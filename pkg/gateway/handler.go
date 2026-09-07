@@ -6803,11 +6803,23 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			return h.backend.HealthyCount(appID) == 0
 		},
 		func(ctx context.Context) error {
-			// Only the WakeGate leader reaches this callback. Repair a
-			// process-local cache miss before spending a scheduler RPC on a
-			// new wake. A peer wake, cron/floor worker, or pre-restart live
-			// instance is therefore reused by all followers.
-			if reconciler, ok := h.backend.(liveTargetReconciler); ok {
+			_, hasCapacityEnsurer := h.backend.(capacityWarmEnsurer)
+			_, hasWarmEnsurer := h.backend.(warmEnsurer)
+			if scope == "" && (hasCapacityEnsurer || hasWarmEnsurer) && h.burstPressure != nil {
+				// A RUNNING notification can make this target visible before
+				// EnsureWarm returns. Publish the settling fence first so those
+				// requests cannot race ahead and start sibling restores while the
+				// primary restore is still completing.
+				h.burstPressure.state(appID).settlingUntil.Store(time.Now().Add(burstInitialRestoreSettlingWindow).UnixNano())
+			}
+			// Only the WakeGate leader reaches this callback. The production
+			// EnsureWarm path is already authoritative: schedd returns an
+			// existing RUNNING instance or creates one under its own wake
+			// coordinator. Avoid querying Postgres here first because that
+			// remote read is directly on every snapshot-restore critical path.
+			// Legacy and preview admission paths still need reconciliation to
+			// avoid creating a duplicate instance from an empty local cache.
+			if reconciler, ok := h.backend.(liveTargetReconciler); ok && (scope != "" || (!hasCapacityEnsurer && !hasWarmEnsurer)) {
 				if reconcileErr := reconciler.ReconcileLiveTargets(ctx, appID); reconcileErr != nil {
 					if h.log != nil {
 						h.log.Warn("gateway: live target reconciliation failed", "app_id", appID, "err", reconcileErr)
@@ -6872,6 +6884,9 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 				// fails before an ID is returned, discard any page visits
 				// so a later retry cannot attach them to a different wake.
 				h.finishWakePageCycle(ctx, appID, "")
+			}
+			if admitErr == nil && cold && method == WakeMethodSnapshotRestore && h.burstPressure != nil {
+				h.burstPressure.state(appID).settlingUntil.Store(time.Now().Add(burstInitialRestoreSettlingWindow).UnixNano())
 			}
 			return admitErr
 		},

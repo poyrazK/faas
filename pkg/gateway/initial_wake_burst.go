@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -15,36 +14,13 @@ type capacityWakeScheduler interface {
 	EnsureWakeCapacity(ctx context.Context, appID, trigger string, desired int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, port int)) error
 }
 
-func (h *Handler) initialWakeDemand(appID string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int) int {
-	if h == nil || h.burstPressure == nil || appID == "" {
-		return 1
-	}
-	limits, ok := api.LimitsFor(plan)
-	if !ok {
-		return 1
-	}
-	state := h.burstPressure.state(appID)
-	now := time.Now()
-	desired := desiredBurstInstancesForApp(state, App{AutoscaleTargetRPS: autoscaleTargetRPS}, limits.ConcurrencyPerVMBound, maxConcurrency, now)
-	// A cold leader evaluates demand before the normal burst worker can observe
-	// a sustained rate. If at least half of one instance's one-second request
-	// target is already queued, start one sibling in the same scheduler batch.
-	// Keeping this headroom at two avoids multiplying capacity for a short
-	// cluster, while a lone cold request continues to restore one instance.
-	if autoscaleTargetRPS > 0 && maxConcurrency > 1 && state.inflight.Load() >= 2 {
-		arrivals := state.recentArrivals(now)
-		threshold := int64((autoscaleTargetRPS + 1) / 2)
-		if arrivals >= threshold && desired < 2 {
-			desired = 2
-		}
-	}
-	if desired < 1 {
-		return 1
-	}
-	if desired > api.ScaleUpMaxBurstPerTick {
-		return api.ScaleUpMaxBurstPerTick
-	}
-	return desired
+func (h *Handler) initialWakeDemand(_ string, _ int, _ api.Plan, _ int) int {
+	// The cold gate releases every queued request only after this batch
+	// completes. Waiting for siblings here creates head-of-line latency even
+	// after the first snapshot restore is routable. Start exactly one instance
+	// synchronously; maybeBurstCapacity observes the same pressure after the
+	// restore settling window and expands while requests use that target.
+	return 1
 }
 
 // EnsureWarmCapacity keeps the cross-producer wake coordinator while passing

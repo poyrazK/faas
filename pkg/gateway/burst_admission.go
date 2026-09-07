@@ -30,6 +30,11 @@ type burstPressure struct {
 
 type burstPressureState struct {
 	inflight atomic.Int64
+	// settlingUntil delays edge-driven scale-out briefly after the first
+	// snapshot restore. Requests coalesced behind the cold gate can otherwise
+	// launch several sibling restores at once and contend with the first VM
+	// while it is serving the queued wake generation.
+	settlingUntil atomic.Int64
 
 	arrivalMu   sync.Mutex
 	arrivals    []int64
@@ -42,6 +47,11 @@ type burstPressureState struct {
 const (
 	burstArrivalWindow      = time.Second
 	burstRateObservationMin = 250 * time.Millisecond
+	// Let the first restored VM drain the coalesced wake generation before
+	// adding more disk and CPU pressure on the same host. Sustained traffic
+	// still triggers this request-local autoscaler after one observation
+	// window; the scheduler's ordinary telemetry loop remains independent.
+	burstInitialRestoreSettlingWindow = time.Second
 	// Leave a small routing headroom around each configured RPS boundary.
 	// Fixed-rate senders otherwise oscillate into the next instance when timer
 	// jitter retains one boundary request or shortens the measured span by a
@@ -208,6 +218,9 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 	}
 	for {
 		healthy := h.backend.HealthyCount(app.ID)
+		if healthy > 0 && time.Now().UnixNano() < state.settlingUntil.Load() {
+			return waited, nil
+		}
 		desired := desiredBurstInstancesForApp(state, app, perVM, maxInstances, time.Now())
 		if desired <= healthy {
 			return waited, nil

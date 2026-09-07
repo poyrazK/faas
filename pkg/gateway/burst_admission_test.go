@@ -292,6 +292,41 @@ func TestMaybeBurstCapacityDoesNotBlockReadyTarget(t *testing.T) {
 	}
 }
 
+func TestMaybeBurstCapacityWaitsForInitialRestoreToSettle(t *testing.T) {
+	b := &burstTestBackend{
+		fakeBackend: &fakeBackend{app: App{ID: "app-1", Plan: api.PlanScale}},
+		admitted:    make(chan int, 1),
+	}
+	b.AddTarget(Target{NodeID: "node-1", InstanceID: "restored"})
+	h := NewHandlerWith(b, NewMetrics(), nil)
+	state := h.burstPressure.state("app-1")
+	state.inflight.Store(81)
+	defer state.inflight.Store(0)
+	state.settlingUntil.Store(time.Now().Add(time.Second).UnixNano())
+
+	if waited, err := h.maybeBurstCapacity(context.Background(), b.app, 20, 80); err != nil || waited {
+		t.Fatalf("settling capacity = waited %v, err %v", waited, err)
+	}
+	select {
+	case got := <-b.admitted:
+		t.Fatalf("admitted %d instances during restore settling window", got)
+	default:
+	}
+
+	state.settlingUntil.Store(time.Now().Add(-time.Nanosecond).UnixNano())
+	if _, err := h.maybeBurstCapacity(context.Background(), b.app, 20, 80); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-b.admitted:
+		if got != 1 {
+			t.Fatalf("admitted = %d, want 1 after settling", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("capacity did not expand after restore settling window")
+	}
+}
+
 func TestPGBackendAdmitBurstCapsLegacyAdapters(t *testing.T) {
 	fakeSched := NewFakeScheduler("node-1")
 	b := NewPGBackend(nil, fakeSched, nil)
