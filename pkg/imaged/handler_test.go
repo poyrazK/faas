@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
@@ -363,6 +364,62 @@ func TestHandleSnapshotWritten(t *testing.T) {
 	// handler mirrors it on the Go side.
 	if snap.Tier != state.SnapshotTierInit {
 		t.Errorf("Tier = %q, want %q (default)", snap.Tier, state.SnapshotTierInit)
+	}
+}
+
+// TestHandleSnapshotWritten_HostingSmokeRunsAfterLive protects the public
+// routing contract: the smoke verifier must see a live deployment, and the
+// resulting evidence must be durable on the deployment row.
+func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "hosting-smoke", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:hosting-smoke", Kind: state.DeploymentKindImage,
+	})
+	_ = store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, "")
+
+	var sawLive bool
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
+		func(ctx context.Context, _ state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			got, err := store.DeploymentByID(ctx, dep.ID)
+			if err == nil {
+				sawLive = got.Status == state.DeployLive
+			}
+			return apihostingreceipt.SmokeResult{
+				Status:     apihostingreceipt.SmokeVerified,
+				Path:       "/healthz",
+				StatusCode: http.StatusOK,
+			}, err
+		},
+	)
+
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + dep.ID + `",` +
+			`"vmstate_path":"/srv/fc/snap/` + dep.ID + `/vmstate",` +
+			`"storage_key":"snap/` + dep.ID + `/mem",` +
+			`"mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	})
+
+	got, err := store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if !sawLive {
+		t.Fatal("hosting smoke ran before deployment became live")
+	}
+	if got.Status != state.DeployLive {
+		t.Fatalf("status = %s, want live", got.Status)
+	}
+	receipt, err := apihostingreceipt.Decode(got.APIHostingReceipt)
+	if err != nil {
+		t.Fatalf("Decode hosting receipt: %v", err)
+	}
+	if receipt.Smoke.Status != apihostingreceipt.SmokeVerified || receipt.Smoke.StatusCode != http.StatusOK {
+		t.Fatalf("hosting smoke = %+v, want verified HTTP 200", receipt.Smoke)
 	}
 }
 

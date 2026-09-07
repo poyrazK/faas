@@ -493,7 +493,7 @@ func TestE2E_Streaming_Metal_H2CInnerLeg(t *testing.T) {
 	appID := mustGetAppID(t, h, key, slug)
 
 	src := NodeFixtureStreaming(t)
-	raw, status := postMultipartDeployment(t, h, key, slug, src, false)
+	raw, status := postMultipartDeployment(t, h, key, slug, src, false, "")
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, raw)
 	}
