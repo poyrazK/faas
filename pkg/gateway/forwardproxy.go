@@ -287,23 +287,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	ctx, detachBudget, touch, cancel := newStreamSession(r.Context(), 910*time.Second, streamIdleTimeout)
 	defer cancel()
 
-	// ADR-124: read the customer's per-app wire-protocol choice
-	// (stamped on r by Handler.ServeHTTP as x-faas-protocol at the
-	// site x-faas-stream is stamped today). The value is recorded
-	// for observability in this PR — the actual wire on the
-	// public↔internal and internal↔guest hops is governed by the
-	// process-global FAAS_INTERNAL_H2C and FAAS_STREAM_BRIDGE_VERSION
-	// knobs, not by per-app state (see ADR-124 §"Architecture" §"Out
-	// of scope" §17 G19 for the bridge-side termination ADR that
-	// would let customer protocol choice reach the guest's :8080).
-	// The hop the gatewayd-internal forwarder controls is the gRPC
-	// bidi ForwardHTTPStream; vmmd-stream-bridge then re-frames to
-	// HTTP/1.1 plaintext today. This means end-to-end framing
-	// (customer→guest) for `app_protocol=grpc/http2` is filed as
-	// G19 (out of scope for this PR); the customer-visible
-	// effect of this PR is **metadata plumbing + plan gating +
-	// observability + header-stamp on the inbound request**, NOT a
-	// transport switch on the bridge.
+	// ADR-126: Handler.ServeHTTP stamps the app's wire-protocol choice
+	// on the request. ForwardHTTPRequestInit carries it to vmmd, which
+	// maps http1 to the H1 bridge and http2/grpc to the H2C bridge.
 	protocol := r.Header.Get("x-faas-protocol")
 	if protocol == "" {
 		protocol = "http1"
@@ -350,11 +336,12 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		port = uint32(sidecarPort)
 	}
 	init := &vmmdpb.ForwardHTTPRequestInit{
-		Instance:   r.Header.Get("x-faas-instance"),
-		Method:     r.Method,
-		RequestUri: r.URL.RequestURI(),
-		Port:       port,
-		Stream:     true,
+		Instance:    r.Header.Get("x-faas-instance"),
+		Method:      r.Method,
+		RequestUri:  r.URL.RequestURI(),
+		Port:        port,
+		Stream:      true,
+		AppProtocol: protocol,
 	}
 	for name, vals := range stripHopByHop(r.Header) {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
