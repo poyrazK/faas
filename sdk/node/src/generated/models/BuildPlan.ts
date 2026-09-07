@@ -3,11 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Auto-detected build plan surfaced on DeploymentResponse (issue #961 / Mega-A PR-2). Same shape the CLI's pre-ship `Detected:` line prints; populated by apid via `pkg/markers.DetectFromTarball` against the spooled source tarball. Embedded on DeploymentResponse; never returned by a dedicated route.
+ * Effective build plan surfaced on DeploymentResponse (issue #961 / zero-config profile PR). Captured from the exact source archive at enqueue time and retained after spool cleanup; legacy rows fall back to marker detection when the spool is still available. Embedded on DeploymentResponse; never returned by a dedicated route.
  */
 export type BuildPlan = {
   /**
-   * Framework detected from the source tarball's top-level markers. `unknown` means no marker was found (monorepo / custom build); the wire renders this as `Detected: …, framework=unknown` rather than dropping the response.
+   * Compatibility framework family derived from the persisted source profile. `unknown` means no supported framework was inferred (monorepo / custom build).
    */
   framework: 'node' | 'python' | 'go' | 'docker' | 'unknown';
   /**
@@ -19,13 +19,17 @@ export type BuildPlan = {
    */
   version?: string | null;
   /**
-   * Entrypoint override (create-time only). nil when the customer did not supply one.
+   * Effective start command from the persisted source profile, replaced by an explicit entrypoint override when supplied.
    */
   entrypoint?: string | null;
   /**
-   * Listen-port override (create-time only). nil when the customer did not supply one.
+   * Effective listen port from the persisted source profile, replaced by an explicit port override when supplied.
    */
   port?: number | null;
+  /**
+   * Effective readiness path selected by the source profile or deployment override.
+   */
+  health_path?: string | null;
   /**
    * App class from `app.Type` — `app` for plain apps, `function` for function rewrites (spec §4.2).
    */

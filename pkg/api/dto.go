@@ -1741,8 +1741,9 @@ type DeploymentResponse struct {
 	// ensures the value is a valid slug; the handler validates
 	// scopeFromBody before storing via api.ValidateScope.
 	Scope string `json:"scope,omitempty"`
-	// BuildPlan (issue #961 / Mega-A PR-2) carries the
-	// framework + runtime + version + entrypoint + port + class
+	// BuildPlan (issue #961 / zero-config profile PR) carries the
+	// compatibility framework family + runtime + version + effective
+	// entrypoint + port + health path + class
 	// that the build pipeline detected or that the deployment
 	// was created with. nil when the deployment is an image
 	// deploy (no source tarball to detect from) — omitempty
@@ -1870,6 +1871,7 @@ type BuildPlan struct {
 	Version    string `json:"version,omitempty"`
 	Entrypoint string `json:"entrypoint,omitempty"`
 	Port       int    `json:"port,omitempty"`
+	HealthPath string `json:"health_path,omitempty"`
 	Class      string `json:"class,omitempty"` // app|function
 }
 

@@ -4730,10 +4730,10 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          scope,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number, workflows,
-		                          full_rootfs_allow_auto, full_rootfs_override)
+		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
-		         $29, $30, $31, nullif($32, 0), $33, $34, $35)
+		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -4773,7 +4773,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		// deployments_pr_number_positive_chk CHECK (which rejects 0).
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
-		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID)
+		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile))
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -6915,7 +6915,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number,
 		                          priority,
-		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override)
+		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -6924,7 +6924,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43)
+		         $40, $41, $42, $43, $44)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -6951,7 +6951,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		newDep.DeployedByUserID, newDep.DeployedVia, newDep.DeployedFromIP, newDep.PusherLogin,
 		nullString(newDep.Reason), nullString(newDep.Tag), nullString(newDep.DeployedBy), newDep.PRNumber,
 		newDep.Priority,
-		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride)
+		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile))
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -17454,7 +17454,8 @@ const deploymentSelectColumnsWithRootfs = `
 	deleted_at, coalesce(deleted_by_principal, ''),
 	coalesce(workflows, '[]'::jsonb),
 	coalesce(full_rootfs_allow_auto, false), full_rootfs_override,
-	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb)`
+	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
+	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb)`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -17507,7 +17508,8 @@ const deploymentSelectColumnsQualified = `
 	d.deleted_at, coalesce(d.deleted_by_principal, ''),
 	coalesce(d.workflows, '[]'::jsonb),
 	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override,
-	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb)`
+	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
+	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb)`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -17618,6 +17620,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.DeletedAt, &d.DeletedByPrincipal, &d.Workflows,
 		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
 		&d.APIHostingReceipt,
+		&d.InferredProfile,
 	); err != nil {
 		return mapErr(err)
 	}
