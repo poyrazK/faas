@@ -830,6 +830,9 @@ type OpsMetrics struct {
 	// Unlabelled — fleet rollup; per-deployment detail lives in the
 	// existing deploy.traffic_changed audit row.
 	canaryProgressionZeroTimestampTotal prometheus.Counter
+	// canaryProgressionHealthGateBlockedTotal counts promotion ticks held
+	// because an actionable rollback/demote alert is still firing.
+	canaryProgressionHealthGateBlockedTotal prometheus.Counter
 	// SAFE-RELEASES-OBS PR-A: safedeploy state-machine counters.
 	safedeployOrchestratorStartedTotal               prometheus.Counter
 	safedeployOrchestratorCompletedTotal             prometheus.Counter
@@ -2653,6 +2656,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_canary_progression_zero_timestamp_total",
 		Help: "Count of canary_progression tick rows whose canary_step_started_at was the zero time (post-00517 the column is NOT NULL DEFAULT NOW(), so a non-zero rate is the tripwire for a write path bypassing the apid CreateDeployment stamp). Unlabelled — fleet-level rollup.",
 	})
+	canaryProgressionHealthGateBlockedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_canary_progression_health_gate_blocked_total",
+		Help: "Count of canary progression ticks held because an actionable rollback or demote alert is firing for the app. Unlabelled — per-deployment detail is in deployment_audit.",
+	})
 	safedeployOrchestratorStartedTotal := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prefix + "_safedeploy_orchestrator_started_total",
 		Help: "Count of pending to rolling_out transitions walked by the safedeploy orchestrator.",
@@ -3234,6 +3241,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		canaryProgressionAdvancedTotal,
 		canaryProgressionErrorsTotal,
 		canaryProgressionZeroTimestampTotal,
+		canaryProgressionHealthGateBlockedTotal,
 		safedeployOrchestratorStartedTotal,
 		safedeployOrchestratorCompletedTotal,
 		safedeployOrchestratorAbortedTotal,
@@ -4464,6 +4472,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		canaryProgressionAdvancedTotal:             canaryProgressionAdvancedTotal,
 		canaryProgressionErrorsTotal:               canaryProgressionErrorsTotal,
 		canaryProgressionZeroTimestampTotal:        canaryProgressionZeroTimestampTotal,
+		canaryProgressionHealthGateBlockedTotal:    canaryProgressionHealthGateBlockedTotal,
 		safedeployOrchestratorStartedTotal:         safedeployOrchestratorStartedTotal,
 		safedeployOrchestratorCompletedTotal:       safedeployOrchestratorCompletedTotal,
 		safedeployOrchestratorAbortedTotal:         safedeployOrchestratorAbortedTotal,
@@ -6963,6 +6972,15 @@ func (m *OpsMetrics) CanaryProgressionZeroTimestampTotal() prometheus.Counter {
 		return nil
 	}
 	return m.canaryProgressionZeroTimestampTotal
+}
+
+// CanaryProgressionHealthGateBlockedTotal returns the counter for promotion
+// ticks held by an actionable safe-release health alert.
+func (m *OpsMetrics) CanaryProgressionHealthGateBlockedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.canaryProgressionHealthGateBlockedTotal
 }
 
 // CanaryProgressionErrorsTotal (issue #976 / ADR-122 /

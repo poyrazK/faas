@@ -58,6 +58,13 @@ fail-safe and atomic:
 - `rollback` creates the rule-correlated rollback audit event and uses the
   rollout-scoped idempotency key.
 
+Promotion is also health-gated. While an enabled, app-scoped alert with an
+explicit `rollback` or `demote` action is in `firing`, the canary progression
+tick holds the current traffic step. Webhook-only alerts remain notification-
+only and do not pause a rollout. A read failure is fail-closed (the canary is
+held until the alert state can be read again). The fleet counter
+`canary_progression_health_gate_blocked_total` records these holds.
+
 ## Production rollout
 
 Promote the exact tested secret/configuration through the normal deployment
@@ -67,6 +74,7 @@ slice. Watch these signals for at least one full rollout window:
 - `safedeploy_in_flight_rollouts`
 - `safedeploy_orchestrator_stuck_detected_total`
 - `safedeploy_orchestrator_audit_emit_failed_total`
+- `canary_progression_health_gate_blocked_total`
 - `deployment_audit_emitted_total{outcome="failed"}`
 
 The default stage and orchestrator cadence is 30 seconds. The default stuck
