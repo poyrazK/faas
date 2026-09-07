@@ -117,20 +117,20 @@ func seedSnapshotWithApp(t *testing.T, store *state.MemStore, memBytes, diskByte
 	return app.ID, dep.ID, snap.ID
 }
 
-func TestGC_PerAppKeepCurrentPrevious(t *testing.T) {
+func TestGC_PerAppKeepRollbackWindow(t *testing.T) {
 	fx := newGCFixture(t, 50) // under budget → only per-app sweep
 	store := fx.store
 
-	// One app, three deployments → two snapshots fall outside the
-	// current+previous window. Insert them in CreatedAt order so the
-	// "newest two" are deterministic.
+	// One app, four deployments → the oldest snapshot falls outside the
+	// current + two previous rollback window. Insert them in CreatedAt order
+	// so the newest three are deterministic.
 	appID := "11111111-1111-1111-1111-111111111111"
 	acct, _ := store.CreateAccount(context.Background(), "a@b.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
 		ID: appID, AccountID: acct.ID, Slug: "keep", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
 	base := time.Now().Add(-time.Hour)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 		})
@@ -155,8 +155,8 @@ func TestGC_PerAppKeepCurrentPrevious(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 {
-		t.Errorf("after per-app GC: %d snapshots remain, want 2", len(rows))
+	if len(rows) != 3 {
+		t.Errorf("after per-app GC: %d snapshots remain, want 3", len(rows))
 	}
 }
 
@@ -476,9 +476,8 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 		StorageKey: state.SnapMemKey(heavyDep.ID),
 		CreatedAt:  time.Now().Add(-3 * time.Minute),
 	})
-	// heavyApp needs > current+previous snapshots so the per-app floor
-	// leaves at least one evictable row. With 3 snapshots and a 2-row
-	// floor, the oldest is a valid eviction target.
+	// heavyApp needs more than the rollback window so the per-app floor leaves
+	// at least one evictable row.
 	heavyDep2, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: heavyApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:h2",
 	})
@@ -496,6 +495,15 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 		FCVersion:  "1.8.0",
 		StorageKey: state.SnapMemKey(heavyDep3.ID),
 		CreatedAt:  time.Now().Add(-1 * time.Minute),
+	})
+	heavyDep4, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: heavyApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:h4",
+	})
+	heavySnap4, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: heavyDep4.ID, MemBytes: 5 << 30, DiskBytes: 5 << 30,
+		FCVersion:  "1.8.0",
+		StorageKey: state.SnapMemKey(heavyDep4.ID),
+		CreatedAt:  time.Now(),
 	})
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: midDep.ID, MemBytes: 3 << 30, DiskBytes: 2 << 30, // 5 GB
@@ -541,19 +549,19 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	loop.runGCTick(context.Background(), time.Unix(0, 0))
 
 	rows, _ := store.ListSnapshotsForGC(context.Background())
-	if len(rows) != 4 {
-		t.Fatalf("pressure GC: %d rows remain, want 4 (one heavy evicted)", len(rows))
+	if len(rows) != 5 {
+		t.Fatalf("pressure GC: %d rows remain, want 5 (one heavy evicted)", len(rows))
 	}
-	// The oldest heavy snapshot must have been evicted; heavySnap2 +
-	// heavySnap3 survive (current + previous); mid + light survive.
+	// The oldest heavy snapshot must have been evicted; heavySnap2..heavySnap4
+	// survive the rollback window; mid + light survive.
 	heavyGone := 0
 	for _, r := range rows {
-		if r.ID == heavySnap.ID || r.ID == heavySnap2.ID || r.ID == heavySnap3.ID {
+		if r.ID == heavySnap.ID || r.ID == heavySnap2.ID || r.ID == heavySnap3.ID || r.ID == heavySnap4.ID {
 			heavyGone++
 		}
 	}
-	if heavyGone != 2 {
-		t.Errorf("expected 2 heavy snaps remain (current+previous); %d of 3 remain", heavyGone)
+	if heavyGone != 3 {
+		t.Errorf("expected 3 heavy snaps remain in the rollback window; %d remain", heavyGone)
 	}
 	for _, r := range rows {
 		if r.ID == heavySnap.ID {
@@ -654,16 +662,16 @@ func TestGC_IdenticalCreatedAt_StableSort(t *testing.T) {
 	loop.runGCTick(context.Background(), time.Unix(0, 0))
 
 	rows, _ := store.ListSnapshotsForGC(context.Background())
-	if len(rows) != 2 {
-		t.Fatalf("per-app GC: %d rows remain, want 2 (current+previous)", len(rows))
+	if len(rows) != 3 {
+		t.Fatalf("per-app GC: %d rows remain, want 3 (rollback window)", len(rows))
 	}
-	// Determinism: the surviving 2 must be deterministic across runs.
+	// Determinism: the surviving 3 must be deterministic across runs.
 	// With stable sort on identical CreatedAt, the secondary key (ID) is
 	// what determines the floor — we don't pin which IDs survive here
 	// (the algorithm doesn't expose the tiebreaker), only that the run
-	// converges to exactly 2 rows and DOES NOT depend on map iteration.
-	if len(rows) > 2 {
-		t.Errorf("F-09 regression: per-app policy left %d rows, want 2", len(rows))
+	// converges to exactly 3 rows and DOES NOT depend on map iteration.
+	if len(rows) > 3 {
+		t.Errorf("F-09 regression: per-app policy left %d rows, want 3", len(rows))
 	}
 }
 
@@ -740,7 +748,7 @@ func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:gc",
 	})
-	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
+	snap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 		FCVersion:  "1.8.0",
 		StorageKey: state.SnapMemKey(dep.ID),
@@ -775,7 +783,7 @@ func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 			storage:  be,
 		},
 	}
-	ts := []deleteTarget{{ID: "ignored", DeploymentID: dep.ID, AppSlug: app.Slug}}
+	ts := []deleteTarget{{ID: snap.ID, DeploymentID: dep.ID, AppSlug: app.Slug}}
 	if err := loop.deleteSnapshotsAndFiles(context.Background(), ts); err != nil {
 		t.Fatalf("deleteSnapshotsAndFiles: %v", err)
 	}
@@ -784,6 +792,72 @@ func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 			_ = rc.Close()
 			t.Errorf("F-05 regression: key %s survived deleteSnapshotsAndFiles", k)
 		}
+	}
+}
+
+func TestLoopDeleteSnapshotsAndFiles_RetainsLayerUntilLastTier(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "tier-retention@x.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "tier-retention", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:tier",
+	})
+	initSnap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
+		StorageKey: state.SnapMemKey(dep.ID), Tier: state.SnapshotTierInit,
+	})
+	warmSnap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
+		StorageKey: state.WarmSnapMemKey(dep.ID), Tier: state.SnapshotTierWarm,
+	})
+	appsRoot := t.TempDir()
+	be, err := storage.NewLocalStorageBackend(appsRoot)
+	if err != nil {
+		t.Fatalf("storage.NewLocalStorageBackend: %v", err)
+	}
+	keys := map[string]string{
+		sched.AppLayerKey(app.Slug, dep.ID): "layer",
+		state.SnapMemKey(dep.ID):            "init-mem",
+		state.SnapVMStateKey(dep.ID):        "init-vm",
+		state.WarmSnapMemKey(dep.ID):        "warm-mem",
+		state.WarmSnapVMStateKey(dep.ID):    "warm-vm",
+	}
+	for key, body := range keys {
+		if err := be.Put(context.Background(), key, strings.NewReader(body)); err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+	}
+	loop := &Loop{
+		store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), appsRoot: appsRoot,
+		handler: &Handler{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), appsRoot: appsRoot, storage: be},
+	}
+	if err := loop.deleteSnapshotsAndFiles(context.Background(), []deleteTarget{targetForSnapshot(state.SnapshotForGC{
+		ID: initSnap.ID, DeploymentID: dep.ID, AppSlug: app.Slug, Tier: state.SnapshotTierInit,
+		StorageKey: state.SnapMemKey(dep.ID),
+	})}); err != nil {
+		t.Fatalf("delete init tier: %v", err)
+	}
+	if rc, err := be.Get(context.Background(), sched.AppLayerKey(app.Slug, dep.ID)); err != nil {
+		t.Fatalf("app layer removed while warm tier remains: %v", err)
+	} else {
+		_ = rc.Close()
+	}
+	if rc, err := be.Get(context.Background(), state.WarmSnapMemKey(dep.ID)); err != nil {
+		t.Fatalf("warm snapshot removed with init tier: %v", err)
+	} else {
+		_ = rc.Close()
+	}
+	if err := loop.deleteSnapshotsAndFiles(context.Background(), []deleteTarget{targetForSnapshot(state.SnapshotForGC{
+		ID: warmSnap.ID, DeploymentID: dep.ID, AppSlug: app.Slug, Tier: state.SnapshotTierWarm,
+		StorageKey: state.WarmSnapMemKey(dep.ID),
+	})}); err != nil {
+		t.Fatalf("delete warm tier: %v", err)
+	}
+	if rc, err := be.Get(context.Background(), sched.AppLayerKey(app.Slug, dep.ID)); err == nil {
+		_ = rc.Close()
+		t.Error("app layer survived after the last snapshot tier was deleted")
 	}
 }
 
@@ -922,8 +996,8 @@ func (s *countingStore) total() int {
 }
 
 // seedEvictionCandidate inserts one account + one app + 4 deployments +
-// 4 snapshots. With the per-app "keep current+previous" rule, the
-// 2 oldest snapshots are evictable in a single GC tick.
+// 4 snapshots. With the three-deployment rollback window, the oldest
+// snapshot is evictable in a single GC tick.
 func seedEvictionCandidate(t *testing.T, store state.Store, slug string) {
 	t.Helper()
 	s, ok := store.(*countingStore)
@@ -1011,15 +1085,14 @@ func seedEvictionCandidateB(b *testing.B, store *countingStore, slug string) {
 // ListSnapshotsForGC, one MarkOldSnapshotsStale, one
 // DeleteSnapshotsByID, plus 2N for SnapMemKey + SnapVMStateKey
 // storage.Delete calls that the storage backend wraps in SQL via the
-// LocalArtifactLister path). The failing case today is 5 + 4N (the +2
-// per-eviction DeploymentByID + AppByID fallback). With N=4 evictions
-// that's 21 today vs ≤11 after the fix — a clear delta the test
-// asserts.
+// LocalArtifactLister path). The rollback window changes the fixture to one
+// eviction per app while preserving the no-per-row DeploymentByID/AppByID
+// lookup assertion.
 func TestRunGCTick_PerEvictionSQLCount(t *testing.T) {
-	const N = 4 // 4 deployments per app → 2 evictions per app → 2 × 4 = 8 rows total when paired
+	const N = 2 // one rollback-window eviction per app
 	store := newCountingStore()
 
-	// Seed two apps, each with 4 snapshots → 4 evictions total.
+	// Seed two apps, each with 4 snapshots → 2 evictions total.
 	seedEvictionCandidate(t, store, "perf-app-a")
 	seedEvictionCandidate(t, store, "perf-app-b")
 
@@ -1061,21 +1134,21 @@ func TestRunGCTick_PerEvictionSQLCount(t *testing.T) {
 	// MarkOldSnapshotsStale + one DeleteSnapshotsByID + a 2-call
 	// margin for any sub-store bookkeeping we don't anticipate.
 	total := store.total()
-	const evictions = 4
+	const evictions = N
 	const ceiling = 5 + 2*evictions
 	if total > ceiling {
 		t.Errorf("B1.1 perf-cost regression: runGCTick issued %d total GC-path calls "+
 			"across %d evictions; expected ≤ %d (ceiling = 5 + 2N)", total, evictions, ceiling)
 	}
 
-	// Sanity: the per-app policy must actually have evicted the 4
-	// oldest snapshots (2 per app).
+	// Sanity: the per-app policy must actually have evicted the 2
+	// oldest snapshots (one per app).
 	rows, err := store.ListSnapshotsForGC(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 4 {
-		t.Errorf("after per-app GC: %d snapshots remain, want 4 (current+previous per app)", len(rows))
+	if len(rows) != 6 {
+		t.Errorf("after per-app GC: %d snapshots remain, want 6 (rollback window per app)", len(rows))
 	}
 	t.Logf("GC SQL counts: %v (total %d)", store.counts, total)
 }
@@ -1184,7 +1257,7 @@ func TestMemStore_ListSnapshotsForGC_PopulatesAppSlug(t *testing.T) {
 //	go test -bench BenchmarkLoopRunGCTick_FallbackSQLCost -benchmem ./pkg/imaged/...
 func BenchmarkLoopRunGCTick_FallbackSQLCost(b *testing.B) {
 	const apps = 10
-	const evictions = 2 * apps // 2 per app fall outside current+previous
+	const evictions = apps // one per app falls outside the rollback window
 
 	for n := 0; n < b.N; n++ {
 		store := newCountingStore()
@@ -1218,12 +1291,11 @@ func BenchmarkLoopRunGCTick_FallbackSQLCost(b *testing.B) {
 	}
 }
 
-// TestGC_PerAppKeepTierFloor_Enabled2Plus2 (issue #470 / PR C /
-// ADR-074) verifies the warm-enabled app policy: keep the 2
-// newest warm-tier rows + the 2 newest init-tier rows; everything
-// older in either tier is dropped. 4 warm + 4 init rows seeded →
-// 4 rows dropped, 4 rows retained.
-func TestGC_PerAppKeepTierFloor_Enabled2Plus2(t *testing.T) {
+// TestGC_PerAppRollbackWindow_EnabledTiers verifies that a warm-enabled app
+// keeps both snapshot tiers for each of the three newest deployment
+// generations. Four paired deployments are seeded, so the oldest pair is
+// reclaimed.
+func TestGC_PerAppRollbackWindow_EnabledTiers(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "warm@x.com", "pro")
 	// Issue #470 / PR C / ADR-074: enable warm-tier retention for
@@ -1238,12 +1310,12 @@ func TestGC_PerAppKeepTierFloor_Enabled2Plus2(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := time.Now().Add(-time.Hour)
-	// Seed 4 init + 4 warm across 8 deployments; the oldest
-	// 2 warm and 2 init should be dropped.
+	// Seed four deployments, each with an init and warm row. The oldest
+	// deployment's pair should be dropped.
 	for i := 0; i < 4; i++ {
 		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage,
-			ImageDigest: "sha256:init" + string(rune('a'+i)),
+			ImageDigest: "sha256:paired" + string(rune('a'+i)),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1258,21 +1330,12 @@ func TestGC_PerAppKeepTierFloor_Enabled2Plus2(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	for i := 0; i < 4; i++ {
-		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
-			AppID: app.ID, Kind: state.DeploymentKindImage,
-			ImageDigest: "sha256:warm" + string(rune('a'+i)),
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
 		_, err = store.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 			FCVersion:  "1.8.0",
 			StorageKey: state.WarmSnapMemKey(dep.ID),
 			Tier:       state.SnapshotTierWarm,
-			CreatedAt:  base.Add(time.Duration(i+10) * time.Minute),
+			CreatedAt:  base.Add(time.Duration(i)*time.Minute + time.Second),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1288,8 +1351,8 @@ func TestGC_PerAppKeepTierFloor_Enabled2Plus2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 4 {
-		t.Errorf("after per-tier GC: %d rows remain, want 4 (2 warm + 2 init)", len(rows))
+	if len(rows) != 6 {
+		t.Errorf("after rollback-window GC: %d rows remain, want 6 (3 warm + 3 init)", len(rows))
 	}
 	var warmCount, initCount int
 	for _, r := range rows {
@@ -1300,19 +1363,18 @@ func TestGC_PerAppKeepTierFloor_Enabled2Plus2(t *testing.T) {
 			initCount++
 		}
 	}
-	if warmCount != 2 {
-		t.Errorf("warm rows = %d, want 2", warmCount)
+	if warmCount != 3 {
+		t.Errorf("warm rows = %d, want 3", warmCount)
 	}
-	if initCount != 2 {
-		t.Errorf("init rows = %d, want 2", initCount)
+	if initCount != 3 {
+		t.Errorf("init rows = %d, want 3", initCount)
 	}
 }
 
-// TestGC_PerAppKeepTierFloor_Disabled2Init (issue #470 / PR C /
-// ADR-074) verifies the warm-disabled policy: keep only the 2
-// newest init-tier rows; every warm-tier row (which the app is
-// not opted in to) is dropped, plus the older init rows.
-func TestGC_PerAppKeepTierFloor_Disabled2Init(t *testing.T) {
+// TestGC_PerAppRollbackWindow_DisabledInit verifies the warm-disabled policy:
+// keep init rows for the three newest deployment generations and drop every
+// warm row, including vestigial rows from a prior opt-in.
+func TestGC_PerAppRollbackWindow_DisabledInit(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "disabled@x.com", "pro")
 	app, err := store.CreateApp(context.Background(), state.App{
@@ -1324,12 +1386,12 @@ func TestGC_PerAppKeepTierFloor_Disabled2Init(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := time.Now().Add(-time.Hour)
-	// Seed 4 init + 4 warm rows even though the app is disabled
-	// (vestigial warm rows from a prior opt-in).
+	// Seed four deployments, each with an init row and a vestigial warm row
+	// from a prior opt-in.
 	for i := 0; i < 4; i++ {
 		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage,
-			ImageDigest: "sha256:dinit" + string(rune('a'+i)),
+			ImageDigest: "sha256:disabled" + string(rune('a'+i)),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1344,21 +1406,12 @@ func TestGC_PerAppKeepTierFloor_Disabled2Init(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	for i := 0; i < 4; i++ {
-		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
-			AppID: app.ID, Kind: state.DeploymentKindImage,
-			ImageDigest: "sha256:dwarm" + string(rune('a'+i)),
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
 		_, err = store.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 			FCVersion:  "1.8.0",
 			StorageKey: state.WarmSnapMemKey(dep.ID),
 			Tier:       state.SnapshotTierWarm,
-			CreatedAt:  base.Add(time.Duration(i+10) * time.Minute),
+			CreatedAt:  base.Add(time.Duration(i)*time.Minute + time.Second),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1374,8 +1427,8 @@ func TestGC_PerAppKeepTierFloor_Disabled2Init(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("disabled app: %d rows remain, want 2 init", len(rows))
+	if len(rows) != 3 {
+		t.Fatalf("disabled app: %d rows remain, want 3 init", len(rows))
 	}
 	for _, r := range rows {
 		if r.Tier != state.SnapshotTierInit {
@@ -1384,11 +1437,10 @@ func TestGC_PerAppKeepTierFloor_Disabled2Init(t *testing.T) {
 	}
 }
 
-// TestGC_PerAppKeepTierFloor_MixedApps (issue #470 / PR C /
-// ADR-074) verifies that the per-app floor is applied INDEPENDENTLY
-// for each app — a warm-enabled app's tier floors do not affect a
-// warm-disabled app in the same tenant.
-func TestGC_PerAppKeepTierFloor_MixedApps(t *testing.T) {
+// TestGC_PerAppRollbackWindow_MixedApps verifies that the rollback window is
+// applied independently for each app — a warm-enabled app's retained tiers do
+// not affect a warm-disabled app in the same tenant.
+func TestGC_PerAppRollbackWindow_MixedApps(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "mixed@x.com", "pro")
 	enabledApp, err := store.CreateApp(context.Background(), state.App{
@@ -1407,18 +1459,13 @@ func TestGC_PerAppKeepTierFloor_MixedApps(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := time.Now().Add(-time.Hour)
-	// Enabled app: 3 init + 3 warm → keep 2 warm + 2 init, drop 2.
+	// Both apps have four deployment generations. Each generation has both
+	// tiers; the disabled app's warm rows are vestigial and are removed.
 	for _, app := range [2]state.App{enabledApp, disabledApp} {
-		var warmBefore int
-		if app.ID == enabledApp.ID {
-			warmBefore = 3
-		} else {
-			warmBefore = 0
-		}
-		for i := 0; i < 3; i++ {
+		for i := 0; i < 4; i++ {
 			dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 				AppID: app.ID, Kind: state.DeploymentKindImage,
-				ImageDigest: "sha256:" + app.Slug + "init" + string(rune('a'+i)),
+				ImageDigest: "sha256:" + app.Slug + string(rune('a'+i)),
 			})
 			_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 				DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
@@ -1427,18 +1474,12 @@ func TestGC_PerAppKeepTierFloor_MixedApps(t *testing.T) {
 				Tier:       state.SnapshotTierInit,
 				CreatedAt:  base.Add(time.Duration(i) * time.Minute),
 			})
-		}
-		for i := 0; i < warmBefore; i++ {
-			dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
-				AppID: app.ID, Kind: state.DeploymentKindImage,
-				ImageDigest: "sha256:" + app.Slug + "warm" + string(rune('a'+i)),
-			})
 			_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 				DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 				FCVersion:  "1.8.0",
 				StorageKey: state.WarmSnapMemKey(dep.ID),
 				Tier:       state.SnapshotTierWarm,
-				CreatedAt:  base.Add(time.Duration(i+10) * time.Minute),
+				CreatedAt:  base.Add(time.Duration(i)*time.Minute + time.Second),
 			})
 		}
 	}
@@ -1461,11 +1502,11 @@ func TestGC_PerAppKeepTierFloor_MixedApps(t *testing.T) {
 			disabled++
 		}
 	}
-	if enabled != 4 {
-		t.Errorf("enabled app: %d rows remain, want 4 (2 warm + 2 init)", enabled)
+	if enabled != 6 {
+		t.Errorf("enabled app: %d rows remain, want 6 (3 warm + 3 init)", enabled)
 	}
-	if disabled != 2 {
-		t.Errorf("disabled app: %d rows remain, want 2 init", disabled)
+	if disabled != 3 {
+		t.Errorf("disabled app: %d rows remain, want 3 init", disabled)
 	}
 }
 

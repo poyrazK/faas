@@ -9815,9 +9815,9 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			MemBytes:         s.MemBytes,
 			DiskBytes:        s.DiskBytes,
 			// Issue #470 / ADR-055: forward the tier so the GC loop's
-			// perAppKeepCurrentPrevious can keep (current warm +
-			// previous init) per warm-tier app and (current init +
-			// previous init) per init-only app.
+			// rollback-window policy can retain both tiers for each
+			// protected generation on warm-enabled apps and init rows
+			// only on warm-disabled apps.
 			Tier: s.Tier,
 			// #96 / ADR-025 axis 2: forward the canonical storage
 			// key so imaged's GC loop can Storage.Delete under it
@@ -9826,10 +9826,10 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			Stale:      s.Stale,
 			CreatedAt:  s.CreatedAt,
 			// Issue #470 / PR C / ADR-072: forward
-			// apps.warm_snapshot_enabled so the per-tier GC
-			// policy can apply the 2+2 floor on warm-tier apps
-			// and the 2-init-only floor on disabled apps. Same
-			// denormalisation pattern as AppSlug above.
+			// apps.warm_snapshot_enabled so the rollback-window
+			// policy can retain both tiers on warm-enabled apps and
+			// init rows only on disabled apps. Same denormalisation
+			// pattern as AppSlug above.
 			AppWarmSnapshotEnabled: app.WarmSnapshotEnabled,
 		})
 	}

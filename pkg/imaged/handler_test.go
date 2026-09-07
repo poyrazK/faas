@@ -648,21 +648,18 @@ func TestHandleNotification_AppChanged_Deleted_CarriesAppID(t *testing.T) {
 	}
 }
 
-// TestHandleNotification_Supersede_KeepsSnapBlob_EndToEnd is the F-02
-// regression. Prior to F-02, cleanupDeploymentFiles(..., false /* keepSnap */)
-// was called on every supersede — deleting the snapshot blob and forcing
-// every cross-supersede rollback to cold-boot. Spec §4.6 requires the snap
-// blob survive; the per-app ext4 layer is the only thing the cleanup may
-// drop. The test exercises the full wire path: HandleNotification on the
-// NotifyDeploymentChanged channel with status="superseded" must drop the
-// ext4 layer but leave the snap blob intact.
+// TestHandleNotification_Supersede_RetainsRollbackArtifacts is the F-02
+// regression. Supersede notifications retain the snapshot and its drive1
+// layer together; the bounded GC window removes both only after the
+// deployment falls out of rollback retention. The test exercises the full
+// wire path and verifies that a superseded deployment remains immediately
+// restoreable.
 //
 // #96: the ext4 layer lives at the storage key sched.AppLayerKey(slug,
 // depID) and the snap blob at sched.SnapshotMemKey(depID). The test
-// seeds both, fires the supersede notification, and asserts the layer is
-// gone while the snap blob key still resolves through the storage
-// backend.
-func TestHandleNotification_Supersede_KeepsSnapBlob_EndToEnd(t *testing.T) {
+// seeds both, fires the supersede notification, and asserts both artifacts
+// still resolve through the storage backend.
+func TestHandleNotification_Supersede_RetainsRollbackArtifacts(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
@@ -692,9 +689,10 @@ func TestHandleNotification_Supersede_KeepsSnapBlob_EndToEnd(t *testing.T) {
 		Payload: `{"kind":"superseded","status":"superseded","app_id":"` + app.ID + `","deployment_id":"` + dep.ID + `","to":"` + dep.ID + `"}`,
 	}
 	h.HandleNotification(context.Background(), n)
-	if rc, err := be.Get(context.Background(), appsKey); err == nil {
+	if rc, err := be.Get(context.Background(), appsKey); err != nil {
+		t.Errorf("rollback retention regression: superseded ext4 layer was removed (key=%s, err=%v)", appsKey, err)
+	} else {
 		_ = rc.Close()
-		t.Errorf("F-05 regression: superseded ext4 layer not removed (key=%s)", appsKey)
 	}
 	if rc, err := be.Get(context.Background(), memKey); err != nil {
 		t.Errorf("F-02 regression: snap mem blob was dropped on supersede (key=%s, err=%v)", memKey, err)

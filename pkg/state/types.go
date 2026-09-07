@@ -4466,14 +4466,15 @@ const (
 )
 
 // SnapshotForGC is the join-projection used by the imaged nightly GC
-// (spec §4.6: keep current + previous deployment's snapshots per app;
-// fleet budget pressure evicts from biggest-over-quota accounts first).
+// (spec §4.6: keep the bounded rollback window of deployment snapshots per
+// app; fleet budget pressure evicts from biggest-over-quota accounts first).
 // It denormalises snapshot → deployment → app → account into one row so
 // the GC algorithm doesn't have to round-trip per row.
 //
 // AppStatus and DeploymentStatus let the GC discard snapshots that cannot
 // participate in a future wake. In particular, deleted apps and
-// failed/cancelled deployments must not consume the per-app retention floor.
+// failed/cancelled deployments must not consume the per-app rollback window;
+// superseded deployments remain eligible because they are rollback targets.
 type SnapshotForGC struct {
 	ID           string
 	DeploymentID string
@@ -4494,19 +4495,17 @@ type SnapshotForGC struct {
 	DiskBytes        int64
 	// Tier (issue #470 / ADR-055) is the snapshot tier — see
 	// Snapshot.Tier for the semantics. The GC projection carries
-	// it so the perAppKeepCurrentPrevious policy can keep
-	// (current warm + previous init) per app instead of the
-	// legacy (current + previous) regardless-of-tier rule.
+	// it so the rollback-window policy can keep both tiers for each protected
+	// deployment generation instead of an arbitrary row count per tier.
 	Tier       string
 	StorageKey string
 	Stale      bool
 	CreatedAt  time.Time
 	// AppWarmSnapshotEnabled (issue #470 / PR C / ADR-072) projects
 	// apps.warm_snapshot_enabled from the JOIN so the GC policy can
-	// apply the 2+2 floor only on apps that opted in to the warm
-	// tier. Apps with warm_snapshot_enabled=false keep only the
-	// 2-init floor. Denormalised to avoid an AppByID round-trip per
-	// eviction row.
+	// apply the two-tier rollback window only on apps that opted in to warm.
+	// Apps with warm_snapshot_enabled=false keep init rows only. Denormalised
+	// to avoid an AppByID round-trip per eviction row.
 	AppWarmSnapshotEnabled bool
 }
 

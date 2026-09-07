@@ -12382,14 +12382,14 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 // DeploymentByID + AppByID round-trip per eviction.
 //
 // Issue #470 / ADR-055: also projects s.tier so the GC loop can keep
-// (current warm + previous init) per app for warm-tier apps, while
-// Free/Hobby apps keep just the single init-tier row. The tier column
-// arrives as a 9th value via Scan's last argument.
+// the newest three deployment generations per app for warm-tier apps (both
+// init and warm rows), while warm-disabled apps keep init rows only. The tier
+// column is included in the projection alongside the storage metadata.
 //
 // Issue #470 / PR C / ADR-072: also projects a.warm_snapshot_enabled as
-// the 13th Scan value so the per-tier GC policy can decide whether to
-// apply the 2+2 floor (warm-enabled apps) or the 2-init-only floor
-// (warm-disabled apps) without a per-row AppByID round-trip. Same
+// the final Scan value so the rollback-window GC policy can decide whether to
+// retain both tiers for protected generations or init rows only without a
+// per-row AppByID round-trip. Same
 // denormalisation pattern as AppSlug.
 func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error) {
 	rows, err := s.pool.Query(ctx,
