@@ -43,7 +43,8 @@ PromQL path, 3 require new signals). The closed vocabulary at
 
 ### Catalog pattern — mirror cors_presets
 
-`alert_presets` is a fixed 8-row table seeded by migration `00348`. Rows
+`alert_presets` is a fixed, bounded catalog seeded by migrations `00348`
+and its follow-up feature migrations. Rows
 are owned by the system (meterd + apid boot roles are the only writers);
 customers have SELECT-only. Each row carries:
 
@@ -60,10 +61,9 @@ list. `minimum_plan` is the closed-set plan tier the customer must hold to
 see the preset (mirrors the alert-rules plan gate at
 `cmd/apid/handlers_alerts.go:102-105`).
 
-Cardinality is bounded: 8 rows, no per-tenant data. The migration
-`00347_alert_presets.sql` enforces the closed-set CHECK constraints
-directly in SQL (defence in depth) and pins the metric vocabulary to
-exactly the 8 strings the evaluator will learn.
+Cardinality is bounded, with no per-tenant data. The migrations enforce
+the closed-set CHECK constraints directly in SQL (defence in depth) and
+pin the metric vocabulary to exactly the strings the evaluator learns.
 
 ### Enablement model — instantiate, no FK
 
@@ -165,8 +165,8 @@ preset (since `AlertRuleLimitPerApp == 0` for Free is the
 `plan_alert_rules_not_allowed` rejection).
 
 The catalog itself has an informational `AlertPresetCatalogLimitPerAccount
-= 8` so the limits table stays in sync with the migration; it's never
-enforced in code (the catalog has 8 rows and is system-owned).
+= 15` so the limits table stays in sync with the current migration set; it
+is never enforced in code because the catalog is system-owned.
 
 ## Consequences
 
@@ -207,7 +207,8 @@ enforced in code (the catalog has 8 rows and is system-owned).
   ships, the preset catalog gains an optional `notification_email`
   field on the instantiate request body. The catalog itself does not
   change.
-- **Dashboard panel polish**: the preset grid currently renders all 8
+- **Dashboard panel polish**: the preset grid currently renders the full
+  bounded catalog
   cards. A future iteration adds per-card "test alert" buttons (sends
   a no-op webhook with `test: true` in the payload).
 - **Alert explanation rendering**: ship a one-paragraph "what this

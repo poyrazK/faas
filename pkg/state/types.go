@@ -2223,7 +2223,8 @@ type OperatorIntent struct {
 // slice and the alert_rules_metric_chk DB CHECK mirror these byte-for-byte
 // (migrations/00349_alert_rules_extend_metrics_chk.sql).
 // Issue #1395 B3 adds new_error_fingerprint, cold_wake_rate_pct, and
-// daily_cost_cents from the durable observability rollups.
+// daily_cost_cents from the durable observability rollups. Issue #1398
+// O2 adds the ADR-082 multi-window SLO burn-rate signal.
 type AlertMetric string
 
 const (
@@ -2242,6 +2243,10 @@ const (
 	AlertMetricNewErrorFingerprint AlertMetric = "new_error_fingerprint"
 	AlertMetricColdWakeRatePct     AlertMetric = "cold_wake_rate_pct"
 	AlertMetricDailyCostCents      AlertMetric = "daily_cost_cents"
+	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
+	// availability burn-rate signal. The evaluator combines the 1h
+	// 14.4x and 6h 6x Google SRE windows into one effective value.
+	AlertMetricSLOBurnRate AlertMetric = "slo_burn_rate"
 	// AlertMetricCanaryStuckStep (SAFE-RELEASES-OBS PR-B) is the
 	// Prometheus-counter-backed tripwire for a canary sitting at the
 	// same step past StuckAfterDuration. The actual firing happens

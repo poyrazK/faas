@@ -16,6 +16,7 @@ AlertRuleResponseMetric = Literal[
     "new_error_fingerprint",
     "queue_depth",
     "request_count",
+    "slo_burn_rate",
 ]
 
 ALERT_RULE_RESPONSE_METRIC_VALUES: set[AlertRuleResponseMetric] = {
@@ -34,6 +35,7 @@ ALERT_RULE_RESPONSE_METRIC_VALUES: set[AlertRuleResponseMetric] = {
     "new_error_fingerprint",
     "queue_depth",
     "request_count",
+    "slo_burn_rate",
 }
 
 

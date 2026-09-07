@@ -2267,6 +2267,47 @@ groups:
           description: "max(gateway_queue_depth{app=\"{{ $labels.app }}\", account_id=\"{{ $labels.account_id }}\"}) by (app, account_id) has been > 50 for 15m. This is the alert_preset catalog `queue_backlog_growing` signal. The `account_id` label is admitted via accountLabelSet (cap=10k, overflow=`__other__`); rows past the cap roll up under `__other__` and contribute to the FaasAlertPresetAnyFiringAccount correlation under that bucket. Common causes: customer app wake latency exceeded the gateway queue cap, cold-boot snapshot restore failing repeatedly, or downstream Postgres contention."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGatewayQueueBacklogGrowing.md"
 
+      # ── Customer SLO burn rate (issue #1398 / O2) ────────────────
+      # ADR-082 defines a 99.5% API-availability SLO, leaving a 0.5%
+      # error budget. Keep the two windows as separate recordings so
+      # the alert expression preserves the Google SRE multi-window
+      # shape: 14.4x over 1h AND 6x over 6h. gateway_requests_total
+      # is app-labelled but not account-labelled; the meterd evaluator
+      # remains the account-authoritative webhook path.
+      - record: faas_slo_burn_rate_1h:by_app
+        expr: |
+          sum by (app) (rate(gateway_requests_total{code!~"2.."}[1h]))
+            /
+          clamp_min(sum by (app) (rate(gateway_requests_total[1h])), 1)
+            / 0.005
+
+      - record: faas_slo_burn_rate_6h:by_app
+        expr: |
+          sum by (app) (rate(gateway_requests_total{code!~"2.."}[6h]))
+            /
+          clamp_min(sum by (app) (rate(gateway_requests_total[6h])), 1)
+            / 0.005
+
+      - alert: FaasSLOBurnRateHigh
+        expr: |
+          (
+            faas_slo_burn_rate_1h:by_app > 14.4
+          )
+          and on (app)
+          (
+            faas_slo_burn_rate_6h:by_app > 6
+          )
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: alert_preset_signals
+          preset: slo_burn_rate
+        annotations:
+          summary: "SLO burn rate is high for app {{ $labels.app }}"
+          description: "The app's API error budget exceeded the Google SRE multi-window thresholds: >14.4x over 1h and >6x over 6h of the ADR-082 99.5% availability SLO. gateway_requests_total is app-labelled; use the meterd alert delivery or app dashboard to correlate the app with its customer account."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSLOBurnRateHigh.md"
+
       # ── Account-level correlation (all 5 signals) ─────────────────
       # gateway_queue_depth now carries an account_id label (admitted
       # via accountLabelSet; rows past the 10k cap collapse to

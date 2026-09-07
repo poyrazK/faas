@@ -16,6 +16,7 @@ UpdateAlertRuleRequestMetric = Literal[
     "new_error_fingerprint",
     "queue_depth",
     "request_count",
+    "slo_burn_rate",
 ]
 
 UPDATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[UpdateAlertRuleRequestMetric] = {
@@ -34,6 +35,7 @@ UPDATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[UpdateAlertRuleRequestMetric] = {
     "new_error_fingerprint",
     "queue_depth",
     "request_count",
+    "slo_burn_rate",
 }
 
 
