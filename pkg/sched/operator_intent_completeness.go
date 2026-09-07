@@ -191,7 +191,7 @@ func (l *Loop) observeTraceCompletenessRatio(ctx context.Context, gaugeUpdates *
 		    END AS ratio
 		FROM events
 		WHERE kind LIKE 'operator.action.%'
-		  AND at > now() - ($1::text || ' seconds')::interval
+		  AND at > now() - ($1::bigint * interval '1 second')
 		GROUP BY kind
 	`, int64(operatorIntentCompletenessWindow.Seconds()))
 	if err != nil {
