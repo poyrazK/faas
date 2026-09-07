@@ -132,6 +132,11 @@ func (m *MemStore) FinishObjectBucket(_ context.Context, id, token, next string)
 				delete(m.objectMultipartUploads, uploadID)
 			}
 		}
+		for credentialID, credential := range m.objectS3Credentials {
+			if credential.BucketID == id {
+				delete(m.objectS3Credentials, credentialID)
+			}
+		}
 	}
 	return nil
 }

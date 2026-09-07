@@ -106,6 +106,7 @@ type MemStore struct {
 	objectReports          []api.ObjectStorageUsageReport
 	objectAuthorizations   map[string]int64
 	objectAccessGrants     map[string]ObjectBucketAccessGrant
+	objectS3Credentials    map[string]ObjectS3Credential
 	objectMultipartUploads map[string]ObjectMultipartUpload
 	mu                     sync.Mutex
 	accounts               map[string]Account
@@ -723,6 +724,7 @@ type builderUsageRow struct {
 func NewMemStore() *MemStore {
 	m := &MemStore{
 		objectAccessGrants:     map[string]ObjectBucketAccessGrant{},
+		objectS3Credentials:    map[string]ObjectS3Credential{},
 		objectMultipartUploads: map[string]ObjectMultipartUpload{},
 		accounts:               map[string]Account{},
 		keys:                   map[string]APIKey{},
@@ -14400,6 +14402,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for grantKey, grant := range m.objectAccessGrants {
 		if grant.AccountID == id {
 			delete(m.objectAccessGrants, grantKey)
+		}
+	}
+	for credentialID, credential := range m.objectS3Credentials {
+		if credential.AccountID == id {
+			delete(m.objectS3Credentials, credentialID)
 		}
 	}
 	for uploadID, upload := range m.objectMultipartUploads {

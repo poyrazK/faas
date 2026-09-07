@@ -57,6 +57,25 @@ func (c *Client) DeleteObjectBucket(ctx context.Context, slug, bucket string) er
 	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket), nil, nil)
 }
 
+func (c *Client) ListObjectS3Credentials(ctx context.Context, slug, bucket string) (ObjectS3CredentialList, error) {
+	var out ObjectS3CredentialList
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/s3-credentials"
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) CreateObjectS3Credential(ctx context.Context, slug, bucket string, req CreateObjectS3CredentialRequest) (ObjectS3CredentialSecret, error) {
+	var out ObjectS3CredentialSecret
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/s3-credentials"
+	err := c.do(ctx, http.MethodPost, path, req, &out)
+	return out, err
+}
+
+func (c *Client) RevokeObjectS3Credential(ctx context.Context, slug, bucket, credential string) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/s3-credentials/" + url.PathEscape(credential)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
 func (c *Client) ListObjectBucketAccessGrants(ctx context.Context, slug, bucket string) (ObjectBucketAccessGrantList, error) {
 	var out ObjectBucketAccessGrantList
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/access-grants", nil, &out)

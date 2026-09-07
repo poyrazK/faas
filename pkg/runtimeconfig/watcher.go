@@ -27,6 +27,7 @@ const (
 	KeyTenantSurfaces = "tenant_surfaces_enabled"
 	KeyHSTS           = "hsts_enabled"
 	KeyDataPlacement  = "data_placement_enabled"
+	KeyS3             = "s3_enabled"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.

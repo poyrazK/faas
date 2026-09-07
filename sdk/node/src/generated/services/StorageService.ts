@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { CompleteObjectMultipartUploadRequest } from '../models/CompleteObjectMultipartUploadRequest.js';
 import type { CreateObjectMultipartUploadRequest } from '../models/CreateObjectMultipartUploadRequest.js';
+import type { CreateObjectS3CredentialRequest } from '../models/CreateObjectS3CredentialRequest.js';
 import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
@@ -12,6 +13,8 @@ import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.
 import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
 import type { ObjectMultipartUpload } from '../models/ObjectMultipartUpload.js';
 import type { ObjectMultipartUploadList } from '../models/ObjectMultipartUploadList.js';
+import type { ObjectS3CredentialList } from '../models/ObjectS3CredentialList.js';
+import type { ObjectS3CredentialSecret } from '../models/ObjectS3CredentialSecret.js';
 import type { ObjectSignedRequest } from '../models/ObjectSignedRequest.js';
 import type { ObjectSignRequest } from '../models/ObjectSignRequest.js';
 import type { ObjectStorageUsageResponse } from '../models/ObjectStorageUsageResponse.js';
@@ -152,7 +155,7 @@ export class StorageService {
     requestBody,
   }: {
     /**
-     * App that owns the logical bucket.
+     * App whose API-key bucket grant is being managed.
      */
     slug: string,
     /**
@@ -189,7 +192,7 @@ export class StorageService {
     key,
   }: {
     /**
-     * App that owns the logical bucket.
+     * App whose API-key bucket grant is being managed.
      */
     slug: string,
     /**
@@ -208,6 +211,102 @@ export class StorageService {
         'slug': slug,
         'bucket': bucket,
         'key': key,
+      },
+    });
+  }
+  /**
+   * List active Gregale S3 credentials for a bucket
+   * Requires storage:manage or admin. Secret access keys are never returned by this endpoint.
+   * @returns ObjectS3CredentialList Active bucket-scoped S3 credentials; Cache-Control no-store
+   * @returns Problem S3 credential listing denied or its bucket is unavailable
+   * @throws ApiError
+   */
+  public static listObjectS3Credentials({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose new S3 credential will be bucket-scoped.
+     */
+    slug: string,
+    /**
+     * Bucket receiving the S3 credential.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectS3CredentialList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Create a bucket-scoped credential for s3.gregale.dev
+   * The secret access key is returned exactly once, sealed at rest, and never recoverable through the control-plane API. At most ten active credentials may exist per bucket.
+   * @returns Problem Invalid request, credential limit, unavailable sealing key, or access denied
+   * @returns ObjectS3CredentialSecret One-time S3 credential response; Cache-Control no-store
+   * @throws ApiError
+   */
+  public static createObjectS3Credential({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose new S3 credential will be bucket-scoped.
+     */
+    slug: string,
+    /**
+     * Bucket receiving the S3 credential.
+     */
+    bucket: string,
+    requestBody: CreateObjectS3CredentialRequest,
+  }): CancelablePromise<Problem | ObjectS3CredentialSecret> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Revoke a Gregale S3 credential
+   * Revocation is immediate for new requests at s3.gregale.dev. Existing provider-signed internal requests are never exposed to the customer.
+   * @returns Problem Credential or bucket missing, or access denied
+   * @throws ApiError
+   */
+  public static revokeObjectS3Credential({
+    slug,
+    bucket,
+    credential,
+  }: {
+    /**
+     * App whose S3 credential is being revoked.
+     */
+    slug: string,
+    /**
+     * Bucket whose credential is being revoked.
+     */
+    bucket: string,
+    /**
+     * Gregale S3 credential identifier.
+     */
+    credential: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'credential': credential,
       },
     });
   }

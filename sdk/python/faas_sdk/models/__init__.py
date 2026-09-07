@@ -209,6 +209,8 @@ from .create_managed_postgres_database_request_service_class import CreateManage
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
+from .create_object_s3_credential_request import CreateObjectS3CredentialRequest
+from .create_object_s3_credential_request_permission import CreateObjectS3CredentialRequestPermission
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
@@ -515,6 +517,12 @@ from .object_multipart_part_sign_request import ObjectMultipartPartSignRequest
 from .object_multipart_upload import ObjectMultipartUpload
 from .object_multipart_upload_list import ObjectMultipartUploadList
 from .object_multipart_upload_state import ObjectMultipartUploadState
+from .object_s3_credential import ObjectS3Credential
+from .object_s3_credential_list import ObjectS3CredentialList
+from .object_s3_credential_permission import ObjectS3CredentialPermission
+from .object_s3_credential_secret import ObjectS3CredentialSecret
+from .object_s3_credential_secret_addressing_style import ObjectS3CredentialSecretAddressingStyle
+from .object_s3_credential_status import ObjectS3CredentialStatus
 from .object_sign_request import ObjectSignRequest
 from .object_sign_request_method import ObjectSignRequestMethod
 from .object_signed_request import ObjectSignedRequest
@@ -1031,6 +1039,8 @@ __all__ = (
     "CreateMirrorRuleRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
+    "CreateObjectS3CredentialRequest",
+    "CreateObjectS3CredentialRequestPermission",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
@@ -1329,6 +1339,12 @@ __all__ = (
     "ObjectMultipartUpload",
     "ObjectMultipartUploadList",
     "ObjectMultipartUploadState",
+    "ObjectS3Credential",
+    "ObjectS3CredentialList",
+    "ObjectS3CredentialPermission",
+    "ObjectS3CredentialSecret",
+    "ObjectS3CredentialSecretAddressingStyle",
+    "ObjectS3CredentialStatus",
     "ObjectSignedRequest",
     "ObjectSignedRequestHeaders",
     "ObjectSignedRequestMethod",

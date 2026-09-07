@@ -6627,6 +6627,298 @@ func (q *Queries) ObjectMultipartRetry(ctx context.Context, db DBTX, arg ObjectM
 	return result.RowsAffected(), nil
 }
 
+const objectS3CredentialCount = `-- name: ObjectS3CredentialCount :one
+SELECT count(*) FROM object_storage_s3_credentials
+WHERE bucket_id=$1 AND status='active'
+`
+
+func (q *Queries) ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, objectS3CredentialCount, bucketID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectS3CredentialInsert = `-- name: ObjectS3CredentialInsert :one
+INSERT INTO object_storage_s3_credentials
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active') RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at
+`
+
+type ObjectS3CredentialInsertParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+	Label        string
+	Permission   string
+}
+
+func (q *Queries) ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg ObjectS3CredentialInsertParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectS3CredentialInsert,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.AccessKeyID,
+		arg.SecretSealed,
+		arg.Kid,
+		arg.Label,
+		arg.Permission,
+	)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const objectS3CredentialList = `-- name: ObjectS3CredentialList :many
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND status='active'
+ORDER BY created_at,id
+`
+
+type ObjectS3CredentialListParams struct {
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg ObjectS3CredentialListParams) ([]ObjectStorageS3Credential, error) {
+	rows, err := db.Query(ctx, objectS3CredentialList, arg.AccountID, arg.BucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageS3Credential{}
+	for rows.Next() {
+		var i ObjectStorageS3Credential
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.BucketID,
+			&i.AccessKeyID,
+			&i.SecretSealed,
+			&i.Kid,
+			&i.Label,
+			&i.Permission,
+			&i.Status,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectS3CredentialListForRekey = `-- name: ObjectS3CredentialListForRekey :many
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at FROM object_storage_s3_credentials
+WHERE status='active' AND id > $1
+ORDER BY id LIMIT $2::int
+`
+
+type ObjectS3CredentialListForRekeyParams struct {
+	ID         pgtype.UUID
+	BatchLimit int32
+}
+
+func (q *Queries) ObjectS3CredentialListForRekey(ctx context.Context, db DBTX, arg ObjectS3CredentialListForRekeyParams) ([]ObjectStorageS3Credential, error) {
+	rows, err := db.Query(ctx, objectS3CredentialListForRekey, arg.ID, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageS3Credential{}
+	for rows.Next() {
+		var i ObjectStorageS3Credential
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.BucketID,
+			&i.AccessKeyID,
+			&i.SecretSealed,
+			&i.Kid,
+			&i.Label,
+			&i.Permission,
+			&i.Status,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectS3CredentialLockBucket = `-- name: ObjectS3CredentialLockBucket :one
+SELECT id FROM object_buckets
+WHERE id=$1 AND account_id=$2 AND state='ready' FOR UPDATE
+`
+
+type ObjectS3CredentialLockBucketParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialLockBucket(ctx context.Context, db DBTX, arg ObjectS3CredentialLockBucketParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectS3CredentialLockBucket, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectS3CredentialReseal = `-- name: ObjectS3CredentialReseal :execrows
+UPDATE object_storage_s3_credentials SET secret_sealed=$4,kid=$3
+WHERE id=$1 AND kid=$2 AND status='active'
+`
+
+type ObjectS3CredentialResealParams struct {
+	ID           pgtype.UUID
+	Kid          string
+	Kid_2        string
+	SecretSealed []byte
+}
+
+func (q *Queries) ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg ObjectS3CredentialResealParams) (int64, error) {
+	result, err := db.Exec(ctx, objectS3CredentialReseal,
+		arg.ID,
+		arg.Kid,
+		arg.Kid_2,
+		arg.SecretSealed,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectS3CredentialResolve = `-- name: ObjectS3CredentialResolve :one
+SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
+       b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
+       b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
+       b.updated_at AS bucket_updated_at
+FROM object_storage_s3_credentials c
+JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
+WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready'
+`
+
+type ObjectS3CredentialResolveRow struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	BucketID           pgtype.UUID
+	AccessKeyID        string
+	SecretSealed       []byte
+	Kid                string
+	Label              string
+	Permission         string
+	Status             string
+	CreatedAt          pgtype.Timestamptz
+	LastUsedAt         pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	AppID              pgtype.UUID
+	BucketName         string
+	BucketScope        string
+	BucketRegion       string
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	BucketState        string
+	BucketCreatedAt    pgtype.Timestamptz
+	BucketUpdatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectS3CredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectS3CredentialResolveRow, error) {
+	row := db.QueryRow(ctx, objectS3CredentialResolve, accessKeyID)
+	var i ObjectS3CredentialResolveRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.AppID,
+		&i.BucketName,
+		&i.BucketScope,
+		&i.BucketRegion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.BucketState,
+		&i.BucketCreatedAt,
+		&i.BucketUpdatedAt,
+	)
+	return i, err
+}
+
+const objectS3CredentialRevoke = `-- name: ObjectS3CredentialRevoke :execrows
+UPDATE object_storage_s3_credentials SET status='revoked',revoked_at=now()
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+`
+
+type ObjectS3CredentialRevokeParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg ObjectS3CredentialRevokeParams) (int64, error) {
+	result, err := db.Exec(ctx, objectS3CredentialRevoke, arg.ID, arg.AccountID, arg.BucketID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectS3CredentialTouch = `-- name: ObjectS3CredentialTouch :execrows
+UPDATE object_storage_s3_credentials
+SET last_used_at=$1::timestamptz
+WHERE id=$2 AND status='active'
+  AND (last_used_at IS NULL OR last_used_at < $1::timestamptz - interval '1 minute')
+`
+
+type ObjectS3CredentialTouchParams struct {
+	UsedAt pgtype.Timestamptz
+	ID     pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error) {
+	result, err := db.Exec(ctx, objectS3CredentialTouch, arg.UsedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
 SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2
 `
