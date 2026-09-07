@@ -106,6 +106,24 @@ func TestMarkAppProtocolSnapshotsStale_FlipsH2COnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// App D: http2 with a snapshot created by the current base image.
+	// Restarting any imaged replica must leave it usable.
+	appD, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "aprot-imaged-h2-current", RAMMB: 256,
+		IdleTimeoutS: 30, MaxConcurrency: 2,
+		AppProtocol: "http2",
+	})
+	depD, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: appD.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:aprot-h2-current",
+	})
+	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: depD.ID, MemBytes: 100, DiskBytes: 100,
+		FCVersion: "1.13.0", BaseImageVersion: fcvm.FAAS_BASE_IMAGE_VERSION,
+		StorageKey: state.SnapMemKey(depD.ID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	h := newHandler(store)
 	h.WithAudit(audit.New(store, h.log, nil, "imaged"))
 
@@ -128,6 +146,10 @@ func TestMarkAppProtocolSnapshotsStale_FlipsH2COnly(t *testing.T) {
 		case "aprot-imaged-h2", "aprot-imaged-g":
 			if !r.Stale {
 				t.Errorf("%s row did NOT go stale — F3 must flip all {http2, grpc}", r.Slug)
+			}
+		case "aprot-imaged-h2-current":
+			if r.Stale {
+				t.Error("current-version http2 snapshot went stale on imaged restart")
 			}
 		}
 	}

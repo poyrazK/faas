@@ -9943,13 +9943,15 @@ func (m *MemStore) MarkAllSnapshotsStaleByFCVersion(_ context.Context, currentVe
 
 // MarkAllSnapshotsStaleByAppProtocol mirrors the SQL UPDATE: every
 // non-stale snapshot whose deployment's app.app_protocol ∈
-// appProtocols is flipped stale. ADR-127 §D1, Layer 6 (imaged F3
-// sweep). app_protocol=http1 snapshots are never affected. Empty
-// appProtocols is a no-op (matches the SQL behaviour: the UPDATE
-// runs against an empty set which matches nothing).
-func (m *MemStore) MarkAllSnapshotsStaleByAppProtocol(_ context.Context, appProtocols []string) (int64, error) {
+// appProtocols and whose base-image version differs from the current
+// generation is flipped stale. app_protocol=http1 snapshots are never
+// affected. Empty appProtocols is a no-op.
+func (m *MemStore) MarkAllSnapshotsStaleByAppProtocol(_ context.Context, appProtocols []string, currentBaseImageVersion string) (int64, error) {
 	if len(appProtocols) == 0 {
 		return 0, nil
+	}
+	if currentBaseImageVersion == "" {
+		return 0, errors.New("memstore: MarkAllSnapshotsStaleByAppProtocol: empty currentBaseImageVersion")
 	}
 	allowed := make(map[string]struct{}, len(appProtocols))
 	for _, p := range appProtocols {
@@ -9971,7 +9973,7 @@ func (m *MemStore) MarkAllSnapshotsStaleByAppProtocol(_ context.Context, appProt
 		if !ok {
 			continue
 		}
-		if _, match := allowed[app.AppProtocol]; match {
+		if _, match := allowed[app.AppProtocol]; match && snap.BaseImageVersion != currentBaseImageVersion {
 			m.snapshots[i].Stale = true
 			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++

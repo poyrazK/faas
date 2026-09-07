@@ -401,8 +401,8 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 	}
 	evicted := len(expired)
 	// F3 (Layer 6): app-protocol stale-mark sweep. ADR-127 §D1 —
-	// flips every non-stale snapshot whose deployment's
-	// app.app_protocol ∈ {http2, grpc}. Operates on the base-image
+	// flips non-stale {http2, grpc} snapshots whose persisted base-image
+	// generation differs from this binary. Operates on the base-image
 	// version stamp, not the FC version; F3 returns success/failure
 	// is logged but does NOT roll back F2's success.
 	apN, apErr := l.handler.MarkAppProtocolSnapshotsStale(ctx)

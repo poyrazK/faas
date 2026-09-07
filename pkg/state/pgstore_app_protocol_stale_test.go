@@ -24,7 +24,7 @@ func TestPg_MarkAllSnapshotsStaleByAppProtocol_Happy(t *testing.T) {
 	// Empty filter → SQL short-circuit, returns 0 + nil. Pinning the
 	// early-return keeps the real UPDATE branch uncovered only on the
 	// path that actually flips rows.
-	if n, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, nil); err != nil || n != 0 {
+	if n, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, nil, "v1"); err != nil || n != 0 {
 		t.Fatalf("nil appProtocols: n=%d, err=%v", n, err)
 	}
 
@@ -32,12 +32,12 @@ func TestPg_MarkAllSnapshotsStaleByAppProtocol_Happy(t *testing.T) {
 	// is 'http1' from migration 00382). The function returns the count
 	// of freshly-flipped rows; the fixture has no snapshots so n=0 but
 	// the WHERE-clause path is exercised.
-	if _, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http1"}); err != nil {
+	if _, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http1"}, "v1"); err != nil {
 		t.Fatalf("MarkAllSnapshotsStaleByAppProtocol(http1): %v", err)
 	}
 
 	// Same query, non-matching protocol → still 0 flips, still nil err.
-	if n, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"grpc"}); err != nil || n != 0 {
+	if n, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"grpc"}, "v1"); err != nil || n != 0 {
 		t.Fatalf("grpc filter: n=%d, err=%v", n, err)
 	}
 }

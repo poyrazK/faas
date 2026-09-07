@@ -12304,10 +12304,10 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 		tier = SnapshotTierInit
 	}
 	row := s.pool.QueryRow(ctx,
-		`insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, tier)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8)
-		 returning id, deployment_id::text, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier`,
-		snap.DeploymentID, snap.FCVersion, snap.MemBytes, snap.DiskBytes, snap.StoredBytes, snap.StorageKey, snap.Stale, tier)
+		`insert into snapshots (deployment_id, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, tier)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 returning id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier`,
+		snap.DeploymentID, snap.FCVersion, snap.BaseImageVersion, snap.MemBytes, snap.DiskBytes, snap.StoredBytes, snap.StorageKey, snap.Stale, tier)
 	out, err := scanSnapshot(row)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -12329,7 +12329,7 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 // (dashboard queries, snapshot dashboards, manual SQL ops).
 func (s *PgStore) LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier
+		`select id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier
 		 from snapshots where deployment_id = $1 and stale = false
 		 order by (tier = 'warm') desc, created_at desc limit 1`, deploymentID)
 	return scanSnapshot(row)
@@ -12348,7 +12348,7 @@ func (s *PgStore) LatestSnapshotForTier(ctx context.Context, deploymentID, tier 
 		tier = SnapshotTierInit
 	}
 	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier
+		`select id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier
 		 from snapshots where deployment_id = $1 and tier = $2 and stale = false
 		 order by created_at desc limit 1`, deploymentID, tier)
 	return scanSnapshot(row)
@@ -12525,8 +12525,9 @@ func (s *PgStore) MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs [
 }
 
 // MarkAllSnapshotsStaleByAppProtocol flips every non-stale snapshot
-// whose deployment's app.app_protocol ∈ appProtocols stale
-// (ADR-127 §D1, Layer 6, the imaged F3 sweep). Idempotent.
+// whose deployment's app.app_protocol ∈ appProtocols and whose
+// base-image generation differs from currentBaseImageVersion stale.
+// Idempotent, including across restarts of multiple imaged replicas.
 //
 // This is the app-protocol dimension of the F2/F3 split: F2
 // (MarkAllSnapshotsStaleByFCVersion above) handles Firecracker-
@@ -12535,12 +12536,15 @@ func (s *PgStore) MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs [
 // are never affected — they ride the unchanged H1+chunked bridge
 // path (ADR-126 §Decision 6).
 //
-// A 0-row result on a stable box is the expected steady state;
+// A 0-row result on a stable box or replica restart is the expected steady state;
 // ops monitors snapshot_fleet_avg_mb to detect the cold-boot spike
 // during an FAAS_BASE_IMAGE_VERSION bump.
-func (s *PgStore) MarkAllSnapshotsStaleByAppProtocol(ctx context.Context, appProtocols []string) (int64, error) {
+func (s *PgStore) MarkAllSnapshotsStaleByAppProtocol(ctx context.Context, appProtocols []string, currentBaseImageVersion string) (int64, error) {
 	if len(appProtocols) == 0 {
 		return 0, nil
+	}
+	if currentBaseImageVersion == "" {
+		return 0, errors.New("pgstore: MarkAllSnapshotsStaleByAppProtocol: empty currentBaseImageVersion")
 	}
 	tag, err := s.pool.Exec(ctx,
 		`update snapshots s
@@ -12549,8 +12553,9 @@ func (s *PgStore) MarkAllSnapshotsStaleByAppProtocol(ctx context.Context, appPro
 		   join apps a on a.id = d.app_id
 		  where s.deployment_id = d.id
 		    and a.app_protocol = any($1::text[])
+		    and s.base_image_version <> $2
 		    and s.stale = false`,
-		appProtocols)
+		appProtocols, currentBaseImageVersion)
 	if err != nil {
 		return 0, err
 	}
@@ -18147,12 +18152,12 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
 	s := Snapshot{}
-	// The 10th column is tier (issue #470 / ADR-055). Every query
+	// The 11th column is tier (issue #470 / ADR-055). Every query
 	// in this file now selects the tier column explicitly; the
 	// scan returns "init" if the column is NULL (legacy rows from
 	// before migration 00110 applied).
 	var tier *string
-	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.MemBytes, &s.DiskBytes, &s.StoredBytes, &s.StorageKey, &s.Stale, &s.CreatedAt, &tier); err != nil {
+	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.BaseImageVersion, &s.MemBytes, &s.DiskBytes, &s.StoredBytes, &s.StorageKey, &s.Stale, &s.CreatedAt, &tier); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Snapshot{}, ErrNotFound
 		}

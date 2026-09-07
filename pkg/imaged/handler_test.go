@@ -336,7 +336,8 @@ func TestHandleSnapshotWritten(t *testing.T) {
 			`"vmstate_path":"/srv/fc/snap/` + dep.ID + `/vmstate",` +
 			`"storage_key":"snap/` + dep.ID + `/mem",` +
 			`"mem_bytes":536870912,` +
-			`"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+			`"vmstate_bytes":40960,"fc_version":"firecracker-1.10",` +
+			`"base_image_version":"v1"}`,
 	})
 
 	got, _ := store.DeploymentByID(context.Background(), dep.ID)
@@ -349,6 +350,9 @@ func TestHandleSnapshotWritten(t *testing.T) {
 	}
 	if snap.FCVersion != "firecracker-1.10" {
 		t.Errorf("FCVersion = %q, want firecracker-1.10", snap.FCVersion)
+	}
+	if snap.BaseImageVersion != "v1" {
+		t.Errorf("BaseImageVersion = %q, want v1", snap.BaseImageVersion)
 	}
 	if snap.MemBytes != 536870912 || snap.StorageKey != state.SnapMemKey(dep.ID) {
 		t.Errorf("snapshot row wrong: %+v", snap)
