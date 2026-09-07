@@ -96,8 +96,14 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	requests    *prometheus.CounterVec
-	wakeLatency prometheus.Histogram
+	requests *prometheus.CounterVec
+	// requestTelemetry* are gateway-side data-plane health counters. They
+	// deliberately have no app/route labels: per-tenant detail belongs to
+	// apid's ingest outcome metric.
+	requestTelemetryDropped     prometheus.Counter
+	requestTelemetryShipped     prometheus.Counter
+	requestTelemetryOverwritten prometheus.Counter
+	wakeLatency                 prometheus.Histogram
 	// drainWaitSeconds (issue #587 / PR-A) is the per-daemon
 	// graceful-shutdown drain histogram (see ObserveDrainWait).
 	drainWaitSeconds *prometheus.HistogramVec
@@ -659,6 +665,18 @@ func NewMetrics() *Metrics {
 			Name: "gateway_requests_total",
 			Help: "Total gateway requests, labelled by app, plan, and HTTP status class.",
 		}, []string{"app", "plan", "code"}),
+		requestTelemetryDropped: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_request_telemetry_dropped_total",
+			Help: "Original requests represented by telemetry rows dropped after publisher retries or an unavailable apid client.",
+		}),
+		requestTelemetryShipped: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_request_telemetry_shipped_total",
+			Help: "Original requests represented by telemetry rows successfully handed to apid.",
+		}),
+		requestTelemetryOverwritten: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_request_telemetry_overwritten_total",
+			Help: "Telemetry rows evicted from the gateway ring because it was full before the publisher drained them.",
+		}),
 		// ADR-089 PR 3 — kind=route substitution outcomes.
 		// Pre-instantiated below so the §12 panel surfaces from
 		// first scrape; PR 4-7 add (kind=rewrite, ...), (kind=jwt, ...).
@@ -1412,7 +1430,7 @@ func NewMetrics() *Metrics {
 	// cartesian) is the same pattern as the rest of the family.
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
-	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -2476,4 +2494,31 @@ func (m *Metrics) AddWSSessionBytes(plan string, direction WSDirection, n int64)
 		return
 	}
 	m.wsSessionBytes.WithLabelValues(plan, string(direction)).Add(float64(n))
+}
+
+// IncRequestTelemetryOverwritten records a row evicted from the in-process
+// debugger ring before the publisher could drain it. Unlabelled by design.
+func (m *Metrics) IncRequestTelemetryOverwritten() {
+	if m == nil || m.requestTelemetryOverwritten == nil {
+		return
+	}
+	m.requestTelemetryOverwritten.Inc()
+}
+
+// AddRequestTelemetryDropped records original requests lost after a drained
+// batch could not be handed to apid. Unlabelled by design.
+func (m *Metrics) AddRequestTelemetryDropped(n int64) {
+	if m == nil || m.requestTelemetryDropped == nil || n <= 0 {
+		return
+	}
+	m.requestTelemetryDropped.Add(float64(n))
+}
+
+// AddRequestTelemetryShipped records original requests represented by rows
+// successfully handed to apid. Unlabelled by design.
+func (m *Metrics) AddRequestTelemetryShipped(n int64) {
+	if m == nil || m.requestTelemetryShipped == nil || n <= 0 {
+		return
+	}
+	m.requestTelemetryShipped.Add(float64(n))
 }
