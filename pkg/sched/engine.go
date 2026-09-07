@@ -7492,7 +7492,9 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 // (issue #470 / PR A / ADR-055) lets the same payload carry
 // tier="warm" when the engine captured a warm snapshot and tier="init"
 // for the legacy cold capture. imaged's subscriber reads the field
-// from the JSON and writes the matching snapshots.tier column.
+// from the JSON and writes the matching snapshots.tier column. The base-image
+// generation is part of the same publication contract: HTTP/2 and gRPC wakes
+// reject snapshots produced by a different guest runner generation.
 func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, vmstatePath, storageKey string, b SnapshotBytes, tier string) {
 	if e.notif == nil {
 		return
@@ -7501,15 +7503,16 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, 
 		tier = state.SnapshotTierInit
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"deployment_id": deploymentID,
-		"node_id":       nodeID,
-		"vmstate_path":  vmstatePath,
-		"storage_key":   storageKey,
-		"mem_bytes":     b.MemBytes,
-		"vmstate_bytes": b.VMStateBytes,
-		"stored_bytes":  b.StoredBytes,
-		"fc_version":    e.fcVer,
-		"tier":          tier,
+		"deployment_id":      deploymentID,
+		"node_id":            nodeID,
+		"vmstate_path":       vmstatePath,
+		"storage_key":        storageKey,
+		"mem_bytes":          b.MemBytes,
+		"vmstate_bytes":      b.VMStateBytes,
+		"stored_bytes":       b.StoredBytes,
+		"fc_version":         e.fcVer,
+		"base_image_version": fcvm.FAAS_BASE_IMAGE_VERSION,
+		"tier":               tier,
 	})
 	if err := e.notif.Notify(ctx, db.NotifySnapshotWritten, string(payload)); err != nil {
 		e.log.Warn("emit snapshot_written", "deployment", deploymentID, "tier", tier, "err", err)
