@@ -258,149 +258,6 @@ jobs:
       - name: forbid +incompatible direct deps
         run: make lint-incompatible-mods
 
-      # promtool check rules — gate for spec §12 alert rules. Downloads
-      # the same Prometheus release the ansible role pins
-      # (deploy/ansible/roles/prometheus/defaults/main.yml:prom_version)
-      # so the CI version is the production version. A broken rule
-      # (typo in metric label, bad histogram_quantile, dangling
-      # matcher) breaks the alert at boot, so we lint at PR time
-      # instead of letting the operator find out via a 5 a.m. page
-      # that never fires. Two files are linted: the consolidated
-      # faas.rules.yml and the per-alert sibling
-      # pkg/promqlrules/data_placement.yaml (ADR-098 §9.A, issue
-      # #951).
-      #
-      # Note: production SHA-256 pin (prom_release_sha256) is enforced
-      # by the role's assert at bootstrap (`make bootstrap`), NOT here.
-      # CI's job is to lint rule syntax, not to verify production
-      # pinning — those are separate concerns.
-      - name: promtool check rules
-        run: |
-          set -euo pipefail
-          PROM_TARBALL="prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
-          curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
-            -o "/tmp/${PROM_TARBALL}" \
-            "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${PROM_TARBALL}"
-          echo "${PROM_TARBALL_SHA256_LINUX_AMD64}  /tmp/${PROM_TARBALL}" | sha256sum --check --strict
-          tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp "prometheus-${PROM_VERSION}.linux-amd64/promtool"
-          sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
-          promtool check rules \
-            deploy/ansible/roles/prometheus/files/faas.rules.yml \
-            pkg/promqlrules/data_placement.yaml
-
-      - name: Prometheus alert metadata check
-        run: make prometheus-alert-metadata-check
-
-      # ansible syntax gate. deploy/ansible/ is the source of truth for the
-      # box's systemd units, sysctls and secret file modes, but nothing in
-      # CI ever parsed it — so it rotted. When this gate was added, SIX role
-      # files did not parse as YAML at all (unquoted `name:` values holding
-      # a `: `, a `when:` opening with a double-quoted path, `failed_when:`
-      # OR-chains whose continuation lines sat at the `-` indent), and the
-      # tree failed before ansible even reached module resolution.
-      #
-      # That is why the deploy roles drifted from the live box: three copies
-      # of faas-imaged.service existed and two were missing /srv/fc/base
-      # while all three were missing /srv/fc/sigs, which crash-looped imaged
-      # and took cd-digitalocean red (PR #374, #375). Nothing could have
-      # caught it, because the playbook was unrunnable.
-      #
-      # --syntax-check both parses every file and RESOLVES every module, so
-      # it also catches semantics YAML alone can't: a task-level `creates:`
-      # that ansible rejects as a conflicting action statement (and which
-      # silently disabled the kernel-extract idempotency guard), and a role
-      # adopting a collection that requirements.yml doesn't pin.
-      #
-      # ansible-core is version-pinned for the same reason promtool is: the
-      # gate should fail on OUR drift, not on an upstream release. Deprecation
-      # warnings are printed but not fatal — ansible-core's deprecation
-      # schedule is outside this repo's control.
-      - name: ansible syntax-check
-        run: |
-          set -euo pipefail
-          pip install --quiet 'ansible-core==2.21.2'
-          cd deploy/ansible
-          ansible-galaxy collection install -r requirements.yml
-          # Gate-A: parse the complete-inventory safety preflight.
-          ansible-playbook --syntax-check preflight.yml
-          # Gate-B: syntax-check the only production bootstrap playbook
-          # before an operator can run either role-specific target.
-          ansible-playbook --syntax-check bootstrap.yml
-          # Gate-C: keep the connection-free scale validator parseable.
-          ansible-playbook --syntax-check scale_check.yml
-          # Gate-D: keep the trusted deployment-runner bootstrap parseable.
-          ansible-playbook --syntax-check fleet_runner.yml
-          # ADR-143: the post-activation verify playbook is production
-          # tooling (`make verify-fleet`) and must stay parseable.
-          ansible-playbook --syntax-check verify.yml
-          # Gate-E: render and validate the 1/10/100/1000 compute-node
-          # topologies, then run Ansible check-mode against the largest one.
-          cd ../..
-          GREGALE_ANSIBLE_SCALE_CHECK=1 go test -count=1 -timeout=5m ./cmd/gregalectl -run '^TestRenderManifestAnsibleFiles_ScaleMatrix$'
-          # ADR-143: scale_check.yml carried real asserts for months but was
-          # only ever --syntax-check'ed (which evaluates nothing). Run it.
-          make ansible-scale-check ANSIBLE_PLAYBOOK=ansible-playbook
-
-      # ADR-143: ansible-lint at the production profile. Config + the three
-      # deliberately skipped cosmetic rules live in deploy/ansible/.ansible-lint.
-      # Pinned like ansible-core so the gate fails on OUR drift only.
-      - name: ansible-lint
-        run: |
-          set -euo pipefail
-          pip install --quiet 'ansible-lint==26.8.0'
-          make ansible-lint
-          # Join and control-plane adoption plays are separate production
-          # entrypoints and must be parsed independently; bootstrap syntax
-          # checking does not cover their task bodies.
-          ansible-playbook --syntax-check deploy/ansible/node_join.yml
-          ansible-playbook --syntax-check deploy/ansible/node_join_control_plane.yml
-
-      # Render the control-plane Prometheus artifacts with the production
-      # inventory. Syntax-check does not evaluate Jinja, so it would not catch
-      # a template stored in the wrong role directory or a missing HTTP-SD
-      # target for the split-box compute fleet.
-      - name: observability template convergence
-        run: |
-          set -euo pipefail
-          cd deploy/ansible
-          test ! -e roles/prometheus/files/prometheus.service
-          test ! -e roles/node_exporter/files/node_exporter.service
-          ansible control_plane -i inventory/hosts.ini -c local \
-            -e @roles/prometheus/defaults/main.yml \
-            -e ansible_hostname=ci-control-plane \
-            -m ansible.builtin.template \
-            -a "src=$(pwd)/roles/prometheus/templates/prometheus.yml.j2 dest=$RUNNER_TEMP/prometheus.yml"
-          ansible control_plane -i inventory/hosts.ini -c local \
-            -e @roles/prometheus/defaults/main.yml \
-            -e ansible_hostname=ci-control-plane \
-            -m ansible.builtin.template \
-            -a "src=$(pwd)/roles/prometheus/templates/prometheus.service.j2 dest=$RUNNER_TEMP/prometheus.service"
-          grep -q 'job_name: "gatewayd-internal"' "$RUNNER_TEMP/prometheus.yml"
-          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/targets' "$RUNNER_TEMP/prometheus.yml"
-          grep -q -- '--web.listen-address=127.0.0.1:9095' "$RUNNER_TEMP/prometheus.service"
-          if grep -q '{{' "$RUNNER_TEMP/prometheus.service"; then
-            echo 'rendered Prometheus systemd unit contains an unresolved template placeholder' >&2
-            exit 1
-          fi
-          ansible compute_nodes -i inventory/hosts.ini -c local \
-            -e @roles/node_exporter/defaults/main.yml \
-            -m ansible.builtin.template \
-            -a "src=$(pwd)/roles/node_exporter/templates/node_exporter.service.j2 dest=$RUNNER_TEMP/node_exporter.service"
-          grep -q -- '--web.listen-address=127.0.0.1:9100' "$RUNNER_TEMP/node_exporter.service"
-          if grep -q '{{' "$RUNNER_TEMP/node_exporter.service"; then
-            echo 'rendered node_exporter systemd unit contains an unresolved template placeholder' >&2
-            exit 1
-          fi
-          grep -q -- '--cluster.listen-address=' roles/alertmanager/files/alertmanager.service
-
-          rules_dir="$RUNNER_TEMP/prometheus-rules"
-          mkdir -p "$rules_dir"
-          cp roles/prometheus/files/{faas.rules.yml,bridge.rules.yml,pg_backup.rules.yml} "$rules_dir/"
-          cp ../../pkg/promqlrules/data_placement.yaml "$rules_dir/"
-          sed "s#/etc/prometheus#$rules_dir#g" \
-            "$RUNNER_TEMP/prometheus.yml" > "$RUNNER_TEMP/prometheus-checked.yml"
-          promtool check config "$RUNNER_TEMP/prometheus-checked.yml"
-
       # Daemon smoke: every cmd/<daemon>/main.go is a one-box binary that wires
       # through pkg/wire.Daemon. `--help` must exit 0 with non-empty usage text
       # (a silent success here usually means init() truncated on a bad flag
@@ -957,6 +814,153 @@ jobs:
         run: |
           set -euo pipefail
           govulncheck -mode=source -show=verbose ./...
+      # ---- moved from `lint + build`: Prometheus rule + ansible gates ----
+      # These need pip (ansible-core, ansible-lint), a pinned promtool and
+      # ~90 s of wall time, none of which the Go lint/build critical path
+      # should carry. `make ansible-scale-check` builds ./bin/gregalectl
+      # itself when `make build` has not run in this job.
+      # promtool check rules — gate for spec §12 alert rules. Downloads
+      # the same Prometheus release the ansible role pins
+      # (deploy/ansible/roles/prometheus/defaults/main.yml:prom_version)
+      # so the CI version is the production version. A broken rule
+      # (typo in metric label, bad histogram_quantile, dangling
+      # matcher) breaks the alert at boot, so we lint at PR time
+      # instead of letting the operator find out via a 5 a.m. page
+      # that never fires. Two files are linted: the consolidated
+      # faas.rules.yml and the per-alert sibling
+      # pkg/promqlrules/data_placement.yaml (ADR-098 §9.A, issue
+      # #951).
+      #
+      # Note: production SHA-256 pin (prom_release_sha256) is enforced
+      # by the role's assert at bootstrap (`make bootstrap`), NOT here.
+      # CI's job is to lint rule syntax, not to verify production
+      # pinning — those are separate concerns.
+      - name: promtool check rules
+        run: |
+          set -euo pipefail
+          PROM_TARBALL="prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+            -o "/tmp/${PROM_TARBALL}" \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${PROM_TARBALL}"
+          echo "${PROM_TARBALL_SHA256_LINUX_AMD64}  /tmp/${PROM_TARBALL}" | sha256sum --check --strict
+          tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp "prometheus-${PROM_VERSION}.linux-amd64/promtool"
+          sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          promtool check rules \
+            deploy/ansible/roles/prometheus/files/faas.rules.yml \
+            pkg/promqlrules/data_placement.yaml
+
+      - name: Prometheus alert metadata check
+        run: make prometheus-alert-metadata-check
+
+      # ansible syntax gate. deploy/ansible/ is the source of truth for the
+      # box's systemd units, sysctls and secret file modes, but nothing in
+      # CI ever parsed it — so it rotted. When this gate was added, SIX role
+      # files did not parse as YAML at all (unquoted `name:` values holding
+      # a `: `, a `when:` opening with a double-quoted path, `failed_when:`
+      # OR-chains whose continuation lines sat at the `-` indent), and the
+      # tree failed before ansible even reached module resolution.
+      #
+      # That is why the deploy roles drifted from the live box: three copies
+      # of faas-imaged.service existed and two were missing /srv/fc/base
+      # while all three were missing /srv/fc/sigs, which crash-looped imaged
+      # and took cd-digitalocean red (PR #374, #375). Nothing could have
+      # caught it, because the playbook was unrunnable.
+      #
+      # --syntax-check both parses every file and RESOLVES every module, so
+      # it also catches semantics YAML alone can't: a task-level `creates:`
+      # that ansible rejects as a conflicting action statement (and which
+      # silently disabled the kernel-extract idempotency guard), and a role
+      # adopting a collection that requirements.yml doesn't pin.
+      #
+      # ansible-core is version-pinned for the same reason promtool is: the
+      # gate should fail on OUR drift, not on an upstream release. Deprecation
+      # warnings are printed but not fatal — ansible-core's deprecation
+      # schedule is outside this repo's control.
+      - name: ansible syntax-check
+        run: |
+          set -euo pipefail
+          pip install --quiet 'ansible-core==2.21.2'
+          cd deploy/ansible
+          ansible-galaxy collection install -r requirements.yml
+          # Gate-A: parse the complete-inventory safety preflight.
+          ansible-playbook --syntax-check preflight.yml
+          # Gate-B: syntax-check the only production bootstrap playbook
+          # before an operator can run either role-specific target.
+          ansible-playbook --syntax-check bootstrap.yml
+          # Gate-C: keep the connection-free scale validator parseable.
+          ansible-playbook --syntax-check scale_check.yml
+          # Gate-D: keep the trusted deployment-runner bootstrap parseable.
+          ansible-playbook --syntax-check fleet_runner.yml
+          # ADR-143: the post-activation verify playbook is production
+          # tooling (`make verify-fleet`) and must stay parseable.
+          ansible-playbook --syntax-check verify.yml
+          # Gate-E: render and validate the 1/10/100/1000 compute-node
+          # topologies, then run Ansible check-mode against the largest one.
+          cd ../..
+          GREGALE_ANSIBLE_SCALE_CHECK=1 go test -count=1 -timeout=5m ./cmd/gregalectl -run '^TestRenderManifestAnsibleFiles_ScaleMatrix$'
+          # ADR-143: scale_check.yml carried real asserts for months but was
+          # only ever --syntax-check'ed (which evaluates nothing). Run it.
+          make ansible-scale-check ANSIBLE_PLAYBOOK=ansible-playbook
+
+      # ADR-143: ansible-lint at the production profile. Config + the three
+      # deliberately skipped cosmetic rules live in deploy/ansible/.ansible-lint.
+      # Pinned like ansible-core so the gate fails on OUR drift only.
+      - name: ansible-lint
+        run: |
+          set -euo pipefail
+          pip install --quiet 'ansible-lint==26.8.0'
+          make ansible-lint
+          # Join and control-plane adoption plays are separate production
+          # entrypoints and must be parsed independently; bootstrap syntax
+          # checking does not cover their task bodies.
+          ansible-playbook --syntax-check deploy/ansible/node_join.yml
+          ansible-playbook --syntax-check deploy/ansible/node_join_control_plane.yml
+
+      # Render the control-plane Prometheus artifacts with the production
+      # inventory. Syntax-check does not evaluate Jinja, so it would not catch
+      # a template stored in the wrong role directory or a missing HTTP-SD
+      # target for the split-box compute fleet.
+      - name: observability template convergence
+        run: |
+          set -euo pipefail
+          cd deploy/ansible
+          test ! -e roles/prometheus/files/prometheus.service
+          test ! -e roles/node_exporter/files/node_exporter.service
+          ansible control_plane -i inventory/hosts.ini -c local \
+            -e @roles/prometheus/defaults/main.yml \
+            -e ansible_hostname=ci-control-plane \
+            -m ansible.builtin.template \
+            -a "src=$(pwd)/roles/prometheus/templates/prometheus.yml.j2 dest=$RUNNER_TEMP/prometheus.yml"
+          ansible control_plane -i inventory/hosts.ini -c local \
+            -e @roles/prometheus/defaults/main.yml \
+            -e ansible_hostname=ci-control-plane \
+            -m ansible.builtin.template \
+            -a "src=$(pwd)/roles/prometheus/templates/prometheus.service.j2 dest=$RUNNER_TEMP/prometheus.service"
+          grep -q 'job_name: "gatewayd-internal"' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q -- '--web.listen-address=127.0.0.1:9095' "$RUNNER_TEMP/prometheus.service"
+          if grep -q '{{' "$RUNNER_TEMP/prometheus.service"; then
+            echo 'rendered Prometheus systemd unit contains an unresolved template placeholder' >&2
+            exit 1
+          fi
+          ansible compute_nodes -i inventory/hosts.ini -c local \
+            -e @roles/node_exporter/defaults/main.yml \
+            -m ansible.builtin.template \
+            -a "src=$(pwd)/roles/node_exporter/templates/node_exporter.service.j2 dest=$RUNNER_TEMP/node_exporter.service"
+          grep -q -- '--web.listen-address=127.0.0.1:9100' "$RUNNER_TEMP/node_exporter.service"
+          if grep -q '{{' "$RUNNER_TEMP/node_exporter.service"; then
+            echo 'rendered node_exporter systemd unit contains an unresolved template placeholder' >&2
+            exit 1
+          fi
+          grep -q -- '--cluster.listen-address=' roles/alertmanager/files/alertmanager.service
+
+          rules_dir="$RUNNER_TEMP/prometheus-rules"
+          mkdir -p "$rules_dir"
+          cp roles/prometheus/files/{faas.rules.yml,bridge.rules.yml,pg_backup.rules.yml} "$rules_dir/"
+          cp ../../pkg/promqlrules/data_placement.yaml "$rules_dir/"
+          sed "s#/etc/prometheus#$rules_dir#g" \
+            "$RUNNER_TEMP/prometheus.yml" > "$RUNNER_TEMP/prometheus-checked.yml"
+          promtool check config "$RUNNER_TEMP/prometheus-checked.yml"
 
   # fakeapid fixture (issue #266, PR 4). The cross-language smoke
   # fixture for the public SDKs — a stdlib-only Go binary that
