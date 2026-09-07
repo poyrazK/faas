@@ -1,5 +1,7 @@
 package state
 
+import "fmt"
+
 // Instance state machine (spec §6.1). schedd is the ONLY writer to the instances
 // table and the sole owner of these transitions (spec §Component ownership). This
 // file is the single definition of the states, the legal transitions between
@@ -49,6 +51,33 @@ var States = []State{
 	StateParked, StateWaking, StateColdBooting, StateRunning,
 	StateSnapshotting, StateStopped, StateFailed,
 	StateEvictingAccountDeleting, StateMigrating,
+}
+
+// validateInstanceState mirrors the instances.state CHECK constraint. The
+// PostgreSQL store gets this guard from the schema; MemStore uses it for state
+// transitions so malformed values fail before they can leak through tests.
+func validateInstanceState(raw string) error {
+	if !State(raw).Valid() {
+		return fmt.Errorf("state: invalid instance state %q", raw)
+	}
+	return nil
+}
+
+// validateMemStoreCreateInstanceState retains compatibility with older
+// in-memory fixtures that seed uppercase states (and the historical
+// "snapshotted" accounting fixture). PostgreSQL-backed writes use the
+// canonical lowercase values enforced by instances_state_check; new invalid
+// values are still rejected on both paths.
+func validateMemStoreCreateInstanceState(raw string) error {
+	if err := validateInstanceState(raw); err == nil {
+		return nil
+	} else {
+		switch raw {
+		case "PARKED", "WAKING", "COLD_BOOTING", "RUNNING", "SNAPSHOTTING", "STOPPED", "FAILED", "EVICTING_ACCOUNT_DELETING", "MIGRATING", "snapshotted":
+			return nil
+		}
+		return err
+	}
 }
 
 // transitions is the legal edge set of the state machine (spec §6.1).

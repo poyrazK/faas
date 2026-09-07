@@ -8569,6 +8569,9 @@ func (m *MemStore) StampInstanceInvocation(_ context.Context, id, instanceID str
 // --- Instances --------------------------------------------------------------
 
 func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+	if err := validateMemStoreCreateInstanceState(state); err != nil {
+		return Instance{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Stamp started_at on creation for every state (commit 3, mirrors
@@ -8627,11 +8630,12 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 // 'normal' so legacy callers (and test fixtures that don't yet
 // thread mode through) keep bit-for-bit compatibility. Valid
 // non-default values are InstanceModeNormal and InstanceModeMirror;
-// the engine validates the value before reaching here so the
-// MemStore is permissive (no SQLSTATE to translate — the SQL
-// CHECK fires on PgStore; the MemStore's only job is to store
-// what the caller asked for).
+// the store validates the value before persisting it so malformed
+// state cannot pass in tests and fail only when PostgreSQL is used.
 func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
+	if err := validateMemStoreCreateInstanceState(state); err != nil {
+		return Instance{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	mode = strings.TrimSpace(mode)
@@ -8661,6 +8665,9 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 // have no app or deployment row: the job definition owns the OCI image and
 // the run/task coordinates live on the job task row.
 func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+	if err := validateMemStoreCreateInstanceState(state); err != nil {
+		return Instance{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.jobs[jobID]; !ok {
@@ -9048,6 +9055,9 @@ func (m *MemStore) ListLatestInstancePerApp(_ context.Context, accountID string)
 }
 
 func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) error {
+	if err := validateInstanceState(state); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -9064,6 +9074,9 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 // expected state both mean another writer won; ErrConflict keeps that path
 // benign for callers that are retrying a reconciliation sweep.
 func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, nextState string) error {
+	if err := validateInstanceState(nextState); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -9101,6 +9114,9 @@ func (m *MemStore) IncInstanceRequestCount(_ context.Context, id string, delta i
 // state" for SNAPSHOTTING rows; parked_at is the column the watchdog
 // reads on that state.
 func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state string, parkedAt time.Time) error {
+	if err := validateInstanceState(state); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -9118,6 +9134,9 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 // (PR #74). Engine.transition routes here for {STOPPED, FAILED}; today
 // no caller writes a different timestamp column for those states.
 func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state string, terminalAt time.Time) error {
+	if err := validateInstanceState(state); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
