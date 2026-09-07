@@ -40,9 +40,11 @@ import (
 // covers the push side (POST + PUT) and tag listing that the puller
 // doesn't exercise.
 type fakeRegistry struct {
-	srv          *httptest.Server
-	token        string
-	requireToken bool
+	srv                *httptest.Server
+	token              string
+	requireToken       bool
+	deleteUnsupported  bool
+	manifestDeleteHits int
 	// monolithicOK: when true the blob upload POST returns 201 directly.
 	// When false (the default) it returns 202 + Location so the
 	// driver's fallback PUT path is exercised — production registries
@@ -238,6 +240,14 @@ func (f *fakeRegistry) handleV2(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Docker-Content-Digest", digestOf(body))
 			_, _ = w.Write(body)
 		case http.MethodDelete:
+			f.mu.Lock()
+			f.manifestDeleteHits++
+			deleteUnsupported := f.deleteUnsupported
+			f.mu.Unlock()
+			if deleteUnsupported {
+				http.Error(w, "manifest deletion disabled", http.StatusMethodNotAllowed)
+				return
+			}
 			// Spec: manifest DELETE must be by digest, not tag.
 			// A reference that doesn't look like sha256:<hex> gets
 			// 405 so a regression to tag-DELETE surfaces as a test
@@ -652,6 +662,31 @@ func TestOCIDeleteIdempotent(t *testing.T) {
 	}
 	if err := be.Delete(ctx, key); err != nil {
 		t.Errorf("second Delete should be no-op, got %v", err)
+	}
+}
+
+func TestOCIDeleteStopsRetryingWhenRegistryRejectsDigestDelete(t *testing.T) {
+	f := newFakeRegistry(t)
+	f.deleteUnsupported = true
+	defer f.srv.Close()
+	be := f.client(t)
+	ctx := context.Background()
+	depUUID := "550e8400-e29b-41d4-a716-446655440000"
+	key := "apps/my-app/" + depUUID + ".ext4"
+	if err := be.Put(ctx, key, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := be.Delete(ctx, key); !errors.Is(err, ErrDeleteUnsupported) {
+		t.Fatalf("first Delete error = %v, want ErrDeleteUnsupported", err)
+	}
+	if err := be.Delete(ctx, key); err != nil {
+		t.Fatalf("second Delete should skip known-unsupported API: %v", err)
+	}
+	f.mu.Lock()
+	hits := f.manifestDeleteHits
+	f.mu.Unlock()
+	if hits != 1 {
+		t.Fatalf("manifest DELETE requests = %d, want 1", hits)
 	}
 }
 

@@ -40,9 +40,8 @@ func TestDashboardGaugesFleetAvgAndP95(t *testing.T) {
 	stats := make([]SnapshotStat, 20)
 	for i := range stats {
 		stats[i] = SnapshotStat{
-			MemBytes:     int64(i+1) * 1024 * 1024,
-			VMStateBytes: 0,
-			DiskBytes:    0,
+			SnapshotBytes: int64(i+1) * 1024 * 1024,
+			LayerBytes:    1024 * 1024,
 		}
 	}
 	g := NewDashboardGauges(DashboardMetrics{
@@ -52,13 +51,13 @@ func TestDashboardGaugesFleetAvgAndP95(t *testing.T) {
 	}).WithTTL(time.Hour)
 
 	avg := g.avgFleet()
-	wantAvg := float64(1+20) / 2.0 * 1024 * 1024 // (n+1)/2 for 1..n
+	wantAvg := (float64(1+20)/2.0 + 1) * 1024 * 1024 // snapshot average + layer
 	if avg != wantAvg {
 		t.Errorf("avg = %v, want %v", avg, wantAvg)
 	}
 
 	p95 := g.p95Fleet()
-	wantP95 := 19.0 * 1024 * 1024 // 19th element of 1..20, nearest-rank
+	wantP95 := 20.0 * 1024 * 1024 // 19 MiB snapshot + 1 MiB layer
 	if p95 != wantP95 {
 		t.Errorf("p95 = %v, want %v", p95, wantP95)
 	}

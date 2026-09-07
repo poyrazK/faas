@@ -48,7 +48,6 @@ type preparedNetworkPool struct {
 	desired  *preparedNetworkPolicy
 	ready    []preparedNetworkEntry
 	retired  []preparedNetworkEntry // failed teardown; retain the slot until removal succeeds
-	observed time.Time
 	closed   bool
 	// Injected only by tests; production uses the native namespace binding.
 	move    func(string, string) error
@@ -112,7 +111,6 @@ func (p *preparedNetworkPool) observe(policy preparedNetworkPolicy) {
 	p.mu.Lock()
 	if !p.closed {
 		p.desired = &policy
-		p.observed = time.Now()
 	}
 	p.mu.Unlock()
 	select {
@@ -187,9 +185,6 @@ func (p *preparedNetworkPool) run() {
 func (p *preparedNetworkPool) fill() {
 	for p.ctx.Err() == nil {
 		p.mu.Lock()
-		if time.Since(p.observed) >= preparedNetworkTTL {
-			p.desired = nil
-		}
 		var expired []preparedNetworkEntry
 		expired = append(expired, p.retired...)
 		p.retired = nil

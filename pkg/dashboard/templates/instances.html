@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1200px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    .muted { color: #6b7280; }
+    .flash { padding: 0.55rem 0.75rem; border-radius: 4px; margin: 0.75rem 0; }
+    .flash.ok { background: #d1fae5; color: #065f46; }
+    .flash.error { background: #fee2e2; color: #991b1b; }
+    .notice { padding: 0.55rem 0.75rem; border-radius: 4px; background: #fef3c7; color: #92400e; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.8rem; white-space: nowrap; }
+    .badge.running { background: #d1fae5; color: #065f46; }
+    .badge.sleeping, .badge.dim { background: #f3f4f6; color: #6b7280; }
+    .badge.waking { background: #dbeafe; color: #1e40af; }
+    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0; }
+    .actions form { display: inline; }
+    button { padding: 0.35rem 0.7rem; border: 1px solid #9ca3af; border-radius: 4px; background: #fff; cursor: pointer; }
+    button:hover { background: #f3f4f6; }
+    .restart-warning { color: #92400e; }
+    .restart-count-high { color: #991b1b; font-weight: 600; }
+    .nowrap { white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/pricing">Pricing</a>
+      <a href="/dashboard/invoices">Invoices</a>
+      <a href="/dashboard/stateless">Stateless</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p class="muted"><a href="/dashboard/apps/{{.Data.App.Slug}}">Apps / {{.Data.App.Slug}}</a></p>
+    <h1>Instances: <code>{{.Data.App.Slug}}</code></h1>
+    <p>
+      App lifecycle: <strong>{{.Data.AppStatus}}</strong> ·
+      <a href="/dashboard/apps/{{.Data.App.Slug}}/logs">View logs →</a>
+    </p>
+
+    {{if eq .Data.Action "parked"}}<div class="flash ok" role="status">App parked. Live instances are being released; wake it again whenever you need it.</div>{{end}}
+    {{if eq .Data.Action "woken"}}<div class="flash ok" role="status">App wake requested. New traffic will bring an instance online.</div>{{end}}
+    {{if eq .Data.Action "restarted"}}<div class="flash ok" role="status">App restart requested. Wake ID: <code>{{.Data.WakeID}}</code></div>{{end}}
+    {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The lifecycle action could not be completed. Refresh and try again.</div>{{end}}
+
+    <div class="actions" aria-label="App lifecycle actions">
+      {{if eq .Data.AppStatus "active"}}
+        <form method="POST" action="/dashboard/apps/{{.Data.App.Slug}}/instances/park">
+          <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}">
+          <button type="submit">Park app</button>
+        </form>
+        <form method="POST" action="/dashboard/apps/{{.Data.App.Slug}}/instances/restart">
+          <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}">
+          <button type="submit">Restart app</button>
+        </form>
+        <span class="muted">Park is reversible; restart creates a fresh wake.</span>
+      {{else}}
+        <form method="POST" action="/dashboard/apps/{{.Data.App.Slug}}/instances/wake">
+          <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}">
+          <button type="submit">Wake app</button>
+        </form>
+        <span class="muted">Wake is safe to repeat while the app is parked.</span>
+      {{end}}
+    </div>
+
+    {{if .Data.Instances}}
+      {{range .Data.Instances}}
+        {{if ge .LivenessRestartCount 3}}
+          <p class="notice"><strong>Crash-loop signal:</strong> deployment <code>{{.DeploymentID}}</code> has restarted {{.LivenessRestartCount}} times. <a href="/dashboard/apps/{{$.Data.App.Slug}}/logs">Inspect logs →</a></p>
+        {{end}}
+      {{end}}
+      <p class="muted">Showing the {{len .Data.Instances}} most recent instance rows. Parked and terminal rows remain visible while retained for diagnostics.</p>
+      <table aria-label="App instances">
+        <thead>
+          <tr>
+            <th>Instance</th><th>State</th><th>Node</th><th>Wake method</th>
+            <th>RAM</th><th>Started</th><th>Last request</th>
+            <th>Liveness restarts</th><th>Parked reason</th><th>Deployment</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Data.Instances}}
+            <tr>
+              <td><code>{{.ID}}</code>{{if .WakeID}}<br><small class="muted">wake <code>{{.WakeID}}</code></small>{{end}}{{if .HostIP}}<br><small class="muted">{{.HostIP}}</small>{{end}}</td>
+              <td><span class="badge {{.StateClass}}">{{.StateGlyph}} {{.StateLabel}}</span><br><small class="muted">{{.State}}</small></td>
+              <td><code>{{if .NodeID}}{{.NodeID}}{{else}}—{{end}}</code></td>
+              <td class="nowrap">{{if .WakeMethod}}{{.WakeMethod}}{{if .WakeTier}}<br><small class="muted">tier {{.WakeTier}}</small>{{end}}{{else}}—{{end}}</td>
+              <td>{{.RAMMB}} MB</td>
+              <td class="nowrap">{{if .StartedAt}}{{.StartedAt}}{{else}}—{{end}}</td>
+              <td class="nowrap">{{if .LastRequestAt}}{{.LastRequestAt}}{{else}}—{{end}}</td>
+              <td>{{if ge .LivenessRestartCount 3}}<span class="restart-count-high">{{.LivenessRestartCount}}</span>{{else}}{{.LivenessRestartCount}}{{end}}</td>
+              <td>{{if .ParkedReason}}<code>{{.ParkedReason}}</code>{{else}}—{{end}}</td>
+              <td><code>{{if .DeploymentID}}{{.DeploymentID}}{{else}}—{{end}}</code></td>
+            </tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{else}}
+      <p class="muted">No retained instance rows yet. A fresh deploy will appear here after its first wake.</p>
+    {{end}}
+
+    <p class="muted">Instance state is scheduler-owned. Lifecycle buttons use the same park, wake, and restart transitions as the CLI/API and never expose guest credentials.</p>
+  </main>
+  <footer>onebox faas · app instances</footer>
+</body>
+</html>

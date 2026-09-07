@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
@@ -163,6 +164,7 @@ func (s *server) runObjectStorageAccounting(ctx context.Context) {
 	if s.ops != nil {
 		s.ops.Registry().MustRegister(counter)
 	}
+	var finalizedPeriod time.Time
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -180,6 +182,20 @@ func (s *server) runObjectStorageAccounting(ctx context.Context) {
 		if err := s.reconcileObjectInventories(ctx, func(outcome string) { counter.WithLabelValues(outcome).Inc() }); err != nil && ctx.Err() == nil {
 			s.log.Warn("object storage inventory sweep failed")
 		}
+		if s.objectStorage != nil && s.objectStorage.Pricing != nil {
+			now := time.Now().UTC()
+			period := state.ObjectStoragePeriod(now).AddDate(0, -1, 0)
+			if !period.Equal(finalizedPeriod) {
+				if records, err := s.finalizeObjectStorageBilling(ctx, *s.objectStorage.Pricing, period, now); err != nil {
+					if ctx.Err() == nil {
+						s.log.Warn("object storage billing finalization failed", "period", period.Format("2006-01"), "err", err)
+					}
+				} else {
+					finalizedPeriod = period
+					s.log.Info("object storage billing period finalized", "period", period.Format("2006-01"), "accounts", len(records))
+				}
+			}
+		}
 		ticker.Reset(time.Minute)
 		select {
 		case <-ctx.Done():
@@ -187,4 +203,24 @@ func (s *server) runObjectStorageAccounting(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// finalizeObjectStorageBilling is the daemon-side month-close boundary. The
+// generic accounting store owns durable idempotency; the optional sink is the
+// only place that knows how to turn a finalized record into a provider invoice
+// line item. A nil sink is valid during the opt-in preview and still records
+// the immutable internal ledger.
+func (s *server) finalizeObjectStorageBilling(ctx context.Context, pricing api.ObjectStoragePricing, periodStart, now time.Time) ([]state.ObjectStorageBillingRecord, error) {
+	runner, ok := s.store.(interface {
+		state.ObjectStorageBillingStore
+		billing.ObjectStorageAccountSource
+	})
+	if !ok {
+		return nil, errors.New("object storage billing store is unavailable")
+	}
+	var sink billing.ObjectStorageLineItemSink
+	if candidate, ok := s.billingProvider.(billing.ObjectStorageLineItemSink); ok {
+		sink = candidate
+	}
+	return billing.FinalizeObjectStoragePeriods(ctx, runner, runner, pricing, periodStart, now, sink)
 }

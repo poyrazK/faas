@@ -100,7 +100,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_APID_REQUEST_WRITE_TIMEOUT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_ROLE", Owners: []string{"apid", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_API_CONTRACT_DIFF_ENABLED", Owners: []string{"shared"}, Source: EnvSourceDefault},
-	{Name: "FAAS_APPS_DOMAIN", Owners: []string{"apid", "gatewayd-internal", "githubd", "shared"}, Source: EnvSourceEnvFile},
+	{Name: "FAAS_API_HOSTING_SMOKE_URL", Owners: []string{"imaged"}, Source: EnvSourceDefault, Note: "optional public origin for post-readiness API hosting smoke verification"},
+	{Name: "FAAS_APPS_DOMAIN", Owners: []string{"apid", "gatewayd-internal", "githubd", "imaged", "shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_APPS_ROOT", Owners: []string{"imaged", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APP_ERRORS_ENABLED", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_ARTIFACT_REPLICATOR", Owners: []string{"imaged"}, Source: EnvSourceEnvFile},
@@ -375,6 +376,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_VMM_TLS_KEY_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_WEBHOOK_SECRET", Owners: []string{"gatewayd-internal", "githubd"}, Source: EnvSourceSecretsEnv, Note: "deprecated fallback delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env"},
 	{Name: "FAAS_WORKFLOWS_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceUnit, Note: "explicit 0 in faas-schedd.service; set to 1 to activate durable workflow dispatch"},
+	{Name: "FAAS_WORKLOAD_", Owners: []string{"guest"}, Source: EnvSourceGuest, Note: "guest-init injects per-task loopback endpoint metadata for the main workload and declared sidecars"},
 }
 
 // EnvContractByName indexes EnvContract by variable name.

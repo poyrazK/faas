@@ -34,8 +34,8 @@ type Querier interface {
 	// the client's Upload-Offset header (the offset the client claims
 	// the server is currently at) and the chunk_size it sent, then
 	// computes expected_new = client_offset + chunk_bytes. The WHERE
-	// clause pins the row to (id=$1 AND status='open' AND
-	// expires_at > now() AND received_bytes=$3) — a row whose received_bytes has already
+	// clause pins the row to the upload id and the explicitly named expected
+	// offset — a row whose received_bytes has already
 	// advanced (e.g., a racing PATCH from a retry) returns 0 rows and
 	// the handler maps that to 409 Conflict with the actual current
 	// offset in the body.

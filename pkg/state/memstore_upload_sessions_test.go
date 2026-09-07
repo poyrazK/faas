@@ -127,9 +127,9 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 
 	// 3. AppendUploadBytes happy path: row.ReceivedBytes=0 → new=512.
 	appendRow, err := m.AppendUploadBytes(ctx, sqlc.AppendUploadBytesParams{
-		ID:              "sess-create",
-		ReceivedBytes:   512,
-		ReceivedBytes_2: 0,
+		ID:                    "sess-create",
+		NewReceivedBytes:      512,
+		ExpectedReceivedBytes: 0,
 	})
 	if err != nil {
 		t.Fatalf("AppendUploadBytes happy: %v", err)
@@ -140,18 +140,18 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 
 	// 4. AppendUploadBytes offset mismatch: expected=0 but row=512 → ErrConflict.
 	if _, err := m.AppendUploadBytes(ctx, sqlc.AppendUploadBytesParams{
-		ID:              "sess-create",
-		ReceivedBytes:   1024,
-		ReceivedBytes_2: 0,
+		ID:                    "sess-create",
+		NewReceivedBytes:      1024,
+		ExpectedReceivedBytes: 0,
 	}); !errors.Is(err, ErrConflict) {
 		t.Errorf("AppendUploadBytes mismatch err = %v; want ErrConflict", err)
 	}
 
 	// 5. AppendUploadBytes missing row → ErrNotFound.
 	if _, err := m.AppendUploadBytes(ctx, sqlc.AppendUploadBytesParams{
-		ID:              "missing",
-		ReceivedBytes:   0,
-		ReceivedBytes_2: 0,
+		ID:                    "missing",
+		NewReceivedBytes:      0,
+		ExpectedReceivedBytes: 0,
 	}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("AppendUploadBytes(missing) err = %v; want ErrNotFound", err)
 	}

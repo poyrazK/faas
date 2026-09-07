@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -66,8 +67,8 @@ type baseHarness struct {
 // has its own dedicated tests (TestEnsureBaseExt4_WithParentRef_*
 // in vmmclient_test.go).
 //
-// ADR-053: the Debian-backed node/python runtime rows are excluded. Their
-// parentRef non-empty triggers the parent-ref branch, which
+// ADR-053: rows derived from base-debian-parent are excluded. Their non-empty
+// ParentRef triggers the parent-ref branch, which
 // requires the parent's DiffIDs to be a strict prefix of the
 // runtime's — the minimal test puller doesn't arrange that. The
 // parent runtime itself stays in this slice because its
@@ -822,11 +823,11 @@ func TestEnsureBases_NilRefsIsNoOp(t *testing.T) {
 // promise of "every runtime base auto-stages on imaged startup".
 //
 // ADR-053: 7 rows now (added RuntimeDebianParent at index 0). The
-// Debian-backed node/python runtime rows declare ParentRef:
-// BaseRefDebianParent and would otherwise pull the parent's tree via the
-// parent-ref branch. Node22 is standalone Alpine and intentionally stays on
-// the full-chain path. The parent row stays first so its stage failure aborts
-// the loop before any Debian-backed child is attempted.
+// Debian-backed Node 24 and Python 3.12 rows declare ParentRef:
+// BaseRefDebianParent and pull the parent's tree via the parent-ref branch.
+// Node 22 (Alpine) and Python 3.13 (Wolfi) are standalone full-chain rows.
+// The parent row stays first so its stage failure aborts the loop before any
+// Debian-backed child is attempted.
 func TestDefaultRuntimeBaseRefs_HasExpectedRuntimes(t *testing.T) {
 	want := []string{
 		RuntimeDebianParent,
@@ -846,16 +847,15 @@ func TestDefaultRuntimeBaseRefs_HasExpectedRuntimes(t *testing.T) {
 		if r.EnvOverride == "" {
 			t.Errorf("row %d (%s) EnvOverride empty", i, r.Runtime)
 		}
-		// ADR-053: Debian-backed node/python rows MUST declare
-		// ParentRef=BaseRefDebianParent. Node22 is the intentional
-		// Alpine exception; musl cannot share the Debian parent.
+		// ADR-053: only OCI chains derived from the Debian parent may use
+		// ParentRef. The Alpine and Wolfi runtimes are standalone.
 		switch r.Runtime {
-		case RuntimeNode24, RuntimePython312, RuntimePython313:
+		case RuntimeNode24, RuntimePython312:
 			if r.ParentRef != BaseRefDebianParent {
 				t.Errorf("row %d (%s) ParentRef = %q, want %q (ADR-053)",
 					i, r.Runtime, r.ParentRef, BaseRefDebianParent)
 			}
-		case RuntimeNode22, RuntimeDebianParent, RuntimeGo124, RuntimeGo124Alpine:
+		case RuntimeNode22, RuntimeDebianParent, RuntimeGo124, RuntimeGo124Alpine, RuntimePython313:
 			if r.ParentRef != "" {
 				t.Errorf("row %d (%s) ParentRef = %q, want empty (legacy path)",
 					i, r.Runtime, r.ParentRef)
@@ -1353,6 +1353,11 @@ func TestWriteScanSidecar_KeySetStable(t *testing.T) {
 		SeverityCounts: SeverityCounts{
 			Critical: 1, High: 2, Medium: 3, Low: 4, Unknown: 5,
 		},
+		Vulnerabilities: []Vulnerability{
+			{Severity: SeverityCritical, FixedIn: "1.2.3"},
+			{Severity: SeverityHigh},
+			{Severity: SeverityMedium, FixedIn: "4.5.6"},
+		},
 	}
 
 	// Two independent runs so a future refactor that introduces a
@@ -1392,9 +1397,10 @@ func TestWriteScanSidecar_KeySetStable(t *testing.T) {
 			// (struct{Image,Findings,ScannedAt}). The findings map is
 			// the load-bearing field for vmmd's bringUpScanCheck.
 			var got struct {
-				Image     string         `json:"image"`
-				Findings  map[string]int `json:"findings"`
-				ScannedAt time.Time      `json:"scanned_at"`
+				Image                string         `json:"image"`
+				Findings             map[string]int `json:"findings"`
+				FixAvailableFindings map[string]int `json:"fix_available_findings"`
+				ScannedAt            time.Time      `json:"scanned_at"`
 			}
 			if err := json.Unmarshal(sidecarBytes, &got); err != nil {
 				t.Fatalf("unmarshal sidecar: %v (bytes=%s)", err, string(sidecarBytes))
@@ -1434,6 +1440,16 @@ func TestWriteScanSidecar_KeySetStable(t *testing.T) {
 				if _, ok := wantKeys[k]; !ok {
 					t.Errorf("findings has unexpected key %q (close-enum violation)", k)
 				}
+			}
+			wantFixAvailable := map[string]int{
+				SeverityCritical: 1,
+				SeverityHigh:     0,
+				SeverityMedium:   1,
+				SeverityLow:      0,
+				SeverityUnknown:  0,
+			}
+			if !reflect.DeepEqual(got.FixAvailableFindings, wantFixAvailable) {
+				t.Errorf("fix_available_findings = %v, want %v", got.FixAvailableFindings, wantFixAvailable)
 			}
 		})
 	}
@@ -1508,6 +1524,38 @@ func TestScanSidecarSourceCurrent_RetriesFailClosedPlaceholder(t *testing.T) {
 	h := &Handler{}
 	if h.scanSidecarSourceCurrent(context.Background(), be, baseKey, "") {
 		t.Fatal("fail-closed scanner placeholder should be refreshed")
+	}
+}
+
+func TestScanSidecarSourceCurrent_RefreshesLegacyPolicySidecar(t *testing.T) {
+	be, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalStorageBackend: %v", err)
+	}
+	baseKey := "base/runtime.ext4"
+	canonical, ok, err := be.LocalPath(baseKey)
+	if err != nil || !ok {
+		t.Fatalf("LocalPath = %q, %t, %v", canonical, ok, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(canonical, []byte("ext4-placeholder"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	sidecar, err := json.Marshal(map[string]any{
+		"source":   canonical,
+		"findings": map[string]int{"CRITICAL": 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := be.Put(context.Background(), wire.ScanKeyForBaseKey(baseKey), bytes.NewReader(sidecar)); err != nil {
+		t.Fatalf("Put sidecar: %v", err)
+	}
+	h := &Handler{}
+	if h.scanSidecarSourceCurrent(context.Background(), be, baseKey, "") {
+		t.Fatal("legacy sidecar without fix_available_findings should be refreshed")
 	}
 }
 

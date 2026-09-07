@@ -1809,6 +1809,10 @@ type Deployment struct {
 	// RFC 7231 Retry-After header set to the remaining seconds.
 	// Capped exponential: 5s base, 300s max.
 	SnapshotMissBackoffUntil *time.Time `json:"snapshot_miss_backoff_until,omitempty"`
+	// APIHostingReceipt is durable, non-secret deployment evidence captured
+	// after the readiness probe. Raw JSON keeps state independent of the API
+	// hosting receipt package.
+	APIHostingReceipt json.RawMessage `json:"api_hosting_receipt,omitempty"`
 }
 
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot
@@ -2501,16 +2505,61 @@ func (e *AlertRuleQuotaError) Error() string {
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
 // An empty filter ([]) means "all events"; non-empty filters accept
 // events whose name appears in the array. The vocabulary must stay
-// in sync with app_webhook_deliveries.event CHECK in migration 00141.
+// in sync with app_webhook_deliveries.event CHECK in the latest
+// webhook-event allowlist migration.
 type AppWebhookEvent string
 
 const (
-	AppWebhookEventCronFired   AppWebhookEvent = "cron.fired"
-	AppWebhookEventAppDeployed AppWebhookEvent = "app.deployed"
-	AppWebhookEventAppScaled   AppWebhookEvent = "app.scaled"
-	AppWebhookEventAppParked   AppWebhookEvent = "app.parked"
-	AppWebhookEventAppWoken    AppWebhookEvent = "app.woken"
+	AppWebhookEventCronFired         AppWebhookEvent = "cron.fired"
+	AppWebhookEventCronFiredManually AppWebhookEvent = "cron.fired.manually"
+	AppWebhookEventAppCreated        AppWebhookEvent = "app.created"
+	AppWebhookEventAppDeleted        AppWebhookEvent = "app.deleted"
+	AppWebhookEventAppDeployed       AppWebhookEvent = "app.deployed"
+	AppWebhookEventAppScaled         AppWebhookEvent = "app.scaled"
+	AppWebhookEventAppParked         AppWebhookEvent = "app.parked"
+	AppWebhookEventAppWoken          AppWebhookEvent = "app.woken"
+	AppWebhookEventBuildSucceeded    AppWebhookEvent = "build.succeeded"
+	AppWebhookEventBuildFailed       AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentFailed  AppWebhookEvent = "deployment.failed"
+	AppWebhookEventRolloutAborted    AppWebhookEvent = "rollout.aborted"
+	AppWebhookEventErrorNew          AppWebhookEvent = "error.new"
+	AppWebhookEventJobFinished       AppWebhookEvent = "job.finished"
+	AppWebhookEventPreviewCreated    AppWebhookEvent = "preview.created"
+	AppWebhookEventBudgetThreshold   AppWebhookEvent = "budget.threshold"
 )
+
+// AllAppWebhookEvents is the canonical closed vocabulary shared by
+// emitters, tests, and adapters. Keep the order stable: it is also the
+// order used in validation error messages and generated documentation.
+var AllAppWebhookEvents = []AppWebhookEvent{
+	AppWebhookEventCronFired,
+	AppWebhookEventCronFiredManually,
+	AppWebhookEventAppCreated,
+	AppWebhookEventAppDeleted,
+	AppWebhookEventAppDeployed,
+	AppWebhookEventAppScaled,
+	AppWebhookEventAppParked,
+	AppWebhookEventAppWoken,
+	AppWebhookEventBuildSucceeded,
+	AppWebhookEventBuildFailed,
+	AppWebhookEventDeploymentFailed,
+	AppWebhookEventRolloutAborted,
+	AppWebhookEventErrorNew,
+	AppWebhookEventJobFinished,
+	AppWebhookEventPreviewCreated,
+	AppWebhookEventBudgetThreshold,
+}
+
+// ValidAppWebhookEvent reports whether event is in the closed
+// customer-facing vocabulary.
+func ValidAppWebhookEvent(event AppWebhookEvent) bool {
+	for _, allowed := range AllAppWebhookEvents {
+		if event == allowed {
+			return true
+		}
+	}
+	return false
+}
 
 // AppWebhookRetryPolicy names the backoff schedule. The dispatcher
 // reads this column at claim time and computes next_attempt_at
@@ -4355,6 +4404,9 @@ type Snapshot struct {
 	FCVersion    string
 	MemBytes     int64
 	DiskBytes    int64
+	// StoredBytes is the physical filesystem allocation of the published
+	// mem + vmstate artifacts. Zero identifies legacy snapshot writers.
+	StoredBytes int64
 	// Tier (issue #470 / ADR-055) is which snapshot tier this row
 	// belongs to: "init" (taken right after guest-init signals
 	// :8080 bound; restore pays framework warmup) or "warm"
@@ -4394,9 +4446,9 @@ const (
 // It denormalises snapshot → deployment → app → account into one row so
 // the GC algorithm doesn't have to round-trip per row.
 //
-// Snapshots for soft-deleted apps (apps.status = 'deleted') are filtered
-// at the SQL layer; they have no in-flight wake target and keeping them
-// would leak the 452 GB budget indefinitely.
+// AppStatus and DeploymentStatus let the GC discard snapshots that cannot
+// participate in a future wake. In particular, deleted apps and
+// failed/cancelled deployments must not consume the per-app retention floor.
 type SnapshotForGC struct {
 	ID           string
 	DeploymentID string
@@ -4409,10 +4461,12 @@ type SnapshotForGC struct {
 	// An empty AppSlug after the projection runs is an invariant
 	// violation — call sites should log + skip, never silently fall
 	// back to a slow path.
-	AppSlug   string
-	FCVersion string
-	MemBytes  int64
-	DiskBytes int64
+	AppSlug          string
+	AppStatus        AppStatus
+	DeploymentStatus DeploymentStatus
+	FCVersion        string
+	MemBytes         int64
+	DiskBytes        int64
 	// Tier (issue #470 / ADR-055) is the snapshot tier — see
 	// Snapshot.Tier for the semantics. The GC projection carries
 	// it so the perAppKeepCurrentPrevious policy can keep

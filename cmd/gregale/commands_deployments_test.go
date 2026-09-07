@@ -559,6 +559,58 @@ func TestCmdDeployment_HappyPath_DetailRendered(t *testing.T) {
 	}
 }
 
+func TestCmdDeployment_HostingReceiptRendered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+			ID:          "0123456789abcdef0123456789abcdef",
+			AppID:       "fedcba9876543210fedcba9876543210",
+			ImageDigest: "sha256:abc123",
+			Kind:        "app",
+			Status:      "succeeded",
+			CreatedAt:   "2026-07-23T11:25:00Z",
+			APIHostingReceipt: json.RawMessage(`{
+				"schema_version":1,
+				"deployment_id":"0123456789abcdef0123456789abcdef",
+				"app_id":"fedcba9876543210fedcba9876543210",
+				"app_url":"https://receipt-app.apps.gregale.dev",
+				"source":{"kind":"github","commit_sha":"deadbeef"},
+				"profile":{"version":"v1","framework":"fastapi","port":8080,"health_path":"/healthz"},
+				"artifact":{},
+				"smoke":{"status":"verified","path":"/healthz","status_code":200,"latency_ms":42}
+			}`),
+		})
+	}))
+	defer srv.Close()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+
+	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+		t.Fatalf("cmdDeployment = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"hosting_status:",
+		"verified",
+		"hosting_app_url:",
+		"https://receipt-app.apps.gregale.dev",
+		"health_path:",
+		"/healthz",
+		"profile:",
+		"fastapi (port 8080)",
+		"source_sha:",
+		"deadbeef",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("hosting receipt output missing %q\nfull: %s", want, out)
+		}
+	}
+}
+
 // --- --before forwarding ----------------------------------------------------
 
 // TestCmdDeployments_BeforeCursorForwarding pins URL-safe cursor forwarding.

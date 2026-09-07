@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 )
 
@@ -26,13 +28,32 @@ type wakePageCycle struct {
 	pending []wakePageVisit
 }
 
+// acceptsWakePage limits the retry document to browser-like navigations.
+// Accept is the compatibility fallback because older browsers and
+// non-browser clients may not send Fetch Metadata headers. When those
+// headers are present, an explicit fetch/XHR request must not receive an
+// HTML interstitial merely because it also advertises text/html.
+func acceptsWakePage(r *http.Request) bool {
+	if r == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) || !api.AcceptsHTML(r) {
+		return false
+	}
+	if mode := strings.TrimSpace(strings.ToLower(r.Header.Get("Sec-Fetch-Mode"))); mode != "" && mode != "navigate" {
+		return false
+	}
+	if dest := strings.TrimSpace(strings.ToLower(r.Header.Get("Sec-Fetch-Dest"))); dest != "" && dest != "document" {
+		return false
+	}
+	return true
+}
+
 // writeWakePage renders the browser-only 200 response used while a detached
 // wake is still booting. The page deliberately contains no app data; the
 // browser fetches the original URL again once the wake is routable.
 func writeWakePage(w http.ResponseWriter, wakeID string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Add("Vary", "Accept")
+	w.Header().Set("Vary", "Accept, Sec-Fetch-Mode, Sec-Fetch-Dest")
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive")
 	w.Header().Set(wakePageHeader, "1")
 	if wakeID != "" {
 		w.Header().Set("x-faas-wake-id", wakeID)

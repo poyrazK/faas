@@ -19,7 +19,7 @@ that briefly doubled invocations) clear without a page.
 
 This is the **customer-facing** counterpart of the platform-tier
 `FaasHighResidentRam` / `FaasResidentGbPerCustomerHigh` family
-(those fire on resident GB-hour, not on EUR). The customer
+(those fire on average resident GB, not on EUR). The customer
 contract (§11 financial model) bills on plan RAM + 8 MB per
 running second, NOT sampled RSS — so the EUR gauge is the
 authoritative billing signal.

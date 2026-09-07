@@ -115,7 +115,7 @@ func TestPartialWakeDoesNotOverrideRequestCancellation(t *testing.T) {
 	defer close(b.release)
 	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := h.coldStart(ctx, b.app.ID, "", "", 2, api.PlanScale)
+		_, _, _, err := h.coldStart(ctx, b.app.ID, "", "", 2, api.PlanScale, 0)
 		done <- err
 	}()
 	select {

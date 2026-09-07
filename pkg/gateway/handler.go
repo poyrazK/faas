@@ -85,6 +85,10 @@ type App struct {
 	Plan api.Plan
 	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
 	MaxConcurrency int
+	// AutoscaleTargetRPS is the configured per-instance request-rate target.
+	// The gateway uses it as an immediate burst signal while schedd remains the
+	// authority for admissions and sustained autoscaling decisions.
+	AutoscaleTargetRPS int
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can
@@ -5311,14 +5315,15 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		var cancelWakePage context.CancelFunc
-		if api.AcceptsHTML(r) {
+		showWakePage := acceptsWakePage(r)
+		if showWakePage {
 			wakeCtx, cancelWakePage = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
 			defer cancelWakePage()
 		}
 		//nolint:contextcheck // request ctx at handler boundary.
-		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan)
+		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS)
 		if err != nil {
-			if api.AcceptsHTML(r) && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
+			if showWakePage && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
 				// still alive. Record the visit and let the page's fetch/meta
 				// retry land on the app without a manual reload.
@@ -5352,12 +5357,12 @@ haveApp:
 		}
 	}
 	// The first request above guarantees one routable target. Reconcile the
-	// request pressure accumulated by the whole burst before forwarding so
-	// requests do not all pile onto that first target while sibling VMs are
-	// still restoring. The admission worker is detached internally, but this
-	// request remains cancellable by its own budget.
+	// request pressure accumulated by the whole burst. Additional capacity is
+	// admitted in the background once a healthy target exists; the forwarding
+	// concurrency gate bounds work on that target while siblings become ready.
 	//nolint:contextcheck // request ctx at handler boundary.
-	waitedForBurst, burstErr := h.maybeBurstCapacity(r.Context(), app, limits.MaxConcurrency, limits.ConcurrencyPerVMBound)
+	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
+	waitedForBurst, burstErr := h.maybeBurstCapacity(r.Context(), app, limits.MaxConcurrency, perVMConcurrency)
 	if burstErr != nil {
 		// A burst that cannot become routable within the request budget is
 		// a controlled timeout, not an upstream 502. Client disconnects
@@ -5416,9 +5421,9 @@ haveApp:
 	// the request waits on the selected VM until its own budget expires.
 	var vmRelease func()
 	var vmWaited bool
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(r.Context(), app, pick, limits.ConcurrencyPerVMBound)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(r.Context(), app, pick, perVMConcurrency)
 	if vmWaited {
-		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, limits.ConcurrencyPerVMBound)
+		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
 	}
 	if err != nil {
 		writeBurstCapacityError(w, r, err)
@@ -6416,7 +6421,10 @@ func (h *Handler) preInstantiateAppRoute(appID, routeLabel string) {
 // 200 ms) AND bytes-since-last-flush > 0. The first flush after
 // WriteHeader unconditionally fires (to set the per-flush write
 // deadline via http.ResponseController) and is the onFlush hook's
-// caller-side gate for the per-flush tx_bytes increment.
+// caller-side gate for the per-flush tx_bytes increment. Event-stream
+// and NDJSON responses bypass the byte/time window and flush after
+// every non-empty write so token-sized messages are not held for the
+// full interval.
 //
 // `streaming` is the boolean the gateway sets when it has decided
 // to take the streaming path (operator flag + per-app flag +
@@ -6634,6 +6642,10 @@ func (s *statusRecorder) maybeFlush() {
 		return
 	}
 	bytesDelta := s.Bytes - s.lastFlushedBytes
+	if bytesDelta > 0 && flushEveryWrite(s.contentTypeOrHeader()) {
+		s.doFlush()
+		return
+	}
 	if bytesDelta >= s.flushBytes {
 		s.doFlush()
 		return
@@ -6641,6 +6653,38 @@ func (s *statusRecorder) maybeFlush() {
 	if bytesDelta > 0 && time.Since(s.lastFlushAt) >= s.flushInterval {
 		s.doFlush()
 		return
+	}
+}
+
+// contentTypeOrHeader returns the response content type captured at header
+// commit, falling back to the underlying header map for writers that commit
+// their implicit 200 status from Write.
+func (s *statusRecorder) contentTypeOrHeader() string {
+	if s == nil {
+		return ""
+	}
+	if s.ContentType != "" {
+		return s.ContentType
+	}
+	if s.ResponseWriter == nil {
+		return ""
+	}
+	return s.ResponseWriter.Header().Get("Content-Type")
+}
+
+// flushEveryWrite identifies protocols where buffering individual writes is
+// user-visible latency. The normal byte/time window remains in place for all
+// other streaming content, including binary responses.
+func flushEveryWrite(contentType string) bool {
+	mediaType := strings.TrimSpace(strings.ToLower(contentType))
+	if i := strings.IndexByte(mediaType, ';'); i >= 0 {
+		mediaType = strings.TrimSpace(mediaType[:i])
+	}
+	switch mediaType {
+	case "text/event-stream", "application/x-ndjson":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -6723,7 +6767,7 @@ func (s *statusRecorder) finalFlush() {
 // prod app's. Empty = prod (legacy). When the cold-start path calls
 // coldStart and coldStart in turn calls Admit, scope is plumbed
 // through both paths.
-func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan) (cold bool, wakeID string, method WakeMethod, err error) {
+func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int) (cold bool, wakeID string, method WakeMethod, err error) {
 	// HealthyCount is intentionally process-local for the hot path, but an
 	// empty process-local cache is not authoritative in a multi-node fleet.
 	// The empty-cache reconciliation now runs inside coldStart's WakeGate
@@ -6733,7 +6777,7 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 	if h.backend.HealthyCount(appID) > 0 {
 		return false, "", WakeMethodUnspecified, nil
 	}
-	cold, wakeID, method, err = h.coldStart(ctx, appID, accountID, scope, maxConcurrency, plan)
+	cold, wakeID, method, err = h.coldStart(ctx, appID, accountID, scope, maxConcurrency, plan, autoscaleTargetRPS)
 	if err != nil {
 		return false, "", WakeMethodUnspecified, err
 	}
@@ -6744,7 +6788,7 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 // through the WakeGate's single-flight coalescing. shouldWake is held
 // under the gate lock and re-runs HealthyCount; if a peer's admit has
 // just landed, we skip the redundant cold boot.
-func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan) (bool, string, WakeMethod, error) {
+func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int) (bool, string, WakeMethod, error) {
 	var (
 		admittedWakeID string
 		cold           bool
@@ -6760,11 +6804,23 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			return h.backend.HealthyCount(appID) == 0
 		},
 		func(ctx context.Context) error {
-			// Only the WakeGate leader reaches this callback. Repair a
-			// process-local cache miss before spending a scheduler RPC on a
-			// new wake. A peer wake, cron/floor worker, or pre-restart live
-			// instance is therefore reused by all followers.
-			if reconciler, ok := h.backend.(liveTargetReconciler); ok {
+			_, hasCapacityEnsurer := h.backend.(capacityWarmEnsurer)
+			_, hasWarmEnsurer := h.backend.(warmEnsurer)
+			if scope == "" && (hasCapacityEnsurer || hasWarmEnsurer) && h.burstPressure != nil {
+				// A RUNNING notification can make this target visible before
+				// EnsureWarm returns. Publish the settling fence first so those
+				// requests cannot race ahead and start sibling restores while the
+				// primary restore is still completing.
+				h.burstPressure.state(appID).settlingUntil.Store(time.Now().Add(burstInitialRestoreSettlingWindow).UnixNano())
+			}
+			// Only the WakeGate leader reaches this callback. The production
+			// EnsureWarm path is already authoritative: schedd returns an
+			// existing RUNNING instance or creates one under its own wake
+			// coordinator. Avoid querying Postgres here first because that
+			// remote read is directly on every snapshot-restore critical path.
+			// Legacy and preview admission paths still need reconciliation to
+			// avoid creating a duplicate instance from an empty local cache.
+			if reconciler, ok := h.backend.(liveTargetReconciler); ok && (scope != "" || (!hasCapacityEnsurer && !hasWarmEnsurer)) {
 				if reconcileErr := reconciler.ReconcileLiveTargets(ctx, appID); reconcileErr != nil {
 					if h.log != nil {
 						h.log.Warn("gateway: live target reconciliation failed", "app_id", appID, "err", reconcileErr)
@@ -6776,7 +6832,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			}
 			admit := func(admitCtx context.Context) error {
 				if ensurer, ok := h.backend.(capacityWarmEnsurer); ok && scope == "" {
-					id, m, atCapacity, e := h.ensureInitialWarm(admitCtx, ensurer, appID, scope, sched.TriggerGateway, h.initialWakeDemand(appID, maxConcurrency, plan))
+					id, m, atCapacity, e := h.ensureInitialWarm(admitCtx, ensurer, appID, scope, sched.TriggerGateway, h.initialWakeDemand(appID, maxConcurrency, plan, autoscaleTargetRPS))
 					if e != nil {
 						return e
 					}
@@ -6829,6 +6885,9 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 				// fails before an ID is returned, discard any page visits
 				// so a later retry cannot attach them to a different wake.
 				h.finishWakePageCycle(ctx, appID, "")
+			}
+			if admitErr == nil && cold && method == WakeMethodSnapshotRestore && h.burstPressure != nil {
+				h.burstPressure.state(appID).settlingUntil.Store(time.Now().Add(burstInitialRestoreSettlingWindow).UnixNano())
 			}
 			return admitErr
 		},

@@ -749,6 +749,97 @@ func TestStatusRecorder_InstallFlushHookArmsAllFields(t *testing.T) {
 	}
 }
 
+func TestStatusRecorder_FlushesEveryWriteForEventStream(t *testing.T) {
+	w := httptest.NewRecorder()
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	flusher := &fakeFlusher{}
+	rec := &statusRecorder{ResponseWriter: w}
+	rec.installFlushHook(flusher, nil, 256*1024, time.Hour, time.Second)
+	rec.WriteHeader(http.StatusOK)
+
+	if _, err := rec.Write([]byte("data: first\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rec.Write([]byte("data: second\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	if flusher.flushed != 2 {
+		t.Fatalf("flushes = %d, want one flush per write", flusher.flushed)
+	}
+}
+
+func TestStatusRecorder_FlushesEveryWriteForNDJSON(t *testing.T) {
+	w := httptest.NewRecorder()
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	flusher := &fakeFlusher{}
+	rec := &statusRecorder{ResponseWriter: w}
+	rec.installFlushHook(flusher, nil, 256*1024, time.Hour, time.Second)
+	rec.WriteHeader(http.StatusOK)
+
+	if _, err := rec.Write([]byte("{\"event\":\"first\"}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rec.Write([]byte("{\"event\":\"second\"}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if flusher.flushed != 2 {
+		t.Fatalf("flushes = %d, want one flush per write", flusher.flushed)
+	}
+}
+
+func TestStatusRecorder_FlushesEveryWriteForImplicitHeader(t *testing.T) {
+	w := httptest.NewRecorder()
+	w.Header().Set("Content-Type", "text/event-stream")
+	flusher := &fakeFlusher{}
+	rec := &statusRecorder{ResponseWriter: w}
+	rec.installFlushHook(flusher, nil, 256*1024, time.Hour, time.Second)
+
+	if _, err := rec.Write([]byte("data: first\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rec.Write([]byte("data: second\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	if flusher.flushed != 2 {
+		t.Fatalf("flushes = %d, want one flush per implicit-header write", flusher.flushed)
+	}
+}
+
+func TestStatusRecorder_RetainsWindowForOtherStreamingContent(t *testing.T) {
+	w := httptest.NewRecorder()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	flusher := &fakeFlusher{}
+	rec := &statusRecorder{ResponseWriter: w}
+	rec.installFlushHook(flusher, nil, 256*1024, time.Hour, time.Second)
+	rec.WriteHeader(http.StatusOK)
+
+	if _, err := rec.Write([]byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rec.Write([]byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	if flusher.flushed != 1 {
+		t.Fatalf("flushes = %d, want initial flush only while window is open", flusher.flushed)
+	}
+}
+
+func TestFlushEveryWriteMediaTypes(t *testing.T) {
+	for contentType, want := range map[string]bool{
+		"text/event-stream":                   true,
+		"TEXT/EVENT-STREAM; charset=utf-8":    true,
+		"application/x-ndjson":                true,
+		"application/x-ndjson; charset=utf-8": true,
+		"application/json":                    false,
+		"application/octet-stream":            false,
+		"":                                    false,
+	} {
+		if got := flushEveryWrite(contentType); got != want {
+			t.Errorf("flushEveryWrite(%q) = %v, want %v", contentType, got, want)
+		}
+	}
+}
+
 func TestStatusRecorder_WriteHeader_RecordsStatusAndContentType(t *testing.T) {
 	w := httptest.NewRecorder()
 	rec := &statusRecorder{ResponseWriter: w}

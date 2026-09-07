@@ -367,6 +367,9 @@ type runDeps struct {
 	// exercise the violation branch inject a func returning a
 	// non-nil error.
 	capCheck func() error
+	// prepareJailHelper moves the release helper copy onto daemon startup.
+	// nil lets orchestration tests avoid writing the production chroot.
+	prepareJailHelper func(*fcvm.JailerVMM) error
 }
 
 func defaultDeps() runDeps {
@@ -387,6 +390,9 @@ func defaultDeps() runDeps {
 		startEgressPoll:     nil, // defaultDeps() leaves nil so the runtime branch can detect "use production"
 		scheddTarget:        envOr("FAAS_VMMD_SCHEDD_TARGET", "unix:///run/faas/schedd.sock"),
 		capacityInterval:    durationPtr(CapacityInterval),
+		prepareJailHelper: func(jailer *fcvm.JailerVMM) error {
+			return jailer.PrepareJailHelper()
+		},
 		// residentFn left nil; runWithDeps fills it with
 		// leakcheck.ResidentBytes once the resolver runs.
 		// startCapacityPublish left nil; the runtime branch
@@ -790,6 +796,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithSlowSubscriberCallback(func() {
 			ops.IncLogDropped("slow_subscriber")
 		})
+	if deps.prepareJailHelper != nil {
+		if err := deps.prepareJailHelper(jailer); err != nil {
+			return fmt.Errorf("vmmd: prepare jail helper: %w", err)
+		}
+	}
 	if archiveSink != nil {
 		jailer.WithLogEvictionCallback(archiveSink.Enqueue)
 	}
@@ -908,26 +919,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (default-local / tests) means there is no durable view to gate
 	// on, so the sweep is skipped entirely rather than run blind.
 	if store != nil {
+		isLiveInstance := func(ctx context.Context, instanceID string) (bool, error) {
+			ins, err := store.InstanceByID(ctx, instanceID)
+			if err != nil {
+				// A row that is genuinely gone is not live; anything else is
+				// unknown and must not authorise resource removal.
+				if errors.Is(err, state.ErrNotFound) {
+					return false, nil
+				}
+				return false, err
+			}
+			return state.IsLive(ins.State), nil
+		}
 		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
 			JailRoot: jailer.JailRoot(),
 			Runner:   wire.ExecRunner{},
 			Log:      log,
-			IsLive: func(ctx context.Context, instanceID string) (bool, error) {
-				ins, err := store.InstanceByID(ctx, instanceID)
-				if err != nil {
-					// A row that is genuinely gone is not live;
-					// anything else is unknown and must not
-					// authorise a kill.
-					if errors.Is(err, state.ErrNotFound) {
-						return false, nil
-					}
-					return false, err
-				}
-				// state.IsLive is the documented single source of
-				// truth for the live set, so a future state added
-				// there is honoured here without a second edit.
-				return state.IsLive(ins.State), nil
-			},
+			IsLive:   isLiveInstance,
 		})
 		if err != nil {
 			log.Warn("vmmd: orphan reap failed", "err", err)
@@ -937,6 +945,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				"skipped_live", rep.SkippedLive,
 				"skipped_young", rep.SkippedYoung,
 				"skipped_unknown", rep.SkippedUnknown)
+		}
+		if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
+			cloneRep, cloneErr := fcvm.ReapOrphanedLayerClones(ctx, fcvm.LayerCloneReapOptions{
+				Root:   cacheBackend.Root(),
+				IsLive: isLiveInstance,
+				Log:    log,
+			})
+			if cloneErr != nil {
+				log.Warn("vmmd: orphan layer clone reap failed", "err", cloneErr)
+			} else if cloneRep.Scanned > 0 {
+				log.Info("vmmd: orphan layer clone reap complete",
+					"scanned", cloneRep.Scanned, "reaped", cloneRep.Reaped,
+					"reclaimed_logical_bytes", cloneRep.ReclaimedLogicalBytes,
+					"skipped_live", cloneRep.SkippedLive,
+					"skipped_young", cloneRep.SkippedYoung,
+					"skipped_unknown", cloneRep.SkippedUnknown,
+					"failed", cloneRep.Failed)
+			}
 		}
 	}
 

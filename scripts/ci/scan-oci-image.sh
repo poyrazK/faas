@@ -5,9 +5,9 @@
 # image and `registry` scans an image served by a registry. A tag is accepted
 # only because the CI callers use immutable PR/SHA tags; production release
 # manifests still carry the resolved digest. The first pass prints the full
-# report, while the second pass makes only actionable fixed matches blocking.
-# This keeps vendor-unfixed and unknown findings visible without making every
-# Debian stable base permanently unpublishable.
+# report, while the second pass enforces the caller's publication policy.
+# Actionable fixed matches remain the default. Hardened runtime callers can set
+# GRYPE_ONLY_FIXED=false to match vmmd's fail-closed CRITICAL admission policy.
 
 set -euo pipefail
 
@@ -16,6 +16,16 @@ image_ref=${2:?image reference is required}
 platform=${3:-linux/amd64}
 fail_on=${GRYPE_FAIL_ON:-critical}
 grype_bin=${GRYPE_BIN:-grype}
+only_fixed=${GRYPE_ONLY_FIXED:-true}
+
+case "${only_fixed}" in
+  true) gate_fix_args=(--only-fixed) ;;
+  false) gate_fix_args=(--only-fixed=false) ;;
+  *)
+    echo "GRYPE_ONLY_FIXED must be true or false, got ${only_fixed}" >&2
+    exit 2
+    ;;
+esac
 
 case "${source_kind}" in
   docker|registry) ;;
@@ -39,11 +49,11 @@ if [[ "${full_status}" -ne 0 && "${full_status}" -ne 2 ]]; then
 fi
 
 if [[ "${full_status}" -eq 2 ]]; then
-  echo "Full report contains findings; enforcing the fixed-finding gate." >&2
+  echo "Full report contains findings; enforcing the configured publication gate." >&2
 fi
 
 "${grype_bin}" "${source_kind}:${image_ref}" \
   --platform "${platform}" \
   --fail-on "${fail_on}" \
-  --only-fixed \
+  "${gate_fix_args[@]}" \
   -o table

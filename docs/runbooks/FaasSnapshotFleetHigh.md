@@ -11,30 +11,36 @@ The fleet-average snapshot size has crossed the §12 threshold.
 - Warn tier (`FaasSnapshotFleetAvgHighWarn`) trips at > 160 MB for 15 m.
 - Page tier (`FaasSnapshotFleetAvgHighPage`) trips at > 200 MB for 10 m.
 
-A large fleet average is the canonical sign of layered rootfs bloat
-(§4.6 two-drive layout, drive1 per-app layer growing past the
-120 MB/sandbox target).
+The metric sums each snapshot's allocated filesystem blocks with its
+deployment's above-base app content. It does not use the Firecracker memory
+file's logical length: a sparse 1 GiB memory file may consume about 130 MiB.
+Rows written before `snapshots.stored_bytes` report zero and conservatively
+fall back to logical bytes until the app produces a new snapshot.
+
+A large fleet average therefore indicates either too many dirty guest-memory
+pages or above-base app-layer growth (§4.6 two-drive layout).
 
 ## Verify
 
 ```bash
 curl -fsS http://127.0.0.1:9103/metrics/fcvm | grep fcvm_snapshot_fleet_avg_bytes
-ls -la /srv/fc/snap/ | head -50
+du -h /var/lib/faas/cache/*/* 2>/dev/null | sort -h | tail -20
+du -h --apparent-size /var/lib/faas/cache/*/* 2>/dev/null | sort -h | tail -20
 ```
 
-Look for outliers: a small number of 600 MB+ snapshots skew the average
-and pinpoint the offending app.
+Compare allocated and apparent sizes. A large apparent memory image with a
+small allocated size is healthy sparse storage; a large allocated size means
+the guest dirtied most of its RAM before capture.
 
 ## Check
 
 ```bash
-du -sh /srv/fc/snap/* 2>/dev/null | sort -h | tail -20
+du -sh /var/lib/faas/cache 2>/dev/null
 ```
 
-The two-drive layout (drive0 = base, drive1 = per-app overlay) means
-the per-app layer is the suspect — the base image is shared and
-shouldn't grow at runtime. A `npm install` that pulled devDependencies
-is the most common cause; customer code reviews live in `docs/ops/`.
+The base image is shared and excluded. For app-layer outliers, inspect whether
+the build retained development dependencies. For memory outliers, inspect the
+runtime's initialization and caches for pages touched before snapshot.
 
 ## Silence
 

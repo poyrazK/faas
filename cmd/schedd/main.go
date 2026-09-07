@@ -479,7 +479,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			out := make([]fcvm.SnapshotStat, len(rows))
 			for i, r := range rows {
-				out[i] = fcvm.SnapshotStat{MemBytes: r.MemBytes, DiskBytes: r.DiskBytes}
+				out[i] = fcvm.SnapshotStat{SnapshotBytes: r.SnapshotBytes, LayerBytes: r.LayerBytes}
 			}
 			return out, nil
 		},
@@ -670,14 +670,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load sign pub %q: %w (run `faas sign-keys init` on imaged's host if missing)", signPubPath, err)
 	}
 	log.Info("schedd: build attestation verifier ready", "pub", signPubPath)
-	deployments, err := store.ListAllDeployments(ctx)
-	if err != nil {
-		return fmt.Errorf("schedd: list startup attestations: %w", err)
-	}
-	if err := prepareLayerAttestations(ctx, deployments, verifier, log); err != nil {
-		return err
-	}
 	engine.WithVerifier(verifier)
+	attestationWarmCtx, cancelAttestationWarm := context.WithCancel(ctx)
+	defer cancelAttestationWarm()
+	startLayerAttestationWarm(attestationWarmCtx, store, verifier, log)
 	// Issue #561 — wire the spend-cap pause-workload seam. Engine
 	// consults the checker inside admitGate AFTER the existing
 	// min-floor branch; a cap-reached app refuses new wakes with
@@ -1502,16 +1498,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("min-instances floor reconciler enabled",
 		"interval", floorInterval,
 		"owner_node_id", ownerNodeID)
-	// Issue #171: wire the recent-load mirror off the same scraper so the
-	// reaper sees per-app RPS without duplicating the scraping wiring.
-	// It has no signal source when the optional endpoint is not configured.
-	if scraper != nil {
+	// Issue #171: wire the recent-load mirror off the same scraper and the
+	// VMMD telemetry reader. Split-box schedulers commonly leave the local
+	// gateway metrics URL empty; the telemetry fallback keeps scale-down
+	// symmetric with the scale-up trigger in that deployment shape.
+	if scraper != nil || reader != nil {
 		mirror := recentload.New(scraper, api.ScaleUpWindowSeconds, time.Second)
+		if reader != nil {
+			mirror.WithRateReader(reader)
+		}
 		loop.WithRecentLoad(mirror)
+		signalSource := "vmmd_telemetry"
+		if scraper != nil {
+			signalSource = "gateway_metrics+vmmd_telemetry"
+		}
 		log.Info("autoscale signal mirror enabled",
 			"metrics_url", cfg.GatewayMetricsURL,
+			"source", signalSource,
 			"window_s", api.ScaleUpWindowSeconds,
 			"aggressive", cfg.ReaperAggressive)
+	}
+	if scraper != nil {
 		// Issue #72 / ADR-124 / ADR-125 PR-A3 commit 4: mirror
 		// invocation_summary rollup + ledger retention sweep.
 		// Runs on the same interval as the scale-up triggers so

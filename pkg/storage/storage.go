@@ -90,6 +90,12 @@ var ErrNotFound = errors.New("storage: key not found")
 // partially succeeds.
 var ErrInvalidKey = errors.New("storage: invalid key")
 
+// ErrDeleteUnsupported reports that a backend can read and write artifacts
+// but its remote service does not implement deletion. Callers should still
+// evict local caches and rely on the service's retention policy for the
+// remote object.
+var ErrDeleteUnsupported = errors.New("storage: delete unsupported")
+
 // IsNotFound reports whether err is (or wraps) ErrNotFound. Use this
 // in cold-boot-fallback code paths so callers stay agnostic of the
 // underlying driver — the local backend's underlying os.ErrNotExist

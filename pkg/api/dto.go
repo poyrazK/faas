@@ -1750,6 +1750,10 @@ type DeploymentResponse struct {
 	// String fields only because pkg/api cannot import pkg/state
 	// (the App.Type enum lives in pkg/state/types.go).
 	BuildPlan *BuildPlan `json:"build_plan,omitempty"`
+	// APIHostingReceipt is the non-secret evidence captured when imaged
+	// promoted this deployment to live. It is intentionally free-form on the
+	// API surface so future receipt schema versions remain additive.
+	APIHostingReceipt json.RawMessage `json:"hosting_receipt,omitempty"`
 	// Issue #606 / SAFE-RELEASES-E.1: structured deployer
 	// attribution. All four fields are server-stamped from the
 	// HTTP request context (never client-supplied) and use
@@ -5020,6 +5024,33 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 	}
 	if p := visit("main"); p != nil {
 		return p
+	}
+	return nil
+}
+
+// ValidatePortConflicts rejects explicitly declared workload ports that would
+// collide inside the shared task network namespace. Port zero on a sidecar is
+// intentionally ignored: init/worker sidecars commonly have no listener and
+// image-derived ports are checked again by guest-init once the baked manifest
+// is available. A zero mainPort uses the platform's 8080 contract.
+func (ss Sidecars) ValidatePortConflicts(mainPort int) *Problem {
+	if mainPort == 0 {
+		mainPort = DefaultAppPort
+	}
+	ports := make(map[int]string, 1+len(ss))
+	if mainPort >= 1 && mainPort <= 65535 {
+		ports[mainPort] = "main"
+	}
+	for _, sidecar := range ss {
+		if sidecar.Port == 0 {
+			continue
+		}
+		if previous, exists := ports[sidecar.Port]; exists {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid workload ports",
+				fmt.Sprintf("workloads %q and %q both claim port %d; workloads share one network namespace and must use distinct ports.", previous, sidecar.Name, sidecar.Port))
+		}
+		ports[sidecar.Port] = sidecar.Name
 	}
 	return nil
 }

@@ -15,8 +15,7 @@
 //     failure slipped through every review.
 //   - Post-fix, the SELECT reads `at`. The smoke test inserts
 //     4 events rows (2 with trace_id, 2 without) and asserts
-//     the gauge for "force_park" (the kind the audit emitter
-//     stamps on operator.action.park_instance, after the
+//     the gauge for "park_instance" (the stored kind after the
 //     prefix-strip in observeTraceCompletenessRatio) hits 0.5.
 //
 // Uses pgtest.Open so the test skips via the standard
@@ -45,7 +44,7 @@ import (
 // gauge reports the right ratio. Pre-fix the SQL failed with
 // "column received_at does not exist"; this test would surface
 // that as a missing label in the metrics body (the gauge would
-// be unset for force_park because the row processing skipped
+// be unset for park_instance because the row processing skipped
 // the body on query error).
 func TestRunOperatorIntentCompletenessTick_FixesColumnRef(t *testing.T) {
 	pool := pgtest.Open(t)
@@ -61,7 +60,7 @@ func TestRunOperatorIntentCompletenessTick_FixesColumnRef(t *testing.T) {
 	// "operator.action.park_instance" kind. The Loop's stripping
 	// logic (operator_intent_completeness.go around lines
 	// 199-213) trims the "operator.action." prefix to map onto
-	// the closed-set label "force_park".
+	// the closed-set label "park_instance".
 	insertEvent := func(traceIDArg interface{}) {
 		var err error
 		if traceIDArg == nil {
@@ -93,14 +92,14 @@ func TestRunOperatorIntentCompletenessTick_FixesColumnRef(t *testing.T) {
 	// Read the per-kind gauge via the metrics body scrape.
 	// Pattern mirrors TestObserveOperatorIntentCompleteness_WiredOpsGaugeUpdate
 	// (operator_intent_completeness_test.go:115-118). The
-	// pre-instantiation grid materialises "force_park" at boot;
+	// pre-instantiation grid materialises "park_instance" at boot;
 	// the Set(ratio) call here replaces the 0 default.
 	body := getMetricsBody(t, ops)
 	// 2 of 4 rows carry trace_id ⇒ ratio 0.5. Prometheus
 	// formats float64 as "0.5" (no trailing zeros).
-	wantForcePark := `schedd_operator_action_trace_completeness_ratio{kind="force_park"} 0.5`
-	if !strings.Contains(body, wantForcePark) {
-		t.Errorf("force_park gauge not stamped to 0.5 (column-ref regression?):\nmetrics body did not contain %q", wantForcePark)
+	wantParkInstance := `schedd_operator_action_trace_completeness_ratio{kind="park_instance"} 0.5`
+	if !strings.Contains(body, wantParkInstance) {
+		t.Errorf("park_instance gauge not stamped to 0.5 (query regression?):\nmetrics body did not contain %q", wantParkInstance)
 	}
 	if !strings.Contains(body, "schedd_operator_action_trace_completeness_first_tick_completed_total 1") {
 		t.Errorf("first-tick completion counter was not recorded:\n%s", body)

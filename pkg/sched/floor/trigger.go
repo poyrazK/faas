@@ -465,6 +465,16 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 		headroom = t.ledger.HeadroomMB()
 	}
 	for _, d := range deps {
+		// A configured floor is serviceable only after the deployment is
+		// live. ListAllDeployments intentionally includes historical and
+		// in-flight rows, so guard here before resolving the parent app or
+		// asking Engine to admit. Otherwise every failed/superseded row
+		// inherits app.min_instances and produces an impossible wake on each
+		// reconciliation tick.
+		if d.Status != state.DeployLive {
+			t.observe(d.AppID, OutcomeDisabled)
+			continue
+		}
 		app, appErr := t.deploymentStore.AppByID(ctx, d.AppID)
 		if appErr != nil {
 			t.observe(d.AppID, OutcomeError)

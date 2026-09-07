@@ -3797,6 +3797,7 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 			}
 		}
 	}
+	ramChanged := p.RAMMB != nil && *p.RAMMB != a.RAMMB
 	if p.RAMMB != nil {
 		a.RAMMB = *p.RAMMB
 	}
@@ -4044,6 +4045,9 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 		}
 	}
 	m.apps[id] = a
+	if ramChanged {
+		m.markAppSnapshotsStaleLocked(id)
+	}
 	return a, nil
 }
 
@@ -4136,6 +4140,13 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if ok && deployment.AppID == id {
+			m.snapshots[i].Stale = true
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+		}
+	}
 	return a, nil
 }
 
@@ -4561,6 +4572,18 @@ func (m *MemStore) DeploymentByID(_ context.Context, id string) (Deployment, err
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
+	return d, nil
+}
+
+func (m *MemStore) UpsertDeploymentHostingReceipt(_ context.Context, deploymentID string, receipt []byte) (Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[deploymentID]
+	if !ok {
+		return Deployment{}, ErrNotFound
+	}
+	d.APIHostingReceipt = append([]byte(nil), receipt...)
+	m.deployments[deploymentID] = d
 	return d, nil
 }
 
@@ -5274,7 +5297,39 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	d.Status = status
 	d.Error = errMsg
 	m.deployments[id] = d
+	if status == DeployFailed || status == DeployCancelled {
+		m.markDeploymentSnapshotsStaleLocked(id)
+	}
 	return nil
+}
+
+func (m *MemStore) markDeploymentSnapshotsStaleLocked(deploymentID string) {
+	for i := range m.snapshots {
+		if m.snapshots[i].DeploymentID != deploymentID {
+			continue
+		}
+		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+	}
+}
+
+func (m *MemStore) markAppSnapshotsStaleLocked(appID string) {
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if !ok || deployment.AppID != appID {
+			continue
+		}
+		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+	}
+}
+
+func (m *MemStore) deleteSnapshotReplicasLocked(snapshotID string) {
+	for key := range m.snapshotReplicas {
+		if key.snapshotID == snapshotID {
+			delete(m.snapshotReplicas, key)
+		}
+	}
 }
 
 func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) error {
@@ -6419,6 +6474,7 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	d.Error = message
 	d.ErrorCode = code
 	m.deployments[id] = d
+	m.markDeploymentSnapshotsStaleLocked(id)
 	return d, nil
 }
 
@@ -6466,6 +6522,7 @@ func (m *MemStore) SetDeploymentFailedEx(
 	d.ErrorFix = fix
 	d.ErrorRelevantLogs = logs
 	m.deployments[id] = d
+	m.markDeploymentSnapshotsStaleLocked(id)
 	return d, nil
 }
 
@@ -9451,14 +9508,16 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 	for i := range m.snapshots {
 		if m.snapshots[i].ID == snapshotID {
 			m.snapshots[i].Stale = true
+			m.deleteSnapshotReplicasLocked(snapshotID)
 			return nil
 		}
 	}
 	return ErrNotFound
 }
 
-// ListSnapshotsForGC joins snapshots → deployments → apps in-memory and
-// filters out snapshots belonging to soft-deleted apps (apps.status='deleted').
+// ListSnapshotsForGC joins snapshots → deployments → apps in-memory.
+// Deleted apps and terminal deployments remain visible so imaged can reclaim
+// their rows and storage artifacts.
 // MemStore doesn't index the join; the O(N×M) scan is fine for the test
 // harness, which seeds at most a few dozen rows. The slice is sorted
 // newest-first to match PgStore.
@@ -9483,7 +9542,7 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			continue
 		}
 		app, ok := appByID[dep.AppID]
-		if !ok || app.Status == AppDeleted {
+		if !ok {
 			continue
 		}
 		out = append(out, SnapshotForGC{
@@ -9493,10 +9552,12 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			AccountID:    app.AccountID,
 			// B1.1: forward the slug so imaged's GC doesn't have to
 			// re-resolve it per eviction (was O(2N) extra SQL).
-			AppSlug:   app.Slug,
-			FCVersion: s.FCVersion,
-			MemBytes:  s.MemBytes,
-			DiskBytes: s.DiskBytes,
+			AppSlug:          app.Slug,
+			AppStatus:        app.Status,
+			DeploymentStatus: dep.Status,
+			FCVersion:        s.FCVersion,
+			MemBytes:         s.MemBytes,
+			DiskBytes:        s.DiskBytes,
 			// Issue #470 / ADR-055: forward the tier so the GC loop's
 			// perAppKeepCurrentPrevious can keep (current warm +
 			// previous init) per warm-tier app and (current init +
@@ -9519,6 +9580,63 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
+	return out, nil
+}
+
+// ListSnapshotsStaleOlderThan mirrors the stale-retention selector used by
+// PgStore while preserving the metadata imaged needs for artifact deletion.
+func (m *MemStore) ListSnapshotsStaleOlderThan(_ context.Context, retention time.Duration) ([]SnapshotForGC, error) {
+	cutoff := time.Now().Add(-retention)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	appByID := make(map[string]App, len(m.apps))
+	for _, a := range m.apps {
+		appByID[a.ID] = a
+	}
+	depByID := make(map[string]Deployment, len(m.deployments))
+	for _, d := range m.deployments {
+		depByID[d.ID] = d
+	}
+	var out []SnapshotForGC
+	for _, s := range m.snapshots {
+		if !s.Stale || !s.CreatedAt.Before(cutoff) {
+			continue
+		}
+		dep, ok := depByID[s.DeploymentID]
+		if !ok {
+			continue
+		}
+		app, ok := appByID[dep.AppID]
+		if !ok {
+			continue
+		}
+		out = append(out, SnapshotForGC{
+			ID: s.ID, DeploymentID: s.DeploymentID, AppID: app.ID,
+			AccountID: app.AccountID, AppSlug: app.Slug, AppStatus: app.Status,
+			DeploymentStatus: dep.Status, FCVersion: s.FCVersion,
+			MemBytes: s.MemBytes, DiskBytes: s.DiskBytes, Tier: s.Tier,
+			StorageKey: s.StorageKey, Stale: true, CreatedAt: s.CreatedAt,
+			AppWarmSnapshotEnabled: app.WarmSnapshotEnabled,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+// ListSnapshotDeploymentIDs mirrors the compact PgStore projection and keeps
+// stale rows visible until their retention cleanup removes them.
+func (m *MemStore) ListSnapshotDeploymentIDs(_ context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	seen := make(map[string]struct{}, len(m.snapshots))
+	for _, snapshot := range m.snapshots {
+		seen[snapshot.DeploymentID] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for deploymentID := range seen {
+		out = append(out, deploymentID)
+	}
+	sort.Strings(out)
 	return out, nil
 }
 
@@ -9560,6 +9678,7 @@ func (m *MemStore) MarkAllSnapshotsStaleByFCVersion(_ context.Context, currentVe
 	for i := range m.snapshots {
 		if !m.snapshots[i].Stale && m.snapshots[i].FCVersion != currentVersion {
 			m.snapshots[i].Stale = true
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++
 		}
 	}
@@ -9598,6 +9717,7 @@ func (m *MemStore) MarkAllSnapshotsStaleByAppProtocol(_ context.Context, appProt
 		}
 		if _, match := allowed[app.AppProtocol]; match {
 			m.snapshots[i].Stale = true
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++
 		}
 	}
@@ -9654,6 +9774,7 @@ func (m *MemStore) MarkSnapshotStaleByAppProtocol(_ context.Context, snapshotID 
 			return nil
 		}
 		m.snapshots[i].Stale = true
+		m.deleteSnapshotReplicasLocked(snapshotID)
 		return nil
 	}
 	return ErrNotFound
@@ -9675,6 +9796,7 @@ func (m *MemStore) MarkOldSnapshotsStale(_ context.Context, beforeSnapshotIDs []
 	for i := range m.snapshots {
 		if _, ok := idSet[m.snapshots[i].ID]; ok {
 			m.snapshots[i].Stale = true
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++
 		}
 	}
@@ -18018,13 +18140,13 @@ func (m *MemStore) AppendUploadBytes(_ context.Context, in sqlc.AppendUploadByte
 	}
 	if row.Status != "open" ||
 		(row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now())) ||
-		row.ReceivedBytes != in.ReceivedBytes_2 {
+		row.ReceivedBytes != in.ExpectedReceivedBytes {
 		return sqlc.AppendUploadBytesRow{
 			ReceivedBytes: row.ReceivedBytes,
 			TotalSize:     row.TotalSize,
 		}, ErrConflict
 	}
-	row.ReceivedBytes = in.ReceivedBytes
+	row.ReceivedBytes = in.NewReceivedBytes
 	row.LastPatchedAt = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 	m.uploadSessions[in.ID] = row
 	return sqlc.AppendUploadBytesRow{

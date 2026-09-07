@@ -7218,6 +7218,17 @@ func (s *PgStore) UpsertDeploymentSecretFindings(ctx context.Context, deployment
 	return nil
 }
 
+// UpsertDeploymentHostingReceipt stores the immutable deployment evidence
+// produced by imaged after readiness. The UPDATE is idempotent so notification
+// redelivery cannot create a second receipt.
+func (s *PgStore) UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error) {
+	return scanDeploymentWithRootfs(s.pool.QueryRow(ctx,
+		`update deployments
+		    set api_hosting_receipt = $2::jsonb
+		  where id = $1
+		  returning `+deploymentSelectColumnsWithRootfs, deploymentID, receipt))
+}
+
 // RecordRestart (issue #586 / ADR-129 / cluster C commit 12)
 // bumps the persisted deployments.liveness_restart_count column
 // by 1 in a single statement. Mirrors
@@ -12155,10 +12166,10 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 		tier = SnapshotTierInit
 	}
 	row := s.pool.QueryRow(ctx,
-		`insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, storage_key, stale, tier)
-		 values ($1, $2, $3, $4, $5, $6, $7)
-		 returning id, deployment_id::text, fc_version, mem_bytes, disk_bytes, storage_key, stale, created_at, tier`,
-		snap.DeploymentID, snap.FCVersion, snap.MemBytes, snap.DiskBytes, snap.StorageKey, snap.Stale, tier)
+		`insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, tier)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8)
+		 returning id, deployment_id::text, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier`,
+		snap.DeploymentID, snap.FCVersion, snap.MemBytes, snap.DiskBytes, snap.StoredBytes, snap.StorageKey, snap.Stale, tier)
 	out, err := scanSnapshot(row)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -12180,7 +12191,7 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 // (dashboard queries, snapshot dashboards, manual SQL ops).
 func (s *PgStore) LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, storage_key, stale, created_at, tier
+		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier
 		 from snapshots where deployment_id = $1 and stale = false
 		 order by (tier = 'warm') desc, created_at desc limit 1`, deploymentID)
 	return scanSnapshot(row)
@@ -12199,7 +12210,7 @@ func (s *PgStore) LatestSnapshotForTier(ctx context.Context, deploymentID, tier 
 		tier = SnapshotTierInit
 	}
 	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, storage_key, stale, created_at, tier
+		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier
 		 from snapshots where deployment_id = $1 and tier = $2 and stale = false
 		 order by created_at desc limit 1`, deploymentID, tier)
 	return scanSnapshot(row)
@@ -12219,10 +12230,9 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 }
 
 // ListSnapshotsForGC returns every non-stale snapshot joined with its
-// deployment + app + account, ordered newest-first. The SQL filter on
-// apps.status='deleted' is what implements "soft-deleted apps' snapshots
-// are GC-eligible" — the row delete cascade in DeleteAccount only touches
-// rows, not on-disk files, so imaged still has to scrub them.
+// deployment + app + account, ordered newest-first. Deleted apps and terminal
+// deployments remain in the result because imaged needs the join metadata to
+// remove their on-disk files before deleting the rows.
 //
 // The JOIN is bounded by snapshotDashboardCap (10k) for the same reason
 // ListLiveSnapshotStats is: the GC algorithm is O(N) per tick and a 10k
@@ -12246,13 +12256,12 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error) {
 	rows, err := s.pool.Query(ctx,
 		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
-		        s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.created_at, s.tier,
+		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.created_at, s.tier,
 		        a.warm_snapshot_enabled
 		   from snapshots s
 		   join deployments d on d.id = s.deployment_id
 		   join apps a       on a.id = d.app_id
 		  where s.stale = false
-		    and a.status <> 'deleted'
 		  order by s.created_at desc
 		  limit 10000`)
 	if err != nil {
@@ -12263,11 +12272,65 @@ func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, erro
 	for rows.Next() {
 		var r SnapshotForGC
 		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
-			&r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.CreatedAt, &r.Tier,
+			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.CreatedAt, &r.Tier,
 			&r.AppWarmSnapshotEnabled); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListSnapshotsStaleOlderThan returns expired stale rows with the same join
+// metadata as ListSnapshotsForGC. The caller removes storage artifacts before
+// the row metadata is lost.
+func (s *PgStore) ListSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) ([]SnapshotForGC, error) {
+	rows, err := s.pool.Query(ctx,
+		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
+		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.created_at, s.tier,
+		        a.warm_snapshot_enabled
+		   from snapshots s
+		   join deployments d on d.id = s.deployment_id
+		   join apps a       on a.id = d.app_id
+		  where s.stale = true
+		    and s.created_at < now() - $1::interval
+		  order by s.created_at
+		  limit 10000`,
+		fmt.Sprintf("%d seconds", int64(retention.Seconds())))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotForGC
+	for rows.Next() {
+		var r SnapshotForGC
+		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
+			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.CreatedAt, &r.Tier,
+			&r.AppWarmSnapshotEnabled); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListSnapshotDeploymentIDs returns every deployment referenced by a snapshot
+// row. Stale rows are intentionally included because their artifacts remain
+// restorable until the stale-retention window expires.
+func (s *PgStore) ListSnapshotDeploymentIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`select distinct deployment_id::text from snapshots order by deployment_id::text`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var deploymentID string
+		if err := rows.Scan(&deploymentID); err != nil {
+			return nil, err
+		}
+		out = append(out, deploymentID)
 	}
 	return out, rows.Err()
 }
@@ -12402,9 +12465,11 @@ func (s *PgStore) DeleteSnapshotsStaleOlderThan(ctx context.Context, retention t
 	return tag.RowsAffected(), nil
 }
 
-// ListLiveSnapshotStats returns mem_bytes + disk_bytes for every non-stale
-// snapshot. Feeds the §12 dashboard gauge `fcvm_snapshot_fleet_avg_bytes`
-// (and the p95 sibling). One round-trip; the dashboard wrapper caches
+// ListLiveSnapshotStats returns the physical snapshot allocation plus app
+// layer content bytes for every non-stale snapshot. New writers populate
+// stored_bytes from st_blocks; legacy zero rows conservatively fall back to
+// mem_bytes + disk_bytes. Feeds the §12 dashboard gauge
+// `fcvm_snapshot_fleet_avg_bytes` (and the p95 sibling). One round-trip; the dashboard wrapper caches
 // the result for 5 s so this isn't on the hot scrape path. The "live"
 // filter matches the dashboard's notion of "parked apps taking up
 // disk": stale snapshots are GC'd by imaged nightly (spec §4.6) and
@@ -12417,7 +12482,13 @@ func (s *PgStore) DeleteSnapshotsStaleOlderThan(ctx context.Context, retention t
 // 5 s otherwise). Raise this when the dashboard gains per-app panels.
 func (s *PgStore) ListLiveSnapshotStats(ctx context.Context) ([]SnapshotSize, error) {
 	rows, err := s.pool.Query(ctx,
-		`select mem_bytes, disk_bytes from snapshots where stale = false order by mem_bytes desc limit 10000`)
+		`select case when s.stored_bytes > 0 then s.stored_bytes else s.mem_bytes + s.disk_bytes end,
+		        coalesce(d.rootfs_bytes, 0)
+		   from snapshots s
+		   join deployments d on d.id = s.deployment_id
+		  where s.stale = false
+		  order by 1 desc
+		  limit 10000`)
 	if err != nil {
 		return nil, err
 	}
@@ -12425,7 +12496,7 @@ func (s *PgStore) ListLiveSnapshotStats(ctx context.Context) ([]SnapshotSize, er
 	var out []SnapshotSize
 	for rows.Next() {
 		var sz SnapshotSize
-		if err := rows.Scan(&sz.MemBytes, &sz.DiskBytes); err != nil {
+		if err := rows.Scan(&sz.SnapshotBytes, &sz.LayerBytes); err != nil {
 			return nil, err
 		}
 		out = append(out, sz)
@@ -12433,15 +12504,12 @@ func (s *PgStore) ListLiveSnapshotStats(ctx context.Context) ([]SnapshotSize, er
 	return out, rows.Err()
 }
 
-// SnapshotSize is the per-row projection used by the dashboard gauge.
-// VMStateBytes is folded into MemBytes today (the `snapshots` table
-// stores a single bytes value for the parked footprint); a future
-// migration splitting the columns can add the field without breaking
-// callers. Keeping it here (not in pkg/fcvm) so the SQL → struct
-// mapping stays in the package that owns the schema.
+// SnapshotSize is the per-row projection used by the dashboard gauge. The
+// two fields form the spec §8 parked footprint: sparse snapshot allocation
+// plus the deployment's above-base app-layer content.
 type SnapshotSize struct {
-	MemBytes  int64
-	DiskBytes int64
+	SnapshotBytes int64
+	LayerBytes    int64
 }
 
 // --- compute nodes (issue #97 / ADR-025 axis 3) -----------------------------
@@ -17383,7 +17451,8 @@ const deploymentSelectColumnsWithRootfs = `
 	cancelled_at, coalesce(cancelled_by_principal, ''), coalesce(cancel_reason, ''),
 	deleted_at, coalesce(deleted_by_principal, ''),
 	coalesce(workflows, '[]'::jsonb),
-	coalesce(full_rootfs_allow_auto, false), full_rootfs_override`
+	coalesce(full_rootfs_allow_auto, false), full_rootfs_override,
+	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb)`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -17435,7 +17504,8 @@ const deploymentSelectColumnsQualified = `
 	d.cancelled_at, coalesce(d.cancelled_by_principal, ''), coalesce(d.cancel_reason, ''),
 	d.deleted_at, coalesce(d.deleted_by_principal, ''),
 	coalesce(d.workflows, '[]'::jsonb),
-	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override`
+	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override,
+	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb)`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -17545,6 +17615,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.CancelledAt, &d.CancelledByPrincipal, &d.CancelReason,
 		&d.DeletedAt, &d.DeletedByPrincipal, &d.Workflows,
 		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
+		&d.APIHostingReceipt,
 	); err != nil {
 		return mapErr(err)
 	}
@@ -17932,12 +18003,12 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
 	s := Snapshot{}
-	// The 9th column is tier (issue #470 / ADR-055). Every query
+	// The 10th column is tier (issue #470 / ADR-055). Every query
 	// in this file now selects the tier column explicitly; the
 	// scan returns "init" if the column is NULL (legacy rows from
 	// before migration 00110 applied).
 	var tier *string
-	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.MemBytes, &s.DiskBytes, &s.StorageKey, &s.Stale, &s.CreatedAt, &tier); err != nil {
+	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.MemBytes, &s.DiskBytes, &s.StoredBytes, &s.StorageKey, &s.Stale, &s.CreatedAt, &tier); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Snapshot{}, ErrNotFound
 		}
@@ -24127,7 +24198,11 @@ func (s *PgStore) CreateUploadSession(ctx context.Context, in sqlc.CreateUploadS
 
 // GetUploadSession reads a single upload_sessions row by id.
 func (s *PgStore) GetUploadSession(ctx context.Context, id string) (sqlc.UploadSession, error) {
-	return s.uploadSessionQueries().GetUploadSession(ctx, s.pool, id)
+	row, err := s.uploadSessionQueries().GetUploadSession(ctx, s.pool, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sqlc.UploadSession{}, ErrNotFound
+	}
+	return row, err
 }
 
 // AppendUploadBytes is the atomic CAS. sqlc maps the UPDATE's
@@ -24210,7 +24285,11 @@ func (s *PgStore) RecordUploadCommitOutcome(ctx context.Context, in sqlc.RecordU
 
 // GetUploadCommitOutcome reads the dedupe row for a retry.
 func (s *PgStore) GetUploadCommitOutcome(ctx context.Context, uploadID string) (sqlc.UploadCommitOutcome, error) {
-	return s.uploadSessionQueries().GetUploadCommitOutcome(ctx, s.pool, uploadID)
+	row, err := s.uploadSessionQueries().GetUploadCommitOutcome(ctx, s.pool, uploadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sqlc.UploadCommitOutcome{}, ErrNotFound
+	}
+	return row, err
 }
 
 // CountOpenUploadSessionsByAccountApp backs the per-(account, app)

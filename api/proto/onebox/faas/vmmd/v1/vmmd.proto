@@ -826,6 +826,9 @@ message PauseAndSnapshotRequest {
 message SnapshotResponse {
   int64 mem_bytes     = 1;
   int64 vmstate_bytes = 2;
+  // Filesystem allocation consumed by the published mem + vmstate blobs.
+  // Zero means an older vmmd did not report the additive field.
+  int64 stored_bytes  = 3;
 }
 
 // WarmSnapshotRequest (issue #470 / PR #470-FU-A) is the input
