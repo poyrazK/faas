@@ -1411,6 +1411,11 @@ export class AppsService {
    * Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
    * outside the window with 403 + `log_archive_retention_exceeded`.
    *
+   * Each `event: log` payload preserves the original `line`. When that
+   * line is a valid JSON object with a recognized `level` or `severity`
+   * field, the server adds a canonical `level` value (`info`, `warn`, or
+   * `error`); plain-text and unclassified lines omit the field.
+   *
    * @returns any A text/event-stream of structured log lines, terminated by an empty SSE frame when the connection closes.
    * @throws ApiError
    */
@@ -1441,7 +1446,7 @@ export class AppsService {
      */
     since?: string,
     /**
-     * Exact match on the structured `level` field (info, warn, or error). Empty = no level filter. The CLI and the apid handler both validate against the same enum (api.IsValidLogLevel in pkg/api/logs.go); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
+     * Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the apid handler both validate against the same enum (api.IsValidLogLevel in pkg/api/logs.go); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
      *
      */
     level?: 'info' | 'warn' | 'error',
