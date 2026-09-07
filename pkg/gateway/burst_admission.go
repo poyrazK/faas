@@ -42,6 +42,11 @@ type burstPressureState struct {
 const (
 	burstArrivalWindow      = time.Second
 	burstRateObservationMin = 250 * time.Millisecond
+	// Leave a small routing headroom around each configured RPS boundary.
+	// Fixed-rate senders otherwise oscillate into the next instance when timer
+	// jitter retains one boundary request or shortens the measured span by a
+	// few microseconds.
+	burstRateHeadroomPercent int64 = 5
 )
 
 // burstGeneration represents one bounded capacity reconciliation. Keeping
@@ -156,13 +161,14 @@ func desiredBurstInstancesForApp(state *burstPressureState, app App, perVM, maxI
 		return desired
 	}
 	arrivals, observed := state.recentArrivalSample(now)
-	byRPS := int((arrivals + int64(app.AutoscaleTargetRPS) - 1) / int64(app.AutoscaleTargetRPS))
+	rateDenominator := int64(app.AutoscaleTargetRPS) * (100 + burstRateHeadroomPercent)
+	byRPS := int((arrivals*100 + rateDenominator - 1) / rateDenominator)
 	if arrivals > 1 && observed >= burstRateObservationMin {
 		// There are arrivals-1 measured intervals between the first and last
 		// timestamp. Compare that observed rate with the configured per-instance
 		// target using integer ceiling arithmetic.
-		numerator := (arrivals - 1) * int64(time.Second)
-		denominator := int64(observed) * int64(app.AutoscaleTargetRPS)
+		numerator := (arrivals - 1) * int64(time.Second) * 100
+		denominator := int64(observed) * rateDenominator
 		byObservedRate := int((numerator + denominator - 1) / denominator)
 		if byObservedRate > byRPS {
 			byRPS = byObservedRate

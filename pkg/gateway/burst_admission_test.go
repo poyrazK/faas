@@ -94,6 +94,27 @@ func TestDesiredBurstInstancesUsesPartialWindowRate(t *testing.T) {
 	}
 }
 
+func TestDesiredBurstInstancesKeepsStableRateAtExistingCapacity(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	app := App{AutoscaleTargetRPS: 15}
+	state := &burstPressureState{}
+	state.inflight.Store(1)
+	// A nominal 30 RPS sender can leave 31 samples in a trailing second and
+	// measure fractionally above 30 RPS because timers are not exact. Two
+	// instances remain the stable target until demand clears the small
+	// boundary headroom.
+	for i := 0; i < 31; i++ {
+		state.recordArrival(base.Add(time.Duration(i) * 33300 * time.Microsecond))
+	}
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(999*time.Millisecond)); got != 2 {
+		t.Fatalf("jittered 30 RPS desired %d, want 2", got)
+	}
+	state.recordArrival(base.Add(999500 * time.Microsecond))
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(999500*time.Microsecond)); got != 3 {
+		t.Fatalf("rate above headroom desired %d, want 3", got)
+	}
+}
+
 func TestBurstPressureBalancesRequestCount(t *testing.T) {
 	var pressure burstPressure
 	releaseOne := pressure.begin("app-1")

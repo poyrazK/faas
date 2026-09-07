@@ -58,7 +58,7 @@ func TestInitialWakeDemandUsesAutoscaleTarget(t *testing.T) {
 	state := h.burstPressure.state("app")
 	state.inflight.Store(1)
 	now := time.Now()
-	for i := 0; i < 31; i++ {
+	for i := 0; i < 32; i++ {
 		state.recordArrival(now)
 	}
 	if got := h.initialWakeDemand("app", 20, api.PlanScale, 15); got != 3 {
