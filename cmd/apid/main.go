@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -445,10 +446,23 @@ func defaultDeps() runDeps {
 			}
 		},
 		loginTTL:          15 * time.Minute,
-		configPath:        "/etc/faas/apid.toml",
+		configPath:        apidConfigPath(flag.Lookup),
 		loadBillingConfig: billingloader.LoadBillingConfigFromPath,
 		loadConfig:        LoadConfig,
 	}
+}
+
+func apidConfigPath(lookup func(string) *flag.Flag) string {
+	const fallback = "/etc/faas/apid.toml"
+	if lookup == nil {
+		return fallback
+	}
+	if configFlag := lookup("config"); configFlag != nil {
+		if path := configFlag.Value.String(); path != "" {
+			return path
+		}
+	}
+	return fallback
 }
 
 func main() {

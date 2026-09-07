@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"io"
 	"log/slog"
 	"net"
@@ -168,6 +169,20 @@ func TestResolvePrometheusURL(t *testing.T) {
 	}
 	if got := resolvePrometheusURL(func(string) string { return "http://prometheus.example:9095" }, role.RoleControlPlane); got != "http://prometheus.example:9095" {
 		t.Fatalf("explicit URL = %q", got)
+	}
+}
+
+func TestAPIDConfigPath_UsesStandardConfigFlag(t *testing.T) {
+	flags := flag.NewFlagSet(t.Name(), flag.ContinueOnError)
+	flags.String("config", "/etc/faas/apid.toml", "")
+	if err := flags.Parse([]string{"--config", "/tmp/rendered/apid.toml"}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	if got := apidConfigPath(flags.Lookup); got != "/tmp/rendered/apid.toml" {
+		t.Fatalf("config path = %q, want rendered path", got)
+	}
+	if got := apidConfigPath(func(string) *flag.Flag { return nil }); got != "/etc/faas/apid.toml" {
+		t.Fatalf("fallback config path = %q", got)
 	}
 }
 
