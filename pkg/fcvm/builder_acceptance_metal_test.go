@@ -6,6 +6,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -198,6 +200,9 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 			}
 		})
 	}
+	t.Run("builderd-orchestrator", func(t *testing.T) {
+		runBuilderdOrchestratorAcceptance(t, buildTimeoutSeconds)
+	})
 }
 
 func mustAcceptance(t *testing.T, err error) {
@@ -207,13 +212,118 @@ func mustAcceptance(t *testing.T, err error) {
 	}
 }
 
-type acceptanceNotifier struct{ primed bool }
+type acceptanceNotifier struct {
+	primed              bool
+	snapshotBootPayload string
+}
 
-func (n *acceptanceNotifier) Notify(_ context.Context, channel, _ string) error {
+func (n *acceptanceNotifier) Notify(_ context.Context, channel, payload string) error {
 	if channel == db.NotifySnapshotPrime {
 		n.primed = true
 	}
+	if channel == db.NotifySnapshotBoot {
+		n.snapshotBootPayload = payload
+	}
 	return nil
+}
+
+// runBuilderdOrchestratorAcceptance exercises the production Builderd
+// pipeline against the same real vmmd/Firecracker stack as the lower-level
+// acceptance cases above. Keeping the store and notification transport in
+// memory makes this a focused orchestrator gate while the separate metal e2e
+// continues to cover the PostgreSQL scheduler wiring.
+func runBuilderdOrchestratorAcceptance(t *testing.T, buildTimeoutSeconds int) {
+	t.Helper()
+	m := fcvm.NewAcceptanceManager(t)
+	tmp := t.TempDir()
+	sock := filepath.Join(tmp, "v.sock")
+	listener, err := net.Listen("unix", sock)
+	mustAcceptance(t, err)
+	server := grpc.NewServer()
+	vmmdpb.RegisterVmmdServer(server, vmmdgrpc.New(acceptanceSignalAdapter{m}, nil, os.Getenv("FAAS_TEST_FC_VERSION"), slog.Default()))
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	driver, err := builderd.NewVMMDriver(sock, os.Getenv("FAAS_BUILDER_BASE_PATH"), filepath.Join(tmp, "drives"), filepath.Join(tmp, "exports"))
+	mustAcceptance(t, err)
+	t.Cleanup(func() { _ = driver.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(buildTimeoutSeconds+600)*time.Second)
+	defer cancel()
+
+	source := acceptanceSource(t, tmp, "", acceptanceSourceOptions{})
+	sourceInfo, err := os.Stat(source)
+	mustAcceptance(t, err)
+	sourceDigest := acceptanceSHA256(t, source)
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "builderd-orchestrator@example.com", api.PlanPro)
+	mustAcceptance(t, err)
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, Slug: "builderd-orchestrator", Type: state.AppTypeApp,
+		RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 1,
+	})
+	mustAcceptance(t, err)
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: source,
+		SourceBytes: sourceInfo.Size(), SourceSHA256: sourceDigest,
+		LogPath: filepath.Join(tmp, "build.log"),
+	})
+	mustAcceptance(t, err)
+	build, err := store.CreateBuildWithID(ctx, "builderd-orchestrator", dep.ID, state.DeploymentKindTarball, sourceInfo.Size(), dep.LogPath)
+	mustAcceptance(t, err)
+	notifier := &acceptanceNotifier{}
+	b := builderd.New(store, notifier, driver, builderd.NewCache(filepath.Join(tmp, "cache")), nil, nil,
+		builderd.Config{BuildTimeoutSeconds: buildTimeoutSeconds, SourceWaitTimeout: 2 * time.Second, BuilderNodeID: "metal-acceptance"}, slog.Default())
+
+	result, err := b.ProcessOne(ctx, build.ID)
+	mustAcceptance(t, err)
+	if result.BuildID != build.ID || result.LayerPath == "" || result.LayerBytes <= 0 {
+		t.Fatalf("builderd result = %+v, want a non-empty successful artifact", result)
+	}
+	completed, err := store.BuildByID(ctx, build.ID)
+	mustAcceptance(t, err)
+	if completed.Status != state.BuildSucceeded {
+		t.Fatalf("build status = %s, want %s", completed.Status, state.BuildSucceeded)
+	}
+	completedDep, err := store.DeploymentByID(ctx, dep.ID)
+	mustAcceptance(t, err)
+	if completedDep.RootfsPath != result.LayerPath || completedDep.RootfsBytes != result.LayerBytes {
+		t.Fatalf("deployment artifact = %q/%d, want %q/%d", completedDep.RootfsPath, completedDep.RootfsBytes, result.LayerPath, result.LayerBytes)
+	}
+	prov, err := store.BuildProvenanceByBuildID(ctx, build.ID)
+	mustAcceptance(t, err)
+	if prov.SourceSHA256 != sourceDigest || prov.BuilderNodeID != "metal-acceptance" {
+		t.Fatalf("provenance = %+v, want source digest %q and node %q", prov, sourceDigest, "metal-acceptance")
+	}
+	if notifier.snapshotBootPayload == "" {
+		t.Fatal("builderd did not publish snapshot_boot after committing the build")
+	}
+
+	// Consume the exact notification Builderd emitted. This proves the
+	// orchestrator's completion handoff is accepted by imaged, rather than
+	// merely checking that a host artifact exists.
+	backend, err := storage.NewLocalStorageBackend(tmp)
+	mustAcceptance(t, err)
+	handler := imaged.New(store, notifier, nil, rootfs.NewBuilder(wire.ExecRunner{}), os.Getenv("FAAS_GUEST_INIT"), filepath.Join(tmp, "apps"), slog.Default()).WithStorage(backend)
+	handler.HandleNotification(ctx, db.Notification{Channel: db.NotifySnapshotBoot, Payload: notifier.snapshotBootPayload})
+	completedDep, err = store.DeploymentByID(ctx, dep.ID)
+	mustAcceptance(t, err)
+	if completedDep.Status != state.DeploySnapshotting || !notifier.primed {
+		t.Fatalf("imaged handoff status = %s, prime=%t, want snapshotting/true", completedDep.Status, notifier.primed)
+	}
+	if m.LiveCount() != 0 || m.LeasedCount() != 0 {
+		t.Fatalf("builderd orchestrator leaked VM or lease: live=%d leases=%d", m.LiveCount(), m.LeasedCount())
+	}
+	leakcheck.AssertZero(t)
+}
+
+func acceptanceSHA256(t *testing.T, path string) string {
+	t.Helper()
+	f, err := os.Open(path)
+	mustAcceptance(t, err)
+	defer f.Close()
+	h := sha256.New()
+	_, err = io.Copy(h, f)
+	mustAcceptance(t, err)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func acceptanceImageBoot(t *testing.T, ctx context.Context, m *fcvm.Manager, tmp, archive, fixture string) {
