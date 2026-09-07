@@ -3,7 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-09-06
 - **Decision:** expose Gregale-owned durable multipart sessions backed by the
-  provider interface, without exposing native S3 credentials or upload IDs.
+  provider interface, without exposing provider credentials or upload IDs.
 
 ## Context
 
@@ -30,11 +30,12 @@ The entire declared size is admitted through the existing conservative capacity
 accounting before any upstream parts can be created.
 
 `objectstorage.Provider` owns ensure, sign-part, complete and abort operations.
-The generic S3 driver uses 64 MiB parts by default, up to 10,000 parts and a
-5 TiB final object. Every part URL binds its exact Content-Length. Customers see
+The S3 and native GCS drivers use 64 MiB parts by default, up to 10,000 parts and
+a 5 TiB final object. Every part URL binds its exact Content-Length. Customers see
 only the Gregale session ID and submit ordered provider ETags at completion;
-the native upload ID remains an implementation detail, so another S3-compatible
-backend or a future Gregale-operated gateway can implement the same contract.
+the native upload ID remains an implementation detail, so another backend or a
+future Gregale-operated gateway can implement the same contract. GCS uses its
+XML multipart API with OAuth control calls and IAM-signed V4 part URLs.
 
 Initiation is an ensure operation. Before creating an S3 upload the driver lists
 exact-key multipart uploads; the catalog's single-live-key invariant makes one

@@ -7,15 +7,14 @@
 //
 //	gregale debug requests list <slug> [--since <dur>] [--route <pattern>] [--limit N]
 //	gregale debug requests get <slug> <req_id>
+//	gregale debug requests evidence <slug> <req_id>
 //	gregale debug requests replay <slug> <req_id>
 //	gregale debug regressions <slug> [--since <dur>]
 //	gregale debug compare <slug> --source <id> --mirror <id> [--route <pattern>] [--since <dur>]
 //
-// PR-B ships the list/regressions/compare/replay verbs; "get"
-// surfaces a single request's metadata by id (read from the
-// list endpoint and filtered locally — the underlying API has
-// no GET /debug/requests/{id} endpoint today; the dashboard
-// reads from the list).
+// The request verbs are direct API lookups: "get" returns metadata,
+// "evidence" returns bounded span evidence plus the deterministic
+// explanation, and "replay" queues the existing replay contract.
 
 package main
 
@@ -35,7 +34,7 @@ import (
 // commands_invocations.go's PrintUsage strings.
 const debugCmdUsage = "usage: gregale debug <requests|regressions|compare> ..."
 
-const debugRequestsCmdUsage = "usage: gregale debug requests <list|get|replay> ..."
+const debugRequestsCmdUsage = "usage: gregale debug requests <list|get|evidence|replay> ..."
 
 // debugCmdDocsTopic is the docs topic slug for the debug
 // namespace. Resolves to cli_meta.go's "debug" cliCommand entry;
@@ -48,7 +47,7 @@ func cmdDebug(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests get      show one request's metadata\n  requests replay   queue a request replay\n  regressions       list detected regressions\n  compare           compare two deployments", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests get      show one request's metadata\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  regressions       list detected regressions\n  compare           compare two deployments", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -69,7 +68,7 @@ func cmdDebugRequests(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  get       show one request's metadata\n  replay    queue a request replay", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  get       show one request's metadata\n  evidence  show request evidence and explanation\n  replay    queue a request replay", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -77,11 +76,32 @@ func cmdDebugRequests(args []string) int {
 		return cmdDebugRequestsList(args[1:])
 	case "get":
 		return cmdDebugRequestsGet(args[1:])
+	case "evidence":
+		return cmdDebugRequestsEvidence(args[1:])
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
 	return 1
+}
+
+// cmdDebugRequestsEvidence renders bounded span evidence and the server's
+// deterministic explanation for one request.
+func cmdDebugRequestsEvidence(args []string) int {
+	if len(args) != 2 {
+		PrintUsage(os.Stderr, "usage: gregale debug requests evidence <slug> <req_id>", debugCmdDocsTopic)
+		return 1
+	}
+	slug, reqID := args[0], args[1]
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.GetAppDebugRequestEvidence(context.Background(), slug, reqID)
+	if err != nil {
+		return printErr("Could not get debug request evidence", err)
+	}
+	return jsonOut(writeJSON(resp))
 }
 
 // cmdDebugRequestsList renders the recent request telemetry for

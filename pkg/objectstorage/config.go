@@ -33,15 +33,18 @@ type BackendConfig struct {
 	Region           string `json:"region"`
 	// Namespace identifies the upstream account/cluster. Changing it, the
 	// endpoint or S3 region fences existing buckets instead of misrouting data.
-	Namespace       string   `json:"namespace"`
-	Endpoint        string   `json:"endpoint"`
-	S3Region        string   `json:"s3_region"`
-	PathStyle       bool     `json:"path_style"`
-	AccessKeyEnv    string   `json:"access_key_env"`
-	SecretKeyEnv    string   `json:"secret_key_env"`
-	SessionTokenEnv string   `json:"session_token_env,omitempty"`
-	AllowedOrigins  []string `json:"allowed_origins,omitempty"`
-	AllowHTTP       bool     `json:"allow_http,omitempty"`
+	Namespace         string   `json:"namespace"`
+	Endpoint          string   `json:"endpoint"`
+	S3Region          string   `json:"s3_region"`
+	PathStyle         bool     `json:"path_style"`
+	AccessKeyEnv      string   `json:"access_key_env"`
+	SecretKeyEnv      string   `json:"secret_key_env"`
+	SessionTokenEnv   string   `json:"session_token_env,omitempty"`
+	GCSLocation       string   `json:"gcs_location,omitempty"`
+	GCSStorageClass   string   `json:"gcs_storage_class,omitempty"`
+	GCSServiceAccount string   `json:"gcs_service_account,omitempty"`
+	AllowedOrigins    []string `json:"allowed_origins,omitempty"`
+	AllowHTTP         bool     `json:"allow_http,omitempty"`
 }
 
 type Registry struct {
@@ -85,6 +88,8 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		r.Pricing = &pricing
 	}
 	validID := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	validGCSLocation := regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
+	validGCSServiceAccount := regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,126}@[a-z0-9.-]+\.gserviceaccount\.com$`)
 	for _, b := range c.Backends {
 		if b.UsageReportsPath != "" {
 			if !filepath.IsAbs(b.UsageReportsPath) {
@@ -92,15 +97,40 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 			}
 			r.usageReportPaths[b.ID] = b.UsageReportsPath
 		}
-		if !validID.MatchString(b.ID) || !validID.MatchString(b.Region) || b.Namespace == "" || b.S3Region == "" {
+		if !validID.MatchString(b.ID) || !validID.MatchString(b.Region) || b.Namespace == "" {
 			return nil, errors.New("object storage: invalid backend identity or region")
 		}
 		if _, ok := r.backends[b.ID]; ok {
 			return nil, errors.New("object storage: duplicate backend ID")
 		}
-		u, err := url.Parse(b.Endpoint)
-		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "https" && (!b.AllowHTTP || u.Scheme != "http")) {
-			return nil, fmt.Errorf("object storage: invalid endpoint for backend %s", b.ID)
+		switch b.Driver {
+		case "s3":
+			if b.S3Region == "" {
+				return nil, fmt.Errorf("object storage: backend %s requires an S3 region", b.ID)
+			}
+			if b.GCSLocation != "" || b.GCSStorageClass != "" || b.GCSServiceAccount != "" {
+				return nil, fmt.Errorf("object storage: backend %s mixes S3 and GCS settings", b.ID)
+			}
+		case "gcs":
+			if !validGCSLocation.MatchString(b.GCSLocation) || !validGCSServiceAccount.MatchString(b.GCSServiceAccount) {
+				return nil, fmt.Errorf("object storage: backend %s requires a valid GCS location and service account", b.ID)
+			}
+			if b.S3Region != "" || b.PathStyle || b.AccessKeyEnv != "" || b.SecretKeyEnv != "" || b.SessionTokenEnv != "" {
+				return nil, fmt.Errorf("object storage: backend %s mixes GCS and S3 settings", b.ID)
+			}
+			switch b.GCSStorageClass {
+			case "", "STANDARD", "NEARLINE", "COLDLINE", "ARCHIVE":
+			default:
+				return nil, fmt.Errorf("object storage: backend %s has an invalid GCS storage class", b.ID)
+			}
+		}
+		if b.Endpoint != "" {
+			u, err := url.Parse(b.Endpoint)
+			if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "https" && (!b.AllowHTTP || u.Scheme != "http")) {
+				return nil, fmt.Errorf("object storage: invalid endpoint for backend %s", b.ID)
+			}
+		} else if b.Driver == "s3" {
+			return nil, fmt.Errorf("object storage: backend %s requires an endpoint", b.ID)
 		}
 		for _, origin := range b.AllowedOrigins {
 			o, err := url.Parse(origin)
@@ -170,7 +200,7 @@ func Load(getenv func(string) string) (*Registry, error) {
 	if dec.Decode(&extra) != io.EOF {
 		return nil, errors.New("object storage: trailing configuration data")
 	}
-	return NewRegistry(c, getenv, map[string]Factory{"s3": NewS3})
+	return NewRegistry(c, getenv, map[string]Factory{"gcs": NewGCS, "s3": NewS3})
 }
 
 func (r *Registry) Default(region string) (Backend, error) {

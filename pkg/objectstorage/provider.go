@@ -1,6 +1,6 @@
 // Package objectstorage implements customer object storage independently of
-// the image/snapshot backend in pkg/storage. The S3 data API is portable;
-// customer credential issuance and provider billing APIs are not.
+// the image/snapshot backend in pkg/storage. The customer API is portable;
+// provider authentication, usage, and billing APIs are not.
 package objectstorage
 
 import (
@@ -26,8 +26,8 @@ var (
 
 // Provider owns data operations for a single immutable backend placement.
 // Implementations must never return provider credentials in errors or results.
-// Native S3 credentials deliberately are not part of this interface: adding
-// a provider's IAM adapter must not change the portable bucket/data service.
+// Provider credentials deliberately are not part of this interface: adding a
+// provider's IAM adapter must not change the portable bucket/data service.
 type Provider interface {
 	CreateBucket(context.Context, string) error
 	DeleteBucket(context.Context, string) error
@@ -83,8 +83,8 @@ func ValidKey(key string) bool {
 type SignedRequest = api.ObjectSignedRequest
 
 // MultipartCreateRequest contains only provider-facing data. SessionID is
-// persisted as object metadata so a completion response lost between S3 and
-// Gregale can be verified without exposing the provider upload ID.
+// persisted as object metadata so a completion response lost between the
+// provider and Gregale can be verified without exposing its upload ID.
 type MultipartCreateRequest struct {
 	SessionID   string
 	Key         string
@@ -160,6 +160,21 @@ type Backend struct {
 }
 
 func fingerprint(c BackendConfig) string {
-	sum := sha256.Sum256([]byte(c.Endpoint + "\x00" + c.S3Region + "\x00" + c.Namespace + "\x00" + c.Driver + "\x00" + c.Region))
+	endpoint := c.Endpoint
+	if c.Driver == "gcs" && endpoint == "" {
+		endpoint = gcsDefaultEndpoint
+	}
+	identity := endpoint + "\x00" + c.S3Region + "\x00" + c.Namespace + "\x00" + c.Driver + "\x00" + c.Region
+	// Keep the established S3 identity byte-for-byte stable. GCS has no S3
+	// signing region, so its immutable placement adds the native location and
+	// storage class instead. Credentials are deliberately excluded for both.
+	if c.Driver == "gcs" {
+		storageClass := c.GCSStorageClass
+		if storageClass == "" {
+			storageClass = "STANDARD"
+		}
+		identity += "\x00" + c.GCSLocation + "\x00" + storageClass
+	}
+	sum := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(sum[:])
 }

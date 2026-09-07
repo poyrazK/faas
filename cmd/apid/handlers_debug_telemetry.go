@@ -7,8 +7,9 @@ package main
 // the existing app_errors_recorder-style rows once a row source is
 // configured.
 //
-// Handlers: list recent requests and retrieve one request by id.
-// The regression / compare / replay endpoints are PR-B / PR-C.
+// Handlers: list recent requests, retrieve one request by id, and return
+// bounded evidence for a request. Regression / compare / replay are the
+// adjacent debugger consumer surfaces.
 
 import (
 	"context"
@@ -16,8 +17,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -133,6 +138,172 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, debugTelemetryGetRowToItem(row))
+}
+
+const debugEvidenceMaxSpans = 100
+const debugEvidenceMaxSpanTextBytes = 256
+
+var (
+	debugEvidenceQuotedLiteral  = regexp.MustCompile(`'(?:''|[^'])*'`)
+	debugEvidenceNumericLiteral = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
+)
+
+// debugRequestEvidenceHandler — GET /v1/apps/{slug}/debug/requests/{req_id}/evidence
+//
+// Returns bounded, redacted span evidence for one request and links it to an
+// active regression observation when the regression cron has produced one.
+// The response is deliberately deterministic and contains no LLM call; a
+// future synthesis layer can consume this safe structure asynchronously.
+func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	if !limits.DebugTelemetryEnabled {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
+		return
+	}
+	reqID, err := uuid.Parse(r.PathValue("req_id"))
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("req_id must be a UUID"))
+		return
+	}
+	now := time.Now().UTC()
+	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	row, err := s.store.GetRequestTelemetryByAppAndID(r.Context(), sqlc.GetRequestTelemetryByAppAndIDParams{
+		AppID:        stringToPgUUID(app.ID),
+		ID:           pgtype.UUID{Bytes: reqID, Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get debug evidence"))
+		return
+	}
+
+	request := debugTelemetryGetRowToItem(row)
+	spans, truncated := parseDebugEvidenceSpans(row.SpansSummary)
+	var regression *api.DebugRegressionItem
+	regRows, err := s.store.ListActiveRegressionsByApp(r.Context(), sqlc.ListActiveRegressionsByAppParams{
+		AppID: stringToPgUUID(app.ID),
+		Column2: pgtype.Interval{
+			Microseconds: int64(retention / time.Microsecond),
+			Valid:        true,
+		},
+	})
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get debug evidence regressions"))
+		return
+	}
+	deploymentID := uuidFromPg(row.DeploymentID)
+	for i := range regRows {
+		if uuidFromPg(regRows[i].DeploymentID) == deploymentID && regRows[i].Route == row.Route {
+			item := debugRegressionRowToItem(regRows[i])
+			regression = &item
+			break
+		}
+	}
+
+	writeJSON(w, http.StatusOK, api.DebugRequestEvidenceResponse{
+		Request:        request,
+		Regression:     regression,
+		Spans:          spans,
+		SpansTruncated: truncated,
+		Explanation:    buildDebugEvidenceExplanation(request, regression, spans),
+		GeneratedAt:    now.Format(time.RFC3339Nano),
+	})
+}
+
+type debugEvidenceSpan struct {
+	TraceID       string `json:"trace_id"`
+	SpanID        string `json:"span_id"`
+	ParentSpanID  string `json:"parent_span_id"`
+	Name          string `json:"name"`
+	Kind          string `json:"kind"`
+	DurationNanos uint64 `json:"duration_nanos"`
+	Status        string `json:"status"`
+	DBStatement   string `json:"db_statement"`
+}
+
+// parseDebugEvidenceSpans parses the writer's JSON summary, drops sensitive
+// fields, sorts slowest first, and caps the response size. Malformed summaries
+// are treated as absent evidence so a bad future payload cannot break lookup.
+func parseDebugEvidenceSpans(raw []byte) ([]api.DebugTelemetrySpan, bool) {
+	if len(raw) == 0 {
+		return []api.DebugTelemetrySpan{}, false
+	}
+	var input []debugEvidenceSpan
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return []api.DebugTelemetrySpan{}, false
+	}
+	sort.SliceStable(input, func(i, j int) bool {
+		if input[i].DurationNanos != input[j].DurationNanos {
+			return input[i].DurationNanos > input[j].DurationNanos
+		}
+		return input[i].SpanID < input[j].SpanID
+	})
+	truncated := len(input) > debugEvidenceMaxSpans
+	if truncated {
+		input = input[:debugEvidenceMaxSpans]
+	}
+	out := make([]api.DebugTelemetrySpan, 0, len(input))
+	for _, span := range input {
+		out = append(out, api.DebugTelemetrySpan{
+			TraceID:       boundDebugEvidenceText(span.TraceID, debugEvidenceMaxSpanTextBytes),
+			SpanID:        boundDebugEvidenceText(span.SpanID, debugEvidenceMaxSpanTextBytes),
+			ParentSpanID:  boundDebugEvidenceText(span.ParentSpanID, debugEvidenceMaxSpanTextBytes),
+			Name:          boundDebugEvidenceText(span.Name, debugEvidenceMaxSpanTextBytes),
+			Kind:          boundDebugEvidenceText(span.Kind, debugEvidenceMaxSpanTextBytes),
+			DurationNanos: span.DurationNanos,
+			Status:        boundDebugEvidenceText(span.Status, debugEvidenceMaxSpanTextBytes),
+			DBStatement:   sanitizeDebugDBStatement(span.DBStatement),
+		})
+	}
+	return out, truncated
+}
+
+func boundDebugEvidenceText(value string, maxBytes int) string {
+	if len(value) <= maxBytes {
+		return value
+	}
+	value = value[:maxBytes]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
+func sanitizeDebugDBStatement(statement string) string {
+	statement = debugEvidenceQuotedLiteral.ReplaceAllString(statement, "?")
+	statement = debugEvidenceNumericLiteral.ReplaceAllString(statement, "?")
+	statement = strings.Join(strings.Fields(statement), " ")
+	return boundDebugEvidenceText(statement, 512)
+}
+
+func buildDebugEvidenceExplanation(request api.DebugTelemetryRequestItem, regression *api.DebugRegressionItem, spans []api.DebugTelemetrySpan) api.DebugEvidenceExplanation {
+	if regression == nil {
+		return api.DebugEvidenceExplanation{
+			Status:   "unobserved",
+			Headline: "No active regression observation is available for this request.",
+		}
+	}
+	headline := fmt.Sprintf("%s on %s is %sx slower than baseline (p95 %dms vs %dms).", request.Route, regression.DeploymentID, regression.Factor, regression.P95MS, regression.P95BaseMS)
+	var primary *api.DebugTelemetrySpan
+	if len(spans) > 0 {
+		copy := spans[0]
+		primary = &copy
+		headline += fmt.Sprintf(" Slowest span: %s (%dms).", copy.Name, copy.DurationNanos/1_000_000)
+	}
+	return api.DebugEvidenceExplanation{
+		Status:      "regression_detected",
+		Headline:    headline,
+		PrimarySpan: primary,
+	}
 }
 
 // debugTelemetryRowToItem maps a sqlc-generated row to the wire

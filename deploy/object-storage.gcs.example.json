@@ -1,0 +1,19 @@
+{
+  "default_region": "us-east-1",
+  "defaults": { "us-east-1": "gcs-us-east1-v1" },
+  "max_buckets_per_app": 10,
+  "max_upload_bytes": 104857600,
+  "accounting": null,
+  "backends": [
+    {
+      "id": "gcs-us-east1-v1",
+      "driver": "gcs",
+      "region": "us-east-1",
+      "namespace": "replace-with-your-dedicated-gcp-project-id",
+      "gcs_location": "US-EAST1",
+      "gcs_storage_class": "STANDARD",
+      "gcs_service_account": "gregale-storage@replace-with-your-project.iam.gserviceaccount.com",
+      "allowed_origins": ["https://gregale.dev"]
+    }
+  ]
+}

@@ -93,6 +93,8 @@ type Notifier interface {
 //	              by the githubd bridge with the upstream archive URL.
 //	CommitSHA   — upstream commit SHA when known. Empty for the
 //	              apid tarball path; populated by the githubd bridge.
+//	Tag         — normalized GitHub release tag for an immutable tag push.
+//	              Empty for branch, pull-request, and non-GitHub deploys.
 //	Handler     — function handler when Type=function. Empty for
 //	              all other paths.
 //	Source      — the JSON `"source"` payload value (the kind of

@@ -890,7 +890,7 @@ spec-install: ## Install vacuum at the pinned version (idempotent)
 	# `go install` if vacuum isn't on PATH yet. Each line is its own shell
 	# statement so this guard stays bash -e safe.
 	@if command -v vacuum >/dev/null 2>&1; then \
-	  vacuum version 2>&1 | grep -q $(VACUUM_VER) && { echo "vacuum $(VACUUM_VER) installed"; exit 0; }; \
+	  vacuum version 2>&1 | grep -q "$(patsubst v%,%,$(VACUUM_VER))" && { echo "vacuum $(VACUUM_VER) installed"; exit 0; }; \
 	fi; \
 	GOFLAGS='' GOBIN=$(or $(GOBIN),$(shell go env GOPATH)/bin) go install github.com/daveshanley/vacuum@$(VACUUM_VER)
 
@@ -984,7 +984,7 @@ sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Cli
 	@$(GO) run ./cmd/sdk-coverage
 
 .PHONY: object-storage-qualify
-object-storage-qualify: ## Operator-only: run the opt-in live S3-compatible provider qualification
+object-storage-qualify: ## Operator-only: run the opt-in live object-storage provider qualification
 	@FAAS_OBJECT_STORAGE_LIVE_TEST=1 $(GO) test ./pkg/objectstorage -run '^TestLiveProviderQualification$$' -count=1 -v
 
 .PHONY: managed-postgres-qualify

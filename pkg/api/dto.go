@@ -6837,6 +6837,40 @@ type DebugTelemetryListResponse struct {
 	Requests []DebugTelemetryRequestItem `json:"requests"`
 }
 
+// DebugTelemetrySpan is the safe, bounded span drill-down returned by the
+// request evidence endpoint. Attributes and status messages are intentionally
+// omitted; DBStatement is a sanitized fingerprint rather than raw SQL.
+type DebugTelemetrySpan struct {
+	TraceID       string `json:"trace_id"`
+	SpanID        string `json:"span_id"`
+	ParentSpanID  string `json:"parent_span_id,omitempty"`
+	Name          string `json:"name"`
+	Kind          string `json:"kind"`
+	DurationNanos uint64 `json:"duration_nanos"`
+	Status        string `json:"status,omitempty"`
+	DBStatement   string `json:"db_statement,omitempty"`
+}
+
+// DebugEvidenceExplanation is a deterministic explanation for a request's
+// evidence. LLM synthesis can build on this stable, redacted structure later.
+type DebugEvidenceExplanation struct {
+	Status      string              `json:"status"`
+	Headline    string              `json:"headline"`
+	PrimarySpan *DebugTelemetrySpan `json:"primary_span,omitempty"`
+}
+
+// DebugRequestEvidenceResponse combines request metadata, bounded span
+// evidence, a matching active regression observation, and a deterministic
+// explanation for GET /v1/apps/{slug}/debug/requests/{req_id}/evidence.
+type DebugRequestEvidenceResponse struct {
+	Request        DebugTelemetryRequestItem `json:"request"`
+	Regression     *DebugRegressionItem      `json:"regression,omitempty"`
+	Spans          []DebugTelemetrySpan      `json:"spans"`
+	SpansTruncated bool                      `json:"spans_truncated"`
+	Explanation    DebugEvidenceExplanation  `json:"explanation"`
+	GeneratedAt    string                    `json:"generated_at"`
+}
+
 // RequestAnalyticsRoute is one aggregated route/method row returned by
 // GET /v1/apps/{slug}/analytics. Counts include the request_telemetry row's
 // collapsed count, while latency percentiles are weighted by that count.
