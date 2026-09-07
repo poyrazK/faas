@@ -106,6 +106,12 @@ class AppManifest:
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
+    favicon: None | str | Unset = UNSET
+    """Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."""
+    robots_txt: None | str | Unset = UNSET
+    """Persisted per-app robots.txt body; empty uses the platform allow-all default."""
+    head_wakes: bool | Unset = False
+    """Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -206,6 +212,20 @@ class AppManifest:
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
 
+        favicon: None | str | Unset
+        if isinstance(self.favicon, Unset):
+            favicon = UNSET
+        else:
+            favicon = self.favicon
+
+        robots_txt: None | str | Unset
+        if isinstance(self.robots_txt, Unset):
+            robots_txt = UNSET
+        else:
+            robots_txt = self.robots_txt
+
+        head_wakes = self.head_wakes
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -243,6 +263,12 @@ class AppManifest:
             field_dict["max_retries"] = max_retries
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
+        if favicon is not UNSET:
+            field_dict["favicon"] = favicon
+        if robots_txt is not UNSET:
+            field_dict["robots_txt"] = robots_txt
+        if head_wakes is not UNSET:
+            field_dict["head_wakes"] = head_wakes
 
         return field_dict
 
@@ -462,6 +488,26 @@ class AppManifest:
         else:
             service_replicas = ServiceReplicas.from_dict(_service_replicas)
 
+        def _parse_favicon(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        favicon = _parse_favicon(d.pop("favicon", UNSET))
+
+        def _parse_robots_txt(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        robots_txt = _parse_robots_txt(d.pop("robots_txt", UNSET))
+
+        head_wakes = d.pop("head_wakes", UNSET)
+
         app_manifest = cls(
             entrypoint=entrypoint,
             env=env,
@@ -479,6 +525,9 @@ class AppManifest:
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             service_replicas=service_replicas,
+            favicon=favicon,
+            robots_txt=robots_txt,
+            head_wakes=head_wakes,
         )
 
         app_manifest.additional_properties = d

@@ -18,6 +18,10 @@ class UpdateCronRequest:
     schedule: None | str | Unset = UNSET
     path: None | str | Unset = UNSET
     enabled: bool | None | Unset = UNSET
+    timezone: None | str | Unset = UNSET
+    """IANA timezone; an empty value resets to UTC."""
+    skip_if_running: bool | None | Unset = UNSET
+    """Enable or disable overlap skipping for scheduled fires."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +43,18 @@ class UpdateCronRequest:
         else:
             enabled = self.enabled
 
+        timezone: None | str | Unset
+        if isinstance(self.timezone, Unset):
+            timezone = UNSET
+        else:
+            timezone = self.timezone
+
+        skip_if_running: bool | None | Unset
+        if isinstance(self.skip_if_running, Unset):
+            skip_if_running = UNSET
+        else:
+            skip_if_running = self.skip_if_running
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -48,6 +64,10 @@ class UpdateCronRequest:
             field_dict["path"] = path
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
+        if timezone is not UNSET:
+            field_dict["timezone"] = timezone
+        if skip_if_running is not UNSET:
+            field_dict["skip_if_running"] = skip_if_running
 
         return field_dict
 
@@ -82,10 +102,30 @@ class UpdateCronRequest:
 
         enabled = _parse_enabled(d.pop("enabled", UNSET))
 
+        def _parse_timezone(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        timezone = _parse_timezone(d.pop("timezone", UNSET))
+
+        def _parse_skip_if_running(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        skip_if_running = _parse_skip_if_running(d.pop("skip_if_running", UNSET))
+
         update_cron_request = cls(
             schedule=schedule,
             path=path,
             enabled=enabled,
+            timezone=timezone,
+            skip_if_running=skip_if_running,
         )
 
         update_cron_request.additional_properties = d

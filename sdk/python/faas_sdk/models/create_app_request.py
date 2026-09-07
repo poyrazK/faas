@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -66,6 +66,12 @@ class CreateAppRequest:
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
+    favicon: None | str | Unset = UNSET
+    """Create-time base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."""
+    robots_txt: None | str | Unset = UNSET
+    """Create-time per-app robots.txt body; empty uses the platform allow-all default."""
+    head_wakes: bool | Unset = False
+    """Create-time opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -144,6 +150,20 @@ class CreateAppRequest:
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
 
+        favicon: None | str | Unset
+        if isinstance(self.favicon, Unset):
+            favicon = UNSET
+        else:
+            favicon = self.favicon
+
+        robots_txt: None | str | Unset
+        if isinstance(self.robots_txt, Unset):
+            robots_txt = UNSET
+        else:
+            robots_txt = self.robots_txt
+
+        head_wakes = self.head_wakes
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -201,6 +221,12 @@ class CreateAppRequest:
             field_dict["max_retries"] = max_retries
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
+        if favicon is not UNSET:
+            field_dict["favicon"] = favicon
+        if robots_txt is not UNSET:
+            field_dict["robots_txt"] = robots_txt
+        if head_wakes is not UNSET:
+            field_dict["head_wakes"] = head_wakes
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -292,6 +318,26 @@ class CreateAppRequest:
         else:
             service_replicas = ServiceReplicas.from_dict(_service_replicas)
 
+        def _parse_favicon(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        favicon = _parse_favicon(d.pop("favicon", UNSET))
+
+        def _parse_robots_txt(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        robots_txt = _parse_robots_txt(d.pop("robots_txt", UNSET))
+
+        head_wakes = d.pop("head_wakes", UNSET)
+
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
@@ -338,6 +384,9 @@ class CreateAppRequest:
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             service_replicas=service_replicas,
+            favicon=favicon,
+            robots_txt=robots_txt,
+            head_wakes=head_wakes,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,
