@@ -724,9 +724,9 @@ type Limits struct {
 	// in the alert_presets catalog. NOT a per-app cap — instantiating
 	// a preset counts toward the existing AlertRuleLimitPerApp /
 	// AlertRuleLimitPerAccount. Default 0 (no catalog seeded); the
-	// PR-A/B3 seeds insert 10 rows so every plan gets 10. Surfaced via
+	// PR-A/B3/O2 seeds insert 15 rows so every plan gets 15. Surfaced via
 	// the GET /v1/alert-presets response so the CLI / dashboard can
-	// render "8 presets available" without hardcoding the seed
+	// render the current catalog count without hardcoding the seed
 	// count — a future ADR that re-seeds the catalog only has to
 	// bump the seed + the per-plan values; consumers read the
 	// accessor.
@@ -1684,7 +1684,7 @@ var planLimits = map[Plan]Limits{
 		// — the value is informational here for fail-closed accessors.
 		AlertRuleLimitPerApp:              0,
 		AlertRuleLimitPerAccount:          0,
-		AlertPresetCatalogLimitPerAccount: 8,
+		AlertPresetCatalogLimitPerAccount: 15,
 		// Edge rules (ADR-089): Free gets 5/app — the 5 cheap
 		// kinds (route, rewrite, redirect, headers, cors). JWT and
 		// IP stay Hobby+ only (paid-only security primitives).
@@ -2059,7 +2059,7 @@ var planLimits = map[Plan]Limits{
 		// account-wide rules.
 		AlertRuleLimitPerApp:              3,
 		AlertRuleLimitPerAccount:          10,
-		AlertPresetCatalogLimitPerAccount: 8,
+		AlertPresetCatalogLimitPerAccount: 15,
 		// Edge rules (ADR-089): Hobby gets 25/app and unlocks the
 		// JWT + IP kinds.
 		EdgeRulesPerApp:     25,
@@ -2421,7 +2421,7 @@ var planLimits = map[Plan]Limits{
 		// Pro app budget (25 apps vs Hobby's 5).
 		AlertRuleLimitPerApp:              10,
 		AlertRuleLimitPerAccount:          30,
-		AlertPresetCatalogLimitPerAccount: 8,
+		AlertPresetCatalogLimitPerAccount: 15,
 		// Edge rules (ADR-089): Pro gets 100/app with JWT + IP.
 		EdgeRulesPerApp:     100,
 		EdgeRulesJWTAllowed: true,
@@ -2774,7 +2774,7 @@ var planLimits = map[Plan]Limits{
 		// the per-account figure absorbs the fan-out.
 		AlertRuleLimitPerApp:              25,
 		AlertRuleLimitPerAccount:          100,
-		AlertPresetCatalogLimitPerAccount: 8,
+		AlertPresetCatalogLimitPerAccount: 15,
 		// Edge rules (ADR-089): Scale gets 500/app with JWT + IP.
 		EdgeRulesPerApp:     500,
 		EdgeRulesJWTAllowed: true,
@@ -5629,11 +5629,11 @@ func (p Plan) AlertRuleLimitPerAccount() int {
 
 // AlertPresetCatalogLimitPerAccount (issue #1233 / ADR-123) returns
 // the informational count of catalog rows visible to the plan.
-// Currently 8 across every plan — the alert_presets catalog is
+// Currently 15 across every plan — the alert_presets catalog is
 // system-seeded and not plan-tier conditional (the per-row
 // `minimum_plan` column is what gates individual presets; the
 // catalog row count is a single global figure). Surfaced so the
-// CLI / dashboard can render "8 presets available" without
+// CLI / dashboard can render the current catalog count without
 // hardcoding the seed count. Unknown plans fail closed (return 0).
 func (p Plan) AlertPresetCatalogLimitPerAccount() int {
 	l, ok := LimitsFor(p)

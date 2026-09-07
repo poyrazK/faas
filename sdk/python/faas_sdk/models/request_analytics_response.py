@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.request_analytics_response_group_by import (
+    RequestAnalyticsResponseGroupBy,
+    check_request_analytics_response_group_by,
+)
+
 if TYPE_CHECKING:
+    from ..models.request_analytics_group import RequestAnalyticsGroup
     from ..models.request_analytics_route import RequestAnalyticsRoute
 
 
@@ -38,6 +44,12 @@ class RequestAnalyticsResponse:
     p50_ms: int
     p95_ms: int
     p99_ms: int
+    group_by: RequestAnalyticsResponseGroupBy
+    groups: list[RequestAnalyticsGroup]
+    groups_limit: int
+    """Maximum number of top groups before __other__."""
+    groups_truncated: bool
+    """True when __other__ contains groups outside the top-N."""
     routes: list[RequestAnalyticsRoute]
     routes_limit: int
     """Maximum number of route rows returned."""
@@ -72,6 +84,17 @@ class RequestAnalyticsResponse:
 
         p99_ms = self.p99_ms
 
+        group_by: str = self.group_by
+
+        groups = []
+        for groups_item_data in self.groups:
+            groups_item = groups_item_data.to_dict()
+            groups.append(groups_item)
+
+        groups_limit = self.groups_limit
+
+        groups_truncated = self.groups_truncated
+
         routes = []
         for routes_item_data in self.routes:
             routes_item = routes_item_data.to_dict()
@@ -99,6 +122,10 @@ class RequestAnalyticsResponse:
                 "p50_ms": p50_ms,
                 "p95_ms": p95_ms,
                 "p99_ms": p99_ms,
+                "group_by": group_by,
+                "groups": groups,
+                "groups_limit": groups_limit,
+                "groups_truncated": groups_truncated,
                 "routes": routes,
                 "routes_limit": routes_limit,
                 "routes_truncated": routes_truncated,
@@ -110,6 +137,7 @@ class RequestAnalyticsResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.request_analytics_group import RequestAnalyticsGroup
         from ..models.request_analytics_route import RequestAnalyticsRoute
 
         d = dict(src_dict)
@@ -137,6 +165,19 @@ class RequestAnalyticsResponse:
 
         p99_ms = d.pop("p99_ms")
 
+        group_by = check_request_analytics_response_group_by(d.pop("group_by"))
+
+        groups = []
+        _groups = d.pop("groups")
+        for groups_item_data in _groups:
+            groups_item = RequestAnalyticsGroup.from_dict(groups_item_data)
+
+            groups.append(groups_item)
+
+        groups_limit = d.pop("groups_limit")
+
+        groups_truncated = d.pop("groups_truncated")
+
         routes = []
         _routes = d.pop("routes")
         for routes_item_data in _routes:
@@ -163,6 +204,10 @@ class RequestAnalyticsResponse:
             p50_ms=p50_ms,
             p95_ms=p95_ms,
             p99_ms=p99_ms,
+            group_by=group_by,
+            groups=groups,
+            groups_limit=groups_limit,
+            groups_truncated=groups_truncated,
             routes=routes,
             routes_limit=routes_limit,
             routes_truncated=routes_truncated,

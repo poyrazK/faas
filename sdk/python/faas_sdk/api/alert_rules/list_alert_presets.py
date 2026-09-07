@@ -64,9 +64,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[AlertPresetResponse]]:
-    r"""List the 8-row alert-preset catalog.
+    r"""List the alert-preset catalog.
 
-     The catalog is small (8 rows in PR-A) so no pagination.
+     The catalog is intentionally small and bounded, so no pagination.
     Rows whose enabled_in_catalog=false are returned with the
     flag set so the dashboard can render \"coming soon\" — the
     enable endpoint rejects them with 400 alert_preset_disabled.
@@ -95,9 +95,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[AlertPresetResponse] | None:
-    r"""List the 8-row alert-preset catalog.
+    r"""List the alert-preset catalog.
 
-     The catalog is small (8 rows in PR-A) so no pagination.
+     The catalog is intentionally small and bounded, so no pagination.
     Rows whose enabled_in_catalog=false are returned with the
     flag set so the dashboard can render \"coming soon\" — the
     enable endpoint rejects them with 400 alert_preset_disabled.
@@ -122,9 +122,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[AlertPresetResponse]]:
-    r"""List the 8-row alert-preset catalog.
+    r"""List the alert-preset catalog.
 
-     The catalog is small (8 rows in PR-A) so no pagination.
+     The catalog is intentionally small and bounded, so no pagination.
     Rows whose enabled_in_catalog=false are returned with the
     flag set so the dashboard can render \"coming soon\" — the
     enable endpoint rejects them with 400 alert_preset_disabled.
@@ -151,9 +151,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[AlertPresetResponse] | None:
-    r"""List the 8-row alert-preset catalog.
+    r"""List the alert-preset catalog.
 
-     The catalog is small (8 rows in PR-A) so no pagination.
+     The catalog is intentionally small and bounded, so no pagination.
     Rows whose enabled_in_catalog=false are returned with the
     flag set so the dashboard can render \"coming soon\" — the
     enable endpoint rejects them with 400 alert_preset_disabled.

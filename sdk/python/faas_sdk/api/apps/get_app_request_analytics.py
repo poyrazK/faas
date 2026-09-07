@@ -7,6 +7,9 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.get_app_request_analytics_group_by import (
+    GetAppRequestAnalyticsGroupBy,
+)
 from ...models.problem import Problem
 from ...models.request_analytics_response import RequestAnalyticsResponse
 from ...types import UNSET, Response, Unset
@@ -17,6 +20,7 @@ def _get_kwargs(
     *,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
+    group_by: GetAppRequestAnalyticsGroupBy | Unset = "route",
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -27,6 +31,12 @@ def _get_kwargs(
     if not isinstance(until, Unset):
         json_until = until.isoformat()
     params["until"] = json_until
+
+    json_group_by: str | Unset = UNSET
+    if not isinstance(group_by, Unset):
+        json_group_by = group_by
+
+    params["group_by"] = json_group_by
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -97,12 +107,14 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
+    group_by: GetAppRequestAnalyticsGroupBy | Unset = "route",
 ) -> Response[Problem | RequestAnalyticsResponse]:
     """Aggregated historical request analytics.
 
      Returns an aggregate request overview for one app: total requests,
     errors, cold boots, weighted p50/p95/p99 latency, and the top
-    route/method combinations. This is the customer analytics surface;
+    route/method combinations, or a bounded top-N grouping by country,
+    referrer host, client family, or status. This is the customer analytics surface;
     request identifiers and trace payloads remain on the debugger routes.
 
     `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -114,6 +126,9 @@ def sync_detailed(
 
     Counts and percentiles include the recorder's collapsed row `count`,
     so the result represents original requests rather than stored rows.
+    Grouped results contain at most 50 groups plus `__other__`. Only a
+    normalized User-Agent family, hostname-only referrer, and country code
+    are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
     The endpoint is read-only, IDOR-safe, and plan-gated by
     `DebugTelemetryEnabled`.
 
@@ -121,6 +136,7 @@ def sync_detailed(
         slug (str):
         since (str | Unset):  Default: '24h'.
         until (datetime.datetime | Unset):
+        group_by (GetAppRequestAnalyticsGroupBy | Unset):  Default: 'route'.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -134,6 +150,7 @@ def sync_detailed(
         slug=slug,
         since=since,
         until=until,
+        group_by=group_by,
     )
 
     response = client.get_httpx_client().request(
@@ -149,12 +166,14 @@ def sync(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
+    group_by: GetAppRequestAnalyticsGroupBy | Unset = "route",
 ) -> Problem | RequestAnalyticsResponse | None:
     """Aggregated historical request analytics.
 
      Returns an aggregate request overview for one app: total requests,
     errors, cold boots, weighted p50/p95/p99 latency, and the top
-    route/method combinations. This is the customer analytics surface;
+    route/method combinations, or a bounded top-N grouping by country,
+    referrer host, client family, or status. This is the customer analytics surface;
     request identifiers and trace payloads remain on the debugger routes.
 
     `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -166,6 +185,9 @@ def sync(
 
     Counts and percentiles include the recorder's collapsed row `count`,
     so the result represents original requests rather than stored rows.
+    Grouped results contain at most 50 groups plus `__other__`. Only a
+    normalized User-Agent family, hostname-only referrer, and country code
+    are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
     The endpoint is read-only, IDOR-safe, and plan-gated by
     `DebugTelemetryEnabled`.
 
@@ -173,6 +195,7 @@ def sync(
         slug (str):
         since (str | Unset):  Default: '24h'.
         until (datetime.datetime | Unset):
+        group_by (GetAppRequestAnalyticsGroupBy | Unset):  Default: 'route'.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,6 +210,7 @@ def sync(
         client=client,
         since=since,
         until=until,
+        group_by=group_by,
     ).parsed
 
 
@@ -196,12 +220,14 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
+    group_by: GetAppRequestAnalyticsGroupBy | Unset = "route",
 ) -> Response[Problem | RequestAnalyticsResponse]:
     """Aggregated historical request analytics.
 
      Returns an aggregate request overview for one app: total requests,
     errors, cold boots, weighted p50/p95/p99 latency, and the top
-    route/method combinations. This is the customer analytics surface;
+    route/method combinations, or a bounded top-N grouping by country,
+    referrer host, client family, or status. This is the customer analytics surface;
     request identifiers and trace payloads remain on the debugger routes.
 
     `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -213,6 +239,9 @@ async def asyncio_detailed(
 
     Counts and percentiles include the recorder's collapsed row `count`,
     so the result represents original requests rather than stored rows.
+    Grouped results contain at most 50 groups plus `__other__`. Only a
+    normalized User-Agent family, hostname-only referrer, and country code
+    are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
     The endpoint is read-only, IDOR-safe, and plan-gated by
     `DebugTelemetryEnabled`.
 
@@ -220,6 +249,7 @@ async def asyncio_detailed(
         slug (str):
         since (str | Unset):  Default: '24h'.
         until (datetime.datetime | Unset):
+        group_by (GetAppRequestAnalyticsGroupBy | Unset):  Default: 'route'.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -233,6 +263,7 @@ async def asyncio_detailed(
         slug=slug,
         since=since,
         until=until,
+        group_by=group_by,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -246,12 +277,14 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     since: str | Unset = "24h",
     until: datetime.datetime | Unset = UNSET,
+    group_by: GetAppRequestAnalyticsGroupBy | Unset = "route",
 ) -> Problem | RequestAnalyticsResponse | None:
     """Aggregated historical request analytics.
 
      Returns an aggregate request overview for one app: total requests,
     errors, cold boots, weighted p50/p95/p99 latency, and the top
-    route/method combinations. This is the customer analytics surface;
+    route/method combinations, or a bounded top-N grouping by country,
+    referrer host, client family, or status. This is the customer analytics surface;
     request identifiers and trace payloads remain on the debugger routes.
 
     `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -263,6 +296,9 @@ async def asyncio(
 
     Counts and percentiles include the recorder's collapsed row `count`,
     so the result represents original requests rather than stored rows.
+    Grouped results contain at most 50 groups plus `__other__`. Only a
+    normalized User-Agent family, hostname-only referrer, and country code
+    are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
     The endpoint is read-only, IDOR-safe, and plan-gated by
     `DebugTelemetryEnabled`.
 
@@ -270,6 +306,7 @@ async def asyncio(
         slug (str):
         since (str | Unset):  Default: '24h'.
         until (datetime.datetime | Unset):
+        group_by (GetAppRequestAnalyticsGroupBy | Unset):  Default: 'route'.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -285,5 +322,6 @@ async def asyncio(
             client=client,
             since=since,
             until=until,
+            group_by=group_by,
         )
     ).parsed
