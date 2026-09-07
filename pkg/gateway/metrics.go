@@ -114,6 +114,12 @@ type Metrics struct {
 	// per-instance concurrency slot, grouped by plan. Unlike the drain gauge
 	// above, this is the capacity signal for the VM multiplexing gate.
 	vmInflightRequests *prometheus.GaugeVec
+	// Customer runtime log-drain delivery health. `kind` is the closed
+	// {http_json, otlp} vocabulary and `app` is the existing app identity.
+	logDrainDropped   *prometheus.CounterVec
+	logDrainDelivered *prometheus.CounterVec
+	logDrainFailed    *prometheus.CounterVec
+	logDrainActive    *prometheus.GaugeVec
 	// wakeLatencyByNode (PR #4 / ADR-092 §3.5) is the per-node
 	// labelled twin of wakeLatency. The unlabeled histogram stays
 	// untouched — it's the §12 SLA contract and is consumed by
@@ -673,6 +679,22 @@ func NewMetrics() *Metrics {
 			Name: "gateway_requests_total",
 			Help: "Total gateway requests, labelled by app, plan, and HTTP status class.",
 		}, []string{"app", "plan", "code"}),
+		logDrainDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_log_drain_dropped_total",
+			Help: "Runtime log records dropped because a customer log-drain queue was full or stopped.",
+		}, []string{"app"}),
+		logDrainDelivered: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_log_drain_delivered_total",
+			Help: "Runtime log records delivered to customer log-drain endpoints.",
+		}, []string{"app", "kind"}),
+		logDrainFailed: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_log_drain_failed_total",
+			Help: "Runtime log records that exhausted delivery attempts for customer log-drain endpoints.",
+		}, []string{"app", "kind"}),
+		logDrainActive: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_log_drain_active",
+			Help: "Whether a configured customer log-drain worker is active.",
+		}, []string{"app", "kind"}),
 		requestTelemetryDropped: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gateway_request_telemetry_dropped_total",
 			Help: "Original requests represented by telemetry rows dropped after publisher retries or an unavailable apid client.",
@@ -1501,6 +1523,41 @@ func (m *Metrics) SetInflightRequests(daemon, op string, count float64) {
 		return
 	}
 	m.inflightRequests.WithLabelValues(daemon, op).Set(count)
+}
+
+// IncLogDrainDropped records a runtime line that could not enter a bounded
+// customer drain queue. The app label is intentionally the exact same app
+// identity used by gateway_requests_total.
+func (m *Metrics) IncLogDrainDropped(app string) {
+	if m == nil || m.logDrainDropped == nil || app == "" {
+		return
+	}
+	m.logDrainDropped.WithLabelValues(app).Inc()
+}
+
+func (m *Metrics) ObserveLogDrainDelivered(app, kind string) {
+	if m == nil || m.logDrainDelivered == nil || app == "" || kind == "" {
+		return
+	}
+	m.logDrainDelivered.WithLabelValues(app, kind).Inc()
+}
+
+func (m *Metrics) ObserveLogDrainFailed(app, kind string) {
+	if m == nil || m.logDrainFailed == nil || app == "" || kind == "" {
+		return
+	}
+	m.logDrainFailed.WithLabelValues(app, kind).Inc()
+}
+
+func (m *Metrics) SetLogDrainActive(app, kind string, active bool) {
+	if m == nil || m.logDrainActive == nil || app == "" || kind == "" {
+		return
+	}
+	value := float64(0)
+	if active {
+		value = 1
+	}
+	m.logDrainActive.WithLabelValues(app, kind).Set(value)
 }
 
 // ObserveVMInflightDelta updates the plan-level aggregate of requests
