@@ -36,6 +36,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -327,7 +328,10 @@ func (i *TenantSurfaceCertIssuer) RequestCertForWildcardDomain(ctx context.Conte
 	}
 	d, err := i.store.DomainByName(ctx, domain)
 	if err != nil {
-		return nil
+		if errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("gateway: lookup wildcard domain %q: %w", domain, err)
 	}
 	if !d.Verified() {
 		return nil

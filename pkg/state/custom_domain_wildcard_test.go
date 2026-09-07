@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -72,7 +73,7 @@ func TestMemStoreWildcardDomainForHostMostSpecific(t *testing.T) {
 	if err != nil || got.Domain != "*.b.example.com" {
 		t.Fatalf("lookup = %+v, %v; want most-specific wildcard", got, err)
 	}
-	if _, err := m.WildcardDomainForHost(ctx, "example.com"); err != ErrNotFound {
+	if _, err := m.WildcardDomainForHost(ctx, "example.com"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("apex lookup err = %v, want ErrNotFound", err)
 	}
 }
