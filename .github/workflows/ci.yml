@@ -1447,6 +1447,9 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_SKIP_PG_TESTS: ""
+      # Clone each test database from a once-migrated template instead of
+      # letting apid replay every migration per test (pkg/db/pgtest).
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
@@ -1496,6 +1499,9 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_SKIP_PG_TESTS: ""
+      # Clone each test database from a once-migrated template instead of
+      # letting apid replay every migration per test (pkg/db/pgtest).
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
@@ -1545,6 +1551,9 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_SKIP_PG_TESTS: ""
+      # Clone each test database from a once-migrated template instead of
+      # letting apid replay every migration per test (pkg/db/pgtest).
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
@@ -1594,6 +1603,9 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_SKIP_PG_TESTS: ""
+      # Clone each test database from a once-migrated template instead of
+      # letting apid replay every migration per test (pkg/db/pgtest).
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |

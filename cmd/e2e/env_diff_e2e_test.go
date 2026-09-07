@@ -54,7 +54,7 @@ import (
 // assertion leaves state (rows in app_secrets / app_envs) the next
 // assertion depends on.
 func TestEnvDiffSurfacePg(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

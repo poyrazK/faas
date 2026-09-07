@@ -99,7 +99,7 @@ func TestSec11_SeccompFilterEnforced_CrossProcess(t *testing.T) {
 		t.Skipf("vmmd socket not at %s: %v (harness must have started vmmd)", vmmdSock, err)
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

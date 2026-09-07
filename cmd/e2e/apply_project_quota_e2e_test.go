@@ -127,7 +127,7 @@ func applyProjectExpectProblem(t *testing.T, h *e2etest.Harness, key, slug strin
 // (DeployedApps=1) with a 2-workload repo. Status 403, code
 // plan_limit_apps, zero rows created.
 func TestApplyProject_Quota_FreePlanOverCap(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -160,7 +160,7 @@ func TestApplyProject_Quota_FreePlanOverCap(t *testing.T) {
 // (DeployedApps=5) accepts a 2-workload repo and creates
 // 2 apps + 2 builds.
 func TestApplyProject_Quota_HobbyPlanUnderCap(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -182,7 +182,7 @@ func TestApplyProject_Quota_HobbyPlanUnderCap(t *testing.T) {
 // TestApplyProject_Quota_HobbyPlanOverCap pins Hobby (5 apps)
 // with a 6-workload repo. Status 403, code plan_limit_apps.
 func TestApplyProject_Quota_HobbyPlanOverCap(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -199,7 +199,7 @@ func TestApplyProject_Quota_HobbyPlanOverCap(t *testing.T) {
 // TestApplyProject_Quota_ProPlanUnderCap pins Pro (25 apps) +
 // 4-workload repo accepted.
 func TestApplyProject_Quota_ProPlanUnderCap(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -218,7 +218,7 @@ func TestApplyProject_Quota_ProPlanUnderCap(t *testing.T) {
 // TestApplyProject_Quota_ScalePlanUnderCap pins Scale (100 apps)
 // + 6-workload repo accepted.
 func TestApplyProject_Quota_ScalePlanUnderCap(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -238,7 +238,7 @@ func TestApplyProject_Quota_ScalePlanUnderCap(t *testing.T) {
 // (CronLimitPerAccount=0). A repo with a cron workload returns
 // 402 plan_crons_not_allowed; zero rows created.
 func TestApplyProject_Quota_CronsNotAllowed(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -280,7 +280,7 @@ func TestApplyProject_Quota_CronsNotAllowed(t *testing.T) {
 // tripping the quota gate would leave orphan build rows that
 // builderd might claim.
 func TestApplyProject_Quota_OverCapZeroBuilds(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -314,7 +314,7 @@ func TestApplyProject_Quota_OverCapZeroBuilds(t *testing.T) {
 // values + a docs URL. The dashboard renders these; a missing
 // field would render "Apply failed (unknown limit)".
 func TestApplyProject_Quota_ProblemCarriesLimitAndObserved(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -380,7 +380,7 @@ func problemBodyContains(haystack []byte, needle string) bool {
 // TestApplyProject_Quota_FreeAcceptedAsOneApp pins that Free
 // (DeployedApps=1) accepts a 1-workload repo. The boundary case.
 func TestApplyProject_Quota_FreeAcceptedAsOneApp(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -407,7 +407,7 @@ func TestApplyProject_Quota_FreeAcceptedAsOneApp(t *testing.T) {
 // apps gate first (DeployedApps=5 < 6 workloads) before the
 // cron quota ever fires; Scale sidesteps that ordering.
 func TestApplyProject_Quota_ScaleCronsUnderCap(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

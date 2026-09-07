@@ -57,7 +57,7 @@ import (
 // quota_e2e_test.go / secrets_e2e_test.go.
 func openSchemaPG(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		t.Skip("pgtest.Open skipped (no DATABASE_URL)")
 	}

@@ -26,7 +26,7 @@ import (
 )
 
 func TestE2E_PersonalOrgBackfill_BackfillsRawAccounts(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	store := state.NewPgStore(pool)
 
@@ -121,7 +121,7 @@ func TestE2E_PersonalOrgBackfill_BackfillsRawAccounts(t *testing.T) {
 }
 
 func TestE2E_PersonalOrgBackfill_ReplaysAreIdempotent(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	store := state.NewPgStore(pool)
 
@@ -215,7 +215,7 @@ func TestE2E_PersonalOrgBackfill_HelperRoundTrip(t *testing.T) {
 	// SeedAccount path. Asserts OrgByPersonalAccount returns the
 	// freshly minted personal org and that the owner membership
 	// row exists.
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	// Pre-migrate to the harness's target (e2etest.Start polls for
 	// it; if we let the apid subprocess do all the migration work,
 	// the harness's WaitForMigration times out because Start()

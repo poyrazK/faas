@@ -31,7 +31,7 @@ import (
 )
 
 func TestEdgeRulesThrottle_E2E_429Contract(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

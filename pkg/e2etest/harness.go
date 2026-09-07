@@ -57,6 +57,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -175,9 +176,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	if dbURL == "" {
 		dbURL = "postgres:///faas?host=/run/postgresql&user=faas"
 	}
-	if schema := pgtest.SchemaOf(pool); schema != "" {
-		dbURL = injectSearchPath(dbURL, schema)
-	}
+	dbURL = daemonDSN(dbURL, pool)
 
 	// Block until the schema is at the current migration target. The
 	// meterd subprocess (issue #52) reads accounts on its first tick and
@@ -686,9 +685,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	if dbURL == "" {
 		dbURL = "postgres:///faas?host=/run/postgresql&user=faas"
 	}
-	if schema := pgtest.SchemaOf(pool); schema != "" {
-		dbURL = injectSearchPath(dbURL, schema)
-	}
+	dbURL = daemonDSN(dbURL, pool)
 
 	// Gate every daemon launch on the schema arriving at the current
 	// migration target. Without this, meterd's first tick races the
@@ -1362,6 +1359,49 @@ func (h *Harness) VmmdLogs() string {
 // injectSearchPath adds (or replaces) the search_path query parameter on a
 // pgx DSN. The test's pool uses <schema>,public — match that so the daemon
 // subprocess reads the same tables the test wrote to.
+// daemonDSN derives the DSN the daemon subprocesses must use so their
+// reads and writes land where the test seeded rows. pgtest isolates each
+// test one of two ways, and the daemons have to follow whichever is in use:
+//
+//   - pgtest.Open: a per-test schema on the shared database, selected via
+//     search_path — inject that schema into the DSN.
+//   - pgtest.OpenMigrated with FAAS_PGTEST_TEMPLATE_DATABASE=1: a per-test
+//     database cloned from a once-migrated template — point the DSN at the
+//     clone. This is what lets the e2e shards skip replaying every
+//     migration inside apid on each test.
+func daemonDSN(base string, pool *pgxpool.Pool) string {
+	if schema := pgtest.SchemaOf(pool); schema != "" {
+		return injectSearchPath(base, schema)
+	}
+	if db := pool.Config().ConnConfig.Database; db != "" {
+		return injectDatabase(base, db)
+	}
+	return base
+}
+
+// injectDatabase rewrites the database name in a DSN. URL-form DSNs
+// (postgres://user@host/db?opts, including the socket form
+// postgres:///db?host=/run/postgresql) carry it in the path; keyword-form
+// DSNs carry it as dbname=.
+func injectDatabase(dsn, db string) string {
+	if strings.Contains(dsn, "://") {
+		u, err := url.Parse(dsn)
+		if err == nil {
+			u.Path = "/" + db
+			return u.String()
+		}
+	}
+	const key = "dbname="
+	if i := strings.Index(dsn, key); i >= 0 {
+		end := strings.IndexByte(dsn[i+len(key):], ' ')
+		if end < 0 {
+			return dsn[:i] + key + db
+		}
+		return dsn[:i] + key + db + dsn[i+len(key)+end:]
+	}
+	return dsn + " " + key + db
+}
+
 func injectSearchPath(dsn, schema string) string {
 	const key = "search_path="
 	if i := strings.Index(dsn, key); i >= 0 {
