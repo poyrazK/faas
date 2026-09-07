@@ -483,6 +483,75 @@ type AppInstancesData struct {
 	ErrorMessage string
 }
 
+// JobsQueuesData is the dashboard-facing payload for the account-level jobs
+// and queues page. Jobs and runs are account-scoped; queue sections are
+// app-scoped and include bounded pending/dead-letter samples.
+type JobsQueuesData struct {
+	Jobs         []JobPageItem
+	Runs         []JobRunPageItem
+	Queues       []QueuePageItem
+	SelectedApp  string
+	ActionCSRF   string
+	Action       string
+	ErrorMessage string
+}
+
+// JobPageItem is the safe, read-only projection of one run-to-completion job.
+type JobPageItem struct {
+	ID             string
+	Name           string
+	Kind           string
+	ImageRef       string
+	Status         string
+	RAMMB          int
+	TaskTimeoutSec int
+	MaxParallelism int
+	RetryMax       int
+	CreatedAt      string
+	UpdatedAt      string
+}
+
+// JobRunPageItem is the compact run projection shown on the jobs page.
+type JobRunPageItem struct {
+	ID              string
+	JobID           string
+	JobName         string
+	TriggerKind     string
+	AggregateStatus string
+	Tasks           int
+	TasksSucceeded  int
+	TasksFailed     int
+	TasksCancelled  int
+	TasksRunning    int
+	DeadLetterCount int
+	StartedAt       string
+	FinishedAt      string
+	CreatedAt       string
+}
+
+// QueuePageItem combines queue counters with bounded samples for one app.
+type QueuePageItem struct {
+	App             AppListItem
+	Depth           int
+	InFlight        int
+	PlanCap         int
+	OldestPendingAt string
+	Pending         []QueueMessageItem
+	DeadLetters     []QueueMessageItem
+}
+
+// QueueMessageItem is a redacted/truncated dashboard projection of an
+// invocation. Payloads are bounded before they reach the template.
+type QueueMessageItem struct {
+	ID         string
+	CreatedAt  string
+	FailedAt   string
+	Attempts   int
+	Payload    string
+	LastError  string
+	Replayable bool
+}
+
 // InstancePageItem is the safe dashboard projection of one instance. It
 // deliberately carries no guest credentials or namespace internals; node,
 // wake method, liveness restart count, and parked reason are the customer
