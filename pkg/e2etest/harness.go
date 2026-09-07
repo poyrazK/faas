@@ -249,6 +249,14 @@ kernel_path = %q
 		waitUnix(t, sockPath, 10*time.Second)
 	}
 
+	// Start the gateway before imaged when the reference-node acceptance opts
+	// into the public API-hosting smoke. imaged needs the gateway origin before
+	// it handles snapshot_written; the default path remains unchanged because
+	// the smoke is opt-in for metal acceptance only.
+	if which&Gatewayd != 0 {
+		startGatewayd(t, h, bin, dbURL, nil)
+	}
+
 	if which&Imaged != 0 {
 		// guest/init lives at repo root in dev; tests don't run a real guest,
 		// but imaged still wants the path. Use a placeholder file so its
@@ -285,11 +293,11 @@ kernel_path = %q
 		if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
 			env = append(env, "FAAS_TEST_DEPLOY_BASE_REF="+dbr)
 		}
+		if os.Getenv("FAAS_E2E_API_HOSTING_SMOKE") == "1" && h.GatewayURL != "" {
+			env = append(env, "FAAS_API_HOSTING_SMOKE_URL="+h.GatewayURL)
+			env = append(env, "FAAS_APPS_DOMAIN="+testDomain)
+		}
 		h.procs = append(h.procs, startProc(t, bin, "imaged", env))
-	}
-
-	if which&Gatewayd != 0 {
-		startGatewayd(t, h, bin, dbURL, nil)
 	}
 
 	if which&Meterd != 0 {

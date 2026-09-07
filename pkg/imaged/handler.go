@@ -2531,38 +2531,50 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 		}
 	}
 
-	// The public smoke is the last readiness gate. Persist its evidence before
-	// flipping the deployment live so a live row always has an auditable receipt.
-	if h.hostingSmoke != nil || func() bool { _, ok := h.store.(state.DeploymentHostingReceiptStore); return ok }() {
-		app, appErr := h.store.AppByID(ctx, dep.AppID)
+	// The public smoke needs the deployment to be routable, so mark it live
+	// before invoking the verifier. A live row without evidence is still not a
+	// successful deployment: smoke or receipt failures immediately transition
+	// it to failed and retain the failed receipt when possible.
+	var hostingApp state.App
+	hostingReceiptEnabled := h.hostingSmoke != nil
+	if _, ok := h.store.(state.DeploymentHostingReceiptStore); ok {
+		hostingReceiptEnabled = true
+	}
+	if hostingReceiptEnabled {
+		var appErr error
+		hostingApp, appErr = h.store.AppByID(ctx, dep.AppID)
 		if appErr != nil {
 			return fmt.Errorf("imaged: load app for hosting receipt: %w", appErr)
-		}
-		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: app.Manifest.Healthz, ErrorCode: "smoke_not_configured"}
-		if smoke.Path == "" {
-			smoke.Path = defaultHealthzPath
-		}
-		if h.hostingSmoke != nil {
-			var smokeErr error
-			smoke, smokeErr = h.hostingSmoke(ctx, app, dep)
-			if smokeErr != nil {
-				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
-				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
-				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
-			}
-			if smokeErr = hostingSmokeFailure(smoke); smokeErr != nil {
-				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
-				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
-				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
-			}
-		}
-		if err := h.persistHostingReceipt(ctx, app, dep, smoke); err != nil {
-			return fmt.Errorf("imaged: hosting receipt: %w", err)
 		}
 	}
 
 	if err := h.store.MarkDeploymentLive(ctx, dep.ID); err != nil {
 		return fmt.Errorf("imaged: mark live: %w", err)
+	}
+
+	if hostingReceiptEnabled {
+		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: hostingApp.Manifest.Healthz, ErrorCode: "smoke_not_configured"}
+		if smoke.Path == "" {
+			smoke.Path = defaultHealthzPath
+		}
+		if h.hostingSmoke != nil {
+			var smokeErr error
+			smoke, smokeErr = h.hostingSmoke(ctx, hostingApp, dep)
+			if smokeErr == nil {
+				smokeErr = hostingSmokeFailure(smoke)
+			}
+			if smokeErr != nil {
+				_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
+				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
+				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
+				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
+			}
+		}
+		if err := h.persistHostingReceipt(ctx, hostingApp, dep, smoke); err != nil {
+			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "hosting receipt persistence failed: "+err.Error())
+			_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "hosting receipt persistence failed")
+			return fmt.Errorf("imaged: hosting receipt: %w", err)
+		}
 	}
 	// ADR-117: close the readiness stage. snapshot_prepare closed
 	// at handler.go:1355 / 2334; readiness opened when vmmd stamped
