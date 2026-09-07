@@ -101,6 +101,12 @@ func TestLogger_JSONToStderr(t *testing.T) {
 	os.Stderr = w
 	t.Cleanup(func() { os.Stderr = orig })
 
+	// This test asserts an Info record reaches stderr, so it must not
+	// inherit a Warn level left behind by a sibling test.
+	prevLevel := wire.LogLevelForTest()
+	t.Cleanup(func() { wire.SetLogLevelForTest(prevLevel) })
+	wire.SetLogLevelForTest(slog.LevelInfo)
+
 	log := wire.Logger()
 	if log == nil {
 		t.Fatal("Logger returned nil")
@@ -208,6 +214,10 @@ func TestLogger_FiltersByLevel(t *testing.T) {
 	os.Stderr = w
 	t.Cleanup(func() { os.Stderr = orig })
 
+	// The leveler is process-wide; restore it or every later test that
+	// expects Info to be emitted fails under -shuffle.
+	prevLevel := wire.LogLevelForTest()
+	t.Cleanup(func() { wire.SetLogLevelForTest(prevLevel) })
 	wire.SetLogLevelForTest(slog.LevelWarn)
 	log := wire.Logger()
 	log.Debug("debug should be filtered")
@@ -256,6 +266,8 @@ func TestLogger_LevelChangeAppliesToExistingLogger(t *testing.T) {
 	os.Stderr = w
 	t.Cleanup(func() { os.Stderr = orig })
 
+	prevLevel := wire.LogLevelForTest()
+	t.Cleanup(func() { wire.SetLogLevelForTest(prevLevel) })
 	wire.SetLogLevelForTest(slog.LevelWarn)
 	log := wire.Logger()
 	log.Debug("pre-change-debug-filtered")
