@@ -2451,6 +2451,14 @@ func (s *server) handler() http.Handler {
 	// applying the same app-scoped park/wake/restart transitions as the
 	// v1 endpoints.
 	mux.Handle("POST /dashboard/apps/{slug}/instances/{action}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardInstanceAction))))
+	// G4 / issue #1397 — edge-rule forms. Each adapter verifies the
+	// named dashboard CSRF envelope and delegates to the existing JSON
+	// edge-rule handler, preserving ownership, validation, quotas, and
+	// RFC7807 problem responses.
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateEdgeRule))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/toggle", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardToggleEdgeRule))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEdgeRule))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/security-headers", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSecurityHeaders))))
 	// G7 / issue #1397 — queue dead-letter replay. The handler verifies
 	// the dashboard's named CSRF envelope before delegating to the same
 	// account-scoped store transition as the JSON API endpoint.
