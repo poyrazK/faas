@@ -1633,6 +1633,17 @@ create instance transitions or `usage_minutes` rows.
 |---|---|---|---|
 | `gateway_edge_answered_total` | `kind` | `pkg/gateway/metrics.go::ObserveEdgeAnswered` | Counter of gateway answers that bypass an app instance. `kind` is closed to `favicon`, `robots`, and `head`; edge answers are telemetry-only and never billed as resident compute. |
 
+### 12.7 CORS preflight edge answers (issue #1398 M4)
+
+When a matching `kind=cors` rule (including a resolved CORS preset) receives
+an `OPTIONS` request, the gateway returns `204` with the resolved
+`Access-Control-Allow-*` headers before auth, limiting, or wake work. The
+request therefore does not create an instance transition or resident usage.
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `gateway_cors_preflight_edge_total` | `app` | `pkg/gateway/metrics.go::ObserveCORSPreflightEdge` | Counter of matching CORS preflights answered by the gateway without waking the resolved app. |
+
 ---
 
 ## 13. RAM budget ledger (enforced as systemd slices)

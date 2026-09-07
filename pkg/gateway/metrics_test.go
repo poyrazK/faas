@@ -141,6 +141,22 @@ func TestMetricsPreInstantiateAppBounded(t *testing.T) {
 	}
 }
 
+func TestMetricsCORSPreflightEdgeExposition(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveCORSPreflightEdge("app-1")
+
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	if !strings.Contains(rec.Body.String(), `gateway_cors_preflight_edge_total{app="app-1"} 1`) {
+		t.Fatalf("missing CORS preflight metric:\n%s", rec.Body.String())
+	}
+}
+
+func TestMetricsCORSPreflightEdgeNilSafe(t *testing.T) {
+	var m *Metrics
+	m.ObserveCORSPreflightEdge("app-1")
+}
+
 // TestObserveRequestDurationNilSafe keeps the histogram usable from
 // nil-Metrics tests.
 func TestObserveRequestDurationNilSafe(t *testing.T) {

@@ -2256,9 +2256,15 @@ func TestApplyEdgeRuleCORS_Preflight_EmitsApplySuccess(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("rec.Code = %d; want 204", rec.Code)
 	}
+	if got := atomic.LoadInt32(b.Admits()); got != 0 {
+		t.Errorf("CORS preflight admits = %d; want 0", got)
+	}
 	body := bodyForCounter(t, h.metrics)
 	if !strings.Contains(body, `gateway_edge_rule_apply_total{kind="cors",result="success"} 1`) {
 		t.Errorf("apply_total{cors,success} != 1; body:\n%s", body)
+	}
+	if !strings.Contains(body, `gateway_cors_preflight_edge_total{app="app-1"} 1`) {
+		t.Errorf("cors_preflight_edge_total{app-1} != 1; body:\n%s", body)
 	}
 }
 
@@ -2326,6 +2332,9 @@ func TestApplyEdgeRuleCORS_NonPreflight_EmitsApplySuccess(t *testing.T) {
 	}
 	if !strings.Contains(body, `gateway_edge_rule_match_total{kind="cors",outcome="match"} 1`) {
 		t.Errorf("match_total{cors,match} != 1; body:\n%s", body)
+	}
+	if strings.Contains(body, `gateway_cors_preflight_edge_total{app="app-1"} `) {
+		t.Errorf("non-preflight request incremented cors_preflight_edge_total; body:\n%s", body)
 	}
 }
 
