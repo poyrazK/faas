@@ -119,16 +119,32 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          # cache: true + cache-dependency-path is the canonical Go Actions
-          # warm-cache idiom — shaves ~60s off every job on a non-first run.
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
 
       # golangci-lint replaces bare gofmt + go vet with a curated set of
       # checks. v2.4.0+ is built with Go 1.25 and supports a go.mod
       # targeting Go 1.25 (golangci-lint v1.x is built with Go 1.23 and
       # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
       # action v8 requires golangci-lint >= v2.1.0; v9 is current.
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
         with:
@@ -138,7 +154,9 @@ jobs:
           # observed cold-cache runtime so timing is not reported as a lint
           # failure while the job-level timeout remains bounded.
           args: --timeout=8m
-          # Cache is built into the action; default cache key works.
+          # The action's own cache is keyed per 7-day interval and never re-saved
+          # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
+          skip-cache: true
 
       # Re-runs the same checks golangci-lint covers as a fallback, in case
       # the lint step is skipped (e.g. workflow_dispatch with no Go file
@@ -348,6 +366,17 @@ jobs:
         run: make proto-check
 
 # Race-enabled unit test suite + pgx-backed Store integration tests.
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
   # Owns the 4:20 long pole — runs in parallel with `test` and `spec-check`
   # so the wall time is bounded by the slowest of the three (≈ 4:40).
   # Postgres service + DATABASE_URL mirror the previous combined job.
@@ -401,9 +430,26 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
 
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pg-1-${{ runner.os }}-
       - name: unit tests (pg shard 1)
         run: |
           mkdir -p coverage
@@ -420,6 +466,16 @@ jobs:
           flags: unittests
           use_oidc: true
           fail_ci_if_error: true
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Shard 2 (Postgres-heavy B) is split into two jobs because pkg/state and
   # cmd/gregale are independent race-enabled hot spots. Both jobs keep their
@@ -485,9 +541,26 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
 
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pg-2-${{ matrix.id }}-${{ runner.os }}-
       - name: unit tests (pg shard 2${{ matrix.id }})
         run: |
           mkdir -p coverage
@@ -514,6 +587,16 @@ jobs:
           flags: unittests
           use_oidc: true
           fail_ci_if_error: true
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
@@ -528,24 +611,29 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          # The Go build + test-result cache for the pure shards is managed
-          # by the restore/save steps below. setup-go keys its cache on
-          # go.sum and only saves on a key miss, so the snapshot would go
           # stale between dependency bumps; here every push to main saves
           # a fresh one and pull requests restore the newest.
-          cache: false
+          cache: false  # managed by the restore/save steps below
 
+
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
         uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          key: go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
             go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pure-1-${{ runner.os }}-
-
       - name: unit tests (pure Go shard 1)
         env:
           # Pull requests let Go's test cache skip packages whose transitive
@@ -561,14 +649,6 @@ jobs:
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard3.out -covermode=atomic $PKGS
 
-      - name: save Go build + test cache
-        if: github.event_name == 'push'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
 
       - name: coverage floor (ship-blocking packages)
         # Validates pkg/fcvm, pkg/sched, pkg/gateway ≥ floors defined in
@@ -584,6 +664,16 @@ jobs:
           flags: unittests
           use_oidc: true
           fail_ci_if_error: true
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Shard 4 (pure Go light): all remaining packages. No Postgres needed.
   unit-tests-pure-2:
@@ -598,21 +688,27 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          # See pure shard 1: cache managed by restore/save below so the
-          # test-result cache refreshes on every push to main.
-          cache: false
+          cache: false  # managed by the restore/save steps below
 
+
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
         uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
             go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pure-2-${{ runner.os }}-
-
       - name: unit tests (pure Go shard 2)
         env:
           # See pure shard 1: PRs use Go's test cache; main re-runs + shuffles.
@@ -622,14 +718,6 @@ jobs:
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
-      - name: save Go build + test cache
-        if: github.event_name == 'push'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
 
       - name: coverage floor (ship-blocking packages)
         # Validates pkg/vmmdgrpc, pkg/vmmdmount ≥ floors defined in
@@ -652,6 +740,16 @@ jobs:
           flags: unittests
           use_oidc: true
           fail_ci_if_error: true
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   checks:
     # Nine gates that each finished in well under two minutes used to run
@@ -676,9 +774,26 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-checks-${{ runner.os }}-
       - name: actionlint
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
         with:
@@ -961,6 +1076,16 @@ jobs:
           sed "s#/etc/prometheus#$rules_dir#g" \
             "$RUNNER_TEMP/prometheus.yml" > "$RUNNER_TEMP/prometheus-checked.yml"
           promtool check config "$RUNNER_TEMP/prometheus-checked.yml"
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # fakeapid fixture (issue #266, PR 4). The cross-language smoke
   # fixture for the public SDKs — a stdlib-only Go binary that
@@ -1101,8 +1226,25 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-load-${{ runner.os }}-
       - name: download Go modules with retry
         env:
           GOPROXY: https://proxy.golang.org,direct
@@ -1123,6 +1265,16 @@ jobs:
           done
       - name: make test-load
         run: make test-load
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   metal:
     # Manual trigger from the Actions tab. Marked workflow_dispatch so the
@@ -1204,8 +1356,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
       # PR-P4 — assert deploy/scripts/verify-secrets.sh is shaped
       # correctly (executable, bash-parseable, presence of the
       # Paddle + Stripe blocks added by Streams A + B). The
@@ -1215,6 +1366,24 @@ jobs:
       # SECRETS_FILE override (an empty fixture that the script
       # must not reject as malformed). see cmd/gregale/_test for
       # the equivalent CLI flag parse-tripwire pattern.
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-migrations-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-migrations-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-migrations-${{ runner.os }}-
       - name: verify-secrets.sh static check
         run: |
           set -euo pipefail
@@ -1264,6 +1433,16 @@ jobs:
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
         run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-migrations-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
@@ -1311,14 +1490,41 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
       - name: install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
       - name: e2e tests (shard 1 — 18 tests)
         run: go test -race -count=1 -timeout=15m -run '^Test(C|D|Docs|Domain|E2E_[A-E])' ./cmd/e2e/...
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   e2e-shard2:
     name: e2e (shard 2 — 15 tests)
@@ -1363,8 +1569,25 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
       - name: install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -1415,8 +1638,25 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
       - name: install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -1467,8 +1707,25 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
       - name: install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
