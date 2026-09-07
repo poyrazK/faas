@@ -65,7 +65,8 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	defer func() { report.CompletedAt = time.Now().UTC() }()
 
 	if parent == nil {
-		parent = context.Background()
+		report.Checks = append(report.Checks, QualificationCheck{Name: "context", Error: "invalid"})
+		return report, fmt.Errorf("%w: context", ErrQualificationFailed)
 	}
 	timeout := options.Timeout
 	if timeout <= 0 {
