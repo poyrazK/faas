@@ -175,6 +175,10 @@ type MemStore struct {
 	crons     map[string]Cron
 	triggers  map[string]sqlc.Trigger
 	records   map[string]sqlc.TriggerRecord
+	// triggerDeadLetters mirrors trigger_dead_letter rows. The production
+	// table is append-only; MemStore keeps insertion order for deterministic
+	// dashboard and handler tests.
+	triggerDeadLetters []sqlc.TriggerDeadLetter
 	// jobs / jobRuns / jobTasks mirror the ADR-099 / issue #1184
 	// Workstream A tables (migrations/00255-00257, 00571-00578) for
 	// handler / dispatch-tick tests. Keyed by id / run_id. The task
@@ -386,6 +390,9 @@ type MemStore struct {
 	// deploymentIDs are UUIDs).
 	deploymentSidecarLayers map[string]DeploymentSidecarLayer
 	snapshots               []Snapshot
+	// snapshotStorage mirrors snapshot_storage_daily. The key is the
+	// (account, app, UTC day) primary-key tuple used by Postgres.
+	snapshotStorage map[string]StorageUsage
 	// snapshotReplicas mirrors snapshot_replicas (issue #1054). The
 	// production worker uses the table as a durable cache-warming queue;
 	// MemStore keeps the same state machine for scheduler and worker tests.
@@ -747,11 +754,12 @@ func NewMemStore() *MemStore {
 		// (ADR-124 follow-up #3). Both sides are non-overlapping
 		// additive fields; column alignment kept (visual width per
 		// the table below) so the diff against `gofmt -s` stays clean.
-		mirrorRules:   map[string]MirrorRule{},
-		mirrorResults: map[string]MirrorInvocationResult{},
-		domains:       map[string]CustomDomain{},
-		doctorObs:     map[string]DomainDoctorObservation{},
-		crons:         map[string]Cron{},
+		mirrorRules:        map[string]MirrorRule{},
+		mirrorResults:      map[string]MirrorInvocationResult{},
+		domains:            map[string]CustomDomain{},
+		doctorObs:          map[string]DomainDoctorObservation{},
+		crons:              map[string]Cron{},
+		triggerDeadLetters: []sqlc.TriggerDeadLetter{},
 		// ADR-099 / issue #1184 Workstream A — job store maps.
 		// Empty until the first JobCreate / JobRunCreate; the
 		// per-account count in JobCreateIfUnderQuota walks m.jobs.
@@ -815,6 +823,7 @@ func NewMemStore() *MemStore {
 		// semantics).
 		deploymentSidecarLayers: map[string]DeploymentSidecarLayer{},
 		snapshots:               []Snapshot{},
+		snapshotStorage:         map[string]StorageUsage{},
 		snapshotReplicas:        map[snapshotReplicaKey]snapshotReplicaRow{},
 		snapshotOrigins:         map[string]snapshotOriginRow{},
 		events:                  []Event{},
@@ -8074,7 +8083,23 @@ func (m *MemStore) MarkTriggerRecordDeadLetter(_ context.Context, id, _ string) 
 	return nil
 }
 
-func (m *MemStore) InsertTriggerDeadLetter(_ context.Context, _, _, _, _ string, _ []byte) error {
+func (m *MemStore) InsertTriggerDeadLetter(_ context.Context, recordID, triggerID, reason, routedTo string, detail []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.triggerDeadLetters == nil {
+		m.triggerDeadLetters = []sqlc.TriggerDeadLetter{}
+	}
+	if detail == nil {
+		detail = []byte("{}")
+	}
+	m.triggerDeadLetters = append(m.triggerDeadLetters, sqlc.TriggerDeadLetter{
+		RecordID:  pgtype.UUID{Bytes: parseMemUUIDString(recordID), Valid: true},
+		TriggerID: pgtype.UUID{Bytes: parseMemUUIDString(triggerID), Valid: true},
+		Reason:    reason,
+		RoutedTo:  routedTo,
+		Detail:    append([]byte(nil), detail...),
+		CreatedAt: pgtypeFromTime(time.Now().UTC()),
+	})
 	return nil
 }
 
@@ -8095,8 +8120,23 @@ func (m *MemStore) TriggerRecordIDByItemIdentifier(_ context.Context, triggerID,
 	return "", nil
 }
 
-func (m *MemStore) ListTriggerDeadLetter(_ context.Context, _ string, _ int32) ([]sqlc.TriggerDeadLetter, error) {
-	return nil, nil
+func (m *MemStore) ListTriggerDeadLetter(_ context.Context, triggerID string, limit int32) ([]sqlc.TriggerDeadLetter, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	want := parseMemUUIDString(triggerID)
+	var out []sqlc.TriggerDeadLetter
+	for i := len(m.triggerDeadLetters) - 1; i >= 0 && int32(len(out)) < limit; i-- {
+		row := m.triggerDeadLetters[i]
+		if !row.TriggerID.Valid || row.TriggerID.Bytes != want {
+			continue
+		}
+		row.Detail = append([]byte(nil), row.Detail...)
+		out = append(out, row)
+	}
+	return out, nil
 }
 
 func (m *MemStore) ListTriggerRecordsForTrigger(_ context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error) {
@@ -10703,24 +10743,67 @@ func (m *MemStore) InstanceListByNodeForRecovery(_ context.Context, nodeID strin
 	return out, nil
 }
 
-// DeploymentRecordSnapshotMiss is the wake-side backoff stamp. The
-// memstore has no deployments map; the unit tests using this path
-// (snapshot_backoff_test.go) bypass the Store interface and call the
-// helper directly.
-func (m *MemStore) DeploymentRecordSnapshotMiss(_ context.Context, _ string, _ time.Time) error {
+// DeploymentRecordSnapshotMiss is the wake-side backoff stamp. It mirrors
+// the PostgreSQL UPDATE for rows present in the in-memory deployment map;
+// an unknown deployment is a silent no-op, matching an UPDATE that affects
+// zero rows.
+func (m *MemStore) DeploymentRecordSnapshotMiss(_ context.Context, deploymentID string, backoffUntil time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[deploymentID]
+	if !ok {
+		return nil
+	}
+	now := time.Now().UTC()
+	d.SnapshotMissCount++
+	d.SnapshotMissLastAt = &now
+	until := backoffUntil.UTC()
+	d.SnapshotMissBackoffUntil = &until
+	m.deployments[deploymentID] = d
 	return nil
 }
 
-// DeploymentClearSnapshotBackoff is the recovery-side reset. Same
-// memstore no-op rationale as DeploymentRecordSnapshotMiss.
-func (m *MemStore) DeploymentClearSnapshotBackoff(_ context.Context, _ string) error {
+// DeploymentClearSnapshotBackoff is the recovery-side reset. Unknown rows
+// are a silent no-op, matching the PostgreSQL UPDATE contract.
+func (m *MemStore) DeploymentClearSnapshotBackoff(_ context.Context, deploymentID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[deploymentID]
+	if !ok {
+		return nil
+	}
+	d.SnapshotMissCount = 0
+	d.SnapshotMissLastAt = nil
+	d.SnapshotMissBackoffUntil = nil
+	m.deployments[deploymentID] = d
 	return nil
 }
 
-// DeploymentSnapshotBackoffActive is the wake-side gate. Returns
-// (Deployment{}, false, nil) — no backoff in the memstore.
-func (m *MemStore) DeploymentSnapshotBackoffActive(_ context.Context, _ string) (Deployment, bool, error) {
-	return Deployment{}, false, nil
+// DeploymentSnapshotBackoffActive is the wake-side gate. It returns the
+// persisted miss count and backoff timestamp for an in-memory deployment,
+// retaining expired rows so the next miss can continue the backoff sequence.
+func (m *MemStore) DeploymentSnapshotBackoffActive(_ context.Context, deploymentID string) (Deployment, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[deploymentID]
+	if !ok || d.SnapshotMissBackoffUntil == nil {
+		return Deployment{}, false, nil
+	}
+	projection := Deployment{
+		ID:                       deploymentID,
+		SnapshotMissCount:        d.SnapshotMissCount,
+		SnapshotMissLastAt:       cloneTimePtr(d.SnapshotMissLastAt),
+		SnapshotMissBackoffUntil: cloneTimePtr(d.SnapshotMissBackoffUntil),
+	}
+	return projection, d.SnapshotMissBackoffUntil.After(time.Now().UTC()), nil
+}
+
+func cloneTimePtr(in *time.Time) *time.Time {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 // ListComputeNodes returns every row in name order (issue #98 /
@@ -12362,13 +12445,55 @@ func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]Usag
 	return out, nil
 }
 
-// UsageDaily mirrors pgstore.UsageDaily. The MemStore does not maintain
-// the rollup table — usage_daily is a cron-populated rollup, and the
-// in-process unit-test surface for the rollup loop uses stubExecer
-// instead. Returns nil + nil so handlers do not crash on dev/host
-// builds where Postgres is not wired.
-func (m *MemStore) UsageDaily(_ context.Context, _ string, _ time.Time) ([]DailyUsage, error) {
-	return nil, nil
+// UsageDaily mirrors pgstore.UsageDaily by aggregating MemStore's minute and
+// builder rows for the requested UTC calendar day. The production rollup is
+// materialized in usage_daily; deriving the same projection here prevents a
+// handler test from passing on an always-empty result.
+func (m *MemStore) UsageDaily(_ context.Context, accountID string, day time.Time) ([]DailyUsage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	day = utcDay(day)
+	byApp := make(map[string]*DailyUsage)
+	for _, minute := range m.usage {
+		if minute.AccountID != accountID || !utcDay(minute.Minute).Equal(day) {
+			continue
+		}
+		row := byApp[minute.AppID]
+		if row == nil {
+			row = &DailyUsage{AccountID: accountID, AppID: minute.AppID, Day: day}
+			byApp[minute.AppID] = row
+		}
+		row.MBSeconds += minute.MBSeconds
+		row.Requests += minute.Requests
+		row.CPUUsec += minute.CPUUsec
+		row.TXBytes += minute.TXBytes
+		row.NetTxBytes += minute.NetTxBytes
+		row.NetRxBytes += minute.NetRxBytes
+		row.ColdBootCount += int64(minute.ColdBootCount)
+		row.TailSeconds += minute.TailSeconds
+	}
+	for _, builder := range m.builderUsage {
+		if builder.AccountID != accountID || !utcDay(builder.FinishedAt).Equal(day) {
+			continue
+		}
+		row := byApp[builder.AppID]
+		if row == nil {
+			row = &DailyUsage{AccountID: accountID, AppID: builder.AppID, Day: day}
+			byApp[builder.AppID] = row
+		}
+		row.BuilderSeconds += builder.Seconds
+	}
+	out := make([]DailyUsage, 0, len(byApp))
+	for _, row := range byApp {
+		out = append(out, *row)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AppID < out[j].AppID })
+	return out, nil
+}
+
+func utcDay(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 // UsageDailyForAccount derives the same bounded shape from MemStore's minute
@@ -12432,16 +12557,39 @@ func (m *MemStore) UsageSLOForAccount(_ context.Context, _ string, _, _ time.Tim
 	return 0, 0, nil
 }
 
-// AppendSnapshotStorage + StorageUsage mirror pgstore for the storage
-// rollup (ADR-049 §B.3). The MemStore does not maintain the rollup —
-// pkg/meter/storage.go wires directly to PgStore in production. Returns
-// nil so handlers do not crash on dev/host builds.
-func (m *MemStore) AppendSnapshotStorage(_ context.Context, _, _ string, _ time.Time, _, _ int64) error {
+// AppendSnapshotStorage + StorageUsage mirror pgstore's point-in-time
+// snapshot rollup (ADR-049 §B.3). Repeated writes for the same primary key
+// replace the byte counts instead of adding them.
+func (m *MemStore) AppendSnapshotStorage(_ context.Context, accountID, appID string, day time.Time, snapshotBytes, layerBytes int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	day = utcDay(day)
+	if m.snapshotStorage == nil {
+		m.snapshotStorage = map[string]StorageUsage{}
+	}
+	m.snapshotStorage[storageUsageKey(accountID, appID, day)] = StorageUsage{
+		AccountID: accountID, AppID: appID, Day: day,
+		SnapshotBytes: snapshotBytes, LayerBytes: layerBytes,
+	}
 	return nil
 }
 
-func (m *MemStore) StorageUsage(_ context.Context, _ string, _ time.Time) ([]StorageUsage, error) {
-	return nil, nil
+func (m *MemStore) StorageUsage(_ context.Context, accountID string, day time.Time) ([]StorageUsage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	day = utcDay(day)
+	var out []StorageUsage
+	for _, row := range m.snapshotStorage {
+		if row.AccountID == accountID && row.Day.Equal(day) {
+			out = append(out, row)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AppID < out[j].AppID })
+	return out, nil
+}
+
+func storageUsageKey(accountID, appID string, day time.Time) string {
+	return accountID + "\x00" + appID + "\x00" + day.Format("2006-01-02")
 }
 
 // LatestSnapshotBytes mirrors pgstore for the storage rollup
@@ -18000,51 +18148,39 @@ func (m *MemStore) MirrorSummary(_ context.Context, ruleID string, since time.Ti
 	return s, nil
 }
 
-// --- ADR-127 PR-B — regression observation + dashboard reads (MemStore stubs) ---
+// --- ADR-127 PR-B — regression observation + dashboard reads ---
 
-// UpsertRegressionObservation is a no-op in MemStore. The regression
-// cron runs only against the production PgStore; the MemStore
-// implementation exists solely to satisfy the Store interface so
-// unit tests that wire up a MemStore still compile.
+// UpsertRegressionObservation is intentionally unsupported by MemStore.
+// Regression observations depend on the request_telemetry table and must be
+// exercised through PgStore so tests cannot pass on an empty in-memory result.
 func (m *MemStore) UpsertRegressionObservation(_ context.Context, _ sqlc.UpsertRegressionObservationParams) error {
-	return nil
+	panic("memstore: UpsertRegressionObservation unimplemented")
 }
 
-// ListActiveRegressionsByApp is a no-op in MemStore. Returns nil so
-// dashboard tests can assert "no regressions surfaced" without a
-// populated regression set.
+// ListActiveRegressionsByApp is intentionally unsupported by MemStore;
+// dashboard and handler tests that need regression rows belong on PgStore.
 func (m *MemStore) ListActiveRegressionsByApp(_ context.Context, _ sqlc.ListActiveRegressionsByAppParams) ([]sqlc.ListActiveRegressionsByAppRow, error) {
-	return nil, nil
+	panic("memstore: ListActiveRegressionsByApp unimplemented")
 }
 
-// ListDeploymentsForCompare is a no-op in MemStore. Returns nil so
-// dashboard tests can render the compare panel empty.
+// ListDeploymentsForCompare is intentionally unsupported by MemStore;
+// it reads request_telemetry's deployment history.
 func (m *MemStore) ListDeploymentsForCompare(_ context.Context, _ sqlc.ListDeploymentsForCompareParams) ([]sqlc.ListDeploymentsForCompareRow, error) {
-	return nil, nil
+	panic("memstore: ListDeploymentsForCompare unimplemented")
 }
 
-// ListAppsWithRecentTelemetry is a no-op in MemStore. Returns nil so
-// the regression cron's discovery loop is a no-op when wired against
-// a MemStore (handy for unit tests that don't want to seed rows).
+// ListAppsWithRecentTelemetry is intentionally unsupported by MemStore;
+// regression discovery is a Postgres-only cron path.
 func (m *MemStore) ListAppsWithRecentTelemetry(_ context.Context, _ pgtype.Interval) ([]pgtype.UUID, error) {
-	return nil, nil
+	panic("memstore: ListAppsWithRecentTelemetry unimplemented")
 }
 
-// --- ADR-127 PR-D — spans_summary writer (MemStore stub) ---
+// --- ADR-127 PR-D — spans_summary writer ---
 
-// UpdateSpansSummary is a no-op in MemStore. The OTel spans writer
-// runs only against the production PgStore (gatewayd-public flushes
-// the spans_summary jsonb via apid's WriteSpansSummary gRPC RPC);
-// the MemStore implementation exists solely to satisfy the Store
-// interface so unit tests that wire up a MemStore still compile.
-//
-// PR-D code-review #1: accountID is ignored — MemStore doesn't
-// enforce any predicate (it's an in-memory shim for unit tests
-// that don't exercise cross-customer overwrite). The Store
-// interface signature is uniform so the apid gRPC handler can
-// pass accountID through unconditionally.
+// UpdateSpansSummary is intentionally unsupported by MemStore. The writer
+// updates request_telemetry rows and must be covered against PgStore.
 func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte) error {
-	return nil
+	panic("memstore: UpdateSpansSummary unimplemented")
 }
 
 // ----------------------------------------------------------------------------
@@ -18282,22 +18418,27 @@ func (m *MemStore) RetryQueueDeadLetter(_ context.Context, accountID, invocation
 	return inv, nil
 }
 
-// ListExpiredTriggerRecordsForReaper (ADR-134 PR-E) is a no-op
-// for MemStore: the trigger_records map holds sqlc.TriggerRecord
-// rows that do not carry the per-row retention column
-// (sqlc.TriggerRecord is generated from the pre-PR-C schema).
-// MemStore-backed tests therefore cannot exercise the retention
-// reaper against trigger_records; the integration path
-// (pkg/sched/retention_triggers_test.go pgtest) runs against
-// PgStore where the column exists.
+// ListExpiredTriggerRecordsForReaper is intentionally unsupported by
+// MemStore because its trigger_records projection predates the retention
+// column. The reaper is covered against PgStore where the schema exists.
 func (m *MemStore) ListExpiredTriggerRecordsForReaper(_ context.Context, _ time.Time, _ int) ([]string, error) {
-	return nil, nil
+	panic("memstore: ListExpiredTriggerRecordsForReaper unimplemented")
 }
 
-// DeleteTriggerRecordsByIDs (ADR-134 PR-E) is a no-op for
-// MemStore for the same reason — see ListExpiredTriggerRecordsForReaper.
-func (m *MemStore) DeleteTriggerRecordsByIDs(_ context.Context, _ []string) (int, error) {
-	return 0, nil
+// DeleteTriggerRecordsByIDs removes records from the in-memory mirror. It is
+// useful independently of the retention query and mirrors PgStore's count.
+func (m *MemStore) DeleteTriggerRecordsByIDs(_ context.Context, ids []string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for _, id := range ids {
+		if _, ok := m.records[id]; !ok {
+			continue
+		}
+		delete(m.records, id)
+		deleted++
+	}
+	return deleted, nil
 }
 
 // Issue #1182 §P1 packaging follow-up (PR-1 of 3): in-memory
