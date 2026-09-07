@@ -19,6 +19,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -177,6 +178,32 @@ func TestRun_ListenFailurePropagates(t *testing.T) {
 	}
 }
 
+func TestRun_PrepareJailHelperFailurePropagates(t *testing.T) {
+	dir := shortDir(t)
+	cfgPath := filepath.Join(dir, "vmmd.toml")
+	if err := os.WriteFile(cfgPath, []byte("socket_path = \""+filepath.Join(dir, "vmmd.sock")+"\"\nowner_user = \"root\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	wantErr := errors.New("helper unavailable")
+	load, write := nopHostKeyDeps(t)
+	deps := runDeps{
+		configPath: cfgPath,
+		detectFC:   func(context.Context) (string, error) { return "1.7.0", nil },
+		prepareJailHelper: func(*fcvm.JailerVMM) error {
+			return wantErr
+		},
+		loadHostKey:    load,
+		loadHostKeys:   nopHostKeysDep(t),
+		writeRecipient: write,
+		capCheck:       nopCapCheck(),
+	}
+	err := runWithDeps(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)), deps)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want wrapped %v", err, wantErr)
+	}
+}
+
 func TestRun_FCDetectFailureIsWarning(t *testing.T) {
 	// fcvm.DetectFirecrackerVersion returning an error is logged as a warning
 	// but does NOT abort run; we verify that by listening on a fake socket
@@ -227,6 +254,9 @@ func TestDefaultDeps(t *testing.T) {
 	}
 	if d.detectFC == nil || d.listen == nil {
 		t.Error("deps must include non-nil detectFC and listen")
+	}
+	if d.prepareJailHelper == nil {
+		t.Error("deps must prepare the jail helper before serving wakes")
 	}
 	if d.loadHostKey == nil {
 		t.Error("loadHostKey must default to secretbox.LoadHostKey")
