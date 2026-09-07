@@ -278,6 +278,9 @@ type Metrics struct {
 	// the §12 panel so operators can tune the byte ceiling.
 	responseCacheBytes   prometheus.Gauge
 	responseCacheEntries prometheus.Gauge
+	// edgeAnswered counts bounded static answers that never reached an
+	// instance. Kind is the closed M1 set: favicon, robots, or head.
+	edgeAnswered *prometheus.CounterVec
 	// edgeRuleCompileError (ADR-091 hardening PR-A): counter of
 	// compile-time failures inside the cmd-side loader
 	// (cmd/gatewayd-internal/edge_rules.go::warnPathGlobErrs). A
@@ -753,6 +756,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_response_cache_entries",
 			Help: "In-process kind=cache store entry count. ADR-122.",
 		}),
+		edgeAnswered: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_answered_total",
+			Help: "Gateway responses served without waking an app, labelled by edge answer kind (favicon|robots|head). Issue #1398 M1.",
+		}, []string{"kind"}),
 		// ADR-124 / issue #72 / PR-A3 — mirror dispatch surface.
 		// rule_id cardinality is bounded by Limits.MirrorTargetsPerApp
 		// (≤ 3 per app) so the (app_id, rule_id) pair is closed;
@@ -1261,6 +1268,9 @@ func NewMetrics() *Metrics {
 	for _, outcome := range []string{"hit", "miss", "bypass_authed", "bypass_uncacheable", "stale_if_error_served", "store_skipped"} {
 		m.responseCache.WithLabelValues(outcome)
 	}
+	for _, kind := range []string{"favicon", "robots", "head"} {
+		m.edgeAnswered.WithLabelValues(kind)
+	}
 	// Phase 3 (ADR-104, issue #881): pre-instantiate the closed
 	// (kind, outcome) cross product for the per-consumer throttle
 	// decision counter. `kind` matches the KeyBy dimension
@@ -1430,7 +1440,7 @@ func NewMetrics() *Metrics {
 	// cartesian) is the same pattern as the rest of the family.
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
-	reg.MustRegister(m.requests, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -1734,6 +1744,19 @@ func (m *Metrics) PreInstantiateAppRoute(appID, route string) {
 // ObserveRateLimit records a 429 outcome.
 func (m *Metrics) ObserveRateLimit(appID, plan string) {
 	m.rateLimited.WithLabelValues(appID, plan).Inc()
+}
+
+// ObserveEdgeAnswered records a response completed by the gateway without an
+// instance transition. kind is deliberately constrained to the M1 vocabulary
+// so callers cannot create unbounded Prometheus label cardinality.
+func (m *Metrics) ObserveEdgeAnswered(kind string) {
+	if m == nil || m.edgeAnswered == nil {
+		return
+	}
+	switch kind {
+	case "favicon", "robots", "head":
+		m.edgeAnswered.WithLabelValues(kind).Inc()
+	}
 }
 
 // ObserveAccountRateLimit records a 429 outcome from the per-account

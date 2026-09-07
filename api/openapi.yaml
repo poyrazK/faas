@@ -14004,6 +14004,18 @@ components:
           example: 5
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
+        favicon:
+          type: [string, "null"]
+          format: byte
+          maxLength: 43692
+          description: "Create-time base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."
+        robots_txt:
+          type: [string, "null"]
+          description: "Create-time per-app robots.txt body; empty uses the platform allow-all default."
+        head_wakes:
+          type: boolean
+          default: false
+          description: "Create-time opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -14165,6 +14177,17 @@ components:
           allOf:
             - $ref: '#/components/schemas/ServiceReplicas'
           description: "Full replacement of the service replica policy. Omit for no change."
+        favicon:
+          type: [string, "null"]
+          format: byte
+          maxLength: 43692
+          description: "Replace the per-app base64-encoded favicon; an empty value clears it. Omit for no change."
+        robots_txt:
+          type: [string, "null"]
+          description: "Replace the per-app robots.txt body; an empty value restores the allow-all default. Omit for no change."
+        head_wakes:
+          type: [boolean, "null"]
+          description: "Opt into waking a parked app for HEAD /. Omit for no change."
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -14592,6 +14615,18 @@ components:
         # other than 'service' is a Validate error.
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
+        favicon:
+          type: [string, "null"]
+          format: byte
+          maxLength: 43692
+          description: "Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."
+        robots_txt:
+          type: [string, "null"]
+          description: "Persisted per-app robots.txt body; empty uses the platform allow-all default."
+        head_wakes:
+          type: boolean
+          default: false
+          description: "Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."

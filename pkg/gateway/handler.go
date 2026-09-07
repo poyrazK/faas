@@ -247,6 +247,15 @@ type App struct {
 	// CORSDefaultEnabled=true ⇒ a non-nil value is
 	// provided.
 	CORSDefaultOrigins []string
+	// Favicon is an optional per-app icon served for /favicon.ico. The
+	// edge enforces the 32 KiB limit before writing it.
+	Favicon []byte
+	// RobotsTxt is the optional per-app /robots.txt body. Empty uses the
+	// platform default (allow all).
+	RobotsTxt string
+	// HeadWakes opts this app into the legacy behaviour of waking for
+	// HEAD / instead of answering from the edge while parked.
+	HeadWakes bool
 }
 
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
@@ -643,6 +652,13 @@ type Handler struct {
 	vmConcurrencyAudit RequireAuthnAuditor
 	// metrics may be nil; nil-guarded everywhere it is read.
 	metrics *Metrics
+	// headHeaders retains a bounded, safe subset of the last successful
+	// origin response headers for parked-app HEAD / answers. It is process
+	// local; after restart the edge returns 204 until a live response lands.
+	headHeaders *edgeHeadHeaderCache
+	// headWakes is the process-wide opt-in for legacy HEAD wake behaviour;
+	// an App.HeadWakes value can enable it for one app.
+	headWakes bool
 	// mirrorRoundTripper (issue #72 / ADR-124 PR-A3) is the
 	// per-request HTTP forwarder the dispatch goroutine uses
 	// to reach the mirror VM. Defaults to
@@ -1015,6 +1031,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		),
 		burstPressure:  &burstPressure{},
 		metrics:        m,
+		headHeaders:    newEdgeHeadHeaderCache(),
 		log:            log,
 		wakePageCycles: make(map[string]*wakePageCycle),
 		// mirrorSlots is sync.Map (zero value ready); the cap is
@@ -4881,6 +4898,13 @@ haveApp:
 		}
 		r = withAppAndAccount(r, accountUUID, appUUID)
 	}
+	// M1 wake hygiene: answer static browser/crawler paths directly at the
+	// edge. This runs immediately after host resolution and before edge-rule,
+	// auth, limiter, or wake work, so these paths cannot create an instance or
+	// accrue resident usage while an app is parked.
+	if h.serveEdgeAnswer(w, r, app) {
+		return
+	}
 	// ADR-093: derive the per-request route label and stash it
 	// on the request context so Handler.observe can read it on
 	// the single exit funnel. The label is method + raw path
@@ -5828,6 +5852,10 @@ haveApp:
 		strings.HasPrefix(strings.ToLower(rec.ContentType), "text/event-stream") {
 		h.streamingFallbackLog(app.ID, rec.ContentType)
 	}
+	// Retain the safe response-header shape for a future parked HEAD / edge
+	// answer. This is deliberately after the origin leg and before observe so
+	// only live responses can populate the cache.
+	h.cacheHeadResponse(app.ID, rec)
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
 	h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
 	// PR-B residual capture. On the streaming path the per-flush

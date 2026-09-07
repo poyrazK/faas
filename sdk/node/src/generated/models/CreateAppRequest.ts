@@ -40,6 +40,18 @@ export type CreateAppRequest = {
   max_retries?: number;
   service_replicas?: ServiceReplicas;
   /**
+   * Create-time base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB.
+   */
+  favicon?: string | null;
+  /**
+   * Create-time per-app robots.txt body; empty uses the platform allow-all default.
+   */
+  robots_txt?: string | null;
+  /**
+   * Create-time opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer.
+   */
+  head_wakes?: boolean;
+  /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */
   streaming_enabled?: boolean;

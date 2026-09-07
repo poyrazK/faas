@@ -210,6 +210,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	if err != nil {
 		return gateway.App{}, false, err
 	}
+	favicon, robotsTxt, headWakes := edgeAnswersFromManifest(app.Manifest)
 	return gateway.App{
 		ID:                 app.ID,
 		AccountID:          acct.ID,
@@ -270,6 +271,9 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		// the legacy wake path bit-for-bit unchanged.
 		CORSDefaultEnabled: app.CORSDefaultEnabled,
 		CORSDefaultOrigins: app.CORSDefaultOrigins,
+		Favicon:            favicon,
+		RobotsTxt:          robotsTxt,
+		HeadWakes:          headWakes,
 		PublicAuth: gateway.PublicAuthConfig{
 			Mode:        app.PublicAuthMode,
 			BasicSealed: app.PublicAuthBasicSealed,
@@ -283,6 +287,10 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 			IPAllowlist: app.PublicAuthIPAllowlist,
 		},
 	}, true, nil
+}
+
+func edgeAnswersFromManifest(manifest state.AppManifest) ([]byte, string, bool) {
+	return append([]byte(nil), manifest.Favicon...), manifest.RobotsTxt, manifest.HeadWakes
 }
 
 // appsSuffix normalizes a bare apps domain ("gregale.dev") into the
