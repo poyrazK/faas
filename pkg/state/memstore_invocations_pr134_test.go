@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -163,9 +165,16 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 		t.Errorf("RetryQueueDeadLetter(missing) = %v, want ErrNotFound", err)
 	}
 
-	// ListExpiredTriggerRecordsForReaper: memstore no-op, returns (nil, nil).
-	tr, err := m.ListExpiredTriggerRecordsForReaper(ctx, time.Now(), 10)
-	if err != nil || tr != nil {
-		t.Errorf("ListExpiredTriggerRecords(memstore) = (%v, %v), want (nil, nil)", tr, err)
+	triggerID := uuid.NewString()
+	recordID := uuid.NewString()
+	if err := m.InsertTriggerDeadLetter(ctx, recordID, triggerID, "poison_record", "drop", []byte(`{"attempt":3}`)); err != nil {
+		t.Fatalf("InsertTriggerDeadLetter: %v", err)
+	}
+	rows, err := m.ListTriggerDeadLetter(ctx, triggerID, 10)
+	if err != nil {
+		t.Fatalf("ListTriggerDeadLetter: %v", err)
+	}
+	if len(rows) != 1 || rows[0].RecordID.String() != recordID || string(rows[0].Detail) != `{"attempt":3}` {
+		t.Fatalf("dead-letter rows = %+v; want record %s and detail", rows, recordID)
 	}
 }
