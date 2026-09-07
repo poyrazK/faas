@@ -2969,6 +2969,7 @@ type Store interface {
 
 	// Crons (apid CRUDs; schedd fires).
 	CreateCron(ctx context.Context, appID, schedule, path string, enabled bool) (Cron, error)
+	CreateCronWithOptions(ctx context.Context, appID, schedule, path string, enabled bool, opts CronOptions) (Cron, error)
 	// CreateCronIfUnderQuota inserts a cron iff the per-app and
 	// per-account caps (limits.CronLimitPerApp / CronLimitPerAccount)
 	// are not yet reached. The per-app count is authoritative under
@@ -2981,6 +2982,7 @@ type Store interface {
 	// dispatch loop and existing tests still call CreateCron
 	// (uncapped) because they bypass the customer-facing path.
 	CreateCronIfUnderQuota(ctx context.Context, appID, schedule, path string, enabled bool, limits api.Limits) (Cron, error)
+	CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, schedule, path string, enabled bool, limits api.Limits, opts CronOptions) (Cron, error)
 	CronByID(ctx context.Context, id string) (Cron, error)
 	// UpdateCron mutates the optional fields of a cron row. nil pointers
 	// leave the field untouched. createdAt is supported because schedd's
@@ -2988,6 +2990,7 @@ type Store interface {
 	// backfilling this field is the only honest way to rewind a test or
 	// restore an imported schedule.
 	UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error)
+	UpdateCronWithOptions(ctx context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time) (Cron, error)
 	DeleteCron(ctx context.Context, id, appID string) error
 	ListCronsForApp(ctx context.Context, appID string) ([]Cron, error)
 	ListEnabledCrons(ctx context.Context) ([]Cron, error)
@@ -2996,6 +2999,9 @@ type Store interface {
 	// dispatched through gatewayd-internal (spec §4.4, M7). MemStore keeps a
 	// lastFiredAt map; PgStore uses a column added in migration 00003.
 	MarkCronFired(ctx context.Context, cronID string, at time.Time) error
+	// CountActiveCronInvocations returns pending/dispatching invocations for
+	// one cron. The scheduler uses it for the skip_if_running policy.
+	CountActiveCronInvocations(ctx context.Context, cronID string) (int, error)
 
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement).
 	// Run-to-completion workloads land across migrations 00255-00257,

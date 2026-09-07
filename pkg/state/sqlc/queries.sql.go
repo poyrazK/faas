@@ -904,25 +904,30 @@ func (q *Queries) CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParam
 }
 
 const createCron = `-- name: CreateCron :one
-insert into crons (id, app_id, schedule, path, enabled)
-values (gen_random_uuid(), $1, $2, $3, $4)
-returning id, app_id, schedule, path, enabled, created_at
+insert into crons (id, app_id, schedule, path, enabled, timezone, skip_if_running)
+values (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
+returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 `
 
 type CreateCronParams struct {
-	AppID    pgtype.UUID
-	Schedule string
-	Path     string
-	Enabled  bool
+	AppID         pgtype.UUID
+	Schedule      string
+	Path          string
+	Enabled       bool
+	Timezone      string
+	SkipIfRunning bool
 }
 
 type CreateCronRow struct {
-	ID        pgtype.UUID
-	AppID     pgtype.UUID
-	Schedule  string
-	Path      string
-	Enabled   bool
-	CreatedAt pgtype.Timestamptz
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	Schedule      string
+	Path          string
+	Enabled       bool
+	Timezone      string
+	SkipIfRunning bool
+	LastFiredAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) CreateCron(ctx context.Context, db DBTX, arg CreateCronParams) (CreateCronRow, error) {
@@ -931,6 +936,8 @@ func (q *Queries) CreateCron(ctx context.Context, db DBTX, arg CreateCronParams)
 		arg.Schedule,
 		arg.Path,
 		arg.Enabled,
+		arg.Timezone,
+		arg.SkipIfRunning,
 	)
 	var i CreateCronRow
 	err := row.Scan(
@@ -939,6 +946,9 @@ func (q *Queries) CreateCron(ctx context.Context, db DBTX, arg CreateCronParams)
 		&i.Schedule,
 		&i.Path,
 		&i.Enabled,
+		&i.Timezone,
+		&i.SkipIfRunning,
+		&i.LastFiredAt,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1394,17 +1404,20 @@ func (q *Queries) CreateUploadSession(ctx context.Context, db DBTX, arg CreateUp
 }
 
 const cronByID = `-- name: CronByID :one
-select id, app_id, schedule, path, enabled, created_at
+select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 from crons where id = $1
 `
 
 type CronByIDRow struct {
-	ID        pgtype.UUID
-	AppID     pgtype.UUID
-	Schedule  string
-	Path      string
-	Enabled   bool
-	CreatedAt pgtype.Timestamptz
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	Schedule      string
+	Path          string
+	Enabled       bool
+	Timezone      string
+	SkipIfRunning bool
+	LastFiredAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronByIDRow, error) {
@@ -1416,6 +1429,9 @@ func (q *Queries) CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronBy
 		&i.Schedule,
 		&i.Path,
 		&i.Enabled,
+		&i.Timezone,
+		&i.SkipIfRunning,
+		&i.LastFiredAt,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -3446,17 +3462,20 @@ func (q *Queries) ListComputeNodeHeartbeats(ctx context.Context, db DBTX, arg Li
 }
 
 const listCronsForApp = `-- name: ListCronsForApp :many
-select id, app_id, schedule, path, enabled, created_at
+select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 from crons where app_id = $1 order by created_at desc
 `
 
 type ListCronsForAppRow struct {
-	ID        pgtype.UUID
-	AppID     pgtype.UUID
-	Schedule  string
-	Path      string
-	Enabled   bool
-	CreatedAt pgtype.Timestamptz
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	Schedule      string
+	Path          string
+	Enabled       bool
+	Timezone      string
+	SkipIfRunning bool
+	LastFiredAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListCronsForAppRow, error) {
@@ -3474,6 +3493,9 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 			&i.Schedule,
 			&i.Path,
 			&i.Enabled,
+			&i.Timezone,
+			&i.SkipIfRunning,
+			&i.LastFiredAt,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -3865,17 +3887,20 @@ func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.U
 }
 
 const listEnabledCrons = `-- name: ListEnabledCrons :many
-select id, app_id, schedule, path, enabled, created_at
+select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 from crons where enabled = true
 `
 
 type ListEnabledCronsRow struct {
-	ID        pgtype.UUID
-	AppID     pgtype.UUID
-	Schedule  string
-	Path      string
-	Enabled   bool
-	CreatedAt pgtype.Timestamptz
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	Schedule      string
+	Path          string
+	Enabled       bool
+	Timezone      string
+	SkipIfRunning bool
+	LastFiredAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledCronsRow, error) {
@@ -3893,6 +3918,9 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 			&i.Schedule,
 			&i.Path,
 			&i.Enabled,
+			&i.Timezone,
+			&i.SkipIfRunning,
+			&i.LastFiredAt,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -9002,7 +9030,7 @@ update crons set
   path = coalesce($3, path),
   enabled = coalesce($4, enabled)
 where id = $1
-returning id, app_id, schedule, path, enabled, created_at
+returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 `
 
 type UpdateCronParams struct {
@@ -9013,12 +9041,15 @@ type UpdateCronParams struct {
 }
 
 type UpdateCronRow struct {
-	ID        pgtype.UUID
-	AppID     pgtype.UUID
-	Schedule  string
-	Path      string
-	Enabled   bool
-	CreatedAt pgtype.Timestamptz
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	Schedule      string
+	Path          string
+	Enabled       bool
+	Timezone      string
+	SkipIfRunning bool
+	LastFiredAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams) (UpdateCronRow, error) {
@@ -9035,6 +9066,9 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 		&i.Schedule,
 		&i.Path,
 		&i.Enabled,
+		&i.Timezone,
+		&i.SkipIfRunning,
+		&i.LastFiredAt,
 		&i.CreatedAt,
 	)
 	return i, err

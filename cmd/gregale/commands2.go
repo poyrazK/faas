@@ -2314,11 +2314,13 @@ func cmdCrons(args []string) int {
 		slug := fs.String("app", "", "app slug (required)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
 		path := fs.String("path", "/", "request path")
+		timezone := fs.String("timezone", "", "IANA timezone (defaults to UTC)")
+		skipIfRunning := fs.Bool("skip-if-running", false, "skip a scheduled fire while the previous cron run is active")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
 		if *slug == "" || *schedule == "" {
-			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' [--path /]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' [--path /] [--timezone UTC] [--skip-if-running]", "crons")
 			return 1
 		}
 		client, err := authedClient()
@@ -2327,6 +2329,7 @@ func cmdCrons(args []string) int {
 		}
 		c, err := client.CreateCron(context.Background(), *slug, api.CreateCronRequest{
 			AppID: *slug, Schedule: *schedule, Path: *path, Enabled: boolPtr(true),
+			Timezone: *timezone, SkipIfRunning: boolPtr(*skipIfRunning),
 		})
 		if err != nil {
 			return printErr("Create failed", err)
@@ -2389,7 +2392,8 @@ func renderCronState(w io.Writer, c api.CronResponse) {
 }
 
 // cmdCronsUpdate implements `gregale crons update <id> [--schedule EXPR]
-// [--path PATH] [--enable|--disable]`. Partial-update semantics:
+// [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap]
+// [--enable|--disable]`. Partial-update semantics:
 // every flag is optional, but at least one patch field must be set
 // (the server happily no-ops an empty body and emits a cron-changed
 // notification — a footgun we'd rather catch at the CLI). Uses
@@ -2400,7 +2404,7 @@ func renderCronState(w io.Writer, c api.CronResponse) {
 // the server's validCron so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
 		return 1
 	}
 	id := args[0]
@@ -2411,17 +2415,24 @@ func cmdCronsUpdate(args []string) int {
 	fs := flag.NewFlagSet("crons-update", flag.ContinueOnError)
 	schedule := fs.String("schedule", "", "cron expression (5 fields)")
 	path := fs.String("path", "", "request path")
+	timezone := fs.String("timezone", "", "IANA timezone (empty resets to UTC)")
 	enable := fs.Bool("enable", false, "enable the cron")
 	disable := fs.Bool("disable", false, "disable the cron")
+	skipIfRunning := fs.Bool("skip-if-running", false, "skip scheduled fires while a prior run is active")
+	allowOverlap := fs.Bool("allow-overlap", false, "allow scheduled fires to overlap")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
 		return 1
 	}
 	if *enable && *disable {
 		PrintUsage(os.Stderr, "usage: gregale crons update --enable | --disable (mutually exclusive)", "crons")
+		return 1
+	}
+	if *skipIfRunning && *allowOverlap {
+		PrintUsage(os.Stderr, "usage: gregale crons update --skip-if-running | --allow-overlap (mutually exclusive)", "crons")
 		return 1
 	}
 	// Reject no-fields-set early; the server otherwise no-ops and
@@ -2429,8 +2440,8 @@ func cmdCronsUpdate(args []string) int {
 	// catch at the CLI before a pointless network round-trip.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if !explicit["schedule"] && !explicit["path"] && !explicit["enable"] && !explicit["disable"] {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--enable|--disable]", "crons")
+	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] {
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
 		return 1
 	}
 	// Local schedule shape check (5 whitespace tokens) mirrors the
@@ -2453,6 +2464,10 @@ func cmdCronsUpdate(args []string) int {
 		p := *path
 		req.Path = &p
 	}
+	if explicit["timezone"] {
+		tz := *timezone
+		req.Timezone = &tz
+	}
 	if explicit["enable"] {
 		v := true
 		req.Enabled = &v
@@ -2460,6 +2475,14 @@ func cmdCronsUpdate(args []string) int {
 	if explicit["disable"] {
 		v := false
 		req.Enabled = &v
+	}
+	if explicit["skip-if-running"] {
+		v := true
+		req.SkipIfRunning = &v
+	}
+	if explicit["allow-overlap"] {
+		v := false
+		req.SkipIfRunning = &v
 	}
 	updated, err := client.UpdateCron(context.Background(), id, req)
 	if err != nil {

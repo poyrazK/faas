@@ -1819,6 +1819,34 @@ func TestCreateCron_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateCron_OptionsRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cron-options")
+	skip := true
+	rec := e.do(t, "POST", "/v1/crons", api.CreateCronRequest{
+		AppID: appID, Schedule: "0 9 * * *", Timezone: "America/New_York", SkipIfRunning: &skip,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Timezone != "America/New_York" || !out.SkipIfRunning {
+		t.Fatalf("options = timezone %q skip=%t", out.Timezone, out.SkipIfRunning)
+	}
+}
+
+func TestCreateCron_InvalidTimezone(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cron-bad-tz")
+	rec := e.do(t, "POST", "/v1/crons", api.CreateCronRequest{
+		AppID: appID, Schedule: "0 9 * * *", Timezone: "Not/AZone",
+	}, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeCronInvalid)
+}
+
 // TestCreateCron_InvalidSchedule confirms the cron regex 400 path
 // (ErrCronInvalid is http.StatusBadRequest, Code=CodeCronInvalid).
 func TestCreateCron_InvalidSchedule(t *testing.T) {
@@ -1960,6 +1988,28 @@ func TestUpdateCron_HappyPath(t *testing.T) {
 	}
 	if out.Schedule != "*/15 * * * *" {
 		t.Errorf("schedule = %q, want */15 * * * *", out.Schedule)
+	}
+}
+
+func TestUpdateCron_OptionsRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "uc-options")
+	c, err := e.store.CreateCron(context.Background(), appID, "0 9 * * *", "/x", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tz := "Europe/Istanbul"
+	skip := true
+	rec := e.do(t, "PATCH", "/v1/crons/"+c.ID, api.UpdateCronRequest{Timezone: &tz, SkipIfRunning: &skip}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Timezone != tz || !out.SkipIfRunning {
+		t.Fatalf("options = timezone %q skip=%t", out.Timezone, out.SkipIfRunning)
 	}
 }
 

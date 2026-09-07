@@ -16637,15 +16637,17 @@ components:
     # ─── Crons ────────────────────────────────────────────────────────────
 
     CronResponse:
-      description: "A cron trigger: schedule (cron expression), target URL, last/next run timestamps, and enabled flag."
+      description: "A cron trigger with an optional IANA timezone and overlap policy."
       type: object
-      required: [id, app_id, schedule, path, enabled, created_at]
+      required: [id, app_id, schedule, path, enabled, timezone, skip_if_running, created_at]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         schedule: { type: string , example: "*/5 * * * *"}
         path: { type: string }
         enabled: { type: boolean }
+        timezone: { type: string, description: "IANA timezone used to evaluate the schedule; defaults to UTC.", example: "America/New_York" }
+        skip_if_running: { type: boolean, description: "When true, consume a scheduled occurrence while a prior cron invocation is pending or dispatching." }
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
 
@@ -16714,7 +16716,7 @@ components:
         account_id: { type: string, format: uuid }
 
     CreateCronRequest:
-      description: "Cron creation payload: schedule expression and target URL."
+      description: "Cron creation payload: schedule expression, target URL, and optional timezone/overlap policy."
       type: object
       required: [app_id, schedule]
       properties:
@@ -16722,6 +16724,8 @@ components:
         schedule: { type: string , example: "*/5 * * * *"}
         path: { type: string }
         enabled: { type: [boolean, "null"] }
+        timezone: { type: string, description: "IANA timezone; defaults to UTC.", example: "Europe/Istanbul" }
+        skip_if_running: { type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running." }
 
     UpdateCronRequest:
       description: "Partial cron update."
@@ -16730,6 +16734,8 @@ components:
         schedule: { type: [string, "null"] , example: "*/5 * * * *"}
         path: { type: [string, "null"] }
         enabled: { type: [boolean, "null"] }
+        timezone: { type: [string, "null"], description: "IANA timezone; an empty value resets to UTC." }
+        skip_if_running: { type: [boolean, "null"], description: "Enable or disable overlap skipping for scheduled fires." }
 
     # ─── Jobs (issue #1184 Workstream A / ADR-099) ─────────────
     # Run-to-completion jobs. Each job is a stored template

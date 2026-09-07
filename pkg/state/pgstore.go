@@ -2524,9 +2524,9 @@ func (s *PgStore) FailRunningInstanceIfOwnedByNode(ctx context.Context, id, node
 // the duplicate-dispatch hazard would corrupt the
 // cron_fired_audit row. The apps_node_id_idx covers the JOIN.
 // Projection matches scanCrons: id, app_id, schedule, path, enabled,
-// created_at (6 columns).
+// timezone, skip_if_running, last_fired_at, created_at.
 func (s *PgStore) ListOwnedCronsByNodeID(ctx context.Context, nodeID string) ([]Cron, error) {
-	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.created_at
+	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at
 		   from crons c
 		   join apps a on a.id = c.app_id
 		  where a.node_id = $1`
@@ -4223,11 +4223,11 @@ func (s *PgStore) ApplyProjectPlan(
 		}
 		row := tx.QueryRow(ctx,
 			`insert into crons (app_id, schedule, path, enabled) values ($1, $2, $3, $4)
-			 returning id, app_id, schedule, path, enabled, created_at`,
+			 returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at`,
 			c.AppID, c.Schedule, c.Path, c.Enabled,
 		)
-		var out Cron
-		if err := row.Scan(&out.ID, &out.AppID, &out.Schedule, &out.Path, &out.Enabled, &out.CreatedAt); err != nil {
+		out, err := scanCronRow(row)
+		if err != nil {
 			return Project{}, nil, nil, mapErr(err)
 		}
 		insertedCrons = append(insertedCrons, out)
@@ -8404,12 +8404,19 @@ func (s *PgStore) OldestDoctorObservation(ctx context.Context) (time.Time, error
 // --- crons -------------------------------------------------------------------
 
 func (s *PgStore) CreateCron(ctx context.Context, appID, schedule, path string, enabled bool) (Cron, error) {
+	return s.CreateCronWithOptions(ctx, appID, schedule, path, enabled, CronOptions{})
+}
+
+func (s *PgStore) CreateCronWithOptions(ctx context.Context, appID, schedule, path string, enabled bool, opts CronOptions) (Cron, error) {
+	if opts.Timezone == "" {
+		opts.Timezone = "UTC"
+	}
 	row := s.pool.QueryRow(ctx,
-		`insert into crons (app_id, schedule, path, enabled) values ($1, $2, $3, $4)
-		 returning id, app_id, schedule, path, enabled, created_at`,
-		appID, schedule, path, enabled)
-	c := Cron{}
-	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+		`insert into crons (app_id, schedule, path, enabled, timezone, skip_if_running) values ($1, $2, $3, $4, $5, $6)
+		 returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at`,
+		appID, schedule, path, enabled, opts.Timezone, opts.SkipIfRunning)
+	c, err := scanCronRow(row)
+	if err != nil {
 		return Cron{}, mapErr(err)
 	}
 	return c, nil
@@ -8432,6 +8439,13 @@ func (s *PgStore) CreateCron(ctx context.Context, appID, schedule, path string, 
 //
 // The lock uses apps_pkey (id) — no extra index needed.
 func (s *PgStore) CreateCronIfUnderQuota(ctx context.Context, appID, schedule, path string, enabled bool, limits api.Limits) (Cron, error) {
+	return s.CreateCronIfUnderQuotaWithOptions(ctx, appID, schedule, path, enabled, limits, CronOptions{})
+}
+
+func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, schedule, path string, enabled bool, limits api.Limits, opts CronOptions) (Cron, error) {
+	if opts.Timezone == "" {
+		opts.Timezone = "UTC"
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Cron{}, fmt.Errorf("state: begin tx: %w", err)
@@ -8500,11 +8514,11 @@ func (s *PgStore) CreateCronIfUnderQuota(ctx context.Context, appID, schedule, p
 	// 4. Insert under the same lock. mapErr wraps unique-violation
 	//    in ErrConflict for future-proofing.
 	row := tx.QueryRow(ctx,
-		`insert into crons (app_id, schedule, path, enabled) values ($1, $2, $3, $4)
-		 returning id, app_id, schedule, path, enabled, created_at`,
-		appID, schedule, path, enabled)
-	c := Cron{}
-	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+		`insert into crons (app_id, schedule, path, enabled, timezone, skip_if_running) values ($1, $2, $3, $4, $5, $6)
+		 returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at`,
+		appID, schedule, path, enabled, opts.Timezone, opts.SkipIfRunning)
+	c, err := scanCronRow(row)
+	if err != nil {
 		return Cron{}, mapErr(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -8515,15 +8529,19 @@ func (s *PgStore) CreateCronIfUnderQuota(ctx context.Context, appID, schedule, p
 
 func (s *PgStore) CronByID(ctx context.Context, id string) (Cron, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, app_id, schedule, path, enabled, created_at from crons where id = $1`, id)
-	c := Cron{}
-	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+		`select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at from crons where id = $1`, id)
+	c, err := scanCronRow(row)
+	if err != nil {
 		return Cron{}, mapErr(err)
 	}
 	return c, nil
 }
 
 func (s *PgStore) UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error) {
+	return s.UpdateCronWithOptions(ctx, id, schedule, path, enabled, nil, nil, createdAt)
+}
+
+func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time) (Cron, error) {
 	var createdAtArg any
 	if createdAt != nil {
 		createdAtArg = createdAt.UTC()
@@ -8533,12 +8551,14 @@ func (s *PgStore) UpdateCron(ctx context.Context, id string, schedule, path *str
 		   schedule   = coalesce($2, schedule),
 		   path       = coalesce($3, path),
 		   enabled    = coalesce($4, enabled),
-		   created_at = coalesce($5, created_at)
+		   timezone   = coalesce($5, timezone),
+		   skip_if_running = coalesce($6, skip_if_running),
+		   created_at = coalesce($7, created_at)
 		 where id = $1
-		 returning id, app_id, schedule, path, enabled, created_at`,
-		id, schedule, path, enabled, createdAtArg)
-	c := Cron{}
-	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+		 returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at`,
+		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg)
+	c, err := scanCronRow(row)
+	if err != nil {
 		return Cron{}, mapErr(err)
 	}
 	return c, nil
@@ -8567,6 +8587,19 @@ func (s *PgStore) MarkCronFired(ctx context.Context, id string, at time.Time) er
 		return ErrNotFound
 	}
 	return nil
+}
+
+// CountActiveCronInvocations counts pending/dispatching cron invocations for
+// the overlap guard. The cron history index keeps this point lookup cheap.
+func (s *PgStore) CountActiveCronInvocations(ctx context.Context, cronID string) (int, error) {
+	var n int
+	if err := s.pool.QueryRow(ctx, `
+		select count(*) from invocations
+		 where cron_id = $1 and source = 'cron'
+		   and state in ('pending','dispatching')`, cronID).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // StampAppScaleOut (PR-C, issue #462) writes the apps
@@ -8605,7 +8638,7 @@ func (s *PgStore) StampAppScaleIn(ctx context.Context, appID string) error {
 
 func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, schedule, path, enabled, created_at from crons where app_id = $1 order by created_at`, appID)
+		`select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at from crons where app_id = $1 order by created_at`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -8615,7 +8648,7 @@ func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, er
 
 func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, schedule, path, enabled, created_at from crons where enabled = true`)
+		`select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at from crons where enabled = true`)
 	if err != nil {
 		return nil, err
 	}
@@ -17958,13 +17991,31 @@ func scanCustomDomain(row customDomainScanner, d *CustomDomain) error {
 func scanCrons(rows pgx.Rows) ([]Cron, error) {
 	var out []Cron
 	for rows.Next() {
-		c := Cron{}
-		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+		c, err := scanCronRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// scanCronRow centralizes the explicit cron projection used by pgx.Row and
+// pgx.Rows. last_fired_at is nullable until the first scheduled fire.
+func scanCronRow(row interface{ Scan(...any) error }) (Cron, error) {
+	var c Cron
+	var lastFired pgtype.Timestamptz
+	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled,
+		&c.Timezone, &c.SkipIfRunning, &lastFired, &c.CreatedAt); err != nil {
+		return Cron{}, err
+	}
+	if c.Timezone == "" {
+		c.Timezone = "UTC"
+	}
+	if lastFired.Valid {
+		c.LastFiredAt = lastFired.Time
+	}
+	return c, nil
 }
 
 func scanInstance(row pgx.Row) (Instance, error) {
@@ -19266,7 +19317,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 // newest crons surface first.
 func (s *PgStore) ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select c.id, c.app_id, c.schedule, c.path, c.enabled, c.created_at
+		`select c.id, c.app_id, c.schedule, c.path, c.enabled, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at
 		 from crons c
 		 join apps a on a.id = c.app_id
 		 where a.account_id = $1
@@ -19277,8 +19328,8 @@ func (s *PgStore) ListCronsForAccount(ctx context.Context, accountID string) ([]
 	defer rows.Close()
 	var out []Cron
 	for rows.Next() {
-		c := Cron{}
-		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+		c, err := scanCronRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, c)

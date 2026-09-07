@@ -2091,13 +2091,24 @@ type DomainDoctorObservation struct {
 
 // Cron is a scheduled synthetic POST through gatewayd-internal (spec §4.3).
 type Cron struct {
-	ID          string
-	AppID       string
-	Schedule    string // cron expression
-	Path        string
-	Enabled     bool
-	CreatedAt   time.Time
-	LastFiredAt time.Time // zero until first fire; updated by MarkCronFired
+	ID            string
+	AppID         string
+	Schedule      string // cron expression
+	Path          string
+	Enabled       bool
+	Timezone      string // IANA timezone; empty is normalized to UTC
+	SkipIfRunning bool   // skip a scheduled fire while a prior cron run is active
+	CreatedAt     time.Time
+	LastFiredAt   time.Time // zero until first fire; updated by MarkCronFired
+}
+
+// CronOptions controls the optional scheduling behavior persisted with a cron.
+// Timezone is an IANA location name; an empty value means UTC. SkipIfRunning
+// advances the schedule without dispatching when a prior cron invocation is
+// still pending or dispatching.
+type CronOptions struct {
+	Timezone      string
+	SkipIfRunning bool
 }
 
 // FireNowStatus is the closed vocabulary for cron_fire_now_requests.status

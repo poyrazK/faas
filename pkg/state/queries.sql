@@ -195,9 +195,9 @@ update custom_domains set verified_at = now() where domain = $1;
 delete from custom_domains where domain = $1;
 
 -- name: CreateCron :one
-insert into crons (id, app_id, schedule, path, enabled)
-values (gen_random_uuid(), $1, $2, $3, $4)
-returning id, app_id, schedule, path, enabled, created_at;
+insert into crons (id, app_id, schedule, path, enabled, timezone, skip_if_running)
+values (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
+returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at;
 
 -- name: UpdateCron :one
 update crons set
@@ -205,21 +205,21 @@ update crons set
   path = coalesce($3, path),
   enabled = coalesce($4, enabled)
 where id = $1
-returning id, app_id, schedule, path, enabled, created_at;
+returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at;
 
 -- name: DeleteCron :exec
 delete from crons where id = $1 and app_id = $2;
 
 -- name: ListCronsForApp :many
-select id, app_id, schedule, path, enabled, created_at
+select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 from crons where app_id = $1 order by created_at desc;
 
 -- name: ListEnabledCrons :many
-select id, app_id, schedule, path, enabled, created_at
+select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 from crons where enabled = true;
 
 -- name: CronByID :one
-select id, app_id, schedule, path, enabled, created_at
+select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 from crons where id = $1;
 
 -- name: AppendEvent :exec
