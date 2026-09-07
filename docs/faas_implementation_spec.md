@@ -509,7 +509,7 @@ Resume path (post-restore, triggered by host signal via vsock): re-seed `/dev/ur
 
 `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine`: a 15-line HTTP host on `:8080` that loads the customer handler and adapts request/response.
 
-Contract (identical across languages): handler receives `{method, path, headers, query, body_b64}`; returns `{status, headers, body_b64}` or a plain body. Node: `export default async function handler(req)`. Python: `def handler(request) -> Response | dict | str`.
+Contract (identical across languages): handler receives `{method, path, headers, query, body_b64}`; returns `{status, headers, body_b64}` or a plain body. Node: `export default async function handler(event, ctx)` or a Fetch API object, `export default { fetch(request, env, ctx) }`; Fetch API requests and responses are translated to and from the envelope by the generated adapter. Python: `def handler(request) -> Response | dict | str`.
 Streaming, websockets: not in v1 for functions (fine for Apps — `gatewayd-internal` proxies them transparently).
 Adding a runtime is a 7-layer procedure (migrations, schema, apid handler whitelist, openapi enums, runner shim, imaged handler surfaces, base Dockerfile + auto-stage wiring) — see ADR-052 for the canonical touch-list. The worked example for `node24` and `python313` is Tier 1 PR 1 + PR 2.
 

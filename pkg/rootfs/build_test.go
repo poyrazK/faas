@@ -590,6 +590,63 @@ func TestNormalizeFunctionHandler_NodeExportAdapterRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNormalizeFunctionHandler_NodeFetchAdapterRoundTrip(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed")
+	}
+	staging := t.TempDir()
+	appDir := filepath.Join(staging, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "package.json"), []byte(`{"type":"module"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const handler = `export default {
+  async fetch(request, env, ctx) {
+    const body = await request.json();
+    return new Response(JSON.stringify({
+      method: request.method,
+      path: new URL(request.url).pathname,
+      query: new URL(request.url).search,
+      trace: request.headers.get('x-trace-id'),
+      body,
+      runtime: env.FAAS_RUNTIME,
+      hasWaitUntil: typeof ctx.waitUntil === 'function',
+    }), { status: 207, headers: { 'content-type': 'application/json', 'x-fetch-adapter': 'yes' } });
+  },
+};
+`
+	if err := os.WriteFile(filepath.Join(appDir, "handler.js"), []byte(handler), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := NormalizeFunctionHandler(staging, "/app/node22.js"); err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := os.ReadFile(filepath.Join(appDir, "node22.js"))
+	if err != nil {
+		t.Fatalf("node22.js: %v", err)
+	}
+	if !bytes.Contains(adapter, []byte("new Request")) || !bytes.Contains(adapter, []byte("arrayBuffer")) {
+		t.Fatalf("node22.js is missing Fetch API translation: %q", adapter)
+	}
+	cmd := exec.Command("node", filepath.Join(appDir, "node22.js"))
+	cmd.Dir = appDir
+	cmd.Env = append(os.Environ(), "FAAS_RUNTIME=node22")
+	cmd.Stdin = strings.NewReader(`{"method":"POST","path":"/fetch","headers":{"x-trace-id":"trace-1"},"query":"a=1","body_b64":"eyJ4Ijo3fQ=="}
+{"method":"POST","path":"/fetch","headers":{"x-trace-id":"trace-2"},"query":"a=2","body_b64":"eyJ4Ijo4fQ=="}`)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("node Fetch API adapter: %v", err)
+	}
+	if got := strings.Count(string(out), `"status":207`); got != 2 {
+		t.Fatalf("Fetch API adapter responses = %d, want 2: %s", got, out)
+	}
+	if !strings.Contains(string(out), `"body_b64":"eyJtZXRob2QiOiJQT1NUIiwicGF0aCI6Ii9mZXRjaCIsInF1ZXJ5IjoiP2E9MSIsInRyYWNlIjoidHJhY2UtMSIsImJvZHkiOnsieCI6N30sInJ1bnRpbWUiOiJub2RlMjIiLCJoYXNXYWl0VW50aWwiOnRydWV9"`) {
+		t.Fatalf("unexpected Fetch API response: %s", out)
+	}
+}
+
 func TestNormalizeFunctionHandler_NodeCommonJSAdapterRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is not installed")
