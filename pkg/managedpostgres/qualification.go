@@ -76,7 +76,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	// Cleanup must retain a separate budget when a provider call hits the
 	// qualification deadline; otherwise an ambiguous create could be left
 	// behind precisely when the harness is under pressure.
-	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), qualificationCleanupTimeout)
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(parent), qualificationCleanupTimeout)
 	defer cleanupCancel()
 
 	record := func(name string, err error) bool {

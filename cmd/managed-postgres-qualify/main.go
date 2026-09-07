@@ -31,17 +31,17 @@ func main() {
 
 func run(getenv func(string) string, output, errorOutput io.Writer) int {
 	if !isLiveQualificationEnabled(getenv) {
-		fmt.Fprintln(errorOutput, "managed postgres qualification requires FAAS_ENVIRONMENT=staging and FAAS_MANAGED_POSTGRES_QUALIFY_LIVE=true")
+		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification requires FAAS_ENVIRONMENT=staging and FAAS_MANAGED_POSTGRES_QUALIFY_LIVE=true")
 		return 2
 	}
 	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
 	if err != nil || registry == nil {
-		fmt.Fprintln(errorOutput, "managed postgres qualification configuration is unavailable")
+		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification configuration is unavailable")
 		return 2
 	}
 	resourceID := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_RESOURCE_ID"))
 	if resourceID == "" || len(resourceID) > 255 {
-		fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_QUALIFY_RESOURCE_ID is required and must be at most 255 characters")
+		_, _ = fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_QUALIFY_RESOURCE_ID is required and must be at most 255 characters")
 		return 2
 	}
 	region := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_REGION"))
@@ -50,19 +50,19 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 	}
 	backend, err := registry.Default(region)
 	if err != nil {
-		fmt.Fprintln(errorOutput, "qualification region has no configured backend")
+		_, _ = fmt.Fprintln(errorOutput, "qualification region has no configured backend")
 		return 2
 	}
 	spec, err := qualificationSpec(backend, region)
 	if err != nil {
-		fmt.Fprintln(errorOutput, "configured backend cannot produce a qualification spec")
+		_, _ = fmt.Fprintln(errorOutput, "configured backend cannot produce a qualification spec")
 		return 2
 	}
 	timeout := 10 * time.Minute
 	if value := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")); value != "" {
 		timeout, err = time.ParseDuration(value)
 		if err != nil || timeout <= 0 {
-			fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT must be a positive duration")
+			_, _ = fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT must be a positive duration")
 			return 2
 		}
 	}
@@ -77,11 +77,11 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(result); err != nil {
-		fmt.Fprintln(errorOutput, "cannot write qualification report")
+		_, _ = fmt.Fprintln(errorOutput, "cannot write qualification report")
 		return 1
 	}
 	if qualificationErr != nil {
-		fmt.Fprintln(errorOutput, "managed postgres provider qualification failed")
+		_, _ = fmt.Fprintln(errorOutput, "managed postgres provider qualification failed")
 		return 1
 	}
 	return 0
