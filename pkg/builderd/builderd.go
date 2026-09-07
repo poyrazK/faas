@@ -431,12 +431,17 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, err
 	}
 
-	fw, ver, err := b.detector.DetectWithVersionAtRoot(dep.SourcePath, dep.SourceRoot)
-	if err != nil {
-		b.markFailed(ctx, build, state.FailureUserError, "framework detect: "+err.Error(), buildStart)
-		return BuildResult{}, err
+	fw, ver, profileUsed := persistedProfileFramework(dep)
+	if profileUsed {
+		b.emitBuildLog(ctx, build.ID, "using persisted framework profile: "+string(fw)+"\n")
+	} else {
+		fw, ver, err = b.detector.DetectWithVersionAtRoot(dep.SourcePath, dep.SourceRoot)
+		if err != nil {
+			b.markFailed(ctx, build, state.FailureUserError, "framework detect: "+err.Error(), buildStart)
+			return BuildResult{}, err
+		}
+		b.emitBuildLog(ctx, build.ID, "detected framework: "+string(fw)+"\n")
 	}
-	b.emitBuildLog(ctx, build.ID, "detected framework: "+string(fw)+"\n")
 	if ver != "" {
 		b.emitBuildLog(ctx, build.ID, "inferred source-declared version: "+ver+"\n")
 	}
