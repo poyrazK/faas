@@ -187,12 +187,21 @@ func (c *UsageCollector) Run(ctx context.Context) error {
 // is stale or has crossed any configured monthly safety ceiling. It is a
 // fail-closed control-plane guard, not a customer invoice calculation.
 func (p UsagePolicy) Admit(ctx context.Context, store UsageStore, accountID string, now time.Time) error {
+	return p.AdmitWithCeilings(ctx, store, accountID, now, UsageCeilings{})
+}
+
+// AdmitWithCeilings applies both the operator COGS policy and the account's
+// plan entitlement before a new reservation is persisted. Existing named
+// resources remain idempotent in Service.Create; only new reservations are
+// blocked when observations are stale or a ceiling has been reached.
+func (p UsagePolicy) AdmitWithCeilings(ctx context.Context, store UsageStore, accountID string, now time.Time, ceilings UsageCeilings) error {
 	if !p.Enabled {
 		return nil
 	}
 	if store == nil || accountID == "" || now.IsZero() {
 		return ErrInvalid
 	}
+	p = p.WithCeilings(ceilings)
 	snapshot, err := store.UsageSnapshot(ctx, accountID, monthStart(now))
 	if err != nil {
 		return ErrUnavailable

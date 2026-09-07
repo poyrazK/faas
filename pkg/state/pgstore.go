@@ -18931,6 +18931,14 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		sql  string
 	}{
 		{"app_secrets", `delete from app_secrets where account_id = $1`},
+		// Managed PostgreSQL metadata is intentionally not ON DELETE CASCADE:
+		// account deletion must never hide a live provider resource. The
+		// account-status trigger only permits this path once every database is
+		// in the deleted tombstone state; remove those tombstones explicitly
+		// before the apps/accounts sentinels so GDPR deletion can complete.
+		{"managed_postgres_usage", `delete from managed_postgres_usage where account_id = $1`},
+		{"managed_postgres_bindings", `delete from managed_postgres_bindings where account_id = $1 and state = 'deleted'`},
+		{"managed_postgres_databases", `delete from managed_postgres_databases where account_id = $1 and state = 'deleted'`},
 		{"custom_domains", `delete from custom_domains
 		   where app_id in (select id from apps where account_id = $1)`},
 		{"crons", `delete from crons
