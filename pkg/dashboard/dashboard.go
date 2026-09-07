@@ -496,6 +496,55 @@ type JobsQueuesData struct {
 	ErrorMessage string
 }
 
+// AppEdgeRulesData is the bounded, account-scoped projection rendered by the
+// per-app edge-rules page. Rules and presets are read from the same Store
+// paths used by the API; mutations are form adapters that delegate to those
+// API handlers so validation and RFC7807 errors stay consistent.
+type AppEdgeRulesData struct {
+	App                    AppListItem
+	Rules                  []EdgeRulePageItem
+	CorsPresets            []CorsPresetPageItem
+	ActionCSRF             string
+	Action                 string
+	SecurityHeadersEnabled bool
+	ErrorMessage           string
+}
+
+// EdgeRulePageItem is a template-safe edge rule projection. ActionJSON is
+// intentionally a display string rather than a parsed map so the dashboard
+// never executes customer-provided JSON.
+type EdgeRulePageItem struct {
+	ID             string
+	Kind           string
+	MatchHost      string
+	MatchPath      string
+	MatchMethods   string
+	Priority       int
+	Enabled        bool
+	ActionJSON     string
+	ActionSummary  string
+	CreatedAt      string
+	UpdatedAt      string
+	SecurityPreset bool
+}
+
+// CorsPresetPageItem is the read-only preset summary shown beside an app's
+// edge rules. AppID is empty for an account-wide preset.
+type CorsPresetPageItem struct {
+	ID               string
+	Name             string
+	Description      string
+	Scope            string
+	AllowOrigins     []string
+	AllowMethods     []string
+	AllowHeaders     []string
+	ExposeHeaders    []string
+	AllowCredentials bool
+	MaxAgeSeconds    int
+	CreatedAt        string
+	UpdatedAt        string
+}
+
 // JobPageItem is the safe, read-only projection of one run-to-completion job.
 type JobPageItem struct {
 	ID             string
