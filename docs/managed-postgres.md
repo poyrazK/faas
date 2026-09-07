@@ -55,6 +55,16 @@ only stable check codes. The report's backend ID and fingerprint are the
 values that may be copied into the staging provisioning gates after an
 operator reviews the run.
 
+Set `FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` for the second,
+control-plane smoke in the same isolated run. After the provider checks pass,
+the command uses the provider-neutral service and binding saga to exercise
+`database_create → database_ready → binding_create → binding_ready →
+binding_delete → database_delete`. The smoke uses an in-memory catalog and a
+non-persistent credential sink, so it validates lease transitions, provider
+credential issuance/revocation, and cleanup without writing a customer app
+secret or exposing a password. This flag is also staging-only and remains
+independent of the customer provisioning gate.
+
 The binding catalog, credential saga, and encrypted-secret ownership boundary
 are durable. Reserving a binding claims one `(app, scope, environment key)`
 target globally, so two databases cannot both own `DATABASE_URL`. A customer
