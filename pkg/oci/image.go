@@ -259,7 +259,7 @@ func ManifestFromConfig(cfg Config) (api.AppManifest, error) {
 	}
 	ports, err := WorkloadPortsFromExposed(cfg.ExposedPorts)
 	if err != nil {
-		return api.AppManifest{}, fmt.Errorf("%w: exposed ports: %v", ErrImageManifestInvalid, err)
+		return api.AppManifest{}, fmt.Errorf("%w: exposed ports: %w", ErrImageManifestInvalid, err)
 	}
 	m.Ports = ports
 	if port, ok := SingleTCPExposedPort(cfg.ExposedPorts); ok {
