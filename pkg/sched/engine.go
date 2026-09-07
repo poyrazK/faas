@@ -6571,27 +6571,30 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 		e.ops.WatchdogKills(string(reason), string(terminal)).Inc()
 	}
 
-	// Error-explanations cluster (spec §6.4 amendment 1): a
-	// StuckColdBootTimeout marks the deployment row as failed with
-	// the app_startup_timeout code + prose so post-mortem retrieval
-	// via `gregale inspect <slug> --errors` surfaces the right
-	// hint/why/fix. The watchdog killed the instance because the
-	// cold boot exhausted the budget — that's distinct from the
-	// ECONNREFUSED (app_not_listening) case handled in pkg/fcvm.
+	// Error-explanations cluster (spec §6.4 amendment 1): a timeout while
+	// preparing the deployment's first snapshot marks that deployment failed
+	// with actionable startup prose. A customer wake can also cold boot after
+	// a snapshot miss; that failure belongs to the instance and must not remove
+	// an already-live deployment from routing.
 	// Best-effort: SetDeploymentFailedEx failure doesn't block the
 	// instance transition (the transition is the source of truth
 	// for the customer-facing timeline).
 	if reason == StuckColdBootTimeout && fresh.DeploymentID != "" {
-		p := api.NewProblem(422, api.CodeAppStartupTimeout,
-			"app did not become ready in time",
-			fmt.Sprintf("watchdog forced the instance to failed after the cold-boot budget elapsed (instance=%s, app=%s)", instanceID, appID))
-		_ = whycopy.Decorate(p, api.CodeAppStartupTimeout, nil)
-		if _, err := e.store.SetDeploymentFailedEx(ctx, fresh.DeploymentID,
-			api.CodeAppStartupTimeout,
-			fmt.Sprintf("cold_boot_timeout: instance=%s", instanceID),
-			p.Hint, p.Why, p.Fix, nil,
-		); err != nil {
-			e.log.Warn("watchdog: stamp app_startup_timeout failed", "deployment", fresh.DeploymentID, "err", err)
+		dep, err := e.store.DeploymentByID(ctx, fresh.DeploymentID)
+		if err != nil {
+			e.log.Warn("watchdog: load deployment for cold-boot timeout", "deployment", fresh.DeploymentID, "err", err)
+		} else if dep.Status == state.DeploySnapshotting {
+			p := api.NewProblem(422, api.CodeAppStartupTimeout,
+				"app did not become ready in time",
+				fmt.Sprintf("watchdog forced the instance to failed after the cold-boot budget elapsed (instance=%s, app=%s)", instanceID, appID))
+			_ = whycopy.Decorate(p, api.CodeAppStartupTimeout, nil)
+			if _, err := e.store.SetDeploymentFailedEx(ctx, fresh.DeploymentID,
+				api.CodeAppStartupTimeout,
+				fmt.Sprintf("cold_boot_timeout: instance=%s", instanceID),
+				p.Hint, p.Why, p.Fix, nil,
+			); err != nil {
+				e.log.Warn("watchdog: stamp app_startup_timeout failed", "deployment", fresh.DeploymentID, "err", err)
+			}
 		}
 	}
 	return nil
