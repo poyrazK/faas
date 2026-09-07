@@ -150,6 +150,15 @@ type AppManifest struct {
 	// lays the schema + admission; M-4 workstream E lands the
 	// rolling deploy / rollback / digest-pinning semantics.
 	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
+	// Favicon is an optional base64-encoded favicon payload for the edge
+	// /favicon.ico answer. The gateway enforces a 32 KiB maximum.
+	Favicon []byte `json:"favicon,omitempty"`
+	// RobotsTxt is the optional per-app robots policy served at the edge.
+	// Empty means the platform default allow-all policy.
+	RobotsTxt string `json:"robots_txt,omitempty"`
+	// HeadWakes opts the app into waking for HEAD / instead of receiving the
+	// parked-app edge answer.
+	HeadWakes bool `json:"head_wakes,omitempty"`
 }
 
 // WorkloadPortProtocol is the transport protocol for a workload listener.

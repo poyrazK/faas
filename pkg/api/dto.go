@@ -41,6 +41,14 @@ type CreateAppRequest struct {
 	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int              `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	// Favicon is an optional base64-encoded payload served at /favicon.ico;
+	// the gateway returns 204 when the decoded payload exceeds 32 KiB.
+	Favicon []byte `json:"favicon,omitempty"`
+	// RobotsTxt is the optional per-app robots policy. Empty uses the
+	// platform allow-all default.
+	RobotsTxt string `json:"robots_txt,omitempty"`
+	// HeadWakes opts the app into waking a parked app for HEAD /.
+	HeadWakes bool `json:"head_wakes,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -168,6 +176,14 @@ type UpdateAppRequest struct {
 	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int             `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	// Favicon replaces the per-app edge icon. An empty slice clears it;
+	// nil leaves the existing icon unchanged.
+	Favicon *[]byte `json:"favicon,omitempty"`
+	// RobotsTxt replaces the per-app robots policy; an empty string restores
+	// the platform allow-all default. Nil leaves the existing value unchanged.
+	RobotsTxt *string `json:"robots_txt,omitempty"`
+	// HeadWakes controls whether HEAD / may wake this app. Nil is unchanged.
+	HeadWakes *bool `json:"head_wakes,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get

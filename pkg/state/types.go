@@ -1185,6 +1185,9 @@ type AppManifest struct {
 	StartupDeadlineS int               `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int               `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas  `json:"service_replicas,omitempty"`
+	Favicon          []byte            `json:"favicon,omitempty"`
+	RobotsTxt        string            `json:"robots_txt,omitempty"`
+	HeadWakes        bool              `json:"head_wakes,omitempty"`
 }
 
 // IsZero reports whether the manifest carries no runner or lifecycle fields.
@@ -1195,7 +1198,8 @@ func (m AppManifest) IsZero() bool {
 		m.Port == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
-		m.ServiceReplicas == nil
+		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
+		m.RobotsTxt == "" && !m.HeadWakes
 }
 
 // ScalingPolicy is the per-app autoscaling configuration (issue #462 /
