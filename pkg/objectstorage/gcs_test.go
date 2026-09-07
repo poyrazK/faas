@@ -134,6 +134,14 @@ func TestGCSPresignBindsUploadAndMultipartShape(t *testing.T) {
 	if query.Query().Get("response-content-disposition") != "attachment" || query.Query().Get("response-content-type") != "application/octet-stream" {
 		t.Fatal("unsafe download response", download.URL)
 	}
+	head, err := p.Presign(context.Background(), "gregale-test", SignRequest{Method: http.MethodHead, Key: "hello", ExpiresIn: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	headURL, _ := url.Parse(head.URL)
+	if head.Method != http.MethodHead || headURL.Query().Has("response-content-disposition") || headURL.Query().Has("response-content-type") {
+		t.Fatalf("invalid HEAD request: %+v", head)
+	}
 	part, err := p.PresignMultipartPart(context.Background(), "gregale-test", MultipartPartRequest{Key: "large.bin", ProviderUploadID: "provider+id", PartNumber: 3, SizeBytes: 10, ExpiresIn: 60})
 	if err != nil {
 		t.Fatal(err)

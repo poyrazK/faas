@@ -162,8 +162,14 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 			}
 		}
 		result.Headers["Content-Type"] = contentType
-	} else {
+	} else if r.Method == http.MethodGet {
 		out, err := p.signer.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(r.Key), ResponseContentDisposition: aws.String("attachment"), ResponseContentType: aws.String("application/octet-stream")}, options)
+		if err != nil {
+			return SignedRequest{}, ErrUnavailable
+		}
+		result.URL = out.URL
+	} else {
+		out, err := p.signer.PresignHeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(r.Key)}, options)
 		if err != nil {
 			return SignedRequest{}, ErrUnavailable
 		}

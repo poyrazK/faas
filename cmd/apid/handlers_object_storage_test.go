@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -149,6 +150,53 @@ func TestObjectStorageLifecycleAndProviderSwitch(t *testing.T) {
 	}
 	if r = e.do(t, "GET", path+"/"+first.ID+"/objects", nil, nil); r.Code != 404 {
 		t.Fatal(r.Code)
+	}
+}
+
+func TestObjectS3CredentialLifecycle(t *testing.T) {
+	e := setupSecrets(t, api.PlanHobby)
+	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+	createApp(t, e, "s3-credential-app")
+	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
+	bucketPath := "/v1/apps/s3-credential-app/buckets"
+	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
+	credentialPath := bucketPath + "/" + bucket.ID + "/s3-credentials"
+
+	createdResponse := e.do(t, "POST", credentialPath, api.CreateObjectS3CredentialRequest{Label: "production uploader", Permission: api.ObjectBucketPermissionReadWrite}, nil)
+	if createdResponse.Code != 201 || createdResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("create credential = %d headers=%v body=%s", createdResponse.Code, createdResponse.Header(), createdResponse.Body.String())
+	}
+	var created api.ObjectS3CredentialSecret
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^GRGA[A-Z2-7]{16}$`).MatchString(created.AccessKeyID) || len(created.SecretAccessKey) != 40 {
+		t.Fatalf("invalid credential shape: access=%q secret_length=%d", created.AccessKeyID, len(created.SecretAccessKey))
+	}
+	if created.BucketID != bucket.ID || created.Status != state.ObjectS3CredentialStatusActive || created.Endpoint != "https://s3.gregale.dev" || created.Region != "us-east-1" || created.AddressingStyle != "path" {
+		t.Fatalf("unexpected credential response: %+v", created)
+	}
+
+	listResponse := e.do(t, "GET", credentialPath, nil, nil)
+	var list api.ObjectS3CredentialList
+	if listResponse.Code != 200 || json.Unmarshal(listResponse.Body.Bytes(), &list) != nil || len(list.Items) != 1 || list.Items[0].ID != created.ID {
+		t.Fatalf("list credential = %d %s", listResponse.Code, listResponse.Body.String())
+	}
+	if strings.Contains(listResponse.Body.String(), created.SecretAccessKey) || strings.Contains(listResponse.Body.String(), "secret_access_key") {
+		t.Fatal("one-time S3 secret leaked through list endpoint")
+	}
+
+	if response := e.do(t, "DELETE", credentialPath+"/"+created.ID, nil, nil); response.Code != 204 {
+		t.Fatalf("revoke credential = %d %s", response.Code, response.Body.String())
+	}
+	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.AccessKeyID); err != state.ErrNotFound {
+		t.Fatalf("revoked credential still resolves: %v", err)
+	}
+	listResponse = e.do(t, "GET", credentialPath, nil, nil)
+	if listResponse.Code != 200 || strings.Contains(listResponse.Body.String(), created.AccessKeyID) {
+		t.Fatalf("revoked credential still listed = %d %s", listResponse.Code, listResponse.Body.String())
 	}
 }
 

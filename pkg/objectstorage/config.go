@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -23,6 +24,8 @@ type Config struct {
 	Defaults         map[string]string         `json:"defaults"`
 	MaxBucketsPerApp int                       `json:"max_buckets_per_app"`
 	MaxUploadBytes   int64                     `json:"max_upload_bytes"`
+	PublicEndpoint   string                    `json:"public_endpoint,omitempty"`
+	PublicRegion     string                    `json:"public_region,omitempty"`
 	Backends         []BackendConfig           `json:"backends"`
 }
 
@@ -54,6 +57,8 @@ type Registry struct {
 	DefaultRegion    string
 	MaxBucketsPerApp int
 	MaxUploadBytes   int64
+	PublicEndpoint   string
+	PublicRegion     string
 	backends         map[string]Backend
 	defaults         map[string]string
 }
@@ -69,10 +74,24 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	if c.MaxUploadBytes == 0 {
 		c.MaxUploadBytes = api.DefaultObjectUploadBytes
 	}
+	if c.PublicEndpoint == "" {
+		c.PublicEndpoint = "https://s3.gregale.dev"
+	}
+	if c.PublicRegion == "" {
+		c.PublicRegion = "us-east-1"
+	}
 	if c.MaxBucketsPerApp < 1 || c.MaxBucketsPerApp > api.MaxObjectBucketsPerApp || c.MaxUploadBytes < 1 || c.MaxUploadBytes > api.MaxObjectUploadBytes {
 		return nil, errors.New("object storage: invalid bucket or upload limit")
 	}
-	r := &Registry{DefaultRegion: c.DefaultRegion, MaxBucketsPerApp: c.MaxBucketsPerApp, MaxUploadBytes: c.MaxUploadBytes, backends: map[string]Backend{}, defaults: map[string]string{}}
+	publicEndpoint, err := url.Parse(c.PublicEndpoint)
+	if err != nil || publicEndpoint.Scheme != "https" || publicEndpoint.Hostname() == "" || publicEndpoint.User != nil || (publicEndpoint.Path != "" && publicEndpoint.Path != "/") || publicEndpoint.RawPath != "" || publicEndpoint.RawQuery != "" || publicEndpoint.Fragment != "" {
+		return nil, errors.New("object storage: public_endpoint must be an HTTPS origin")
+	}
+	validRegion := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	if !validRegion.MatchString(c.PublicRegion) {
+		return nil, errors.New("object storage: invalid public_region")
+	}
+	r := &Registry{DefaultRegion: c.DefaultRegion, MaxBucketsPerApp: c.MaxBucketsPerApp, MaxUploadBytes: c.MaxUploadBytes, PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), PublicRegion: c.PublicRegion, backends: map[string]Backend{}, defaults: map[string]string{}}
 	r.usageReportPaths = map[string]string{}
 	if c.Accounting != nil {
 		if !c.Accounting.Valid() {

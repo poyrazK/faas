@@ -294,7 +294,7 @@ func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (Signed
 			opts.Headers = []string{"content-length:" + length}
 			result.Headers["Content-Length"] = length
 		}
-	} else {
+	} else if r.Method == http.MethodGet {
 		opts.QueryParameters.Set("response-content-disposition", "attachment")
 		opts.QueryParameters.Set("response-content-type", "application/octet-stream")
 	}
