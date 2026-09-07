@@ -58,7 +58,8 @@ type deleteTarget struct {
 //
 // Deleted apps and unusable terminal deployments are returned by the store
 // specifically so this function can evict them without letting them consume
-// a retention-floor slot. Stale rows are handled by the retention sweep.
+// a retention-floor slot, even when lifecycle triggers already marked those
+// rows stale. Other stale rows are handled by the retention sweep.
 //
 // Replaces the legacy perAppKeepCurrentPrevious (spec §4.6 current +
 // previous) which ignored tier entirely.
