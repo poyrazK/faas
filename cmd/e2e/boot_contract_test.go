@@ -3,10 +3,12 @@ package e2e_test
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,10 +19,13 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	imagedpkg "github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/renderer"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // TestBootContract_APIDRenderedConfigAndProductionListeners is the first
@@ -63,7 +68,7 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode rendered apid unit: %v", err)
 	}
-	configPath := renderedConfigPath(t, unit, etcDir)
+	configPath := renderedConfigPath(t, unit, etcDir, "apid")
 	relocateRenderedDBURL(t, configPath, dsn)
 
 	socketDir, err := os.MkdirTemp("", "faas-boot-apid-*")
@@ -164,6 +169,143 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 	}
 }
 
+// TestBootContract_ImagedRenderedConfigAndFunctionRunners executes imaged's
+// real production entrypoint with its manifest-rendered TOML and systemd
+// environment. The runner paths come exclusively from UnitImaged: reverting
+// production-fix commit 7d76deaf0 (issue #1286) therefore makes this boot fail
+// before readiness instead of allowing function deploys to break in the fleet.
+func TestBootContract_ImagedRenderedConfigAndFunctionRunners(t *testing.T) {
+	pool := pgtest.Open(t)
+	if pool == nil {
+		t.Skip("pgtest.Open skipped")
+	}
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("migrate isolated boot-contract schema: %v", err)
+	}
+
+	dsn := poolDSN(pool)
+	manifestPath := writeRenderManifestWithDSN(t, dsn)
+	renderRoot := t.TempDir()
+	etcDir := filepath.Join(renderRoot, "etc")
+	systemdDir := filepath.Join(renderRoot, "systemd")
+	_, err := renderer.Render(renderer.RenderOptions{
+		ManifestPath: manifestPath,
+		ReleasesRoot: filepath.Join(renderRoot, "releases"),
+		EtcFaasDir:   etcDir,
+		SystemdDir:   systemdDir,
+		PKIRootDir:   filepath.Join(renderRoot, "tls"),
+		CgroupRoot:   filepath.Join(renderRoot, "cgroup"),
+	})
+	if err != nil {
+		t.Fatalf("render production manifest: %v", err)
+	}
+
+	unitBody, err := os.ReadFile(filepath.Join(systemdDir, "faas-imaged.service"))
+	if err != nil {
+		t.Fatalf("read rendered imaged unit: %v", err)
+	}
+	unit, err := daemonunit.Decode(unitBody)
+	if err != nil {
+		t.Fatalf("decode rendered imaged unit: %v", err)
+	}
+	configPath := renderedConfigPath(t, unit, etcDir, "imaged")
+	controlAddr := freeTCPAddr(t)
+	relocateRenderedMetricsAddr(t, configPath, controlAddr)
+
+	fixtureRoot := t.TempDir()
+	hostAgePath := filepath.Join(fixtureRoot, "host.age")
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("generate host age identity: %v", err)
+	}
+	writeBootKey(t, hostAgePath, []byte(identity.String()), 0o400)
+
+	guestInitPath := filepath.Join(fixtureRoot, "guest-init")
+	guestInitBody := []byte("#!/bin/sh\nexit 0\n")
+	writeBootKey(t, guestInitPath, guestInitBody, 0o755)
+	privPEM, _, err := cosign.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate imaged signing key: %v", err)
+	}
+	signKeyPath := filepath.Join(fixtureRoot, "sign.key")
+	writeBootKey(t, signKeyPath, privPEM, 0o400)
+
+	storageRoot := filepath.Join(fixtureRoot, "storage")
+	seedBootContractBuilderBase(t, storageRoot, guestInitBody)
+	registry := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(registry.Close)
+	fakeBin := filepath.Join(fixtureRoot, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatalf("make boot-contract bin dir: %v", err)
+	}
+	// imaged validates an existing base read-only through debugfs. The boot
+	// contract is about daemon/deployment wiring, so use a deterministic shim
+	// instead of constructing a multi-gigabyte ext4 on every CI run.
+	writeBootKey(t, filepath.Join(fakeBin, "debugfs"), []byte("#!/bin/sh\necho 'Inode: 1'\n"), 0o755)
+
+	env := []string{
+		"PATH=" + fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"HOME=" + fixtureRoot,
+		"DATABASE_URL=" + dsn,
+		"FAAS_APPS_ROOT=" + filepath.Join(fixtureRoot, "apps"),
+		"FAAS_STORAGE_BACKEND=local",
+		"FAAS_STORAGE_ROOT=" + storageRoot,
+		"FAAS_SIGN_KEY=" + signKeyPath,
+		"FAAS_GUEST_INIT=" + guestInitPath,
+		"FAAS_OCI_INSECURE=1",
+		"FAAS_OCI_PULL_TIMEOUT_SECONDS=1",
+		// A local 404 makes the normal registry-outage fallback deterministic;
+		// imaged must accept the already-provisioned base.
+		"FAAS_BUILDER_BASE_REF=" + strings.TrimPrefix(registry.URL, "http://") + "/builder-base@sha256:" + strings.Repeat("0", 64),
+	}
+	env = append(env, renderedImagedUnitEnvironment(t, unit, fixtureRoot, hostAgePath)...)
+
+	proc := exec.Command(buildBootContractBinary(t, "cmd/imaged"), "--config", configPath)
+	proc.Env = env
+	var logs syncBuffer
+	proc.Stdout = &logs
+	proc.Stderr = &logs
+	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := proc.Start(); err != nil {
+		t.Fatalf("start rendered imaged: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- proc.Wait() }()
+	t.Cleanup(func() {
+		select {
+		case err := <-done:
+			if err != nil && !t.Failed() {
+				t.Errorf("imaged exited early: %v\n%s", err, logs.String())
+			}
+			return
+		default:
+		}
+		_ = syscall.Kill(-proc.Process.Pid, syscall.SIGTERM)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
+			<-done
+		}
+	})
+
+	waitBootReady(t, "http://"+controlAddr+"/readyz", 15*time.Second, &logs)
+}
+
+func buildBootContractBinary(t *testing.T, pkg string) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), filepath.Base(pkg))
+	cmd := exec.Command("go", "build", "-o", out, "./"+pkg)
+	cmd.Dir = bootContractRepoRoot(t)
+	var logs syncBuffer
+	cmd.Stdout = &logs
+	cmd.Stderr = &logs
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("build %s: %v\n%s", pkg, err, logs.String())
+	}
+	return out
+}
+
 // TestBootContract_APIDAppErrorsDeploymentGuard pins the deployment half of
 // production defect #1287. The runtime boot above proves apid can bind every
 // listener; this assertion prevents the Ansible role from again accepting a
@@ -200,19 +342,117 @@ func writeRenderManifestWithDSN(t *testing.T, dsn string) string {
 	return path
 }
 
-func renderedConfigPath(t *testing.T, unit daemonunit.Unit, etcDir string) string {
+func renderedConfigPath(t *testing.T, unit daemonunit.Unit, etcDir, daemon string) string {
 	t.Helper()
 	fields := strings.Fields(unit.ExecStart)
 	for i := 0; i+1 < len(fields); i++ {
 		if fields[i] == "--config" {
-			if fields[i+1] != "/etc/faas/apid.toml" {
-				t.Fatalf("rendered config path = %q, want /etc/faas/apid.toml", fields[i+1])
+			want := "/etc/faas/" + daemon + ".toml"
+			if fields[i+1] != want {
+				t.Fatalf("rendered config path = %q, want %s", fields[i+1], want)
 			}
-			return filepath.Join(etcDir, "apid.toml")
+			return filepath.Join(etcDir, daemon+".toml")
 		}
 	}
 	t.Fatalf("rendered ExecStart has no --config: %q", unit.ExecStart)
 	return ""
+}
+
+func relocateRenderedMetricsAddr(t *testing.T, configPath, addr string) {
+	t.Helper()
+	body, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read rendered config: %v", err)
+	}
+	lines := strings.Split(string(body), "\n")
+	found := false
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "metrics_addr =") {
+			if found {
+				t.Fatal("rendered config has multiple metrics_addr entries")
+			}
+			lines[i] = "metrics_addr = " + fmt.Sprintf("%q", addr)
+			found = true
+		}
+	}
+	if !found {
+		lines = append(lines, "metrics_addr = "+fmt.Sprintf("%q", addr))
+	}
+	if err := os.WriteFile(configPath, []byte(strings.Join(lines, "\n")), 0o640); err != nil {
+		t.Fatalf("relocate rendered metrics_addr: %v", err)
+	}
+}
+
+func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hostAgePath string) []string {
+	t.Helper()
+	const wantEnvironmentFiles = "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/runtime-bases.env"
+	if unit.EnvironmentFile != wantEnvironmentFiles {
+		t.Fatalf("EnvironmentFile = %q, want %q", unit.EnvironmentFile, wantEnvironmentFiles)
+	}
+
+	runnerKeys := map[string]bool{
+		"FAAS_FUNCTION_RUNNER_NODE22":       false,
+		"FAAS_FUNCTION_RUNNER_NODE24":       false,
+		"FAAS_FUNCTION_RUNNER_PYTHON312":    false,
+		"FAAS_FUNCTION_RUNNER_PYTHON313":    false,
+		"FAAS_FUNCTION_RUNNER_GO124":        false,
+		"FAAS_FUNCTION_RUNNER_GO124_ALPINE": false,
+	}
+	dirReplacements := map[string]string{
+		"TMPDIR":                 filepath.Join(root, "tmp"),
+		"FAAS_BASE_STAGING_ROOT": filepath.Join(root, "base-staging"),
+		"FAAS_BASE_EXTRACT_ROOT": filepath.Join(root, "base-extract"),
+		"FAAS_BASE_TMP_ROOT":     filepath.Join(root, "base-tmp"),
+	}
+	var env []string
+	for _, kv := range unit.Environment {
+		value := kv.Value
+		if dir, ok := dirReplacements[kv.Key]; ok {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatalf("make %s fixture: %v", kv.Key, err)
+			}
+			value = dir
+		}
+		if kv.Key == "FAAS_HOST_AGE_IDENTITY_PATH" {
+			value = hostAgePath
+		}
+		if _, ok := runnerKeys[kv.Key]; ok {
+			runnerKeys[kv.Key] = true
+			value = filepath.Join(root, "runners", strings.ToLower(strings.TrimPrefix(kv.Key, "FAAS_FUNCTION_RUNNER_")), "faas-runner")
+			if err := os.MkdirAll(filepath.Dir(value), 0o755); err != nil {
+				t.Fatalf("make %s fixture dir: %v", kv.Key, err)
+			}
+			writeBootKey(t, value, []byte("boot-contract runner\n"), 0o755)
+		}
+		if strings.Contains(value, "%d") {
+			t.Fatalf("unresolved systemd credential path for %s=%s", kv.Key, value)
+		}
+		env = append(env, kv.Key+"="+value)
+	}
+	for key, seen := range runnerKeys {
+		if !seen {
+			t.Errorf("rendered imaged unit is missing %s", key)
+		}
+	}
+	return env
+}
+
+func seedBootContractBuilderBase(t *testing.T, storageRoot string, guestInit []byte) {
+	t.Helper()
+	baseKey := sched.BaseKeyForArch("builder", imagedpkg.BuilderArch())
+	basePath := filepath.Join(storageRoot, filepath.FromSlash(baseKey))
+	if err := os.MkdirAll(filepath.Dir(basePath), 0o755); err != nil {
+		t.Fatalf("make builder base fixture dir: %v", err)
+	}
+	if err := os.WriteFile(basePath, []byte("boot-contract ext4 placeholder\n"), 0o600); err != nil {
+		t.Fatalf("write builder base fixture: %v", err)
+	}
+	digest := sha256.Sum256(guestInit)
+	sidecar := "boot-contract\nguest-init-sha256=" + hex.EncodeToString(digest[:]) + "\n"
+	digestPath := filepath.Join(storageRoot, filepath.FromSlash(sched.BaseDigestKeyForArch("builder", imagedpkg.BuilderArch())))
+	if err := os.WriteFile(digestPath, []byte(sidecar), 0o600); err != nil {
+		t.Fatalf("write builder base sidecar fixture: %v", err)
+	}
 }
 
 func relocateRenderedDBURL(t *testing.T, configPath, dsn string) {
@@ -290,7 +530,7 @@ func waitBootReady(t *testing.T, url string, timeout time.Duration, logs *syncBu
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("apid did not become ready at %s within %s\n%s", url, timeout, logs.String())
+			t.Fatalf("daemon did not become ready at %s within %s\n%s", url, timeout, logs.String())
 		case <-ticker.C:
 		}
 	}
