@@ -711,6 +711,7 @@ type Deployment struct {
 	SnapshotMissCount        int32
 	SnapshotMissLastAt       pgtype.Timestamptz
 	SnapshotMissBackoffUntil pgtype.Timestamptz
+	ApiHostingReceipt        []byte
 }
 
 type DeploymentAudit struct {
@@ -1543,6 +1544,7 @@ type Snapshot struct {
 	FcVersion    string
 	MemBytes     int64
 	DiskBytes    int64
+	StoredBytes  int64
 	Stale        bool
 	CreatedAt    pgtype.Timestamptz
 	StorageKey   string

@@ -30,7 +30,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, err
 	}
 	service, err := managedpostgres.NewService(registry, store, managedpostgres.ServiceOptions{
-		ProvisioningEnabled: func() bool { return registry.ProvisioningEnabled },
+		ProvisioningEnabled: managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now),
 		MaxDatabasesPerAccount: func(ctx context.Context, accountID string) (int, error) {
 			account, err := accountStore.AccountByID(ctx, accountID)
 			if err != nil {
@@ -54,7 +54,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, err
 	}
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
-		IncludeProvisioning: func() bool { return registry.ProvisioningEnabled },
+		IncludeProvisioning: managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now),
 		Logger:              log,
 	})
 	if err != nil {
@@ -79,13 +79,13 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, err
 	}
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
-		ProvisioningEnabled: func() bool { return registry.ProvisioningEnabled },
+		ProvisioningEnabled: managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now),
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
-		IncludeProvisioning: func() bool { return registry.ProvisioningEnabled },
+		IncludeProvisioning: managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now),
 		Logger:              log,
 	})
 	if err != nil {

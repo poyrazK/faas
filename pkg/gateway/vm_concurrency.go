@@ -3,7 +3,26 @@ package gateway
 import (
 	"context"
 	"sync"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+const vmConcurrencyRetryInterval = 10 * time.Millisecond
+
+// effectiveVMConcurrencyLimit keeps the gateway's request slots aligned with
+// the execution capacity inside a function guest. Generated function runners
+// have a fixed-size interpreter pool; admitting more concurrent requests than
+// that pool can execute only creates an in-guest queue and hides the pressure
+// that should add another VM. Request-mode apps retain the plan limit because
+// their servers own their concurrency model. Empty type is the legacy
+// function value.
+func effectiveVMConcurrencyLimit(app App, planLimit int) int {
+	if planLimit <= 0 || app.Type == AppTypeApp {
+		return planLimit
+	}
+	return min(planLimit, api.FunctionInterpreterMaxWorkers)
+}
 
 // vmConcurrencyManager owns the request slots for routable instances. The
 // gateway is the first component that knows which instance a request is
@@ -179,8 +198,9 @@ func (m *vmConcurrencyManager) acquire(ctx context.Context, instanceID, plan str
 }
 
 // acquireVMTarget first probes a few other picker entries when the selected
-// instance is saturated. This preserves round-robin distribution during a
-// burst while retaining a cancellable wait when every routable VM is full.
+// instance is saturated. While every routable VM is full, it periodically
+// picks again so a request queued behind the first restored VM can move to a
+// sibling as soon as that sibling becomes ready.
 func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult, perVM int) (PickResult, func(), bool, error) {
 	if h == nil || h.backend == nil || h.vmConcurrency == nil || perVM <= 0 || !pick.OK || pick.Target.InstanceID == "" {
 		return pick, func() {}, false, nil
@@ -188,24 +208,44 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 	if release, ok := h.vmConcurrency.tryAcquire(pick.Target.InstanceID, string(app.Plan), perVM); ok {
 		return pick, release, false, nil
 	}
-	// HealthyCount is a bounded upper estimate of useful retries. The hard
-	// cap avoids turning a saturated request into an unbounded picker loop if
-	// a custom backend reports a bad count.
-	attempts := h.backend.HealthyCount(app.ID)
-	if attempts > 16 {
-		attempts = 16
-	}
-	for i := 0; i < attempts; i++ {
-		candidate := h.backend.Pick(app.ID)
-		if !candidate.OK || candidate.Target.InstanceID == "" || candidate.Target.InstanceID == pick.Target.InstanceID {
-			continue
+	tryReadyTarget := func() (PickResult, func(), bool) {
+		// HealthyCount is a bounded upper estimate of useful retries. The hard
+		// cap avoids turning a saturated request into an unbounded picker loop
+		// if a custom backend reports a bad count.
+		attempts := h.backend.HealthyCount(app.ID)
+		if attempts < 1 {
+			attempts = 1
 		}
-		if release, ok := h.vmConcurrency.tryAcquire(candidate.Target.InstanceID, string(app.Plan), perVM); ok {
-			return candidate, release, false, nil
+		if attempts > 16 {
+			attempts = 16
+		}
+		for i := 0; i < attempts; i++ {
+			candidate := h.backend.Pick(app.ID)
+			if !candidate.OK || candidate.Target.InstanceID == "" {
+				continue
+			}
+			if release, ok := h.vmConcurrency.tryAcquire(candidate.Target.InstanceID, string(app.Plan), perVM); ok {
+				return candidate, release, true
+			}
+		}
+		return PickResult{}, nil, false
+	}
+	if candidate, release, ok := tryReadyTarget(); ok {
+		return candidate, release, false, nil
+	}
+
+	ticker := time.NewTicker(vmConcurrencyRetryInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if candidate, release, ok := tryReadyTarget(); ok {
+				return candidate, release, true, nil
+			}
+		case <-ctx.Done():
+			return pick, nil, true, ctx.Err()
 		}
 	}
-	release, waited, err := h.vmConcurrency.acquire(ctx, pick.Target.InstanceID, string(app.Plan), perVM)
-	return pick, release, waited, err
 }
 
 func (h *Handler) emitVMConcurrencyThreshold(ctx context.Context, app App, target Target, limit int) {

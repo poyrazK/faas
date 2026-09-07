@@ -445,6 +445,7 @@ type SnapshotRef struct {
 type SnapshotBytes struct {
 	MemBytes     int64
 	VMStateBytes int64
+	StoredBytes  int64
 }
 
 // WakeOutcome is the decoded result of a vmmd wake. Method reports what vmmd
@@ -644,7 +645,7 @@ func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath,
 	if err != nil {
 		return SnapshotBytes{}, liftErr(err)
 	}
-	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes()}, nil
+	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) wraps the new
@@ -661,7 +662,7 @@ func (c *VMMClient) WarmSnapshot(ctx context.Context, instance, storageKey, vmst
 	if err != nil {
 		return SnapshotBytes{}, liftErr(err)
 	}
-	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes()}, nil
+	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
 }
 
 // FrameworkReady implements VMM. The wire RPC's NotFound return

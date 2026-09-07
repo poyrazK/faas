@@ -468,6 +468,46 @@ type AppDomainsData struct {
 	ErrorMessage string
 }
 
+// AppInstancesData is the dashboard-facing payload for the per-app
+// instances page. The page combines the durable instance rows with the
+// wake-boot event metadata and deployment lifecycle fields that already
+// exist in the control plane. Lifecycle actions are app-scoped (park, wake,
+// restart), because schedd owns the individual instance state machine.
+type AppInstancesData struct {
+	App          AppListItem
+	AppStatus    string
+	Instances    []InstancePageItem
+	ActionCSRF   string
+	Action       string
+	WakeID       string
+	ErrorMessage string
+}
+
+// InstancePageItem is the safe dashboard projection of one instance. It
+// deliberately carries no guest credentials or namespace internals; node,
+// wake method, liveness restart count, and parked reason are the customer
+// useful diagnostics from #1395 B6.
+type InstancePageItem struct {
+	ID                   string
+	DeploymentID         string
+	State                string
+	StateClass           string
+	StateGlyph           string
+	StateLabel           string
+	NodeID               string
+	HostIP               string
+	RAMMB                int
+	WakeID               string
+	WakeMethod           string
+	WakeTier             string
+	LivenessRestartCount int
+	ParkedReason         string
+	StartedAt            string
+	LastRequestAt        string
+	ParkedAt             string
+	TerminalAt           string
+}
+
 // DomainPageItem is one custom-domain row on the app domains page.
 type DomainPageItem struct {
 	Domain           string
@@ -708,6 +748,10 @@ type DeploymentDetailData struct {
 	// POST /dashboard/apps/{slug}/rollback. It is empty when
 	// CanRollback is false.
 	RollbackConfirmToken string
+	// HostingReceipt is the durable post-readiness evidence emitted by
+	// imaged. It is optional because older deployments and non-API
+	// deployment paths may not have a receipt yet.
+	HostingReceipt *HostingReceiptView
 	// PreviewURL carries the resolved per-deployment preview
 	// URL. nil when the deployment doesn't exist or belongs to
 	// another account (handler already 404s in that case).
@@ -743,6 +787,31 @@ type DeploymentDetailData struct {
 	// template can pick a CSS palette without re-implementing
 	// the kind→severity mapping.
 	DeploymentAudit []DeploymentAuditRow
+}
+
+// HostingReceiptView is the dashboard-safe projection of the durable API
+// hosting receipt. The raw receipt stays on the API/state boundary; this
+// view keeps the template focused on the fields that answer "is it ready,
+// what was checked, and what artifact went live?" without exposing storage
+// internals such as the rootfs key.
+type HostingReceiptView struct {
+	AppURL          string
+	SourceKind      string
+	SourceURL       string
+	CommitSHA       string
+	ImageDigest     string
+	ProfileVersion  string
+	Framework       string
+	FrameworkVer    string
+	Port            int
+	HealthPath      string
+	SmokeStatus     string
+	SmokePath       string
+	SmokeStatusCode int
+	SmokeLatencyMS  int64
+	SmokeVerifiedAt string
+	SmokeErrorCode  string
+	SmokeError      string
 }
 
 // DeploymentAuditRow is the dashboard-local projection of one

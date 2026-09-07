@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -74,6 +75,12 @@ type OCIRegistryStorageBackend struct {
 	// channel has capacity 1 so the producer never blocks.
 	inFlight  sync.Map
 	refreshMu sync.Mutex
+
+	// deleteUnsupported is set after a registry returns 405 to a conforming
+	// digest DELETE. Public registries such as GHCR may disable that API. One
+	// observed error remains visible to the caller; later cleanup skips the
+	// known-unsupported network round trip and relies on registry retention.
+	deleteUnsupported atomic.Bool
 }
 
 // cachedToken is the bearer cache entry. issuedAt is when FetchToken
@@ -489,8 +496,15 @@ func (o *OCIRegistryStorageBackend) Delete(ctx context.Context, key string) erro
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("storage: oci delete %q: %w", key, err)
 	}
+	if o.deleteUnsupported.Load() {
+		return nil
+	}
 
 	if err := o.deleteManifest(ctx, repo, tag); err != nil {
+		if errors.Is(err, ErrDeleteUnsupported) {
+			o.deleteUnsupported.Store(true)
+			return fmt.Errorf("storage: oci delete %q: %w", key, err)
+		}
 		// 404 on manifest means "already gone" — non-error.
 		if !isNotFoundErr(err) {
 			return fmt.Errorf("storage: oci delete %q: %w", key, err)
@@ -1200,6 +1214,9 @@ func (o *OCIRegistryStorageBackend) deleteManifest(ctx context.Context, repo, ta
 		return nil
 	}
 	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		return fmt.Errorf("%w: delete returned %d: %s", ErrDeleteUnsupported, resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
 	return fmt.Errorf("delete returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 }
 

@@ -63,13 +63,32 @@ func (m *MemStore) EnqueueSnapshotReplicasForNode(_ context.Context, nodeID stri
 		if snap.Stale || snap.StorageKey == "" {
 			continue
 		}
+		deployment, ok := m.deployments[snap.DeploymentID]
+		if !ok {
+			continue
+		}
+		app, ok := m.apps[deployment.AppID]
+		if !ok || app.Status == AppDeleted {
+			continue
+		}
+		if _, serviceable := snapshotReplicaDeploymentPriority(deployment.Status); !serviceable {
+			continue
+		}
 		if origin, exists := m.snapshotOrigins[snap.ID]; exists {
-			if origin.nodeID == nodeID || (origin.region != "" && origin.region != nodeRegion(node)) {
+			if origin.region != "" && origin.region != nodeRegion(node) {
 				continue
 			}
 		}
 		key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: nodeID}
-		if _, exists := m.snapshotReplicas[key]; exists {
+		row, exists := m.snapshotReplicas[key]
+		if exists {
+			if row.state == SnapshotReplicaReady && !row.readyAt.IsZero() && time.Since(row.readyAt) >= snapshotReplicaRevalidateAfter {
+				row.state = SnapshotReplicaPending
+				row.readyAt = time.Time{}
+				row.updatedAt = time.Now()
+				m.snapshotReplicas[key] = row
+				created++
+			}
 			continue
 		}
 		m.snapshotReplicas[key] = snapshotReplicaRow{
@@ -88,28 +107,45 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 	var chosen *Snapshot
 	var chosenKey snapshotReplicaKey
 	var chosenRow snapshotReplicaRow
+	chosenPriority := 0
 	for i := range m.snapshots {
 		snap := &m.snapshots[i]
 		if snap.Stale || snap.StorageKey == "" {
 			continue
 		}
+		deployment, ok := m.deployments[snap.DeploymentID]
+		if !ok {
+			continue
+		}
+		app, ok := m.apps[deployment.AppID]
+		if !ok || app.Status == AppDeleted {
+			continue
+		}
+		priority, serviceable := snapshotReplicaDeploymentPriority(deployment.Status)
+		if !serviceable {
+			continue
+		}
 		key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: nodeID}
 		row, ok := m.snapshotReplicas[key]
-		if !ok || row.attempts >= snapshotReplicaMaxAttempts || row.nextAttemptAt.After(now) {
+		if !ok || row.nextAttemptAt.After(now) {
 			continue
 		}
 		reclaim := row.state == SnapshotReplicaSyncing && now.Sub(row.updatedAt) >= 5*time.Minute
-		if row.state != SnapshotReplicaPending && row.state != SnapshotReplicaFailed && !reclaim {
+		retryableFailure := row.state == SnapshotReplicaFailed && !row.nextAttemptAt.IsZero()
+		if row.state != SnapshotReplicaPending && !retryableFailure && !reclaim {
 			continue
 		}
-		chosen, chosenKey, chosenRow = snap, key, row
-		break
+		if chosen == nil || priority < chosenPriority ||
+			(priority == chosenPriority && snap.CreatedAt.After(chosen.CreatedAt)) ||
+			(priority == chosenPriority && snap.CreatedAt.Equal(chosen.CreatedAt) && snap.ID < chosen.ID) {
+			chosen, chosenKey, chosenRow, chosenPriority = snap, key, row, priority
+		}
 	}
 	if chosen == nil {
 		return SnapshotReplicaJob{}, ErrNotFound
 	}
 	chosenRow.state = SnapshotReplicaSyncing
-	chosenRow.attempts++
+	chosenRow.attempts = min(chosenRow.attempts+1, snapshotReplicaAttemptCap)
 	chosenRow.updatedAt = now
 	chosenRow.nextAttemptAt = time.Time{}
 	chosenRow.lastError = ""
@@ -177,9 +213,7 @@ func (m *MemStore) MarkSnapshotReplicaFailed(_ context.Context, snapshotID, node
 	row.readyAt = time.Time{}
 	row.updatedAt = time.Now()
 	if isPermanentSnapshotReplicaError(cause) {
-		row.attempts = snapshotReplicaMaxAttempts
-		row.nextAttemptAt = time.Time{}
-	} else if row.attempts >= snapshotReplicaMaxAttempts {
+		row.attempts = snapshotReplicaAttemptCap
 		row.nextAttemptAt = time.Time{}
 	} else {
 		row.nextAttemptAt = row.updatedAt.Add(snapshotReplicaRetryDelay(row.attempts))

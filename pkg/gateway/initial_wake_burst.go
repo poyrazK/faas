@@ -14,22 +14,13 @@ type capacityWakeScheduler interface {
 	EnsureWakeCapacity(ctx context.Context, appID, trigger string, desired int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, port int)) error
 }
 
-func (h *Handler) initialWakeDemand(appID string, maxConcurrency int, plan api.Plan) int {
-	if h == nil || h.burstPressure == nil || appID == "" {
-		return 1
-	}
-	limits, ok := api.LimitsFor(plan)
-	if !ok {
-		return 1
-	}
-	desired := desiredBurstInstances(h.burstPressure.state(appID).inflight.Load(), limits.ConcurrencyPerVMBound, maxConcurrency)
-	if desired < 1 {
-		return 1
-	}
-	if desired > api.ScaleUpMaxBurstPerTick {
-		return api.ScaleUpMaxBurstPerTick
-	}
-	return desired
+func (h *Handler) initialWakeDemand(_ string, _ int, _ api.Plan, _ int) int {
+	// The cold gate releases every queued request only after this batch
+	// completes. Waiting for siblings here creates head-of-line latency even
+	// after the first snapshot restore is routable. Start exactly one instance
+	// synchronously; maybeBurstCapacity observes the same pressure after the
+	// restore settling window and expands while requests use that target.
+	return 1
 }
 
 // EnsureWarmCapacity keeps the cross-producer wake coordinator while passing

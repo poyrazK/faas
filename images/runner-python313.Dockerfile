@@ -7,14 +7,25 @@
 # a digest-pinned ref from the deployment pipeline; no manual ext4 copy is
 # part of the supported workflow.
 #
-# The two-drive scheme amortizes this base across every python313 app
-# on the box — per-app cost is just the customer's site-packages +
-# handler. The 130 MB/sandbox accounting is preserved
-# (CLAUDE.md "load-bearing — DO NOT fix").
-FROM python:3.13-slim-bookworm@sha256:2f2e5a876c71a6757f55ec57f2add0225ddaf01c802a33fcc29073943f94d907
-# Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
-    apt-get upgrade -y --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/* && \
-    (id app 2>/dev/null || useradd -u 1000 -m app)
+# Wolfi keeps Python 3.13 as a versioned package while its minimal glibc base
+# avoids the unfixed CRITICAL findings in the Debian 12 and 13 Python images.
+# The package name pins the interpreter minor; patch releases remain eligible
+# for security updates. The image stays standalone in DefaultRuntimeBaseRefs
+# because its OCI layer chain is not derived from base-debian-parent.
+#
+# The two-drive scheme still amortizes this base across every python313 app on
+# the box — per-app cost is just the customer's site-packages + handler.
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042
+# Issue #197 B3.6 (extension): mutable tag pinned via images/Dockerfile.lock.
+RUN apk add --no-cache bash ca-certificates python-3.13 && \
+    mkdir -p /usr/local/bin && \
+    ln -sf /usr/bin/python3.13 /usr/local/bin/python3 && \
+    ln -sf /usr/bin/python3.13 /usr/local/bin/python
+
+# Guest runtime user (uid 1000, spec §4.8). Keep the static identity in the
+# shared skeleton instead of retaining an account-management package.
+COPY images/rootfs-skel/ /
+# Wolfi's mode-000 placeholder has no login use inside the microVM and blocks
+# unprivileged ext4 assembly from copying the complete runtime tree.
+RUN rm -f /etc/shadow
 WORKDIR /app

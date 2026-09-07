@@ -78,6 +78,16 @@ func TestReadyTimeoutForUsesPerAppOverride(t *testing.T) {
 	}
 }
 
+func TestLayerCloneTempPatternCarriesDurableInstanceID(t *testing.T) {
+	const instanceID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+	if got, want := layerCloneTempPattern(instanceID), ".faas-layer-"+instanceID+"-*"; got != want {
+		t.Fatalf("pattern = %q, want %q", got, want)
+	}
+	if got := layerCloneTempPattern("not-an-instance-id"); got != ".faas-layer-*" {
+		t.Fatalf("invalid-id pattern = %q, want legacy safe fallback", got)
+	}
+}
+
 func TestNotReadyProblemUsesPerAppTimeout(t *testing.T) {
 	v := &JailerVMM{readyTimeout: 30 * time.Second}
 	p := v.notReadyProblem(Lease{Instance: "inst-1"}, "", 1, 45*time.Second)
@@ -392,6 +402,28 @@ func TestMoveOut_CrossDeviceFallback(t *testing.T) {
 	size, err := moveOut(src, dst)
 	if err != nil || size != 2 {
 		t.Fatalf("moveOut happy: size=%d err=%v", size, err)
+	}
+}
+
+func TestPrepareLocalSnapshotPathMakesNestedDirsGroupWritable(t *testing.T) {
+	root := t.TempDir()
+	localPath := filepath.Join(root, "deployment", "captures", "capture", "mem")
+	key := "snap/deployment/captures/capture/mem"
+	if err := prepareLocalSnapshotPath(key, localPath); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{
+		filepath.Join(root, "deployment"),
+		filepath.Join(root, "deployment", "captures"),
+		filepath.Join(root, "deployment", "captures", "capture"),
+	} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o770 {
+			t.Errorf("%s mode = %o, want 770", dir, info.Mode().Perm())
+		}
 	}
 }
 

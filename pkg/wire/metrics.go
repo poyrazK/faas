@@ -657,6 +657,12 @@ type OpsMetrics struct {
 	// dataUpstreamProbeDuration (ADR-098 PR-C) — wall-clock
 	// duration of each probe (TCP+TLS handshake).
 	dataUpstreamProbeDuration prometheus.Histogram
+	// dataUpstreamClassifierFailures (issue #957) — counter for
+	// apid env-classifier failures after the env row has already been
+	// persisted. The reason vocabulary is intentionally closed so a
+	// malformed customer value cannot create an unbounded label set.
+	// Only apid increments this shared-registry metric.
+	dataUpstreamClassifierFailures *prometheus.CounterVec
 	// accountLabels: the bounded admission set shared by the
 	// account_id-labelled metrics above. See accountLabelSet docs
 	// for the fixed-capacity, non-evicting contract — an evicting
@@ -1126,8 +1132,8 @@ type OpsMetrics struct {
 	// expose the path (apid, imaged, builderd, gatewayd-internal, meterd,
 	// githubd, faas CLI). Buckets: 100 µs → 100 ms.
 	cpuStatsCollectDur prometheus.Histogram
-	// residentGBPerCustomer: per-plan "resident GB-hours per paying
-	// customer" gauge emitted by meterd (ADR-031, PR #141). Labelled
+	// residentGBPerCustomer: per-plan month-to-date average resident GB
+	// per paying customer gauge emitted by meterd (ADR-031, PR #141). Labelled
 	// by plan ∈ {free, hobby, pro, scale} so the §12 dashboard's
 	// "Resident GB per paying customer" panel can split by plan while
 	// the FaasResidentGbPerCustomerHigh alert rule fans out per-plan.
@@ -2529,7 +2535,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	})
 	residentGBPerCustomer := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_resident_gb_per_customer",
-		Help: "Monthly GB-RAM-hours divided by paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
+		Help: "Month-to-date GB-RAM-hours divided by elapsed UTC-month hours and paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
 	}, []string{"plan"})
 	billingCapExceededTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_billing_cap_exceeded_total",
@@ -3562,9 +3568,16 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help:    "Per-probe wall-clock duration (TCP+TLS handshake). Buckets cover the 1ms..3s range — a healthy TLS handshake completes in <100ms; the 1s+ tail catches TCP retries. §12 data-placement panel.",
 		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 3},
 	})
-	commonCollectors = append(commonCollectors, dataUpstreamRTT, dataUpstreamProbes, dataUpstreamProbeDuration)
+	dataUpstreamClassifierFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_data_upstream_classifier_failures_total",
+		Help: "Env-classifier failures after the env row was persisted (issue #957), labelled by reason ∈ {salt_missing, port_out_of_range, unknown_kind, internal_error}. Only apid increments this counter; the closed vocabulary keeps the metric cardinality bounded.",
+	}, []string{"reason"})
+	commonCollectors = append(commonCollectors, dataUpstreamRTT, dataUpstreamProbes, dataUpstreamProbeDuration, dataUpstreamClassifierFailures)
 	for _, o := range []string{"ok", "timeout", "refused", "tls_handshake", "dns", "unreachable"} {
 		dataUpstreamProbes.WithLabelValues(o)
+	}
+	for _, reason := range []string{"salt_missing", "port_out_of_range", "unknown_kind", "internal_error"} {
+		dataUpstreamClassifierFailures.WithLabelValues(reason)
 	}
 	// Pre-instantiate the outcome set so /metrics surfaces the
 	// rows from a fresh process (Prometheus skips zero-valued
@@ -4426,6 +4439,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dataUpstreamRTT:                            dataUpstreamRTT,
 		dataUpstreamProbes:                         dataUpstreamProbes,
 		dataUpstreamProbeDuration:                  dataUpstreamProbeDuration,
+		dataUpstreamClassifierFailures:             dataUpstreamClassifierFailures,
 		accountLabels:                              newAccountLabelSet(maxAccountLabelValues),
 		failedLoginTotal:                           failedLoginTotal,
 		failedLoginDropped:                         failedLoginDropped,
@@ -6432,6 +6446,18 @@ func (m *OpsMetrics) MetricPrefix() string {
 	return m.metricPrefix
 }
 
+// ObserveDataUpstreamClassifierFailure records one env-classifier failure.
+// reason must come from the closed set {salt_missing, port_out_of_range,
+// unknown_kind, internal_error}; callers should normalize their typed error
+// before calling this method. Nil receivers are safe so apid's optional
+// metrics wiring does not change the customer-facing partial-success path.
+func (m *OpsMetrics) ObserveDataUpstreamClassifierFailure(reason string) {
+	if m == nil || m.dataUpstreamClassifierFailures == nil {
+		return
+	}
+	m.dataUpstreamClassifierFailures.WithLabelValues(reason).Inc()
+}
+
 // Observe records one operation outcome. err == nil codes OK; any error
 // is treated as a failure and exposes the gRPC code's string form as the
 // "code" label.
@@ -6802,10 +6828,9 @@ func (m *OpsMetrics) ImagedOCIBlobCacheEviction() {
 
 // SetResidentGBPerCustomer writes one sample to the
 // <daemon>_resident_gb_per_customer gauge (ADR-031, PR #141).
-// Spec §12 target is 0.305 GB-RAM-hours per paying customer
-// (= 312 MB / Hobby plan's 256 MB ≈ 312 MB-monthly inclusive); > 0.45
-// warns. Safe on a nil receiver so meterd unit tests without metrics
-// keep working.
+// Spec §12 target is 0.305 average resident GB per paying customer
+// (≈ 312 MB/customer); > 0.45 warns. Safe on a nil receiver so meterd
+// unit tests without metrics keep working.
 func (m *OpsMetrics) SetResidentGBPerCustomer(plan string, gb float64) {
 	if m == nil {
 		return

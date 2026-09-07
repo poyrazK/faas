@@ -13,6 +13,7 @@ import (
 const (
 	snapshotReplicaInitialRetryDelay = 5 * time.Second
 	snapshotReplicaMaxRetryDelay     = 5 * time.Minute
+	snapshotReplicaRevalidateAfter   = 5 * time.Minute
 )
 
 func snapshotReplicaRetryDelay(attempt int) time.Duration {
@@ -86,6 +87,8 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 		select e.snapshot_id, cn.id, coalesce(cn.region, '')
 		  from snapshot_fanout_events e
 		  join snapshots sn on sn.id = e.snapshot_id
+		  join deployments d on d.id = sn.deployment_id
+		  join apps a on a.id = d.app_id
 		  cross join compute_nodes cn
 		  left join snapshot_origins so on so.snapshot_id = sn.id
 		 where e.id > $2
@@ -93,8 +96,9 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 		   and cn.active = true
 		   and sn.stale = false
 		   and sn.storage_key <> ''
+		   and a.status <> 'deleted'
+		   and d.status in ('snapshotting', 'live', 'superseded')
 		   and (so.snapshot_id is null or so.region = '' or so.region = coalesce(cn.region, ''))
-		   and (so.snapshot_id is null or so.node_id is null or so.node_id <> cn.id)
 		on conflict (snapshot_id, node_id) do nothing`, nodeID, lastEventID)
 	if err != nil {
 		return 0, fmt.Errorf("state: enqueue snapshot replicas for %s: %w", nodeID, err)
@@ -112,10 +116,27 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 		 where node_id = $1`, nodeID, latestEventID); err != nil {
 		return 0, fmt.Errorf("state: enqueue snapshot replicas cursor update: %w", err)
 	}
+	revalidated, err := tx.Exec(ctx, `
+		update snapshot_replicas r
+		   set state = 'pending', ready_at = null, updated_at = now()
+		  from snapshots sn
+		  join deployments d on d.id = sn.deployment_id
+		  join apps a on a.id = d.app_id
+		 where r.snapshot_id = sn.id
+		   and r.node_id = $1
+		   and r.state = 'ready'
+		   and r.ready_at <= now() - make_interval(secs => $2)
+		   and sn.stale = false
+		   and a.status <> 'deleted'
+		   and d.status in ('snapshotting', 'live', 'superseded')`,
+		nodeID, int(snapshotReplicaRevalidateAfter/time.Second))
+	if err != nil {
+		return 0, fmt.Errorf("state: enqueue snapshot replicas revalidate: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: enqueue snapshot replicas commit: %w", err)
 	}
-	return int(tag.RowsAffected()), nil
+	return int(tag.RowsAffected() + revalidated.RowsAffected()), nil
 }
 
 // RecordSnapshotOrigin lets the reconciler restrict fan-out to the producer's
@@ -179,18 +200,28 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		from snapshot_replicas r
 		join snapshots sn on sn.id = r.snapshot_id
 		join deployments d on d.id = sn.deployment_id
+		join apps a on a.id = d.app_id
 		join compute_nodes cn on cn.id = r.node_id
 		where r.node_id = $1
 		  and sn.stale = false
-		  and r.attempts < $2
+		  and a.status <> 'deleted'
+		  and d.status in ('snapshotting', 'live', 'superseded')
 		  and (
-				r.state in ('pending', 'failed')
+				r.state = 'pending'
+				or (r.state = 'failed' and r.next_attempt_at is not null)
 				or (r.state = 'syncing' and r.updated_at < now() - interval '5 minutes')
 			  )
 		  and (r.next_attempt_at is null or r.next_attempt_at <= now())
-		order by r.created_at, r.snapshot_id
+		order by case d.status
+		           when 'live' then 0
+		           when 'snapshotting' then 1
+		           else 2
+		         end,
+		         sn.created_at desc,
+		         r.created_at desc,
+		         r.snapshot_id
 		for update of r skip locked
-		limit 1`, nodeID, snapshotReplicaMaxAttempts)
+		limit 1`, nodeID)
 	if err := row.Scan(&job.SnapshotID, &job.DeploymentID, &job.StorageKey,
 		&job.VMStateStorageKey, &job.LayerStorageKeys, &job.Tier, &job.NodeID, &job.Region, &job.Attempts); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -200,15 +231,15 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 	}
 	if _, err := tx.Exec(ctx, `
 		update snapshot_replicas
-		set state = 'syncing', attempts = attempts + 1,
+		set state = 'syncing', attempts = least(attempts + 1, $3),
 		    updated_at = now(), next_attempt_at = null, last_error = null
-		where snapshot_id = $1 and node_id = $2`, job.SnapshotID, job.NodeID); err != nil {
+		where snapshot_id = $1 and node_id = $2`, job.SnapshotID, job.NodeID, snapshotReplicaAttemptCap); err != nil {
 		return SnapshotReplicaJob{}, fmt.Errorf("state: claim snapshot replica update: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return SnapshotReplicaJob{}, fmt.Errorf("state: claim snapshot replica commit: %w", err)
 	}
-	job.Attempts++
+	job.Attempts = min(job.Attempts+1, snapshotReplicaAttemptCap)
 	job.VMStateStorageKey = SnapshotVMStateKey(Snapshot{DeploymentID: job.DeploymentID, StorageKey: job.StorageKey, Tier: job.Tier})
 	return job, nil
 }
@@ -231,7 +262,7 @@ func (s *PgStore) MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nod
 			update snapshot_replicas
 			set state = $3, attempts = greatest(attempts, $5), last_error = $4,
 			    ready_at = null, updated_at = now(), next_attempt_at = null
-			where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, string(SnapshotReplicaFailed), message, snapshotReplicaMaxAttempts)
+			where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, string(SnapshotReplicaFailed), message, snapshotReplicaAttemptCap)
 		if err != nil {
 			return fmt.Errorf("state: mark snapshot replica permanent failure: %w", err)
 		}
@@ -246,12 +277,9 @@ func (s *PgStore) MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nod
 	tag, err := s.pool.Exec(ctx, `
 		update snapshot_replicas
 		set state = $3, last_error = $4, ready_at = null, updated_at = now(),
-		    next_attempt_at = case
-		      when attempts >= $5 then null
-		      else now() + make_interval(secs => least($6, $7 * power(2, greatest(attempts - 1, 0)))::int)
-		    end
+		    next_attempt_at = now() + make_interval(secs => least($5, $6 * power(2, greatest(attempts - 1, 0)))::int)
 		where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, string(SnapshotReplicaFailed), message,
-		snapshotReplicaMaxAttempts, int(snapshotReplicaMaxRetryDelay/time.Second), int(snapshotReplicaInitialRetryDelay/time.Second))
+		int(snapshotReplicaMaxRetryDelay/time.Second), int(snapshotReplicaInitialRetryDelay/time.Second))
 	if err != nil {
 		return fmt.Errorf("state: mark snapshot replica failed: %w", err)
 	}

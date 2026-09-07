@@ -137,3 +137,22 @@ func TestErrEnvClassifier_WrapWithInner(t *testing.T) {
 		t.Errorf("errors.Is(wrapped, inner) = false")
 	}
 }
+
+func TestClassifierFailureMetricReason(t *testing.T) {
+	cases := map[string]string{
+		"host_hash_failed":     "salt_missing",
+		"port_out_of_range":    "port_out_of_range",
+		"unknown_kind":         "unknown_kind",
+		"uuid_parse":           "internal_error",
+		"insert_data_upstream": "internal_error",
+		"classifier_internal":  "internal_error",
+		"future_failure":       "internal_error",
+	}
+	for errorClass, want := range cases {
+		t.Run(errorClass, func(t *testing.T) {
+			if got := classifierFailureMetricReason(errorClass); got != want {
+				t.Fatalf("classifierFailureMetricReason(%q) = %q, want %q", errorClass, got, want)
+			}
+		})
+	}
+}

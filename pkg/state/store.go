@@ -259,6 +259,13 @@ type CanaryAdvancer interface {
 	AdvanceCanary(ctx context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error)
 }
 
+// DeploymentHostingReceiptStore is optional so existing narrow Store test
+// doubles remain source-compatible. Production stores implement it; callers
+// type-assert before persisting a hosting receipt.
+type DeploymentHostingReceiptStore interface {
+	UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error)
+}
+
 // RecoverRolloutStuckAfter (issue #976 / ADR-122 / SAFE-RELEASES-R +
 // production-leveling Stream C) is the canned stuck-detection
 // window the RecoverRollout method uses to gate action="advance".
@@ -3992,6 +3999,13 @@ type Store interface {
 	// soft-deleted app or an unusable terminal deployment so imaged can remove
 	// their rows and storage artifacts immediately.
 	ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error)
+	// ListSnapshotsStaleOlderThan returns stale snapshots whose retention
+	// window has expired, including the metadata needed to remove their files.
+	ListSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) ([]SnapshotForGC, error)
+	// ListSnapshotDeploymentIDs returns the distinct deployment IDs referenced
+	// by every snapshot row, including retained stale rows. Imaged uses this
+	// compact projection to distinguish legacy local orphans from retained data.
+	ListSnapshotDeploymentIDs(ctx context.Context) ([]string, error)
 	// DeleteSnapshotsByID bulk-removes the named snapshot rows (no cascade).
 	// Returns the number of rows deleted; a second call with the same ids
 	// returns 0 and no error.

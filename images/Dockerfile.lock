@@ -133,12 +133,12 @@
     {
       "dockerfile": "images/runner-python313.Dockerfile",
       "instruction": "FROM",
-      "alias": "python:3.13-slim-bookworm",
-      "resolved_repo": "docker.io/library/python",
-      "resolved_tag": "3.13-slim-bookworm",
+      "alias": "cgr.dev/chainguard/wolfi-base:latest",
+      "resolved_repo": "cgr.dev/chainguard/wolfi-base",
+      "resolved_tag": "latest",
       "platform": "linux/amd64",
-      "digest": "sha256:2f2e5a876c71a6757f55ec57f2add0225ddaf01c802a33fcc29073943f94d907",
-      "pinned_in_dockerfile": "FROM python:3.13-slim-bookworm@sha256:2f2e5a876c71a6757f55ec57f2add0225ddaf01c802a33fcc29073943f94d907"
+      "digest": "sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042"
     }
   ]
 }

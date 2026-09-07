@@ -308,6 +308,16 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 	}
 }
 
+// PrepareJailHelper stages the release-matched helper in the chroot base before
+// vmmd starts serving wake requests. Keeping this work on the daemon startup
+// path prevents the first Boot or Restore after a restart from paying for the
+// helper copy. It also surfaces a missing or unusable helper before vmmd
+// advertises capacity.
+func (v *JailerVMM) PrepareJailHelper() error {
+	_, err := v.ensureMountHelper()
+	return err
+}
+
 // WithStorage wires the artifact backend the VMM uses for snapshot blob
 // (de)serialization. Issue #96 / ADR-025 axis 2 — when Restore carries a
 // StorageKey, the VMM streams the bytes through Storage.Get into a tmp
@@ -1350,6 +1360,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// systemd PrivateTmp namespace making the intermediate file invisible to
 	// operators. Remote backends keep the streaming temp-file path below.
 	var memTmpPath string
+	var memPublishedPath string
 	var memBytes int64
 	var err error
 	memPublishedLocally := false
@@ -1363,12 +1374,16 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			if localPath, pathOK, pathErr := resolver.LocalPath(spec.StorageKey); pathErr != nil {
 				return SnapshotInfo{}, fmt.Errorf("vmm: resolve snapshot mem path: %w", pathErr)
 			} else if pathOK {
+				if prepErr := prepareLocalSnapshotPath(spec.StorageKey, localPath); prepErr != nil {
+					return SnapshotInfo{}, fmt.Errorf("vmm: prepare local snapshot path: %w", prepErr)
+				}
 				var moveErr error
 				memBytes, moveErr = moveOut(filepath.Join(root, memName), localPath)
 				if moveErr != nil {
 					return SnapshotInfo{}, fmt.Errorf("vmm: publish local snapshot mem: %w", moveErr)
 				}
 				memPublishedLocally = true
+				memPublishedPath = localPath
 			}
 		}
 	}
@@ -1439,13 +1454,101 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		}
 	}
 
+	// Logical snapshot lengths are required for Firecracker compatibility,
+	// but they are not the disk footprint of a sparse memory image. Resolve
+	// the just-published local/cache files and record their allocated blocks.
+	// A backend without a local representation falls back to logical bytes,
+	// which is conservative and keeps mixed-version rollouts truthful.
+	if memPublishedPath == "" {
+		memPublishedPath = v.publishedLocalPath(spec.StorageKey, memTmpPath)
+	}
+	statePublishedPath := spec.VMStatePath
+	if spec.VMStateStorageKey != "" {
+		statePublishedPath = v.publishedLocalPath(spec.VMStateStorageKey, vmstateSrcInChroot)
+	}
+	storedBytes := allocatedBytesOrLogical(memPublishedPath, memBytes) +
+		allocatedBytesOrLogical(statePublishedPath, stateBytes)
+
 	// SnapshotKeepAlive purposely does NOT Kill the VM — the
 	// warm-tier capture keeps the VM paused until the engine's
 	// pre-existing snapshotAndPark (init-tier capture) finishes
 	// and the legacy Snapshot() wrapper releases the chroot. The
 	// responsible caller (Manager.WarmSnapshot → vmm.WarmSnapshot
 	// → vmmdgrpc.WarmSnapshot) MUST fire ResumeVM on success.
-	return SnapshotInfo{MemBytes: memBytes, VMStateBytes: stateBytes}, nil
+	return SnapshotInfo{MemBytes: memBytes, VMStateBytes: stateBytes, StoredBytes: storedBytes}, nil
+}
+
+// publishedLocalPath returns the backend's local representation of key after a
+// successful Put. OCI production wraps the remote backend in LocalCacheBackend,
+// so this resolves the sparse cache file; pure remote backends use fallback.
+func (v *JailerVMM) publishedLocalPath(key, fallback string) string {
+	if key == "" || v.storage == nil {
+		return fallback
+	}
+	resolver, ok := v.storage.(storage.LocalPathResolver)
+	if !ok {
+		return fallback
+	}
+	path, local, err := resolver.LocalPath(key)
+	if err != nil || !local {
+		return fallback
+	}
+	return path
+}
+
+// allocatedBytesOrLogical reads POSIX st_blocks (512-byte units). It falls
+// back to the logical length when the path cannot be inspected so telemetry
+// never understates an unknown backend during a rolling deployment.
+func allocatedBytesOrLogical(path string, logical int64) int64 {
+	if path == "" {
+		return logical
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return logical
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st.Blocks < 0 {
+		return logical
+	}
+	return st.Blocks * 512
+}
+
+// prepareLocalSnapshotPath gives the unprivileged imaged GC group ownership
+// and write permission on directories created by root-owned vmmd. The snapshot
+// root's group is the deployment-defined shared group (faas in production), so
+// this avoids hard-coding a host GID and remains hermetic in tests.
+func prepareLocalSnapshotPath(storageKey, localPath string) error {
+	parts := strings.Split(storageKey, "/")
+	if len(parts) < 3 || parts[0] != "snap" {
+		return nil
+	}
+	root := filepath.Clean(localPath)
+	for range parts[1:] {
+		root = filepath.Dir(root)
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return err
+	}
+	stat, ok := rootInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("snapshot root %q has unsupported stat metadata", root)
+	}
+	dir := root
+	for _, part := range parts[1 : len(parts)-1] {
+		dir = filepath.Join(dir, part)
+		if err := os.Mkdir(dir, 0o2770); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		if err := os.Chown(dir, -1, int(stat.Gid)); err != nil {
+			return err
+		}
+		if err := os.Chmod(dir, 0o2770); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ResumeVM (issue #470 / PR #470-FU-A) is the host-side resume
@@ -3725,7 +3828,7 @@ func (v *JailerVMM) stageWritableAs(root, src, name string, uid, gid int, instan
 	if instance == "" {
 		return stageWritableAs(root, src, name, uid, gid)
 	}
-	clone, cloned, err := reflinkCloneTemp(src)
+	clone, cloned, err := reflinkCloneTemp(src, instance)
 	if err != nil {
 		return "", fmt.Errorf("reflink writable %s: %w", src, err)
 	}
@@ -3953,7 +4056,7 @@ const ficloneIoctl = 0x40049409
 // false when the filesystem does not support FICLONE; callers then use their
 // portable copy path. Keeping the clone beside src is what guarantees both
 // files are on the same reflink-capable filesystem.
-func reflinkCloneTemp(src string) (path string, cloned bool, err error) {
+func reflinkCloneTemp(src, instance string) (path string, cloned bool, err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return "", false, err
@@ -3963,7 +4066,7 @@ func reflinkCloneTemp(src string) (path string, cloned bool, err error) {
 			err = closeErr
 		}
 	}()
-	out, err := os.CreateTemp(filepath.Dir(src), ".faas-layer-*")
+	out, err := os.CreateTemp(filepath.Dir(src), layerCloneTempPattern(instance))
 	if err != nil {
 		return "", false, err
 	}
@@ -3981,6 +4084,17 @@ func reflinkCloneTemp(src string) (path string, cloned bool, err error) {
 		return "", false, nil
 	}
 	return path, true, nil
+}
+
+func layerCloneTempPattern(instance string) string {
+	if !looksLikeInstanceID(instance) {
+		return ".faas-layer-*"
+	}
+	// Include the durable instance id so a replacement vmmd can safely
+	// recover clones whose in-memory materialisedTmp ownership was lost
+	// across a daemon restart. ReapOrphanedLayerClones applies the same
+	// durable liveness gate as the jail sweep before removing one.
+	return ".faas-layer-" + instance + "-*"
 }
 
 //nolint:forbidigo // src/dst are vetted slot/instance-id paths under /srv/fc — vmmd is the sole writer of this directory; the tmpfs jail root means symlink-attack would require root (which vmmd already has, by spec §11). Copy is an internal migration helper, not a customer-path surface.

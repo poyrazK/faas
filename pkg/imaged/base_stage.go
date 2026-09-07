@@ -625,7 +625,8 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, ref, outImage s
 		return err
 	}
 	findings, scanErr := h.runGrype(ctx, scanSource)
-	if scanErr != nil || findings == nil {
+	scanFailed := scanErr != nil || findings == nil
+	if scanFailed {
 		h.log.Warn("imaged: grype scan failed; writing fail-closed sidecar",
 			"ref", ref, "err", scanErr)
 		// CRITICAL=9999 (and the other buckets set to 9999 as well)
@@ -641,16 +642,26 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, ref, outImage s
 			},
 		}
 	}
+	fixAvailableFindings := findings.fixAvailableToMap()
+	if scanFailed {
+		// A scanner failure must remain fail closed under the admission
+		// policy as well as in the total counts. The synthetic 9999 values
+		// have no Vulnerability rows from which fix availability can be
+		// derived, so copy the placeholder counts explicitly.
+		fixAvailableFindings = findings.toMap()
+	}
 	scanBlob, err := json.Marshal(struct {
-		Image     string         `json:"image"`
-		Source    string         `json:"source"`
-		Findings  map[string]int `json:"findings"`
-		ScannedAt time.Time      `json:"scanned_at"`
+		Image                string         `json:"image"`
+		Source               string         `json:"source"`
+		Findings             map[string]int `json:"findings"`
+		FixAvailableFindings map[string]int `json:"fix_available_findings"`
+		ScannedAt            time.Time      `json:"scanned_at"`
 	}{
-		Image:     ref,
-		Source:    scanSource,
-		Findings:  findings.toMap(),
-		ScannedAt: time.Now().UTC(),
+		Image:                ref,
+		Source:               scanSource,
+		Findings:             findings.toMap(),
+		FixAvailableFindings: fixAvailableFindings,
+		ScannedAt:            time.Now().UTC(),
 	})
 	if err != nil {
 		return fmt.Errorf("imaged: marshal scan sidecar: %w", err)
@@ -695,13 +706,20 @@ func (h *Handler) scanSidecarSourceCurrent(ctx context.Context, be storage.Stora
 	}
 	defer func() { _ = rc.Close() }()
 	var sidecar struct {
-		Source   string         `json:"source"`
-		Findings map[string]int `json:"findings"`
+		Source               string         `json:"source"`
+		Findings             map[string]int `json:"findings"`
+		FixAvailableFindings map[string]int `json:"fix_available_findings"`
 	}
 	if err := json.NewDecoder(rc).Decode(&sidecar); err != nil {
 		return false
 	}
 	if sidecar.Findings[SeverityCritical] >= 9999 {
+		return false
+	}
+	// Sidecars written before the runtime gate matched CI's --only-fixed
+	// policy do not carry this field. Refresh them so vmmd never has to
+	// guess whether a critical finding is actionable.
+	if sidecar.FixAvailableFindings == nil {
 		return false
 	}
 	return sidecar.Source != "" && sidecar.Source == source
@@ -757,12 +775,11 @@ type RuntimeBaseRef struct {
 // the build/run path at function-deploy time reuses go124's runner
 // binary.
 //
-// ADR-053: the Debian-backed node/python runtime rows declare
-// ParentRef: BaseRefDebianParent. Node22 is intentionally standalone on
-// Alpine because musl cannot compose over the shared glibc parent; its full
-// OCI chain is staged through the legacy (parentRef="") path. The shared
-// parent is staged
-// first (index 0) so a parent re-stage failure aborts the loop
+// ADR-053: the Debian-backed Node 24 and Python 3.12 rows declare ParentRef:
+// BaseRefDebianParent. Node 22 is standalone on Alpine, and Python 3.13 is
+// standalone on Wolfi; neither OCI chain can compose over the Debian parent.
+// Those full chains use the legacy (parentRef="") path. The shared parent is
+// staged first (index 0) so a parent re-stage failure aborts the loop
 // before any child is attempted — half-staged fleet is worse
 // than refuse. The parent row's ParentRef is "" (legacy path:
 // apply ALL its layers, no composition).
@@ -776,7 +793,7 @@ var DefaultRuntimeBaseRefs = []RuntimeBaseRef{
 	{Runtime: RuntimeGo124, Ref: BaseRefGo124, EnvOverride: "FAAS_DEPLOY_BASE_REF_GO124"},
 	{Runtime: RuntimeGo124Alpine, Ref: BaseRefGo124Alpine, EnvOverride: "FAAS_DEPLOY_BASE_REF_GO124_ALPINE"},
 	{Runtime: RuntimeNode24, Ref: BaseRefNode24, EnvOverride: "FAAS_DEPLOY_BASE_REF_NODE24", ParentRef: BaseRefDebianParent},
-	{Runtime: RuntimePython313, Ref: BaseRefPython313, EnvOverride: "FAAS_DEPLOY_BASE_REF_PYTHON313", ParentRef: BaseRefDebianParent},
+	{Runtime: RuntimePython313, Ref: BaseRefPython313, EnvOverride: "FAAS_DEPLOY_BASE_REF_PYTHON313"},
 }
 
 // EnsureBasesResult reports what EnsureBases did for a single runtime

@@ -10,14 +10,18 @@ package imaged
 // never touch a real /srv/fc.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -164,6 +168,245 @@ func TestGC_NoOpUnderBudget(t *testing.T) {
 	rows, _ := fx.store.ListSnapshotsForGC(context.Background())
 	if len(rows) != 1 {
 		t.Errorf("under-budget GC dropped rows: %d remain, want 1", len(rows))
+	}
+}
+
+func TestRun_PerformsGCBeforeFirstTicker(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "startup-gc@x.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "startup-gc", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:failed", Status: state.DeployFailed,
+	})
+	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
+		FCVersion: "1.8.0", StorageKey: state.SnapMemKey(dep.ID),
+	})
+
+	appsRoot := t.TempDir()
+	be, _ := storage.NewLocalStorageBackend(appsRoot)
+	loop := &Loop{
+		store: store,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:   time.Now,
+		lvUsedPct: func(context.Context) (float64, error) {
+			return 50, nil
+		},
+		gcCh: make(chan time.Time),
+		fcCh: make(chan struct{}),
+		handler: &Handler{
+			store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), storage: be, appsRoot: appsRoot,
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- loop.Run(ctx) }()
+
+	deadline := time.After(time.Second)
+	for {
+		rows, err := store.ListSnapshotsForGC(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("startup GC did not run before the first ticker")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+func TestRun_StartupGCDoesNotBlockEventLoop(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	loop := &Loop{
+		store: state.NewMemStore(),
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:   time.Now,
+		lvUsedPct: func(context.Context) (float64, error) {
+			close(started)
+			<-release
+			return 0, nil
+		},
+		gcCh: make(chan time.Time),
+		fcCh: make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- loop.Run(ctx) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("startup GC did not begin")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("startup GC blocked the event loop from observing cancellation")
+	}
+	close(release)
+}
+
+func TestRunGCTick_NaNUsageProducesValidStructuredLog(t *testing.T) {
+	var logs bytes.Buffer
+	loop := &Loop{
+		store: state.NewMemStore(),
+		log:   slog.New(slog.NewJSONHandler(&logs, nil)),
+		lvUsedPct: func(context.Context) (float64, error) {
+			return nan(), nil
+		},
+	}
+	loop.runGCTick(context.Background(), time.Unix(0, 0))
+	got := logs.String()
+	if strings.Contains(got, "!ERROR:json") {
+		t.Fatalf("NaN produced invalid JSON logging: %s", got)
+	}
+	if !strings.Contains(got, `"lv_fc_pct_known":false`) || !strings.Contains(got, `"lv_fc_pct":0`) {
+		t.Fatalf("unknown usage signal missing from log: %s", got)
+	}
+}
+
+func TestRemoveLocalSnapshotOrphansPreservesReferencedAndRecentDirs(t *testing.T) {
+	store := state.NewMemStore()
+	_, knownID, snapID := seedSnapshotWithApp(t, store, 1, 1)
+	if err := store.MarkSnapshotStale(context.Background(), snapID); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	orphanID := "550e8400-e29b-41d4-a716-446655440000"
+	recentID := "660e8400-e29b-41d4-a716-446655440001"
+	now := time.Now()
+	for _, id := range []string{knownID, orphanID, recentID} {
+		dir := filepath.Join(root, "snap", id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "mem"), []byte("snapshot"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := now.Add(-2 * localSnapshotOrphanGrace)
+	for _, id := range []string{knownID, orphanID} {
+		dir := filepath.Join(root, "snap", id)
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loop := &Loop{
+		store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), storageRoot: root,
+	}
+	loop.removeLocalSnapshotOrphans(context.Background(), now)
+	if _, err := os.Stat(filepath.Join(root, "snap", knownID)); err != nil {
+		t.Fatalf("retained stale snapshot directory removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "snap", orphanID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old orphan directory still present: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "snap", recentID)); err != nil {
+		t.Fatalf("recent unpublished directory removed: %v", err)
+	}
+}
+
+func TestDeleteSnapshotsAndFilesRemovesLegacyStorageRoot(t *testing.T) {
+	store := state.NewMemStore()
+	appID, depID, snapID := seedSnapshotWithApp(t, store, 1, 1)
+	app, err := store.AppByID(context.Background(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyRoot := t.TempDir()
+	legacy, err := storage.NewLocalStorageBackend(legacyRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{state.SnapMemKey(depID), state.SnapVMStateKey(depID)} {
+		if err := legacy.Put(context.Background(), key, strings.NewReader("legacy")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loop := &Loop{
+		store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), storageRoot: legacyRoot,
+		handler: &Handler{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), storage: configured},
+	}
+	if err := loop.deleteSnapshotsAndFiles(context.Background(), []deleteTarget{{
+		ID: snapID, DeploymentID: depID, AppSlug: app.Slug, Tier: state.SnapshotTierInit,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(legacyRoot, "snap", depID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy deployment directory still present: %v", err)
+	}
+}
+
+func TestFCSweep_ExpiredStaleSnapshotRemovesArtifacts(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "stale-gc@x.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "stale-gc", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stale", Status: state.DeployLive,
+	})
+	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, Stale: true,
+		FCVersion: "1.8.0", StorageKey: state.SnapMemKey(dep.ID),
+		CreatedAt: time.Now().Add(-api.SnapshotStaleRetention - time.Hour),
+	})
+
+	appsRoot := t.TempDir()
+	be, _ := storage.NewLocalStorageBackend(appsRoot)
+	keys := []string{
+		state.SnapMemKey(dep.ID),
+		sched.SnapshotVMStateKey(dep.ID),
+		sched.AppLayerKey(app.Slug, dep.ID),
+	}
+	for _, key := range keys {
+		if err := be.Put(context.Background(), key, strings.NewReader("artifact")); err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+	}
+	loop := &Loop{
+		store: store,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		detectFC: func(context.Context) (string, error) {
+			return "1.8.0", nil
+		},
+		handler: &Handler{
+			store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), storage: be, appsRoot: appsRoot,
+		},
+	}
+	if ok := loop.runFCSweep(context.Background()); !ok {
+		t.Fatal("runFCSweep returned false")
+	}
+	for _, key := range keys {
+		if rc, err := be.Get(context.Background(), key); err == nil {
+			_ = rc.Close()
+			t.Errorf("expired artifact %s survived stale retention", key)
+		}
+	}
+	rows, err := store.ListSnapshotsStaleOlderThan(context.Background(), api.SnapshotStaleRetention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expired stale rows remain: %d", len(rows))
 	}
 }
 

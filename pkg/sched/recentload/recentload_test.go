@@ -17,6 +17,18 @@ func (f *fakeScraper) Scrape(ctx context.Context) (map[string]int64, error) {
 	return f.fn(ctx)
 }
 
+type fakeRateReader struct {
+	rates map[string]float64
+}
+
+func (f *fakeRateReader) RequestRatesPerSecondAt(time.Time) map[string]float64 {
+	out := make(map[string]float64, len(f.rates))
+	for appID, rate := range f.rates {
+		out[appID] = rate
+	}
+	return out
+}
+
 // TestRecentLoad_PerAppSum exercises the basic sliding-window sum
 // after a cold start. The first Touch seeds the ring with count=0
 // (cold-start guard) — the cumulative value seen at first sight
@@ -120,6 +132,43 @@ func TestRecentLoad_DesiredReplicas_NoObservation(t *testing.T) {
 	r := New(nil, 5, time.Second)
 	if got := r.RecentDesiredReplicas("never-touched", time.Unix(1_000_000, 0), 10); got != 0 {
 		t.Errorf("RecentDesiredReplicas(no observation) = %d, want 0", got)
+	}
+}
+
+func TestRecentLoad_TelemetryFallbackPreservesZeroObservation(t *testing.T) {
+	reader := &fakeRateReader{rates: map[string]float64{"app1": 30}}
+	r := New(nil, 5, time.Second).WithRateReader(reader)
+	base := time.Unix(1_000_000, 0)
+	r.Touch(context.Background(), base)
+	if got, observed := r.RecentDesiredReplicasWithSignal("app1", base, 15); got != 2 || !observed {
+		t.Fatalf("initial desired = (%d, %v), want (2, true)", got, observed)
+	}
+
+	reader.rates["app1"] = 0
+	for i := 1; i <= 5; i++ {
+		r.Touch(context.Background(), base.Add(time.Duration(i)*time.Second))
+	}
+	if got, observed := r.RecentDesiredReplicasWithSignal("app1", base.Add(5*time.Second), 15); got != 0 || !observed {
+		t.Fatalf("zero-traffic desired = (%d, %v), want (0, true)", got, observed)
+	}
+	if got, observed := r.RecentDesiredReplicasWithSignal("missing", base.Add(5*time.Second), 15); got != 0 || observed {
+		t.Fatalf("missing desired = (%d, %v), want (0, false)", got, observed)
+	}
+}
+
+func TestRecentLoad_GatewaySignalPreferredOverTelemetry(t *testing.T) {
+	cumulative := int64(0)
+	scraper := &fakeScraper{fn: func(context.Context) (map[string]int64, error) {
+		return map[string]int64{"app1": cumulative}, nil
+	}}
+	reader := &fakeRateReader{rates: map[string]float64{"app1": 100}}
+	r := New(scraper, 5, time.Second).WithRateReader(reader)
+	base := time.Unix(1_000_000, 0)
+	r.Touch(context.Background(), base)
+	cumulative = 50
+	r.Touch(context.Background(), base.Add(time.Second))
+	if got, observed := r.RecentRateWithSignal("app1", base.Add(time.Second)); got != 10 || !observed {
+		t.Fatalf("rate = (%v, %v), want gateway-derived (10, true)", got, observed)
 	}
 }
 
