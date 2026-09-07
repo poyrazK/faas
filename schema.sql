@@ -3224,10 +3224,12 @@ CREATE TABLE public.snapshots (
     fc_version text NOT NULL,
     mem_bytes bigint NOT NULL,
     disk_bytes bigint NOT NULL,
+    stored_bytes bigint DEFAULT 0 NOT NULL,
     stale boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     storage_key text DEFAULT ''::text NOT NULL,
     tier text DEFAULT 'init'::text NOT NULL,
+    CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
     CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
 );
 

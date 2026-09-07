@@ -7446,6 +7446,7 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, 
 		"storage_key":   storageKey,
 		"mem_bytes":     b.MemBytes,
 		"vmstate_bytes": b.VMStateBytes,
+		"stored_bytes":  b.StoredBytes,
 		"fc_version":    e.fcVer,
 		"tier":          tier,
 	})

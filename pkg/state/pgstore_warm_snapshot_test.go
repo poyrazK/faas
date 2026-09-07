@@ -67,7 +67,7 @@ func TestPg_CreateSnapshot_DefaultsTierToInit(t *testing.T) {
 
 	created, err := s.CreateSnapshot(ctx, state.Snapshot{
 		DeploymentID: depID, FCVersion: "fc-1.0",
-		MemBytes: 1024, DiskBytes: 512,
+		MemBytes: 1024, DiskBytes: 512, StoredBytes: 384,
 		StorageKey: "snap/" + depID + "/mem",
 	})
 	if err != nil {
@@ -75,6 +75,9 @@ func TestPg_CreateSnapshot_DefaultsTierToInit(t *testing.T) {
 	}
 	if created.Tier != state.SnapshotTierInit {
 		t.Errorf("default Tier = %q, want %q", created.Tier, state.SnapshotTierInit)
+	}
+	if created.StoredBytes != 384 {
+		t.Errorf("StoredBytes = %d, want 384", created.StoredBytes)
 	}
 }
 

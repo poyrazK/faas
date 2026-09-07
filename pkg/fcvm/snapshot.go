@@ -217,4 +217,8 @@ type SnapshotSpec struct {
 type SnapshotInfo struct {
 	MemBytes     int64
 	VMStateBytes int64
+	// StoredBytes is the filesystem allocation consumed by the published
+	// memory and vmstate artifacts. It intentionally differs from the two
+	// logical lengths above for sparse Firecracker memory files.
+	StoredBytes int64
 }

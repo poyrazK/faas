@@ -479,7 +479,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			out := make([]fcvm.SnapshotStat, len(rows))
 			for i, r := range rows {
-				out[i] = fcvm.SnapshotStat{MemBytes: r.MemBytes, DiskBytes: r.DiskBytes}
+				out[i] = fcvm.SnapshotStat{SnapshotBytes: r.SnapshotBytes, LayerBytes: r.LayerBytes}
 			}
 			return out, nil
 		},
