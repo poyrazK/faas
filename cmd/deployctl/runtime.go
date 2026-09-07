@@ -260,6 +260,9 @@ func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
 	}); err != nil {
 		return fmt.Errorf("install units: %w", err)
 	}
+	if err := removeCanaryExecOverrides(r.unitDir, services); err != nil {
+		return fmt.Errorf("remove canary exec overrides: %w", err)
+	}
 	tmpfiles := filepath.Join(releaseRoot, "tmpfiles.d", "faas.conf")
 	if info, err := os.Stat(tmpfiles); err == nil && info.Mode().IsRegular() {
 		if err := installAtomic(tmpfiles, "/etc/tmpfiles.d/faas.conf", info.Mode().Perm()); err != nil {
@@ -287,6 +290,58 @@ func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
 		}
 	}
 	return nil
+}
+
+// removeCanaryExecOverrides makes the verified release's daemon binaries
+// authoritative. Development canaries override ExecStart from systemd drop-ins;
+// leaving one behind would make a successful release restart the old canary
+// instead of the binary in /opt/faas/current. Environment-only canaries, such
+// as the SSD Firecracker PATH selector, are intentionally preserved.
+func removeCanaryExecOverrides(unitDir string, services []string) error {
+	for _, service := range services {
+		dropInDir := filepath.Join(unitDir, "faas-"+service+".service.d")
+		entries, err := os.ReadDir(dropInDir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read %s: %w", dropInDir, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".conf" {
+				continue
+			}
+			path := filepath.Join(dropInDir, entry.Name())
+			info, err := os.Lstat(path)
+			if err != nil {
+				return fmt.Errorf("inspect %s: %w", path, err)
+			}
+			if !info.Mode().IsRegular() {
+				continue
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", path, err)
+			}
+			if !isCanaryExecOverride(string(body)) {
+				continue
+			}
+			if err := os.Remove(path); err != nil {
+				return fmt.Errorf("remove %s: %w", path, err)
+			}
+		}
+	}
+	return nil
+}
+
+func isCanaryExecOverride(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "ExecStart=") && strings.Contains(line, "/opt/faas/canaries/") {
+			return true
+		}
+	}
+	return false
 }
 
 // reconcileServiceTopology makes the service set in a verified release
