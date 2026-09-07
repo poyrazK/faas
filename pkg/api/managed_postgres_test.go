@@ -4,7 +4,7 @@ import "testing"
 
 func TestManagedPostgresLimitsFor(t *testing.T) {
 	hobby, ok := ManagedPostgresLimitsFor(PlanHobby)
-	if !ok || hobby.DatabasesMax != 1 || hobby.StorageLimitBytes != 10*(1<<30) || hobby.RestoreWindowSeconds != 7*24*60*60 || !hobby.DevelopmentAllowed || hobby.BurstableAllowed || hobby.ProductionAllowed {
+	if !ok || hobby.DatabasesMax != 1 || hobby.StorageLimitBytes != 10*(1<<30) || hobby.RestoreWindowSeconds != 7*24*60*60 || !hobby.DevelopmentAllowed || hobby.BurstableAllowed || hobby.ProductionAllowed || hobby.AlwaysOnAllowed {
 		t.Fatalf("unexpected hobby managed postgres limits: %+v, ok=%v", hobby, ok)
 	}
 	pro, _ := ManagedPostgresLimitsFor(PlanPro)
@@ -12,7 +12,7 @@ func TestManagedPostgresLimitsFor(t *testing.T) {
 		t.Fatalf("unexpected pro managed postgres limits: %+v", pro)
 	}
 	scale, _ := ManagedPostgresLimitsFor(PlanScale)
-	if scale.DatabasesMax != 10 || scale.StorageLimitBytes != 100*(1<<30) || !scale.ProductionAllowed {
+	if scale.DatabasesMax != 10 || scale.StorageLimitBytes != 100*(1<<30) || !scale.ProductionAllowed || scale.AlwaysOnAllowed {
 		t.Fatalf("unexpected scale managed postgres limits: %+v", scale)
 	}
 	free, _ := ManagedPostgresLimitsFor(PlanFree)

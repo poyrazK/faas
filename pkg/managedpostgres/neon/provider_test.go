@@ -41,6 +41,43 @@ func testDatabaseSpec() managedpostgres.Spec {
 	}
 }
 
+func TestComputeStateMapsNeonEndpointStates(t *testing.T) {
+	tests := map[string]managedpostgres.ComputeState{
+		"active":   managedpostgres.ComputeStateActive,
+		"idle":     managedpostgres.ComputeStateSuspended,
+		"starting": managedpostgres.ComputeStateWaking,
+		"unknown":  managedpostgres.ComputeStateUnknown,
+	}
+	for input, want := range tests {
+		if got := computeState(input); got != want {
+			t.Errorf("computeState(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestProbeDSNPrefersDirectEndpoint(t *testing.T) {
+	dsn, err := probeDSN(managedpostgres.CredentialMaterial{
+		Username: "gregale", Password: "secret", Database: "app", TLSMode: "require",
+		Endpoints: []managedpostgres.Endpoint{
+			{Role: managedpostgres.EndpointPooled, Host: "pool.example", Port: 6432},
+			{Role: managedpostgres.EndpointDirect, Host: "direct.example", Port: 5432},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Host != "direct.example:5432" || parsed.Query().Get("sslmode") != "require" {
+		t.Fatalf("dsn = %q", dsn)
+	}
+	if parsed.User.Username() != "gregale" {
+		t.Fatalf("dsn username = %q", parsed.User.Username())
+	}
+}
+
 func testProvider(t *testing.T, handler http.Handler) *Provider {
 	t.Helper()
 	server := httptest.NewTLSServer(handler)

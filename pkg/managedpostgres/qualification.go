@@ -23,6 +23,15 @@ type QualificationCheck struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// ScaleToZeroEvidence is safe to include in an operator qualification
+// report. It contains timing and boolean evidence only; no provider or
+// credential material is retained.
+type ScaleToZeroEvidence struct {
+	Suspended     bool  `json:"suspended"`
+	Resumed       bool  `json:"resumed"`
+	WakeLatencyMS int64 `json:"wake_latency_ms"`
+}
+
 // QualificationReport is safe to persist in an operator audit log. It does
 // not contain provider resource IDs, endpoint hosts, passwords, or URLs.
 type QualificationReport struct {
@@ -32,6 +41,7 @@ type QualificationReport struct {
 	StartedAt   time.Time            `json:"started_at"`
 	CompletedAt time.Time            `json:"completed_at"`
 	Checks      []QualificationCheck `json:"checks"`
+	ScaleToZero *ScaleToZeroEvidence `json:"scale_to_zero,omitempty"`
 }
 
 // QualificationOptions controls one isolated provider qualification run.
@@ -197,6 +207,25 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	credentialIssued = true
 	if err := material.Validate(); !record("credentials_valid", err) {
 		return report, resultErr
+	}
+	if options.Spec.ScaleToZero {
+		prober, ok := provider.(ScaleToZeroProber)
+		if !ok {
+			record("scale_to_zero_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		probe, probeErr := prober.ProbeScaleToZero(ctx, providerResourceID, material)
+		report.ScaleToZero = &ScaleToZeroEvidence{
+			Suspended:     probe.Suspended,
+			Resumed:       probe.Resumed,
+			WakeLatencyMS: probe.WakeLatency.Milliseconds(),
+		}
+		if probeErr == nil {
+			probeErr = probe.Validate()
+		}
+		if !record("scale_to_zero_probe", probeErr) {
+			return report, resultErr
+		}
 	}
 	if err := provider.RevokeCredentials(ctx, credentialRequest); !record("credentials_revoke", err) {
 		return report, resultErr
