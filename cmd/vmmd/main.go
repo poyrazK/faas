@@ -45,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/cpustats"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
+	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -65,6 +66,32 @@ import (
 // pkg/sched — we just need a stable pointer for the curve
 // equality check inside loadNodeSigningKey.
 func ellipticP256() elliptic.Curve { return elliptic.P256() }
+
+func configuredRuntimeBaseGenerations(envLookup func(string) string) (map[string]string, error) {
+	if envLookup == nil {
+		envLookup = os.Getenv
+	}
+	rows := []struct {
+		runtime string
+	}{
+		{""},
+		{imaged.RuntimeNode22},
+		{imaged.RuntimePython312},
+		{imaged.RuntimeGo124},
+		{imaged.RuntimeGo124Alpine},
+		{imaged.RuntimeNode24},
+		{imaged.RuntimePython313},
+	}
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		ref, err := imaged.ResolveDeployBaseRef(row.runtime, envLookup)
+		if err != nil {
+			return nil, fmt.Errorf("vmmd: resolve runtime base generation %q: %w", row.runtime, err)
+		}
+		out[sched.BaseKeyForArch(row.runtime, runtime.GOARCH)] = ref
+	}
+	return out, nil
+}
 
 // signalAdapter (M-2 / ADR-138 §Decision 1) wraps *fcvm.Manager
 // so the gRPC surface can take int32 (the wire shape — every
@@ -878,6 +905,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same backend (the production PrefixRouter rooted at
 	// /srv/fc).
 	mgr.WithStorage(storageBackend)
+	baseGenerations, err := configuredRuntimeBaseGenerations(os.Getenv)
+	if err != nil {
+		return err
+	}
+	mgr.WithBaseGenerations(baseGenerations)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// (pkg/events.Platform) on the VMM. vmmd is the canonical emit
 	// site for wake.readiness_200 (the first 2xx probe) and a

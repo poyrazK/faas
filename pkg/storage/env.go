@@ -403,3 +403,26 @@ func AsCacheBackend(root StorageBackend) *LocalCacheBackend {
 	}
 	return nil
 }
+
+// CacheBackendForKey resolves key through the same PrefixRouter chain as Get
+// and returns the LocalCacheBackend that owns it plus that cache's relative
+// key. A nil cache means the selected route is local or otherwise uncached.
+func CacheBackendForKey(root StorageBackend, key string) (*LocalCacheBackend, string, error) {
+	if root == nil {
+		return nil, "", nil
+	}
+	if c, ok := root.(*LocalCacheBackend); ok {
+		if err := validateKey(key); err != nil {
+			return nil, "", err
+		}
+		return c, key, nil
+	}
+	if r, ok := root.(*PrefixRouter); ok {
+		child, remainder, _, err := r.dispatch(key)
+		if err != nil {
+			return nil, "", err
+		}
+		return CacheBackendForKey(child, remainder)
+	}
+	return nil, "", nil
+}

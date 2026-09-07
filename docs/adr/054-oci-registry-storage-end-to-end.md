@@ -205,6 +205,30 @@ is a v1.1 tightening.
   metric for cache hit ratio. Out of scope here; lives in the
   observability pass.
 
+## Amendment (2026-09-07): runtime-base generation consistency
+
+Runtime bases remain under stable logical keys such as
+`base/runner-go124-amd64.ext4`, while production changes their digest-pinned
+OCI reference between releases. A cache-first peer could therefore retain the
+old base, digest sidecar, and scan sidecar indefinitely after another imaged
+node published their replacements. The first observed failure was a clean Go
+1.24 release rejected on the SSD node because its cache still held the
+previous base's CRITICAL finding after the HDD node staged the replacement.
+
+`vmmd` now loads the same `/etc/faas/runtime-bases.env` contract as imaged and
+builderd and binds each logical base key to its configured immutable OCI
+reference. `LocalCacheBackend` stores a node-local generation marker only
+after imaged publishes the base, digest sidecar, and scan sidecar. On a marker
+mismatch, vmmd refreshes all three keys directly from the canonical parent,
+checks that the refreshed scan names the configured reference, and only then
+commits the new marker and continues admission. A failed or partially
+published generation stays fail-closed.
+
+The normal restore path reads the small local marker and scan sidecar without
+a registry round trip. Registry I/O occurs once per node and runtime
+generation, so the consistency repair does not consume the 350 ms full-wake
+latency budget after adoption.
+
 ## Rejected alternatives
 
 - **One flat `OCIRegistryStorageBackend` for everything (no
