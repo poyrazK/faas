@@ -712,6 +712,7 @@ type Deployment struct {
 	SnapshotMissLastAt       pgtype.Timestamptz
 	SnapshotMissBackoffUntil pgtype.Timestamptz
 	ApiHostingReceipt        []byte
+	InferredProfile          []byte
 }
 
 type DeploymentAudit struct {
