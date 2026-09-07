@@ -316,3 +316,27 @@ func TestReader_SignalFreshness(t *testing.T) {
 		}
 	})
 }
+
+func TestReader_RequestRatesPerSecondAt(t *testing.T) {
+	r := NewReader()
+	base := time.Unix(1_000_000, 0)
+	r.Replace([]InstanceStat{{
+		AppID: "app1", InstanceID: "i-1", SampledAt: base,
+		RequestCountTotal: 10, RequestCountValid: true,
+	}})
+	r.Replace([]InstanceStat{{
+		AppID: "app1", InstanceID: "i-1", SampledAt: base.Add(time.Second),
+		RequestCountTotal: 40, RequestCountValid: true,
+	}})
+	rates := r.RequestRatesPerSecondAt(base.Add(time.Second))
+	if got := rates["app1"]; got != 30 {
+		t.Fatalf("app1 rate = %v, want 30", got)
+	}
+	rates["app1"] = 999
+	if got := r.RequestRatesPerSecondAt(base.Add(time.Second))["app1"]; got != 30 {
+		t.Fatalf("mutating returned map changed reader rate to %v", got)
+	}
+	if got := r.RequestRatesPerSecondAt(base.Add(time.Second + DefaultFreshness + time.Nanosecond)); len(got) != 0 {
+		t.Fatalf("stale rates = %v, want empty", got)
+	}
+}
