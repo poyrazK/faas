@@ -1978,7 +1978,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 			return 0
 		}
-		return streamDeployLogsContext(ctx, client, dep)
+		return streamDeployLogsContext(ctx, client, dep, slug)
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
 	// (CreateDeploymentRequest), so the annotation fields ride on the
@@ -2024,7 +2024,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 		return 0
 	}
-	return streamDeployLogsContext(ctx, client, dep)
+	return streamDeployLogsContext(ctx, client, dep, slug)
 }
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
@@ -3522,7 +3522,7 @@ func topPatterns(patterns map[string]int, n int) []string {
 // short-circuits the constructor when the customer piped the
 // output (`gregale deploy … | tee /tmp/log`) — the static fallback
 // in renderStageSummary is the path that fires instead.
-func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentResponse) int {
+func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string) int {
 	PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
 	body, err := c.StreamDeploymentLogs(ctx, dep.ID, nil, 0, true)
 	if err != nil {
@@ -3537,10 +3537,10 @@ func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentR
 		// is the canonical case where the stream never opened and
 		// the build row is already terminal.
 		if b, ok := pollBuildStatusContext(ctx, c, dep, 5*time.Second); ok {
-			return terminalExitForBuild(b, dep.AppID)
+			return terminalExitForBuild(b, appSlug)
 		}
 		if final, ok := pollDeploymentFinalContext(ctx, c, dep); ok {
-			return terminalExitForDeployment(final)
+			return terminalExitForDeploymentAs(final, appSlug)
 		}
 		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs --deployment %s", dep.ID)
 		return 3
@@ -3601,7 +3601,7 @@ streamLoop:
 				if json.Unmarshal([]byte(e.Data), &status) == nil &&
 					(status.Status == statusLive || status.Status == deploymentStatusFailed) {
 					if status.Status == statusLive {
-						PrintOK(osStdout, "Deployed. %s", deployedAppURL(dep.AppID))
+						PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
 						printDeployColdWakeSentence()
 						return 0
 					}
@@ -3645,7 +3645,7 @@ streamLoop:
 	// fall back to pollDeploymentFinal when the new poll reports
 	// the build is still queued or running.
 	if b, ok := pollBuildStatusContext(ctx, c, dep, 60*time.Second); ok {
-		return terminalExitForBuild(b, dep.AppID)
+		return terminalExitForBuild(b, appSlug)
 	}
 	// Tarball/function deployments created by older API paths may not carry
 	// BuildID.  In that case the build poll above is intentionally skipped,
@@ -3654,7 +3654,7 @@ streamLoop:
 	// the deployment row through that recovery window so a healthy deployment
 	// is not reported as exit 3 merely because the SSE stream ended first.
 	if final, ok := pollDeploymentFinalUntilContext(ctx, c, dep, 5*time.Minute); ok {
-		return terminalExitForDeployment(final)
+		return terminalExitForDeploymentAs(final, appSlug)
 	}
 	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs --deployment %s", dep.ID)
 	return 3
@@ -3797,8 +3797,12 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 // in-stream `event: status` branch, but uses the polled deployment
 // row (which has the canonical Error string from the DB).
 func terminalExitForDeployment(d api.DeploymentResponse) int {
+	return terminalExitForDeploymentAs(d, d.AppID)
+}
+
+func terminalExitForDeploymentAs(d api.DeploymentResponse, appSlug string) int {
 	if d.Status == statusLive {
-		PrintOK(osStdout, "Deployed. %s", deployedAppURL(d.AppID))
+		PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
 		printDeployColdWakeSentence()
 		return 0
 	}

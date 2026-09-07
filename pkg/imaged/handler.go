@@ -2538,7 +2538,7 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 		if appErr != nil {
 			return fmt.Errorf("imaged: load app for hosting receipt: %w", appErr)
 		}
-		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: app.Manifest.Healthz, ErrorCode: "smoke_not_configured"}
+		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(app, dep), ErrorCode: "smoke_not_configured"}
 		if smoke.Path == "" {
 			smoke.Path = defaultHealthzPath
 		}

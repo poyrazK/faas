@@ -112,5 +112,5 @@ func cmdDeployRepoSourceRefContext(ctx context.Context, slug, repo, ref string, 
 		// section.
 		return jsonOut(writeJSON(newDeployReceipt(dep, nil, deployedAppURL(slug), "")))
 	}
-	return streamDeployLogsContext(ctx, client, dep)
+	return streamDeployLogsContext(ctx, client, dep, slug)
 }

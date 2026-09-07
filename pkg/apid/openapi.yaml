@@ -14873,14 +14873,14 @@ components:
           description: "Operator or orchestrator reason recorded when the rollout is aborted."
 
     BuildPlan:
-      description: "Auto-detected build plan surfaced on DeploymentResponse (issue #961 / Mega-A PR-2). Same shape the CLI's pre-ship `Detected:` line prints; populated by apid via `pkg/markers.DetectFromTarball` against the spooled source tarball. Embedded on DeploymentResponse; never returned by a dedicated route."
+      description: "Effective build plan surfaced on DeploymentResponse (issue #961 / zero-config profile PR). Captured from the exact source archive at enqueue time and retained after spool cleanup; legacy rows fall back to marker detection when the spool is still available. Embedded on DeploymentResponse; never returned by a dedicated route."
       type: object
       required: [framework]
       properties:
         framework:
           type: string
           enum: [node, python, go, docker, unknown]
-          description: "Framework detected from the source tarball's top-level markers. `unknown` means no marker was found (monorepo / custom build); the wire renders this as `Detected: …, framework=unknown` rather than dropping the response."
+          description: "Compatibility framework family derived from the persisted source profile. `unknown` means no supported framework was inferred (monorepo / custom build)."
         runtime:
           type: [string, "null"]
           description: "Runtime the app is pinned to (eg `node22`, `python312`). Echoed from app.Runtime. nil for apps without a runtime set (image deploys)."
@@ -14889,12 +14889,15 @@ components:
           description: "Framework version extracted from the detected marker (eg `package.json` `engines.node`, `requirements.txt` head pin). nil when the marker has no version or framework is `unknown`."
         entrypoint:
           type: [string, "null"]
-          description: "Entrypoint override (create-time only). nil when the customer did not supply one."
+          description: "Effective start command from the persisted source profile, replaced by an explicit entrypoint override when supplied."
         port:
           type: [integer, "null"]
           minimum: 0
           maximum: 65535
-          description: "Listen-port override (create-time only). nil when the customer did not supply one."
+          description: "Effective listen port from the persisted source profile, replaced by an explicit port override when supplied."
+        health_path:
+          type: [string, "null"]
+          description: "Effective readiness path selected by the source profile or deployment override."
         class:
           type: [string, "null"]
           enum: [null, app, function]

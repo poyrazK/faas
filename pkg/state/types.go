@@ -1813,6 +1813,10 @@ type Deployment struct {
 	// after the readiness probe. Raw JSON keeps state independent of the API
 	// hosting receipt package.
 	APIHostingReceipt json.RawMessage `json:"api_hosting_receipt,omitempty"`
+	// InferredProfile is the versioned, non-secret source profile captured from
+	// the exact archive accepted for this deployment. It is kept as raw JSON so
+	// state does not depend on the framework-profile package's API shape.
+	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
 }
 
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot

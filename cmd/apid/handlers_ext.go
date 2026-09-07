@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -4116,41 +4117,31 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	// is enforced at the schema layer.
 	resp.ParkedReason = d.ParkedReason
 	resp.ParkedAt = d.ParkedAt
-	// Issue #961 / Mega-A PR-2: surface the auto-detected build plan
-	// (framework, runtime, class, entrypoint, port) on every deployment
-	// response so the CLI can print a single "Detected:" line and the
-	// dashboard can render the same shape without a separate /build
-	// fetch. For DeploymentKindImage (no SourcePath on disk), BuildPlan
-	// is left nil — the wire's omitempty keeps the field off the
-	// response in that case and pre-PR-2 clients see bit-identical
-	// JSON.
-	//
-	// HIGH-2 fix: route the marker detection through
-	// getCachedBuildPlan so listDeployments doesn't open +
-	// parse every spooled tarball on every page render. The
-	// cache is keyed by path + source root + mtime — a fresh spool write
-	// invalidates the entry.
-	//
-	// getCachedBuildPlan calls pkg/markers.DetectFromTarball
-	// directly (not builderd.NewDetector().Detect) because the
-	// builderd shim errors on FrameworkUnknown
-	// (pkg/builderd/detect.go:49-50), which would leave the
-	// BuildPlan field empty for monorepos. The markers API
-	// returns (FrameworkUnknown, nil) for missing markers —
-	// graceful degradation, no special error path.
-	if d.SourcePath != "" {
-		bp := &api.BuildPlan{Class: string(app.Type)}
-		if app.Runtime != "" {
-			bp.Runtime = app.Runtime
+	// Issue #961 / Mega-A PR-2: surface the effective build plan from the
+	// profile captured at enqueue time. The persisted profile is tied to the
+	// exact source archive and remains available after the spool is cleaned up;
+	// old rows without it retain the lazy marker-detection fallback.
+	if d.SourcePath != "" || len(d.InferredProfile) > 0 {
+		bp := &api.BuildPlan{Class: string(app.Type), Runtime: app.Runtime}
+		var profile frameworkprofile.Profile
+		profileLoaded := len(d.InferredProfile) > 0 && json.Unmarshal(d.InferredProfile, &profile) == nil && profile.Version != ""
+		if profileLoaded {
+			bp.Framework = buildPlanFramework(profile.Framework)
+			bp.Version = profile.FrameworkVer
+			bp.Entrypoint = profile.StartCommand
+			bp.Port = profile.Port
+			bp.HealthPath = profile.HealthPath
 		}
-		// HIGH-2 fix: route the marker detection through
-		// getCachedBuildPlan so listDeployments doesn't open +
-		// parse every spooled tarball on every page render. The
-		// cache is keyed by path + source root + mtime — a fresh spool write
-		// invalidates the entry.
-		fw, ver := getCachedBuildPlanAtRoot(d.SourcePath, d.SourceRoot)
-		bp.Framework = string(fw)
-		bp.Version = ver
+		if !profileLoaded && d.SourcePath != "" {
+			// Pre-profile deployments may still have a spool available. Keep
+			// the existing compatibility behavior for those rows.
+			fw, ver := getCachedBuildPlanAtRoot(d.SourcePath, d.SourceRoot)
+			bp.Framework = string(fw)
+			bp.Version = ver
+		}
+		if bp.Framework == "" {
+			bp.Framework = "unknown"
+		}
 		if len(d.OverrideEntrypoint) > 0 {
 			bp.Entrypoint = d.OverrideEntrypoint[0]
 		}
@@ -4160,6 +4151,25 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		resp.BuildPlan = bp
 	}
 	return resp
+}
+
+// buildPlanFramework keeps the long-lived BuildPlan wire enum coarse while
+// receipts retain the more specific framework-profile value (express, hono,
+// fastapi, and so on). This preserves compatibility for clients that already
+// branch on node/python/go/docker.
+func buildPlanFramework(framework string) string {
+	switch strings.ToLower(strings.TrimSpace(framework)) {
+	case "node", "express", "hono", "fastify", "nestjs":
+		return "node"
+	case "python", "fastapi", "flask", "django":
+		return "python"
+	case "go", "gin", "go-net-http":
+		return "go"
+	case "docker", "oci":
+		return "docker"
+	default:
+		return "unknown"
+	}
 }
 
 // buildProvenanceResponse renders a state.BuildProvenance as the
