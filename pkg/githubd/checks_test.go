@@ -104,6 +104,10 @@ func TestChecksAPI_WriteGitHubDeploymentStatus_IsStableAcrossRetries(t *testing.
 		Environment:           "preview/demo",
 		Status:                "building",
 		Description:           "Gregale deployment deployment-1 for demo",
+		DeployedBy:            "octocat",
+		PRNumber:              42,
+		Reason:                "Review\nfeedback",
+		Tag:                   "preview",
 		TargetURL:             "https://gregale.dev/deployments/deployment-1",
 		EnvironmentURL:        "https://demo.gregale.dev",
 		LogURL:                "https://gregale.dev/logs/deployment-1",
@@ -127,8 +131,20 @@ func TestChecksAPI_WriteGitHubDeploymentStatus_IsStableAcrossRetries(t *testing.
 	if !strings.Contains(createBody["description"].(string), "gregale-deployment:deployment-1") {
 		t.Fatalf("create description missing stable marker: %#v", createBody["description"])
 	}
+	if got := createBody["payload"].(map[string]any); got["gregale_deployed_by"] != "octocat" ||
+		got["gregale_pr_number"] != "42" || got["gregale_reason"] != "Review feedback" || got["gregale_tag"] != "preview" {
+		t.Fatalf("create provenance payload = %#v", got)
+	}
+	if description := createBody["description"].(string); !strings.Contains(description, "deployed by octocat") ||
+		!strings.Contains(description, "PR #42") || !strings.Contains(description, "reason: Review feedback") {
+		t.Fatalf("create description missing provenance: %q", description)
+	}
 	if len(statusBodies) != 1 || statusBodies[0]["state"] != "in_progress" {
 		t.Fatalf("status bodies = %#v", statusBodies)
+	}
+	if description, _ := statusBodies[0]["description"].(string); !strings.Contains(description, "PR #42") ||
+		!strings.Contains(description, "tag preview") {
+		t.Fatalf("status description missing provenance: %q", description)
 	}
 
 	update.Status = "live"

@@ -20,10 +20,12 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return fmt.Errorf("githubd: deployment check: empty deployment id")
 	}
 	var commitSHA, kind, status, failure, repo, appSlug, previewOf, scope string
-	var previewPRNumber int
+	var reason, tag, deployedBy string
+	var previewPRNumber, prNumber int
 	var installationID int64
 	err := pool.QueryRow(ctx, `
 		select coalesce(d.commit_sha, ''), d.kind, d.status, coalesce(d.error, ''), coalesce(d.scope, 'default'),
+		       coalesce(d.reason, ''), coalesce(d.tag, ''), coalesce(nullif(d.deployed_by, ''), d.pusher_login, ''), coalesce(d.pr_number, 0),
 		       coalesce(parent.github_repo_full_name, a.github_repo_full_name, p.repo_full_name, ''),
 		       a.slug, coalesce(a.preview_of_slug, ''), coalesce(a.preview_pr_number, 0),
 		       coalesce(parent.github_install_id, a.github_install_id, 0)
@@ -35,9 +37,15 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		 and parent.slug = a.preview_of_slug
 		 and parent.deleted_at is null
 		where d.id = $1`, deploymentID).Scan(
-		&commitSHA, &kind, &status, &failure, &scope, &repo, &appSlug, &previewOf, &previewPRNumber, &installationID)
+		&commitSHA, &kind, &status, &failure, &scope, &reason, &tag, &deployedBy, &prNumber,
+		&repo, &appSlug, &previewOf, &previewPRNumber, &installationID)
 	if err != nil {
 		return fmt.Errorf("githubd: deployment check lookup %s: %w", deploymentID, err)
+	}
+	// Pre-annotation preview rows kept the PR number on the preview app;
+	// use it when the deployment row predates the annotation columns.
+	if prNumber <= 0 && previewPRNumber > 0 {
+		prNumber = previewPRNumber
 	}
 	if commitSHA == "" || repo == "" || installationID <= 0 {
 		return fmt.Errorf("githubd: deployment check %s missing commit, repo, or installation", deploymentID)
@@ -53,6 +61,11 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	if domain == "" {
 		domain = "gregale.dev"
 	}
+	// Annotation fields are customer-controlled text. Keep the Check Run
+	// summary and PR comment single-line and predictable; the provider writer
+	// applies the same compaction to the Deployment payload.
+	deployedByText := strings.Join(strings.Fields(deployedBy), " ")
+	reasonText := strings.Join(strings.Fields(reason), " ")
 	deploymentURL := fmt.Sprintf("https://%s/dashboard/apps/%s/deployments/%s", domain, appSlug, deploymentID)
 	logsURL := fmt.Sprintf("https://%s/v1/deployments/%s/logs", domain, deploymentID)
 	environmentURL := fmt.Sprintf("https://%s.%s", appSlug, domain)
@@ -66,6 +79,10 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		Environment:           environment,
 		Status:                status,
 		Description:           fmt.Sprintf("Gregale deployment %s for %s", deploymentID, appSlug),
+		DeployedBy:            deployedBy,
+		PRNumber:              prNumber,
+		Reason:                reason,
+		Tag:                   tag,
 		TargetURL:             deploymentURL,
 		EnvironmentURL:        environmentURL,
 		LogURL:                logsURL,
@@ -75,6 +92,15 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return err
 	}
 	summary := fmt.Sprintf("Gregale deployment %s is %s.", deploymentID, status)
+	if deployedByText != "" {
+		summary += " Deployed by " + deployedByText + "."
+	}
+	if prNumber > 0 {
+		summary += fmt.Sprintf(" PR #%d.", prNumber)
+	}
+	if reasonText != "" {
+		summary += " Reason: " + reasonText + "."
+	}
 	if failure != "" {
 		summary += " " + failure
 	}
@@ -91,6 +117,15 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 			dashboardBase := "https://" + domain
 			marker := "<!-- gregale-preview:" + appSlug + " -->"
 			body := fmt.Sprintf("%s\n### Gregale preview — %s\n\nPreview status: **%s**.\n\n[Open preview](%s) · [Deployment details](%s/dashboard/apps/%s/deployments/%s) · [Deployment logs](%s/v1/deployments/%s/logs) · [Destroy preview](%s/dashboard/apps/%s/preview/%s/destroy)\n\nCommit: `%s`", marker, status, status, previewURL, dashboardBase, appSlug, deploymentID, dashboardBase, deploymentID, dashboardBase, previewOf, appSlug, commitSHA)
+			if deployedByText != "" {
+				body += "\nDeployed by: **" + deployedByText + "**"
+			}
+			if prNumber > 0 {
+				body += fmt.Sprintf("\nPull request: **#%d**", prNumber)
+			}
+			if reasonText != "" {
+				body += "\nReason: " + reasonText
+			}
 			_ = checks.UpsertPreviewComment(ctx, installationID, repo, previewPRNumber, marker, body)
 		}
 		return nil
