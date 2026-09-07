@@ -2159,12 +2159,27 @@ func TestMemStore_ListSnapshotsForGC_IncludesDeletedAppForCleanup(t *testing.T) 
 		t.Fatal(err)
 	}
 
+	// App deletion retires snapshots immediately (the PostgreSQL lifecycle
+	// trigger has the same effect), so the fresh-snapshot projection is empty.
 	rows, _ := m.ListSnapshotsForGC(ctx)
-	if len(rows) != 1 {
-		t.Fatalf("deleted app's snapshot missing from GC cleanup: %d rows", len(rows))
+	if len(rows) != 0 {
+		t.Fatalf("deleted app's fresh snapshots remained in GC projection: %d rows", len(rows))
 	}
-	if rows[0].AppStatus != AppDeleted {
-		t.Errorf("AppStatus = %q, want %q", rows[0].AppStatus, AppDeleted)
+	// Stale rows remain available to the retention projection so imaged can
+	// reclaim their storage after the retention window. Backdate the fixture
+	// row to exercise that cleanup path without waiting in the test.
+	m.mu.Lock()
+	m.snapshots[0].CreatedAt = time.Now().Add(-2 * time.Hour)
+	m.mu.Unlock()
+	stale, err := m.ListSnapshotsStaleOlderThan(ctx, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 {
+		t.Fatalf("deleted app's stale snapshot missing from retention GC: %d rows", len(stale))
+	}
+	if stale[0].AppStatus != AppDeleted {
+		t.Errorf("AppStatus = %q, want %q", stale[0].AppStatus, AppDeleted)
 	}
 }
 
