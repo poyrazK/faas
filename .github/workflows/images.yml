@@ -143,7 +143,11 @@ jobs:
 
           changed="$(git diff --name-only "$base" "$head")"
           printf '%s\n' "$changed"
-          if grep -Eq '^(images/|guest/init/|guest/runners/|pkg/(builderd|imaged|oci|rootfs|api)/|cmd/imaged/|cmd/apid/handlers_templates(_test)?\.go$|cmd/gregale/templates/|cmd/gregale/cli_meta\.go$|cmd/gregale/commands_init|migrations/.*runtime.*\.sql$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image|validate-runtime-docs)\.sh$|docs/runtimes/|docs/faas_implementation_spec\.md$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+          # The trusted native builder gate runs the metal acceptance fixture
+          # from the published source commit. A fixture-only change therefore
+          # must publish a matching builder-base image, or the post-merge gate
+          # would silently skip the new test and wait for a scheduled run.
+          if grep -Eq '^(images/|guest/init/|guest/runners/|pkg/fcvm/builder_acceptance_metal_test\.go$|pkg/(builderd|imaged|oci|rootfs|api)/|cmd/imaged/|cmd/apid/handlers_templates(_test)?\.go$|cmd/gregale/templates/|cmd/gregale/cli_meta\.go$|cmd/gregale/commands_init|migrations/.*runtime.*\.sql$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image|validate-runtime-docs)\.sh$|docs/runtimes/|docs/faas_implementation_spec\.md$|\.github/workflows/images\.yml$)' <<<"$changed"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "Runtime-affecting change detected."
           else
