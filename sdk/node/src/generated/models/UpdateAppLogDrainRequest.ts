@@ -14,3 +14,4 @@ export type UpdateAppLogDrainRequest = {
   auth_header?: string;
   enabled?: boolean;
 };
+
