@@ -2140,7 +2140,7 @@ func TestMemStore_ListSnapshotsForGC(t *testing.T) {
 	}
 }
 
-func TestMemStore_ListSnapshotsForGC_IncludesDeletedAppForCleanup(t *testing.T) {
+func TestMemStore_ListSnapshotsForGC_ExcludesDeletedAppSnapshots(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
 	acct, _ := m.CreateAccount(ctx, "u@example.com", "pro")
@@ -2160,11 +2160,8 @@ func TestMemStore_ListSnapshotsForGC_IncludesDeletedAppForCleanup(t *testing.T) 
 	}
 
 	rows, _ := m.ListSnapshotsForGC(ctx)
-	if len(rows) != 1 {
-		t.Fatalf("deleted app's snapshot missing from GC cleanup: %d rows", len(rows))
-	}
-	if rows[0].AppStatus != AppDeleted {
-		t.Errorf("AppStatus = %q, want %q", rows[0].AppStatus, AppDeleted)
+	if len(rows) != 0 {
+		t.Fatalf("deleted app's stale snapshot remains in active GC projection: %d rows", len(rows))
 	}
 }
 

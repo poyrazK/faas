@@ -246,8 +246,8 @@ func TestPg_ListSnapshotsForGC_ProjectsTier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSnapshotsForGC after delete: %v", err)
 	}
-	if len(got) != 2 || got[0].AppStatus != state.AppDeleted || got[1].AppStatus != state.AppDeleted {
-		t.Fatalf("deleted app cleanup projection = %+v, want two deleted-app rows", got)
+	if len(got) != 0 {
+		t.Fatalf("deleted app snapshots remain in active GC projection = %+v, want no rows", got)
 	}
 }
 
