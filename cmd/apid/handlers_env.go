@@ -368,7 +368,8 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 				// HostHashOK at L624, port bounds at L666).
 				silentSkip = ec.Kind != errClassifierInsert.Kind
 			}
-			s.audit.Emit(r.Context(), "env.classifier_failed", &acct.ID, map[string]any{
+			s.ops.ObserveDataUpstreamClassifierFailure(classifierFailureMetricReason(errorClass))
+			s.audit.Emit(r.Context(), "data_upstream.classifier_failed", &acct.ID, map[string]any{
 				"app_id":      app.ID,
 				"scope":       scope,
 				"name":        key,
@@ -580,9 +581,26 @@ func (s *server) envExistsInScope(c stdctxEnv, accountID, appID, scope, key stri
 	return false, nil
 }
 
+// classifierFailureMetricReason maps the precise audit error-class vocabulary
+// to the smaller Prometheus reason vocabulary from issue #957. The audit
+// payload retains the typed class while the metric stays bounded and useful
+// for alerting.
+func classifierFailureMetricReason(errorClass string) string {
+	switch errorClass {
+	case "host_hash_failed":
+		return "salt_missing"
+	case "port_out_of_range":
+		return "port_out_of_range"
+	case "unknown_kind":
+		return "unknown_kind"
+	default:
+		return "internal_error"
+	}
+}
+
 // errEnvClassifier is the typed error wrapper returned from
 // runEnvClassifier. The Kind field is the closed-vocab discriminator
-// written to the env.classifier_failed audit row (issue #957) so an
+// written to the data_upstream.classifier_failed audit row (issue #957) so an
 // operator can triage the failure mode without log-spelunking. The
 // underlying Err is intentionally NOT surfaced on the audit row —
 // secretbox.HostHashSaltError can carry salt-path material, and
@@ -703,7 +721,7 @@ func (s *server) runEnvClassifier(ctx context.Context, acct state.Account, app s
 			// instead of a silent `continue` (which
 			// leaves no SOC 2 trace), return a typed
 			// sentinel so setEnv emits
-			// env.classifier_failed with
+			// data_upstream.classifier_failed with
 			// silent_skip=true. The env row IS already
 			// persisted — the customer still gets 200.
 			return errClassifierHostHashFailed
