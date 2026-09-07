@@ -451,14 +451,13 @@ bias is wrong — check `node_capacity_table` (step 5) and
 If the cut-over surfaces a regression (e.g. fsn-2 rejects every Nth
 wake, capacity reports stop after 30 s, mTLS handshake fails):
 
-```sh
-# 1. Drain fsn-2 from placement.
-psql -c "UPDATE compute_nodes SET active=false WHERE name='fsn-2';"
-# The compute_node_changed trigger fires; gatewayd-internal evicts the
-# cached conn; schedd's watchdog treats the row as drained;
-# placement skips it.
+1. Drain `fsn-2` from Operations → Nodes, provide the rollback reason,
+   and retain the returned intent ID. The `compute_node_changed` trigger
+   fires after schedd applies the intent; gatewayd-internal evicts the
+   cached connection and placement skips the node.
 
-# 2. Stop vmmd on the new node.
+```sh
+# 2. Stop vmmd on the new node after the intent succeeds.
 ssh faas-fsn-2 'sudo systemctl stop faas-vmmd'
 
 # 3. Verify the cluster returns to single-box state.
@@ -468,9 +467,9 @@ psql -c "select name, active from compute_nodes"
 
 The rollback is non-destructive — the `compute_nodes` row stays
 in place with `active=false`, the cert material under
-`/etc/faas/tls/vmmd/` is untouched, and a re-rollout
-(`UPDATE compute_nodes SET active=true WHERE name='fsn-2'` +
-`systemctl restart faas-vmmd`) returns fsn-2 to service.
+`/etc/faas/tls/vmmd/` is untouched. A re-rollout restarts vmmd and uses
+Operations → Nodes → **Activate**; its durable intent returns `fsn-2` to
+service.
 
 ### 9. Escalation
 
@@ -525,10 +524,8 @@ acceptance for §14 M9.
    `psql -c "select id, app_id, node_id, state from instances
    where state='running' and node_id=(select id from
    compute_nodes where name='compute-01');"`
-2. **Trigger the drain** —
-   `psql -c "update compute_nodes set active=false where
-   name='compute-01';"` (operator's standard drain command;
-   no orchestration step required).
+2. **Trigger the drain** in Operations → Nodes and retain the returned
+   `node_drain` intent ID.
 3. **Watch the handoff** — within
    `MigrateLiveLeaseSeconds` (90 s) + ~5 s:
    `psql -c "select id, app_id, node_id, state,
@@ -545,7 +542,7 @@ acceptance for §14 M9.
    handoff).
 6. **Smoke-test the customer experience** —
    `curl https://<app>.compute-02.example.com/`. The response
-   should arrive within ~350 ms of the `UPDATE compute_nodes`
+   should arrive within ~350 ms of the successful `node_drain` intent
    (cold-boot from snapshot on the destination's wake path).
 
 ### Tier A5 validation matrix
@@ -571,12 +568,11 @@ If the handoff stalls in `state='migrating'` past the lease
 - The Tier A6 watchdog (`pkg/sched/migrating_watchdog.go` →
   `Engine.ReconcileExpiredMigrations`) hard-deletes stuck
   instances; `apps.migrated_at` reverts on next re-attempt.
-- Operator-facing: `psql -c "update compute_nodes set active=true
-  where name='compute-01';"` restores the source for retry; a
-  new drain event re-runs the handoff.
-- Manual escape hatch: `psql -c "delete from instances where
-  state='migrating';"` clears stuck rows; the next wake re-creates
-  the instance from snapshot (ADR-005: cold boot must always work).
+- Operator-facing: Operations → Nodes → **Activate** restores the source
+  for retry; a new drain intent re-runs the handoff.
+- If the typed operation cannot make progress, declare break-glass and
+  follow [database repair](../break-glass/database-repair.md). Direct row
+  deletion is never part of the normal rollout path.
 
 ### Tier A5 escalation
 

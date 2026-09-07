@@ -152,23 +152,12 @@ clearly labelled "revert: rm-backfill-heredoc" — useful for
 post-incident review. The cherry-pick is faster; the revert is
 safer when you can't predict the merge conflicts.
 
-### Option C — manual SSH repair
+### Option C — break-glass repair
 
-If neither git option is acceptable (e.g., the droplet is mid-deploy
-and you can't wait for the next push), the backfill is reproducible
-by hand:
-
-```sh
-ssh root@$DO_HOST
-su - faas -s /bin/bash -c \
-  "psql -v ON_ERROR_STOP=1 -d faas -f \
-     /opt/faas/bin/deploy-tmp/migrations/00014_cli_auth_codes.sql"
-su - faas -s /bin/bash -c \
-  "psql -v ON_ERROR_STOP=1 -d faas -c \"
-     INSERT INTO goose_db_version (version_id, is_applied)
-     VALUES (14, true) ON CONFLICT DO NOTHING;\""
-# (repeat for v19 / 00019_gdpr_requests.sql)
-```
+If neither git option is acceptable, stop the rollout and declare
+break-glass. Follow the migration-ledger section of
+[database repair](../break-glass/database-repair.md); record the incident,
+operator identity, exact migration checksum, and before/after evidence.
 
 But `/opt/faas/bin/deploy-tmp/` is `rm -rf`'d at the end of every
 deploy, so the SQL files won't be there except during the deploy

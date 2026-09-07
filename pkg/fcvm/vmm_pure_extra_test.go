@@ -9,6 +9,7 @@ package fcvm
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -189,6 +190,21 @@ func TestStableReadOnlyName_FaasSnapReturnsFallback(t *testing.T) {
 func TestStableReadOnlyName_RegularReturnsBasename(t *testing.T) {
 	if got := stableReadOnlyName("/some/where/base.ext4", "fallback.ext4"); got != "base.ext4" {
 		t.Errorf("regular file: got %q, want base.ext4", got)
+	}
+}
+
+func TestStableReadOnlyName_CacheObjectReturnsFallback(t *testing.T) {
+	cachePath := "/var/lib/faas/cache/42/" + strings.Repeat("a", 62)
+	if got := stableReadOnlyName(cachePath, baseImageName); got != baseImageName {
+		t.Errorf("cache object: got %q, want %q", got, baseImageName)
+	}
+}
+
+func TestStableReadOnlyName_SimilarNonCachePathReturnsBasename(t *testing.T) {
+	name := strings.Repeat("a", 62)
+	path := "/var/lib/faas/not-a-hex-bucket/" + name
+	if got := stableReadOnlyName(path, baseImageName); got != name {
+		t.Errorf("non-cache object: got %q, want %q", got, name)
 	}
 }
 

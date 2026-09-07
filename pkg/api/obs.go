@@ -386,13 +386,35 @@ type ObsNodeApp struct {
 }
 
 type ObsNodeMutationResponse struct {
-	OK             bool   `json:"ok"`
-	Node           string `json:"node"`
-	PreviousActive bool   `json:"previous_active"`
-	Active         bool   `json:"active"`
-	LiveInstances  int    `json:"live_instances"`
-	Forced         bool   `json:"forced"`
-	Reason         string `json:"reason"`
+	OK                 bool                      `json:"ok"`
+	IntentID           string                    `json:"intent_id"`
+	StatusURL          string                    `json:"status_url"`
+	ExpiresAt          time.Time                 `json:"expires_at"`
+	Kind               string                    `json:"kind"`
+	Node               string                    `json:"node"`
+	PreviousActive     bool                      `json:"previous_active"`
+	Active             bool                      `json:"active"`
+	PreviousLifecycle  string                    `json:"previous_lifecycle"`
+	RequestedLifecycle string                    `json:"requested_lifecycle"`
+	LiveInstances      int                       `json:"live_instances"`
+	Forced             bool                      `json:"forced"`
+	Reason             string                    `json:"reason"`
+	Preflight          ObsNodeOperationPreflight `json:"preflight"`
+}
+
+// ObsNodeOperationPreflight is the bounded impact summary persisted with a
+// node lifecycle intent and returned to the operations console. It contains
+// counts and capacity only; app, tenant, and instance identifiers remain on
+// the authenticated node-detail read surface.
+type ObsNodeOperationPreflight struct {
+	AffectedApps      int   `json:"affected_apps"`
+	AffectedTenants   int   `json:"affected_tenants"`
+	TotalInstances    int   `json:"total_instances"`
+	LiveInstances     int   `json:"live_instances"`
+	LiveRAMMB         int64 `json:"live_ram_mb"`
+	CapacityChangeMB  int   `json:"capacity_change_mb"`
+	Reversible        bool  `json:"reversible"`
+	DisruptionWarning bool  `json:"disruption_warning"`
 }
 
 // ObsTenantApp is a single app row in the tenant detail view.
@@ -817,4 +839,7 @@ var ObsHealthKindVocabulary = []string{
 	"force_park",
 	"force_cold_boot",
 	"force_restart",
+	"node_drain",
+	"node_force_drain",
+	"node_activate",
 }

@@ -138,18 +138,12 @@ Use the `hop=` label to identify the slow leg:
 
 ### If a budget rule is wrong
 
-```sql
--- Disable a budget rule (preserves audit trail).
-update edge_rules
-   set enabled = false,
-       updated_at = now()
- where id = '<rule-id>';
+```bash
+# Disable a budget rule (preserves API audit and ownership checks).
+gregale edge-rules update <rule-id> --disable
 
--- Tighten or relax the budget ceiling.
-update edge_rules
-   set action = jsonb_set(action, '{budget,budget_ms}', '5000'),
-       updated_at = now()
- where id = '<rule-id>';
+# Tighten or relax the complete budget action.
+gregale edge-rules update <rule-id> --kind budget --budget-ms 5000
 ```
 
 The gateway reloads the rule on the next `compileBudgetRules`

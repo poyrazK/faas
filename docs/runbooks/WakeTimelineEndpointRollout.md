@@ -76,9 +76,11 @@ feature-flag ramp:
 
 ## Rollback
 
-```sql
-DROP INDEX CONCURRENTLY IF EXISTS events_wake_id_idx;
-```
+Roll back through the normal release/migration pipeline so schema state and
+the goose ledger stay aligned. If an index emergency makes that path too
+slow, declare break-glass and use the reviewed procedure in
+[database repair](../break-glass/database-repair.md); do not run ad-hoc SQL
+from this runbook.
 
 The endpoint reads from the index when present, but the read
 path (`pkg/state/queries.sql::ListEventsByWakeID`) is a plain

@@ -66,6 +66,9 @@ commit to the designated amd64 KVM host, and tests the matching
 `builder-base:sha-<commit>` image. It is a post-merge release signal rather than
 a pull-request status check because this public repository must not execute
 untrusted pull-request code with root access to a persistent compute node.
+Changes to `pkg/fcvm/builder_acceptance_metal_test.go` are included in the
+runtime change detector so the post-merge native gate publishes and tests the
+commit containing the updated acceptance fixture.
 Every successful Dockerfile and Railpack fixture must also complete its Grype
 scan. The hardened Python 3.13 runtime rejects every CRITICAL finding to match
 vmmd admission. Legacy runtime bases and builder artifacts retain their

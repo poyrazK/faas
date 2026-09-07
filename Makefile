@@ -522,8 +522,12 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check ## golangci-lint via go tool (matches CI version v2.4.0) + egress artifact drift + +incompatible direct-dep gate + packer-builder syntax (ADR-111) + sealed.env scope gate (ADR-127)
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
 	@$(GO) tool golangci-lint run
+
+.PHONY: runbook-sql-check
+runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
+	@python3 scripts/ci/check_runbook_mutating_sql.py
 
 # ADR-111: packer-builder syntax gate. Delegates to deploy/packer/Makefile:image-validate,
 # which loops `packer validate -syntax-only` over every *.pkr.hcl. Works

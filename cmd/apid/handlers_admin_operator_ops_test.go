@@ -97,6 +97,57 @@ func TestObsNodeMutation_RequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestObsNodeDrain_EnqueuesDurableIntentBeforeMutation(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	node, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name:               "node-intent-a",
+		TargetURL:          "unix:///run/faas/vmmd-intent-a.sock",
+		VPCPUs:             8,
+		MemMB:              16384,
+		MaxConcurrency:     32,
+		AdmissionCeilingMB: 12000,
+	})
+	if err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+
+	rec := e.doAdmin(t, "POST", "/v1/admin/ops/nodes/node-intent-a/drain?confirm=true&reason=kernel_upgrade", nil, nil)
+	if rec.Code != 202 {
+		t.Fatalf("node drain: got status %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.ObsNodeMutationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.IntentID == "" || resp.StatusURL == "" || resp.Kind != string(state.OperatorIntentKindNodeDrain) {
+		t.Fatalf("missing durable intent receipt: %+v", resp)
+	}
+	if resp.PreviousLifecycle != string(state.NodeLifecycleActive) || resp.RequestedLifecycle != string(state.NodeLifecycleDraining) {
+		t.Fatalf("unexpected lifecycle preflight: %+v", resp)
+	}
+
+	intent, err := e.store.GetOperatorIntent(context.Background(), resp.IntentID)
+	if err != nil {
+		t.Fatalf("read intent: %v", err)
+	}
+	if intent.Status != state.OperatorIntentPending || intent.ActorID != e.acct.ID || intent.Reason != "kernel_upgrade" {
+		t.Fatalf("unexpected intent: %+v", intent)
+	}
+	if intent.TraceID == nil || *intent.TraceID == "" {
+		t.Fatal("node intent did not retain request trace id")
+	}
+
+	// The HTTP handler records desired state only. schedd must claim the
+	// durable row before any compute_nodes lifecycle mutation can land.
+	fresh, err := e.store.NodeGet(context.Background(), node.ID)
+	if err != nil {
+		t.Fatalf("reload node: %v", err)
+	}
+	if fresh.Lifecycle != state.NodeLifecycleActive {
+		t.Fatalf("handler mutated node before intent dispatch: lifecycle=%q", fresh.Lifecycle)
+	}
+}
+
 func TestObsAccountMutation_RequiresConfirmation(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
 	target, err := e.store.CreateAccount(context.Background(), "tenant@example.com", api.PlanHobby)

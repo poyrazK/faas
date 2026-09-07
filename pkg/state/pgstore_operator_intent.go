@@ -14,19 +14,17 @@ import (
 // pgstore_operator_intent.go — CRUD for the operator_intents
 // table (migrations/00445, PR #1099 P2 redesign).
 //
-// Two producers, one consumer:
+// One producer, one consumer:
 //
-//   - apid (cmd/apid/handlers_admin_force_park.go and the
-//     cold-boot twin) is the only caller of
-//     InsertOperatorIntent. Status starts at `pending`. After the
-//     INSERT, apid emits `db.NotifyOperatorIntent` so schedd
-//     picks up the row on the next LISTEN delivery.
+//   - apid's workload and compute-node operator handlers call
+//     InsertOperatorIntent. Status starts at `pending`. After the INSERT,
+//     apid emits `db.NotifyOperatorIntent` so schedd picks up the row on
+//     the next LISTEN delivery.
 //   - schedd (pkg/sched/operator_intent_subscriber.go) is the
 //     only caller of ClaimPendingOperatorIntent /
 //     MarkOperatorIntentSucceeded / MarkOperatorIntentFailed.
 //     It updates status to `running` on claim and to a
-//     terminal value after Engine.Park /
-//     Engine.ForceColdBootNextWake returns.
+//     terminal value after the typed dispatch returns.
 //
 // Cross-account safety: every helper takes an explicit
 // target_id + account_id parameter; schedd never queries by
@@ -50,9 +48,8 @@ var ErrOperatorIntentNotFound = errors.New("state: operator intent not found")
 // transactional boundary (the row is committed before the
 // notify fires — same precedent as InsertFireNowRequest).
 //
-// account_id may be nil for fleet-level actions (none today;
-// reclaim_build — P2c — stays on a separate code path); the
-// column is nullable in the schema for forward-compatibility.
+// account_id is nil for fleet-level node actions; the column is nullable
+// so fleet intents do not invent a tenant owner.
 // actor_id is the admin actor identity (caller); metadata is
 // free-form JSONB for future per-kind payload fields (snap IDs
 // at claim time, etc.) and defaults to '{}'.

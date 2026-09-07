@@ -29,14 +29,9 @@ Before promoting a fleet to active-passive HA, verify:
 
 ## Procedure (operator-driven drain)
 
-The active-passive flip is initiated by the operator's
-standard drain command (the same one Tier A4 + A5 use):
-
-```sql
-UPDATE compute_nodes
-   SET active = false
- WHERE name = '<dying-leader>';
-```
+The active-passive flip is initiated from Operations → Nodes with the
+standard **Drain** action (the same one Tier A4 + A5 use). Enter the
+incident/change reason and retain the returned `intent_id`.
 
 The downstream behaviour is automatic:
 
@@ -100,13 +95,8 @@ unreachable, stuck drain):
    proxied; otherwise Caddy's `X-Forwarded-For` sees Cloudflare's
    anycast IPs instead of the customer's resolver.)
 
-2. **Set `active=true` on the dying leader:**
-
-   ```sql
-   UPDATE compute_nodes
-      SET active = true
-    WHERE name = '<old-leader>';
-   ```
+2. **Activate the old leader in Operations → Nodes.** Poll the returned
+   `node_activate` intent and continue only after it succeeds.
 
 3. **Verify the leader flipped back:**
 
@@ -219,8 +209,7 @@ The Tier A8 escalation tree (in order of preference):
 The runbook is closed when ALL of the following pass on the
 two-node Lima fleet (`make ha-failover-drill`):
 
-- [ ] Drain event fires (`UPDATE compute_nodes SET
-      active=false WHERE name='node-a'`).
+- [ ] A `node_drain` intent for `node-a` succeeds and the drain event fires.
 - [ ] Within `HADNSRecordStaleSeconds = 30 s`:
       - `gateway_active_passive_failovers_total{outcome="dns_flipped"} >= 1` on the new leader.
       - The old leader's `gateway_standby_state` shows

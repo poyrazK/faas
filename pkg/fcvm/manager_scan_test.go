@@ -18,10 +18,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -279,6 +281,132 @@ func TestBringUpScanCheck_GetErrorSurfacesAsProblem(t *testing.T) {
 	}
 	if prob.Code != api.CodeScanCritical {
 		t.Errorf("Code = %q, want %q", prob.Code, api.CodeScanCritical)
+	}
+}
+
+func TestBringUpScanCheck_RefreshesStaleRuntimeBaseGeneration(t *testing.T) {
+	ctx := context.Background()
+	const (
+		baseKey = "base/runner-go124-amd64.ext4"
+		scanKey = "scans/runner-go124-amd64.ext4.scan.json"
+		oldRef  = "ghcr.io/example/go124@sha256:old"
+		newRef  = "ghcr.io/example/go124@sha256:new"
+	)
+	parent := &memStorage{}
+	put := func(key, value string) {
+		t.Helper()
+		if err := parent.Put(ctx, key, strings.NewReader(value)); err != nil {
+			t.Fatalf("parent.Put(%s): %v", key, err)
+		}
+	}
+	oldScan, _ := json.Marshal(map[string]any{"image": oldRef, "findings": map[string]int{"CRITICAL": 1}})
+	put(baseKey, "old-base")
+	put(baseKey+".digest", "old-digest")
+	put(scanKey, string(oldScan))
+	cache, err := storage.NewLocalCacheBackend(parent, t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend: %v", err)
+	}
+	for _, key := range []string{baseKey, baseKey + ".digest", scanKey} {
+		rc, getErr := cache.Get(ctx, key)
+		if getErr != nil {
+			t.Fatalf("prime stale cache %s: %v", key, getErr)
+		}
+		_ = rc.Close()
+	}
+	if err := cache.MarkGeneration(baseKey, oldRef); err != nil {
+		t.Fatalf("MarkGeneration old: %v", err)
+	}
+
+	newScan, _ := json.Marshal(map[string]any{"image": newRef, "findings": map[string]int{"CRITICAL": 0}})
+	put(baseKey, "new-base")
+	put(baseKey+".digest", "new-digest")
+	put(scanKey, string(newScan))
+	m := &Manager{}
+	m.WithStorage(cache)
+	m.WithBaseGenerations(map[string]string{baseKey: newRef})
+	if err := m.bringUpScanCheck(ctx, baseKey); err != nil {
+		t.Fatalf("bringUpScanCheck: %v", err)
+	}
+	rc, err := cache.Get(ctx, baseKey)
+	if err != nil {
+		t.Fatalf("read refreshed base: %v", err)
+	}
+	b, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil || string(b) != "new-base" {
+		t.Fatalf("refreshed base = %q, %v; want new-base", b, err)
+	}
+	if got, ok, err := cache.CachedGeneration(baseKey); err != nil || !ok || got != newRef {
+		t.Fatalf("generation = %q, %t, %v; want %s", got, ok, err, newRef)
+	}
+}
+
+func TestBringUpScanCheck_RejectsMismatchedScanGeneration(t *testing.T) {
+	const baseKey = "base/runner-go124-amd64.ext4"
+	be := &memStorage{}
+	be.blobs = map[string][]byte{
+		wire.ScanKeyForBaseKey(baseKey): []byte(`{"image":"ghcr.io/example/go124@sha256:old","findings":{"CRITICAL":0}}`),
+	}
+	m := &Manager{}
+	m.WithStorage(be)
+	m.WithBaseGenerations(map[string]string{baseKey: "ghcr.io/example/go124@sha256:new"})
+	err := m.bringUpScanCheck(context.Background(), baseKey)
+	if err == nil || !strings.Contains(err.Error(), "want configured runtime base") {
+		t.Fatalf("bringUpScanCheck error = %v, want configured generation rejection", err)
+	}
+}
+
+func TestBringUpScanCheck_WaitsForGenerationCommitBeforeRefreshingBase(t *testing.T) {
+	ctx := context.Background()
+	const (
+		baseKey = "base/runner-go124-amd64.ext4"
+		oldRef  = "ghcr.io/example/go124@sha256:old"
+		newRef  = "ghcr.io/example/go124@sha256:new"
+	)
+	parent := &memStorage{}
+	put := func(key, value string) {
+		t.Helper()
+		if err := parent.Put(ctx, key, strings.NewReader(value)); err != nil {
+			t.Fatalf("parent.Put(%s): %v", key, err)
+		}
+	}
+	put(baseKey, "old-base")
+	put(baseKey+".digest", "old-digest")
+	put(wire.ScanKeyForBaseKey(baseKey), `{"image":"`+oldRef+`","findings":{"CRITICAL":0}}`)
+	cache, err := storage.NewLocalCacheBackend(parent, t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend: %v", err)
+	}
+	for _, key := range []string{baseKey, baseKey + ".digest", wire.ScanKeyForBaseKey(baseKey)} {
+		rc, getErr := cache.Get(ctx, key)
+		if getErr != nil {
+			t.Fatalf("prime stale cache %s: %v", key, getErr)
+		}
+		_ = rc.Close()
+	}
+	if err := cache.MarkGeneration(baseKey, oldRef); err != nil {
+		t.Fatalf("MarkGeneration old: %v", err)
+	}
+
+	// Model imaged midway through publication: base and digest are new, but
+	// the scan sidecar commit marker still names the previous release.
+	put(baseKey, "new-base")
+	put(baseKey+".digest", "new-digest")
+	m := &Manager{}
+	m.WithStorage(cache)
+	m.WithBaseGenerations(map[string]string{baseKey: newRef})
+	if err := m.bringUpScanCheck(ctx, baseKey); err == nil {
+		t.Fatal("bringUpScanCheck succeeded before the new scan sidecar was published")
+	}
+	rc, err := cache.Get(ctx, baseKey)
+	if err != nil {
+		t.Fatalf("read cached base: %v", err)
+	}
+	b, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil || string(b) != "old-base" {
+		t.Fatalf("cached base = %q, %v; want old-base until generation commit", b, err)
 	}
 }
 

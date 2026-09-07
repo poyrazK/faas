@@ -337,6 +337,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_STORAGE_LOCAL_PREFIXES", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_STORAGE_ROLLUP_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STORAGE_ROOT", Owners: []string{"imaged", "vmmd", "shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_STORAGE_SNAPSHOT_COMPRESSION", Owners: []string{"shared"}, Source: EnvSourceEnvFile, Note: "remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165)"},
 	{Name: "FAAS_STREAM_BRIDGE_PERSISTENT", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STREAM_BRIDGE_VERSION", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "rollback lever, see docs/ops/h2c-rollback.md"},
 	{Name: "FAAS_STRIPE_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},

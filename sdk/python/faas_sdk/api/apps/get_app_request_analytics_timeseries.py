@@ -7,6 +7,9 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.get_app_request_analytics_timeseries_group_by import (
+    GetAppRequestAnalyticsTimeseriesGroupBy,
+)
 from ...models.get_app_request_analytics_timeseries_method import (
     GetAppRequestAnalyticsTimeseriesMethod,
 )
@@ -22,6 +25,7 @@ def _get_kwargs(
     until: datetime.datetime | Unset = UNSET,
     route: str | Unset = UNSET,
     method: GetAppRequestAnalyticsTimeseriesMethod | Unset = UNSET,
+    group_by: GetAppRequestAnalyticsTimeseriesGroupBy | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -40,6 +44,12 @@ def _get_kwargs(
         json_method = method
 
     params["method"] = json_method
+
+    json_group_by: str | Unset = UNSET
+    if not isinstance(group_by, Unset):
+        json_group_by = group_by
+
+    params["group_by"] = json_group_by
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -112,6 +122,7 @@ def sync_detailed(
     until: datetime.datetime | Unset = UNSET,
     route: str | Unset = UNSET,
     method: GetAppRequestAnalyticsTimeseriesMethod | Unset = UNSET,
+    group_by: GetAppRequestAnalyticsTimeseriesGroupBy | Unset = UNSET,
 ) -> Response[Problem | RequestAnalyticsTimeseriesResponse]:
     """Request analytics time series by hour.
 
@@ -124,6 +135,8 @@ def sync_detailed(
     timestamp. `until` is an optional RFC3339 exclusive upper bound and
     defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
     by `DebugTelemetryEnabled`.
+    Set `group_by` to country, referrer_host, ua_family, or status to
+    receive zero-filled series for the top 50 groups plus `__other__`.
 
     Args:
         slug (str):
@@ -131,6 +144,7 @@ def sync_detailed(
         until (datetime.datetime | Unset):
         route (str | Unset):
         method (GetAppRequestAnalyticsTimeseriesMethod | Unset):
+        group_by (GetAppRequestAnalyticsTimeseriesGroupBy | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,6 +160,7 @@ def sync_detailed(
         until=until,
         route=route,
         method=method,
+        group_by=group_by,
     )
 
     response = client.get_httpx_client().request(
@@ -163,6 +178,7 @@ def sync(
     until: datetime.datetime | Unset = UNSET,
     route: str | Unset = UNSET,
     method: GetAppRequestAnalyticsTimeseriesMethod | Unset = UNSET,
+    group_by: GetAppRequestAnalyticsTimeseriesGroupBy | Unset = UNSET,
 ) -> Problem | RequestAnalyticsTimeseriesResponse | None:
     """Request analytics time series by hour.
 
@@ -175,6 +191,8 @@ def sync(
     timestamp. `until` is an optional RFC3339 exclusive upper bound and
     defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
     by `DebugTelemetryEnabled`.
+    Set `group_by` to country, referrer_host, ua_family, or status to
+    receive zero-filled series for the top 50 groups plus `__other__`.
 
     Args:
         slug (str):
@@ -182,6 +200,7 @@ def sync(
         until (datetime.datetime | Unset):
         route (str | Unset):
         method (GetAppRequestAnalyticsTimeseriesMethod | Unset):
+        group_by (GetAppRequestAnalyticsTimeseriesGroupBy | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -198,6 +217,7 @@ def sync(
         until=until,
         route=route,
         method=method,
+        group_by=group_by,
     ).parsed
 
 
@@ -209,6 +229,7 @@ async def asyncio_detailed(
     until: datetime.datetime | Unset = UNSET,
     route: str | Unset = UNSET,
     method: GetAppRequestAnalyticsTimeseriesMethod | Unset = UNSET,
+    group_by: GetAppRequestAnalyticsTimeseriesGroupBy | Unset = UNSET,
 ) -> Response[Problem | RequestAnalyticsTimeseriesResponse]:
     """Request analytics time series by hour.
 
@@ -221,6 +242,8 @@ async def asyncio_detailed(
     timestamp. `until` is an optional RFC3339 exclusive upper bound and
     defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
     by `DebugTelemetryEnabled`.
+    Set `group_by` to country, referrer_host, ua_family, or status to
+    receive zero-filled series for the top 50 groups plus `__other__`.
 
     Args:
         slug (str):
@@ -228,6 +251,7 @@ async def asyncio_detailed(
         until (datetime.datetime | Unset):
         route (str | Unset):
         method (GetAppRequestAnalyticsTimeseriesMethod | Unset):
+        group_by (GetAppRequestAnalyticsTimeseriesGroupBy | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -243,6 +267,7 @@ async def asyncio_detailed(
         until=until,
         route=route,
         method=method,
+        group_by=group_by,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -258,6 +283,7 @@ async def asyncio(
     until: datetime.datetime | Unset = UNSET,
     route: str | Unset = UNSET,
     method: GetAppRequestAnalyticsTimeseriesMethod | Unset = UNSET,
+    group_by: GetAppRequestAnalyticsTimeseriesGroupBy | Unset = UNSET,
 ) -> Problem | RequestAnalyticsTimeseriesResponse | None:
     """Request analytics time series by hour.
 
@@ -270,6 +296,8 @@ async def asyncio(
     timestamp. `until` is an optional RFC3339 exclusive upper bound and
     defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
     by `DebugTelemetryEnabled`.
+    Set `group_by` to country, referrer_host, ua_family, or status to
+    receive zero-filled series for the top 50 groups plus `__other__`.
 
     Args:
         slug (str):
@@ -277,6 +305,7 @@ async def asyncio(
         until (datetime.datetime | Unset):
         route (str | Unset):
         method (GetAppRequestAnalyticsTimeseriesMethod | Unset):
+        group_by (GetAppRequestAnalyticsTimeseriesGroupBy | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -294,5 +323,6 @@ async def asyncio(
             until=until,
             route=route,
             method=method,
+            group_by=group_by,
         )
     ).parsed

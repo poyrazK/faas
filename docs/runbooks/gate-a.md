@@ -55,23 +55,16 @@ semantics on `compute_nodes`. The active-passive concept
 applies only to the gateway DNS cutover (which is orthogonal to
 schedd peer equality) and is not changed by this gate.
 
-If you find yourself wanting to mark a schedd "standby", flip
-`compute_nodes.active = false` instead — the chooser skips it and
-the gateway stops dialling it.
+If you need to mark a schedd "standby", use the node drain action in
+the Operations Console. The resulting durable `node_drain` intent makes
+the chooser skip it and the gateway stop dialling it.
 
 ## Compute eligibility — `compute_nodes.active`
 
-Drain a compute node without removing it:
-
-```bash
-psql -c "UPDATE compute_nodes SET active = false WHERE name = 'fsn-2';"
-```
-
-Reverse:
-
-```bash
-psql -c "UPDATE compute_nodes SET active = true WHERE name = 'fsn-2';"
-```
+Drain a compute node without removing it in Operations → Nodes. Supply a
+change/incident reason, confirm the action, and retain the returned
+`intent_id`. To restore an unavailable node, use **Activate** on the same
+page and poll the intent until it reaches a terminal state.
 
 The `compute_node_changed` notify fires on UPDATE; the schedd's
 router refresh watcher rebuilds its dial cache and the gateway's
@@ -195,17 +188,12 @@ The minimum operator surface for cutting over a second compute
 node:
 
 ```bash
-# 1. Insert the row in compute_nodes.
-psql <<'SQL'
-INSERT INTO compute_nodes (
-  name, active, target_url, schedd_target_url,
-  vcpus, mem_mb, max_concurrency, admission_ceiling_mb
-) VALUES (
-  'fsn-2', true,
-  'tcp://10.0.0.2:7000', 'tcp://10.0.0.2:7100',
-  80, 28000, 10, 23800
-);
-SQL
+# 1. Register the row through the typed operator command.
+gregalectl compute-nodes add \
+  --name fsn-2 \
+  --target-url tcp://10.0.0.2:7000 \
+  --vcpus 80 --mem-mb 28000 --max-concurrency 10 \
+  --admission-ceiling-mb 23800
 
 # 2. Bootstrap vmmd on the new box (per deploy/ansible).
 ssh faas-fsn-2 'make bootstrap-compute'
@@ -286,11 +274,9 @@ rolling back is local:
    ```bash
    ssh faas-fsn-2 'systemctl stop faas-schedd'
    ```
-2. **Mark it inactive.** So the gateway stops dialling and the
-   chooser skips it:
-   ```bash
-   psql -c "UPDATE compute_nodes SET active = false WHERE name = 'fsn-2';"
-   ```
+2. **Drain it in Operations → Nodes.** Record the returned intent ID.
+   Once the `node_drain` intent succeeds, the gateway stops dialling and
+   the chooser skips it.
 3. **Apps auto-rebalance to the surviving schedds.** Each peer
    schedd consumes the `active=false` notify via the
    Tier-A4 rebalancer (ADR-064) and atomically re-stamps the

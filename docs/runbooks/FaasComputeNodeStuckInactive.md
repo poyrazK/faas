@@ -86,21 +86,18 @@ that "finished cleanly" is not evidence the node is healthy.
 
 ## Mitigation
 
-Restore the node with the minimal write — one column, leaving every
-capacity value vmmd re-registered:
-
-```sql
-UPDATE compute_nodes SET active = true WHERE name = '<node-name>';
-```
+Restore the node through Operations → Nodes → **Activate**. Supply the
+incident ID as the reason and poll the returned `node_activate` intent.
+The operation changes only lifecycle state, leaving every capacity value
+vmmd re-registered.
 
 Service returns within ~15 s, and `last_heartbeat_at` starts advancing
 again once the heartbeat re-enumerates the row.
 
-Prefer this over the operator endpoint (`POST /v1/compute-nodes`, which
-routes to `UpsertComputeNodeFromOperator` and does set `active = true`)
-unless you are also correcting capacity: that path overwrites `vpcpus`,
-`mem_mb`, `max_concurrency` and `admission_ceiling_mb` with whatever the
-caller supplies, so a wrong value mis-sizes admission.
+Do not use the node registration endpoint for recovery unless you are also
+correcting capacity: that path can overwrite `vpcpus`, `mem_mb`,
+`max_concurrency` and `admission_ceiling_mb` with whatever the caller
+supplies, so a wrong value mis-sizes admission.
 
 `gregalectl` also exposes an activate path
 (`cmd/gregalectl/commands_compute_nodes.go`) backed by

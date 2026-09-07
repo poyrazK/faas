@@ -161,6 +161,8 @@ jobs:
       # record whenever a PR claims completion with the `m8-done` label.
       - name: restore-drill script contract
         run: make lint-drill
+      - name: forbid mutating SQL in normal runbooks
+        run: make runbook-sql-check
       - name: restore-drill evidence freshness (M8 claim)
         if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'm8-done') }}
         run: make m8-evidence-check

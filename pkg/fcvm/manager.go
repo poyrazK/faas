@@ -843,6 +843,12 @@ type Manager struct {
 	// pkg/fcvm/manager_test.go) take this path today and continue to
 	// pass after the change.
 	storage storage.StorageBackend
+	// baseGenerations binds each logical runtime base key to the immutable
+	// OCI reference configured for this node. The separate mutex serializes
+	// the rare cross-node cache adoption path without holding Manager.mu
+	// across registry I/O.
+	baseGenerations  map[string]string
+	baseGenerationMu sync.Mutex
 	// imageScanMetrics is the per-daemon OpsMetrics the scan sidecar
 	// findings get fed into (issue #299). Wired via SetImageScanMetrics,
 	// mirroring SetHostIdentity above (nil-safe). The counter is
@@ -1266,6 +1272,21 @@ func (m *Manager) SetHostIdentities(ids []*age.X25519Identity) {
 // check (bringUpScanCheck returns nil immediately).
 func (m *Manager) WithStorage(s storage.StorageBackend) {
 	m.storage = s
+}
+
+// WithBaseGenerations configures the immutable OCI reference expected for
+// each runtime base key. Production calls this before serving traffic.
+func (m *Manager) WithBaseGenerations(generations map[string]string) {
+	if len(generations) == 0 {
+		m.baseGenerations = nil
+		return
+	}
+	m.baseGenerations = make(map[string]string, len(generations))
+	for key, generation := range generations {
+		if key != "" && generation != "" {
+			m.baseGenerations[key] = generation
+		}
+	}
 }
 
 // VMM returns the underlying VMM (the one wired at NewManager). The
@@ -4013,27 +4034,127 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 // gate returns the same Problem shape schedd's engine.go:558-595
 // emits (api.NewProblem with HTTP 503), so schedd can render the
 // wake-error path with no extra translation layer.
+type baseScanSidecar struct {
+	Image                string         `json:"image"`
+	Findings             map[string]int `json:"findings"`
+	FixAvailableFindings map[string]int `json:"fix_available_findings"`
+}
+
+func (m *Manager) readBaseScan(ctx context.Context, scanKey string) (baseScanSidecar, error) {
+	rc, err := m.storage.Get(ctx, scanKey)
+	if err != nil {
+		return baseScanSidecar{}, err
+	}
+	defer func() { _ = rc.Close() }()
+	var scan baseScanSidecar
+	if err := json.NewDecoder(rc).Decode(&scan); err != nil {
+		return baseScanSidecar{}, err
+	}
+	return scan, nil
+}
+
+// ensureBaseGeneration refreshes a stale logical runtime-base group before
+// admission. The marker makes the steady-state path a local file read; only a
+// release reference change streams the base from shared storage.
+func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey string) error {
+	expected := m.baseGenerations[baseKey]
+	if expected == "" {
+		return nil
+	}
+	baseCache, baseCacheKey, err := storage.CacheBackendForKey(m.storage, baseKey)
+	if err != nil || baseCache == nil {
+		return err
+	}
+	if generation, ok, readErr := baseCache.CachedGeneration(baseCacheKey); readErr != nil {
+		return readErr
+	} else if ok && generation == expected {
+		return nil
+	}
+
+	m.baseGenerationMu.Lock()
+	defer m.baseGenerationMu.Unlock()
+	if generation, ok, readErr := baseCache.CachedGeneration(baseCacheKey); readErr != nil {
+		return readErr
+	} else if ok && generation == expected {
+		return nil
+	}
+	if m.log != nil {
+		m.log.Info("runtime base cache generation refresh started", "base_key", baseKey, "generation", expected)
+	}
+
+	// imaged publishes the scan sidecar after the base and digest sidecar.
+	// Read that commit marker first: once it names expected, the canonical
+	// parent already contains the complete generation. Pulling the large base
+	// before this check could otherwise race a release publication and combine
+	// the previous base with the new digest and scan sidecars.
+	scanCache, scanCacheKey, routeErr := storage.CacheBackendForKey(m.storage, scanKey)
+	if routeErr != nil {
+		return fmt.Errorf("resolve cache route for %q: %w", scanKey, routeErr)
+	}
+	if scanCache == nil || scanCache != baseCache {
+		return fmt.Errorf("runtime base group %q is not owned by one read-through cache", baseKey)
+	}
+	rc, refreshErr := scanCache.Refresh(ctx, scanCacheKey)
+	if refreshErr != nil {
+		return fmt.Errorf("refresh runtime base artifact %q: %w", scanKey, refreshErr)
+	}
+	if closeErr := rc.Close(); closeErr != nil {
+		return fmt.Errorf("close refreshed runtime base artifact %q: %w", scanKey, closeErr)
+	}
+	scan, err := m.readBaseScan(ctx, scanKey)
+	if err != nil {
+		return fmt.Errorf("read refreshed scan sidecar: %w", err)
+	}
+	if scan.Image != expected {
+		return fmt.Errorf("refreshed scan generation %q does not match configured runtime base %q", scan.Image, expected)
+	}
+
+	keys := []string{baseKey, baseKey + ".digest"}
+	for _, key := range keys {
+		cache, relativeKey, routeErr := storage.CacheBackendForKey(m.storage, key)
+		if routeErr != nil {
+			return fmt.Errorf("resolve cache route for %q: %w", key, routeErr)
+		}
+		if cache == nil || cache != baseCache {
+			return fmt.Errorf("runtime base group %q is not owned by one read-through cache", baseKey)
+		}
+		rc, refreshErr := cache.Refresh(ctx, relativeKey)
+		if refreshErr != nil {
+			return fmt.Errorf("refresh runtime base artifact %q: %w", key, refreshErr)
+		}
+		if closeErr := rc.Close(); closeErr != nil {
+			return fmt.Errorf("close refreshed runtime base artifact %q: %w", key, closeErr)
+		}
+	}
+	if err := baseCache.MarkGeneration(baseCacheKey, expected); err != nil {
+		return fmt.Errorf("commit runtime base generation: %w", err)
+	}
+	if m.log != nil {
+		m.log.Info("runtime base cache generation refresh completed", "base_key", baseKey, "generation", expected)
+	}
+	return nil
+}
+
 func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	if m.storage == nil {
 		return nil
 	}
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
-	rc, err := m.storage.Get(ctx, scanKey)
+	if err := m.ensureBaseGeneration(ctx, baseKey, scanKey); err != nil {
+		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+			"runtime base generation unavailable",
+			fmt.Sprintf("runtime base %q could not adopt its configured generation: %v", baseKey, err))
+	}
+	scan, err := m.readBaseScan(ctx, scanKey)
 	if err != nil {
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar missing",
 			fmt.Sprintf("scan sidecar missing for base %q at %q; refusing to boot un-scanned ext4 (issue #299)", baseKey, scanKey))
 	}
-	defer func() { _ = rc.Close() }()
-	var scan struct {
-		Image                string         `json:"image"`
-		Findings             map[string]int `json:"findings"`
-		FixAvailableFindings map[string]int `json:"fix_available_findings"`
-	}
-	if err := json.NewDecoder(rc).Decode(&scan); err != nil {
+	if expected := m.baseGenerations[baseKey]; expected != "" && scan.Image != expected {
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
-			"scan sidecar unreadable",
-			fmt.Sprintf("scan sidecar at %q unreadable: %v (issue #299)", scanKey, err))
+			"scan sidecar generation mismatch",
+			fmt.Sprintf("scan sidecar at %q names %q, want configured runtime base %q; refusing to boot (issue #299)", scanKey, scan.Image, expected))
 	}
 	if _, ok := scan.Findings["CRITICAL"]; !ok {
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,

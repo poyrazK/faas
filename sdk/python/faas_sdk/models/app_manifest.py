@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
     from ..models.app_manifest_healthcheck import AppManifestHealthcheck
     from ..models.service_replicas import ServiceReplicas
+    from ..models.workload_port import WorkloadPort
 
 
 T = TypeVar("T", bound="AppManifest")
@@ -63,6 +64,9 @@ class AppManifest:
     the app_secrets table at wake."""
     working_dir: None | str | Unset = UNSET
     port: int | None | Unset = UNSET
+    ports: list[WorkloadPort] | Unset = UNSET
+    """Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the public HTTP/readiness
+    listener; these entries are used for in-task endpoint discovery (ADR-165)."""
     healthz: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
     healthcheck: AppManifestHealthcheck | Unset = UNSET
@@ -126,6 +130,13 @@ class AppManifest:
             port = UNSET
         else:
             port = self.port
+
+        ports: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.ports, Unset):
+            ports = []
+            for ports_item_data in self.ports:
+                ports_item = ports_item_data.to_dict()
+                ports.append(ports_item)
 
         healthz: None | str | Unset
         if isinstance(self.healthz, Unset):
@@ -210,6 +221,8 @@ class AppManifest:
             field_dict["working_dir"] = working_dir
         if port is not UNSET:
             field_dict["port"] = port
+        if ports is not UNSET:
+            field_dict["ports"] = ports
         if healthz is not UNSET:
             field_dict["healthz"] = healthz
         if user is not UNSET:
@@ -239,6 +252,7 @@ class AppManifest:
         from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
         from ..models.app_manifest_healthcheck import AppManifestHealthcheck
         from ..models.service_replicas import ServiceReplicas
+        from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
         entrypoint = cast(list[str], d.pop("entrypoint"))
@@ -274,6 +288,15 @@ class AppManifest:
             return cast(int | None | Unset, data)
 
         port = _parse_port(d.pop("port", UNSET))
+
+        _ports = d.pop("ports", UNSET)
+        ports: list[WorkloadPort] | Unset = UNSET
+        if _ports is not UNSET:
+            ports = []
+            for ports_item_data in _ports:
+                ports_item = WorkloadPort.from_dict(ports_item_data)
+
+                ports.append(ports_item)
 
         def _parse_healthz(data: object) -> None | str | Unset:
             if data is None:
@@ -445,6 +468,7 @@ class AppManifest:
             env_secrets=env_secrets,
             working_dir=working_dir,
             port=port,
+            ports=ports,
             healthz=healthz,
             user=user,
             healthcheck=healthcheck,

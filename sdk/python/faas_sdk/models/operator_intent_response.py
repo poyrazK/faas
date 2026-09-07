@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -11,6 +11,10 @@ from attrs import field as _attrs_field
 from ..models.operator_intent_response_kind import OperatorIntentResponseKind, check_operator_intent_response_kind
 from ..models.operator_intent_response_status import OperatorIntentResponseStatus, check_operator_intent_response_status
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operator_intent_response_metadata import OperatorIntentResponseMetadata
+
 
 T = TypeVar("T", bound="OperatorIntentResponse")
 
@@ -29,10 +33,17 @@ class OperatorIntentResponse:
     kind: OperatorIntentResponseKind
     status: OperatorIntentResponseStatus
     target_id: str
-    """Instance UUID (force_park or force_restart) or deployment UUID (force_cold_boot)."""
+    """Instance UUID (force_park or force_restart), deployment UUID (force_cold_boot), or compute-node UUID (node
+    lifecycle intents)."""
+    actor_id: UUID
+    """Admin account that requested the operation."""
+    reason: str
+    """Bounded operator-supplied reason recorded with the intent."""
+    metadata: OperatorIntentResponseMetadata
+    """Kind-specific preflight and desired-state metadata captured before dispatch."""
     requested_at: datetime.datetime
     account_id: UUID | Unset = UNSET
-    """Owning account. NULL for fleet-level intents (e.g. P2c reclaim_build)."""
+    """Owning account. Omitted for fleet-level node lifecycle intents."""
     started_at: datetime.datetime | Unset = UNSET
     """Set when schedd claims the intent (pending → running)."""
     finished_at: datetime.datetime | Unset = UNSET
@@ -60,6 +71,12 @@ class OperatorIntentResponse:
         status: str = self.status
 
         target_id = self.target_id
+
+        actor_id = str(self.actor_id)
+
+        reason = self.reason
+
+        metadata = self.metadata.to_dict()
 
         requested_at = self.requested_at.isoformat()
 
@@ -98,6 +115,9 @@ class OperatorIntentResponse:
                 "kind": kind,
                 "status": status,
                 "target_id": target_id,
+                "actor_id": actor_id,
+                "reason": reason,
+                "metadata": metadata,
                 "requested_at": requested_at,
             }
         )
@@ -118,6 +138,8 @@ class OperatorIntentResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operator_intent_response_metadata import OperatorIntentResponseMetadata
+
         d = dict(src_dict)
         intent_id = UUID(d.pop("intent_id"))
 
@@ -126,6 +148,12 @@ class OperatorIntentResponse:
         status = check_operator_intent_response_status(d.pop("status"))
 
         target_id = d.pop("target_id")
+
+        actor_id = UUID(d.pop("actor_id"))
+
+        reason = d.pop("reason")
+
+        metadata = OperatorIntentResponseMetadata.from_dict(d.pop("metadata"))
 
         requested_at = datetime.datetime.fromisoformat(d.pop("requested_at"))
 
@@ -175,6 +203,9 @@ class OperatorIntentResponse:
             kind=kind,
             status=status,
             target_id=target_id,
+            actor_id=actor_id,
+            reason=reason,
+            metadata=metadata,
             requested_at=requested_at,
             account_id=account_id,
             started_at=started_at,

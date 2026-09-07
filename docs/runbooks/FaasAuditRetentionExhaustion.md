@@ -149,11 +149,11 @@ If the loop is alive but the table is on track to exhaust disk in
    must be paired with a follow-up SOC 2 ticket to extend the
    window once disk is recovered. **Never** lower below 30 without
    security sign-off (the 30-day floor is a hard SOC 2 limit).
-3. If disk is the immediate constraint, consider moving the
-   events table to a separate tablespace backed by a larger
-   EBS volume (`pg_tablespace_location` + `ALTER TABLE events
-   SET TABLESPACE events_archive`). Do NOT drop the table —
-   audit retention is an audit-trail obligation.
+3. If disk is the immediate constraint, page the database owner to ship and
+   review a normal migration that moves `events` to a larger tablespace. If
+   the migration pipeline cannot run during the incident, use the approved
+   [`database-repair`](../break-glass/database-repair.md) procedure. Do not
+   drop the table — audit retention is an audit-trail obligation.
 
 ## Related
 

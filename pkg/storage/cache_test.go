@@ -170,6 +170,70 @@ func TestLocalCacheBackend_RefreshReplacesExistingEntry(t *testing.T) {
 	}
 }
 
+func TestLocalCacheBackend_ExplicitRefreshAndGeneration(t *testing.T) {
+	parent := newFakeBackend()
+	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(t.TempDir(), "cache"), 0)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend: %v", err)
+	}
+	ctx := context.Background()
+	const key = "base/runner-go124-amd64.ext4"
+	if err := cache.Put(ctx, key, strings.NewReader("old-base")); err != nil {
+		t.Fatalf("Put old: %v", err)
+	}
+	if err := cache.MarkGeneration(key, "old-ref"); err != nil {
+		t.Fatalf("MarkGeneration old: %v", err)
+	}
+	if got, ok, err := cache.CachedGeneration(key); err != nil || !ok || got != "old-ref" {
+		t.Fatalf("CachedGeneration = %q, %t, %v; want old-ref", got, ok, err)
+	}
+	if err := parent.Put(ctx, key, strings.NewReader("new-base")); err != nil {
+		t.Fatalf("parent.Put new: %v", err)
+	}
+	rc, err := cache.Refresh(ctx, key)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	b, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil || string(b) != "new-base" {
+		t.Fatalf("Refresh bytes = %q, %v; want new-base", b, err)
+	}
+	if got, ok, err := cache.CachedGeneration(key); err != nil || ok || got != "" {
+		t.Fatalf("generation after refresh = %q, %t, %v; want cleared", got, ok, err)
+	}
+	if err := cache.MarkGeneration(key, "new-ref"); err != nil {
+		t.Fatalf("MarkGeneration new: %v", err)
+	}
+	if got, ok, err := cache.CachedGeneration(key); err != nil || !ok || got != "new-ref" {
+		t.Fatalf("new generation = %q, %t, %v; want new-ref", got, ok, err)
+	}
+}
+
+func TestCacheBackendForKey_UsesRouterDispatch(t *testing.T) {
+	cache, err := storage.NewLocalCacheBackend(newFakeBackend(), filepath.Join(t.TempDir(), "cache"), 0)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend: %v", err)
+	}
+	local, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalStorageBackend: %v", err)
+	}
+	router, err := storage.NewPrefixRouter(map[string]storage.StorageBackend{"local/": local, "remote/": cache}, cache)
+	if err != nil {
+		t.Fatalf("NewPrefixRouter: %v", err)
+	}
+	if got, key, err := storage.CacheBackendForKey(router, "local/blob"); err != nil || got != nil || key != "" {
+		t.Fatalf("local route = %p, %q, %v; want nil cache", got, key, err)
+	}
+	if got, key, err := storage.CacheBackendForKey(router, "remote/blob"); err != nil || got != cache || key != "blob" {
+		t.Fatalf("remote route = %p, %q, %v; want cache, blob", got, key, err)
+	}
+	if got, key, err := storage.CacheBackendForKey(router, "fallback/blob"); err != nil || got != cache || key != "fallback/blob" {
+		t.Fatalf("fallback route = %p, %q, %v; want cache, fallback/blob", got, key, err)
+	}
+}
+
 // TestLocalCacheBackend_LocalPathDelegates pins the local-file capability
 // used by large ext4 scans. The cache must not redirect callers to its hashed
 // cache file; the parent path is the canonical artifact path.

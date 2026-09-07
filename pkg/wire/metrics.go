@@ -3818,7 +3818,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// the same endpoint × kind grid. The grid is bounded at
 	// 4 endpoints × 7 kinds × {success, [error_class]} = a
 	// small constant. kind is the closed operator-action
-	// vocabulary: 3 verbs × {request, outcome} = 6 plus
+	// vocabulary: 6 verbs × {request, outcome} = 12 plus
 	// "other" overflow. The emit path routes non-operator
 	// kinds (cron, wake, deployment, etc.) to "other" so a
 	// typo in audit.emit() callers cannot blow up
@@ -3837,6 +3837,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		"force_park.outcome",
 		"force_cold_boot.outcome",
 		"force_restart.outcome",
+		"node_drain",
+		"node_force_drain",
+		"node_activate",
+		"node_drain.outcome",
+		"node_force_drain.outcome",
+		"node_activate.outcome",
 		// apid request-side instance-oriented aliases
 		// (pkg/audit.auditKindMetricLabel maps them onto the
 		// verb-oriented labels above). The auditLogWriteTotal
@@ -3871,6 +3877,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		"force_park",
 		"force_cold_boot",
 		"force_restart",
+		"node_drain",
+		"node_force_drain",
+		"node_activate",
 		"park_instance",
 		"restart_instance",
 	}
@@ -3884,7 +3893,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"endpoint", "kind", "error_class"})
 	operatorActionTraceCompletenessRatio := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_operator_action_trace_completeness_ratio",
-		Help: "5-minute trailing ratio (0.0..1.0) of operator.action.<verb>* audit rows whose events.trace_id column is non-NULL. Labelled by kind ∈ {force_park, force_cold_boot, force_restart, force_park.outcome, force_cold_boot.outcome, force_restart.outcome}. Single-registry: registered on every daemon; only schedd sets the value via SetOperatorActionTraceCompleteness (60s tick). A drop below 0.95 is the obs-coverage alert tripwire — every force-action should carry a trace_id end-to-end (PR-#TBD C1-C4 contract).",
+		Help: "5-minute trailing ratio (0.0..1.0) of operator.action.<verb>* audit rows whose events.trace_id column is non-NULL. Labelled by the closed operator-intent kind vocabulary and its .outcome variants. Single-registry: registered on every daemon; only schedd sets the value via SetOperatorActionTraceCompleteness (60s tick). A drop below 0.95 is the obs-coverage alert tripwire — every operator action should carry a trace_id end-to-end.",
 	}, []string{"kind"})
 	operatorActionTraceCompletenessFirstTickCompleted := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prefix + "_operator_action_trace_completeness_first_tick_completed_total",
