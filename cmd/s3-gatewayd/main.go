@@ -107,12 +107,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("s3-gatewayd: listen data: %w", err)
 	}
-	defer dataListener.Close()
+	defer func() {
+		if closeErr := dataListener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			log.Warn("s3-gatewayd: close data listener", "error", closeErr)
+		}
+	}()
 	controlListener, err := net.Listen("tcp", controlAddr)
 	if err != nil {
 		return fmt.Errorf("s3-gatewayd: listen control: %w", err)
 	}
-	defer controlListener.Close()
+	defer func() {
+		if closeErr := controlListener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			log.Warn("s3-gatewayd: close control listener", "error", closeErr)
+		}
+	}()
 
 	dataServer := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
 	controlMux := http.NewServeMux()

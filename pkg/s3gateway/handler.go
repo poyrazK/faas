@@ -419,7 +419,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}
-	defer response.Body.Close()
+	defer h.closeResponseBody(response.Body, req.requestID)
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		h.providerHTTPError(w, r, req, response.StatusCode, key)
 		return
@@ -454,7 +454,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}
-	defer response.Body.Close()
+	defer h.closeResponseBody(response.Body, req.requestID)
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		h.providerHTTPError(w, r, req, response.StatusCode, key)
 		return
@@ -463,6 +463,12 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 	w.WriteHeader(response.StatusCode)
 	if r.Method == http.MethodGet {
 		_, _ = io.Copy(w, response.Body)
+	}
+}
+
+func (h *Handler) closeResponseBody(body io.Closer, requestID string) {
+	if err := body.Close(); err != nil {
+		h.log.Warn("S3 provider response close failed", "request_id", requestID)
 	}
 }
 

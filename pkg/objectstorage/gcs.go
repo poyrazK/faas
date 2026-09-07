@@ -279,7 +279,8 @@ func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (Signed
 		Style: storage.PathStyle(), QueryParameters: make(url.Values),
 	}
 	result := SignedRequest{Method: r.Method, Headers: map[string]string{}, ExpiresAt: expiresAt}
-	if r.Method == http.MethodPut {
+	switch r.Method {
+	case http.MethodPut:
 		contentType := r.ContentType
 		if contentType == "" {
 			contentType = "application/octet-stream"
@@ -294,7 +295,7 @@ func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (Signed
 			opts.Headers = []string{"content-length:" + length}
 			result.Headers["Content-Length"] = length
 		}
-	} else if r.Method == http.MethodGet {
+	case http.MethodGet:
 		opts.QueryParameters.Set("response-content-disposition", "attachment")
 		opts.QueryParameters.Set("response-content-type", "application/octet-stream")
 	}
