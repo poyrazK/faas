@@ -372,6 +372,24 @@ func (s *ScanResult) toMap() map[string]int {
 	}
 }
 
+// fixAvailableToMap returns the severity counts for vulnerabilities that have
+// an upstream fix. Runtime-base publication applies the same policy with
+// Grype's --only-fixed flag: unfixed vendor findings remain visible, while
+// findings an operator can remediate block admission.
+func (s *ScanResult) fixAvailableToMap() map[string]int {
+	if s == nil {
+		return nil
+	}
+	fixed := &ScanResult{}
+	for _, vulnerability := range s.Vulnerabilities {
+		if vulnerability.FixedIn == "" {
+			continue
+		}
+		fixed.bumpSeverity(vulnerability.Severity)
+	}
+	return fixed.toMap()
+}
+
 // SeverityCounts is the per-bucket count of CVEs in Grype's
 // closed vocabulary. Mirrors pkg/api.SeverityCounts (the
 // customer-facing DTO) but lives in imaged to keep the

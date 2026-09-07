@@ -1,6 +1,7 @@
 // Whitebox tests for pkg/fcvm/manager.go::bringUpScanCheck — the
 // issue #299 admission gate that refuses to boot a base ext4 whose
-// Grype scan sidecar reports CRITICAL ≥ 1 (or is missing/malformed).
+// Grype scan sidecar reports fix-available CRITICAL ≥ 1 (or is
+// missing/malformed). Legacy sidecars remain gated on total CRITICAL.
 //
 // Pattern: whitebox-test-file convention (memory:
 // whitebox-test-file-pattern), narrowly scoped to the
@@ -116,6 +117,29 @@ func TestBringUpScanCheck(t *testing.T) {
 			wantStatus: http.StatusServiceUnavailable,
 		},
 		{
+			name: "missing findings returns CodeScanCritical",
+			setup: func(s *memStorage) {
+				_ = s.Put(context.Background(), scanKey, bytes.NewReader([]byte(`{"image":"broken"}`)))
+			},
+			wantErr:    true,
+			wantCode:   api.CodeScanCritical,
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name: "incomplete fix-available findings returns CodeScanCritical",
+			setup: func(s *memStorage) {
+				blob, _ := json.Marshal(map[string]any{
+					"image":                  "ghcr.io/onebox-faas/runner-builder:latest",
+					"findings":               map[string]int{"CRITICAL": 7},
+					"fix_available_findings": map[string]int{},
+				})
+				_ = s.Put(context.Background(), scanKey, bytes.NewReader(blob))
+			},
+			wantErr:    true,
+			wantCode:   api.CodeScanCritical,
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
 			name: "fail-closed placeholder (CRITICAL=9999) returns CodeScanCritical",
 			setup: func(s *memStorage) {
 				blob, _ := json.Marshal(map[string]any{
@@ -137,6 +161,32 @@ func TestBringUpScanCheck(t *testing.T) {
 				blob, _ := json.Marshal(map[string]any{
 					"image":    "ghcr.io/onebox-faas/runner-builder:latest",
 					"findings": map[string]int{"CRITICAL": 1, "HIGH": 3, "MEDIUM": 5, "LOW": 2, "UNKNOWN": 0},
+				})
+				_ = s.Put(context.Background(), scanKey, bytes.NewReader(blob))
+			},
+			wantErr:    true,
+			wantCode:   api.CodeScanCritical,
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name: "unfixed CRITICAL findings are admitted",
+			setup: func(s *memStorage) {
+				blob, _ := json.Marshal(map[string]any{
+					"image":                  "ghcr.io/onebox-faas/runner-builder:latest",
+					"findings":               map[string]int{"CRITICAL": 7, "HIGH": 3, "MEDIUM": 5, "LOW": 2, "UNKNOWN": 0},
+					"fix_available_findings": map[string]int{"CRITICAL": 0, "HIGH": 1, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0},
+				})
+				_ = s.Put(context.Background(), scanKey, bytes.NewReader(blob))
+			},
+			wantErr: false,
+		},
+		{
+			name: "fix-available CRITICAL=1 returns CodeScanCritical",
+			setup: func(s *memStorage) {
+				blob, _ := json.Marshal(map[string]any{
+					"image":                  "ghcr.io/onebox-faas/runner-builder:latest",
+					"findings":               map[string]int{"CRITICAL": 7, "HIGH": 3, "MEDIUM": 5, "LOW": 2, "UNKNOWN": 0},
+					"fix_available_findings": map[string]int{"CRITICAL": 1, "HIGH": 1, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0},
 				})
 				_ = s.Put(context.Background(), scanKey, bytes.NewReader(blob))
 			},

@@ -694,9 +694,9 @@ const (
 	CodeTrustedSignerNotFound = "trusted_signer_not_found"
 
 	// CodeScanCritical is returned by vmmd when the staged base
-	// ext4's Grype scan sidecar reports a CRITICAL finding (or
+	// ext4's Grype scan sidecar reports a fix-available CRITICAL finding (or
 	// is missing/unreadable) at boot time (issue #299). The
-	// failure mode is policy-driven (a CRITICAL CVE is a known
+	// failure mode is policy-driven (an actionable CRITICAL CVE is a known
 	// bad, not an operator fault), so the code is SLO-exempt —
 	// it's not a customer-actionable signal in the same way
 	// capacity / build-failure codes are, but a sustained
