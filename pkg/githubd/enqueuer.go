@@ -71,7 +71,10 @@ type BuildSpec struct {
 	CommitSHA    string
 	RepoFullName string
 	Ref          string
-	Branch       string
+	// Tag is the normalized GitHub release tag for an immutable tag push.
+	// It is empty for branch and pull-request events.
+	Tag    string
+	Branch string
 	// Scope is the deployment environment selected by the project's
 	// GitHub branch routing rules. Empty keeps the legacy default scope.
 	Scope       string

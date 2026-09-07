@@ -233,6 +233,7 @@ func TestEnqueueBuild_HappyPath(t *testing.T) {
 		RepoFullName: "owner/repo",
 		Branch:       "main",
 		Pusher:       "octocat",
+		Tag:          "v1.2.3",
 	})
 	if err != nil {
 		t.Fatalf("EnqueueBuild: %v", err)
@@ -243,6 +244,9 @@ func TestEnqueueBuild_HappyPath(t *testing.T) {
 	}
 	if resp.DeploymentId != "dep-1" {
 		t.Errorf("DeploymentId = %q, want %q", resp.DeploymentId, "dep-1")
+	}
+	if store.createDeploymentReturned.Tag != "v1.2.3" {
+		t.Errorf("deployment tag = %q, want %q", store.createDeploymentReturned.Tag, "v1.2.3")
 	}
 	// Notify channel: build_queued fired exactly once.
 	if len(notif.channels) != 1 || notif.channels[0] != db.NotifyBuildQueued {

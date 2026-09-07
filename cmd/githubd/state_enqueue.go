@@ -114,6 +114,7 @@ func (a *apidEnqueuer) Enqueue(ctx context.Context, spec githubd.BuildSpec) (sta
 		SourceBytes:     spec.SourceBytes,
 		RepoFullName:    spec.RepoFullName,
 		Ref:             spec.Ref,
+		Tag:             spec.Tag,
 		Branch:          spec.Branch,
 		DeploymentScope: spec.Scope,
 		Pusher:          spec.Pusher,

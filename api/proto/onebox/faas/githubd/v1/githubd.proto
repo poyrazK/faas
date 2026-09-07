@@ -360,6 +360,10 @@ message EnqueueBuildRequest {
   // GitHub branch routing rule (for example "staging"). Empty preserves the
   // legacy default scope.
   string deployment_scope  = 15;
+  // tag is the normalized GitHub release tag (for example "v1.2.3") for
+  // immutable release-tag pushes. Empty for branch and pull-request events.
+  // apid stamps it onto deployments.tag for deployment provenance.
+  string tag                = 16;
 }
 
 // EnqueueBuildEventKind is the githubd-side event taxonomy for
