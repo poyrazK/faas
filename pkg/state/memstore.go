@@ -18018,13 +18018,13 @@ func (m *MemStore) AppendUploadBytes(_ context.Context, in sqlc.AppendUploadByte
 	}
 	if row.Status != "open" ||
 		(row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now())) ||
-		row.ReceivedBytes != in.ReceivedBytes_2 {
+		row.ReceivedBytes != in.ExpectedReceivedBytes {
 		return sqlc.AppendUploadBytesRow{
 			ReceivedBytes: row.ReceivedBytes,
 			TotalSize:     row.TotalSize,
 		}, ErrConflict
 	}
-	row.ReceivedBytes = in.ReceivedBytes
+	row.ReceivedBytes = in.NewReceivedBytes
 	row.LastPatchedAt = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 	m.uploadSessions[in.ID] = row
 	return sqlc.AppendUploadBytesRow{

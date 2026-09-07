@@ -338,19 +338,19 @@ func (q *Queries) AppendEvent(ctx context.Context, db DBTX, arg AppendEventParam
 
 const appendUploadBytes = `-- name: AppendUploadBytes :one
 UPDATE upload_sessions
-   SET received_bytes = $3,
+   SET received_bytes = $1,
        last_patched_at = now()
- WHERE id = $1
+ WHERE id = $2
    AND status = 'open'
    AND expires_at > now()
-   AND received_bytes = $2
+   AND received_bytes = $3
 RETURNING received_bytes, total_size
 `
 
 type AppendUploadBytesParams struct {
-	ID              string
-	ReceivedBytes   int64
-	ReceivedBytes_2 int64
+	NewReceivedBytes      int64
+	ID                    string
+	ExpectedReceivedBytes int64
 }
 
 type AppendUploadBytesRow struct {
@@ -363,8 +363,8 @@ type AppendUploadBytesRow struct {
 // the client's Upload-Offset header (the offset the client claims
 // the server is currently at) and the chunk_size it sent, then
 // computes expected_new = client_offset + chunk_bytes. The WHERE
-// clause pins the row to (id=$1 AND status='open' AND
-// expires_at > now() AND received_bytes=$3) — a row whose received_bytes has already
+// clause pins the row to the upload id and the explicitly named expected
+// offset — a row whose received_bytes has already
 // advanced (e.g., a racing PATCH from a retry) returns 0 rows and
 // the handler maps that to 409 Conflict with the actual current
 // offset in the body.
@@ -374,7 +374,7 @@ type AppendUploadBytesRow struct {
 // bumped to now() so the reaper's idle-aware expiry (NOT in PR-1;
 // deferred — see plan "Out of scope") has a fresh anchor.
 func (q *Queries) AppendUploadBytes(ctx context.Context, db DBTX, arg AppendUploadBytesParams) (AppendUploadBytesRow, error) {
-	row := db.QueryRow(ctx, appendUploadBytes, arg.ID, arg.ReceivedBytes, arg.ReceivedBytes_2)
+	row := db.QueryRow(ctx, appendUploadBytes, arg.NewReceivedBytes, arg.ID, arg.ExpectedReceivedBytes)
 	var i AppendUploadBytesRow
 	err := row.Scan(&i.ReceivedBytes, &i.TotalSize)
 	return i, err

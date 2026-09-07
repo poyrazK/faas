@@ -423,9 +423,9 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 	// PgStore).
 	newReceived := clientOffset + int64(len(chunk))
 	appendRow, err := s.store.AppendUploadBytes(r.Context(), sqlc.AppendUploadBytesParams{
-		ID:              uploadID,
-		ReceivedBytes:   newReceived,
-		ReceivedBytes_2: clientOffset,
+		ID:                    uploadID,
+		NewReceivedBytes:      newReceived,
+		ExpectedReceivedBytes: clientOffset,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
