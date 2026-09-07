@@ -12230,9 +12230,9 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 }
 
 // ListSnapshotsForGC returns every non-stale snapshot joined with its
-// deployment + app + account, ordered newest-first. Deleted apps and terminal
-// deployments remain in the result because imaged needs the join metadata to
-// remove their on-disk files before deleting the rows.
+// deployment + app + account, ordered newest-first. Snapshots made stale by a
+// deleted app or an unusable terminal deployment remain in the result because
+// imaged needs the join metadata to remove their on-disk files immediately.
 //
 // The JOIN is bounded by snapshotDashboardCap (10k) for the same reason
 // ListLiveSnapshotStats is: the GC algorithm is O(N) per tick and a 10k
@@ -12262,6 +12262,8 @@ func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, erro
 		   join deployments d on d.id = s.deployment_id
 		   join apps a       on a.id = d.app_id
 		  where s.stale = false
+		     or a.status = 'deleted'
+		     or d.status in ('failed', 'cancelled')
 		  order by s.created_at desc
 		  limit 10000`)
 	if err != nil {
