@@ -3,6 +3,7 @@ package oci
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -135,6 +136,55 @@ func SingleTCPExposedPort(exposed map[string]struct{}) (int, bool) {
 	return port, true
 }
 
+// WorkloadPortsFromExposed converts OCI ExposedPorts keys into a deterministic
+// protocol-aware listener list. OCI has no portable port-name field, so each
+// entry receives the stable name "<protocol>-<port>"; callers can use that
+// name directly in endpoint environment variables.
+func WorkloadPortsFromExposed(exposed map[string]struct{}) ([]api.WorkloadPort, error) {
+	if len(exposed) == 0 {
+		return nil, nil
+	}
+	type candidate struct {
+		port     int
+		protocol api.WorkloadPortProtocol
+	}
+	seen := make(map[string]candidate, len(exposed))
+	for spec := range exposed {
+		parts := strings.Split(spec, "/")
+		if len(parts) != 2 {
+			continue
+		}
+		port, err := strconv.Atoi(parts[0])
+		if err != nil || port < 1 || port > 65535 {
+			continue
+		}
+		protocol := api.WorkloadPortProtocol(strings.ToLower(parts[1]))
+		if protocol != api.WorkloadPortTCP && protocol != api.WorkloadPortUDP {
+			continue
+		}
+		key := fmt.Sprintf("%s/%d", protocol, port)
+		seen[key] = candidate{port: port, protocol: protocol}
+	}
+	ports := make([]api.WorkloadPort, 0, len(seen))
+	for _, c := range seen {
+		ports = append(ports, api.WorkloadPort{
+			Name:     fmt.Sprintf("%s-%d", c.protocol, c.port),
+			Port:     c.port,
+			Protocol: c.protocol,
+		})
+	}
+	sort.Slice(ports, func(i, j int) bool {
+		if ports[i].Port != ports[j].Port {
+			return ports[i].Port < ports[j].Port
+		}
+		return ports[i].Protocol < ports[j].Protocol
+	})
+	if err := api.ValidateWorkloadPorts(ports); err != nil {
+		return nil, err
+	}
+	return ports, nil
+}
+
 func clonePortSet(m map[string]struct{}) map[string]struct{} {
 	if len(m) == 0 {
 		return nil
@@ -207,6 +257,11 @@ func ManifestFromConfig(cfg Config) (api.AppManifest, error) {
 		WorkingDir: cfg.WorkingDir,
 		User:       normalizeUser(cfg.User),
 	}
+	ports, err := WorkloadPortsFromExposed(cfg.ExposedPorts)
+	if err != nil {
+		return api.AppManifest{}, fmt.Errorf("%w: exposed ports: %v", ErrImageManifestInvalid, err)
+	}
+	m.Ports = ports
 	if port, ok := SingleTCPExposedPort(cfg.ExposedPorts); ok {
 		m.Port = port
 	}

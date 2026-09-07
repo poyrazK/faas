@@ -102,6 +102,7 @@ type workloadSpec struct {
 	Essential     bool                     `json:"essential"`
 	Name          string                   `json:"name"`
 	Port          int                      `json:"port"`
+	Ports         []api.WorkloadPort       `json:"ports,omitempty"`
 	RamMB         int                      `json:"ram_mb"`
 	Type          string                   `json:"type"` // "main" | "init" | "sidecar"
 }
@@ -291,6 +292,9 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	if len(roster.Sidecars) > 2 {
 		return fmt.Errorf("workload roster: deployment has %d sidecars; cap is 2 (ADR-069 §Decision 1)", len(roster.Sidecars))
 	}
+	if err := hydrateSidecarPortMetadata(&roster); err != nil {
+		return err
+	}
 	workloadEnv, err := buildWorkloadEndpointEnv(roster, mainManifest)
 	if err != nil {
 		return err
@@ -414,6 +418,43 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	wg.Wait()
 	if mainErr != nil {
 		return mainErr
+	}
+	return nil
+}
+
+// hydrateSidecarPortMetadata reads the immutable sidecar image manifest before
+// endpoint env is built. The roster remains a scheduling contract, while OCI
+// ExposedPorts live with the image; loading them here makes multi-port image
+// metadata available without widening the wake database or gRPC schema.
+func hydrateSidecarPortMetadata(roster *workloadRoster) error {
+	if roster == nil {
+		return nil
+	}
+	for i := range roster.Sidecars {
+		spec := &roster.Sidecars[i]
+		if len(spec.Ports) > 0 || spec.Port != 0 {
+			continue
+		}
+		directRoot, err := fullRootfsSidecarRoot(spec.Name)
+		if err != nil {
+			return fmt.Errorf("workload %q: resolve sidecar root: %w", spec.Name, err)
+		}
+		var baked api.AppManifest
+		if directRoot != "" {
+			baked, err = loadSidecarManifestAt(directRoot, spec.Name)
+		} else {
+			baked, err = loadSidecarManifest(spec.Name)
+		}
+		if err == nil {
+			spec.Ports = append([]api.WorkloadPort(nil), baked.Ports...)
+			if len(spec.Ports) == 0 && baked.Port != 0 {
+				spec.Ports = []api.WorkloadPort{{Port: baked.Port, Protocol: api.WorkloadPortTCP}}
+			}
+			continue
+		}
+		if !isNotExist(err) {
+			return fmt.Errorf("workload %q: load sidecar manifest: %w", spec.Name, err)
+		}
 	}
 	return nil
 }

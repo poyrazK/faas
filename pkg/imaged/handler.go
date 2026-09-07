@@ -2126,7 +2126,17 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 	if err != nil {
 		return api.AppManifest{}, err
 	}
-	manifest.Port = sc.Port
+	if sc.Port != 0 {
+		// The legacy single-port override remains authoritative for the
+		// sidecar's serving endpoint. Preserve the new protocol-aware shape
+		// by projecting it as one TCP listener.
+		manifest.Port = sc.Port
+		manifest.Ports = []api.WorkloadPort{{
+			Name:     fmt.Sprintf("tcp-%d", sc.Port),
+			Port:     sc.Port,
+			Protocol: api.WorkloadPortTCP,
+		}}
+	}
 	return manifest, nil
 }
 

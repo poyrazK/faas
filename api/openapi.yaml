@@ -14402,6 +14402,12 @@ components:
           description: "Env override via sealed-secret refs. Each value is \"secret:NAME\"; the host resolver looks up NAME against the app_secrets table at wake."
         working_dir: { type: [string, "null"] }
         port: { type: [integer, "null"], minimum: 0, maximum: 65535 }
+        ports:
+          type: array
+          maxItems: 16
+          description: "Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the public HTTP/readiness listener; these entries are used for in-task endpoint discovery (ADR-165)."
+          items:
+            $ref: '#/components/schemas/WorkloadPort'
         healthz: { type: [string, "null"] }
         user: { type: [string, "null"] }
         healthcheck:
@@ -14459,6 +14465,23 @@ components:
         # other than 'service' is a Validate error.
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
+
+    WorkloadPort:
+      description: "One protocol-aware listener in a container workload (ADR-165)."
+      type: object
+      additionalProperties: false
+      required: [port, protocol]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        protocol:
+          type: string
+          enum: [tcp, udp]
 
     AppManifestHealthcheck:
       description: "AppManifest-level projection of the OCI HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are integer seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1 surfaces the field for the registry-pull path."

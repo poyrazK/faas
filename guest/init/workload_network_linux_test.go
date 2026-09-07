@@ -23,15 +23,72 @@ func TestBuildWorkloadEndpointEnv(t *testing.T) {
 		t.Fatalf("buildWorkloadEndpointEnv: %v", err)
 	}
 	want := map[string]string{
-		"FAAS_WORKLOAD_MAIN_HOST":          "127.0.0.1",
-		"FAAS_WORKLOAD_MAIN_PORT":          "8080",
-		"FAAS_WORKLOAD_MAIN_ADDR":          "127.0.0.1:8080",
-		"FAAS_WORKLOAD_METRICS_AGENT_HOST": "127.0.0.1",
-		"FAAS_WORKLOAD_METRICS_AGENT_PORT": "9090",
-		"FAAS_WORKLOAD_METRICS_AGENT_ADDR": "127.0.0.1:9090",
+		"FAAS_WORKLOAD_MAIN_HOST":              "127.0.0.1",
+		"FAAS_WORKLOAD_MAIN_PORT":              "8080",
+		"FAAS_WORKLOAD_MAIN_ADDR":              "127.0.0.1:8080",
+		"FAAS_WORKLOAD_MAIN_PROTOCOL":          "tcp",
+		"FAAS_WORKLOAD_METRICS_AGENT_HOST":     "127.0.0.1",
+		"FAAS_WORKLOAD_METRICS_AGENT_PORT":     "9090",
+		"FAAS_WORKLOAD_METRICS_AGENT_ADDR":     "127.0.0.1:9090",
+		"FAAS_WORKLOAD_METRICS_AGENT_PROTOCOL": "tcp",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("endpoint env = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildWorkloadEndpointEnvExposesNamedTCPAndUDPPorts(t *testing.T) {
+	got, err := buildWorkloadEndpointEnv(workloadRoster{
+		Main: workloadSpec{Ports: []api.WorkloadPort{
+			{Name: "http", Port: 8080, Protocol: api.WorkloadPortTCP},
+			{Name: "dns", Port: 53, Protocol: api.WorkloadPortUDP},
+		}},
+	}, api.AppManifest{})
+	if err != nil {
+		t.Fatalf("buildWorkloadEndpointEnv: %v", err)
+	}
+	checks := map[string]string{
+		"FAAS_WORKLOAD_MAIN_PORT":          "8080",
+		"FAAS_WORKLOAD_MAIN_PROTOCOL":      "tcp",
+		"FAAS_WORKLOAD_MAIN_HTTP_ADDR":     "127.0.0.1:8080",
+		"FAAS_WORKLOAD_MAIN_HTTP_PROTOCOL": "tcp",
+		"FAAS_WORKLOAD_MAIN_DNS_ADDR":      "127.0.0.1:53",
+		"FAAS_WORKLOAD_MAIN_DNS_PROTOCOL":  "udp",
+	}
+	for key, want := range checks {
+		if got[key] != want {
+			t.Errorf("%s = %q, want %q", key, got[key], want)
+		}
+	}
+}
+
+func TestBuildWorkloadEndpointEnvAllowsTCPAndUDPSamePort(t *testing.T) {
+	_, err := buildWorkloadEndpointEnv(workloadRoster{
+		Main: workloadSpec{Ports: []api.WorkloadPort{
+			{Name: "http", Port: 8080, Protocol: api.WorkloadPortTCP},
+			{Name: "udp", Port: 8080, Protocol: api.WorkloadPortUDP},
+		}},
+	}, api.AppManifest{})
+	if err != nil {
+		t.Fatalf("same numeric TCP/UDP port should be allowed: %v", err)
+	}
+}
+
+func TestBuildWorkloadEndpointEnvKeepsEffectivePortAsLegacyBase(t *testing.T) {
+	got, err := buildWorkloadEndpointEnv(workloadRoster{}, api.AppManifest{
+		Ports: []api.WorkloadPort{
+			{Name: "dns", Port: 53, Protocol: api.WorkloadPortUDP},
+			{Name: "http", Port: 8080, Protocol: api.WorkloadPortTCP},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildWorkloadEndpointEnv: %v", err)
+	}
+	if got["FAAS_WORKLOAD_MAIN_PORT"] != "8080" || got["FAAS_WORKLOAD_MAIN_PROTOCOL"] != "tcp" {
+		t.Fatalf("legacy main endpoint = %v, want tcp/8080", got)
+	}
+	if got["FAAS_WORKLOAD_MAIN_DNS_PROTOCOL"] != "udp" {
+		t.Fatalf("named UDP endpoint missing: %v", got)
 	}
 }
 
