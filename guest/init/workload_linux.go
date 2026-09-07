@@ -291,6 +291,10 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	if len(roster.Sidecars) > 2 {
 		return fmt.Errorf("workload roster: deployment has %d sidecars; cap is 2 (ADR-069 §Decision 1)", len(roster.Sidecars))
 	}
+	workloadEnv, err := buildWorkloadEndpointEnv(roster, mainManifest)
+	if err != nil {
+		return err
+	}
 	deps, err := normalizeWorkloadDependencies(roster)
 	if err != nil {
 		return err
@@ -302,10 +306,10 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 		state *workloadDependencyState
 	}
 	runtimes := make(map[string]*workloadRuntime, 1+len(roster.Sidecars))
-	mainSup := newSupervisorForMain(roster.Main, mainManifest, secrets, apiEnv, log)
+	mainSup := newSupervisorForMain(roster.Main, mainManifest, secrets, apiEnv, log, workloadEnv)
 	runtimes["main"] = &workloadRuntime{spec: roster.Main, sup: mainSup, state: newWorkloadDependencyState()}
 	for _, sc := range roster.Sidecars {
-		runtimes[sc.Name] = &workloadRuntime{spec: sc, sup: newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy), state: newWorkloadDependencyState()}
+		runtimes[sc.Name] = &workloadRuntime{spec: sc, sup: newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy, workloadEnv), state: newWorkloadDependencyState()}
 	}
 	orderedNames, err := workloadStartOrder(roster, deps)
 	if err != nil {
@@ -421,10 +425,13 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 // supervisor's Start closure runs runAppWithEnv (the legacy
 // entrypoint that exec's the manifest's entrypoint with
 // the merged env).
-func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, apiEnv map[string]string, log *slog.Logger) *Supervisor {
+func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, apiEnv map[string]string, log *slog.Logger, workloadEnvOpt ...map[string]string) *Supervisor {
 	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
 	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
-	supRef.Start = func() error { return runAppWithRAM(manifest, secrets, apiEnv, supRef, spec.RamMB, spec.CPUMillicores) }
+	workloadEnv := firstWorkloadEnv(workloadEnvOpt)
+	supRef.Start = func() error {
+		return runAppWithRAMAndWorkloadEnv(manifest, secrets, apiEnv, supRef, spec.RamMB, workloadEnv, spec.CPUMillicores)
+	}
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: main restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
@@ -443,13 +450,14 @@ func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, 
 // can increment vmmd_sidecar_restart_total{app, sidecar}.
 // A nil sidecarProxy (no-signal contract when bind fails)
 // keeps the OnCrash hook log-only.
-func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy) *Supervisor {
+func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy, workloadEnvOpt ...map[string]string) *Supervisor {
 	maxRestarts := MaxRestarts
 	if spec.Type == "init" || !spec.Essential {
 		maxRestarts = 0 // init and non-essential sidecars do not restart
 	}
 	supRef := &Supervisor{Max: maxRestarts, Policy: api.RestartPolicyOnFailure}
-	supRef.Start = func() error { return runSidecar(spec, secrets, apiEnv, supRef) }
+	workloadEnv := firstWorkloadEnv(workloadEnvOpt)
+	supRef.Start = func() error { return runSidecar(spec, secrets, apiEnv, workloadEnv, supRef) }
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: sidecar %s crashed (restart %d/%d): %v\n",
 			spec.Name, attempt, maxRestarts, err)
@@ -479,7 +487,7 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 // spec.Name and spec.Port remain the wire-stable scheduling and log fields.
 // The effective command and image defaults are baked into the sidecar layer;
 // the roster command fields are retained for legacy layers.
-func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Supervisor) error {
+func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]string, sup *Supervisor) error {
 	directRoot, rootErr := fullRootfsSidecarRoot(spec.Name)
 	if rootErr != nil {
 		return fmt.Errorf("run sidecar %s: resolve direct root: %w", spec.Name, rootErr)
@@ -546,6 +554,7 @@ func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Super
 	if port > 0 {
 		env = StampOverridePortEnv(env, port)
 	}
+	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	if directRoot != "" {
 		// exec.Command resolves bare names against the guest-init process's
 		// host PATH before the child chroots. Resolve them against the image
@@ -637,6 +646,13 @@ func runSidecar(spec workloadSpec, secrets, apiEnv map[string]string, sup *Super
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}
 	return nil
+}
+
+func firstWorkloadEnv(options []map[string]string) map[string]string {
+	if len(options) == 0 {
+		return nil
+	}
+	return options[0]
 }
 
 // fullRootfsSidecarRoot returns the mounted root for a sidecar when the main

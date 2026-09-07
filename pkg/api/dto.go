@@ -5024,6 +5024,33 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 	return nil
 }
 
+// ValidatePortConflicts rejects explicitly declared workload ports that would
+// collide inside the shared task network namespace. Port zero on a sidecar is
+// intentionally ignored: init/worker sidecars commonly have no listener and
+// image-derived ports are checked again by guest-init once the baked manifest
+// is available. A zero mainPort uses the platform's 8080 contract.
+func (ss Sidecars) ValidatePortConflicts(mainPort int) *Problem {
+	if mainPort == 0 {
+		mainPort = DefaultAppPort
+	}
+	ports := make(map[int]string, 1+len(ss))
+	if mainPort >= 1 && mainPort <= 65535 {
+		ports[mainPort] = "main"
+	}
+	for _, sidecar := range ss {
+		if sidecar.Port == 0 {
+			continue
+		}
+		if previous, exists := ports[sidecar.Port]; exists {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid workload ports",
+				fmt.Sprintf("workloads %q and %q both claim port %d; workloads share one network namespace and must use distinct ports.", previous, sidecar.Name, sidecar.Port))
+		}
+		ports[sidecar.Port] = sidecar.Name
+	}
+	return nil
+}
+
 func appendUniqueDependencyName(names []string, name string) []string {
 	for _, existing := range names {
 		if existing == name {
