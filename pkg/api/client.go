@@ -1014,6 +1014,12 @@ func (c *Client) DeleteApp(ctx context.Context, slug string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug, nil, nil)
 }
 
+// RestoreApp brings a soft-deleted app back before its grace deadline.
+func (c *Client) RestoreApp(ctx context.Context, slug string) (AppResponse, error) {
+	var out AppResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restore", nil, &out)
+}
+
 // DestroyPreview tears down a preview app (issue #961 Mega-C
 // PR-1, leaf 3). Distinct from DeleteApp because the preview
 // teardown also stamps apps.preview_pr_state='torn_down' so the
@@ -2962,8 +2968,9 @@ func (c *Client) GetAppRequestAnalytics(ctx context.Context, slug, since string)
 // window. Since accepts a duration (24h, 7d) or an RFC3339 start timestamp;
 // Until is an optional RFC3339 exclusive upper bound.
 type AppRequestAnalyticsOptions struct {
-	Since string
-	Until string
+	Since   string
+	Until   string
+	GroupBy string
 }
 
 // GetAppRequestAnalyticsOpts returns the bounded historical request analytics
@@ -2978,6 +2985,9 @@ func (c *Client) GetAppRequestAnalyticsOpts(ctx context.Context, slug string, op
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
 	}
+	if opts.GroupBy != "" {
+		q.Set("group_by", opts.GroupBy)
+	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}
@@ -2989,10 +2999,11 @@ func (c *Client) GetAppRequestAnalyticsOpts(ctx context.Context, slug string, op
 // hourly series. Route and Method must be supplied together; empty values
 // request the app-wide series.
 type AppRequestAnalyticsTimeseriesOptions struct {
-	Since  string
-	Until  string
-	Route  string
-	Method string
+	Since   string
+	Until   string
+	Route   string
+	Method  string
+	GroupBy string
 }
 
 // GetAppRequestAnalyticsTimeseries returns the zero-filled hourly request
@@ -3013,6 +3024,9 @@ func (c *Client) GetAppRequestAnalyticsTimeseries(ctx context.Context, slug stri
 	}
 	if opts.Method != "" {
 		q.Set("method", opts.Method)
+	}
+	if opts.GroupBy != "" {
+		q.Set("group_by", opts.GroupBy)
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
@@ -4262,10 +4276,27 @@ func (c *Client) DeleteAppOpenAPI(ctx context.Context, slug string) error {
 // 404 when the app is owned by a different account (IDOR-safe
 // byte-identical-404).
 func (c *Client) ListAppDebugRequests(ctx context.Context, slug, since string) (DebugTelemetryListResponse, error) {
+	return c.ListAppDebugRequestsWithOptions(ctx, slug, DebugTelemetryListOptions{Since: since})
+}
+
+// ListAppDebugRequestsWithOptions is the filtered form of
+// ListAppDebugRequests. Route and limit are sent to the API so filtering and
+// pagination happen before rows are read from the database.
+func (c *Client) ListAppDebugRequestsWithOptions(ctx context.Context, slug string, opts DebugTelemetryListOptions) (DebugTelemetryListResponse, error) {
 	var out DebugTelemetryListResponse
 	path := "/v1/apps/" + slug + "/debug/requests"
-	if since != "" {
-		path += "?since=" + url.QueryEscape(since)
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Route != "" {
+		q.Set("route", opts.Route)
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }

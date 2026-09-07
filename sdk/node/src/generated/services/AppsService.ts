@@ -186,6 +186,36 @@ export class AppsService {
     });
   }
   /**
+   * Restore an app during its deletion grace window.
+   * @returns AppResponse The restored app.
+   * @throws ApiError
+   */
+  public static restoreApp({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/restore',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Per-app request metrics (issue
    * Time-windowed rollup of one app's gateway activity. The `range`
    * parameter is a closed vocabulary bounded by Prometheus
@@ -396,7 +426,8 @@ export class AppsService {
    * Aggregated historical request analytics.
    * Returns an aggregate request overview for one app: total requests,
    * errors, cold boots, weighted p50/p95/p99 latency, and the top
-   * route/method combinations. This is the customer analytics surface;
+   * route/method combinations, or a bounded top-N grouping by country,
+   * referrer host, client family, or status. This is the customer analytics surface;
    * request identifiers and trace payloads remain on the debugger routes.
    *
    * `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -408,6 +439,9 @@ export class AppsService {
    *
    * Counts and percentiles include the recorder's collapsed row `count`,
    * so the result represents original requests rather than stored rows.
+   * Grouped results contain at most 50 groups plus `__other__`. Only a
+   * normalized User-Agent family, hostname-only referrer, and country code
+   * are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
    * The endpoint is read-only, IDOR-safe, and plan-gated by
    * `DebugTelemetryEnabled`.
    *
@@ -418,6 +452,7 @@ export class AppsService {
     slug,
     since = '24h',
     until,
+    groupBy = 'route',
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -431,6 +466,10 @@ export class AppsService {
      * Optional RFC3339 upper-bound timestamp for the historical window.
      */
     until?: string,
+    /**
+     * Bounded top-N grouping dimension. Defaults to route.
+     */
+    groupBy?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status',
   }): CancelablePromise<RequestAnalyticsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -441,6 +480,7 @@ export class AppsService {
       query: {
         'since': since,
         'until': until,
+        'group_by': groupBy,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -465,6 +505,8 @@ export class AppsService {
    * timestamp. `until` is an optional RFC3339 exclusive upper bound and
    * defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
    * by `DebugTelemetryEnabled`.
+   * Set `group_by` to country, referrer_host, ua_family, or status to
+   * receive zero-filled series for the top 50 groups plus `__other__`.
    *
    * @returns RequestAnalyticsTimeseriesResponse Zero-filled hourly request analytics buckets.
    * @throws ApiError
@@ -475,6 +517,7 @@ export class AppsService {
     until,
     route,
     method,
+    groupBy,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -496,6 +539,10 @@ export class AppsService {
      * Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods.
      */
     method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS',
+    /**
+     * Return grouped series for the selected dimension. Omitted preserves the app-wide points shape; route/method filters require group_by=route or omission.
+     */
+    groupBy?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status',
   }): CancelablePromise<RequestAnalyticsTimeseriesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -508,6 +555,7 @@ export class AppsService {
         'until': until,
         'route': route,
         'method': method,
+        'group_by': groupBy,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -861,8 +909,9 @@ export class AppsService {
   }
   /**
    * Per-app request telemetry (ADR-127 / PR-A).
-   * Recent request rows for an app — status, latency_ms, route,
-   * method, deployment_id, cold_boot, trace_id, received_at.
+   * Recent request telemetry rows for an app — status, latency_ms, route,
+   * method, deployment_id, cold_boot, trace_id, received_at, and the
+   * number of original requests represented by each collapsed row.
    * PR-A ships the read endpoint only; the write-side (publisher
    * → gRPC IncrementRequestTelemetry → apid receiver → sqlc
    * INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -882,6 +931,7 @@ export class AppsService {
     slug,
     since,
     limit,
+    route,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -895,6 +945,10 @@ export class AppsService {
      * Page size, default 20, max 200.
      */
     limit?: number | null,
+    /**
+     * Exact route-template filter.
+     */
+    route?: string | null,
   }): CancelablePromise<DebugTelemetryListResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -905,8 +959,10 @@ export class AppsService {
       query: {
         'since': since,
         'limit': limit,
+        'route': route,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
@@ -1304,9 +1360,9 @@ export class AppsService {
    * `event: end` terminal with `archive_complete` /
    * `archive_missing` / `archive_degraded` reasons) so the SDK
    * decoder treats the two paths interchangeably. Archive is
-   * gated by `Plan.LogArchiveEnabled()` — Free customers receive
-   * 402 + `plan_log_archive_not_allowed`. The per-plan retention
-   * cap (Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
+   * gated by `Plan.LogArchiveEnabled()` — Free customers receive a
+   * one-day archive window. The per-plan retention cap (Free 1d /
+   * Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
    * outside the window with 403 + `log_archive_retention_exceeded`.
    *
    * @returns any A text/event-stream of structured log lines, terminated by an empty SSE frame when the connection closes.
@@ -1344,7 +1400,7 @@ export class AppsService {
      */
     level?: 'info' | 'warn' | 'error',
     /**
-     * If 1, serve archived logs from S3 instead of the live ring buffer. Requires `instance=<id>` and `date=YYYY-MM-DD`. Gated by `Plan.LogArchiveEnabled()` — Free plans receive 402 + `plan_log_archive_not_allowed`. The per-plan retention cap (Hobby 7d / Pro 30d / Scale 90d) refuses `date=` values outside the window.
+     * If 1, serve archived logs from S3 instead of the live ring buffer. Requires `instance=<id>` and `date=YYYY-MM-DD`. Gated by `Plan.LogArchiveEnabled()` — Free plans have a one-day archive window. The per-plan retention cap (Free 1d / Hobby 7d / Pro 30d / Scale 90d) refuses `date=` values outside the window.
      *
      */
     archive?: 0 | 1,
@@ -1354,7 +1410,7 @@ export class AppsService {
      */
     instance?: string,
     /**
-     * Required when `archive=1`. The day to read in YYYY-MM-DD UTC. Must be inside the per-plan retention cap (Hobby 7d / Pro 30d / Scale 90d) — outside values return 403 + `log_archive_retention_exceeded`. Future dates are refused with the same code.
+     * Required when `archive=1`. The day to read in YYYY-MM-DD UTC. Must be inside the per-plan retention cap (Free 1d / Hobby 7d / Pro 30d / Scale 90d) — outside values return 403 + `log_archive_retention_exceeded`. Future dates are refused with the same code.
      *
      */
     date?: string,
@@ -1376,7 +1432,7 @@ export class AppsService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `Plan does not include log archive read-back. Free plans receive this on \`?archive=1\`.`,
+        402: `Plan does not include log archive read-back. This response is reserved for plans without archive entitlement.`,
         403: `Log archive retention cap exceeded; \`?date=\` is outside the per-plan window.`,
         404: `code: not_found`,
         429: `429. Two response shapes:

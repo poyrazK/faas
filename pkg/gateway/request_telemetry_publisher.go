@@ -18,7 +18,8 @@
 //
 // Cardinality discipline lands HERE, not in the recorder. Before
 // shipping, the publisher collapses burst traffic by
-// (app_id, deployment_id, route, status, minute_bucket) to one
+// (app_id, deployment_id, route, status, analytics dimensions,
+// minute_bucket) to one
 // representative row + count — so a 1k-RPS endpoint at 100%
 // sampling lands as ~1 row/minute to Postgres instead of ~60k.
 
@@ -58,16 +59,22 @@ type RequestTelemetryPublisherConfig struct {
 
 	// Now is injectable for tests. nil ⇒ time.Now.
 	Now func() time.Time
+
+	// OnDropped and OnShipped receive the number of original requests
+	// represented by a batch, rather than only the number of collapsed rows.
+	// They are optional hooks for daemon metrics.
+	OnDropped func(int64)
+	OnShipped func(int64)
 }
 
 func (c *RequestTelemetryPublisherConfig) setDefaults() {
-	if c.FlushInterval == 0 {
+	if c.FlushInterval <= 0 {
 		c.FlushInterval = 5 * time.Second
 	}
-	if c.FlushBatchSize == 0 {
+	if c.FlushBatchSize <= 0 {
 		c.FlushBatchSize = 256
 	}
-	if c.MaxRetries == 0 {
+	if c.MaxRetries <= 0 {
 		c.MaxRetries = 3
 	}
 	if c.Now == nil {
@@ -125,6 +132,9 @@ type requestTelemetryPublisher struct {
 // references and starts the goroutine in Start.
 func NewRequestTelemetryPublisher(cfg RequestTelemetryPublisherConfig, recorder *requestTelemetryRecorder, ship ShipFn, log *slog.Logger) *requestTelemetryPublisher {
 	cfg.setDefaults()
+	if log == nil {
+		log = slog.Default()
+	}
 	return &requestTelemetryPublisher{
 		cfg:      cfg,
 		recorder: recorder,
@@ -181,9 +191,11 @@ func (p *requestTelemetryPublisher) ShippedTotal() int64 {
 // the way out so Stop() returns "nothing left to ship".
 func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	defer func() {
-		// Final drain on the way out so Stop() blocks until the
-		// last in-flight rows have been attempted.
-		p.tick(ctx)
+		// Final drain on the way out so Stop() blocks until every
+		// pending row has been attempted, not just one batch.
+		for p.recorder.PendingCount() > 0 {
+			p.tick(ctx)
+		}
 		p.doneCh <- struct{}{}
 	}()
 
@@ -209,17 +221,18 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 // Errors are logged + retried with exponential backoff up to
 // MaxRetries; final failure increments droppedTotal.
 func (p *requestTelemetryPublisher) tick(ctx context.Context) {
-	if p.ship == nil {
-		// ship not wired (test-only or boot race); drop the
-		// drained rows on the floor + log once.
-		rows := p.recorder.DrainBatch(p.cfg.FlushBatchSize)
-		if len(rows) > 0 {
-			p.droppedTotal.Add(int64(len(rows)))
-		}
-		return
-	}
 	rows := p.recorder.DrainBatch(p.cfg.FlushBatchSize)
 	if len(rows) == 0 {
+		return
+	}
+	rawCount := requestTelemetryCount(rows)
+	if p.ship == nil {
+		// ship not wired (test-only or boot race); drop the
+		// drained rows on the floor and make the loss visible.
+		p.recordDropped(rawCount)
+		p.log.Warn("request telemetry ship unavailable; dropping batch",
+			slog.Int("batch_size", len(rows)),
+			slog.Int64("request_count", rawCount))
 		return
 	}
 	collapsed := collapseRequestTelemetry(rows)
@@ -231,14 +244,14 @@ func (p *requestTelemetryPublisher) tick(ctx context.Context) {
 			backoff := time.Duration(1<<attempt) * 100 * time.Millisecond
 			select {
 			case <-ctx.Done():
-				p.droppedTotal.Add(int64(len(collapsed)))
+				p.recordDropped(rawCount)
 				return
 			case <-time.After(backoff):
 			}
 		}
 		lastErr = p.ship(ctx, collapsed)
 		if lastErr == nil {
-			p.shippedTotal.Add(int64(len(collapsed)))
+			p.recordShipped(rawCount)
 			return
 		}
 		// Transient — log + retry.
@@ -248,10 +261,49 @@ func (p *requestTelemetryPublisher) tick(ctx context.Context) {
 			slog.Any("error", lastErr))
 	}
 	// Out of retries — drop the batch.
-	p.droppedTotal.Add(int64(len(collapsed)))
+	p.recordDropped(rawCount)
 	p.log.Warn("request telemetry ship exhausted retries; dropping batch",
 		slog.Int("batch_size", len(collapsed)),
+		slog.Int64("request_count", rawCount),
 		slog.Any("last_error", lastErr))
+}
+
+// requestTelemetryCount returns the number of original requests represented
+// by rows. A row from an older caller may have Count=0; treat it as one so
+// loss accounting never under-reports.
+func requestTelemetryCount(rows []RequestTelemetryRow) int64 {
+	var n int64
+	for _, row := range rows {
+		n += int64(normalizedRequestTelemetryCount(row.Count))
+	}
+	return n
+}
+
+func normalizedRequestTelemetryCount(count int) int {
+	if count < 1 {
+		return 1
+	}
+	return count
+}
+
+func (p *requestTelemetryPublisher) recordDropped(n int64) {
+	if n <= 0 {
+		return
+	}
+	p.droppedTotal.Add(n)
+	if p.cfg.OnDropped != nil {
+		p.cfg.OnDropped(n)
+	}
+}
+
+func (p *requestTelemetryPublisher) recordShipped(n int64) {
+	if n <= 0 {
+		return
+	}
+	p.shippedTotal.Add(n)
+	if p.cfg.OnShipped != nil {
+		p.cfg.OnShipped(n)
+	}
 }
 
 // collapseRequestTelemetry collapses burst traffic into one row
@@ -309,6 +361,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 	bucketIdx := make(map[string]int, len(rows)/4+1)
 	out := make([]RequestTelemetryRow, 0, len(rows)/4+1)
 	for _, row := range rows {
+		row.Count = normalizedRequestTelemetryCount(row.Count)
 		bucket := row.ReceivedAt.Truncate(time.Minute)
 		key := bucketKey{
 			AccountID:    row.AccountID,
@@ -317,20 +370,20 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			Route:        row.Route,
 			Method:       row.Method,
 			Status:       row.Status,
+			UAFamily:     row.UAFamily,
+			ReferrerHost: row.ReferrerHost,
+			Country:      row.Country,
 			bucket:       bucket,
 		}.String()
 		idx, ok := bucketIdx[key]
 		if !ok {
 			row.ReceivedAt = bucket
-			if row.Count < 1 {
-				row.Count = 1
-			}
 			out = append(out, row)
 			bucketIdx[key] = len(out) - 1
 			continue
 		}
 		agg := &out[idx]
-		agg.Count++
+		agg.Count += row.Count
 		// Worst-case latency wins.
 		if row.LatencyMS > agg.LatencyMS {
 			agg.LatencyMS = row.LatencyMS
@@ -358,6 +411,9 @@ type bucketKey struct {
 	Route        string
 	Method       string
 	Status       int
+	UAFamily     string
+	ReferrerHost string
+	Country      string
 	bucket       time.Time
 }
 
@@ -367,7 +423,8 @@ func (k bucketKey) String() string {
 	// encoding if the profiler flags it. (Profile showed < 1%
 	// of publisher CPU before the collapse; even at 2x with the
 	// canonical string we're well under 2%.)
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%d",
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%d",
 		k.AccountID, k.AppID, k.DeploymentID,
-		k.Route, k.Method, k.Status, k.bucket.Unix())
+		k.Route, k.Method, k.Status, k.UAFamily, k.ReferrerHost,
+		k.Country, k.bucket.Unix())
 }

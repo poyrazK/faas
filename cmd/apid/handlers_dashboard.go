@@ -66,6 +66,9 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/errors → grouped errors + drill-down
 //	GET /dashboard/apps/{slug}/domains → custom domains + TLS/doctor status
 //	GET /dashboard/apps/{slug}/instances → instance fleet + lifecycle actions
+//	GET /dashboard/apps/{slug}/jobs → jobs and queue view (app filter)
+//	GET /dashboard/apps/{slug}/queues → queue state + samples (alias)
+//	GET /dashboard/jobs             → jobs, runs, and all application queues
 //	GET /dashboard/usage             → usage meter
 //	GET /dashboard/billing           → plan + usage + last invoice + portal link (issue #253)
 //	GET /dashboard/account           → account + keys + GitHub connect
@@ -87,6 +90,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderIndex(w, r, log, acct)
 		case path == "/dashboard/apps":
 			s.renderAppsList(w, r, log, acct)
+		case path == "/dashboard/jobs":
+			s.renderJobsQueues(w, r, log, acct, r.URL.Query().Get("app"))
 		case path == "/dashboard/apps/new":
 			// Issue #961 / Mega-B PR-3 — thin dashboard deploy
 			// wizard. The CLI's `gregale connect repo <owner>/<name>`
@@ -104,6 +109,25 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G7 / issue #1397 — queue state, pending samples, and
+			// dead-letter replay for one app. The account-level jobs
+			// page remains the canonical landing surface.
+			if jslug, ok := parseAppJobsPath(slug); ok {
+				if app, err := s.store.AppBySlug(r.Context(), jslug); err != nil || app.AccountID != acct.ID {
+					http.NotFound(w, r)
+					return
+				}
+				s.renderJobsQueues(w, r, log, acct, jslug)
+				return
+			}
+			if qslug, ok := parseAppQueuesPath(slug); ok {
+				if app, err := s.store.AppBySlug(r.Context(), qslug); err != nil || app.AccountID != acct.ID {
+					http.NotFound(w, r)
+					return
+				}
+				s.renderJobsQueues(w, r, log, acct, qslug)
+				return
+			}
 			// G6 / issue #1397 — per-app instances and lifecycle controls.
 			if islug, ok := parseAppInstancesPath(slug); ok {
 				s.renderAppInstances(w, r, log, acct, islug)
@@ -697,6 +721,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		}
 	}
 	analyticsRoute, analyticsMethod, _ := parseRequestAnalyticsRouteFilter(r.URL.Query().Get("analytics_route"), r.URL.Query().Get("analytics_method"))
+	analyticsGroupBy, _ := parseRequestAnalyticsGroupBy(r.URL.Query().Get("analytics_by"), "route")
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
 		App:             appRow,
 		Manifest:        dashboardManifestView(app),
@@ -738,7 +763,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// Customer request analytics is a best-effort durable rollup. It is
 		// separate from the live Prometheus snapshot above and is omitted for
 		// plans without request-telemetry retention.
-		RequestAnalytics: s.fetchDashboardRequestAnalytics(ctx, log, app, acct, analyticsRoute, analyticsMethod),
+		RequestAnalytics: s.fetchDashboardRequestAnalytics(ctx, log, app, acct, analyticsGroupBy, analyticsRoute, analyticsMethod),
 		// Issue #396 / ADR-045 PR 4 — best-effort alert-rule
 		// snapshot. Failure is non-fatal: a Postgres blip on the
 		// alert_rules read renders the panel's warning empty-state

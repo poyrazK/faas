@@ -48,6 +48,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -299,12 +300,28 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	}
 	var sourceErr error
 	sourceSHA256 := ""
+	var inferredProfile json.RawMessage
 	if p.RetryOf != "" {
 		sourceErr = publishRetrySource(ctx, sourceStorage, buildID, p)
 	} else {
 		sourceSHA256, err = hashSourceFile(p.SourcePath)
 		if err != nil {
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source integrity: %w", err)
+		}
+		profile, profileErr := frameworkprofile.AnalyzeTarballAtRoot(p.SourcePath, p.SourceRoot)
+		if profileErr != nil {
+			// The archive has already passed apid's shape validation. Static
+			// profiling is durable evidence, not a second deployment gate;
+			// preserve the build path if an unexpected profile-reader issue
+			// occurs and let builderd/runtime verification remain authoritative.
+			if p.Log != nil {
+				p.Log.Warn("apidsource.Enqueue: infer source profile", "app", p.AppID, "err", profileErr)
+			}
+		} else if inferredProfile, err = json.Marshal(profile); err != nil {
+			if p.Log != nil {
+				p.Log.Warn("apidsource.Enqueue: encode source profile", "app", p.AppID, "err", err)
+			}
+			inferredProfile = nil
 		}
 		sourceErr = publishSource(ctx, sourceStorage, buildID, p.SourcePath)
 	}
@@ -357,11 +374,12 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		// the upstream caller (CLI multipart, JSON body, githubd
 		// bridge). pgstore.CreateDeployment collapses "" to NULL
 		// via nullString and PRNumber=0 to NULL via nullif(0).
-		Reason:     p.Reason,
-		Tag:        p.Tag,
-		DeployedBy: p.DeployedBy,
-		PRNumber:   p.PRNumber,
-		Workflows:  append(json.RawMessage(nil), p.Workflows...),
+		Reason:          p.Reason,
+		Tag:             p.Tag,
+		DeployedBy:      p.DeployedBy,
+		PRNumber:        p.PRNumber,
+		Workflows:       append(json.RawMessage(nil), p.Workflows...),
+		InferredProfile: append(json.RawMessage(nil), inferredProfile...),
 	})
 	if err != nil {
 		// A deterministic ID conflict means this delivery/app pair crossed

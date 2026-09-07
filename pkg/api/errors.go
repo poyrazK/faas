@@ -1278,6 +1278,7 @@ const (
 	CodeAccountDeletionConfirm = "account_deletion_confirm_required"
 	CodeAccountDeletionPending = "account_deletion_pending"
 	CodeAccountNotRestorable   = "account_not_restorable"
+	CodeAppNotRestorable       = "app_not_restorable"
 
 	// App rename (issue #63). One code covers both "slug taken by
 	// another live app" and "DB unique violation"; the Detail field
@@ -1828,11 +1829,10 @@ func StatusForCode(code string) int {
 	case CodePlanAlertRuleQuota:
 		return http.StatusForbidden
 	case CodePlanLogArchiveNotAllowed:
-		// Issue #562 / PR-B: Free customers don't have log
-		// archive read-back. Same shape as the other plan-
-		// gated "X unavailable on this plan" codes: 402 +
-		// a deliberate upsell. The gatewayd-internal archive
-		// handler maps LogArchiveEnabled() == false to this
+		// Issue #562 / PR-B: this remains the fail-closed response
+		// for plans without archive entitlement (including unknown
+		// plan rows). Free now has a one-day archive window, while
+		// the gatewayd-internal handler maps disabled plans to this
 		// code via ErrPlanLogArchiveNotAllowed.
 		return http.StatusPaymentRequired
 	case CodePlanPerAppMetricsNotAllowed:
@@ -2845,7 +2845,7 @@ const CodeTriggerTLSSkipVerifyNotAllowed = "trigger_tls_skip_verify_not_allowed"
 
 // CodePlanLogArchiveNotAllowed is the 402 the customer sees when
 // they request ?archive=1 against an app on a plan whose
-// LogArchiveEnabled() returns false (Free today, issue #562).
+// LogArchiveEnabled() returns false (issue #562).
 // Fires BEFORE the gatewayd-internal handler touches S3 so a
 // Free customer gets a clean 402 instead of an S3 403 from a
 // bucket they don't have read access to. The wire is the same
@@ -2855,7 +2855,7 @@ const CodePlanLogArchiveNotAllowed = "plan_log_archive_not_allowed"
 
 // ErrPlanLogArchiveNotAllowed is returned by the gatewayd-internal
 // archive log read-back handler when the customer's plan has
-// LogArchiveEnabled() == false (Free today). Mirrors
+// LogArchiveEnabled() == false. Mirrors
 // ErrPlanCronsNotAllowed and ErrPlanAlertRulesNotAllowed so the
 // upsell surface is consistent across plan-gated features. The
 // Hobby+ copy is the deliberate upgrade hint; Free never sees
@@ -2864,7 +2864,7 @@ const CodePlanLogArchiveNotAllowed = "plan_log_archive_not_allowed"
 func ErrPlanLogArchiveNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanLogArchiveNotAllowed,
 		"Log archive unavailable on this plan",
-		fmt.Sprintf("the %s plan does not include log archive read-back; upgrade to Hobby or above to query historical logs from object storage.", p)).
+		fmt.Sprintf("the %s plan does not include log archive read-back; upgrade to a plan with archive access to query historical logs from object storage.", p)).
 		WithDocs(docsBase + "/plans#log-archive")
 }
 

@@ -5,11 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -287,7 +291,94 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 	if selectedBranch.ID == "" {
 		status = managedpostgres.ProviderStatusPending
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, Spec: observedSpec}, nil
+	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, ComputeState: computeState(primaryEndpoint.CurrentState), Spec: observedSpec}, nil
+}
+
+// ProbeScaleToZero is used only by the isolated operator qualification run.
+// It proves the configured endpoint actually suspends and wakes; lifecycle
+// reconciliation never opens customer connections.
+func (p *Provider) ProbeScaleToZero(ctx context.Context, providerResourceID string, material managedpostgres.CredentialMaterial) (managedpostgres.ScaleToZeroProbeResult, error) {
+	dsn, err := probeDSN(material)
+	if err != nil {
+		return managedpostgres.ScaleToZeroProbeResult{}, err
+	}
+	if err := probeQuery(ctx, dsn); err != nil {
+		return managedpostgres.ScaleToZeroProbeResult{}, err
+	}
+	for {
+		observed, inspectErr := p.Inspect(ctx, providerResourceID)
+		if inspectErr != nil {
+			return managedpostgres.ScaleToZeroProbeResult{}, inspectErr
+		}
+		if observed.ComputeState == managedpostgres.ComputeStateSuspended {
+			break
+		}
+		timer := time.NewTimer(5 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return managedpostgres.ScaleToZeroProbeResult{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	wakeStarted := time.Now()
+	if err := probeQuery(ctx, dsn); err != nil {
+		return managedpostgres.ScaleToZeroProbeResult{}, err
+	}
+	return managedpostgres.ScaleToZeroProbeResult{Suspended: true, Resumed: true, WakeLatency: time.Since(wakeStarted)}, nil
+}
+
+func probeDSN(material managedpostgres.CredentialMaterial) (string, error) {
+	var selected managedpostgres.Endpoint
+	for _, endpoint := range material.Endpoints {
+		if endpoint.Role == managedpostgres.EndpointDirect {
+			selected = endpoint
+			break
+		}
+	}
+	if selected.Host == "" {
+		for _, endpoint := range material.Endpoints {
+			if endpoint.Role == managedpostgres.EndpointPooled {
+				selected = endpoint
+				break
+			}
+		}
+	}
+	if selected.Host == "" || selected.Port == 0 || material.Username == "" || material.Password == "" || material.Database == "" {
+		return "", managedpostgres.ErrInvalid
+	}
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(material.Username, material.Password),
+		Host:   net.JoinHostPort(selected.Host, fmt.Sprintf("%d", selected.Port)),
+		Path:   "/" + material.Database,
+	}
+	query := url.Values{"sslmode": {material.TLSMode}}
+	u.RawQuery = query.Encode()
+	return u.String(), nil
+}
+
+func probeQuery(ctx context.Context, dsn string) error {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var result int
+	return conn.QueryRow(ctx, "SELECT 1").Scan(&result)
+}
+
+func computeState(current string) managedpostgres.ComputeState {
+	switch strings.ToLower(strings.TrimSpace(current)) {
+	case "active":
+		return managedpostgres.ComputeStateActive
+	case "idle":
+		return managedpostgres.ComputeStateSuspended
+	case "init", "starting", "resuming", "stopping":
+		return managedpostgres.ComputeStateWaking
+	default:
+		return managedpostgres.ComputeStateUnknown
+	}
 }
 
 func (*Provider) Update(context.Context, managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {

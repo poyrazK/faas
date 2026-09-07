@@ -228,6 +228,15 @@ for these billing quantities. **No OVH/AWS/R2 billing exporter is bundled yet**;
 the normalized import contract is provider-neutral, and a real exporter is
 still a deployment prerequisite.
 
+Provider adapters may implement the `objectstorage.UsageReportExporter` seam
+and publish through `objectstorage.ExportUsageReports`. The helper validates
+that a batch belongs to one backend and UTC period, rejects duplicate account
+rows, and atomically replaces the configured report file with owner-only
+permissions. This keeps provider credentials, billing APIs, and attribution
+logic outside the generic S3 driver; the adapter remains responsible for
+obtaining authoritative data and mapping each physical Gregale bucket to one
+account.
+
 All fields are required, including explicit zero measurements. Reports must
 match catalogued backend placement. Identical repeats are harmless;
 conflicting duplicates, future observations, decreasing counters/costs, or

@@ -976,6 +976,10 @@ sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Cli
 object-storage-qualify: ## Operator-only: run the opt-in live S3-compatible provider qualification
 	@FAAS_OBJECT_STORAGE_LIVE_TEST=1 $(GO) test ./pkg/objectstorage -run '^TestLiveProviderQualification$$' -count=1 -v
 
+.PHONY: managed-postgres-qualify
+managed-postgres-qualify: ## Operator-only: run the explicit staging managed PostgreSQL provider qualification
+	@$(GO) run ./cmd/managed-postgres-qualify
+
 .PHONY: sdk-gen-node
 sdk-gen-node: ## Regenerate sdk/node/src/generated from api/openapi.yaml
 	@cd sdk/node && npm run gen

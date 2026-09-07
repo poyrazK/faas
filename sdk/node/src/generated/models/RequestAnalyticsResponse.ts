@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RequestAnalyticsGroup } from './RequestAnalyticsGroup.js';
 import type { RequestAnalyticsRoute } from './RequestAnalyticsRoute.js';
 /**
  * Bounded historical request analytics for
@@ -34,6 +35,16 @@ export type RequestAnalyticsResponse = {
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
+  group_by: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status';
+  groups: Array<RequestAnalyticsGroup>;
+  /**
+   * Maximum number of top groups before __other__.
+   */
+  groups_limit: number;
+  /**
+   * True when __other__ contains groups outside the top-N.
+   */
+  groups_truncated: boolean;
   routes: Array<RequestAnalyticsRoute>;
   /**
    * Maximum number of route rows returned.

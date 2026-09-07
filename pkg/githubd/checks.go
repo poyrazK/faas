@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -76,14 +77,21 @@ var ErrGitHubDeploymentNotFound = errors.New("githubd: github deployment not fou
 // writer maps it to GitHub's queued/in_progress/success/failure/inactive
 // states.
 type GitHubDeploymentUpdate struct {
-	LocalDeploymentID     string
-	InstallationID        int64
-	RepoFullName          string
-	CommitSHA             string
-	Ref                   string
-	Environment           string
-	Status                string
-	Description           string
+	LocalDeploymentID string
+	InstallationID    int64
+	RepoFullName      string
+	CommitSHA         string
+	Ref               string
+	Environment       string
+	Status            string
+	Description       string
+	// Provenance is copied from the durable Gregale deployment row so
+	// GitHub's deployment timeline answers who/why/which PR without a
+	// second Gregale API lookup.
+	DeployedBy            string
+	PRNumber              int
+	Reason                string
+	Tag                   string
 	TargetURL             string
 	EnvironmentURL        string
 	LogURL                string
@@ -280,11 +288,12 @@ func (c *ChecksAPI) WriteGitHubDeploymentStatus(ctx context.Context, update GitH
 	if err != nil {
 		return err
 	}
+	description := githubDeploymentDescription(update)
 	payload, err := json.Marshal(githubDeploymentStatusRequest{
 		State:          state,
 		TargetURL:      update.TargetURL,
 		LogURL:         update.LogURL,
-		Description:    update.Description,
+		Description:    description,
 		EnvironmentURL: update.EnvironmentURL,
 		Environment:    update.Environment,
 		AutoInactive:   state == "success" && !update.TransientEnvironment,
@@ -379,14 +388,29 @@ func (c *ChecksAPI) createGitHubDeployment(ctx context.Context, token string, up
 	if ref == "" {
 		ref = update.CommitSHA
 	}
+	providerPayload := map[string]string{
+		"gregale_deployment_id": update.LocalDeploymentID,
+	}
+	if update.DeployedBy != "" {
+		providerPayload["gregale_deployed_by"] = compactDeploymentValue(update.DeployedBy)
+	}
+	if update.PRNumber > 0 {
+		providerPayload["gregale_pr_number"] = strconv.Itoa(update.PRNumber)
+	}
+	if update.Reason != "" {
+		providerPayload["gregale_reason"] = compactDeploymentValue(update.Reason)
+	}
+	if update.Tag != "" {
+		providerPayload["gregale_tag"] = compactDeploymentValue(update.Tag)
+	}
 	payload, err := json.Marshal(githubDeploymentRequest{
 		Ref:                   ref,
 		Task:                  "gregale-deploy",
 		AutoMerge:             false,
 		RequiredContexts:      []string{},
-		Payload:               map[string]string{"gregale_deployment_id": update.LocalDeploymentID},
+		Payload:               providerPayload,
 		Environment:           update.Environment,
-		Description:           update.Description + " (" + githubDeploymentMarker(update.LocalDeploymentID) + ")",
+		Description:           githubDeploymentDescription(update) + " (" + githubDeploymentMarker(update.LocalDeploymentID) + ")",
 		TransientEnvironment:  update.TransientEnvironment,
 		ProductionEnvironment: update.ProductionEnvironment,
 	})
@@ -421,6 +445,37 @@ func (c *ChecksAPI) createGitHubDeployment(ctx context.Context, token string, up
 
 func githubDeploymentMarker(localDeploymentID string) string {
 	return "gregale-deployment:" + localDeploymentID
+}
+
+// githubDeploymentDescription keeps the GitHub Deployment timeline useful to
+// a customer without making the provider payload the source of truth. The
+// durable deployment row remains authoritative; this is a compact projection
+// that is safe to update on every lifecycle status retry.
+func githubDeploymentDescription(update GitHubDeploymentUpdate) string {
+	parts := make([]string, 0, 5)
+	if base := compactDeploymentValue(update.Description); base != "" {
+		parts = append(parts, base)
+	}
+	if by := compactDeploymentValue(update.DeployedBy); by != "" {
+		parts = append(parts, "deployed by "+by)
+	}
+	if update.PRNumber > 0 {
+		parts = append(parts, fmt.Sprintf("PR #%d", update.PRNumber))
+	}
+	if tag := compactDeploymentValue(update.Tag); tag != "" {
+		parts = append(parts, "tag "+tag)
+	}
+	if reason := compactDeploymentValue(update.Reason); reason != "" {
+		parts = append(parts, "reason: "+reason)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// compactDeploymentValue prevents user-provided annotation text from
+// becoming multi-line provider metadata. The database already enforces the
+// annotation length cap; this also protects older rows and test fixtures.
+func compactDeploymentValue(value string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 }
 
 func githubDeploymentState(status string) (string, bool) {

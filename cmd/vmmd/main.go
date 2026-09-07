@@ -1543,9 +1543,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// canonical live path; cross-fs renames fall through atomicReplace's
 	// copy+rename fallback so the daemon does not silently fail on a
 	// host where /tmp is tmpfs and /etc is on ext4.
+	// Construct the watcher on every host so Manager cache mutations can
+	// use it as the HostRenderer seam. Only the pg_notify drain loop is
+	// gated on nodeID; default-local still needs live policy writes when a
+	// Hobby app changes its SMTP destination allowlist.
+	w := newEgressWatcher(log, "/tmp/vmmd-egress-staging", "/etc/nftables.conf")
+	deps.egressWatcher = w
+	mgr.SetHostRenderer(w)
 	if nodeID != "" {
-		w := newEgressWatcher(log, "/tmp/vmmd-egress-staging", "/etc/nftables.conf")
-		deps.egressWatcher = w
 		if deps.startEgressWatcher != nil {
 			deps.startEgressWatcher(ctx, log)
 		} else {

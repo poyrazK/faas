@@ -102,17 +102,18 @@ type Config struct {
 	// emits one or two rules in the per-netns forward chain(s),
 	// partitioned by `prefix.Addr().Is4()`:
 	//   * the v4 half lands on `ip faas forward` as
-	//     `iifname "tap0" ip daddr { … } accept`
+	//     `iifname "tap0" ip daddr { … } tcp dport != 25 accept`
 	//   * the v6 half lands on `ip6 faas forward` as
 	//     `iifname "tap0" ip6 daddr { … } accept`
 	// (nft rejects mixing `ip` and `ip6` matches in one table —
 	// ADR-023; the renderer partitions internally so the wire shape
 	// stays a single repeated string at proto AppSpec field 7).
-	// Both rules are placed AFTER the lateral-movement deny + SMTP
-	// drops, so deny > allow on overlap (an operator typo into
-	// RFC1918 still gets dropped); and BEFORE the chain's default
-	// policy, so unlisted destinations drop when an allowlist
-	// exists on either chain. Free/Hobby plans never populate this
+	// The v4 rule is placed AFTER the lateral-movement deny but BEFORE
+	// the SMTP drop, with TCP port 25 excluded; this enables explicit
+	// 465/587 destinations while keeping port 25 universally blocked.
+	// The v6 rule remains after the v6 lateral-movement deny. Both are
+	// BEFORE the chain's default policy, so unlisted destinations drop
+	// when an allowlist exists on either chain. Free plans never populate this
 	// field — apid gates the PATCH upstream. The non-/0 contract
 	// is enforced by the DB trigger
 	// `apps_egress_allowlist_cidr` (migration 00033, ADR-032).
@@ -365,11 +366,6 @@ func (c Config) NftCommands() [][]string {
 	if rule := c.forwardConnlimitRule(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
-	// Keep the historical terminal drop rule byte-compatible for the
-	// renderer contract, and put the named counter in a preceding
-	// non-terminal rule so it observes the same packets.
-	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "counter", "name", EgressDenyCounterSMTP)
-	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "drop")
 	// Lateral-movement deny (spec §11 + ADR-023 + ADR-034) — the v4
 	// half of the shared DenySet. ADR-031 reorders this list so
 	// deny > allow on overlap with the per-app EgressAllowlist accept
@@ -390,20 +386,27 @@ func (c Config) NftCommands() [][]string {
 			"counter", "name", e.CounterName, "drop")
 	}
 	// ADR-031 + ADR-032 per-app egress allowlist. Placed AFTER the
-	// lateral-movement deny + SMTP drops so deny > allow on overlap
-	// (an operator typo landing a sensitive CIDR in the allowlist
-	// still gets dropped). Placed BEFORE the chain's default-accept
-	// policy so unlisted destinations drop when an allowlist exists.
+	// lateral-movement deny but BEFORE the SMTP drop so explicitly
+	// allowlisted destinations can use submission ports 465/587.
+	// ForwardAllowlistRule excludes TCP port 25, which remains
+	// universally blocked. The rule is still after the deny block so
+	// internal/private/metadata destinations cannot be allowlisted.
 	// Empty EgressAllowlist means no rule and current behaviour is
 	// preserved (chain-default accept does the work). The v4 helper
-	// is called here, after the v4 lateral-movement drop; the v6
-	// helper is called later, after the v6 lateral-movement drop, so
-	// each rule sits inside its chain block (the ruleset's per-chain
-	// ordering — established,related accept → cap → SMTP → deny →
-	// allowlist → chain-policy — holds for both v4 and v6).
+	// is called here, after the v4 lateral-movement drop and before
+	// the SMTP deny; the v6 helper is called later, after the v6
+	// lateral-movement drop. Each rule stays inside its family chain
+	// block before that chain's terminal policy.
 	if rule := c.ForwardAllowlistRule(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
+	// Keep the historical terminal drop rule byte-compatible for the
+	// renderer contract, and put the named counter in a preceding
+	// non-terminal rule so it observes the same packets. This comes
+	// after the allowlist exception, so 465/587 reach explicitly
+	// allowlisted destinations while port 25 still drops.
+	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "counter", "name", EgressDenyCounterSMTP)
+	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "drop")
 	if len(c.EgressAllowlist) > 0 {
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
@@ -543,9 +546,10 @@ func (c Config) forwardConnlimitRule6(nft func(...string) []string) []string {
 // `accept` default — every non-deny-listed destination reaches the
 // public internet, unchanged from before ADR-031. Non-empty flips
 // to `drop`: the allowlist accept rule becomes the only egress path,
-// the explicit deny rules (lateral movement + SMTP) still run BEFORE
-// the accept rule (deny > allow on overlap), and unlisted
-// destinations fall through to the chain policy and are dropped.
+// the explicit lateral-movement deny rules still run BEFORE the
+// accept rule (deny > allow on overlap), and the SMTP rule continues
+// to block port 25 while 465/587 require an allowlisted destination.
+// Unlisted destinations fall through to the chain policy and are dropped.
 //
 // Why not keep `policy accept` always and append a terminal
 // `iifname "tap0" drop`? Two reasons: (1) the operator's intent —
@@ -574,15 +578,20 @@ func (c Config) forwardChainPolicy() string {
 // Shape:
 //
 //	nft add rule ip faas forward
-//	  iifname "tap0" ip daddr { CIDR1,CIDR2,… } accept
+//	  iifname "tap0" ip daddr { CIDR1,CIDR2,… } tcp dport != 25 accept
 //
 // The CIDR set uses comma-joined values inside `{ … }` with NO
 // trailing whitespace, matching the modern-nft syntax gate at
 // pkg/netns/policy.go (PR #128's comma-required regression net —
 // memory `nft-cidr-set-comma-required`). Order in the v4 chain:
-// AFTER lateral-movement deny + SMTP drops (deny > allow on
-// overlap), BEFORE chain-default accept (unlisted destinations
-// drop when an allowlist exists on the v4 chain).
+// AFTER lateral-movement deny and BEFORE the SMTP drop. The rule
+// excludes TCP port 25, so 465/587 are enabled only for explicitly
+// listed destinations while port 25 remains denied.
+//
+// TCP port 25 is intentionally excluded from the accept rule so the
+// universal SMTP deny below remains effective. Ports 465/587 are
+// therefore reachable only when their destination is explicitly listed.
+// UDP and non-TCP traffic retain the existing allowlist semantics.
 //
 // Exported because Manager.UpdateEgressAllowlist renders the same
 // argv against a live netns (in-place patch) using a per-netns
@@ -599,7 +608,7 @@ func (c Config) ForwardAllowlistRule(nft func(...string) []string) []string {
 		return nil
 	}
 	return nft("add", "rule", "ip", "faas", "forward",
-		"iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "accept")
+		"iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "tcp", "dport", "!=", "25", "accept")
 }
 
 // ForwardAllowlistRule6 (ADR-032 — v6 mirror of ForwardAllowlistRule;

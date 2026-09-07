@@ -80,6 +80,11 @@ keeping (tax invoices: 7 years).
   retained beyond the in-flight transit window.
 - Operational logs: request path, status code, host IP, timing —
   retained for 30 days for security incident response (spec §11).
+- Customer request analytics: bounded aggregates over a normalized
+  User-Agent family, hostname-only referrer, ISO country code, route,
+  and status. The analytics path stores no source IP, raw User-Agent,
+  full referrer URL, cookies, tracking script, or request/response body;
+  retention follows the plan's DebugTelemetryRetentionDays setting.
 
 ## 5. Processor obligations
 

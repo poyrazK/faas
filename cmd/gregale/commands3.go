@@ -255,7 +255,7 @@ func secretsSet(args []string) int {
 	// Move 1 PR-A: post-write quota stamp. After every successful
 	// set, follow up with a ListSecrets and print "<slug>: N/M
 	// secrets" so the customer knows how close they are to the
-	// per-app cap (Free 3 / Hobby 25 / Pro 50 / Scale 100, in
+	// per-app cap (Free 8 / Hobby 25 / Pro 50 / Scale 100, in
 	// pkg/api/limits.go's SecretCountMax). The cap is looked up
 	// from /v1/account's plan via the local limits table — no
 	// server round-trip beyond the one already needed for the

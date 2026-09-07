@@ -19,8 +19,7 @@ class AccountEgressAllowlistExtraResponse:
     extra: int
     """Effective additive budget currently in force. 0 = no override; the plan cap is authoritative."""
     plan_cap: int
-    """Plan cap on apps.egress_allowlist CIDR count (Pro 16, Scale 64; Free/Hobby 0 — those plans don't unlock the
-    knob at all)."""
+    """Plan cap on apps.egress_allowlist CIDR count (Hobby 8, Pro 16, Scale 64; Free 0)."""
     max_extra: int
     """Global ceiling on the per-account override (api.MaxAccountEgressAllowlistExtra = 1024). Flat across plans;
     the validator rejects out-of-range values with `account_egress_allowlist_extra_out_of_range`."""

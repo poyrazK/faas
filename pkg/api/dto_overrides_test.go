@@ -40,10 +40,10 @@ func decodeForTest(body []byte, dst any) error {
 //   - healthcheck: path must start with "/"; interval/timeout/retries
 //     must be >= 0.
 func TestCreateDeploymentOverrides_Validate(t *testing.T) {
-	// Free plan env caps: EnvVarsMax=8, EnvValueMaxBytes=4KiB.
+	// Free plan env caps: EnvVarsMax=16, EnvValueMaxBytes=4KiB.
 	free := MustLimitsFor(Plan("free"))
 	// Sanity check — the test pins real plan values.
-	if free.EnvVarsMax != 8 || free.EnvValueMaxBytes != 4*1024 {
+	if free.EnvVarsMax != 16 || free.EnvValueMaxBytes != 4*1024 {
 		t.Fatalf("Free plan limits drifted: EnvVarsMax=%d EnvValueMaxBytes=%d", free.EnvVarsMax, free.EnvValueMaxBytes)
 	}
 
@@ -130,10 +130,12 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 		{
 			name: "env-count-exceeds-quota",
 			overrides: &CreateDeploymentOverrides{
-				// Free caps at 8 env+env_secrets; this case has 9.
+				// Free caps at 16 env+env_secrets; this case has 17.
 				Env: map[string]string{
 					"A": "1", "B": "1", "C": "1", "D": "1", "E": "1",
-					"F": "1", "G": "1", "H": "1", "I": "1",
+					"F": "1", "G": "1", "H": "1", "I": "1", "J": "1",
+					"K": "1", "L": "1", "M": "1", "N": "1", "O": "1",
+					"P": "1", "Q": "1",
 				},
 			},
 			wantStatus: http.StatusBadRequest,
@@ -142,14 +144,16 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 		{
 			name: "env-shared-cap-includes-env-secrets",
 			overrides: &CreateDeploymentOverrides{
-				// 5 env + 5 env_secrets = 10 > Free 8; the shared cap
+				// 9 env + 9 env_secrets = 18 > Free 16; the shared cap
 				// catches it even though env alone is under-quota.
 				Env: map[string]string{
 					"A": "1", "B": "1", "C": "1", "D": "1", "E": "1",
+					"F": "1", "G": "1", "H": "1", "I": "1",
 				},
 				EnvSecrets: map[string]string{
-					"F": "secret:f", "G": "secret:g", "H": "secret:h",
-					"I": "secret:i", "J": "secret:j",
+					"J": "secret:J", "K": "secret:K", "L": "secret:L",
+					"M": "secret:M", "N": "secret:N", "O": "secret:O",
+					"P": "secret:P", "Q": "secret:Q", "R": "secret:R",
 				},
 			},
 			wantStatus: http.StatusBadRequest,

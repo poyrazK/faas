@@ -2404,6 +2404,24 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/restore:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: restoreApp
+      summary: Restore an app during its deletion grace window.
+      responses:
+        '200':
+          description: The restored app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/preview/{slug}/destroy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -2761,7 +2779,8 @@ paths:
       description: |
         Returns an aggregate request overview for one app: total requests,
         errors, cold boots, weighted p50/p95/p99 latency, and the top
-        route/method combinations. This is the customer analytics surface;
+        route/method combinations, or a bounded top-N grouping by country,
+        referrer host, client family, or status. This is the customer analytics surface;
         request identifiers and trace payloads remain on the debugger routes.
 
         `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -2773,6 +2792,9 @@ paths:
 
         Counts and percentiles include the recorder's collapsed row `count`,
         so the result represents original requests rather than stored rows.
+        Grouped results contain at most 50 groups plus `__other__`. Only a
+        normalized User-Agent family, hostname-only referrer, and country code
+        are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
         The endpoint is read-only, IDOR-safe, and plan-gated by
         `DebugTelemetryEnabled`.
       parameters:
@@ -2786,6 +2808,11 @@ paths:
           required: false
           schema: { type: string, format: date-time }
           description: "Optional RFC3339 upper-bound timestamp for the historical window."
+        - name: group_by
+          in: query
+          required: false
+          schema: { type: string, enum: [route, country, referrer_host, ua_family, status], default: route }
+          description: "Bounded top-N grouping dimension. Defaults to route."
       x-since: 2026-09
       responses:
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -2843,6 +2870,8 @@ paths:
         timestamp. `until` is an optional RFC3339 exclusive upper bound and
         defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
         by `DebugTelemetryEnabled`.
+        Set `group_by` to country, referrer_host, ua_family, or status to
+        receive zero-filled series for the top 50 groups plus `__other__`.
       parameters:
         - name: since
           in: query
@@ -2864,6 +2893,11 @@ paths:
           required: false
           schema: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
           description: "Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods."
+        - name: group_by
+          in: query
+          required: false
+          schema: { type: string, enum: [route, country, referrer_host, ua_family, status] }
+          description: "Return grouped series for the selected dimension. Omitted preserves the app-wide points shape; route/method filters require group_by=route or omission."
       x-since: 2026-09
       responses:
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -3191,8 +3225,9 @@ paths:
       operationId: listAppDebugRequests
       summary: Per-app request telemetry (ADR-127 / PR-A).
       description: |
-        Recent request rows for an app — status, latency_ms, route,
-        method, deployment_id, cold_boot, trace_id, received_at.
+        Recent request telemetry rows for an app — status, latency_ms, route,
+        method, deployment_id, cold_boot, trace_id, received_at, and the
+        number of original requests represented by each collapsed row.
         PR-A ships the read endpoint only; the write-side (publisher
         → gRPC IncrementRequestTelemetry → apid receiver → sqlc
         INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -3215,6 +3250,11 @@ paths:
           required: false
           schema: { type: [integer, 'null'], minimum: 1, maximum: 200, default: 20 }
           description: "Page size, default 20, max 200."
+        - name: route
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 256 }
+          description: "Exact route-template filter."
       responses:
         '200':
           description: Page of recent request telemetry rows.
@@ -3222,6 +3262,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DebugTelemetryListResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -4563,9 +4604,9 @@ paths:
           `event: end` terminal with `archive_complete` /
           `archive_missing` / `archive_degraded` reasons) so the SDK
           decoder treats the two paths interchangeably. Archive is
-          gated by `Plan.LogArchiveEnabled()` — Free customers receive
-          402 + `plan_log_archive_not_allowed`. The per-plan retention
-          cap (Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
+          gated by `Plan.LogArchiveEnabled()` — Free customers receive a
+          one-day archive window. The per-plan retention cap (Free 1d /
+          Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
           outside the window with 403 + `log_archive_retention_exceeded`.
       parameters:
         - name: follow
@@ -4595,9 +4636,9 @@ paths:
           description: >
             If 1, serve archived logs from S3 instead of the live ring buffer.
             Requires `instance=<id>` and `date=YYYY-MM-DD`. Gated by
-            `Plan.LogArchiveEnabled()` — Free plans receive 402 +
-            `plan_log_archive_not_allowed`. The per-plan retention cap
-            (Hobby 7d / Pro 30d / Scale 90d) refuses `date=` values
+            `Plan.LogArchiveEnabled()` — Free plans have a one-day archive
+            window. The per-plan retention cap (Free 1d / Hobby 7d / Pro 30d
+            / Scale 90d) refuses `date=` values
             outside the window.
         - name: instance
           in: query
@@ -4611,8 +4652,8 @@ paths:
           schema: { type: string, format: date }
           description: >
             Required when `archive=1`. The day to read in YYYY-MM-DD UTC.
-            Must be inside the per-plan retention cap (Hobby 7d / Pro 30d
-            / Scale 90d) — outside values return 403 +
+            Must be inside the per-plan retention cap (Free 1d / Hobby 7d
+            / Pro 30d / Scale 90d) — outside values return 403 +
             `log_archive_retention_exceeded`. Future dates are refused
             with the same code.
       responses:
@@ -4622,11 +4663,11 @@ paths:
             text/event-stream: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402':
-          description: Plan does not include log archive read-back. Free plans receive this on `?archive=1`.
+          description: Plan does not include log archive read-back. This response is reserved for plans without archive entitlement.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-              example: {"type":"about:blank","title":"Log archive unavailable on this plan","status":402,"code":"plan_log_archive_not_allowed","detail":"the free plan does not include log archive read-back; upgrade to Hobby or above to query historical logs from object storage."}
+              example: {"type":"about:blank","title":"Log archive unavailable on this plan","status":402,"code":"plan_log_archive_not_allowed","detail":"the requested plan does not include log archive read-back; upgrade to a plan with archive access to query historical logs from object storage."}
         '403':
           description: Log archive retention cap exceeded; `?date=` is outside the per-plan window.
           content:
@@ -13572,6 +13613,8 @@ components:
         idle_timeout_s: { type: [integer, "null"] }
         min_instances: { type: integer }
         status: { type: string , example: "active"}
+        deleted_at: { type: [string, "null"], format: date-time }
+        delete_grace_until: { type: [string, "null"], format: date-time }
         url: { type: string, format: uri }
         manifest: { $ref: '#/components/schemas/AppManifest' }
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):
@@ -13582,7 +13625,8 @@ components:
         # validateUpdateApp, so the read-back never carries a
         # "::ffff:" prefix. Always present (serialised as `[]`
         # when empty, never `null`); NOT in `required:` so the
-        # empty case stays the contract for Free/Hobby.
+        # empty case stays the contract for every plan (Free cannot
+        # set the field; Hobby+ may clear it explicitly).
         egress_allowlist:
           description: "Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies."
           type: array
@@ -14042,9 +14086,9 @@ components:
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
         # omitted → no change; non-null array → atomic
-        # overwrite (empty array clears). Pro/Scale only;
-        # Free/Hobby PATCH → 403 plan_egress_allowlist_not_
-        # allowed. Plan caps: Pro 16 entries, Scale 64.
+        # overwrite (empty array clears). Hobby/Pro/Scale;
+        # Free PATCH → 403 plan_egress_allowlist_not_allowed.
+        # Plan caps: Hobby 8 entries, Pro 16, Scale 64.
         # PR-C widens the pattern from IPv4-only to v4+v6
         # (ADR-032 already shipped the handler-side acceptance
         # but the spec wasn't updated; pre-PR-C the validator
@@ -14402,6 +14446,12 @@ components:
           description: "Env override via sealed-secret refs. Each value is \"secret:NAME\"; the host resolver looks up NAME against the app_secrets table at wake."
         working_dir: { type: [string, "null"] }
         port: { type: [integer, "null"], minimum: 0, maximum: 65535 }
+        ports:
+          type: array
+          maxItems: 16
+          description: "Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the public HTTP/readiness listener; these entries are used for in-task endpoint discovery (ADR-165)."
+          items:
+            $ref: '#/components/schemas/WorkloadPort'
         healthz: { type: [string, "null"] }
         user: { type: [string, "null"] }
         healthcheck:
@@ -14459,6 +14509,23 @@ components:
         # other than 'service' is a Validate error.
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
+
+    WorkloadPort:
+      description: "One protocol-aware listener in a container workload (ADR-165)."
+      type: object
+      additionalProperties: false
+      required: [port, protocol]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        protocol:
+          type: string
+          enum: [tcp, udp]
 
     AppManifestHealthcheck:
       description: "AppManifest-level projection of the OCI HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are integer seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1 surfaces the field for the registry-pull path."
@@ -14866,14 +14933,14 @@ components:
           description: "Operator or orchestrator reason recorded when the rollout is aborted."
 
     BuildPlan:
-      description: "Auto-detected build plan surfaced on DeploymentResponse (issue #961 / Mega-A PR-2). Same shape the CLI's pre-ship `Detected:` line prints; populated by apid via `pkg/markers.DetectFromTarball` against the spooled source tarball. Embedded on DeploymentResponse; never returned by a dedicated route."
+      description: "Effective build plan surfaced on DeploymentResponse (issue #961 / zero-config profile PR). Captured from the exact source archive at enqueue time and retained after spool cleanup; legacy rows fall back to marker detection when the spool is still available. Embedded on DeploymentResponse; never returned by a dedicated route."
       type: object
       required: [framework]
       properties:
         framework:
           type: string
           enum: [node, python, go, docker, unknown]
-          description: "Framework detected from the source tarball's top-level markers. `unknown` means no marker was found (monorepo / custom build); the wire renders this as `Detected: …, framework=unknown` rather than dropping the response."
+          description: "Compatibility framework family derived from the persisted source profile. `unknown` means no supported framework was inferred (monorepo / custom build)."
         runtime:
           type: [string, "null"]
           description: "Runtime the app is pinned to (eg `node22`, `python312`). Echoed from app.Runtime. nil for apps without a runtime set (image deploys)."
@@ -14882,12 +14949,15 @@ components:
           description: "Framework version extracted from the detected marker (eg `package.json` `engines.node`, `requirements.txt` head pin). nil when the marker has no version or framework is `unknown`."
         entrypoint:
           type: [string, "null"]
-          description: "Entrypoint override (create-time only). nil when the customer did not supply one."
+          description: "Effective start command from the persisted source profile, replaced by an explicit entrypoint override when supplied."
         port:
           type: [integer, "null"]
           minimum: 0
           maximum: 65535
-          description: "Listen-port override (create-time only). nil when the customer did not supply one."
+          description: "Effective listen port from the persisted source profile, replaced by an explicit port override when supplied."
+        health_path:
+          type: [string, "null"]
+          description: "Effective readiness path selected by the source profile or deployment override."
         class:
           type: [string, "null"]
           enum: [null, app, function]
@@ -19257,7 +19327,7 @@ components:
       required: [extra, plan_cap, max_extra]
       properties:
         extra: { type: integer, minimum: 0, description: "Effective additive budget currently in force. 0 = no override; the plan cap is authoritative." }
-        plan_cap: { type: integer, minimum: 0, description: "Plan cap on apps.egress_allowlist CIDR count (Pro 16, Scale 64; Free/Hobby 0 — those plans don't unlock the knob at all)." }
+        plan_cap: { type: integer, minimum: 0, description: "Plan cap on apps.egress_allowlist CIDR count (Hobby 8, Pro 16, Scale 64; Free 0)." }
         max_extra: { type: integer, minimum: 0, description: "Global ceiling on the per-account override (api.MaxAccountEgressAllowlistExtra = 1024). Flat across plans; the validator rejects out-of-range values with `account_egress_allowlist_extra_out_of_range`." }
 
     # ─── Audit events (IAM-4 / ADR-035) ──────────────────────────────────
@@ -21088,13 +21158,28 @@ components:
         p95_ms: { type: integer, minimum: 0 }
         p99_ms: { type: integer, minimum: 0 }
 
+    RequestAnalyticsGroup:
+      type: object
+      description: "Bounded aggregate for a selected analytics dimension. Value is a route, country, hostname, normalized client family, status code, or __other__."
+      required: [value, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
+      properties:
+        value: { type: string }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        cold_boots: { type: integer, format: int64, minimum: 0 }
+        p50_ms: { type: integer, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+        p99_ms: { type: integer, minimum: 0 }
+
     RequestAnalyticsResponse:
       type: object
       description: |
         Bounded historical request analytics for
         `GET /v1/apps/{slug}/analytics?since=`. The window is half-open
         `[from, until)`, and the route list is capped at 50 rows.
-      required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, routes, routes_limit, routes_truncated, as_of]
+      required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, group_by, groups, groups_limit, groups_truncated, routes, routes_limit, routes_truncated, as_of]
       properties:
         slug: { type: string }
         since: { type: string, description: "Effective lookback duration after retention clamping." }
@@ -21108,6 +21193,12 @@ components:
         p50_ms: { type: integer, minimum: 0 }
         p95_ms: { type: integer, minimum: 0 }
         p99_ms: { type: integer, minimum: 0 }
+        group_by: { type: string, enum: [route, country, referrer_host, ua_family, status] }
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsGroup' }
+        groups_limit: { type: integer, minimum: 1, description: "Maximum number of top groups before __other__." }
+        groups_truncated: { type: boolean, description: "True when __other__ contains groups outside the top-N." }
         routes:
           type: array
           items: { $ref: '#/components/schemas/RequestAnalyticsRoute' }
@@ -21129,6 +21220,17 @@ components:
         p95_ms: { type: integer, minimum: 0 }
         p99_ms: { type: integer, minimum: 0 }
 
+    RequestAnalyticsTimeseriesSeries:
+      type: object
+      description: "A grouped request analytics series with its hourly points."
+      required: [value, points]
+      properties:
+        value: { type: string }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint' }
+
     RequestAnalyticsTimeseriesResponse:
       type: object
       description: |
@@ -21148,6 +21250,10 @@ components:
         points:
           type: array
           items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint' }
+        group_by: { type: string, enum: [route, country, referrer_host, ua_family, status] }
+        series:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesSeries' }
         as_of: { type: string, format: date-time, description: "UTC time when the series response was assembled." }
 
     AppSLOResponse:
@@ -22858,7 +22964,7 @@ components:
     DebugTelemetryRequestItem:
       type: object
       description: "One row per gateway-served request, persisted by the recorder (PR-A)."
-      required: [id, deployment_id, route, method, status, latency_ms, cold_boot, received_at]
+      required: [id, deployment_id, route, method, status, latency_ms, count, cold_boot, received_at]
       properties:
         id: { type: string, format: uuid }
         deployment_id: { type: string, format: uuid }
@@ -22866,6 +22972,7 @@ components:
         method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
         status: { type: integer, minimum: 100, maximum: 599 }
         latency_ms: { type: integer, minimum: 0 }
+        count: { type: integer, minimum: 1, description: "Number of original requests represented by this collapsed telemetry row." }
         cold_boot: { type: boolean }
         trace_id: { type: [string, 'null'], description: "W3C trace-id hex (32 chars), null when unset." }
         received_at: { type: string, format: date-time }

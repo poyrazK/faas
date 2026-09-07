@@ -2662,6 +2662,17 @@ func (m *MemStore) AppBySlug(_ context.Context, slug string) (App, error) {
 	return App{}, ErrNotFound
 }
 
+func (m *MemStore) AppBySlugIncludingDeleted(_ context.Context, slug string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, a := range m.apps {
+		if a.Slug == slug {
+			return a, nil
+		}
+	}
+	return App{}, ErrNotFound
+}
+
 // PreviewAppsByParent (ADR-095 / issue #272) is the MemStore mirror
 // of PgStore.PreviewAppsByParent. Walks the in-memory map under the
 // same lock as CreateApp / AppByID / ListApps. Returns an empty slice
@@ -4123,6 +4134,172 @@ func (m *MemStore) DeleteApp(ctx context.Context, id string) error {
 	return err
 }
 
+// ScheduleAppDeletion stamps a restorable tombstone. Repeated calls preserve
+// the first deadline, matching the PostgreSQL COALESCE update.
+func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil time.Time) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok {
+		return App{}, ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return App{}, ErrConflict
+		}
+	}
+	if graceUntil.IsZero() {
+		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
+	}
+	now := time.Now().UTC()
+	if a.DeletedAt == nil {
+		a.DeletedAt = &now
+	}
+	if a.DeleteGraceUntil == nil {
+		deadline := graceUntil.UTC()
+		a.DeleteGraceUntil = &deadline
+	}
+	a.Status = AppDeleted
+	m.apps[id] = a
+	// Retire replica placements immediately while preserving snapshot rows for
+	// GC and a possible restore during the grace window.
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if ok && deployment.AppID == id {
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+		}
+	}
+	return a, nil
+}
+
+func (m *MemStore) RestoreApp(_ context.Context, id string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok {
+		return App{}, ErrNotFound
+	}
+	if a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) {
+		return App{}, ErrConflict
+	}
+	a.Status = AppActive
+	a.DeletedAt = nil
+	a.DeleteGraceUntil = nil
+	m.apps[id] = a
+	return a, nil
+}
+
+func (m *MemStore) ListDeletedApps(_ context.Context) ([]App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]App, 0)
+	for _, a := range m.apps {
+		if a.Status == AppDeleted {
+			out = append(out, a)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DeleteGraceUntil == nil {
+			return false
+		}
+		if out[j].DeleteGraceUntil == nil {
+			return true
+		}
+		return out[i].DeleteGraceUntil.Before(*out[j].DeleteGraceUntil)
+	})
+	return out, nil
+}
+
+func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok || a.Status != AppDeleted || a.DeleteGraceUntil == nil || a.DeleteGraceUntil.After(time.Now()) {
+		if ok && a.Status == AppDeleted {
+			return ErrNotFound
+		}
+		return ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return ErrConflict
+		}
+	}
+	for key, v := range m.envs {
+		if v.AppID == id {
+			delete(m.envs, key)
+		}
+	}
+	for key, v := range m.secrets {
+		if v.AppID == id {
+			delete(m.secrets, key)
+		}
+	}
+	for key, v := range m.registryCreds {
+		if v.AppID == id {
+			delete(m.registryCreds, key)
+		}
+	}
+	for key, v := range m.trustedSigners {
+		if v.AppID == id {
+			delete(m.trustedSigners, key)
+		}
+	}
+	for key, v := range m.invocations {
+		if v.AppID == id {
+			delete(m.invocations, key)
+		}
+	}
+	for key, v := range m.crons {
+		if v.AppID == id {
+			delete(m.crons, key)
+		}
+	}
+	for key, v := range m.domains {
+		if v.AppID == id {
+			delete(m.domains, key)
+		}
+	}
+	for key, v := range m.instances {
+		if v.AppID == id {
+			delete(m.instances, key)
+		}
+	}
+	depIDs := make(map[string]struct{})
+	for key, d := range m.deployments {
+		if d.AppID == id {
+			depIDs[key] = struct{}{}
+			delete(m.deployments, key)
+		}
+	}
+	for key, b := range m.builds {
+		if _, ok := depIDs[b.DeploymentID]; ok {
+			delete(m.builds, key)
+		}
+	}
+	filtered := m.snapshots[:0]
+	for _, snap := range m.snapshots {
+		if _, ok := depIDs[snap.DeploymentID]; !ok {
+			filtered = append(filtered, snap)
+		}
+	}
+	m.snapshots = filtered
+	for key, v := range m.objectBuckets {
+		if v.AppID == id {
+			delete(m.objectBuckets, key)
+		}
+	}
+	filteredUsage := m.usage[:0]
+	for _, v := range m.usage {
+		if v.AppID != id {
+			filteredUsage = append(filteredUsage, v)
+		}
+	}
+	m.usage = filteredUsage
+	delete(m.apps, id)
+	return nil
+}
+
 // SoftDeleteAppCascade marks the app deleted (status=AppDeleted) and
 // returns the freshly-deleted App row. Memstore parity with
 // PgStore.SoftDeleteAppCascade — status-only, child rows survive.
@@ -4140,10 +4317,13 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
+	// App deletion retires snapshot replicas immediately, but keeps the
+	// snapshot rows available to GC. The PostgreSQL lifecycle trigger uses
+	// the same split: deleted-app snapshots are not wake-eligible, yet their
+	// metadata must remain visible so imaged can remove the backing files.
 	for i := range m.snapshots {
 		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
 		if ok && deployment.AppID == id {
-			m.snapshots[i].Stale = true
 			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 		}
 	}
@@ -8569,6 +8749,9 @@ func (m *MemStore) StampInstanceInvocation(_ context.Context, id, instanceID str
 // --- Instances --------------------------------------------------------------
 
 func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+	if err := validateMemStoreCreateInstanceState(state); err != nil {
+		return Instance{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Stamp started_at on creation for every state (commit 3, mirrors
@@ -8627,11 +8810,12 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 // 'normal' so legacy callers (and test fixtures that don't yet
 // thread mode through) keep bit-for-bit compatibility. Valid
 // non-default values are InstanceModeNormal and InstanceModeMirror;
-// the engine validates the value before reaching here so the
-// MemStore is permissive (no SQLSTATE to translate — the SQL
-// CHECK fires on PgStore; the MemStore's only job is to store
-// what the caller asked for).
+// the store validates the value before persisting it so malformed
+// state cannot pass in tests and fail only when PostgreSQL is used.
 func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
+	if err := validateMemStoreCreateInstanceState(state); err != nil {
+		return Instance{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	mode = strings.TrimSpace(mode)
@@ -8661,6 +8845,9 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 // have no app or deployment row: the job definition owns the OCI image and
 // the run/task coordinates live on the job task row.
 func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+	if err := validateMemStoreCreateInstanceState(state); err != nil {
+		return Instance{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.jobs[jobID]; !ok {
@@ -9048,6 +9235,9 @@ func (m *MemStore) ListLatestInstancePerApp(_ context.Context, accountID string)
 }
 
 func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) error {
+	if err := validateInstanceState(state); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -9064,6 +9254,9 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 // expected state both mean another writer won; ErrConflict keeps that path
 // benign for callers that are retrying a reconciliation sweep.
 func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, nextState string) error {
+	if err := validateInstanceState(nextState); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -9101,6 +9294,9 @@ func (m *MemStore) IncInstanceRequestCount(_ context.Context, id string, delta i
 // state" for SNAPSHOTTING rows; parked_at is the column the watchdog
 // reads on that state.
 func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state string, parkedAt time.Time) error {
+	if err := validateInstanceState(state); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -9118,6 +9314,9 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 // (PR #74). Engine.transition routes here for {STOPPED, FAILED}; today
 // no caller writes a different timestamp column for those states.
 func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state string, terminalAt time.Time) error {
+	if err := validateInstanceState(state); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -9451,6 +9650,12 @@ func (m *MemStore) LatestSnapshot(_ context.Context, deploymentID string) (Snaps
 		if s.DeploymentID != deploymentID || s.Stale {
 			continue
 		}
+		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
+			deployment.Status == DeployFailed || deployment.Status == DeployCancelled {
+			continue
+		} else if app, ok := m.apps[deployment.AppID]; !ok || app.Status == AppDeleted {
+			continue
+		}
 		if !found {
 			latest = s
 			found = true
@@ -9489,6 +9694,12 @@ func (m *MemStore) LatestSnapshotForTier(_ context.Context, deploymentID, tier s
 	found := false
 	for _, s := range m.snapshots {
 		if s.DeploymentID != deploymentID || s.Stale || s.Tier != tier {
+			continue
+		}
+		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
+			deployment.Status == DeployFailed || deployment.Status == DeployCancelled {
+			continue
+		} else if app, ok := m.apps[deployment.AppID]; !ok || app.Status == AppDeleted {
 			continue
 		}
 		if !found || s.CreatedAt.After(latest.CreatedAt) {
@@ -9534,15 +9745,20 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 	}
 	var out []SnapshotForGC
 	for _, s := range m.snapshots {
-		if s.Stale {
-			continue
-		}
 		dep, ok := depByID[s.DeploymentID]
 		if !ok {
 			continue
 		}
 		app, ok := appByID[dep.AppID]
 		if !ok {
+			continue
+		}
+		// Lifecycle triggers mark snapshots stale as soon as an app is
+		// deleted or a deployment becomes unusable. Keep those terminal rows
+		// in this projection so the immediate GC pass can remove their files;
+		// ordinary stale rows remain owned by the retention sweep.
+		if s.Stale && app.Status != AppDeleted &&
+			dep.Status != DeployFailed && dep.Status != DeployCancelled {
 			continue
 		}
 		out = append(out, SnapshotForGC{
@@ -13927,6 +14143,13 @@ func (m *MemStore) CountAppTrustedSigners(_ context.Context, accountID, appID st
 // customer has to restore their account. MemStore and PgStore share
 // the constant so handler tests don't drift from production behavior.
 func DeletionGraceDuration() time.Duration { return 30 * 24 * time.Hour }
+
+// AppDeleteGraceDuration is the customer-visible restore window for app
+// tombstones. Keep the duration in state so apid, pkg/grace, and both store
+// implementations share the same policy source.
+func AppDeleteGraceDuration() time.Duration {
+	return time.Duration(api.AppDeleteGraceDays) * 24 * time.Hour
+}
 
 // DeleteAccount walks the FK graph in dependency order under a single
 // m.mu lock. The dependency order matches the PgStore tx so a redelivered

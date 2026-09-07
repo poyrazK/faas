@@ -215,5 +215,41 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		}
 		g.p.Log.Info("grace: account hard-deleted", "account", acct.ID)
 	}
+	return g.RunAppsOnce(ctx)
+}
+
+// RunAppsOnce permanently removes app tombstones whose seven-day restore
+// window has elapsed. It is separate so callers and tests can drive app
+// cleanup independently from the account sweep.
+func (g *Grace) RunAppsOnce(ctx context.Context) error {
+	rows, err := g.p.Store.ListDeletedApps(ctx)
+	if err != nil {
+		return err
+	}
+	now := g.p.Now()
+	for _, app := range rows {
+		if app.DeleteGraceUntil == nil || app.DeleteGraceUntil.After(now) {
+			continue
+		}
+		if err := g.p.Store.DeleteAppPermanently(ctx, app.ID); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				continue
+			}
+			g.p.Log.Warn("grace: app hard delete failed", "app", app.ID, "err", err)
+			continue
+		}
+		// Reuse the existing lifecycle channel so schedd's cleanup path
+		// gets a durable redelivery signal. The app row has already been
+		// removed, so consumers treat a missing row as an idempotent no-op.
+		payload, _ := json.Marshal(map[string]string{"app_id": app.ID, "slug": app.Slug})
+		if err := g.p.Notif(ctx, db.NotifyAppDelete, string(payload)); err != nil {
+			g.p.Log.Warn("grace: app delete notify failed", "app", app.ID, "err", err)
+		}
+		appID := app.AccountID
+		g.p.Audit.Emit(ctx, "app.deleted", &appID, map[string]any{
+			"app_id": app.ID, "slug": app.Slug, "actor": "grace-sweep",
+		})
+		g.p.Log.Info("grace: app hard-deleted", "app", app.ID, "slug", app.Slug)
+	}
 	return nil
 }

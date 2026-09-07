@@ -9,9 +9,9 @@
 // cli_test.go:760).
 //
 // Receipt-only fields:
-//   - app_url:        customer-facing URL derived from deployment's
-//                     app id via FAAS_APPS_DOMAIN (deployedAppURL at
-//                     commands2.go:3469). Empty when AppID is empty.
+//   - app_url:        customer-facing URL derived from the CLI-known
+//                     app slug via FAAS_APPS_DOMAIN (deployedAppURL).
+//                     Empty when the slug is empty.
 //   - commit_sha:     HEAD SHA from zeroConfigProvenance.SHA. Empty on
 //                     non-git cwd-auto-pack, image, and source-ref
 //                     paths (no git detection ran).

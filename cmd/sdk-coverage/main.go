@@ -238,6 +238,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/domains/{domain}":                 "DeleteDomain",
 	"DELETE /v1/crons/{id}":                       "DeleteCron",
 	"DELETE /v1/apps/{slug}":                      "DeleteApp",
+	"POST /v1/apps/{slug}/restore":                "RestoreApp",
 	"DELETE /v1/apps/{slug}/secrets/{key}":        "UnsetSecret",
 	"PUT /v1/apps/{slug}/secrets/{key}":           "SetSecret",
 	"POST /v1/apps/{slug}/secrets/{key}/rotate":   "RotateSecret",

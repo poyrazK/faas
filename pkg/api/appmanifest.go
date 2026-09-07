@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -103,6 +104,10 @@ type AppManifest struct {
 	WorkingDir string `json:"working_dir,omitempty"`
 	// Port is the readiness/serving port; 0 means DefaultAppPort.
 	Port int `json:"port,omitempty"`
+	// Ports preserves the OCI image's protocol-aware listener declarations.
+	// Port remains the public HTTP/readiness contract; Ports lets workloads
+	// discover additional TCP or UDP listeners inside their shared netns.
+	Ports []WorkloadPort `json:"ports,omitempty"`
 	// Healthz, if set, is a GET path guest-init probes for readiness instead of a
 	// bare TCP accept (spec §4.8).
 	Healthz string `json:"healthz,omitempty"`
@@ -145,6 +150,74 @@ type AppManifest struct {
 	// lays the schema + admission; M-4 workstream E lands the
 	// rolling deploy / rollback / digest-pinning semantics.
 	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
+}
+
+// WorkloadPortProtocol is the transport protocol for a workload listener.
+// The closed set mirrors OCI's exposed-port grammar and keeps endpoint
+// discovery explicit when TCP and UDP share a numeric port.
+type WorkloadPortProtocol string
+
+const (
+	WorkloadPortTCP WorkloadPortProtocol = "tcp"
+	WorkloadPortUDP WorkloadPortProtocol = "udp"
+	// WorkloadPortCapMax bounds image metadata and the guest endpoint
+	// environment. It is deliberately small because listeners are a local
+	// contract, not an unbounded service registry.
+	WorkloadPortCapMax = 16
+)
+
+// WorkloadPort is one protocol-aware listener declared by an image or
+// workload. Name is optional for OCI-derived entries and is used to create a
+// stable endpoint environment suffix when present.
+type WorkloadPort struct {
+	Name     string               `json:"name,omitempty"`
+	Port     int                  `json:"port"`
+	Protocol WorkloadPortProtocol `json:"protocol"`
+}
+
+var workloadPortNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
+
+// EffectiveProtocol maps the omitted protocol used by old callers to TCP.
+func (p WorkloadPort) EffectiveProtocol() WorkloadPortProtocol {
+	if p.Protocol == "" {
+		return WorkloadPortTCP
+	}
+	return WorkloadPortProtocol(strings.ToLower(string(p.Protocol)))
+}
+
+// ValidateWorkloadPorts validates the bounded listener contract and rejects
+// duplicate names or duplicate (protocol, port) tuples.
+func ValidateWorkloadPorts(ports []WorkloadPort) error {
+	if len(ports) > WorkloadPortCapMax {
+		return fmt.Errorf("workload ports: %d entries exceed cap %d", len(ports), WorkloadPortCapMax)
+	}
+	seenNames := make(map[string]struct{}, len(ports))
+	seenTuples := make(map[string]struct{}, len(ports))
+	for i, p := range ports {
+		if p.Name != "" && !workloadPortNameRe.MatchString(strings.ToLower(p.Name)) {
+			return fmt.Errorf("workload ports[%d]: invalid name %q", i, p.Name)
+		}
+		protocol := p.EffectiveProtocol()
+		if protocol != WorkloadPortTCP && protocol != WorkloadPortUDP {
+			return fmt.Errorf("workload ports[%d]: protocol %q must be tcp or udp", i, p.Protocol)
+		}
+		if p.Port < 1 || p.Port > 65535 {
+			return fmt.Errorf("workload ports[%d]: port %d is outside 1..65535", i, p.Port)
+		}
+		if p.Name != "" {
+			name := strings.ToLower(p.Name)
+			if _, exists := seenNames[name]; exists {
+				return fmt.Errorf("workload ports: duplicate name %q", p.Name)
+			}
+			seenNames[name] = struct{}{}
+		}
+		key := fmt.Sprintf("%s/%d", protocol, p.Port)
+		if _, exists := seenTuples[key]; exists {
+			return fmt.Errorf("workload ports: duplicate %s", key)
+		}
+		seenTuples[key] = struct{}{}
+	}
+	return nil
 }
 
 // AppManifestHealthcheck is the AppManifest-level projection of the OCI
@@ -285,6 +358,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)
+	}
+	if err := ValidateWorkloadPorts(m.Ports); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
 	}
 	limits, ok := LimitsFor(plan)
 	if !ok {

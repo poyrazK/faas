@@ -12,10 +12,9 @@
 //   - HappyPath: gzip→JSONL→SSE — a small .jsonl.gz ships
 //     through S3, the handler reads it back, and three
 //     `event: log` frames appear in the recorder body.
-//   - FreePlan_Returns402: Plan.LogArchiveEnabled() == false
-//     (Free) → 402 + CodePlanLogArchiveNotAllowed. Verifies the
-//     plan gate fires BEFORE the auth chain so a Free customer
-//     never sees the bucket-proxy surface.
+//   - FreePlan_OneDayWindow: Free plans are enabled with a one-day
+//     retention window; yesterday's archive is readable while older
+//     dates are refused by the retention gate.
 //   - S3NotFound_ArchiveMissing: S3 returns 404 → terminal
 //     reason archive_missing. The handler never touches the
 //     gzip pipe; the S3 error is the wire-level signal.
@@ -228,34 +227,48 @@ func TestArchiveStream_HappyPath(t *testing.T) {
 	}
 }
 
-// TestArchiveStream_FreePlan_Returns402 pins the plan-gate.
-// Free (LogArchiveEnabled() == false) must surface 402 +
-// CodePlanLogArchiveNotAllowed WITHOUT touching S3. The
-// fake server is intentionally not wired; the test asserts
-// the request never lands by relying on the handler's
-// early-return order: plan gate → store → S3.
-func TestArchiveStream_FreePlan_Returns402(t *testing.T) {
+// TestArchiveStream_FreePlan_OneDayWindow pins the Free demo archive
+// entitlement. Today's archive is inside the one-day inclusive window
+// and reaches S3; an older date is rejected before the bucket is touched.
+func TestArchiveStream_FreePlan_OneDayWindow(t *testing.T) {
+	srv := newFakeS3(t, http.StatusOK, gzipJSONL(t, []string{`{"seq":1,"stream":"stdout","ts":"2026-08-07T12:00:00Z","msg":"free"}`}))
 	h := &ArchiveLogsHandler{
-		// S3 nil + a non-zero Bucket — the handler must refuse
-		// on plan alone, not on the S3 nil-check.
+		S3:       newArchiveTestClient(t, srv),
+		Bucket:   "test-bucket",
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Backstop: 5 * time.Second,
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	body := driveStream(t, h, state.Account{ID: "acct-1", Plan: api.PlanFree},
+		"archive=1&instance=inst-abc&date="+today)
+	if !strings.Contains(body, `"reason":"archive_complete"`) {
+		t.Fatalf("Free today's archive should be readable: %s", body)
+	}
+	older := time.Now().UTC().AddDate(0, 0, -2).Format("2006-01-02")
+	rec := newFlusherRecorder()
+	r := httptest.NewRequest(http.MethodGet,
+		"/v1/apps/test-app/logs?archive=1&instance=inst-abc&date="+older, nil)
+	h.streamUnauth(rec, r, state.Account{ID: "acct-1", Plan: api.PlanFree}, "test-app-id")
+	if !strings.Contains(rec.body.String(), "log_archive_retention_exceeded") {
+		t.Errorf("Free date outside one-day window should refuse: %s", rec.body.String())
+	}
+}
+
+// TestArchiveStream_UnknownPlan_Returns402 preserves the fail-closed
+// guard for an account row whose plan is not in the authoritative matrix.
+// Known Free is enabled, but an unknown plan must never reach S3.
+func TestArchiveStream_UnknownPlan_Returns402(t *testing.T) {
+	h := &ArchiveLogsHandler{
 		S3:     nil,
 		Bucket: "test-bucket",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	rec := newFlusherRecorder()
 	r := httptest.NewRequest(http.MethodGet,
-		"/v1/apps/test-app/logs?archive=1&instance=inst-abc&date="+time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02"), nil)
-	h.streamUnauth(rec, r, state.Account{ID: "acct-1", Plan: api.PlanFree}, "test-app-id")
-
-	if rec.h.Get("Content-Type") != "application/problem+json" {
-		t.Errorf("Content-Type: got %q, want application/problem+json",
-			rec.h.Get("Content-Type"))
-	}
+		"/v1/apps/test-app/logs?archive=1&instance=inst-abc&date="+time.Now().UTC().Format("2006-01-02"), nil)
+	h.streamUnauth(rec, r, state.Account{ID: "acct-1", Plan: api.Plan("unknown")}, "test-app-id")
 	if !strings.Contains(rec.body.String(), "plan_log_archive_not_allowed") {
-		t.Errorf("body missing plan_log_archive_not_allowed: %s", rec.body.String())
-	}
-	if !strings.Contains(rec.body.String(), "free") {
-		t.Errorf("body missing plan name: %s", rec.body.String())
+		t.Fatalf("unknown plan should fail closed: %s", rec.body.String())
 	}
 }
 

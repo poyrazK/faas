@@ -28,6 +28,8 @@ class DebugTelemetryRequestItem:
     method: DebugTelemetryRequestItemMethod
     status: int
     latency_ms: int
+    count: int
+    """Number of original requests represented by this collapsed telemetry row."""
     cold_boot: bool
     received_at: datetime.datetime
     trace_id: None | str | Unset = UNSET
@@ -46,6 +48,8 @@ class DebugTelemetryRequestItem:
         status = self.status
 
         latency_ms = self.latency_ms
+
+        count = self.count
 
         cold_boot = self.cold_boot
 
@@ -67,6 +71,7 @@ class DebugTelemetryRequestItem:
                 "method": method,
                 "status": status,
                 "latency_ms": latency_ms,
+                "count": count,
                 "cold_boot": cold_boot,
                 "received_at": received_at,
             }
@@ -91,6 +96,8 @@ class DebugTelemetryRequestItem:
 
         latency_ms = d.pop("latency_ms")
 
+        count = d.pop("count")
+
         cold_boot = d.pop("cold_boot")
 
         received_at = datetime.datetime.fromisoformat(d.pop("received_at"))
@@ -111,6 +118,7 @@ class DebugTelemetryRequestItem:
             method=method,
             status=status,
             latency_ms=latency_ms,
+            count=count,
             cold_boot=cold_boot,
             received_at=received_at,
             trace_id=trace_id,

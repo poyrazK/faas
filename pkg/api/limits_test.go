@@ -83,12 +83,12 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 		// EgressAllowlistAllowed/MaxSize default to false/0 (Go zero), so
 		// Free/Hobby rows below omit them intentionally — mirrors the
 		// MinInstancesAllowed row shape.
-		PlanFree: {Plan: PlanFree, DeployedApps: 1, DeveloperApps: 1, MaxConcurrency: 1, RAMMB: 128, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 30, CertExpiryWarningDays: 30, IncludedGBHours: 5, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, SecretCountMax: 3, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
-			// Issue #559: Free = 1 (single-concurrency plan — one VM
-			// serves one request at a time; mirrors MaxConcurrency).
-			ConcurrencyPerVMBound: 1,
-			// Issue #395 / ADR-045: Free gets 8 keys / 4 KB per value.
-			EnvVarsMax: 8, EnvValueMaxBytes: 4096,
+		PlanFree: {Plan: PlanFree, DeployedApps: 1, DeveloperApps: 1, MaxConcurrency: 1, RAMMB: 128, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 5, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, SecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
+			// Issue #559: Free = 4 — enough listener concurrency for
+			// small demo bursts while MaxConcurrency remains one VM.
+			ConcurrencyPerVMBound: 4,
+			// Issue #395 / ADR-045: Free gets 16 keys / 4 KB per value.
+			EnvVarsMax: 16, EnvValueMaxBytes: 4096,
 			// ADR-044: per-plan CPUWeight/CPUQuotaUS/CPUPeriodUS — issue
 			// #301 acceptance #1+#2. The 2/4/8/16 ratio is the literal
 			// value from the issue; the quota is the spec's literal
@@ -208,8 +208,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			KeysMax: 3,
 			// Issue #667 / ADR-078: tail primitive on with floor timeout.
 			TailEnabled: true, TailTimeoutS: 5, TailCapMax: 16, ConcurrentTailsPerInstance: 4,
-			// Issue #562: Free has no archive surface.
-			LogArchiveEnabled: false, LogArchiveRetentionDaysMax: 0,
+			// Issue #562: Free gets a one-day archive surface.
+			LogArchiveEnabled: true, LogArchiveRetentionDaysMax: 1,
 			// ADR-096: Free = 1 day retention, 50 fingerprints, 25 request rows.
 			AppErrorsRetentionDays: 1, AppErrorsMaxFingerprintsPerApp: 50, AppErrorsMaxRequestRowsPerFingerprint: 25,
 			// ADR-120 / issue #975 item #5: consumer keys — Free gated
@@ -251,6 +251,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxAsyncInvocationsPerAccount:     1000,
 			MaxAsyncInvocationDeadlineSeconds: 3600,
 			MaxAsyncResultRetentionSeconds:    604800,
+			EgressAllowlistAllowed:            true, EgressAllowlistMaxSize: 8,
 			// Issue #462 / ADR-058 / PR-A: Hobby unlocks the warm
 			// floor (MinInstancesAllowed) and the max_instances
 			// ceiling (MaxInstancesAllowed). Hobby is still
@@ -871,7 +872,7 @@ func TestPlansAreMonotonic(t *testing.T) {
 			// apid's updateApp path reads this directly.
 			{"ReservedConcurrencyPerAccount", lo.ReservedConcurrencyPerAccount, hi.ReservedConcurrencyPerAccount},
 			// Issue #395 / ADR-045: env quota must be monotonic like every
-			// other gate — Free's 8 < Hobby's 32 < Pro's 64 < Scale's 256,
+			// other gate — Free's 16 < Hobby's 32 < Pro's 64 < Scale's 256,
 			// and the per-value byte cap doubles each step.
 			{"EnvVarsMax", lo.EnvVarsMax, hi.EnvVarsMax},
 			{"EnvValueMaxBytes", lo.EnvValueMaxBytes, hi.EnvValueMaxBytes},
@@ -882,7 +883,7 @@ func TestPlansAreMonotonic(t *testing.T) {
 			// (Free=3 → Hobby=10 → Pro=50 → Scale=200).
 			{"KeysMax", lo.KeysMax, hi.KeysMax},
 			// Issue #559: per-VM concurrency bound must grow with
-			// plan (Free=1 → Hobby=5 → Pro=25 → Scale=80). Mirrors
+			// plan (Free=4 → Hobby=5 → Pro=25 → Scale=80). Mirrors
 			// MaxConcurrency's monotonicity because a customer's
 			// concurrency ceiling should never shrink on upgrade.
 			{"ConcurrencyPerVMBound", lo.ConcurrencyPerVMBound, hi.ConcurrencyPerVMBound},
@@ -1065,7 +1066,7 @@ func TestBillableRAMMBWithSidecars(t *testing.T) {
 }
 
 // TestPlanConcurrencyPerVMBound pins the platform-advertised per-VM
-// concurrency bound (issue #559). Free 1, Hobby 5, Pro 25, Scale 80.
+// concurrency bound (issue #559). Free 4, Hobby 5, Pro 25, Scale 80.
 // Distinct from MaxConcurrency (the per-app instance cap, free=1 /
 // hobby=2 / pro=5 / scale=20) — this is per-VM. Surfaced on GET
 // /v1/apps/{slug} as concurrency_per_vm so dashboards + CLI can
@@ -1076,7 +1077,7 @@ func TestPlanConcurrencyPerVMBound(t *testing.T) {
 		plan Plan
 		want int
 	}{
-		{PlanFree, 1},
+		{PlanFree, 4},
 		{PlanHobby, 5},
 		{PlanPro, 25},
 		{PlanScale, 80},
@@ -1129,9 +1130,9 @@ func TestPlanScaleUpTargetRPSAllowed(t *testing.T) {
 
 // TestPlanEgressAllowlistAllowed pins the per-plan gate that apid's
 // updateApp handler uses for the per-app egress allowlist (ADR-031).
-// Free/Hobby → false (no allowlist — abuse-desk hygiene is a Pro+
-// concern; the default scale-to-zero tenant never sees this surface);
-// Pro/Scale → true. Unknown plans must default to false (fail-closed
+// Free → false; Hobby/Pro/Scale → true. Hobby receives the small
+// eight-entry cap used for explicit SMTP destinations. Unknown plans
+// must default to false (fail-closed
 // — same contract as MinInstancesAllowed above).
 func TestPlanEgressAllowlistAllowed(t *testing.T) {
 	cases := []struct {
@@ -1139,7 +1140,7 @@ func TestPlanEgressAllowlistAllowed(t *testing.T) {
 		want bool
 	}{
 		{PlanFree, false},
-		{PlanHobby, false},
+		{PlanHobby, true},
 		{PlanPro, true},
 		{PlanScale, true},
 		{Plan("unknown"), false},
@@ -1152,16 +1153,15 @@ func TestPlanEgressAllowlistAllowed(t *testing.T) {
 }
 
 // TestPlanLogArchiveEnabled pins the per-plan gate for the
-// log archive + read-back surface (issue #562). Free → false
-// (the abuse-floor tier doesn't get the S3 archive); Hobby,
-// Pro, Scale → true. Unknown plans default to false
+// log archive + read-back surface (issue #562). Free → true
+// (one-day demo window); Hobby, Pro, Scale → true. Unknown plans default to false
 // (fail-closed, same contract as the other plan gates).
 func TestPlanLogArchiveEnabled(t *testing.T) {
 	cases := []struct {
 		plan Plan
 		want bool
 	}{
-		{PlanFree, false},
+		{PlanFree, true},
 		{PlanHobby, true},
 		{PlanPro, true},
 		{PlanScale, true},
@@ -1175,16 +1175,16 @@ func TestPlanLogArchiveEnabled(t *testing.T) {
 }
 
 // TestPlanLogArchiveRetentionDaysMax pins the per-plan
-// retention ceiling (issue #562). 0 for Free (no archive);
-// 7 / 30 / 90 for Hobby / Pro / Scale (the "last week /
-// this month / this quarter" customer expectations per tier).
+// retention ceiling (issue #562). 1 / 7 / 30 / 90 for Free /
+// Hobby / Pro / Scale (the "demo / last week / this month /
+// this quarter" customer expectations per tier).
 // Unknown plans default to 0 (fail-closed).
 func TestPlanLogArchiveRetentionDaysMax(t *testing.T) {
 	cases := []struct {
 		plan Plan
 		want int
 	}{
-		{PlanFree, 0},
+		{PlanFree, 1},
 		{PlanHobby, 7},
 		{PlanPro, 30},
 		{PlanScale, 90},
@@ -1198,15 +1198,15 @@ func TestPlanLogArchiveRetentionDaysMax(t *testing.T) {
 }
 
 // TestPlanEgressAllowlistMaxSize pins the per-plan CIDR cap (ADR-031).
-// Free/Hobby → 0 (no allowlist slot, the gate above rejects the
-// PATCH before this matters); Pro → 16; Scale → 64.
+// Free → 0; Hobby → 8 (the narrow SMTP destination budget); Pro → 16;
+// Scale → 64.
 func TestPlanEgressAllowlistMaxSize(t *testing.T) {
 	cases := []struct {
 		plan Plan
 		want int
 	}{
 		{PlanFree, 0},
-		{PlanHobby, 0},
+		{PlanHobby, 8},
 		{PlanPro, 16},
 		{PlanScale, 64},
 	}

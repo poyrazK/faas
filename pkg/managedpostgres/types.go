@@ -85,6 +85,18 @@ const (
 	ProviderStatusFailed   ProviderStatus = "failed"
 )
 
+// ComputeState is the provider-neutral runtime state of the database compute
+// endpoint. It is intentionally separate from ProviderStatus: a database can
+// be Ready while its compute is Suspended and waiting for the next query.
+type ComputeState string
+
+const (
+	ComputeStateUnknown   ComputeState = "unknown"
+	ComputeStateActive    ComputeState = "active"
+	ComputeStateSuspended ComputeState = "suspended"
+	ComputeStateWaking    ComputeState = "waking"
+)
+
 type ProvisionRequest struct {
 	ResourceID     string
 	Spec           Spec
@@ -101,7 +113,24 @@ type UpdateRequest struct {
 type ObservedDatabase struct {
 	ProviderResourceID string
 	Status             ProviderStatus
+	ComputeState       ComputeState
 	Spec               Spec
+}
+
+// ScaleToZeroProbeResult is the non-sensitive evidence produced by an
+// operator qualification run. The probe must observe suspension and then
+// successfully wake the same database compute.
+type ScaleToZeroProbeResult struct {
+	Suspended   bool
+	Resumed     bool
+	WakeLatency time.Duration
+}
+
+func (r ScaleToZeroProbeResult) Validate() error {
+	if !r.Suspended || !r.Resumed || r.WakeLatency < 0 {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 type DeleteRequest struct {
@@ -421,6 +450,15 @@ type Provider interface {
 	IssueCredentials(context.Context, CredentialRequest) (CredentialMaterial, error)
 	RevokeCredentials(context.Context, CredentialRequest) error
 	Usage(context.Context, string, UsageWindow) (Usage, error)
+}
+
+// ScaleToZeroProber is an optional qualification-only capability. Providers
+// that advertise scale-to-zero must implement it so the operator can verify
+// the real suspend/resume behavior instead of trusting configuration alone.
+// It is deliberately not part of the lifecycle Provider interface because it
+// is never used during customer reconciliation.
+type ScaleToZeroProber interface {
+	ProbeScaleToZero(context.Context, string, CredentialMaterial) (ScaleToZeroProbeResult, error)
 }
 
 type Database struct {

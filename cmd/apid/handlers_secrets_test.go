@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -206,32 +207,36 @@ func TestSecrets_CiphertextStoredNotPlaintext(t *testing.T) {
 }
 
 func TestSecrets_QuotaExceeded_Free403(t *testing.T) {
-	// Free plan allows 3 secrets; fill it then verify 403 on the 4th.
+	// Free plan allows 8 secrets; fill it then verify 403 on the 9th.
 	e := setupSecrets(t, api.PlanFree)
 	app := createApp(t, e, "free-quota")
+	freeLimit := api.MustLimitsFor(api.PlanFree).SecretCountMax
 
-	for _, k := range []string{"A", "B", "C"} {
+	for i := 0; i < freeLimit; i++ {
+		k := fmt.Sprintf("KEY_%d", i)
 		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/"+k,
 			api.PutAppSecretRequest{Value: "v"}, nil)
 		if rec.Code != 200 {
 			t.Fatalf("PUT %s: %d %s", k, rec.Code, rec.Body.String())
 		}
 	}
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/D",
+	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/KEY_8",
 		api.PutAppSecretRequest{Value: "v"}, nil)
 	if rec.Code != 403 {
-		t.Fatalf("4th PUT: %d %s, want 403", rec.Code, rec.Body.String())
+		t.Fatalf("9th PUT: %d %s, want 403", rec.Code, rec.Body.String())
 	}
 	assertProblem(t, rec, 403, api.CodePlanLimitSecrets)
 }
 
 func TestSecrets_QuotaCountedDistinctFromReUpsert(t *testing.T) {
 	// Re-PUT of an existing key MUST NOT count against the quota.
-	// Otherwise the quota would block legitimate rotations on Free (3 keys).
+	// Otherwise the quota would block legitimate rotations on Free (8 keys).
 	e := setupSecrets(t, api.PlanFree)
 	app := createApp(t, e, "reupsert")
+	freeLimit := api.MustLimitsFor(api.PlanFree).SecretCountMax
 
-	for _, k := range []string{"A", "B", "C"} {
+	for i := 0; i < freeLimit; i++ {
+		k := fmt.Sprintf("KEY_%d", i)
 		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/"+k,
 			api.PutAppSecretRequest{Value: "v1"}, nil)
 		if rec.Code != 200 {
@@ -239,16 +244,16 @@ func TestSecrets_QuotaCountedDistinctFromReUpsert(t *testing.T) {
 		}
 	}
 	// Re-PUT existing key with new value → still 200.
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/A",
+	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/KEY_0",
 		api.PutAppSecretRequest{Value: "v2"}, nil)
 	if rec.Code != 200 {
-		t.Fatalf("re-PUT A: %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("re-PUT KEY_0: %d %s", rec.Code, rec.Body.String())
 	}
-	// Adding a NEW key on Free (already at cap) → 403.
-	rec = e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/D",
+	// Adding a new key on Free (already at cap) → 403.
+	rec = e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/KEY_8",
 		api.PutAppSecretRequest{Value: "v"}, nil)
 	if rec.Code != 403 {
-		t.Fatalf("PUT D after re-PUT: %d %s, want 403", rec.Code, rec.Body.String())
+		t.Fatalf("PUT new key after re-PUT: %d %s, want 403", rec.Code, rec.Body.String())
 	}
 }
 

@@ -1,15 +1,41 @@
 from typing import Literal
 
 CreateAppWebhookRequestEventFilterItem = Literal[
-    "app.created", "app.deleted", "build.failed", "build.succeeded", "cron.fired"
+    "app.created",
+    "app.deleted",
+    "app.deployed",
+    "app.parked",
+    "app.scaled",
+    "app.woken",
+    "budget.threshold",
+    "build.failed",
+    "build.succeeded",
+    "cron.fired",
+    "cron.fired.manually",
+    "deployment.failed",
+    "error.new",
+    "job.finished",
+    "preview.created",
+    "rollout.aborted",
 ]
 
 CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequestEventFilterItem] = {
     "app.created",
     "app.deleted",
+    "app.deployed",
+    "app.parked",
+    "app.scaled",
+    "app.woken",
+    "budget.threshold",
     "build.failed",
     "build.succeeded",
     "cron.fired",
+    "cron.fired.manually",
+    "deployment.failed",
+    "error.new",
+    "job.finished",
+    "preview.created",
+    "rollout.aborted",
 }
 
 

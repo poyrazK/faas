@@ -73,6 +73,9 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		profile.Framework = string(markers.FrameworkUnknown)
 		profile.Warnings = append(profile.Warnings, Warning{Code: "framework_not_detected", Message: "No supported API framework marker was found; supply an explicit Dockerfile or command."})
 	}
+	if framework != markers.FrameworkUnknown {
+		profile.FrameworkVer = markers.VersionFromFS(fsys, framework)
+	}
 	profile.Warnings = append(profile.Warnings, loopbackWarnings(fsys)...)
 	profile.Inferred = profile.StartCommand != "" && profile.Framework != string(markers.FrameworkUnknown)
 	return profile, nil

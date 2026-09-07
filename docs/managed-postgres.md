@@ -18,6 +18,10 @@ database reservation boundary:
 | Pro | 3 | 50 GiB | 7 days | development, burstable |
 | Scale | 10 | 100 GiB | 7 days | development, burstable, production |
 
+All current plans use provider-managed compute suspension. Always-on database
+compute is not included in the bundled plans, and requests that disable
+scale-to-zero are rejected until a separately priced entitlement exists.
+
 The operator registry can set a lower global database or provider ceiling;
 customer limits never raise it. API keys use `postgres:read` for read/status
 operations and `postgres:manage` for create, restore, delete, and binding
@@ -25,9 +29,31 @@ operations. Binding credentials are delivered through the existing app-secret
 surface after the binding saga reaches `ready`.
 
 Keep `provisioning_enabled` false outside an isolated provider qualification
-environment. The lifecycle service and background discovery both fail closed
-while it is false. Deletion intents are still reconciled, so disabling rollout
-cannot strand known paid resources.
+environment. The lifecycle service and background discovery also require all
+of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
+must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
+`FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` must be a future RFC3339 timestamp,
+and the exact qualified backend ID and fingerprint must be supplied through
+`FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` and
+`FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT`. A single default backend is
+required during this preview. Deletion intents are still reconciled, so
+disabling rollout cannot strand known paid resources.
+
+## Provider qualification
+
+Qualification is a separate operator action and is never started by `apid`.
+Build and run `cmd/managed-postgres-qualify` only against an isolated staging
+organization. Set `FAAS_ENVIRONMENT=staging`,
+`FAAS_MANAGED_POSTGRES_QUALIFY_LIVE=true`,
+`FAAS_MANAGED_POSTGRES_QUALIFY_RESOURCE_ID` to a disposable logical identity,
+and point `FAAS_MANAGED_POSTGRES_CONFIG` at the provider configuration. The
+command provisions one resource, retries the same idempotency key to exercise
+ambiguous-create recovery, inspects it, reads a complete usage window, issues
+and revokes a read/write credential, and deletes the resource. It always
+attempts cleanup after an intermediate failure and emits a JSON report with
+only stable check codes. The report's backend ID and fingerprint are the
+values that may be copied into the staging provisioning gates after an
+operator reviews the run.
 
 The binding catalog, credential saga, and encrypted-secret ownership boundary
 are durable. Reserving a binding claims one `(app, scope, environment key)`
@@ -79,7 +105,15 @@ The initial service-class mapping is:
 Only `single_zone` is advertised. Gregale does not claim a portable
 high-availability promise merely because Neon storage has internal redundancy.
 `scale_to_zero=true` uses a 300-second suspend timeout; false disables compute
-suspension. PostgreSQL majors 14 through 18 are enabled.
+suspension. Customer requests cannot currently select `false`; the adapter
+retains the provider-neutral field for a future always-on entitlement.
+PostgreSQL majors 14 through 18 are enabled.
+
+The mutating qualification run also proves the runtime behavior: it connects
+to the disposable database, closes the connection, waits for Neon to report
+the endpoint as idle, reconnects, records wake latency, and only then allows
+the backend fingerprint to be approved. Configuration inspection alone is not
+sufficient evidence for a scale-to-zero promise.
 
 ## Safety boundary
 

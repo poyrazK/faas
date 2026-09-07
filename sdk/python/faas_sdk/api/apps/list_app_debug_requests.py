@@ -16,6 +16,7 @@ def _get_kwargs(
     *,
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
+    route: None | str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -33,6 +34,13 @@ def _get_kwargs(
     else:
         json_limit = limit
     params["limit"] = json_limit
+
+    json_route: None | str | Unset
+    if isinstance(route, Unset):
+        json_route = UNSET
+    else:
+        json_route = route
+    params["route"] = json_route
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -54,6 +62,11 @@ def _parse_response(
         response_200 = DebugTelemetryListResponse.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -98,11 +111,13 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
+    route: None | str | Unset = UNSET,
 ) -> Response[DebugTelemetryListResponse | Problem]:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
-     Recent request rows for an app — status, latency_ms, route,
-    method, deployment_id, cold_boot, trace_id, received_at.
+     Recent request telemetry rows for an app — status, latency_ms, route,
+    method, deployment_id, cold_boot, trace_id, received_at, and the
+    number of original requests represented by each collapsed row.
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -119,6 +134,7 @@ def sync_detailed(
         slug (str):
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
+        route (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -132,6 +148,7 @@ def sync_detailed(
         slug=slug,
         since=since,
         limit=limit,
+        route=route,
     )
 
     response = client.get_httpx_client().request(
@@ -147,11 +164,13 @@ def sync(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
+    route: None | str | Unset = UNSET,
 ) -> DebugTelemetryListResponse | Problem | None:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
-     Recent request rows for an app — status, latency_ms, route,
-    method, deployment_id, cold_boot, trace_id, received_at.
+     Recent request telemetry rows for an app — status, latency_ms, route,
+    method, deployment_id, cold_boot, trace_id, received_at, and the
+    number of original requests represented by each collapsed row.
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -168,6 +187,7 @@ def sync(
         slug (str):
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
+        route (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,6 +202,7 @@ def sync(
         client=client,
         since=since,
         limit=limit,
+        route=route,
     ).parsed
 
 
@@ -191,11 +212,13 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
+    route: None | str | Unset = UNSET,
 ) -> Response[DebugTelemetryListResponse | Problem]:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
-     Recent request rows for an app — status, latency_ms, route,
-    method, deployment_id, cold_boot, trace_id, received_at.
+     Recent request telemetry rows for an app — status, latency_ms, route,
+    method, deployment_id, cold_boot, trace_id, received_at, and the
+    number of original requests represented by each collapsed row.
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -212,6 +235,7 @@ async def asyncio_detailed(
         slug (str):
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
+        route (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -225,6 +249,7 @@ async def asyncio_detailed(
         slug=slug,
         since=since,
         limit=limit,
+        route=route,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -238,11 +263,13 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
+    route: None | str | Unset = UNSET,
 ) -> DebugTelemetryListResponse | Problem | None:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
-     Recent request rows for an app — status, latency_ms, route,
-    method, deployment_id, cold_boot, trace_id, received_at.
+     Recent request telemetry rows for an app — status, latency_ms, route,
+    method, deployment_id, cold_boot, trace_id, received_at, and the
+    number of original requests represented by each collapsed row.
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -259,6 +286,7 @@ async def asyncio(
         slug (str):
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
+        route (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -274,5 +302,6 @@ async def asyncio(
             client=client,
             since=since,
             limit=limit,
+            route=route,
         )
     ).parsed

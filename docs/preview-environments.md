@@ -89,6 +89,13 @@ reuse the same provider deployment across retries, so GitHub consumers
 see one `queued` → `in_progress` → `success`/`failure` lifecycle rather
 than a new deployment row for every phase.
 
+The Deployment record also carries the provenance already stored on the
+Gregale deployment row: deployer, pull-request number, tag, and optional
+reason. These values are included in the Deployment description and under
+`payload.gregale_*`, while the Check Run and preview comment render the
+deployer, PR, and reason for reviewers without requiring a second Gregale
+API lookup.
+
 ## Operational notes
 
 - **Stuck teardowns.** If a preview sits in `closed` for

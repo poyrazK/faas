@@ -2195,6 +2195,15 @@ func (s *PgStore) AppBySlug(ctx context.Context, slug string) (App, error) {
 	return scanApp(row)
 }
 
+// AppBySlugIncludingDeleted is the restore-side lookup. Customer reads use
+// AppBySlug so tombstones stay hidden; restore must still be able to resolve
+// the original slug and perform the account ownership check in apid.
+func (s *PgStore) AppBySlugIncludingDeleted(ctx context.Context, slug string) (App, error) {
+	row := s.pool.QueryRow(ctx,
+		`select `+appsSelectColumns+` from apps where slug = $1`, slug)
+	return scanApp(row)
+}
+
 // PreviewAppsByParent (ADR-095 / issue #272) returns every preview
 // app whose preview_of_slug = parentSlug, scoped to accountID. The
 // query plan uses the partial index apps_preview_of_slug_idx
@@ -3617,6 +3626,135 @@ func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
 	return err
 }
 
+// ScheduleAppDeletion parks an app in a restorable tombstone. Repeated
+// requests preserve the original deletion timestamp and deadline.
+func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error) {
+	if graceUntil.IsZero() {
+		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
+	}
+	var a App
+	row := s.pool.QueryRow(ctx, `
+		update apps
+		   set status = 'deleted',
+		       deleted_at = coalesce(deleted_at, now()),
+		       delete_grace_until = coalesce(delete_grace_until, $2)
+		 where id = $1
+		 returning `+appsSelectColumns, id, graceUntil.UTC())
+	if err := scanAppInto(&a, row); err != nil {
+		return App{}, mapErr(err)
+	}
+	return a, nil
+}
+
+// RestoreApp reactivates an app only while its customer grace deadline is
+// still in the future. The conditional update makes restore vs. sweep a
+// single race-safe decision; an unsuccessful update is reported as conflict.
+func (s *PgStore) RestoreApp(ctx context.Context, id string) (App, error) {
+	var a App
+	row := s.pool.QueryRow(ctx, `
+		update apps
+		   set status = 'active', deleted_at = null, delete_grace_until = null
+		 where id = $1
+		   and status = 'deleted'
+		   and delete_grace_until > now()
+		 returning `+appsSelectColumns, id)
+	if err := scanAppInto(&a, row); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return App{}, ErrConflict
+		}
+		return App{}, mapErr(err)
+	}
+	return a, nil
+}
+
+// ListDeletedApps returns app tombstones for the app grace sweeper.
+func (s *PgStore) ListDeletedApps(ctx context.Context) ([]App, error) {
+	rows, err := s.pool.Query(ctx,
+		`select `+appsSelectColumns+` from apps where status = 'deleted' order by delete_grace_until nulls last, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanApps(rows)
+}
+
+// DeleteAppPermanently removes an expired app and all state that is not
+// covered by an ON DELETE CASCADE. It deliberately rechecks the deadline in
+// the final DELETE so a concurrent restore cannot be lost.
+func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin app purge: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var activeBuckets int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from object_buckets where app_id = $1 and state <> 'deleted'`, id).Scan(&activeBuckets); err != nil {
+		return fmt.Errorf("state: count app buckets: %w", err)
+	}
+	if activeBuckets != 0 {
+		return ErrConflict
+	}
+	var exists int
+	if err := tx.QueryRow(ctx,
+		`select 1 from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() for update`, id).Scan(&exists); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: lock expired app %s: %w", id, err)
+	}
+	steps := []struct {
+		name string
+		sql  string
+	}{
+		{"object_storage_access_grants", `delete from object_storage_access_grants where bucket_id in (select id from object_buckets where app_id = $1)`},
+		{"object_buckets", `delete from object_buckets where app_id = $1`},
+		{"invocations", `delete from invocations where app_id = $1`},
+		{"crons", `delete from crons where app_id = $1`},
+		{"custom_domains", `delete from custom_domains where app_id = $1 or app_id_redirect = $1`},
+		{"job_tasks", `delete from job_tasks where instance_id in (select id from instances where app_id = $1)`},
+		{"instances", `delete from instances where app_id = $1`},
+		{"app_envs", `delete from app_envs where app_id = $1`},
+		{"app_secrets", `delete from app_secrets where app_id = $1`},
+		{"app_trusted_signers", `delete from app_trusted_signers where app_id = $1`},
+		{"builder_usage", `delete from builder_usage where app_id = $1`},
+		{"usage_minutes", `delete from usage_minutes where app_id = $1`},
+		{"usage_daily", `delete from usage_daily where app_id = $1`},
+		{"snapshot_storage_daily", `delete from snapshot_storage_daily where app_id = $1`},
+		{"request_telemetry", `delete from request_telemetry where app_id = $1`},
+		{"debug_regression_observations", `delete from debug_regression_observations where app_id = $1`},
+		{"mirror_invocation_results", `delete from mirror_invocation_results where app_id = $1`},
+		{"mirror_invocation_summary", `delete from mirror_invocation_summary where app_id = $1`},
+		{"warm_hint", `delete from warm_hint where app_id = $1`},
+		{"deployment_audit", `delete from deployment_audit where deployment_id in (select id from deployments where app_id = $1)`},
+		{"build_provenance", `delete from build_provenance where build_id in (select b.id from builds b join deployments d on d.id = b.deployment_id where d.app_id = $1)`},
+		{"recent_build_claims", `delete from recent_build_claims where build_id in (select b.id from builds b join deployments d on d.id = b.deployment_id where d.app_id = $1)`},
+		{"snapshots", `delete from snapshots where deployment_id in (select id from deployments where app_id = $1)`},
+		{"builds", `delete from builds where deployment_id in (select id from deployments where app_id = $1)`},
+		{"deployments", `delete from deployments where app_id = $1`},
+	}
+	for _, step := range steps {
+		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
+			return fmt.Errorf("state: purge %s for app %s: %w", step.name, id, err)
+		}
+	}
+	// Most app-owned tables use ON DELETE CASCADE (alerts, mirrors,
+	// webhooks, edge rules, tenant surfaces, and their deliveries).
+	// The parent delete therefore removes those rows atomically as well.
+	tag, err := tx.Exec(ctx,
+		`delete from apps where id = $1 and status = 'deleted' and delete_grace_until <= now()`, id)
+	if err != nil {
+		return fmt.Errorf("state: purge app %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit app purge %s: %w", id, err)
+	}
+	return nil
+}
+
 // SoftDeleteAppCascade marks the app deleted (status='deleted') and
 // returns the freshly-deleted App row. Per Phase 5 user decision the
 // cascade is status-only — child rows survive for slug-reuse (an app
@@ -4730,10 +4868,10 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          scope,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number, workflows,
-		                          full_rootfs_allow_auto, full_rootfs_override)
+		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
-		         $29, $30, $31, nullif($32, 0), $33, $34, $35)
+		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -4773,7 +4911,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		// deployments_pr_number_positive_chk CHECK (which rejects 0).
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
-		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID)
+		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile))
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -6915,7 +7053,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number,
 		                          priority,
-		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override)
+		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -6924,7 +7062,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43)
+		         $40, $41, $42, $43, $44)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -6951,7 +7089,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		newDep.DeployedByUserID, newDep.DeployedVia, newDep.DeployedFromIP, newDep.PusherLogin,
 		nullString(newDep.Reason), nullString(newDep.Tag), nullString(newDep.DeployedBy), newDep.PRNumber,
 		newDep.Priority,
-		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride)
+		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile))
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -12230,9 +12368,9 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 }
 
 // ListSnapshotsForGC returns every non-stale snapshot joined with its
-// deployment + app + account, ordered newest-first. Deleted apps and terminal
-// deployments remain in the result because imaged needs the join metadata to
-// remove their on-disk files before deleting the rows.
+// deployment + app + account, ordered newest-first. Snapshots made stale by a
+// deleted app or an unusable terminal deployment remain in the result because
+// imaged needs the join metadata to remove their on-disk files immediately.
 //
 // The JOIN is bounded by snapshotDashboardCap (10k) for the same reason
 // ListLiveSnapshotStats is: the GC algorithm is O(N) per tick and a 10k
@@ -12262,6 +12400,8 @@ func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, erro
 		   join deployments d on d.id = s.deployment_id
 		   join apps a       on a.id = d.app_id
 		  where s.stale = false
+		     or a.status = 'deleted'
+		     or d.status in ('failed', 'cancelled')
 		  order by s.created_at desc
 		  limit 10000`)
 	if err != nil {
@@ -17197,7 +17337,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// targets are populated by the Set*/CASE branch on the
 		// write side.
 		&a.StaticEgressIP, &a.StaticEgressIPSetAt,
-		&a.CPUMillicores); err != nil {
+		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil); err != nil {
 		return mapErr(err)
 	}
 	if overflowNodeStr != "" {
@@ -17359,7 +17499,8 @@ const appsSelectColumns = `
 	-- same shape as ReassignedAt / MigratedAt above).
 	static_egress_ip, static_egress_ip_set_at,
 	-- Configured sustained CPU quota. Appended to keep the positional scan stable.
-	cpu_millicores`
+	cpu_millicores,
+	deleted_at, delete_grace_until`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`
@@ -17452,7 +17593,8 @@ const deploymentSelectColumnsWithRootfs = `
 	deleted_at, coalesce(deleted_by_principal, ''),
 	coalesce(workflows, '[]'::jsonb),
 	coalesce(full_rootfs_allow_auto, false), full_rootfs_override,
-	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb)`
+	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
+	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb)`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -17505,7 +17647,8 @@ const deploymentSelectColumnsQualified = `
 	d.deleted_at, coalesce(d.deleted_by_principal, ''),
 	coalesce(d.workflows, '[]'::jsonb),
 	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override,
-	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb)`
+	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
+	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb)`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -17616,6 +17759,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.DeletedAt, &d.DeletedByPrincipal, &d.Workflows,
 		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
 		&d.APIHostingReceipt,
+		&d.InferredProfile,
 	); err != nil {
 		return mapErr(err)
 	}
@@ -21592,6 +21736,12 @@ func (s *PgStore) RequestTelemetryAnalyticsSummary(ctx context.Context, arg sqlc
 	return s.appErrorsQueries().RequestTelemetryAnalyticsSummary(ctx, s.pool, arg)
 }
 
+// RequestTelemetryAnalyticsByDimension backs the bounded top-N customer
+// analytics grouping surface.
+func (s *PgStore) RequestTelemetryAnalyticsByDimension(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+	return s.appErrorsQueries().RequestTelemetryAnalyticsByDimension(ctx, s.pool, arg)
+}
+
 // RequestTelemetryAnalyticsByRoute backs the bounded top-route portion of
 // the customer-facing request analytics response.
 func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
@@ -21602,6 +21752,12 @@ func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc
 // analytics chart. The SQL query weights collapsed telemetry rows by count.
 func (s *PgStore) RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
 	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseries(ctx, s.pool, arg)
+}
+
+// RequestTelemetryAnalyticsTimeseriesGrouped backs zero-filled hourly series
+// for a bounded top-N analytics dimension.
+func (s *PgStore) RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
+	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseriesGrouped(ctx, s.pool, arg)
 }
 
 // --- ADR-127 PR-B — regression observation persistence + dashboard reads ---

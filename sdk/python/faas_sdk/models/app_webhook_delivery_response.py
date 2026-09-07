@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_webhook_delivery_response_event import (
+    AppWebhookDeliveryResponseEvent,
+    check_app_webhook_delivery_response_event,
+)
 from ..models.app_webhook_delivery_response_status import (
     AppWebhookDeliveryResponseStatus,
     check_app_webhook_delivery_response_status,
@@ -41,7 +45,7 @@ class AppWebhookDeliveryResponse:
     webhook_id: str
     app_id: str
     account_id: UUID
-    event: str
+    event: AppWebhookDeliveryResponseEvent
     attempt: int
     status: AppWebhookDeliveryResponseStatus
     next_attempt_at: datetime.datetime
@@ -63,7 +67,7 @@ class AppWebhookDeliveryResponse:
 
         account_id = str(self.account_id)
 
-        event = self.event
+        event: str = self.event
 
         attempt = self.attempt
 
@@ -127,7 +131,7 @@ class AppWebhookDeliveryResponse:
 
         account_id = UUID(d.pop("account_id"))
 
-        event = d.pop("event")
+        event = check_app_webhook_delivery_response_event(d.pop("event"))
 
         attempt = d.pop("attempt")
 

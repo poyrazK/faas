@@ -110,7 +110,7 @@ type egressPolicyAuditRow struct {
 }
 
 // renderStagingFunc is the seam that converts the host policy into
-// a ruleset body. Production uses netns.DefaultHostPolicy.Render().
+// a ruleset body. Production reads netns.ActiveHostPolicyForRender().Render().
 // Tests inject a stub that returns a known body so the staging-file
 // + atomic-replace path can be exercised without invoking the real
 // renderer.
@@ -139,6 +139,18 @@ type egressWatcher struct {
 	stagingDir string
 	livePath   string
 }
+
+// Render satisfies fcvm.HostRenderer. Manager cache mutations (including a
+// live Hobby SMTP allowlist PATCH) reuse the same staged validation and atomic
+// replacement pipeline as pg_notify-driven reloads.
+func (w *egressWatcher) Render(ctx context.Context) error {
+	return w.Reload(ctx)
+}
+
+// SetStaticEgressRules is retained for the fcvm.HostRenderer seam. The active
+// policy is swapped atomically by the Manager; the watcher reads that policy
+// at Render time, so no duplicate mutable slice is needed here.
+func (w *egressWatcher) SetStaticEgressRules(_ []netns.StaticEgressRule) {}
 
 // newEgressWatcher wires the production watcher. stagingDir is the
 // daemon's process-local temp directory; livePath is the canonical
