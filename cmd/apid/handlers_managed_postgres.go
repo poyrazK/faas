@@ -67,6 +67,9 @@ func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest
 	if req.ScaleToZero != nil {
 		scaleToZero = *req.ScaleToZero
 	}
+	if !scaleToZero && !limits.AlwaysOnAllowed {
+		return managedpostgres.Spec{}, managedpostgres.ErrQuotaExceeded
+	}
 	storage := req.StorageLimitBytes
 	if storage == 0 {
 		storage = limits.StorageLimitBytes
@@ -199,7 +202,7 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, err)
 		return
 	}
-	if !managedPostgresPlanAllows(limits, source.Spec) || source.Spec.StorageLimitBytes > limits.StorageLimitBytes || source.Spec.RestoreWindowSeconds > limits.RestoreWindowSeconds {
+	if !managedPostgresPlanAllows(limits, source.Spec) || (!source.Spec.ScaleToZero && !limits.AlwaysOnAllowed) || source.Spec.StorageLimitBytes > limits.StorageLimitBytes || source.Spec.RestoreWindowSeconds > limits.RestoreWindowSeconds {
 		managedPostgresPlanDenied(w, acct.Plan, "the source database exceeds the current plan allowance")
 		return
 	}

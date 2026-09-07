@@ -10,6 +10,10 @@ type ManagedPostgresPlanLimits struct {
 	DevelopmentAllowed   bool
 	BurstableAllowed     bool
 	ProductionAllowed    bool
+	// AlwaysOnAllowed is deliberately disabled for the current bundled plans.
+	// Keeping this as an entitlement makes the future always-on tier explicit
+	// instead of allowing a customer request to bypass the COGS guardrail.
+	AlwaysOnAllowed bool
 }
 
 const managedPostgresGiB int64 = 1 << 30
