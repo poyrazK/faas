@@ -6420,3 +6420,53 @@ type DeploymentScopeExclusion struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// AppLogDrainKind names the provider-neutral customer log encodings.
+type AppLogDrainKind string
+
+const (
+	AppLogDrainKindHTTPJSON AppLogDrainKind = "http_json"
+	AppLogDrainKindOTLP     AppLogDrainKind = "otlp"
+)
+
+// AppLogDrain is one customer-owned runtime log destination. AuthHeaderSealed
+// is age/X25519 ciphertext and is never returned by the API.
+type AppLogDrain struct {
+	ID               string
+	AppID            string
+	AccountID        string
+	Kind             AppLogDrainKind
+	TargetURL        string
+	AuthHeaderSealed []byte
+	Enabled          bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// UpdateAppLogDrainParams carries the optional fields of UpdateAppLogDrain.
+// A nil pointer means the existing value remains unchanged.
+type UpdateAppLogDrainParams struct {
+	Kind             *AppLogDrainKind
+	TargetURL        *string
+	AuthHeaderSealed *[]byte
+	Enabled          *bool
+}
+
+// AppLogDrainQuotaError is returned when either the per-app or per-account
+// drain cap is reached.
+type AppLogDrainQuotaError struct {
+	Scope    AppLogDrainQuotaScope
+	Limit    int
+	Observed int
+}
+
+type AppLogDrainQuotaScope string
+
+const (
+	AppLogDrainQuotaScopeApp     AppLogDrainQuotaScope = "app"
+	AppLogDrainQuotaScopeAccount AppLogDrainQuotaScope = "account"
+)
+
+func (e *AppLogDrainQuotaError) Error() string {
+	return fmt.Sprintf("state: app log drain quota exceeded (scope=%s, limit=%d, observed=%d)", e.Scope, e.Limit, e.Observed)
+}

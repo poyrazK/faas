@@ -3900,6 +3900,32 @@ func (c *Client) RetryAppWebhookDelivery(ctx context.Context, slug, id, delivery
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
 }
 
+// --- Customer runtime log drains (issue #1398 O4) -------------------------
+
+func (c *Client) ListAppLogDrains(ctx context.Context, slug string) ([]AppLogDrainResponse, error) {
+	var out []AppLogDrainResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains", nil, &out)
+}
+
+func (c *Client) CreateAppLogDrain(ctx context.Context, slug string, req CreateAppLogDrainRequest) (AppLogDrainResponse, error) {
+	var out AppLogDrainResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/log-drains", req, &out)
+}
+
+func (c *Client) GetAppLogDrain(ctx context.Context, slug, id string) (AppLogDrainResponse, error) {
+	var out AppLogDrainResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains/"+id, nil, &out)
+}
+
+func (c *Client) UpdateAppLogDrain(ctx context.Context, slug, id string, req UpdateAppLogDrainRequest) (AppLogDrainResponse, error) {
+	var out AppLogDrainResponse
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/log-drains/"+id, req, &out)
+}
+
+func (c *Client) DeleteAppLogDrain(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/log-drains/"+id, nil, nil)
+}
+
 // --- /v1/account/dpa (spec §17 G6) ----------------------------------------
 //
 // DPA = Data Processing Addendum. Public, no-auth endpoint that

@@ -9207,6 +9207,111 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # ─── Customer runtime log drains (issue #1398 O4) ─────────────────────────
+  /v1/apps/{slug}/log-drains:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: listAppLogDrains
+      summary: List runtime log destinations for this app.
+      responses:
+        '200':
+          description: The configured log destinations. Authentication headers are always masked.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AppLogDrainResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [observability]
+      operationId: createAppLogDrain
+      summary: Export runtime logs to an external HTTP or OTLP endpoint.
+      description: |
+        The platform tails the existing per-instance runtime log ring and
+        forwards each line through a bounded queue. `http_json` sends a
+        provider-neutral JSON record; `otlp` sends an OTLP/HTTP JSON logs
+        envelope suitable for a collector or vendor OTLP endpoint. The URL
+        is SSRF-checked, and auth_header is sealed at rest and never echoed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppLogDrainRequest' }
+            example:
+              kind: otlp
+              target_url: "https://otel-collector.example.com/v1/logs"
+              auth_header: "Authorization: Bearer <token>"
+              enabled: true
+      responses:
+        '201':
+          description: Log drain created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppLogDrainResponse' }
+        '400': { $ref: '#/components/responses/AppLogDrainInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '403': { $ref: '#/components/responses/PlanLogDrainQuota' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AppLogDrainInvalid' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/log-drains/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [observability]
+      operationId: getAppLogDrain
+      summary: Fetch one runtime log destination.
+      responses:
+        '200':
+          description: The log destination. Authentication headers are masked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppLogDrainResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [observability]
+      operationId: updateAppLogDrain
+      summary: Update a runtime log destination.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAppLogDrainRequest' }
+            example: { enabled: false }
+      responses:
+        '200':
+          description: The updated log destination.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppLogDrainResponse' }
+        '400': { $ref: '#/components/responses/AppLogDrainInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AppLogDrainInvalid' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [observability]
+      operationId: deleteAppLogDrain
+      summary: Delete a runtime log destination.
+      responses:
+        '204': { description: No body. The log drain was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Event-driven surface (Move 2) ─────────────────────────────────────────
   # Customer-facing surface for the Move 1 invocations backend. The five
   # shapes — async_invoke, queue_send, queue_receive, queue_ack, delayed_task
@@ -23045,6 +23150,40 @@ components:
         created_at: "2026-08-06T10:00:00Z"
         updated_at: "2026-08-06T10:00:00Z"
 
+    AppLogDrainResponse:
+      type: object
+      description: Runtime log destination with sealed credentials represented by a mask.
+      required: [id, app_id, account_id, kind, target_url, auth_header_masked, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        account_id: { type: string, format: uuid }
+        kind: { type: string, enum: [http_json, otlp] }
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        auth_header_masked: { type: string, enum: ["", "***"] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateAppLogDrainRequest:
+      type: object
+      description: Create a provider-neutral runtime log destination.
+      required: [kind, target_url]
+      properties:
+        kind: { type: string, enum: [http_json, otlp] }
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        auth_header: { type: string, maxLength: 4096, description: "One Name: value pair; sealed at rest and never returned." }
+        enabled: { type: boolean, default: true }
+
+    UpdateAppLogDrainRequest:
+      type: object
+      description: Partially update a runtime log destination; omitted fields remain unchanged.
+      properties:
+        kind: { type: string, enum: [http_json, otlp] }
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        auth_header: { type: string, maxLength: 4096, description: "One Name: value pair; an empty value clears credentials." }
+        enabled: { type: boolean }
+
     CreateAppWebhookRequest:
       type: object
       description: |
@@ -23726,6 +23865,24 @@ components:
 
     PlanWebhookQuota:
       description: 'code: plan_webhook_quota — per-app or per-account webhook limit reached.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    AppLogDrainInvalid:
+      description: 'code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanLogDrainsNotAllowed:
+      description: 'code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanLogDrainQuota:
+      description: 'code: plan_log_drain_quota — per-app or per-account runtime log destination limit reached.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

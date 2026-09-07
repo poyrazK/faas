@@ -1578,7 +1578,7 @@ func StatusForCode(code string) int {
 	case CodeSourceTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
-		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeHandlerMissing, CodeImageRequired,
+		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist:
 		return http.StatusBadRequest
@@ -1875,6 +1875,10 @@ func StatusForCode(code string) int {
 	case CodePlanWebhooksNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanWebhookQuota:
+		return http.StatusForbidden
+	case CodePlanLogDrainsNotAllowed:
+		return http.StatusPaymentRequired
+	case CodePlanLogDrainQuota:
 		return http.StatusForbidden
 	// Issue #462 / ADR-058 — scaling policy gate. PR-A History
 	// (2026-07-31): Hobby+ tier-up for max_instances. 403 mirrors
@@ -2808,6 +2812,14 @@ const CodePlanWebhooksNotAllowed = "plan_webhooks_not_allowed"
 // can branch on upsell-vs-delete copy without parsing the body.
 const CodePlanWebhookQuota = "plan_webhook_quota"
 
+// CodePlanLogDrainsNotAllowed is the 402 returned when the plan does not
+// include customer-configurable runtime log destinations.
+const CodePlanLogDrainsNotAllowed = "plan_log_drains_not_allowed"
+
+// CodePlanLogDrainQuota is the 403 returned when an unlocked plan reaches a
+// per-app or per-account destination cap.
+const CodePlanLogDrainQuota = "plan_log_drain_quota"
+
 // CodePlanTriggersNotAllowed is the 402 the customer sees when
 // the plan doesn't unlock the unified Trigger primitive at all
 // (Free today, issue #757 / ADR-0NN). Mirrors CodePlanCronsNotAllowed
@@ -2939,6 +2951,10 @@ func ErrPlanAppErrorsNotAllowed(p Plan) *Problem {
 // malformed webhook body — missing target_url, invalid retry_policy,
 // out-of-vocabulary event, oversize webhook_secret, etc.
 const CodeAppWebhookInvalid = "app_webhook_invalid"
+
+// CodeAppLogDrainInvalid is the 400 returned for an invalid drain kind, URL,
+// or authentication header.
+const CodeAppLogDrainInvalid = "app_log_drain_invalid"
 
 // Edge rules (ADR-089). Each code maps to one wire-level failure
 // mode so the CLI can surface a stable, machine-readable error.
@@ -3503,6 +3519,28 @@ func ErrTriggerTLSSkipVerifyNotAllowed(plan Plan) *Problem {
 func ErrAppWebhookInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAppWebhookInvalid,
 		"Invalid webhook", reason)
+}
+
+func ErrPlanLogDrainsNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanLogDrainsNotAllowed,
+		"Log drains unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include customer log drains; upgrade to Hobby or above to export runtime logs.", p)).
+		WithDocs(docsBase + "/plans#observability")
+}
+
+func ErrPlanLogDrainQuota(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodePlanLogDrainQuota,
+		"Log drain limit reached",
+		fmt.Sprintf("%s plan caps log drains at %d for %s; you have %d. Delete one to add another.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#observability")
+}
+
+func ErrAppLogDrainInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeAppLogDrainInvalid,
+		"Invalid log drain", reason)
 }
 
 // ErrTenantSurfacesNotAllowed is returned by apid's createTenantSurface
