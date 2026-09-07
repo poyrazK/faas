@@ -451,7 +451,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/buckets/{bucket}":                                                  "DeleteObjectBucket",
 	"GET /v1/apps/{slug}/buckets/{bucket}/s3-credentials":                                      "ListObjectS3Credentials",
 	"POST /v1/apps/{slug}/buckets/{bucket}/s3-credentials":                                     "CreateObjectS3Credential",
-	"DELETE /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}":                       "RevokeObjectS3Credential",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}":                      "RevokeObjectS3Credential",
 	"GET /v1/apps/{slug}/buckets/{bucket}/access-grants":                                       "ListObjectBucketAccessGrants",
 	"PUT /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}":                                 "SetObjectBucketAccessGrant",
 	"DELETE /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}":                              "DeleteObjectBucketAccessGrant",
