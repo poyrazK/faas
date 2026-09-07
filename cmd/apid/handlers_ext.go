@@ -1327,8 +1327,9 @@ func resolveUpdateResourceProfile(req *api.UpdateAppRequest) *api.Problem {
 	return nil
 }
 
-// deleteApp marks the app as deleted (soft delete; PG snapshot GC runs on the
-// next successful deploy per spec §9).
+// deleteApp parks an app in the seven-day restore window. Child rows and the
+// last live deployment remain intact until pkg/grace hard-deletes the expired
+// tombstone.
 func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -1367,7 +1368,9 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 				"inv", inv.ID, "app", app.ID, "err", err)
 		}
 	}
-	if err := s.store.DeleteApp(r.Context(), app.ID); err != nil {
+	graceUntil := time.Now().UTC().Add(state.AppDeleteGraceDuration())
+	parked, err := s.store.ScheduleAppDeletion(r.Context(), app.ID, graceUntil)
+	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
 		return
 	}
@@ -1382,13 +1385,43 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// `account.deletion_scheduled` / `account.deletion_restored`
 	// for account-level churn; this is the per-app counterpart
 	// (spec §9: row goes to AppDeleted, snapshot GC follows on
-	// the next successful deploy). data carries the slug so the
+	// the grace sweeper). data carries the slug so the
 	// audit row is searchable even after the row soft-deletes.
 	s.audit.Emit(r.Context(), "app.deleted", &acct.ID, map[string]any{
-		"app_id": app.ID,
-		"slug":   app.Slug,
+		"app_id":             parked.ID,
+		"slug":               parked.Slug,
+		"delete_grace_until": parked.DeleteGraceUntil,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// restoreApp reactivates a deleted app while its seven-day grace window is
+// open. The tombstone lookup is deliberately separate from loadApp so normal
+// customer reads continue to hide deleted slugs.
+func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, err := s.store.AppBySlugIncludingDeleted(r.Context(), r.PathValue("slug"))
+	if err != nil || app.AccountID != acct.ID {
+		s.notFound(w, "no such app")
+		return
+	}
+	restored, err := s.store.RestoreApp(r.Context(), app.ID)
+	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
+				api.CodeAppNotRestorable, "App not restorable",
+				"the seven-day app deletion grace window has lapsed"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not restore app"))
+		return
+	}
+	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
+		fmt.Sprintf(`{"app_id":"%s","kind":"restored"}`, restored.ID))
+	s.audit.Emit(r.Context(), "app.restored", &acct.ID, map[string]any{
+		"app_id": restored.ID,
+		"slug":   restored.Slug,
+	})
+	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), s.appResponse(restored, acct.Plan), restored))
 }
 
 // --- deployments -----------------------------------------------------------

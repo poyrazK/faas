@@ -247,6 +247,8 @@ type App struct {
 	StaticEgressIpSetAt       pgtype.Timestamptz
 	PreviewDestroyCommentedAt pgtype.Timestamptz
 	AppProtocol               string
+	DeletedAt                 pgtype.Timestamptz
+	DeleteGraceUntil          pgtype.Timestamptz
 }
 
 type AppEnv struct {

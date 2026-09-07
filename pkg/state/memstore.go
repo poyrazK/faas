@@ -2662,6 +2662,17 @@ func (m *MemStore) AppBySlug(_ context.Context, slug string) (App, error) {
 	return App{}, ErrNotFound
 }
 
+func (m *MemStore) AppBySlugIncludingDeleted(_ context.Context, slug string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, a := range m.apps {
+		if a.Slug == slug {
+			return a, nil
+		}
+	}
+	return App{}, ErrNotFound
+}
+
 // PreviewAppsByParent (ADR-095 / issue #272) is the MemStore mirror
 // of PgStore.PreviewAppsByParent. Walks the in-memory map under the
 // same lock as CreateApp / AppByID / ListApps. Returns an empty slice
@@ -4121,6 +4132,172 @@ func (m *MemStore) DeleteApp(ctx context.Context, id string) error {
 	// Legacy thin wrapper retained for the apid deleteApp handler.
 	_, err := m.SoftDeleteAppCascade(ctx, id)
 	return err
+}
+
+// ScheduleAppDeletion stamps a restorable tombstone. Repeated calls preserve
+// the first deadline, matching the PostgreSQL COALESCE update.
+func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil time.Time) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok {
+		return App{}, ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return App{}, ErrConflict
+		}
+	}
+	if graceUntil.IsZero() {
+		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
+	}
+	now := time.Now().UTC()
+	if a.DeletedAt == nil {
+		a.DeletedAt = &now
+	}
+	if a.DeleteGraceUntil == nil {
+		deadline := graceUntil.UTC()
+		a.DeleteGraceUntil = &deadline
+	}
+	a.Status = AppDeleted
+	m.apps[id] = a
+	// Retire replica placements immediately while preserving snapshot rows for
+	// GC and a possible restore during the grace window.
+	for i := range m.snapshots {
+		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
+		if ok && deployment.AppID == id {
+			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
+		}
+	}
+	return a, nil
+}
+
+func (m *MemStore) RestoreApp(_ context.Context, id string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok {
+		return App{}, ErrNotFound
+	}
+	if a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) {
+		return App{}, ErrConflict
+	}
+	a.Status = AppActive
+	a.DeletedAt = nil
+	a.DeleteGraceUntil = nil
+	m.apps[id] = a
+	return a, nil
+}
+
+func (m *MemStore) ListDeletedApps(_ context.Context) ([]App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]App, 0)
+	for _, a := range m.apps {
+		if a.Status == AppDeleted {
+			out = append(out, a)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DeleteGraceUntil == nil {
+			return false
+		}
+		if out[j].DeleteGraceUntil == nil {
+			return true
+		}
+		return out[i].DeleteGraceUntil.Before(*out[j].DeleteGraceUntil)
+	})
+	return out, nil
+}
+
+func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok || a.Status != AppDeleted || a.DeleteGraceUntil == nil || a.DeleteGraceUntil.After(time.Now()) {
+		if ok && a.Status == AppDeleted {
+			return ErrNotFound
+		}
+		return ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return ErrConflict
+		}
+	}
+	for key, v := range m.envs {
+		if v.AppID == id {
+			delete(m.envs, key)
+		}
+	}
+	for key, v := range m.secrets {
+		if v.AppID == id {
+			delete(m.secrets, key)
+		}
+	}
+	for key, v := range m.registryCreds {
+		if v.AppID == id {
+			delete(m.registryCreds, key)
+		}
+	}
+	for key, v := range m.trustedSigners {
+		if v.AppID == id {
+			delete(m.trustedSigners, key)
+		}
+	}
+	for key, v := range m.invocations {
+		if v.AppID == id {
+			delete(m.invocations, key)
+		}
+	}
+	for key, v := range m.crons {
+		if v.AppID == id {
+			delete(m.crons, key)
+		}
+	}
+	for key, v := range m.domains {
+		if v.AppID == id {
+			delete(m.domains, key)
+		}
+	}
+	for key, v := range m.instances {
+		if v.AppID == id {
+			delete(m.instances, key)
+		}
+	}
+	depIDs := make(map[string]struct{})
+	for key, d := range m.deployments {
+		if d.AppID == id {
+			depIDs[key] = struct{}{}
+			delete(m.deployments, key)
+		}
+	}
+	for key, b := range m.builds {
+		if _, ok := depIDs[b.DeploymentID]; ok {
+			delete(m.builds, key)
+		}
+	}
+	filtered := m.snapshots[:0]
+	for _, snap := range m.snapshots {
+		if _, ok := depIDs[snap.DeploymentID]; !ok {
+			filtered = append(filtered, snap)
+		}
+	}
+	m.snapshots = filtered
+	for key, v := range m.objectBuckets {
+		if v.AppID == id {
+			delete(m.objectBuckets, key)
+		}
+	}
+	filteredUsage := m.usage[:0]
+	for _, v := range m.usage {
+		if v.AppID != id {
+			filteredUsage = append(filteredUsage, v)
+		}
+	}
+	m.usage = filteredUsage
+	delete(m.apps, id)
+	return nil
 }
 
 // SoftDeleteAppCascade marks the app deleted (status=AppDeleted) and
@@ -13966,6 +14143,13 @@ func (m *MemStore) CountAppTrustedSigners(_ context.Context, accountID, appID st
 // customer has to restore their account. MemStore and PgStore share
 // the constant so handler tests don't drift from production behavior.
 func DeletionGraceDuration() time.Duration { return 30 * 24 * time.Hour }
+
+// AppDeleteGraceDuration is the customer-visible restore window for app
+// tombstones. Keep the duration in state so apid, pkg/grace, and both store
+// implementations share the same policy source.
+func AppDeleteGraceDuration() time.Duration {
+	return time.Duration(api.AppDeleteGraceDays) * 24 * time.Hour
+}
 
 // DeleteAccount walks the FK graph in dependency order under a single
 // m.mu lock. The dependency order matches the PgStore tx so a redelivered

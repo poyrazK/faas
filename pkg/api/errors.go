@@ -1278,6 +1278,7 @@ const (
 	CodeAccountDeletionConfirm = "account_deletion_confirm_required"
 	CodeAccountDeletionPending = "account_deletion_pending"
 	CodeAccountNotRestorable   = "account_not_restorable"
+	CodeAppNotRestorable       = "app_not_restorable"
 
 	// App rename (issue #63). One code covers both "slug taken by
 	// another live app" and "DB unique violation"; the Detail field

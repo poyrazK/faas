@@ -600,7 +600,12 @@ type AppResponse struct {
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
 	Status       string `json:"status"`
-	URL          string `json:"url"`
+	// DeletedAt and DeleteGraceUntil are populated for a soft-deleted
+	// app so clients can show the restore deadline. They are omitted
+	// for live apps.
+	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
+	DeleteGraceUntil *time.Time `json:"delete_grace_until,omitempty"`
+	URL              string     `json:"url"`
 	// Manifest is the runner-scaffold payload (env, healthz path,
 	// entrypoint). Surfaced so the dashboard's app detail page can
 	// show the function handler + env without a separate round-trip.

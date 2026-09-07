@@ -1196,6 +1196,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/slo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getAccountSLO))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateApp))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteApp))))
+	mux.HandleFunc("POST /v1/apps/{slug}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreApp))))
 	// Mega-C PR-1 / issue #961 leaf 3: one-click preview destroy
 	// from a PR comment. Distinct URL from DELETE /v1/apps/{slug}
 	// so production apps do not collide with the preview-specific
