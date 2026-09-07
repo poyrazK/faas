@@ -5360,7 +5360,8 @@ haveApp:
 	// admitted in the background once a healthy target exists; the forwarding
 	// concurrency gate bounds work on that target while siblings become ready.
 	//nolint:contextcheck // request ctx at handler boundary.
-	waitedForBurst, burstErr := h.maybeBurstCapacity(r.Context(), app, limits.MaxConcurrency, limits.ConcurrencyPerVMBound)
+	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
+	waitedForBurst, burstErr := h.maybeBurstCapacity(r.Context(), app, limits.MaxConcurrency, perVMConcurrency)
 	if burstErr != nil {
 		// A burst that cannot become routable within the request budget is
 		// a controlled timeout, not an upstream 502. Client disconnects
@@ -5419,9 +5420,9 @@ haveApp:
 	// the request waits on the selected VM until its own budget expires.
 	var vmRelease func()
 	var vmWaited bool
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(r.Context(), app, pick, limits.ConcurrencyPerVMBound)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(r.Context(), app, pick, perVMConcurrency)
 	if vmWaited {
-		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, limits.ConcurrencyPerVMBound)
+		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
 	}
 	if err != nil {
 		writeBurstCapacityError(w, r, err)

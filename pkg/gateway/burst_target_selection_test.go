@@ -53,7 +53,7 @@ func TestHandlerForwardsToReadyTargetDuringBurstAdmission(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			b := &burstSelectionBackend{blockingBurstBackend: &blockingBurstBackend{
-				burstTestBackend: &burstTestBackend{fakeBackend: &fakeBackend{app: App{ID: "app-1", Plan: api.PlanScale, AutoscaleTargetRPS: 1}, host: "app.example.com"}, admitted: make(chan int, 1)},
+				burstTestBackend: &burstTestBackend{fakeBackend: &fakeBackend{app: App{ID: "app-1", Type: AppTypeApp, Plan: api.PlanScale, AutoscaleTargetRPS: 1}, host: "app.example.com"}, admitted: make(chan int, 1)},
 				started:          make(chan struct{}), release: make(chan struct{}),
 			}}
 			b.AddTarget(Target{NodeID: "node-1", InstanceID: "original"})
