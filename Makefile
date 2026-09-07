@@ -885,7 +885,7 @@ spec-install: ## Install vacuum at the pinned version (idempotent)
 	# `go install` if vacuum isn't on PATH yet. Each line is its own shell
 	# statement so this guard stays bash -e safe.
 	@if command -v vacuum >/dev/null 2>&1; then \
-	  vacuum version 2>&1 | grep -q $(VACUUM_VER) && { echo "vacuum $(VACUUM_VER) installed"; exit 0; }; \
+	  vacuum version 2>&1 | grep -q "$(patsubst v%,%,$(VACUUM_VER))" && { echo "vacuum $(VACUUM_VER) installed"; exit 0; }; \
 	fi; \
 	GOFLAGS='' GOBIN=$(or $(GOBIN),$(shell go env GOPATH)/bin) go install github.com/daveshanley/vacuum@$(VACUUM_VER)
 

@@ -309,6 +309,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	}
 	branch := refToBranch(ev.Ref)
 	isTag := false
+	releaseTag := ""
 	if branch == "" {
 		tag := refToTag(ev.Ref)
 		if tag == "" {
@@ -331,6 +332,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			branch = defaultProductionBranch
 		}
 		isTag = true
+		releaseTag = tag
 	}
 
 	// 1. Resolve the (repo, branch) binding. An empty BindingID
@@ -605,6 +607,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			CommitSHA:    ev.After,
 			RepoFullName: ev.Repository.FullName,
 			Ref:          ev.Ref,
+			Tag:          releaseTag,
 			Branch:       branch,
 			Scope:        deploymentScope,
 			Pusher:       ev.Pusher.Name,

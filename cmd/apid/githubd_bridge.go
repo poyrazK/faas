@@ -295,14 +295,15 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	// on the build_enqueued line.
 	//
 	// Issue #977 / ADR-116: Pusher + SenderLogin + PullRequestNumber
-	// stamp the annotation surface onto the deployment row. We
+	// + Tag stamp the annotation surface onto the deployment row. We
 	// prefer SenderLogin over Pusher as the deployed_by value when
 	// present (it's the actor who triggered the webhook — for
 	// pull_request events, that's the PR opener). Fall back to
 	// Pusher when SenderLogin is empty (push events, pre-feature
 	// builds, older githubd). PullRequestNumber is forwarded only
 	// when > 0; push events and pre-feature builds pass 0, which
-	// the pgstore nullif(0) collapse maps to NULL.
+	// the pgstore nullif(0) collapse maps to NULL. Tag is populated only
+	// for immutable release-tag pushes and is persisted as deployments.tag.
 	//
 	// Kind dispatch (issue #272 / ADR-094): the proto3 EnqueueBuild
 	// carries an event_kind enum (push vs pull_request). Push events
@@ -354,6 +355,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		// pgstore nullif(0) collapse maps 0 to NULL.
 		DeployedBy: deployedBy,
 		PRNumber:   int(req.PullRequestNumber),
+		Tag:        req.Tag,
 	})
 	if err != nil {
 		return nil, g.asGRPC("enqueue", err)

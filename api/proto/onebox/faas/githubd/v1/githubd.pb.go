@@ -1338,8 +1338,12 @@ type EnqueueBuildRequest struct {
 	// GitHub branch routing rule (for example "staging"). Empty preserves the
 	// legacy default scope.
 	DeploymentScope string `protobuf:"bytes,15,opt,name=deployment_scope,json=deploymentScope,proto3" json:"deployment_scope,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// tag is the normalized GitHub release tag (for example "v1.2.3") for
+	// immutable release-tag pushes. Empty for branch and pull-request events.
+	// apid stamps it onto deployments.tag for deployment provenance.
+	Tag           string `protobuf:"bytes,16,opt,name=tag,proto3" json:"tag,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EnqueueBuildRequest) Reset() {
@@ -1473,6 +1477,13 @@ func (x *EnqueueBuildRequest) GetDeliveryId() string {
 func (x *EnqueueBuildRequest) GetDeploymentScope() string {
 	if x != nil {
 		return x.DeploymentScope
+	}
+	return ""
+}
+
+func (x *EnqueueBuildRequest) GetTag() string {
+	if x != nil {
+		return x.Tag
 	}
 	return ""
 }
@@ -1918,7 +1929,7 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x05phase\x18\x03 \x01(\x0e2\".onebox.faas.githubd.v1.CheckPhaseR\x05phase\x12\x19\n" +
 	"\blogs_url\x18\x04 \x01(\tR\alogsUrl\x12\x18\n" +
 	"\asummary\x18\x05 \x01(\tR\asummary\"\x14\n" +
-	"\x12WriteCheckResponse\"\xa2\x04\n" +
+	"\x12WriteCheckResponse\"\xb4\x04\n" +
 	"\x13EnqueueBuildRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -1941,7 +1952,8 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\fsender_login\x18\r \x01(\tR\vsenderLogin\x12\x1f\n" +
 	"\vdelivery_id\x18\x0e \x01(\tR\n" +
 	"deliveryId\x12)\n" +
-	"\x10deployment_scope\x18\x0f \x01(\tR\x0fdeploymentScope\"m\n" +
+	"\x10deployment_scope\x18\x0f \x01(\tR\x0fdeploymentScope\x12\x10\n" +
+	"\x03tag\x18\x10 \x01(\tR\x03tag\"m\n" +
 	"\x14EnqueueBuildResponse\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x15\n" +

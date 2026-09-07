@@ -356,6 +356,8 @@ func TestHandlePushRequest_TagDeploysAgainstDefaultBranch(t *testing.T) {
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
 	rig.seedProject(t, "octo/api", "main")
 	svc := newServiceForRig(t, rig)
+	enq := &recordingEnqueuer{buildID: "build-tag"}
+	svc.Enqueuer = enq
 	body := []byte(`{"ref":"refs/tags/v1.0.0","before":"0000000000000000000000000000000000000000","after":"x","created":true,"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"pusher":{"name":"alice"}}`)
 	result, err := svc.HandlePushRequest(context.Background(), body)
 	if err != nil {
@@ -363,6 +365,9 @@ func TestHandlePushRequest_TagDeploysAgainstDefaultBranch(t *testing.T) {
 	}
 	if len(result.Added) != 1 {
 		t.Errorf("tag result.Added = %d, want 1", len(result.Added))
+	}
+	if len(enq.calls) != 1 || enq.calls[0].tag != "v1.0.0" {
+		t.Errorf("enqueue calls = %#v, want release tag v1.0.0", enq.calls)
 	}
 }
 
@@ -482,6 +487,7 @@ type enqueueCall struct {
 	commitSHA  string
 	sourcePath string
 	scope      string
+	tag        string
 }
 
 func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Build, error) {
@@ -492,6 +498,7 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Bu
 		commitSHA:  spec.CommitSHA,
 		sourcePath: spec.SourcePath,
 		scope:      spec.Scope,
+		tag:        spec.Tag,
 	})
 	if r.err != nil {
 		return state.Build{}, r.err
