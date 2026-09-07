@@ -671,14 +671,45 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          # The Go build + test-result cache for the pure shards is managed
+          # by the restore/save steps below. setup-go keys its cache on
+          # go.sum and only saves on a key miss, so the snapshot would go
+          # stale between dependency bumps; here every push to main saves
+          # a fresh one and pull requests restore the newest.
+          cache: false
+
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pure-1-${{ runner.os }}-
 
       - name: unit tests (pure Go shard 1)
+        env:
+          # Pull requests let Go's test cache skip packages whose transitive
+          # inputs are unchanged since the last main push. This shard is
+          # hermetic (no Postgres, Docker, or network), so a cached pass is
+          # the same observation a re-run would make. Pushes to main re-run
+          # everything and shuffle test order to surface order dependence.
+          GO_TEST_FRESHNESS: ${{ github.event_name == 'pull_request' && '' || '-count=1 -shuffle=on' }}
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
-          go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard3.out -covermode=atomic $PKGS
+          go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard3.out -covermode=atomic $PKGS
+
+      - name: save Go build + test cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
 
       - name: coverage floor (ship-blocking packages)
         # Validates pkg/fcvm, pkg/sched, pkg/gateway ≥ floors defined in
@@ -708,14 +739,38 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          # See pure shard 1: cache managed by restore/save below so the
+          # test-result cache refreshes on every push to main.
+          cache: false
+
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pure-2-${{ runner.os }}-
 
       - name: unit tests (pure Go shard 2)
+        env:
+          # See pure shard 1: PRs use Go's test cache; main re-runs + shuffles.
+          GO_TEST_FRESHNESS: ${{ github.event_name == 'pull_request' && '' || '-count=1 -shuffle=on' }}
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
-          go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
+          go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
+
+      - name: save Go build + test cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
 
       - name: coverage floor (ship-blocking packages)
         # Validates pkg/vmmdgrpc, pkg/vmmdmount ≥ floors defined in
