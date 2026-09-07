@@ -41,6 +41,18 @@ export type UpdateAppRequest = {
    * Full replacement of the service replica policy. Omit for no change.
    */
   service_replicas?: ServiceReplicas;
+  /**
+   * Replace the per-app base64-encoded favicon; an empty value clears it. Omit for no change.
+   */
+  favicon?: string | null;
+  /**
+   * Replace the per-app robots.txt body; an empty value restores the allow-all default. Omit for no change.
+   */
+  robots_txt?: string | null;
+  /**
+   * Opt into waking a parked app for HEAD /. Omit for no change.
+   */
+  head_wakes?: boolean | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

@@ -39,6 +39,9 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		StartupDeadlineS: req.StartupDeadlineS,
 		MaxRetries:       req.MaxRetries,
 		ServiceReplicas:  req.ServiceReplicas,
+		Favicon:          append([]byte(nil), req.Favicon...),
+		RobotsTxt:        req.RobotsTxt,
+		HeadWakes:        req.HeadWakes,
 	}
 }
 
@@ -56,6 +59,9 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		StartupDeadlineS: manifest.StartupDeadlineS,
 		MaxRetries:       manifest.MaxRetries,
 		ServiceReplicas:  replicas,
+		Favicon:          append([]byte(nil), manifest.Favicon...),
+		RobotsTxt:        manifest.RobotsTxt,
+		HeadWakes:        manifest.HeadWakes,
 	}
 }
 
@@ -73,12 +79,16 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		StartupDeadlineS: manifest.StartupDeadlineS,
 		MaxRetries:       manifest.MaxRetries,
 		ServiceReplicas:  replicas,
+		Favicon:          append([]byte(nil), manifest.Favicon...),
+		RobotsTxt:        manifest.RobotsTxt,
+		HeadWakes:        manifest.HeadWakes,
 	}
 }
 
 func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppManifest, bool) {
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
-		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.ServiceReplicas != nil
+		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.ServiceReplicas != nil ||
+		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil
 	if !changed {
 		return api.AppManifest{}, false
 	}
@@ -100,6 +110,15 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	} else if manifest.EffectiveExecutionMode() != api.ExecutionModeService {
 		manifest.ServiceReplicas = nil
 	}
+	if req.Favicon != nil {
+		manifest.Favicon = append([]byte(nil), (*req.Favicon)...)
+	}
+	if req.RobotsTxt != nil {
+		manifest.RobotsTxt = *req.RobotsTxt
+	}
+	if req.HeadWakes != nil {
+		manifest.HeadWakes = *req.HeadWakes
+	}
 	return manifest, true
 }
 
@@ -114,5 +133,8 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.StartupDeadlineS = manifest.StartupDeadlineS
 	updated.MaxRetries = manifest.MaxRetries
 	updated.ServiceReplicas = stateManifestFromAPI(manifest).ServiceReplicas
+	updated.Favicon = append([]byte(nil), manifest.Favicon...)
+	updated.RobotsTxt = manifest.RobotsTxt
+	updated.HeadWakes = manifest.HeadWakes
 	return &updated, true
 }

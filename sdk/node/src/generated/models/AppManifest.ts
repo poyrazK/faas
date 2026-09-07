@@ -49,5 +49,17 @@ export type AppManifest = {
    */
   max_retries?: number | null;
   service_replicas?: ServiceReplicas;
+  /**
+   * Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB.
+   */
+  favicon?: string | null;
+  /**
+   * Persisted per-app robots.txt body; empty uses the platform allow-all default.
+   */
+  robots_txt?: string | null;
+  /**
+   * Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer.
+   */
+  head_wakes?: boolean;
 };
 

@@ -658,6 +658,9 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 			StartupDeadlineS: a.Manifest.StartupDeadlineS,
 			MaxRetries:       a.Manifest.MaxRetries,
 			ServiceReplicas:  apiManifestFromState(a.Manifest).ServiceReplicas,
+			Favicon:          append([]byte(nil), a.Manifest.Favicon...),
+			RobotsTxt:        a.Manifest.RobotsTxt,
+			HeadWakes:        a.Manifest.HeadWakes,
 		},
 		EgressAllowlist: ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger

@@ -196,7 +196,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -257,6 +257,7 @@ func cmdApp(args []string) int {
 	// problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL unless --public-auth is also set")
+	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
 	// ADR-124: per-app wire-protocol selector. Single string
 	// flag (closed set {http1, http2, grpc}) — empty value
 	// means "use the per-plan default" (http1 universal). The
@@ -438,6 +439,10 @@ func cmdApp(args []string) int {
 			req.PublicAuth = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
 		}
 	}
+	if explicit["head-wakes"] {
+		v := *headWakes
+		req.HeadWakes = &v
+	}
 	// ADR-124: per-app wire-protocol selector. Validate the
 	// closed set locally so a typo surfaces as a usage error
 	// before the round-trip (the apid side returns the same
@@ -502,7 +507,7 @@ func cmdApp(args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil {
+		req.OverflowNode == nil && req.AppProtocol == nil && req.HeadWakes == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)

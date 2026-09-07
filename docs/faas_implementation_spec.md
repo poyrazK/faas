@@ -1618,6 +1618,20 @@ cold-boot data.
 in place but no alert fires until the rate stabilises across one
 full PR cycle.
 
+### 12.6 Static edge answers (issue #1398 M1)
+
+The gateway answers browser noise without entering the wake path:
+`/favicon.ico` serves the optional per-app icon (capped at 32 KiB) or
+204, `/robots.txt` serves the optional policy or the allow-all default,
+and parked `HEAD /` replays a bounded safe subset of headers from the
+last successful live response (or returns 204). `head_wakes` is the
+per-app opt-in for the legacy wake behaviour. These responses do not
+create instance transitions or `usage_minutes` rows.
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `gateway_edge_answered_total` | `kind` | `pkg/gateway/metrics.go::ObserveEdgeAnswered` | Counter of gateway answers that bypass an app instance. `kind` is closed to `favicon`, `robots`, and `head`; edge answers are telemetry-only and never billed as resident compute. |
+
 ---
 
 ## 13. RAM budget ledger (enforced as systemd slices)

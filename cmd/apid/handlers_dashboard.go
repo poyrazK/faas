@@ -66,6 +66,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/errors → grouped errors + drill-down
 //	GET /dashboard/apps/{slug}/domains → custom domains + TLS/doctor status
 //	GET /dashboard/apps/{slug}/instances → instance fleet + lifecycle actions
+//	GET /dashboard/apps/{slug}/edge-rules → edge rules + CORS presets
 //	GET /dashboard/apps/{slug}/jobs → jobs and queue view (app filter)
 //	GET /dashboard/apps/{slug}/queues → queue state + samples (alias)
 //	GET /dashboard/jobs             → jobs, runs, and all application queues
@@ -109,6 +110,13 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G4 / issue #1397 — edge rules and reusable CORS presets.
+			// The form adapters below delegate to the existing JSON API
+			// handlers so the dashboard cannot drift from API validation.
+			if eslug, ok := parseAppEdgeRulesPath(slug); ok {
+				s.renderAppEdgeRules(w, r, log, acct, eslug)
+				return
+			}
 			// G7 / issue #1397 — queue state, pending samples, and
 			// dead-letter replay for one app. The account-level jobs
 			// page remains the canonical landing surface.

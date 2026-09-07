@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1280px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code, textarea, input, select { font-family: ui-monospace, Menlo, monospace; }
+    code { overflow-wrap: anywhere; }
+    .muted { color: #6b7280; }
+    .flash { padding: 0.55rem 0.75rem; border-radius: 4px; margin: 0.75rem 0; }
+    .flash.ok { background: #d1fae5; color: #065f46; }
+    .flash.error { background: #fee2e2; color: #991b1b; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.9rem; margin: 1rem 0; }
+    .actions form { display: inline; }
+    button { padding: 0.3rem 0.65rem; border: 1px solid #9ca3af; border-radius: 4px; background: #fff; cursor: pointer; }
+    input, select, textarea { box-sizing: border-box; max-width: 100%; padding: 0.35rem; }
+    textarea { width: 34rem; }
+    label { display: block; margin: 0.55rem 0; }
+    .rule-action { max-width: 32rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .nowrap { white-space: nowrap; }
+    .enabled { color: #065f46; }
+    .disabled { color: #92400e; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/jobs">Jobs &amp; queues</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p><a href="/dashboard/apps/{{.Data.App.Slug}}">← Back to {{.Data.App.Slug}}</a></p>
+    <h1>Edge rules for <code>{{.Data.App.Slug}}</code></h1>
+    <p class="muted">Rules run before the app wake gate. The dashboard uses the same validation and quotas as the API and CLI.</p>
+
+    {{if eq .Data.Action "created"}}<div class="flash ok" role="status">Edge rule created.</div>{{end}}
+    {{if eq .Data.Action "updated"}}<div class="flash ok" role="status">Edge rule updated.</div>{{end}}
+    {{if eq .Data.Action "deleted"}}<div class="flash ok" role="status">Edge rule deleted.</div>{{end}}
+    {{if eq .Data.Action "security_headers_enabled"}}<div class="flash ok" role="status">Security headers preset is enabled.</div>{{end}}
+    {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The edge-rule action could not be completed. Refresh and try again.</div>{{end}}
+    {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
+
+    <section class="card" aria-labelledby="security-headers-heading">
+      <h2 id="security-headers-heading">Security headers preset</h2>
+      <p class="muted">Adds HSTS, <code>nosniff</code>, a strict referrer policy, and <code>frame-ancestors 'none'</code> to responses.</p>
+      {{if .Data.SecurityHeadersEnabled}}
+        <p class="enabled"><strong>Enabled.</strong> Delete the marked rule below to disable it.</p>
+      {{else}}
+        <form method="POST" action="/dashboard/apps/{{.Data.App.Slug}}/edge-rules/security-headers">
+          <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}">
+          <button type="submit">Enable security headers</button>
+        </form>
+      {{end}}
+    </section>
+
+    <h2>Rules</h2>
+    {{if .Data.Rules}}
+      <table aria-label="Edge rules">
+        <thead><tr><th>Priority</th><th>Kind</th><th>Match</th><th>Methods</th><th>Status</th><th>Action</th><th>Manage</th></tr></thead>
+        <tbody>
+          {{range .Data.Rules}}
+            <tr>
+              <td>{{.Priority}}</td>
+              <td><strong>{{.Kind}}</strong>{{if .SecurityPreset}}<br><small class="muted">security preset</small>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
+              <td><code>{{.MatchHost}}{{.MatchPath}}</code></td>
+              <td>{{if .MatchMethods}}{{.MatchMethods}}{{else}}any{{end}}</td>
+              <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}</td>
+              <td><span class="muted">{{.ActionSummary}}</span><br><code class="rule-action">{{.ActionJSON}}</code></td>
+              <td class="actions nowrap">
+                <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">{{if .Enabled}}Disable{{else}}Enable{{end}}</button></form>
+                <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Delete</button></form>
+              </td>
+            </tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{else}}<p class="muted">No edge rules yet.</p>{{end}}
+
+    <section class="card" aria-labelledby="create-rule-heading">
+      <h2 id="create-rule-heading">Create an edge rule</h2>
+      <form method="POST" action="/dashboard/apps/{{.Data.App.Slug}}/edge-rules">
+        <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}">
+        <label>Match host <input name="match_host" required maxlength="253" placeholder="api.example.com"></label>
+        <label>Match path <input name="match_path" value="/" required maxlength="2048"></label>
+        <label>Methods <input name="match_methods" placeholder="GET, POST"> <span class="muted">optional, comma-separated</span></label>
+        <label>Priority <input name="priority" type="number" min="0" max="10000" value="100"></label>
+        <label>Kind
+          <select name="kind">
+            <option value="headers">headers</option><option value="cors">cors</option><option value="redirect">redirect</option>
+            <option value="rewrite">rewrite</option><option value="route">route</option><option value="maintenance">maintenance</option>
+            <option value="limit">limit</option><option value="budget">budget</option><option value="cache">cache</option>
+            <option value="geo">geo</option><option value="throttle">throttle</option><option value="validate">validate</option>
+          </select>
+        </label>
+        <label>Action JSON<br><textarea name="action" rows="5" required placeholder='{"response_headers":[{"name":"X-Example","value":"on","action":"set"}]}'></textarea></label>
+        <label><input type="checkbox" name="enabled" checked> enabled</label>
+        <button type="submit">Create rule</button>
+      </form>
+    </section>
+
+    <h2>CORS presets</h2>
+    <p class="muted">Reusable CORS policies available to this app. Create or attach presets with the CLI/API; this page keeps the effective policy visible next to its rules.</p>
+    {{if .Data.CorsPresets}}
+      <table aria-label="CORS presets">
+        <thead><tr><th>Name</th><th>Scope</th><th>Origins</th><th>Methods</th><th>Headers</th><th>Credentials</th><th>Max age</th></tr></thead>
+        <tbody>
+          {{range .Data.CorsPresets}}
+            <tr><td><strong>{{.Name}}</strong><br><small class="muted">{{.Description}}</small><br><small class="muted"><code>{{.ID}}</code></small></td><td>{{.Scope}}</td><td><code>{{range .AllowOrigins}}{{.}} {{end}}</code></td><td><code>{{range .AllowMethods}}{{.}} {{end}}</code></td><td><code>{{range .AllowHeaders}}{{.}} {{end}}</code></td><td>{{if .AllowCredentials}}yes{{else}}no{{end}}</td><td>{{.MaxAgeSeconds}}s</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{else}}<p class="muted">No CORS presets are available for this app.</p>{{end}}
+  </main>
+  <footer>onebox faas · edge rules</footer>
+</body>
+</html>
