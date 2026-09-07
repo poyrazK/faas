@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"regexp"
 	"strconv"
@@ -191,7 +192,7 @@ func TestObjectS3CredentialLifecycle(t *testing.T) {
 	if response := e.do(t, "DELETE", credentialPath+"/"+created.ID, nil, nil); response.Code != 204 {
 		t.Fatalf("revoke credential = %d %s", response.Code, response.Body.String())
 	}
-	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.AccessKeyID); err != state.ErrNotFound {
+	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("revoked credential still resolves: %v", err)
 	}
 	listResponse = e.do(t, "GET", credentialPath, nil, nil)
