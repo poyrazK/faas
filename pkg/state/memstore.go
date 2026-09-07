@@ -4140,10 +4140,13 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
+	// App deletion retires snapshot replicas immediately, but keeps the
+	// snapshot rows available to GC. The PostgreSQL lifecycle trigger uses
+	// the same split: deleted-app snapshots are not wake-eligible, yet their
+	// metadata must remain visible so imaged can remove the backing files.
 	for i := range m.snapshots {
 		deployment, ok := m.deployments[m.snapshots[i].DeploymentID]
 		if ok && deployment.AppID == id {
-			m.snapshots[i].Stale = true
 			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 		}
 	}
@@ -9451,6 +9454,12 @@ func (m *MemStore) LatestSnapshot(_ context.Context, deploymentID string) (Snaps
 		if s.DeploymentID != deploymentID || s.Stale {
 			continue
 		}
+		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
+			deployment.Status == DeployFailed || deployment.Status == DeployCancelled {
+			continue
+		} else if app, ok := m.apps[deployment.AppID]; !ok || app.Status == AppDeleted {
+			continue
+		}
 		if !found {
 			latest = s
 			found = true
@@ -9489,6 +9498,12 @@ func (m *MemStore) LatestSnapshotForTier(_ context.Context, deploymentID, tier s
 	found := false
 	for _, s := range m.snapshots {
 		if s.DeploymentID != deploymentID || s.Stale || s.Tier != tier {
+			continue
+		}
+		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
+			deployment.Status == DeployFailed || deployment.Status == DeployCancelled {
+			continue
+		} else if app, ok := m.apps[deployment.AppID]; !ok || app.Status == AppDeleted {
 			continue
 		}
 		if !found || s.CreatedAt.After(latest.CreatedAt) {
@@ -9534,15 +9549,19 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 	}
 	var out []SnapshotForGC
 	for _, s := range m.snapshots {
-		if s.Stale {
-			continue
-		}
 		dep, ok := depByID[s.DeploymentID]
 		if !ok {
 			continue
 		}
 		app, ok := appByID[dep.AppID]
 		if !ok {
+			continue
+		}
+		// Lifecycle-invalid rows are intentionally still projected: imaged
+		// must reclaim their storage immediately. Other stale rows are held
+		// for the retention sweep and stay out of this hot-path list.
+		if s.Stale && app.Status != AppDeleted &&
+			dep.Status != DeployFailed && dep.Status != DeployCancelled {
 			continue
 		}
 		out = append(out, SnapshotForGC{
