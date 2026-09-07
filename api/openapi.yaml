@@ -21168,6 +21168,7 @@ components:
 
     RequestAnalyticsTimeseriesSeries:
       type: object
+      description: "A grouped request analytics series with its hourly points."
       required: [value, points]
       properties:
         value: { type: string }
