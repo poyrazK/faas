@@ -39,7 +39,10 @@ type burstPressureState struct {
 	worker *burstGeneration
 }
 
-const burstArrivalWindow = time.Second
+const (
+	burstArrivalWindow      = time.Second
+	burstRateObservationMin = 250 * time.Millisecond
+)
 
 // burstGeneration represents one bounded capacity reconciliation. Keeping
 // the result on the generation (rather than on burstPressureState) prevents a
@@ -90,13 +93,31 @@ func (s *burstPressureState) recordArrival(now time.Time) {
 }
 
 func (s *burstPressureState) recentArrivals(now time.Time) int64 {
+	count, _ := s.recentArrivalSample(now)
+	return count
+}
+
+// recentArrivalSample returns the number of arrivals in the trailing window
+// and the interval spanned by those arrivals. The interval lets the gateway
+// recognize a sustained rise before a full second of requests has accumulated.
+// A separate minimum observation period in desiredBurstInstancesForApp keeps
+// a very short cluster of requests from being extrapolated into a large rate.
+func (s *burstPressureState) recentArrivalSample(now time.Time) (count int64, span time.Duration) {
 	if s == nil {
-		return 0
+		return 0, 0
 	}
 	s.arrivalMu.Lock()
 	defer s.arrivalMu.Unlock()
 	s.pruneArrivalsLocked(now.Add(-burstArrivalWindow).UnixNano())
-	return int64(len(s.arrivals) - s.arrivalHead)
+	count = int64(len(s.arrivals) - s.arrivalHead)
+	if count > 1 {
+		first := s.arrivals[s.arrivalHead]
+		last := s.arrivals[len(s.arrivals)-1]
+		if last > first {
+			span = time.Duration(last - first)
+		}
+	}
+	return count, span
 }
 
 func (s *burstPressureState) pruneArrivalsLocked(cutoff int64) {
@@ -134,8 +155,19 @@ func desiredBurstInstancesForApp(state *burstPressureState, app App, perVM, maxI
 	if app.AutoscaleTargetRPS <= 0 || maxInstances <= 0 {
 		return desired
 	}
-	arrivals := state.recentArrivals(now)
+	arrivals, observed := state.recentArrivalSample(now)
 	byRPS := int((arrivals + int64(app.AutoscaleTargetRPS) - 1) / int64(app.AutoscaleTargetRPS))
+	if arrivals > 1 && observed >= burstRateObservationMin {
+		// There are arrivals-1 measured intervals between the first and last
+		// timestamp. Compare that observed rate with the configured per-instance
+		// target using integer ceiling arithmetic.
+		numerator := (arrivals - 1) * int64(time.Second)
+		denominator := int64(observed) * int64(app.AutoscaleTargetRPS)
+		byObservedRate := int((numerator + denominator - 1) / denominator)
+		if byObservedRate > byRPS {
+			byRPS = byObservedRate
+		}
+	}
 	if byRPS > maxInstances {
 		byRPS = maxInstances
 	}

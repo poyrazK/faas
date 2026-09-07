@@ -45,20 +45,52 @@ func TestDesiredBurstInstancesUsesRecentArrivalRate(t *testing.T) {
 	state := &burstPressureState{}
 	state.inflight.Store(1)
 	for i := 0; i < 16; i++ {
-		state.recordArrival(base.Add(time.Duration(i) * 30 * time.Millisecond))
+		state.recordArrival(base.Add(time.Duration(i) * 50 * time.Millisecond))
 	}
 	app := App{AutoscaleTargetRPS: 15}
-	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(450*time.Millisecond)); got != 2 {
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(750*time.Millisecond)); got != 2 {
 		t.Fatalf("recent 16 requests at target 15 desired %d, want 2", got)
 	}
-	if got := desiredBurstInstancesForApp(state, App{}, 80, 20, base.Add(450*time.Millisecond)); got != 1 {
+	if got := desiredBurstInstancesForApp(state, App{}, 80, 20, base.Add(750*time.Millisecond)); got != 1 {
 		t.Fatalf("disabled RPS target desired %d, want concurrency-only 1", got)
 	}
-	if got := desiredBurstInstancesForApp(state, app, 80, 1, base.Add(450*time.Millisecond)); got != 1 {
+	if got := desiredBurstInstancesForApp(state, app, 80, 1, base.Add(750*time.Millisecond)); got != 1 {
 		t.Fatalf("app cap desired %d, want 1", got)
 	}
 	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(2*time.Second)); got != 1 {
 		t.Fatalf("expired arrivals desired %d, want concurrency-only 1", got)
+	}
+}
+
+func TestDesiredBurstInstancesUsesPartialWindowRate(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	app := App{AutoscaleTargetRPS: 15}
+
+	state := &burstPressureState{}
+	state.inflight.Store(1)
+	for i := 0; i < 8; i++ {
+		state.recordArrival(base.Add(time.Duration(i) * 40 * time.Millisecond))
+	}
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(280*time.Millisecond)); got != 2 {
+		t.Fatalf("eight requests over 280ms desired %d, want 2", got)
+	}
+
+	immature := &burstPressureState{}
+	immature.inflight.Store(1)
+	for i := 0; i < 7; i++ {
+		immature.recordArrival(base.Add(time.Duration(i) * 40 * time.Millisecond))
+	}
+	if got := desiredBurstInstancesForApp(immature, app, 80, 20, base.Add(240*time.Millisecond)); got != 1 {
+		t.Fatalf("rate observed for less than 250ms desired %d, want 1", got)
+	}
+
+	atTarget := &burstPressureState{}
+	atTarget.inflight.Store(1)
+	for i := 0; i < 5; i++ {
+		atTarget.recordArrival(base.Add(time.Duration(i) * 70 * time.Millisecond))
+	}
+	if got := desiredBurstInstancesForApp(atTarget, app, 80, 20, base.Add(280*time.Millisecond)); got != 1 {
+		t.Fatalf("rate below target desired %d, want 1", got)
 	}
 }
 
