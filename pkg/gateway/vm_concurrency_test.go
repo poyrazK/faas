@@ -114,3 +114,60 @@ func TestVMConcurrencyManagerWakesWaiterOnRelease(t *testing.T) {
 		t.Fatalf("gate remained after all requests drained, gates=%d", len(m.gates))
 	}
 }
+
+func TestEffectiveVMConcurrencyLimitCapsFunctionWorkerPool(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		app  App
+		plan int
+		want int
+	}{
+		{name: "function", app: App{Type: AppTypeFunction}, plan: 80, want: 4},
+		{name: "legacy function", app: App{}, plan: 25, want: 4},
+		{name: "smaller plan", app: App{Type: AppTypeFunction}, plan: 1, want: 1},
+		{name: "request mode app", app: App{Type: AppTypeApp}, plan: 80, want: 80},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := effectiveVMConcurrencyLimit(tc.app, tc.plan); got != tc.want {
+				t.Fatalf("effectiveVMConcurrencyLimit() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAcquireVMTargetMovesWaiterToNewSibling(t *testing.T) {
+	b := &fakeBackend{app: App{ID: "app", Type: AppTypeFunction}, targets: []Target{{NodeID: "node", InstanceID: "first"}}}
+	h := NewHandlerWith(b, NewMetrics(), nil)
+	held, ok := h.vmConcurrency.tryAcquire("first", "scale", 1)
+	if !ok {
+		t.Fatal("failed to occupy first target")
+	}
+	defer held()
+
+	type result struct {
+		pick    PickResult
+		release func()
+		waited  bool
+		err     error
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan result, 1)
+	go func() {
+		pick, release, waited, err := h.acquireVMTarget(ctx, b.app, PickResult{Target: b.targets[0], OK: true}, 1)
+		done <- result{pick: pick, release: release, waited: waited, err: err}
+	}()
+
+	time.Sleep(2 * vmConcurrencyRetryInterval)
+	b.AddTarget(Target{NodeID: "node", InstanceID: "second"})
+	got := <-done
+	if got.err != nil {
+		t.Fatalf("acquireVMTarget: %v", got.err)
+	}
+	if got.release != nil {
+		defer got.release()
+	}
+	if !got.waited || got.pick.Target.InstanceID != "second" {
+		t.Fatalf("waited=%v target=%q, want waited sibling", got.waited, got.pick.Target.InstanceID)
+	}
+}

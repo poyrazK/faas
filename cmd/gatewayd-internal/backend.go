@@ -211,13 +211,14 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		return gateway.App{}, false, err
 	}
 	return gateway.App{
-		ID:               app.ID,
-		AccountID:        acct.ID,
-		Type:             gateway.AppType(app.Type),
-		Plan:             acct.Plan,
-		MaxConcurrency:   app.MaxConcurrency,
-		Slug:             app.Slug,
-		StreamingEnabled: app.StreamingEnabled,
+		ID:                 app.ID,
+		AccountID:          acct.ID,
+		Type:               gateway.AppType(app.Type),
+		Plan:               acct.Plan,
+		MaxConcurrency:     app.MaxConcurrency,
+		AutoscaleTargetRPS: app.AutoscaleTargetRPS,
+		Slug:               app.Slug,
+		StreamingEnabled:   app.StreamingEnabled,
 		// Issue #676 / ADR-080: per-app raw-bytes Upgrade
 		// bridge flag. Plumbed from apps.websocket_enabled
 		// through pgRouter.toApp so Handler.ServeHTTP's

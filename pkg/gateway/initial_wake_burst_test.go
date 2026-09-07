@@ -45,11 +45,54 @@ func TestInitialWakeDemandUsesQueuedPressureAndBounds(t *testing.T) {
 	for _, tc := range []struct {
 		pressure      int64
 		maximum, want int
-	}{{0, 20, 1}, {1, 20, 1}, {80, 20, 1}, {81, 20, 2}, {100, 1, 1}, {10000, 20, api.ScaleUpMaxBurstPerTick}} {
+	}{{0, 20, 1}, {1, 20, 1}, {80, 20, 1}, {81, 20, 1}, {100, 1, 1}, {10000, 20, 1}} {
 		h.burstPressure.state("app").inflight.Store(tc.pressure)
-		if got := h.initialWakeDemand("app", tc.maximum, api.PlanScale); got != tc.want {
+		if got := h.initialWakeDemand("app", tc.maximum, api.PlanScale, 0); got != tc.want {
 			t.Errorf("pressure=%d max=%d got=%d want=%d", tc.pressure, tc.maximum, got, tc.want)
 		}
+	}
+}
+
+func TestInitialWakeDemandUsesAutoscaleTarget(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), nil)
+	state := h.burstPressure.state("app")
+	state.inflight.Store(1)
+	now := time.Now()
+	for i := 0; i < 32; i++ {
+		state.recordArrival(now)
+	}
+	if got := h.initialWakeDemand("app", 20, api.PlanScale, 15); got != 1 {
+		t.Fatalf("initial wake demand = %d, want 1", got)
+	}
+}
+
+func TestInitialWakeDemandAddsBoundedColdBurstHeadroom(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		inflight  int64
+		arrivals  int
+		maximum   int
+		targetRPS int
+		want      int
+	}{
+		{name: "single request", inflight: 1, arrivals: 1, maximum: 20, targetRPS: 15, want: 1},
+		{name: "below half target", inflight: 7, arrivals: 7, maximum: 20, targetRPS: 15, want: 1},
+		{name: "half target queued", inflight: 8, arrivals: 8, maximum: 20, targetRPS: 15, want: 1},
+		{name: "app capped at one", inflight: 8, arrivals: 8, maximum: 1, targetRPS: 15, want: 1},
+		{name: "target disabled", inflight: 8, arrivals: 8, maximum: 20, targetRPS: 0, want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHandlerWith(&fakeBackend{}, NewMetrics(), nil)
+			state := h.burstPressure.state("app")
+			state.inflight.Store(tc.inflight)
+			now := time.Now()
+			for i := 0; i < tc.arrivals; i++ {
+				state.recordArrival(now)
+			}
+			if got := h.initialWakeDemand("app", tc.maximum, api.PlanScale, tc.targetRPS); got != tc.want {
+				t.Fatalf("initial wake demand = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -79,10 +122,12 @@ func TestInitialCapacityGenerationPreventsDuplicateExpansion(t *testing.T) {
 	go func() { _, _, _, err := h.ensureInitialWarm(ctx, initial, "app", "", "gateway", 2); done <- err }()
 	<-initial.started
 	b.AddTarget(Target{NodeID: "node", InstanceID: "first"}) // First RUNNING notify arrives before batch completion.
-	waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Millisecond)
-	defer waitCancel()
-	if _, err := h.maybeBurstCapacity(waitCtx, b.app, 3, 80); err == nil {
-		t.Error("capacity waiter did not join initial generation")
+	waited, err := h.maybeBurstCapacity(ctx, b.app, 3, 80)
+	if err != nil {
+		t.Fatalf("ready target blocked by initial generation: %v", err)
+	}
+	if waited {
+		t.Fatal("ready target was invalidated by initial generation")
 	}
 	select {
 	case <-b.admitted:
@@ -112,6 +157,55 @@ func (b *capturingInitialBackend) EnsureWarmCapacity(_ context.Context, _, _, _ 
 	return "initial-1", WakeMethodSnapshotRestore, false, nil
 }
 
+type reconcilingInitialBackend struct {
+	*capturingInitialBackend
+	reconcileCalls int
+}
+
+func (b *reconcilingInitialBackend) ReconcileLiveTargets(context.Context, string) error {
+	b.reconcileCalls++
+	return nil
+}
+
+func TestColdStartSkipsRedundantReconcileForAuthoritativeEnsureWarm(t *testing.T) {
+	b := &reconcilingInitialBackend{capturingInitialBackend: &capturingInitialBackend{
+		fakeBackend: &fakeBackend{app: App{ID: "app", Plan: api.PlanScale}},
+	}}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	cold, wakeID, method, err := h.coldStart(context.Background(), "app", "acct", "", 3, api.PlanScale, 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cold || wakeID != "initial-1" || method != WakeMethodSnapshotRestore {
+		t.Fatalf("coldStart = cold %v, wake %q, method %v", cold, wakeID, method)
+	}
+	if b.reconcileCalls != 0 {
+		t.Fatalf("reconcile calls = %d, want 0", b.reconcileCalls)
+	}
+	if b.desired != 1 || b.HealthyCount("app") != 1 {
+		t.Fatalf("desired=%d healthy=%d, want 1,1", b.desired, b.HealthyCount("app"))
+	}
+	if until := h.burstPressure.state("app").settlingUntil.Load(); until <= time.Now().UnixNano() {
+		t.Fatalf("restore settling deadline = %d, want a future deadline", until)
+	}
+}
+
+func TestColdStartKeepsReconcileForPreviewScope(t *testing.T) {
+	b := &reconcilingInitialBackend{capturingInitialBackend: &capturingInitialBackend{
+		fakeBackend: &fakeBackend{app: App{ID: "app", Plan: api.PlanScale}},
+	}}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	_, _, _, err := h.coldStart(context.Background(), "app", "acct", "pr-17", 3, api.PlanScale, 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.reconcileCalls != 1 {
+		t.Fatalf("reconcile calls = %d, want 1", b.reconcileCalls)
+	}
+}
+
 func TestHandlerPassesInitialPressureWithinAppCap(t *testing.T) {
 	for _, maximum := range []int{1, 3} {
 		t.Run(itoa(uint64(maximum)), func(t *testing.T) {
@@ -123,7 +217,7 @@ func TestHandlerPassesInitialPressureWithinAppCap(t *testing.T) {
 			})
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://app.example.com/", nil))
-			if rec.Code != http.StatusOK || b.desired != min(2, maximum) {
+			if rec.Code != http.StatusOK || b.desired != 1 {
 				t.Fatalf("status=%d desired=%d body=%s", rec.Code, b.desired, rec.Body.String())
 			}
 		})
@@ -132,7 +226,6 @@ func TestHandlerPassesInitialPressureWithinAppCap(t *testing.T) {
 
 func TestInitialCapacityWakeHeaderFollowsSelectedSibling(t *testing.T) {
 	b := &capturingInitialBackend{fakeBackend: &fakeBackend{app: App{ID: "app", Plan: api.PlanScale, MaxConcurrency: 3}, host: "app.example.com", upstream: "node"}}
-	b.nextIdx.Store(1) // Select the sibling, not the primary returned by EnsureWarmCapacity.
 	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	h.burstPressure.state("app").inflight.Store(100)
 	var selected Target
@@ -142,7 +235,7 @@ func TestInitialCapacityWakeHeaderFollowsSelectedSibling(t *testing.T) {
 	})
 	cold := httptest.NewRecorder()
 	h.ServeHTTP(cold, httptest.NewRequest(http.MethodGet, "http://app.example.com/", nil))
-	if cold.Code != http.StatusOK || selected.InstanceID != "2" || cold.Header().Get("x-faas-wake-id") != "initial-2" {
+	if cold.Code != http.StatusOK || selected.InstanceID != "1" || cold.Header().Get("x-faas-wake-id") != "initial-1" {
 		t.Fatalf("cold status=%d instance=%s wake=%s", cold.Code, selected.InstanceID, cold.Header().Get("x-faas-wake-id"))
 	}
 	warm := httptest.NewRecorder()

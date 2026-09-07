@@ -45,15 +45,15 @@ func (b *warmBurstSelectionBackend) PickWarm(string) PickResult {
 	return PickResult{OK: true, Target: Target{NodeID: "node-1", InstanceID: "original"}}
 }
 
-func TestHandlerSelectsTargetAfterBurstAdmission(t *testing.T) {
+func TestHandlerForwardsToReadyTargetDuringBurstAdmission(t *testing.T) {
 	for _, warm := range []bool{false, true} {
 		name := "post-wake selection"
 		if warm {
-			name = "invalidate warm selection"
+			name = "warm selection"
 		}
 		t.Run(name, func(t *testing.T) {
 			b := &burstSelectionBackend{blockingBurstBackend: &blockingBurstBackend{
-				burstTestBackend: &burstTestBackend{fakeBackend: &fakeBackend{app: App{ID: "app-1", Plan: api.PlanScale}, host: "app.example.com"}, admitted: make(chan int, 1)},
+				burstTestBackend: &burstTestBackend{fakeBackend: &fakeBackend{app: App{ID: "app-1", Type: AppTypeApp, Plan: api.PlanScale, AutoscaleTargetRPS: 1}, host: "app.example.com"}, admitted: make(chan int, 1)},
 				started:          make(chan struct{}), release: make(chan struct{}),
 			}}
 			b.AddTarget(Target{NodeID: "node-1", InstanceID: "original"})
@@ -62,8 +62,10 @@ func TestHandlerSelectsTargetAfterBurstAdmission(t *testing.T) {
 				backend = &warmBurstSelectionBackend{b}
 			}
 			h := NewHandlerWith(backend, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
-			h.burstPressure.state(b.app.ID).inflight.Store(80)
-			defer h.burstPressure.state(b.app.ID).inflight.Store(0)
+			state := h.burstPressure.state(b.app.ID)
+			state.inflight.Store(80)
+			state.recordArrival(time.Now())
+			defer state.inflight.Store(0)
 			chosen := make(chan string, 1)
 			h.WithForwarding(func(target Target) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -86,24 +88,28 @@ func TestHandlerSelectsTargetAfterBurstAdmission(t *testing.T) {
 				t.Fatal("burst admission did not start")
 			}
 			select {
-			case <-chosen:
-				t.Fatal("forwarded before capacity became ready")
-			default:
-			}
-			release()
-			select {
 			case code := <-finished:
 				if code != http.StatusOK {
 					t.Fatalf("status %d", code)
 				}
-			case <-time.After(3 * time.Second):
-				t.Fatal("request did not finish")
+			case <-time.After(time.Second):
+				t.Fatal("request waited for background capacity")
 			}
-			if got := <-chosen; got != "newly-ready" {
-				t.Fatalf("forwarded to %q selected before admission; want newly-ready", got)
+			if got := <-chosen; got != "original" {
+				t.Fatalf("forwarded to %q, want existing ready target", got)
 			}
-			if got := b.selections.Load(); got != 1 {
-				t.Fatalf("post-capacity selections = %d, want 1", got)
+			wantSelections := int32(1)
+			if warm {
+				wantSelections = 0
+			}
+			if got := b.selections.Load(); got != wantSelections {
+				t.Fatalf("fallback selections = %d, want %d", got, wantSelections)
+			}
+			release()
+			select {
+			case <-b.admitted:
+			case <-time.After(time.Second):
+				t.Fatal("background admission did not finish")
 			}
 		})
 	}

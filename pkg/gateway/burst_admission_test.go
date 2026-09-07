@@ -40,6 +40,81 @@ func TestDesiredBurstInstances(t *testing.T) {
 	}
 }
 
+func TestDesiredBurstInstancesUsesRecentArrivalRate(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	state := &burstPressureState{}
+	state.inflight.Store(1)
+	for i := 0; i < 16; i++ {
+		state.recordArrival(base.Add(time.Duration(i) * 50 * time.Millisecond))
+	}
+	app := App{AutoscaleTargetRPS: 15}
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(750*time.Millisecond)); got != 2 {
+		t.Fatalf("recent 16 requests at target 15 desired %d, want 2", got)
+	}
+	if got := desiredBurstInstancesForApp(state, App{}, 80, 20, base.Add(750*time.Millisecond)); got != 1 {
+		t.Fatalf("disabled RPS target desired %d, want concurrency-only 1", got)
+	}
+	if got := desiredBurstInstancesForApp(state, app, 80, 1, base.Add(750*time.Millisecond)); got != 1 {
+		t.Fatalf("app cap desired %d, want 1", got)
+	}
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(2*time.Second)); got != 1 {
+		t.Fatalf("expired arrivals desired %d, want concurrency-only 1", got)
+	}
+}
+
+func TestDesiredBurstInstancesUsesPartialWindowRate(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	app := App{AutoscaleTargetRPS: 15}
+
+	state := &burstPressureState{}
+	state.inflight.Store(1)
+	for i := 0; i < 8; i++ {
+		state.recordArrival(base.Add(time.Duration(i) * 40 * time.Millisecond))
+	}
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(280*time.Millisecond)); got != 2 {
+		t.Fatalf("eight requests over 280ms desired %d, want 2", got)
+	}
+
+	immature := &burstPressureState{}
+	immature.inflight.Store(1)
+	for i := 0; i < 7; i++ {
+		immature.recordArrival(base.Add(time.Duration(i) * 40 * time.Millisecond))
+	}
+	if got := desiredBurstInstancesForApp(immature, app, 80, 20, base.Add(240*time.Millisecond)); got != 1 {
+		t.Fatalf("rate observed for less than 250ms desired %d, want 1", got)
+	}
+
+	atTarget := &burstPressureState{}
+	atTarget.inflight.Store(1)
+	for i := 0; i < 5; i++ {
+		atTarget.recordArrival(base.Add(time.Duration(i) * 70 * time.Millisecond))
+	}
+	if got := desiredBurstInstancesForApp(atTarget, app, 80, 20, base.Add(280*time.Millisecond)); got != 1 {
+		t.Fatalf("rate below target desired %d, want 1", got)
+	}
+}
+
+func TestDesiredBurstInstancesKeepsStableRateAtExistingCapacity(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	app := App{AutoscaleTargetRPS: 15}
+	state := &burstPressureState{}
+	state.inflight.Store(1)
+	// A nominal 30 RPS sender can leave 31 samples in a trailing second and
+	// measure fractionally above 30 RPS because timers are not exact. Two
+	// instances remain the stable target until demand clears the small
+	// boundary headroom.
+	for i := 0; i < 31; i++ {
+		state.recordArrival(base.Add(time.Duration(i) * 33300 * time.Microsecond))
+	}
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(999*time.Millisecond)); got != 2 {
+		t.Fatalf("jittered 30 RPS desired %d, want 2", got)
+	}
+	state.recordArrival(base.Add(999500 * time.Microsecond))
+	if got := desiredBurstInstancesForApp(state, app, 80, 20, base.Add(999500*time.Microsecond)); got != 3 {
+		t.Fatalf("rate above headroom desired %d, want 3", got)
+	}
+}
+
 func TestBurstPressureBalancesRequestCount(t *testing.T) {
 	var pressure burstPressure
 	releaseOne := pressure.begin("app-1")
@@ -47,6 +122,9 @@ func TestBurstPressureBalancesRequestCount(t *testing.T) {
 	state := pressure.state("app-1")
 	if got := state.inflight.Load(); got != 2 {
 		t.Fatalf("inflight after begin = %d, want 2", got)
+	}
+	if got := state.recentArrivals(time.Now()); got != 2 {
+		t.Fatalf("recent arrivals after begin = %d, want 2", got)
 	}
 	releaseOne()
 	releaseTwo()
@@ -156,7 +234,7 @@ func TestMaybeBurstCapacityStartsOneDeduplicatedWorker(t *testing.T) {
 	}
 }
 
-func TestMaybeBurstCapacityWaitsForReadyTarget(t *testing.T) {
+func TestMaybeBurstCapacityDoesNotBlockReadyTarget(t *testing.T) {
 	b := &blockingBurstBackend{
 		burstTestBackend: &burstTestBackend{
 			fakeBackend: &fakeBackend{app: App{ID: "app-1", Plan: api.PlanScale}},
@@ -171,10 +249,14 @@ func TestMaybeBurstCapacityWaitsForReadyTarget(t *testing.T) {
 	state.inflight.Store(81)
 	defer state.inflight.Store(0)
 
-	result := make(chan error, 1)
+	type result struct {
+		waited bool
+		err    error
+	}
+	results := make(chan result, 1)
 	go func() {
-		_, err := h.maybeBurstCapacity(context.Background(), b.app, 20, 80)
-		result <- err
+		waited, err := h.maybeBurstCapacity(context.Background(), b.app, 20, 80)
+		results <- result{waited: waited, err: err}
 	}()
 
 	select {
@@ -183,19 +265,65 @@ func TestMaybeBurstCapacityWaitsForReadyTarget(t *testing.T) {
 		t.Fatal("burst admission worker did not start")
 	}
 	select {
-	case err := <-result:
-		t.Fatalf("maybeBurstCapacity returned before target readiness: %v", err)
-	case <-time.After(25 * time.Millisecond):
+	case got := <-results:
+		if got.err != nil {
+			t.Fatalf("maybeBurstCapacity: %v", got.err)
+		}
+		if got.waited {
+			t.Fatal("ready target was invalidated while background capacity was pending")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("maybeBurstCapacity blocked a ready target")
+	}
+	select {
+	case <-b.admitted:
+		t.Fatal("admission completed before backend release")
+	default:
 	}
 
 	close(b.release)
 	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("maybeBurstCapacity: %v", err)
+	case got := <-b.admitted:
+		if got != 1 {
+			t.Fatalf("burst admission count = %d, want 1", got)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("maybeBurstCapacity did not return after target became ready")
+		t.Fatal("background admission did not finish")
+	}
+}
+
+func TestMaybeBurstCapacityWaitsForInitialRestoreToSettle(t *testing.T) {
+	b := &burstTestBackend{
+		fakeBackend: &fakeBackend{app: App{ID: "app-1", Plan: api.PlanScale}},
+		admitted:    make(chan int, 1),
+	}
+	b.AddTarget(Target{NodeID: "node-1", InstanceID: "restored"})
+	h := NewHandlerWith(b, NewMetrics(), nil)
+	state := h.burstPressure.state("app-1")
+	state.inflight.Store(81)
+	defer state.inflight.Store(0)
+	state.settlingUntil.Store(time.Now().Add(time.Second).UnixNano())
+
+	if waited, err := h.maybeBurstCapacity(context.Background(), b.app, 20, 80); err != nil || waited {
+		t.Fatalf("settling capacity = waited %v, err %v", waited, err)
+	}
+	select {
+	case got := <-b.admitted:
+		t.Fatalf("admitted %d instances during restore settling window", got)
+	default:
+	}
+
+	state.settlingUntil.Store(time.Now().Add(-time.Nanosecond).UnixNano())
+	if _, err := h.maybeBurstCapacity(context.Background(), b.app, 20, 80); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-b.admitted:
+		if got != 1 {
+			t.Fatalf("admitted = %d, want 1 after settling", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("capacity did not expand after restore settling window")
 	}
 }
 
@@ -314,6 +442,10 @@ func TestBurstCapacityUsesExistingTargetsWhenExpansionStalls(t *testing.T) {
 			defer cancel()
 			if _, err := h.maybeBurstCapacity(ctx, b.app, 20, 80); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("maybeBurstCapacity = %v, want %v", err, tt.wantErr)
+			}
+			deadline := time.Now().Add(time.Second)
+			for b.burstCalls.Load() != 1 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
 			}
 			if got := b.burstCalls.Load(); got != 1 {
 				t.Fatalf("admissions = %d, want one bounded attempt", got)
