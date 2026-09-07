@@ -12219,10 +12219,9 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 }
 
 // ListSnapshotsForGC returns every non-stale snapshot joined with its
-// deployment + app + account, ordered newest-first. The SQL filter on
-// apps.status='deleted' is what implements "soft-deleted apps' snapshots
-// are GC-eligible" — the row delete cascade in DeleteAccount only touches
-// rows, not on-disk files, so imaged still has to scrub them.
+// deployment + app + account, ordered newest-first. Deleted apps and terminal
+// deployments remain in the result because imaged needs the join metadata to
+// remove their on-disk files before deleting the rows.
 //
 // The JOIN is bounded by snapshotDashboardCap (10k) for the same reason
 // ListLiveSnapshotStats is: the GC algorithm is O(N) per tick and a 10k
@@ -12246,13 +12245,12 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error) {
 	rows, err := s.pool.Query(ctx,
 		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
-		        s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.created_at, s.tier,
+		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.created_at, s.tier,
 		        a.warm_snapshot_enabled
 		   from snapshots s
 		   join deployments d on d.id = s.deployment_id
 		   join apps a       on a.id = d.app_id
 		  where s.stale = false
-		    and a.status <> 'deleted'
 		  order by s.created_at desc
 		  limit 10000`)
 	if err != nil {
@@ -12263,11 +12261,65 @@ func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, erro
 	for rows.Next() {
 		var r SnapshotForGC
 		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
-			&r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.CreatedAt, &r.Tier,
+			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.CreatedAt, &r.Tier,
 			&r.AppWarmSnapshotEnabled); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListSnapshotsStaleOlderThan returns expired stale rows with the same join
+// metadata as ListSnapshotsForGC. The caller removes storage artifacts before
+// the row metadata is lost.
+func (s *PgStore) ListSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) ([]SnapshotForGC, error) {
+	rows, err := s.pool.Query(ctx,
+		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
+		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.created_at, s.tier,
+		        a.warm_snapshot_enabled
+		   from snapshots s
+		   join deployments d on d.id = s.deployment_id
+		   join apps a       on a.id = d.app_id
+		  where s.stale = true
+		    and s.created_at < now() - $1::interval
+		  order by s.created_at
+		  limit 10000`,
+		fmt.Sprintf("%d seconds", int64(retention.Seconds())))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotForGC
+	for rows.Next() {
+		var r SnapshotForGC
+		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
+			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.CreatedAt, &r.Tier,
+			&r.AppWarmSnapshotEnabled); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListSnapshotDeploymentIDs returns every deployment referenced by a snapshot
+// row. Stale rows are intentionally included because their artifacts remain
+// restorable until the stale-retention window expires.
+func (s *PgStore) ListSnapshotDeploymentIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`select distinct deployment_id::text from snapshots order by deployment_id::text`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var deploymentID string
+		if err := rows.Scan(&deploymentID); err != nil {
+			return nil, err
+		}
+		out = append(out, deploymentID)
 	}
 	return out, rows.Err()
 }

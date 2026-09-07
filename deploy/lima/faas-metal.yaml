@@ -111,7 +111,7 @@ provision:
       install -d -m 0755 -o root -g root /etc/faas
       install -d -m 0755 -o faas-vmmd -g faas /srv/fc/base
       install -d -m 0755 -o faas-vmmd -g faas /srv/fc/jail
-      install -d -m 0755 -o faas-vmmd -g faas /srv/fc/snap
+      install -d -m 2770 -o root -g faas /srv/fc/snap
       install -d -m 0755 -o faas-vmmd -g faas /srv/fc/layers
 
       # Postgres: edit-until-idempotent config, start, create role/db. The

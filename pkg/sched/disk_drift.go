@@ -24,9 +24,10 @@
 // ops reads rate(snapshot_disk_drift_total[5m]) and alerts on a
 // non-zero rate.
 //
-// Soft-deleted apps are excluded at the SQL/memstore layer by
-// ListSnapshotsForGC (apps.status='deleted' filter), so the sweep
-// inherits that contract and does not re-implement it.
+// ListSnapshotsForGC also supplies rows that imaged is about to reclaim.
+// This sweep omits deleted apps and failed/cancelled deployments from the
+// expected set so their remaining directories are reported as drift until GC
+// removes them.
 //
 // Tick is exported so tests drive the sweep deterministically without
 // spinning up a real ticker — same shape as Retention.SweepOnce.
@@ -226,6 +227,11 @@ func (d *DiskDrift) Tick(ctx context.Context) (int, error) {
 	// when scanning the disk tree; rows is small (~tens per box).
 	expected := make(map[string]state.SnapshotForGC, len(rows))
 	for _, r := range rows {
+		if r.AppStatus == state.AppDeleted ||
+			r.DeploymentStatus == state.DeployFailed ||
+			r.DeploymentStatus == state.DeployCancelled {
+			continue
+		}
 		directory := r.DeploymentID
 		if strings.HasPrefix(r.StorageKey, "snap/") && strings.HasSuffix(r.StorageKey, "/mem") {
 			directory = strings.TrimSuffix(strings.TrimPrefix(r.StorageKey, "snap/"), "/mem")

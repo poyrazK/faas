@@ -10,12 +10,17 @@ package imaged
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -29,15 +34,17 @@ import (
 // Loop is the imaged M8 daemon loop. cmd/imaged constructs it after wiring
 // the Handler's collaborators (store, notifier, OCI puller, builder).
 type Loop struct {
-	handler   *Handler
-	store     state.Store
-	pool      *pgxpool.Pool
-	log       *slog.Logger
-	now       func() time.Time
-	lvUsedPct func(ctx context.Context) (float64, error)
-	gcEvery   time.Duration // default 24h; tests shrink to ms
-	detectFC  func(ctx context.Context) (string, error)
-	appsRoot  string
+	handler     *Handler
+	store       state.Store
+	pool        *pgxpool.Pool
+	log         *slog.Logger
+	now         func() time.Time
+	lvUsedPct   func(ctx context.Context) (float64, error)
+	gcEvery     time.Duration // default 24h; tests shrink to ms
+	detectFC    func(ctx context.Context) (string, error)
+	appsRoot    string
+	storageRoot string
+	gcMu        sync.Mutex
 
 	// Injected channels so tests never block on time.Sleep. Defaults are
 	// built in NewLoop and can be overridden by WithGCChannel/WithFCSweepCh.
@@ -49,15 +56,16 @@ type Loop struct {
 // tests can build it once with stub collaborators instead of threading six
 // positional args through.
 type LoopConfig struct {
-	Handler   *Handler
-	Store     state.Store
-	Pool      *pgxpool.Pool
-	Log       *slog.Logger
-	Now       func() time.Time
-	LvUsedPct func(ctx context.Context) (float64, error)
-	DetectFC  func(ctx context.Context) (string, error)
-	AppsRoot  string
-	GCEvery   time.Duration
+	Handler     *Handler
+	Store       state.Store
+	Pool        *pgxpool.Pool
+	Log         *slog.Logger
+	Now         func() time.Time
+	LvUsedPct   func(ctx context.Context) (float64, error)
+	DetectFC    func(ctx context.Context) (string, error)
+	AppsRoot    string
+	StorageRoot string
+	GCEvery     time.Duration
 }
 
 // NewLoop returns a Loop wired with sane defaults. The caller (cmd/imaged)
@@ -73,15 +81,16 @@ func NewLoop(cfg LoopConfig) *Loop {
 		cfg.GCEvery = 24 * time.Hour
 	}
 	return &Loop{
-		handler:   cfg.Handler,
-		store:     cfg.Store,
-		pool:      cfg.Pool,
-		log:       cfg.Log,
-		now:       cfg.Now,
-		lvUsedPct: cfg.LvUsedPct,
-		detectFC:  cfg.DetectFC,
-		appsRoot:  cfg.AppsRoot,
-		gcEvery:   cfg.GCEvery,
+		handler:     cfg.Handler,
+		store:       cfg.Store,
+		pool:        cfg.Pool,
+		log:         cfg.Log,
+		now:         cfg.Now,
+		lvUsedPct:   cfg.LvUsedPct,
+		detectFC:    cfg.DetectFC,
+		appsRoot:    cfg.AppsRoot,
+		storageRoot: cfg.StorageRoot,
+		gcEvery:     cfg.GCEvery,
 	}
 }
 
@@ -169,6 +178,10 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 
 	l.recoverBuildHandoffs(ctx)
+	// A daemon that restarts more often than gcEvery would otherwise never
+	// reclaim anything because every restart resets the ticker. Run one sweep
+	// after recovery so cleanup makes progress on frequently updated nodes.
+	go l.runGCTick(ctx, l.now())
 
 	for {
 		select {
@@ -201,11 +214,19 @@ func (l *Loop) Run(ctx context.Context) error {
 // previous" cleanup. When lv-fc usage is at or above the alarm threshold,
 // also walks biggest accounts first until pressure is relieved.
 func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
+	l.gcMu.Lock()
+	defer l.gcMu.Unlock()
+
 	pct, err := l.lvUsedPct(ctx)
-	pressure := err == nil && !math.IsNaN(pct) && pct >= api.SnapshotBudgetAlarmPct
+	pctKnown := err == nil && !math.IsNaN(pct) && !math.IsInf(pct, 0)
+	pressure := pctKnown && pct >= api.SnapshotBudgetAlarmPct
+	pctForLog := pct
+	if !pctKnown {
+		pctForLog = 0
+	}
 	l.log.Info("imaged: gc tick",
 		"now", now.Format(time.RFC3339),
-		"lv_fc_pct", pct, "pressure", pressure)
+		"lv_fc_pct", pctForLog, "lv_fc_pct_known", pctKnown, "pressure", pressure)
 
 	rows, err := l.store.ListSnapshotsForGC(ctx)
 	if err != nil {
@@ -227,6 +248,7 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 			l.log.Warn("imaged: per-app gc", "err", err)
 		}
 	}
+	l.removeLocalSnapshotOrphans(ctx, now)
 	if !pressure {
 		return
 	}
@@ -251,6 +273,70 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 			l.log.Warn("imaged: pressure gc", "err", err)
 			return
 		}
+	}
+}
+
+const localSnapshotOrphanGrace = time.Hour
+
+// removeLocalSnapshotOrphans reclaims the pre-OCI /srv/fc/snap layout after
+// its database rows have disappeared. Every snapshot row, including a retained
+// stale row, protects its deployment directory. The age guard avoids racing a
+// newly-created directory before snapshot publication commits its row.
+func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
+	if strings.TrimSpace(l.storageRoot) == "" {
+		return
+	}
+	knownIDs, err := l.store.ListSnapshotDeploymentIDs(ctx)
+	if err != nil {
+		l.log.Warn("imaged: local snapshot orphan list", "err", err)
+		return
+	}
+	known := make(map[string]struct{}, len(knownIDs))
+	for _, deploymentID := range knownIDs {
+		known[deploymentID] = struct{}{}
+	}
+	snapRoot := filepath.Join(filepath.Clean(l.storageRoot), "snap")
+	entries, err := os.ReadDir(snapRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		l.log.Warn("imaged: local snapshot orphan scan", "root", snapRoot, "err", err)
+		return
+	}
+	cutoff := now.Add(-localSnapshotOrphanGrace)
+	removed := 0
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		deploymentID := entry.Name()
+		if _, err := uuid.Parse(deploymentID); err != nil {
+			continue
+		}
+		if _, ok := known[deploymentID]; ok {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		path := filepath.Join(snapRoot, deploymentID)
+		info, err = os.Lstat(path)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			l.log.Warn("imaged: local snapshot orphan remove", "deployment", deploymentID, "err", err)
+			continue
+		}
+		removed++
+	}
+	if removed > 0 {
+		l.log.Info("imaged: local snapshot orphans removed", "count", removed, "root", snapRoot)
 	}
 }
 
@@ -298,17 +384,22 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 		l.runAppProtocolSweep(ctx)
 		return false
 	}
-	// F-07: also evict stale snapshots past the retention window. The
-	// prior sweep only flipped stale=true, leaving rows on disk
-	// indefinitely — disk leaks on every FC upgrade.
-	evicted, err := l.store.DeleteSnapshotsStaleOlderThan(ctx, api.SnapshotStaleRetention)
+	// Reclaim expired stale rows and their storage artifacts together. Deleting
+	// rows first loses the deployment and app keys needed to find the files.
+	expired, err := l.store.ListSnapshotsStaleOlderThan(ctx, api.SnapshotStaleRetention)
 	if err != nil {
-		l.log.Warn("imaged: fc sweep evict", "err", err)
+		l.log.Warn("imaged: fc sweep list expired", "err", err)
 		// mark-stale succeeded; partial eviction still counts as progress.
 		// F3 still runs.
 		l.runAppProtocolSweep(ctx)
 		return true
 	}
+	if err := l.deleteSnapshotsAndFiles(ctx, snapshotTargets(expired)); err != nil {
+		l.log.Warn("imaged: fc sweep evict", "err", err)
+		l.runAppProtocolSweep(ctx)
+		return true
+	}
+	evicted := len(expired)
 	// F3 (Layer 6): app-protocol stale-mark sweep. ADR-127 §D1 —
 	// flips every non-stale snapshot whose deployment's
 	// app.app_protocol ∈ {http2, grpc}. Operates on the base-image
@@ -326,6 +417,14 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 		"fc_version", ver, "marked_stale", n, "evicted", evicted,
 		"app_protocol_marked_stale", apN)
 	return true
+}
+
+func snapshotTargets(rows []state.SnapshotForGC) []deleteTarget {
+	targets := make([]deleteTarget, 0, len(rows))
+	for _, row := range rows {
+		targets = append(targets, targetForSnapshot(row))
+	}
+	return targets
 }
 
 // runAppProtocolSweep is the F3 standalone entry point — runs
@@ -391,6 +490,13 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 	if err != nil {
 		return fmt.Errorf("imaged: gc storageFor: %w", err)
 	}
+	var legacyLocal *storage.LocalStorageBackend
+	if strings.TrimSpace(l.storageRoot) != "" {
+		legacyLocal, err = storage.NewLocalStorageBackend(l.storageRoot)
+		if err != nil {
+			l.log.Warn("imaged: gc legacy storage root", "root", l.storageRoot, "err", err)
+		}
+	}
 	for _, t := range ts {
 		// snap blobs: pick the keys by tier. The storage backend
 		// swallows missing keys so a transient race with restore
@@ -412,6 +518,9 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		}
 		if err := be.Delete(ctx, vmstateKey); err != nil {
 			l.log.Warn("imaged: gc remove snap vmstate", "deployment", t.DeploymentID, "tier", t.Tier, "err", err)
+		}
+		if legacyLocal != nil {
+			l.deleteLegacyLocalSnapshot(ctx, legacyLocal, t.DeploymentID, memKey, vmstateKey)
 		}
 		// Per-app ext4 (drive1) — derive the key the same way buildImageLayer
 		// writes it. B1.1 (issue #195): AppSlug is now on SnapshotForGC;
@@ -437,6 +546,36 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 			"backend", fmt.Sprintf("%T", be))
 	}
 	return nil
+}
+
+// deleteLegacyLocalSnapshot removes snapshot files left in FAAS_STORAGE_ROOT
+// before snap/ was routed to shared OCI storage. It is intentionally limited
+// to snapshot keys selected by database GC; app layers retain their existing
+// router-owned lifecycle.
+func (l *Loop) deleteLegacyLocalSnapshot(ctx context.Context, local *storage.LocalStorageBackend, deploymentID string, keys ...string) {
+	for _, key := range keys {
+		if !strings.HasPrefix(key, "snap/") {
+			continue
+		}
+		if err := local.Delete(ctx, key); err != nil {
+			l.log.Warn("imaged: gc remove legacy local snapshot", "deployment", deploymentID, "key", key, "err", err)
+			continue
+		}
+		removeEmptySnapshotParents(local.Root(), key)
+	}
+}
+
+// removeEmptySnapshotParents prunes capture/tier/deployment directories after
+// their files are gone. os.Remove only succeeds for an empty directory, so a
+// surviving snapshot in the same deployment remains protected.
+func removeEmptySnapshotParents(root, key string) {
+	snapRoot := filepath.Join(filepath.Clean(root), "snap")
+	full := filepath.Join(filepath.Clean(root), filepath.FromSlash(key))
+	for dir := filepath.Dir(full); dir != snapRoot && strings.HasPrefix(dir, snapRoot+string(filepath.Separator)); dir = filepath.Dir(dir) {
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+	}
 }
 
 // recoverBuildHandoffs consumes successful builds whose image stage has not
