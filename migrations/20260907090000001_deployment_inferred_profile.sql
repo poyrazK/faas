@@ -1,4 +1,4 @@
--- filename: 20260907090000000_deployment_inferred_profile.sql
+-- filename: 20260907090000001_deployment_inferred_profile.sql
 -- +goose Up
 -- +goose StatementBegin
 
