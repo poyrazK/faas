@@ -18,6 +18,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/daemonunit"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/renderer"
 )
@@ -32,6 +33,9 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 	pool := pgtest.Open(t)
 	if pool == nil {
 		t.Skip("pgtest.Open skipped")
+	}
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("migrate isolated boot-contract schema: %v", err)
 	}
 
 	dsn := poolDSN(pool)
