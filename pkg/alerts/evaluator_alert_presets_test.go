@@ -187,6 +187,7 @@ func TestEvaluator_B3Metrics(t *testing.T) {
 		{name: "cold wake rate", metric: state.AlertMetricColdWakeRatePct, threshold: 10, value: 12.5},
 		{name: "queue depth", metric: state.AlertMetricQueueDepth, threshold: 50, value: 75, prom: true},
 		{name: "daily cost", metric: state.AlertMetricDailyCostCents, threshold: 100, value: 250},
+		{name: "SLO burn rate", metric: state.AlertMetricSLOBurnRate, threshold: 14.4, value: 15, prom: true},
 	}
 
 	for _, tc := range cases {

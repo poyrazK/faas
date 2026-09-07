@@ -774,6 +774,15 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		}
 		observed := float64(observedCents)
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricSLOBurnRate:
+		// PromQL-backed customer SLO signal. FetchSLOBurnRate folds
+		// the 1h/14.4x and 6h/6x windows into one effective value so
+		// the catalog can keep the normal single-threshold rule shape.
+		observed, source := appmetrics.FetchSLOBurnRate(ctx, e.promQL, e.log, rule.AppID)
+		if appmetrics.IsDegradedSource(source) {
+			return 0, false, skipDegraded
+		}
+		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	default:
 		// PromQL-driven metrics.
 		resp, source := appmetrics.Fetch(ctx, e.promQL, e.log, rule.AppID, string(rule.WindowSpec))

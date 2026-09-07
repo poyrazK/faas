@@ -120,6 +120,7 @@ var AllowedAlertRuleMetrics = []string{
 	"new_error_fingerprint",
 	"cold_wake_rate_pct",
 	"daily_cost_cents",
+	"slo_burn_rate",
 	// SAFE-RELEASES-OBS PR-B (issue #976 / ADR-122): 4 new
 	// Prometheus-counter-backed tripwires for the canary/safedeploy
 	// lifecycle. The actual firing happens in Prometheus against

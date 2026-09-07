@@ -69,10 +69,33 @@ type EnvVar struct {
 	// "shared" for pkg/ readers and "guest" for guest-init.
 	Owners []string
 	Source EnvSource
+	// Required makes an empty or unset value a boot-time error for every
+	// owner. Required variables must be delivered by the owner's unit or
+	// role; they may not silently fall back to a development default.
+	Required bool
+	// Default is applied when the variable is unset or empty. A required
+	// variable must leave this empty so an absent production setting cannot
+	// be masked by a code default.
+	Default string
+	// Validate names the small set of contract validations performed by
+	// pkg/daemonenv before a daemon opens listeners or a database.
+	Validate EnvValidation
 	// Note is free text shown in docs/ops/env-contract.md. Mandatory for
 	// EnvSourceSecretsEnv (must name the delivering file).
 	Note string
 }
+
+// EnvValidation is the validation kind for an EnvVar row. Validation is
+// intentionally declarative so the contract remains inspectable by the
+// deploy-side tripwire and generated documentation.
+type EnvValidation string
+
+const (
+	EnvValidationPathExists EnvValidation = "path-exists"
+	EnvValidationSocket     EnvValidation = "socket"
+	EnvValidationURL        EnvValidation = "url"
+	EnvValidationInt        EnvValidation = "int"
+)
 
 // EnvContract is sorted by Name; TestEnvContract_Sorted pins it.
 var EnvContract = []EnvVar{
@@ -132,7 +155,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_COMPLETION_CACHE_PATH", Owners: []string{"shared"}, Source: EnvSourceClient, Note: "read by the CLI/SDK on the operator's machine, never by a daemon"},
 	{Name: "FAAS_COMPUTE_GATEWAY_DISCOVERY", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_CONTROL_PLANE_API_TARGET", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
-	{Name: "FAAS_DATABASE_URL", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "DATABASE_URL from compute-db.env is the production DSN; this is the legacy alias"},
+	{Name: "FAAS_DATABASE_URL", Owners: []string{"shared"}, Source: EnvSourceDefault, Required: true, Validate: EnvValidationURL, Note: "DATABASE_URL from compute-db.env is the production DSN; this is the legacy alias; DATABASE_URL satisfies this requirement"},
 	{Name: "FAAS_DATA_PLACEMENT", Owners: []string{"apid"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
@@ -160,12 +183,12 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_ENVIRONMENT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value"},
 	{Name: "FAAS_FLOOR_INTERVAL_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
-	{Name: "FAAS_FUNCTION_RUNNER_GO124", Owners: []string{"imaged", "shared"}, Source: EnvSourceUnit},
-	{Name: "FAAS_FUNCTION_RUNNER_GO124_ALPINE", Owners: []string{"imaged", "shared"}, Source: EnvSourceUnit},
-	{Name: "FAAS_FUNCTION_RUNNER_NODE22", Owners: []string{"imaged", "shared"}, Source: EnvSourceUnit},
-	{Name: "FAAS_FUNCTION_RUNNER_NODE24", Owners: []string{"imaged", "shared"}, Source: EnvSourceUnit},
-	{Name: "FAAS_FUNCTION_RUNNER_PYTHON312", Owners: []string{"imaged", "shared"}, Source: EnvSourceUnit},
-	{Name: "FAAS_FUNCTION_RUNNER_PYTHON313", Owners: []string{"imaged", "shared"}, Source: EnvSourceUnit},
+	{Name: "FAAS_FUNCTION_RUNNER_GO124", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
+	{Name: "FAAS_FUNCTION_RUNNER_GO124_ALPINE", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
+	{Name: "FAAS_FUNCTION_RUNNER_NODE22", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
+	{Name: "FAAS_FUNCTION_RUNNER_NODE24", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
+	{Name: "FAAS_FUNCTION_RUNNER_PYTHON312", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
+	{Name: "FAAS_FUNCTION_RUNNER_PYTHON313", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_GATEWAYD_CONFIG", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin},
 	{Name: "FAAS_GATEWAYD_CONTROL_URL", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GATEWAYD_PUBLIC_ROLE", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceDropin},
@@ -338,6 +361,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_STORAGE_LOCAL_PREFIXES", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_STORAGE_ROLLUP_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STORAGE_ROOT", Owners: []string{"imaged", "vmmd", "shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_STORAGE_SNAPSHOT_COMPRESSION", Owners: []string{"shared"}, Source: EnvSourceEnvFile, Note: "remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165)"},
 	{Name: "FAAS_STREAM_BRIDGE_PERSISTENT", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STREAM_BRIDGE_VERSION", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "rollback lever, see docs/ops/h2c-rollback.md"},
 	{Name: "FAAS_STRIPE_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
@@ -392,4 +416,21 @@ func EnvContractByName() map[string]EnvVar {
 		m[v.Name] = v
 	}
 	return m
+}
+
+// EnvContractForDaemon returns the contract rows visible to a daemon. Rows
+// owned by "shared" are included because shared packages execute inside each
+// daemon process; direct daemon ownership remains useful for deployment and
+// documentation checks.
+func EnvContractForDaemon(daemon string) []EnvVar {
+	var out []EnvVar
+	for _, v := range EnvContract {
+		for _, owner := range v.Owners {
+			if owner == daemon || owner == "shared" {
+				out = append(out, v)
+				break
+			}
+		}
+	}
+	return out
 }

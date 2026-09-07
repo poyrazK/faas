@@ -123,7 +123,7 @@ type server struct {
 	// never invalidates. Wired via WithSpecCache from
 	// cmd/apid/main.go (production) or kept nil (unit tests).
 	specCache *openapidiff.SpecCache
-	// PR #1099 P2 redesign: force-park + force-cold-boot now
+	// Workload force-actions and provider compute-node lifecycle actions
 	// route through the operator_intents table + pg_notify
 	// (migrations/00431). apid never imports pkg/scheddgrpc —
 	// the apid-control-plane-only depguard rule
@@ -1978,12 +1978,12 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireAdminMutation(s.postObsAccountRestore)))
 	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
 		s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions)))
-	mux.HandleFunc("POST /v1/admin/ops/nodes/{name}/drain",
-		s.authLimited(s.requireAdminMutation(s.postObsNodeDrain)))
-	mux.HandleFunc("POST /v1/admin/ops/nodes/{name}/force-drain",
-		s.authLimited(s.requireAdminMutation(s.postObsNodeForceDrain)))
-	mux.HandleFunc("POST /v1/admin/ops/nodes/{name}/activate",
-		s.authLimited(s.requireAdminMutation(s.postObsNodeActivate)))
+	mux.Handle("POST /v1/admin/ops/nodes/{name}/drain",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeDrain))))
+	mux.Handle("POST /v1/admin/ops/nodes/{name}/force-drain",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeForceDrain))))
+	mux.Handle("POST /v1/admin/ops/nodes/{name}/activate",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeActivate))))
 
 	// ADR-132 — typed runtime configuration. GET is MFA-gated; PATCH and
 	// rollback use the strict operator-session policy

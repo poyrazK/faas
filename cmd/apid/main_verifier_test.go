@@ -75,6 +75,7 @@ func TestRunWithDeps_PassesNodeVerifierToDialSites(t *testing.T) {
 	)
 
 	deps := defaultDeps()
+	withTestStore(&deps)
 	deps.preLoadedConfig = preLoadedConfigForVerifierTest(t)
 	deps.config = deps.preLoadedConfig // runWithDeps reads deps.config, not deps.preLoadedConfig
 	// Hand the test a stub verifier. preLoadedNodeVerifier overrides
@@ -150,6 +151,7 @@ func TestRunWithDeps_NilPreLoadedNodeVerifier_NoHookInstalled(t *testing.T) {
 	)
 
 	deps := defaultDeps()
+	withTestStore(&deps)
 	deps.preLoadedConfig = preLoadedConfigForVerifierTest(t)
 	deps.config = deps.preLoadedConfig // runWithDeps reads deps.config, not deps.preLoadedConfig
 	deps.preLoadedNodeVerifier = nil   // explicit

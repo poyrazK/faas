@@ -1709,7 +1709,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return fmt.Errorf("imaged: pull image config: %w", err)
 	}
 
-	manifest, err := manifestFromImageConfig(imageCfg)
+	manifest, err := manifestFromImageConfigWithApp(imageCfg, app)
 	if err != nil {
 		// Image declares neither Entrypoint nor Cmd — oci.ManifestFromConfig
 		// already wrapped it with ErrImageManifestInvalid; mark the deploy
@@ -2498,6 +2498,23 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	dep, err := h.store.DeploymentByID(ctx, p.DeploymentID)
 	if err != nil {
 		return fmt.Errorf("imaged: load deployment: %w", err)
+	}
+	app, err := h.store.AppByID(ctx, dep.AppID)
+	if err != nil {
+		return fmt.Errorf("imaged: load app for snapshot: %w", err)
+	}
+	// Firecracker restore requires the memory artifact to match the VM's
+	// configured RAM exactly. An app update can race a snapshot notification,
+	// so validate again at the sole snapshot-row writer rather than relying
+	// only on schedd's pre-capture check. Zero is retained for legacy writers
+	// that did not report mem_bytes.
+	expectedMemBytes := int64(app.RAMMB) << 20
+	if p.MemBytes > 0 && app.RAMMB > 0 && p.MemBytes != expectedMemBytes {
+		if state.IsSnapshotCaptureKey(p.StorageKey) {
+			h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: p.StorageKey})
+		}
+		return fmt.Errorf("imaged: snapshot RAM mismatch: deployment %s has %d bytes, app requires %d",
+			p.DeploymentID, p.MemBytes, expectedMemBytes)
 	}
 
 	snap := state.Snapshot{

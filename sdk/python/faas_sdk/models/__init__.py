@@ -370,6 +370,8 @@ from .get_account_slo_window import GetAccountSLOWindow
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
 from .get_app_open_api_source import GetAppOpenAPISource
+from .get_app_request_analytics_group_by import GetAppRequestAnalyticsGroupBy
+from .get_app_request_analytics_timeseries_group_by import GetAppRequestAnalyticsTimeseriesGroupBy
 from .get_app_request_analytics_timeseries_method import GetAppRequestAnalyticsTimeseriesMethod
 from .get_app_slo_window import GetAppSLOWindow
 from .get_apps_metrics_range import GetAppsMetricsRange
@@ -525,6 +527,7 @@ from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
 )
 from .obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTraceIdCompletenessRatio
+from .obs_node_operation_preflight import ObsNodeOperationPreflight
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_response import OIDCExchangeResponse
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
@@ -532,6 +535,7 @@ from .operator_intent_accepted_response_kind import OperatorIntentAcceptedRespon
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
 from .operator_intent_response import OperatorIntentResponse
 from .operator_intent_response_kind import OperatorIntentResponseKind
+from .operator_intent_response_metadata import OperatorIntentResponseMetadata
 from .operator_intent_response_status import OperatorIntentResponseStatus
 from .operator_runtime_config import OperatorRuntimeConfig
 from .operator_runtime_config_apply_mode import OperatorRuntimeConfigApplyMode
@@ -624,13 +628,19 @@ from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .repo_response import RepoResponse
+from .request_analytics_group import RequestAnalyticsGroup
+from .request_analytics_group_method import RequestAnalyticsGroupMethod
 from .request_analytics_response import RequestAnalyticsResponse
+from .request_analytics_response_group_by import RequestAnalyticsResponseGroupBy
 from .request_analytics_route import RequestAnalyticsRoute
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
 from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
 from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
 from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
+from .request_analytics_timeseries_response_group_by import RequestAnalyticsTimeseriesResponseGroupBy
 from .request_analytics_timeseries_response_method import RequestAnalyticsTimeseriesResponseMethod
+from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSeries
+from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
 from .resource_profile import ResourceProfile
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .retry_deployment_request import RetryDeploymentRequest
@@ -804,6 +814,8 @@ from .workflow_trigger_spec import WorkflowTriggerSpec
 from .workflow_trigger_spec_type import WorkflowTriggerSpecType
 from .workload_dependency import WorkloadDependency
 from .workload_dependency_condition import WorkloadDependencyCondition
+from .workload_port import WorkloadPort
+from .workload_port_protocol import WorkloadPortProtocol
 
 __all__ = (
     "AccountAppSecretResponse",
@@ -1168,6 +1180,8 @@ __all__ = (
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
     "GetAppOpenAPISource",
+    "GetAppRequestAnalyticsGroupBy",
+    "GetAppRequestAnalyticsTimeseriesGroupBy",
     "GetAppRequestAnalyticsTimeseriesMethod",
     "GetAppSLOWindow",
     "GetAppsMetricsRange",
@@ -1321,6 +1335,7 @@ __all__ = (
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",
+    "ObsNodeOperationPreflight",
     "OIDCExchangeRequest",
     "OIDCExchangeResponse",
     "OperatorIntentAcceptedResponse",
@@ -1328,6 +1343,7 @@ __all__ = (
     "OperatorIntentAcceptedResponsePreviousState",
     "OperatorIntentResponse",
     "OperatorIntentResponseKind",
+    "OperatorIntentResponseMetadata",
     "OperatorIntentResponseStatus",
     "OperatorRuntimeConfig",
     "OperatorRuntimeConfigApplyMode",
@@ -1420,13 +1436,19 @@ __all__ = (
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
     "RepoResponse",
+    "RequestAnalyticsGroup",
+    "RequestAnalyticsGroupMethod",
     "RequestAnalyticsResponse",
+    "RequestAnalyticsResponseGroupBy",
     "RequestAnalyticsRoute",
     "RequestAnalyticsRouteMethod",
     "RequestAnalyticsTimeseriesPoint",
     "RequestAnalyticsTimeseriesResponse",
     "RequestAnalyticsTimeseriesResponseBucket",
+    "RequestAnalyticsTimeseriesResponseGroupBy",
     "RequestAnalyticsTimeseriesResponseMethod",
+    "RequestAnalyticsTimeseriesSeries",
+    "RequestAnalyticsTimeseriesSeriesMethod",
     "ResourceProfile",
     "RestoreManagedPostgresDatabaseRequest",
     "RetryDeploymentRequest",
@@ -1594,4 +1616,6 @@ __all__ = (
     "WorkflowTriggerSpecType",
     "WorkloadDependency",
     "WorkloadDependencyCondition",
+    "WorkloadPort",
+    "WorkloadPortProtocol",
 )

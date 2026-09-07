@@ -103,6 +103,7 @@ type multiSink struct {
 	onListApp  func(slug string) (int, any)
 	onRename   func(slug string) (int, any, []byte)
 	onScale    func(slug string, body []byte) (int, any)
+	onRestart  func(slug string) (int, any)
 	onSecrets  func(method string, path string) (int, any)
 	onPlan     func(body []byte) (int, any)
 	lastBody   []byte
@@ -134,6 +135,10 @@ func (s *multiSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/v1/apps") && strings.HasSuffix(path, "/instances"):
 		slug := strings.TrimSuffix(strings.TrimPrefix(path, "/v1/apps/"), "/instances")
 		status, payload := s.onListApp(slug)
+		writeJSONTestStatus(w, status, payload)
+	case strings.HasPrefix(path, "/v1/apps") && strings.HasSuffix(path, "/restart"):
+		slug := strings.TrimSuffix(strings.TrimPrefix(path, "/v1/apps/"), "/restart")
+		status, payload := s.onRestart(slug)
 		writeJSONTestStatus(w, status, payload)
 	case strings.HasPrefix(path, "/v1/apps") && r.Method == "PATCH":
 		slug := strings.TrimPrefix(path, "/v1/apps/")
@@ -467,6 +472,60 @@ func TestCmdEnvPush_ForwardsEveryKeyValue(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "A set") || !strings.Contains(stdout.String(), "B set") {
 		t.Errorf("stdout should confirm both keys set: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "apply on the next wake") {
+		t.Errorf("stdout should explain default next-wake semantics: %q", stdout.String())
+	}
+}
+
+func TestCmdEnvPush_RestartAfterSuccessfulUpdate(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".env")
+	if err := os.WriteFile(envFile, []byte("A=alpha\nB=bravo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	sink := &multiSink{
+		onSecrets: func(method, path string) (int, any) {
+			if method == "GET" {
+				return http.StatusOK, api.AppSecretListResponse{Quota: 25}
+			}
+			if method == "PUT" {
+				parts := strings.Split(path, "/")
+				calls = append(calls, "put:"+parts[len(parts)-1])
+				return http.StatusOK, nil
+			}
+			return http.StatusBadRequest, nil
+		},
+		onRestart: func(slug string) (int, any) {
+			if slug != "hello" {
+				t.Errorf("restart slug = %q, want hello", slug)
+			}
+			calls = append(calls, "restart")
+			return http.StatusAccepted, api.AppRestartResponse{WakeID: "wake-env-123"}
+		},
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := envPush([]string{"--app", "hello", "-f", envFile, "--restart"}); code != 0 {
+		t.Fatalf("envPush --restart exit = %d, want 0", code)
+	}
+	if !containsAll(calls, []string{"put:A", "put:B", "restart"}) {
+		t.Fatalf("request sequence = %v, want both PUTs and restart", calls)
+	}
+	if calls[len(calls)-1] != "restart" {
+		t.Fatalf("last request = %q, want restart after all PUTs", calls[len(calls)-1])
+	}
+	if !strings.Contains(stdout.String(), "Restart requested after env update") ||
+		!strings.Contains(stdout.String(), "wake-env-123") {
+		t.Errorf("stdout should include restart correlation id: %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "apply on the next wake") {
+		t.Errorf("--restart output should not claim lazy next-wake semantics: %q", stdout.String())
 	}
 }
 

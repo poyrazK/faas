@@ -3,6 +3,7 @@
 //   gregale ps <app>          instances + state (humanizes parked → sleeping)
 //   gregale status            personal SLO snapshot from GET /status/slo.json
 //   gregale env pull|push     local .env <-> sealed secrets (key-only pull per §11/G2)
+//                              with optional --restart after a push
 //   gregale app <slug> scale  per-app scale knobs (--ram/--max-concurrency/--idle/--min)
 //   gregale app <slug> rename atomic slug swap (full-stack: server + state + CLI)
 //   gregale app <slug> restart park + fresh snapshot + wake
@@ -189,7 +190,8 @@ func cmdStatus(args []string) int {
 // writes a KEY-only .env template (empty values) per the §11/G2
 // sealed-secrets boundary — the server never returns plaintext. The
 // push path re-uses the secrets API PUT with the same rotation-hint
-// flow as `gregale secrets set`.
+// flow as `gregale secrets set`; `--restart` opts into an immediate
+// park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale env <pull|push> --app <slug>", "env")
@@ -256,6 +258,7 @@ func envPush(args []string) int {
 	app := fs.String("app", "", "app slug")
 	in := fs.String("f", ".env", "input file (default .env)")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
+	restart := fs.Bool("restart", false, "restart app after applying changes (otherwise changes apply on next wake)")
 	// --secret-scan mirrors the deploy-side flag. Default ON because the
 	// failure mode (a Stripe key pasted into a `gregale env push`
 	// heredoc) is the same as the deploy-side case — the value lands in
@@ -272,7 +275,7 @@ func envPush(args []string) int {
 		return 1
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [-f .env | --from-stdin]", "env")
+		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [-f .env | --from-stdin] [--restart]", "env")
 		return 1
 	}
 	if *fromStdin && *in != ".env" {
@@ -433,6 +436,23 @@ func envPush(args []string) int {
 		}
 		PrintOK(osStdout, "%s set", p.k)
 	}
+	if *restart {
+		// The env PUT invalidates parked snapshots, but running instances
+		// intentionally keep their old process environment. Reuse the
+		// customer restart endpoint so `--restart` has the same durable
+		// park-and-replacement-wake semantics as `gregale app <slug> restart`.
+		out, err := client.RestartApp(context.Background(), *app)
+		if err != nil {
+			return printErr("Restart failed", err)
+		}
+		PrintOK(osStdout, "Restart requested after env update (wake_id=%s)", out.WakeID)
+		return 0
+	}
+	// Default semantics are deliberately lazy: the API keeps live
+	// instances on their existing environment and the next wake picks up
+	// the persisted values. Say this even when no key was a re-PUT — a new
+	// key is just as invisible to already-running processes as a rotation.
+	PrintWarn(osStdout, "Updated env values apply on the next wake; running instances keep their current environment. Use --restart to apply now.")
 	return 0
 }
 

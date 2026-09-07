@@ -378,13 +378,14 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	}
 	defer cleanup()
 
-	manifest, err := oci.ManifestFromConfig(config)
+	manifest, err := manifestFromLocalOCIConfig(config, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
 	}
 	// F8 fixup: shared default-seeding helper — same rule the
 	// registry pull path applies in manifestFromImageConfig.
 	applyContainerDefaults(&manifest)
+	manifest = applyAppStartCommand(manifest, app)
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}

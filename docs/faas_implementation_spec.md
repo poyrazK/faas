@@ -1375,6 +1375,7 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `cold_wake_rate_pct` alert metric | n/a (per-app) | > 10 % / 1 h (request_telemetry `cold_boot`) |
 | `gateway_queue_depth{app}` alert metric | plan queue cap | > 50 / 15 m (queue backlog) |
 | `daily_cost_cents` alert metric | n/a (per-app) | > 100 cents / 24 h (usage_daily RAM burn rate) |
+| `slo_burn_rate` alert metric | 99.5% API availability SLO | > 14.4x / 1 h **and** > 6x / 6 h (0.5% error budget, Google SRE multi-window) |
 | `schedd_instance_cpu_pct{app,node}` | max over siblings | > 90 sustained page (hot loop) |
 | `schedd_instance_rss_mb{app,node}` | sum over siblings | > plan × max_concurrency page |
 | `schedd_instance_inflight_requests{app,node}` | sum over siblings | > max_concurrency × 2 page |

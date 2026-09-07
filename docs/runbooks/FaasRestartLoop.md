@@ -3,7 +3,7 @@
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 Metric: `node_systemd_restart_count{name=~"faas-.*\.service"}`
 (from node_exporter `--collector.systemd`, enabled by
-`deploy/ansible/roles/node_exporter/files/node_exporter.service`).
+`deploy/ansible/roles/node_exporter/templates/node_exporter.service.j2`).
 Issue: #573. ADR: ADR-128. Severity: page.
 
 ## Symptom

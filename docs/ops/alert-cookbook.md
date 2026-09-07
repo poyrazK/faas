@@ -37,6 +37,7 @@ When you receive a page:
 | `cold_boot` | page | [`FaasColdBootFallbackHigh.md`](FaasColdBootFallbackHigh.md) | FC version upgrade mid-rollout (transient); check `fc_version` label. |
 | `cold_boot_ratio` | warn | [`FaasColdBootRatioHigh.md`](FaasColdBootRatioHigh.md) | High churn customer (CI/CD); check per-account breakdown. |
 | `api_availability` | page | [`FaasApiAvailabilityLow.md`](FaasApiAvailabilityLow.md) | Scheduled maintenance window; check `#ops-maintenance` Slack. |
+| `slo_burn_rate` | warn | [`FaasSLOBurnRateHigh.md`](../runbooks/FaasSLOBurnRateHigh.md) | Low-volume apps can look noisy; confirm meaningful traffic and both windows before escalating. |
 | `build_success` | warn | [`FaasBuildSuccessLow.md`](FaasBuildSuccessLow.md) | Failed app dependency update (customer-side); check per-app failure breakdown. |
 | `audit_write_failures` | warn | [`FaasApidAuditWriteFailures.md`](FaasApidAuditWriteFailures.md) | Postgres connection storm (transient); check apid error logs. |
 | `audit_retention` | warn | [`FaasAuditRetentionExhaustion.md`](FaasAuditRetentionExhaustion.md) | Cleanup-loop goroutine wedged (liveness check). |

@@ -9701,7 +9701,7 @@ func scanAlertPresetCols(scan func(...any) error) (AlertPreset, error) {
 // (defence-in-depth: the closed-set check on minimum_plan is the
 // authoritative gate, not a SQL filter).
 //
-// Catalog cardinality is bounded (10 rows today) so no pagination
+// Catalog cardinality is bounded (15 rows today) so no pagination
 // is needed; the slice fits in a single round trip.
 func (s *PgStore) ListAlertPresets(ctx context.Context) ([]AlertPreset, error) {
 	rows, err := s.pool.Query(ctx,

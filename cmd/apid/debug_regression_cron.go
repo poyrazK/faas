@@ -5,7 +5,7 @@
 // traffic in the window, finds the prior deployment to use as
 // baseline, and upserts a debug_regression_observations row for
 // every (deployment, route) where the current p95 exceeds the
-// baseline by ≥20% and the affected row count is at least
+// baseline by ≥20% and the affected request count is at least
 // debugRegressionMinAffected (default 100 — PR-B chosen value).
 //
 // Why 5 minutes: same cadence as the gatewayd-internal publisher
@@ -262,7 +262,7 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 		if curRow.P95Ms <= threshold {
 			continue
 		}
-		// Affected rows: count current deployment's rows in the
+		// Affected requests: count current deployment's rows in the
 		// window where latency_ms > threshold. PR-B uses a simple
 		// RequestTelemetryByDeployment walk capped at 10k rows;
 		// the cron already filters at the window edge.
@@ -281,20 +281,7 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 				"err", err)
 			continue
 		}
-		affected := int32(0)
-		for _, row := range drilldown {
-			// Drilldown is per-deployment, not per-route — PR-B
-			// kept the simpler indexed query and filters in Go so
-			// the dashboard's "X requests affected" badge
-			// attributes the count to the regressed route rather
-			// than the deployment as a whole.
-			if row.Route != curRow.Route {
-				continue
-			}
-			if row.LatencyMs > threshold {
-				affected++
-			}
-		}
+		affected := countAffectedRequests(drilldown, curRow.Route, threshold)
 		if affected < debugRegressionMinAffected {
 			continue
 		}
@@ -335,6 +322,35 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 		}
 	}
 	return nil
+}
+
+// countAffectedRequests returns the number of requests represented by
+// drilldown rows for route whose latency exceeds threshold. The gateway
+// publisher collapses identical requests into rows with a Count weight, so
+// counting rows would under-report the impact of a regression. The result is
+// saturated at the int32 range used by debug_regression_observations.
+func countAffectedRequests(rows []sqlc.RequestTelemetryByDeploymentRow, route string, threshold int32) int32 {
+	const maxAffectedCount = int64(1<<31 - 1)
+	var affected int64
+	for _, row := range rows {
+		// Drilldown is per-deployment, not per-route — the indexed query
+		// stays reusable for the compare endpoint and we filter here so
+		// the persisted badge attributes the count to the route.
+		if row.Route != route || row.LatencyMs <= threshold {
+			continue
+		}
+		count := int64(row.Count)
+		if count < 1 {
+			// Legacy rows predate the CHECK constraint; preserve the old
+			// one-row semantics for those records.
+			count = 1
+		}
+		if affected > maxAffectedCount-count {
+			return int32(maxAffectedCount)
+		}
+		affected += count
+	}
+	return int32(affected)
 }
 
 // emitRegressionOldestPassGauge (ADR-127 PR-B) refreshes the

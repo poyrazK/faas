@@ -450,6 +450,7 @@ func TestForwardingReverseProxy_HappyPath(t *testing.T) {
 	// before the forwarder dispatches.
 	req.Header.Set("x-faas-stream", "true")
 	req.Header.Set("x-faas-instance", "i-test")
+	req.Header.Set("x-faas-protocol", "http2")
 
 	rec := httptest.NewRecorder()
 	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, req)
@@ -482,6 +483,9 @@ func TestForwardingReverseProxy_HappyPath(t *testing.T) {
 	}
 	if !init.GetStream() {
 		t.Errorf("init.Stream = false, want true")
+	}
+	if got := init.GetAppProtocol(); got != "http2" {
+		t.Errorf("init.AppProtocol = %q, want http2", got)
 	}
 	// Connection was stripped; X-Custom + Authorization survived.
 	gotHeaders := map[string]string{}
@@ -592,6 +596,9 @@ func TestForwardingReverseProxy_PortZeroDefaultsAtBoundary(t *testing.T) {
 	}
 	if got := init.GetPort(); got != 0 {
 		t.Errorf("ForwardHTTPRequestInit.port = %d, want 0 (server defaults to 8080)", got)
+	}
+	if got := init.GetAppProtocol(); got != "http1" {
+		t.Errorf("ForwardHTTPRequestInit.app_protocol = %q, want http1 default", got)
 	}
 }
 

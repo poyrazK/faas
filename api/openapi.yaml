@@ -8245,9 +8245,9 @@ paths:
     get:
       tags: [alert_rules]
       operationId: listAlertPresets
-      summary: List the 8-row alert-preset catalog.
+      summary: List the alert-preset catalog.
       description: |
-        The catalog is small (8 rows in PR-A) so no pagination.
+        The catalog is intentionally small and bounded, so no pagination.
         Rows whose enabled_in_catalog=false are returned with the
         flag set so the dashboard can render "coming soon" — the
         enable endpoint rejects them with 400 alert_preset_disabled.
@@ -13296,6 +13296,45 @@ components:
       x-since: "2026-08"
       x-pr-cluster: "operator-obs-mega"
 
+    ObsNodeOperationPreflight:
+      description: Bounded impact summary captured before a provider compute-node lifecycle intent is enqueued.
+      type: object
+      required:
+        - affected_apps
+        - affected_tenants
+        - total_instances
+        - live_instances
+        - live_ram_mb
+        - capacity_change_mb
+        - reversible
+        - disruption_warning
+      properties:
+        affected_apps:
+          type: integer
+          minimum: 0
+        affected_tenants:
+          type: integer
+          minimum: 0
+        total_instances:
+          type: integer
+          minimum: 0
+        live_instances:
+          type: integer
+          minimum: 0
+        live_ram_mb:
+          type: integer
+          format: int64
+          minimum: 0
+        capacity_change_mb:
+          type: integer
+          description: Signed admission-capacity delta if the requested lifecycle transition lands; zero for an idempotent request.
+        reversible:
+          type: boolean
+        disruption_warning:
+          type: boolean
+          description: True when a force-drain targets a node that still has live instances.
+      x-since: "2026-09"
+
     # P2 of the operator-side observability mega-PR (Commit P2.3).
     # Returned by GET /v1/admin/operator-intents/{id}. Mirrors
     # state.OperatorIntent. Status is one of "pending" | "running"
@@ -13311,22 +13350,33 @@ components:
         on wrong-owner so an admin cannot distinguish "wrong id"
         from "wrong owner".
       type: object
-      required: [intent_id, kind, status, target_id, requested_at]
+      required: [intent_id, kind, status, target_id, actor_id, reason, metadata, requested_at]
       properties:
         intent_id: { type: string, format: uuid }
         kind:
           type: string
-          enum: [force_park, force_cold_boot, force_restart]
+          enum: [force_park, force_cold_boot, force_restart, node_drain, node_force_drain, node_activate]
         status:
           type: string
           enum: [pending, running, succeeded, failed, cancelled]
         target_id:
           type: string
-          description: Instance UUID (force_park or force_restart) or deployment UUID (force_cold_boot).
+          description: Instance UUID (force_park or force_restart), deployment UUID (force_cold_boot), or compute-node UUID (node lifecycle intents).
         account_id:
           type: string
           format: uuid
-          description: Owning account. NULL for fleet-level intents (e.g. P2c reclaim_build).
+          description: Owning account. Omitted for fleet-level node lifecycle intents.
+        actor_id:
+          type: string
+          format: uuid
+          description: Admin account that requested the operation.
+        reason:
+          type: string
+          description: Bounded operator-supplied reason recorded with the intent.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Kind-specific preflight and desired-state metadata captured before dispatch.
         requested_at:
           type: string
           format: date-time
@@ -17849,6 +17899,7 @@ components:
             - new_error_fingerprint
             - cold_wake_rate_pct
             - daily_cost_cents
+            - slo_burn_rate
         comparison:
           type: string
           enum: [gt, gte, lt, lte]
@@ -17894,7 +17945,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -17929,7 +17980,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

@@ -190,6 +190,36 @@ tests:
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGatewayQueueBacklogGrowing.md"
 
   # ──────────────────────────────────────────────────────────────
+  # Test 6 — SLO burn rate fires only when both Google SRE windows
+  # breach. 15% errors is a 30x burn of the 0.5% error budget, so
+  # it is above both the 14.4x/1h and 6x/6h thresholds.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "SLO burn >14.4x in both windows → FaasSLOBurnRateHigh fires"
+    input_series:
+      # 100 total requests and 15 non-2xx requests per sample. The
+      # counters cover 6h15m so the 6h range and the 10m `for:`
+      # window are both fully populated at eval_time.
+      - series: 'gateway_requests_total{app="app-burn",plan="hobby",code="2xx"}'
+        values: '850+85x750'
+      - series: 'gateway_requests_total{app="app-burn",plan="hobby",code="5xx"}'
+        values: '0+15x750'
+    alert_rule_test:
+      - eval_time: 6h15m
+        alertname: FaasSLOBurnRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: alert_preset_signals
+              preset: slo_burn_rate
+              app: "app-burn"
+            exp_annotations:
+              summary: "SLO burn rate is high for app app-burn"
+              description: "The app's API error budget exceeded the Google SRE multi-window thresholds: >14.4x over 1h and >6x over 6h of the ADR-082 99.5% availability SLO. gateway_requests_total is app-labelled; use the meterd alert delivery or app dashboard to correlate the app with its customer account."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSLOBurnRateHigh.md"
+
+  # ──────────────────────────────────────────────────────────────
   # Test 6 — correlation rule fires when at least one of the
   # 5 account-labeled signals is firing for the same account.
   # ──────────────────────────────────────────────────────────────

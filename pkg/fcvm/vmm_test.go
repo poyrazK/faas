@@ -138,6 +138,50 @@ func TestProvisionRewritesPathsIntoChroot(t *testing.T) {
 	}
 }
 
+func TestProvisionUsesStableNamesForCachedReadOnlyArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	cache := filepath.Join(dir, "cache")
+	kernel := filepath.Join(cache, "c0", strings.Repeat("a", 62))
+	base := filepath.Join(cache, "42", strings.Repeat("b", 62))
+	layer := filepath.Join(dir, "layer.ext4")
+	for path, body := range map[string]string{
+		kernel: "kernel",
+		base:   "base",
+		layer:  "layer",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfg := BuildColdBootConfig(ColdBootSpec{
+		KernelKey: kernel, BaseKey: base, LayerKey: layer,
+		VcpuCount: 2, MemSizeMiB: 128, Tap: "tap0",
+	}, 0)
+	out, err := NewJailerVMM(t.TempDir(), 0).provision(root, cfg, 20000, 20000)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	if out.BootSource.KernelImagePath != kernelImageName {
+		t.Errorf("kernel path = %q, want %q", out.BootSource.KernelImagePath, kernelImageName)
+	}
+	if out.Drives[0].PathOnHost != baseImageName {
+		t.Errorf("base path = %q, want %q", out.Drives[0].PathOnHost, baseImageName)
+	}
+	for _, name := range []string{kernelImageName, baseImageName, layerImageName} {
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Errorf("expected %s provisioned into chroot: %v", name, err)
+		}
+	}
+}
+
 func TestStageReadOnly_HardlinksAndWidensRead(t *testing.T) {
 	// A 0600 source must end up readable by other (o+r) after staging, and share
 	// the source inode (hardlink) — we never copy or chown a shared read-only file.

@@ -250,7 +250,7 @@ func TestMemStoreCoverageInstances(t *testing.T) {
 }
 
 func TestMemStoreCoverageMeteringAndInvoices(t *testing.T) {
-	m, ctx, account, app, _ := memCoverageFixture(t)
+	m, ctx, account, app, dep := memCoverageFixture(t)
 	now := time.Now().UTC()
 	minute := now.Truncate(time.Minute)
 
@@ -261,19 +261,33 @@ func TestMemStoreCoverageMeteringAndInvoices(t *testing.T) {
 	if err := m.AppendBuilderUsage(ctx, account.ID, app.ID, "build-1", now, "dockerfile", 999); err != nil {
 		t.Fatal(err)
 	}
-	// UsageDaily / AppendSnapshotStorage / StorageUsage / LatestSnapshotBytes
-	// are no-op MemStore surfaces (PgStore owns the real rollup).
-	if got, err := m.UsageDaily(ctx, account.ID, minute); err != nil || got != nil {
-		t.Fatalf("usage daily = %+v, %v", got, err)
+	// UsageDaily derives the same projection from MemStore's source rows.
+	if got, err := m.UsageDaily(ctx, account.ID, minute); err != nil || len(got) != 1 || got[0].BuilderSeconds != 120 {
+		t.Fatalf("usage daily = %+v, %v; want one row with 120 builder seconds", got, err)
 	}
 	if err := m.AppendSnapshotStorage(ctx, account.ID, app.ID, minute, 100, 200); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := m.StorageUsage(ctx, account.ID, minute); err != nil || got != nil {
-		t.Fatalf("storage usage = %+v, %v", got, err)
+	if got, err := m.StorageUsage(ctx, account.ID, minute); err != nil || len(got) != 1 || got[0].SnapshotBytes != 100 || got[0].LayerBytes != 200 {
+		t.Fatalf("storage usage = %+v, %v; want 100/200 row", got, err)
 	}
 	if mb, disk, err := m.LatestSnapshotBytes(ctx, app.ID); err != nil || mb != 0 || disk != 0 {
 		t.Fatalf("latest snapshot bytes = %d/%d, %v", mb, disk, err)
+	}
+	// Deployment snapshot backoff is persisted on the in-memory deployment
+	// row and cleared by the recovery path.
+	until := now.Add(time.Minute)
+	if err := m.DeploymentRecordSnapshotMiss(ctx, dep.ID, until); err != nil {
+		t.Fatalf("record snapshot miss: %v", err)
+	}
+	if got, active, err := m.DeploymentSnapshotBackoffActive(ctx, dep.ID); err != nil || !active || got.SnapshotMissCount != 1 {
+		t.Fatalf("snapshot backoff = %+v active=%v err=%v; want count=1 active", got, active, err)
+	}
+	if err := m.DeploymentClearSnapshotBackoff(ctx, dep.ID); err != nil {
+		t.Fatalf("clear snapshot backoff: %v", err)
+	}
+	if got, active, err := m.DeploymentSnapshotBackoffActive(ctx, dep.ID); err != nil || active || got.ID != "" {
+		t.Fatalf("cleared snapshot backoff = %+v active=%v err=%v; want empty inactive", got, active, err)
 	}
 	// GetInvoiceByID — hit + miss. SeedInvoiceForTest is the test seam;
 	// PeriodEnd must fall inside the month the list filter uses.

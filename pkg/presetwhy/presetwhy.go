@@ -69,8 +69,8 @@ type row struct {
 // catalog is the static explanation table. Order does not matter;
 // lookup is map-based. Adding a new preset name → add a row here.
 // Tripwire: TestEveryPresetHasPresetwhyEntry in
-// cmd/gregale/lint_tripwires_test.go pins 1:1 membership against the
-// 8 catalog rows in migrations/00418_alert_presets_seed.sql.
+// cmd/gregale/lint_tripwires_test.go pins membership against the
+// customer-facing catalog rows in the alert-preset seed migrations.
 var catalog = map[string]row{
 	// ─── Originally enabled (3) — surface their prose for parity ────
 	"error_rate_2pct": {
@@ -179,6 +179,19 @@ var catalog = map[string]row{
 				fmt.Sprintf("• if the queue is rising steadily (you saw %.0f pending wakes), your max_concurrency(plan) is the ceiling — each pending wake blocks until an instance frees up\n• if traffic is bursty, the wake queue caps at 512/30 s — requests beyond that get 503\n• consider lowering the idle timeout to free instances faster (trade-off: more cold starts)", observed)
 		},
 	},
+	"slo_burn_rate": {
+		Explanation: Explanation{
+			Title:   "SLO burn rate is high",
+			Hint:    "your app is consuming its API-availability error budget too quickly",
+			Why:     "the app's non-2xx request rate exceeded the ADR-082 99.5% availability error budget at both Google SRE alert windows: 14.4x over 1 hour and 6x over 6 hours",
+			Fix:     "• check `gregale logs <slug>` and the error-rate breakdown for the failing status codes\n• correlate the start time with the latest deployment or dependency incident\n• roll back the deployment if the errors began immediately after release",
+			DocsURL: "/docs/runbooks/FaasSLOBurnRateHigh",
+		},
+		Observed: func(observed float64) (why, fix string) {
+			return fmt.Sprintf("the effective API-availability burn rate landed at %.1fx; both the 1-hour and 6-hour Google SRE windows are over budget", observed),
+				"• check `gregale logs <slug>` and the error-rate breakdown for the failing status codes\n• correlate the start time with the latest deployment or dependency incident\n• roll back the deployment if the errors began immediately after release"
+		},
+	},
 }
 
 // Decorate copies the catalog row for name into a fresh *Explanation.
@@ -220,7 +233,7 @@ func Decorate(name string, observed float64) *Explanation {
 // Codes returns the sorted list of preset names that have a catalog
 // row. Used by TestEveryPresetHasPresetwhyEntry to assert 1:1
 // membership with the catalog seed in
-// migrations/00418_alert_presets_seed.sql.
+// the alert-preset seed migrations.
 func Codes() []string {
 	out := make([]string, 0, len(catalog))
 	for name := range catalog {

@@ -196,6 +196,10 @@ check-state-coverage: ## Assert pkg/state coverage ≥ 70% from existing profile
 		&& echo "pkg/state coverage: $$total% ✓ (target ≥ 70%, excluding generated pkg/state/sqlc/**)" \
 		|| (echo "pkg/state coverage: $$total% ✗ (target ≥ 70%, excluding generated pkg/state/sqlc/**)"; exit 1)
 
+.PHONY: memstore-stubs-check
+memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
+	bash scripts/ci/check_memstore_stubs.sh
+
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live in the `floors` dict inside the python heredoc below
 # (no separate Make variable — keeping the table adjacent to the verifier
@@ -523,8 +527,12 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check ## golangci-lint via go tool (matches CI version v2.4.0) + egress artifact drift + +incompatible direct-dep gate + packer-builder syntax (ADR-111) + sealed.env scope gate (ADR-127)
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
 	@$(GO) tool golangci-lint run
+
+.PHONY: runbook-sql-check
+runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
+	@python3 scripts/ci/check_runbook_mutating_sql.py
 
 # ADR-111: packer-builder syntax gate. Delegates to deploy/packer/Makefile:image-validate,
 # which loops `packer validate -syntax-only` over every *.pkr.hcl. Works
@@ -627,7 +635,10 @@ ansible-scale-check: ## Render the example manifest and RUN scale_check.yml (not
 	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i $(CURDIR)/.cache/ansible-scale-check/inventory/hosts.ini scale_check.yml
 
 .PHONY: env-contract-check
+# Keep both the static delivery-path scanner and the generated contract tests
+# behind one target so CI and local verification exercise the same gate.
 env-contract-check: ## Every FAAS_* a daemon reads is declared + delivered; docs/ops/env-contract.md in sync — ADR-143
+	bash scripts/ci/check_env_contract.sh
 	$(GO) test -count=1 ./pkg/daemonunitspec/ -run 'TestEnvContract|TestDaemonsYAML'
 
 .PHONY: verify-fleet

@@ -286,6 +286,39 @@ func TestBackendFromEnv_OCIRequiresRegistry(t *testing.T) {
 	}
 }
 
+func TestOCIBackendFromEnvSnapshotCompression(t *testing.T) {
+	t.Setenv("FAAS_OCI_REGISTRY", "https://ghcr.io/onebox-faas")
+	t.Setenv("FAAS_STORAGE_LOCAL_PREFIXES", "none")
+	t.Setenv("FAAS_STORAGE_SNAPSHOT_COMPRESSION", snapshotCompressionZstd)
+
+	be, err := ociBackendFromEnv()
+	if err != nil {
+		t.Fatalf("ociBackendFromEnv: %v", err)
+	}
+	router, ok := be.(*PrefixRouter)
+	if !ok {
+		t.Fatalf("ociBackendFromEnv = %T, want *PrefixRouter", be)
+	}
+	remote, ok := router.fallback.(*OCIRegistryStorageBackend)
+	if !ok {
+		t.Fatalf("OCI fallback = %T, want *OCIRegistryStorageBackend", router.fallback)
+	}
+	if got := remote.snapshotCompression; got != snapshotCompressionZstd {
+		t.Fatalf("snapshot compression = %q, want %q", got, snapshotCompressionZstd)
+	}
+}
+
+func TestOCIBackendFromEnvRejectsUnknownSnapshotCompression(t *testing.T) {
+	t.Setenv("FAAS_OCI_REGISTRY", "https://ghcr.io/onebox-faas")
+	t.Setenv("FAAS_STORAGE_LOCAL_PREFIXES", "none")
+	t.Setenv("FAAS_STORAGE_SNAPSHOT_COMPRESSION", "brotli")
+
+	_, err := ociBackendFromEnv()
+	if err == nil || !strings.Contains(err.Error(), "FAAS_STORAGE_SNAPSHOT_COMPRESSION") {
+		t.Fatalf("ociBackendFromEnv error = %v, want snapshot-compression validation error", err)
+	}
+}
+
 func TestBackendFromEnv_SharedArtifactsRejectsLocalBackend(t *testing.T) {
 	t.Setenv("FAAS_REQUIRE_SHARED_ARTIFACTS", "1")
 	t.Setenv("FAAS_STORAGE_BACKEND", "local")

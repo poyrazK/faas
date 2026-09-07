@@ -2083,10 +2083,34 @@ const (
 
 func stableReadOnlyName(src, fallback string) string {
 	name := filepath.Base(src)
-	if strings.HasPrefix(name, "faas-snap-") {
+	if strings.HasPrefix(name, "faas-snap-") || isCacheObjectPath(src) {
 		return fallback
 	}
 	return name
+}
+
+// isCacheObjectPath recognizes LocalCacheBackend's SHA-256 fan-out layout:
+// <root>/<first two hex chars>/<remaining 62 hex chars>. Those basenames are
+// an implementation detail, not part of a Firecracker snapshot. A cold boot
+// may materialize an OCI object as faas-snap-* while a later restore hits this
+// cache path; both must be staged under the same in-jail name or Firecracker
+// cannot find the backing file recorded in vmstate.
+func isCacheObjectPath(path string) bool {
+	name := filepath.Base(path)
+	bucket := filepath.Base(filepath.Dir(path))
+	if len(bucket) != 2 || len(name) != 62 {
+		return false
+	}
+	return isLowerHex(bucket) && isLowerHex(name)
+}
+
+func isLowerHex(s string) bool {
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // sidecarDriveImageName returns the in-chroot basename for a sidecar

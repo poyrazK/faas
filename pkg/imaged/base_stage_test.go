@@ -1522,7 +1522,7 @@ func TestScanSidecarSourceCurrent_RetriesFailClosedPlaceholder(t *testing.T) {
 		t.Fatalf("Put sidecar: %v", err)
 	}
 	h := &Handler{}
-	if h.scanSidecarSourceCurrent(context.Background(), be, baseKey, "") {
+	if h.scanSidecarSourceCurrent(context.Background(), be, baseKey, "", "ghcr.io/example/runtime@sha256:deadbeef") {
 		t.Fatal("fail-closed scanner placeholder should be refreshed")
 	}
 }
@@ -1554,7 +1554,7 @@ func TestScanSidecarSourceCurrent_RefreshesLegacyPolicySidecar(t *testing.T) {
 		t.Fatalf("Put sidecar: %v", err)
 	}
 	h := &Handler{}
-	if h.scanSidecarSourceCurrent(context.Background(), be, baseKey, "") {
+	if h.scanSidecarSourceCurrent(context.Background(), be, baseKey, "", "ghcr.io/example/runtime@sha256:deadbeef") {
 		t.Fatal("legacy sidecar without fix_available_findings should be refreshed")
 	}
 }

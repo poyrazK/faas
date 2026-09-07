@@ -11,11 +11,13 @@ truncate to the original logical length before the existing sync and atomic
 publication. Memory use remains bounded by a 256 KiB copy buffer. Other artifact
 keys keep their existing copy path.
 
-Readers, content hashes, registry uploads and snapshot format see identical
-bytes. Sparse storage is not wire compression and does not reduce registry
-egress. Cache budgeting continues to use the full logical length. Existing
-dense cache entries are not rewritten by this change; future publication or
-cache fills create sparse files.
+Readers, content hashes and the Firecracker snapshot format see identical
+bytes. Sparse storage itself is not wire compression. When ADR-165's optional
+OCI Zstandard writer is enabled, only the registry representation is encoded;
+origin and replica caches still materialize these same sparse bytes. Cache
+budgeting continues to use the full logical length. Existing dense cache
+entries are not rewritten by this change; future publication or cache fills
+create sparse files.
 
 Validation covers fragmented streams, unaligned/trailing zeros, interrupted
 sources including wrapped EOF errors, cancellation, and preservation of a

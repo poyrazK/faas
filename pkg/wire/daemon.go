@@ -6,6 +6,7 @@ package wire
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -332,7 +333,12 @@ func Daemon(name string, fn RunFunc) {
 		// so a daemon that exited before RegisterDefaultOps ran
 		// doesn't panic.
 		defaultOps.MarkReady(name, false, "exited with error")
-		os.Exit(1)
+		exitCode := 1
+		var coded interface{ ExitCode() int }
+		if errors.As(err, &coded) && coded.ExitCode() > 0 {
+			exitCode = coded.ExitCode()
+		}
+		os.Exit(exitCode)
 	}
 	// Issue #586 / ADR-129 (Finding 2 from PR #1091 review):
 	// flip daemon_ready{daemon} to 0 BEFORE the process exits so

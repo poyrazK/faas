@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -93,16 +94,46 @@ func authChallenge(w http.ResponseWriter, srvURL, scope string) {
 }
 
 func (f *fakeRegistry) client(t *testing.T) *OCIRegistryStorageBackend {
+	return f.clientWithOptions(t)
+}
+
+func (f *fakeRegistry) clientWithOptions(t *testing.T, opts ...Option) *OCIRegistryStorageBackend {
 	t.Helper()
-	o, err := NewOCIRegistryStorageBackend(
+	baseOpts := []Option{
 		WithRegistry(f.srv.URL), // include scheme (http://) — production passes https://
 		WithHTTPClient(f.srv.Client()),
 		WithRepoPrefix("faas"),
-	)
+	}
+	baseOpts = append(baseOpts, opts...)
+	o, err := NewOCIRegistryStorageBackend(baseOpts...)
 	if err != nil {
 		t.Fatalf("NewOCIRegistryStorageBackend: %v", err)
 	}
 	return o
+}
+
+func (f *fakeRegistry) storedLayer(t *testing.T, repo, tag string) (imageManifest, []byte) {
+	t.Helper()
+	f.mu.Lock()
+	manifestJSON := append([]byte(nil), f.manifests[repo][tag]...)
+	f.mu.Unlock()
+	if len(manifestJSON) == 0 {
+		t.Fatalf("manifest %s:%s was not stored", repo, tag)
+	}
+	var manifest imageManifest
+	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+		t.Fatalf("decode stored manifest %s:%s: %v", repo, tag, err)
+	}
+	if len(manifest.Layers) != 1 {
+		t.Fatalf("stored manifest %s:%s layers = %d, want 1", repo, tag, len(manifest.Layers))
+	}
+	f.mu.Lock()
+	blob := append([]byte(nil), f.blobs[manifest.Layers[0].Digest]...)
+	f.mu.Unlock()
+	if blob == nil {
+		t.Fatalf("blob %s was not stored", manifest.Layers[0].Digest)
+	}
+	return manifest, blob
 }
 
 // handleV2 dispatches a /v2/<repo>/... request through the fake
@@ -530,6 +561,215 @@ func TestOCIRoundTrip(t *testing.T) {
 			}
 			if !bytes.Equal(got, body) {
 				t.Errorf("Get(%q): round-trip mismatch\nwant %q\ngot  %q", key, body, got)
+			}
+		})
+	}
+}
+
+func TestOCISnapshotCompressionPreservesLocalCacheRepresentation(t *testing.T) {
+	f := newFakeRegistry(t)
+	defer f.srv.Close()
+	writerBackend := f.clientWithOptions(t, WithSnapshotCompression(snapshotCompressionZstd))
+	originCache, err := NewLocalCacheBackend(writerBackend, t.TempDir(), 8<<20)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend(origin): %v", err)
+	}
+
+	const depID = "550e8400-e29b-41d4-a716-446655440000"
+	key := "snap/" + depID + "/warm/captures/660e8400-e29b-41d4-a716-446655440001/mem"
+	body := make([]byte, 4<<20)
+	copy(body[12345:], []byte("live guest memory page"))
+	if err := originCache.Put(t.Context(), key, bytes.NewReader(body)); err != nil {
+		t.Fatalf("Put compressed snapshot: %v", err)
+	}
+	cachePath, _ := originCache.cacheFileFor(key)
+	localBlob, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read origin cache: %v", err)
+	}
+	if !bytes.Equal(localBlob, body) {
+		t.Fatal("origin cache did not retain the uncompressed Firecracker memory file")
+	}
+
+	manifest, remoteBlob := f.storedLayer(
+		t,
+		"faas/snap-"+depID,
+		"warm-captures-660e8400-e29b-41d4-a716-446655440001-mem",
+	)
+	layer := manifest.Layers[0]
+	if got := layer.Annotations[layerEncodingAnnotation]; got != snapshotCompressionZstd {
+		t.Fatalf("layer encoding = %q, want %q", got, snapshotCompressionZstd)
+	}
+	if got := layer.Annotations[layerUncompressedSizeAnnotation]; got != "4194304" {
+		t.Fatalf("uncompressed size = %q, want 4194304", got)
+	}
+	if len(remoteBlob) >= len(body)/10 {
+		t.Fatalf("compressed registry blob = %d bytes, want less than 10%% of %d", len(remoteBlob), len(body))
+	}
+
+	// A backend with the default writer setting represents the binary that
+	// has read support deployed before operators turn compression on.
+	defaultReader := f.client(t)
+	replicaCache, err := NewLocalCacheBackend(defaultReader, t.TempDir(), 8<<20)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend(replica): %v", err)
+	}
+	rc, err := replicaCache.Get(t.Context(), key)
+	if err != nil {
+		t.Fatalf("populate replica cache from compressed snapshot: %v", err)
+	}
+	got, readErr := io.ReadAll(rc)
+	closeErr := rc.Close()
+	if readErr != nil {
+		t.Fatalf("read compressed snapshot: %v", readErr)
+	}
+	if closeErr != nil {
+		t.Fatalf("close compressed snapshot: %v", closeErr)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatal("compressed snapshot round-trip changed the memory bytes")
+	}
+	replicaPath, _ := replicaCache.cacheFileFor(key)
+	replicaBlob, err := os.ReadFile(replicaPath)
+	if err != nil {
+		t.Fatalf("read replica cache: %v", err)
+	}
+	if !bytes.Equal(replicaBlob, body) {
+		t.Fatal("replica cache did not materialize the uncompressed Firecracker memory file")
+	}
+}
+
+func TestOCISnapshotCompressionScope(t *testing.T) {
+	f := newFakeRegistry(t)
+	defer f.srv.Close()
+	const depID = "550e8400-e29b-41d4-a716-446655440000"
+
+	tests := []struct {
+		name    string
+		backend *OCIRegistryStorageBackend
+		key     string
+		repo    string
+		tag     string
+	}{
+		{
+			name:    "disabled snapshot memory",
+			backend: f.client(t),
+			key:     "snap/" + depID + "/mem",
+			repo:    "faas/snap-" + depID,
+			tag:     "mem",
+		},
+		{
+			name:    "enabled snapshot vmstate",
+			backend: f.clientWithOptions(t, WithSnapshotCompression(snapshotCompressionZstd)),
+			key:     "snap/" + depID + "/vmstate",
+			repo:    "faas/snap-" + depID,
+			tag:     "vmstate",
+		},
+		{
+			name:    "enabled app layer",
+			backend: f.clientWithOptions(t, WithSnapshotCompression(snapshotCompressionZstd)),
+			key:     "apps/example/" + depID + ".ext4",
+			repo:    "faas/apps",
+			tag:     "example__" + depID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte("opaque artifact bytes")
+			if err := tt.backend.Put(t.Context(), tt.key, bytes.NewReader(body)); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+			manifest, remoteBlob := f.storedLayer(t, tt.repo, tt.tag)
+			if got := manifest.Layers[0].Annotations[layerEncodingAnnotation]; got != "" {
+				t.Fatalf("layer encoding = %q, want legacy unencoded representation", got)
+			}
+			if !bytes.Equal(remoteBlob, body) {
+				t.Fatal("artifact outside enabled snapshot-memory scope changed in registry")
+			}
+		})
+	}
+}
+
+func TestOCIGetRejectsUnknownLayerEncoding(t *testing.T) {
+	f := newFakeRegistry(t)
+	defer f.srv.Close()
+	be := f.client(t)
+	const depID = "550e8400-e29b-41d4-a716-446655440000"
+	key := "snap/" + depID + "/mem"
+	if err := be.Put(t.Context(), key, strings.NewReader("snapshot")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	repo, tag := "faas/snap-"+depID, "mem"
+	f.mu.Lock()
+	var manifest imageManifest
+	if err := json.Unmarshal(f.manifests[repo][tag], &manifest); err != nil {
+		f.mu.Unlock()
+		t.Fatalf("decode manifest: %v", err)
+	}
+	manifest.Layers[0].Annotations = map[string]string{layerEncodingAnnotation: "unknown"}
+	manifestJSON, err := json.Marshal(manifest)
+	if err == nil {
+		f.manifests[repo][tag] = manifestJSON
+	}
+	f.mu.Unlock()
+	if err != nil {
+		t.Fatalf("encode manifest: %v", err)
+	}
+
+	_, err = be.Get(t.Context(), key)
+	if err == nil || !strings.Contains(err.Error(), "unsupported layer encoding") {
+		t.Fatalf("Get unknown encoding error = %v, want unsupported-layer error", err)
+	}
+}
+
+func TestOCIGetRejectsCompressedSizeMismatch(t *testing.T) {
+	f := newFakeRegistry(t)
+	defer f.srv.Close()
+	writer := f.clientWithOptions(t, WithSnapshotCompression(snapshotCompressionZstd))
+	const depID = "550e8400-e29b-41d4-a716-446655440000"
+	key := "snap/" + depID + "/mem"
+	body := bytes.Repeat([]byte("memory-page"), 128)
+	repo, tag := "faas/snap-"+depID, "mem"
+
+	tests := []struct {
+		name         string
+		declaredSize int
+		wantError    string
+	}{
+		{name: "declared smaller", declaredSize: len(body) - 1, wantError: "past declared size"},
+		{name: "declared larger", declaredSize: len(body) + 1, wantError: "unexpected EOF"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := writer.Put(t.Context(), key, bytes.NewReader(body)); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+			f.mu.Lock()
+			var manifest imageManifest
+			if err := json.Unmarshal(f.manifests[repo][tag], &manifest); err != nil {
+				f.mu.Unlock()
+				t.Fatalf("decode manifest: %v", err)
+			}
+			manifest.Layers[0].Annotations[layerUncompressedSizeAnnotation] = fmt.Sprint(tt.declaredSize)
+			manifestJSON, err := json.Marshal(manifest)
+			if err == nil {
+				f.manifests[repo][tag] = manifestJSON
+			}
+			f.mu.Unlock()
+			if err != nil {
+				t.Fatalf("encode manifest: %v", err)
+			}
+
+			rc, err := writer.Get(t.Context(), key)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			_, readErr := io.ReadAll(rc)
+			_ = rc.Close()
+			if readErr == nil || !strings.Contains(readErr.Error(), tt.wantError) {
+				t.Fatalf("read error = %v, want substring %q", readErr, tt.wantError)
 			}
 		})
 	}

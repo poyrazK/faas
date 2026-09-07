@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/cosign"
+	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
@@ -104,6 +105,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 }
 
 func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
+	contractEnv, err := daemonenv.Load("imaged")
+	if err != nil {
+		return err
+	}
+	getenv := contractEnv.Get
+
 	// DEPLOY-1 / ADR-075 capdecl gate. imaged's capsDecl
 	// asserts no cap_sys_admin in Bnd (review finding M1).
 	// A future PR that brings back
@@ -172,7 +179,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// the schedd owner-node line. (Future improvement: lift
 	// NodeName into cmd/imaged/config.go so it matches the
 	// schedd/meterd/builderd shape — out of scope for ADR-122.)
-	if nodeName := os.Getenv("FAAS_NODE_NAME"); nodeName != "" {
+	if nodeName := getenv("FAAS_NODE_NAME"); nodeName != "" {
 		log.Info("imaged owner node", "node_name", nodeName)
 	} else {
 		log.Info("imaged: legacy single-box (FAAS_NODE_NAME unset)")
@@ -398,7 +405,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
-		WithNodeName(os.Getenv("FAAS_NODE_NAME")).
+		WithNodeName(getenv("FAAS_NODE_NAME")).
 		WithStorage(storageBackend).
 		WithRuntimeBaseStaging().
 		WithBaseArtifactValidator(imaged.ValidateBaseArtifact).
@@ -446,8 +453,8 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// Optional public readiness verification. Split-box installations set the
 	// origin explicitly; leaving it empty preserves the existing offline/local
 	// deployment path and records a skipped smoke in the receipt.
-	if smokeURL := strings.TrimSpace(os.Getenv("FAAS_API_HOSTING_SMOKE_URL")); smokeURL != "" {
-		verifier := apihostingreceipt.Verifier{BaseURL: smokeURL, AppsDomain: os.Getenv("FAAS_APPS_DOMAIN"), Timeout: 10 * time.Second}
+	if smokeURL := strings.TrimSpace(getenv("FAAS_API_HOSTING_SMOKE_URL")); smokeURL != "" {
+		verifier := apihostingreceipt.Verifier{BaseURL: smokeURL, AppsDomain: getenv("FAAS_APPS_DOMAIN"), Timeout: 10 * time.Second}
 		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
 			return verifier.Verify(ctx, app.Slug, imaged.HostingHealthPath(app, dep))
 		})
@@ -491,7 +498,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		{"FAAS_FUNCTION_RUNNER_NODE24", imaged.RuntimeNode24, func(p string) { h.WithFunctionRunnerNode24(p) }},
 		{"FAAS_FUNCTION_RUNNER_PYTHON313", imaged.RuntimePython313, func(p string) { h.WithFunctionRunnerPython313(p) }},
 	} {
-		p := os.Getenv(kw.envKey)
+		p := getenv(kw.envKey)
 		if p == "" {
 			continue
 		}

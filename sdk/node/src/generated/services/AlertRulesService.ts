@@ -323,8 +323,8 @@ export class AlertRulesService {
     });
   }
   /**
-   * List the 8-row alert-preset catalog.
-   * The catalog is small (8 rows in PR-A) so no pagination.
+   * List the alert-preset catalog.
+   * The catalog is intentionally small and bounded, so no pagination.
    * Rows whose enabled_in_catalog=false are returned with the
    * flag set so the dashboard can render "coming soon" — the
    * enable endpoint rejects them with 400 alert_preset_disabled.

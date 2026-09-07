@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,10 +21,11 @@ import (
 )
 
 type qualificationOutput struct {
-	BackendID          string                              `json:"backend_id"`
-	BackendFingerprint string                              `json:"backend_fingerprint"`
-	Spec               managedpostgres.Spec                `json:"spec"`
-	Report             managedpostgres.QualificationReport `json:"report"`
+	BackendID          string                                        `json:"backend_id"`
+	BackendFingerprint string                                        `json:"backend_fingerprint"`
+	Spec               managedpostgres.Spec                          `json:"spec"`
+	Report             managedpostgres.QualificationReport           `json:"report"`
+	Lifecycle          *managedpostgres.LifecycleQualificationReport `json:"lifecycle,omitempty"`
 }
 
 func main() {
@@ -74,6 +77,40 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		Mutating:     true,
 	})
 	result := qualificationOutput{BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Spec: spec, Report: report}
+	if qualificationErr == nil && isLifecycleQualificationEnabled(getenv) {
+		store := managedpostgres.NewMemoryStore()
+		sink := &qualificationCredentialSink{refs: make(map[string]struct{})}
+		lifecycleService, serviceErr := managedpostgres.NewService(registry, store, managedpostgres.ServiceOptions{
+			PollInterval:        2 * time.Second,
+			ProvisioningEnabled: func() bool { return true },
+		})
+		if serviceErr == nil {
+			bindingService, bindingErr := managedpostgres.NewBindingService(registry, store, store, sink, managedpostgres.BindingServiceOptions{
+				ProviderTimeout:     30 * time.Second,
+				ProvisioningEnabled: func() bool { return true },
+			})
+			if bindingErr == nil {
+				lifecycle, lifecycleErr := managedpostgres.QualifyLifecycle(context.Background(), lifecycleService, bindingService, managedpostgres.LifecycleQualificationOptions{
+					AccountID:      "qualification-account",
+					DatabaseName:   qualificationDatabaseName(resourceID),
+					AppID:          "qualification-app",
+					Scope:          "default",
+					EnvironmentKey: "DATABASE_URL",
+					Access:         managedpostgres.CredentialReadWrite,
+					Spec:           spec,
+					Timeout:        timeout,
+				})
+				result.Lifecycle = &lifecycle
+				if lifecycleErr != nil {
+					qualificationErr = lifecycleErr
+				}
+			} else {
+				qualificationErr = fmt.Errorf("%w: lifecycle_binding_service", managedpostgres.ErrQualificationFailed)
+			}
+		} else {
+			qualificationErr = fmt.Errorf("%w: lifecycle_service", managedpostgres.ErrQualificationFailed)
+		}
+	}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(result); err != nil {
@@ -93,6 +130,41 @@ func isLiveQualificationEnabled(getenv func(string) string) bool {
 	}
 	approved, err := strconv.ParseBool(strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_LIVE")))
 	return err == nil && approved
+}
+
+func isLifecycleQualificationEnabled(getenv func(string) string) bool {
+	if !isLiveQualificationEnabled(getenv) {
+		return false
+	}
+	approved, err := strconv.ParseBool(strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE")))
+	return err == nil && approved
+}
+
+func qualificationDatabaseName(resourceID string) string {
+	sum := sha256.Sum256([]byte(resourceID))
+	return "qualification-" + hex.EncodeToString(sum[:6])
+}
+
+// qualificationCredentialSink validates the provider material and records
+// only opaque ownership references. It intentionally does not retain a
+// password or connection URL; the production app-secret sink is exercised by
+// the apid integration tests.
+type qualificationCredentialSink struct {
+	refs map[string]struct{}
+}
+
+func (s *qualificationCredentialSink) Put(_ context.Context, binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (string, error) {
+	if err := material.Validate(); err != nil {
+		return "", err
+	}
+	ref := "qualification-secret-" + binding.ID
+	s.refs[ref] = struct{}{}
+	return ref, nil
+}
+
+func (s *qualificationCredentialSink) Delete(_ context.Context, binding managedpostgres.Binding) error {
+	delete(s.refs, "qualification-secret-"+binding.ID)
+	return nil
 }
 
 func qualificationSpec(backend managedpostgres.Backend, region string) (managedpostgres.Spec, error) {

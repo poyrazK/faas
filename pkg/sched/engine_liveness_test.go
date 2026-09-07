@@ -382,7 +382,7 @@ func TestLiveness_StaleSnapAndColdBootOnlyAfterDestroy(t *testing.T) {
 	// Seed a non-stale init snapshot.
 	snap, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
-		MemBytes: 1 << 20, DiskBytes: 1 << 20, StorageKey: "/tmp/snap",
+		MemBytes: 512 << 20, DiskBytes: 1 << 20, StorageKey: "/tmp/snap",
 		Tier: state.SnapshotTierInit,
 	})
 	if err != nil {
@@ -391,7 +391,7 @@ func TestLiveness_StaleSnapAndColdBootOnlyAfterDestroy(t *testing.T) {
 
 	// Pre-destroy: usableSnapshotForWake must find the snapshot
 	// (haveSnap=true → would take WakeRestore).
-	_, preOK, preTier := engine.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro))
+	_, preOK, preTier := engine.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro), 512)
 	if !preOK {
 		t.Fatalf("usableSnapshotForWake (pre) = no snap; AC #4 wake-side pin depends on a real pre-state snap")
 	}
@@ -409,7 +409,7 @@ func TestLiveness_StaleSnapAndColdBootOnlyAfterDestroy(t *testing.T) {
 
 	// Post-destroy: usableSnapshotForWake MUST return haveSnap=false
 	// → wake flow takes the cold-boot path, never WakeRestore.
-	_, postOK, postTier := engine.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro))
+	_, postOK, postTier := engine.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro), 512)
 	if postOK {
 		t.Errorf("usableSnapshotForWake (post) haveSnap = true, want false (AC #4: stale snapshot must NOT be restored on next wake)")
 	}

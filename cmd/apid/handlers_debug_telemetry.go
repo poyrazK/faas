@@ -395,8 +395,9 @@ func (s *server) debugCompareHandler(w http.ResponseWriter, r *http.Request, acc
 
 	// Fetch both distributions. Both calls share one index scan
 	// over request_telemetry_app_dep_received_idx — four
-	// aggregates (p50/p95/p99/COUNT) in a single pass (Debugger
-	// UX v1 stage 3 sqlc rewrite; PR-B minimum was p95-only and
+	// aggregates (p50/p95/p99/represented request count) in a
+	// single pass (Debugger UX v1 stage 3 sqlc rewrite; PR-B
+	// minimum was p95-only and
 	// walked client-side for the others).
 	srcStats, err := s.fetchRouteStats(r.Context(), app.ID, srcID, from, until, req.Route)
 	if err != nil {
@@ -447,7 +448,7 @@ func (s *server) debugCompareHandler(w http.ResponseWriter, r *http.Request, acc
 // RequestTelemetryBaselineP95ByRoute to return p50/p95/p99/N
 // from a single index scan; this struct mirrors that shape so
 // the dashboard can render the full latency distribution
-// alongside the request count.
+// alongside the represented request count.
 type routeStats struct {
 	P50 int
 	P95 int
@@ -455,10 +456,10 @@ type routeStats struct {
 	N   int64
 }
 
-// fetchRouteStats reads the per-route p50/p95/p99 + row count
+// fetchRouteStats reads the per-route p50/p95/p99 + represented request count
 // for a single deployment in the window. The shape mirrors the
 // regression cron (cmd/apid/debug_regression_cron.go) — same
-// percentile_cont aggregate, same window split, single index
+// count-weighted percentile aggregate, same window split, single index
 // scan over request_telemetry_app_dep_received_idx (PR-A
 // migration 00427).
 //

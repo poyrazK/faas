@@ -270,6 +270,7 @@ export type { ObjectStorageUsage } from './models/ObjectStorageUsage.js';
 export type { ObjectStorageUsageReport } from './models/ObjectStorageUsageReport.js';
 export type { ObjectStorageUsageResponse } from './models/ObjectStorageUsageResponse.js';
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';
+export type { ObsNodeOperationPreflight } from './models/ObsNodeOperationPreflight.js';
 export type { OIDCExchangeRequest } from './models/OIDCExchangeRequest.js';
 export type { OIDCExchangeResponse } from './models/OIDCExchangeResponse.js';
 export type { OperatorIntentAcceptedResponse } from './models/OperatorIntentAcceptedResponse.js';

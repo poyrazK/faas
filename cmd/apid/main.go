@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authcode"
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -406,7 +407,10 @@ type runDeps struct {
 func defaultDeps() runDeps {
 	return runDeps{
 		listen: net.Listen,
-		store:  func() state.Store { return state.NewMemStore() },
+		// Production wires the Postgres store immediately after db.Open in
+		// run(). Leaving this unset prevents a direct runWithDeps caller from
+		// silently exercising an in-memory store as a production fallback.
+		store:  nil,
 		notif:  func() Notifier { return noopNotifier{} },
 		getenv: os.Getenv,
 		// Issue #995 Phase 1: harden the customer-facing http.Server
@@ -442,6 +446,9 @@ func main() {
 
 func run(ctx context.Context, log *slog.Logger) error {
 	deps := defaultDeps()
+	if _, err := daemonenv.Load("apid"); err != nil {
+		return err
+	}
 
 	// DEPLOY-1 / ADR-075 capdecl gate. apid's capsDecl is
 	// cap_net_bind_service (HTTPS listener). A misconfigured
@@ -1062,7 +1069,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		nodeVerifier = pgv
 	}
 
+	if deps.store == nil {
+		return errors.New("apid: store dependency not wired (production must open Postgres before runWithDeps)")
+	}
 	store := deps.store()
+	if store == nil {
+		return errors.New("apid: store dependency returned nil")
+	}
 
 	// Dev-only: seed a Free account bound to $FAAS_DEV_TOKEN so the CLI can be
 	// exercised end-to-end without the (browser-paste) signup flow. Never set in
@@ -1264,8 +1277,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv.WithOAuthConfig(oauthCfg)
 
-	// PR #1099 P2 redesign: force-park + force-cold-boot now route
-	// through the operator_intents table + pg_notify (migrations/00431,
+	// Workload force-actions and provider compute-node lifecycle actions
+	// route through operator_intents + pg_notify (migrations/00431,
 	// pkg/sched/operator_intent_subscriber.go). apid never imports
 	// pkg/scheddgrpc — the apid-control-plane-only depguard rule
 	// (.golangci.yml:41-58) is preserved. schedd is still the only

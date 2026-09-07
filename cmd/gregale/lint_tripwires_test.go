@@ -851,9 +851,9 @@ func TestEveryCodeHasWhycopyEntry(t *testing.T) {
 //     seedPresetNames (inverse direction — catch dead rows).
 //
 // Both directions fail loud. The seedPresetNames slice is the
-// canonical membership list — it's the 8 names in the
-// migrations/00418_alert_presets_seed.sql seed (3 originally
-// enabled + 5 newly-enabled signals from ADR-123 PR-B).
+// canonical membership list for customer-facing catalog rows.
+// Operator-only safe-release rows are intentionally excluded because
+// they do not have customer dashboard explanations.
 func TestEveryPresetHasPresetwhyEntry(t *testing.T) {
 	seedPresetNames := []string{
 		// Originally enabled (3) — surface their prose for parity
@@ -869,6 +869,7 @@ func TestEveryPresetHasPresetwhyEntry(t *testing.T) {
 		"deploy_failed",
 		"cert_expiring_14d",
 		"queue_backlog_growing",
+		"slo_burn_rate",
 	}
 
 	// Forward direction: every seed preset name must have a
