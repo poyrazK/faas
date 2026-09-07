@@ -4570,9 +4570,9 @@ paths:
           `event: end` terminal with `archive_complete` /
           `archive_missing` / `archive_degraded` reasons) so the SDK
           decoder treats the two paths interchangeably. Archive is
-          gated by `Plan.LogArchiveEnabled()` — Free customers receive
-          402 + `plan_log_archive_not_allowed`. The per-plan retention
-          cap (Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
+          gated by `Plan.LogArchiveEnabled()` — Free customers receive a
+          one-day archive window. The per-plan retention cap (Free 1d /
+          Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
           outside the window with 403 + `log_archive_retention_exceeded`.
       parameters:
         - name: follow
@@ -4602,9 +4602,9 @@ paths:
           description: >
             If 1, serve archived logs from S3 instead of the live ring buffer.
             Requires `instance=<id>` and `date=YYYY-MM-DD`. Gated by
-            `Plan.LogArchiveEnabled()` — Free plans receive 402 +
-            `plan_log_archive_not_allowed`. The per-plan retention cap
-            (Hobby 7d / Pro 30d / Scale 90d) refuses `date=` values
+            `Plan.LogArchiveEnabled()` — Free plans have a one-day archive
+            window. The per-plan retention cap (Free 1d / Hobby 7d / Pro 30d
+            / Scale 90d) refuses `date=` values
             outside the window.
         - name: instance
           in: query
@@ -4618,8 +4618,8 @@ paths:
           schema: { type: string, format: date }
           description: >
             Required when `archive=1`. The day to read in YYYY-MM-DD UTC.
-            Must be inside the per-plan retention cap (Hobby 7d / Pro 30d
-            / Scale 90d) — outside values return 403 +
+            Must be inside the per-plan retention cap (Free 1d / Hobby 7d
+            / Pro 30d / Scale 90d) — outside values return 403 +
             `log_archive_retention_exceeded`. Future dates are refused
             with the same code.
       responses:
@@ -4629,11 +4629,11 @@ paths:
             text/event-stream: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402':
-          description: Plan does not include log archive read-back. Free plans receive this on `?archive=1`.
+          description: Plan does not include log archive read-back. This response is reserved for plans without archive entitlement.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-              example: {"type":"about:blank","title":"Log archive unavailable on this plan","status":402,"code":"plan_log_archive_not_allowed","detail":"the free plan does not include log archive read-back; upgrade to Hobby or above to query historical logs from object storage."}
+              example: {"type":"about:blank","title":"Log archive unavailable on this plan","status":402,"code":"plan_log_archive_not_allowed","detail":"the requested plan does not include log archive read-back; upgrade to a plan with archive access to query historical logs from object storage."}
         '403':
           description: Log archive retention cap exceeded; `?date=` is outside the per-plan window.
           content:

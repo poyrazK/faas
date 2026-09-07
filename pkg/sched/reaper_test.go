@@ -16,12 +16,12 @@ func TestEffectiveIdleTimeout(t *testing.T) {
 		configured int
 		want       int
 	}{
-		{api.PlanFree, 0, 30},    // default
+		{api.PlanFree, 0, 60},    // default
 		{api.PlanPro, 0, 300},    // default
 		{api.PlanPro, 120, 120},  // in-bounds override
 		{api.PlanPro, 5, 10},     // below floor → 10
 		{api.PlanPro, 9999, 600}, // above ceiling (300×2) → 600
-		{api.PlanFree, 100, 60},  // Free ceiling = 30×2
+		{api.PlanFree, 100, 100}, // Free ceiling = 60×2; 100 is in bounds
 	}
 	for _, tt := range tests {
 		if got := EffectiveIdleTimeoutS(tt.plan, tt.configured); got != tt.want {
@@ -39,12 +39,12 @@ func TestReapIdle(t *testing.T) {
 		{Instance: "busy", Plan: api.PlanPro, State: state.StateRunning, LastRequest: now.Add(-100 * time.Second)},
 		// Idle but not running → not reapable.
 		{Instance: "waking", Plan: api.PlanPro, State: state.StateWaking, LastRequest: now.Add(-999 * time.Second)},
-		// Free 30s; idle 45s → reap.
+		// Free 60s; idle 45s → keep.
 		{Instance: "free-idle", Plan: api.PlanFree, State: state.StateRunning, LastRequest: now.Add(-45 * time.Second)},
 	}
 	got := ReapIdle(now, instances, nil, nil)
-	if !equalSet(got, []string{"idle", "free-idle"}) {
-		t.Errorf("ReapIdle = %v, want [idle free-idle]", got)
+	if !equalSet(got, []string{"idle"}) {
+		t.Errorf("ReapIdle = %v, want [idle]", got)
 	}
 }
 

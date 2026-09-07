@@ -582,7 +582,7 @@ type AppResponse struct {
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// per-VM concurrency cap for the customer's plan. Distinct from
 	// MaxConcurrency (the per-app instance cap, spec §6.2-1) — this
-	// is per-VM. Free 1, Hobby 5, Pro 25, Scale 80. Surfaced so
+	// is per-VM. Free 4, Hobby 5, Pro 25, Scale 80. Surfaced so
 	// dashboards / CLI can show "what's the bound for one VM on
 	// this plan" without the customer reading limits.go. Concurrency
 	// above 1 is the customer's runner/process responsibility — see

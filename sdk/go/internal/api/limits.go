@@ -62,7 +62,7 @@ type Limits struct {
 	EgressMbit int // per-instance egress bandwidth cap via tc
 
 	// Secrets (spec §11/G2). Ciphertext quota per app; per-value byte cap.
-	SecretCountMax      int // max secrets per app (Free 3, Hobby 25, Pro 50, Scale 100)
+	SecretCountMax      int // max secrets per app (Free 8, Hobby 25, Pro 50, Scale 100)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 
 	// MinInstancesAllowed toggles the per-app cold-wake floor (ux_spec

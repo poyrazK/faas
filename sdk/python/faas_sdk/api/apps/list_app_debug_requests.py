@@ -115,8 +115,9 @@ def sync_detailed(
 ) -> Response[DebugTelemetryListResponse | Problem]:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
-     Recent request rows for an app — status, latency_ms, route,
-    method, deployment_id, cold_boot, trace_id, received_at.
+     Recent request telemetry rows for an app — status, latency_ms, route,
+    method, deployment_id, cold_boot, trace_id, received_at, and the
+    number of original requests represented by each collapsed row.
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -133,7 +134,7 @@ def sync_detailed(
         slug (str):
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
-        route (None | str | Unset):  Exact route-template filter.
+        route (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -167,8 +168,9 @@ def sync(
 ) -> DebugTelemetryListResponse | Problem | None:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
-     Recent request rows for an app — status, latency_ms, route,
-    method, deployment_id, cold_boot, trace_id, received_at.
+     Recent request telemetry rows for an app — status, latency_ms, route,
+    method, deployment_id, cold_boot, trace_id, received_at, and the
+    number of original requests represented by each collapsed row.
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -185,7 +187,7 @@ def sync(
         slug (str):
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
-        route (None | str | Unset):  Exact route-template filter.
+        route (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,8 +216,9 @@ async def asyncio_detailed(
 ) -> Response[DebugTelemetryListResponse | Problem]:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
-     Recent request rows for an app — status, latency_ms, route,
-    method, deployment_id, cold_boot, trace_id, received_at.
+     Recent request telemetry rows for an app — status, latency_ms, route,
+    method, deployment_id, cold_boot, trace_id, received_at, and the
+    number of original requests represented by each collapsed row.
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -232,7 +235,7 @@ async def asyncio_detailed(
         slug (str):
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
-        route (None | str | Unset):  Exact route-template filter.
+        route (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -264,8 +267,9 @@ async def asyncio(
 ) -> DebugTelemetryListResponse | Problem | None:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
-     Recent request rows for an app — status, latency_ms, route,
-    method, deployment_id, cold_boot, trace_id, received_at.
+     Recent request telemetry rows for an app — status, latency_ms, route,
+    method, deployment_id, cold_boot, trace_id, received_at, and the
+    number of original requests represented by each collapsed row.
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -282,7 +286,7 @@ async def asyncio(
         slug (str):
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
-        route (None | str | Unset):  Exact route-template filter.
+        route (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

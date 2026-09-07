@@ -1312,9 +1312,9 @@ export class AppsService {
    * `event: end` terminal with `archive_complete` /
    * `archive_missing` / `archive_degraded` reasons) so the SDK
    * decoder treats the two paths interchangeably. Archive is
-   * gated by `Plan.LogArchiveEnabled()` — Free customers receive
-   * 402 + `plan_log_archive_not_allowed`. The per-plan retention
-   * cap (Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
+   * gated by `Plan.LogArchiveEnabled()` — Free customers receive a
+   * one-day archive window. The per-plan retention cap (Free 1d /
+   * Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
    * outside the window with 403 + `log_archive_retention_exceeded`.
    *
    * @returns any A text/event-stream of structured log lines, terminated by an empty SSE frame when the connection closes.
@@ -1352,7 +1352,7 @@ export class AppsService {
      */
     level?: 'info' | 'warn' | 'error',
     /**
-     * If 1, serve archived logs from S3 instead of the live ring buffer. Requires `instance=<id>` and `date=YYYY-MM-DD`. Gated by `Plan.LogArchiveEnabled()` — Free plans receive 402 + `plan_log_archive_not_allowed`. The per-plan retention cap (Hobby 7d / Pro 30d / Scale 90d) refuses `date=` values outside the window.
+     * If 1, serve archived logs from S3 instead of the live ring buffer. Requires `instance=<id>` and `date=YYYY-MM-DD`. Gated by `Plan.LogArchiveEnabled()` — Free plans have a one-day archive window. The per-plan retention cap (Free 1d / Hobby 7d / Pro 30d / Scale 90d) refuses `date=` values outside the window.
      *
      */
     archive?: 0 | 1,
@@ -1362,7 +1362,7 @@ export class AppsService {
      */
     instance?: string,
     /**
-     * Required when `archive=1`. The day to read in YYYY-MM-DD UTC. Must be inside the per-plan retention cap (Hobby 7d / Pro 30d / Scale 90d) — outside values return 403 + `log_archive_retention_exceeded`. Future dates are refused with the same code.
+     * Required when `archive=1`. The day to read in YYYY-MM-DD UTC. Must be inside the per-plan retention cap (Free 1d / Hobby 7d / Pro 30d / Scale 90d) — outside values return 403 + `log_archive_retention_exceeded`. Future dates are refused with the same code.
      *
      */
     date?: string,
@@ -1384,7 +1384,7 @@ export class AppsService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `Plan does not include log archive read-back. Free plans receive this on \`?archive=1\`.`,
+        402: `Plan does not include log archive read-back. This response is reserved for plans without archive entitlement.`,
         403: `Log archive retention cap exceeded; \`?date=\` is outside the per-plan window.`,
         404: `code: not_found`,
         429: `429. Two response shapes:
