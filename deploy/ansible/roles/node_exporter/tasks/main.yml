@@ -57,8 +57,8 @@
     remote_src: true
 
 - name: node_exporter — install systemd unit
-  ansible.builtin.copy:
-    src: node_exporter.service
+  ansible.builtin.template:
+    src: node_exporter.service.j2
     dest: /etc/systemd/system/node_exporter.service
     owner: root
     group: root
@@ -66,6 +66,22 @@
   notify:
     - daemon-reload
     - restart node_exporter
+
+- name: node_exporter — read rendered systemd unit
+  ansible.builtin.slurp:
+    src: /etc/systemd/system/node_exporter.service
+  register: ne_rendered_unit
+
+- name: node_exporter — assert rendered unit contains no Jinja placeholders
+  ansible.builtin.assert:
+    that:
+      - "'{' ~ '{' not in (ne_rendered_unit.content | b64decode)"
+      - "'}' ~ '}' not in (ne_rendered_unit.content | b64decode)"
+      - "'{' ~ '%' not in (ne_rendered_unit.content | b64decode)"
+      - "'%' ~ '}' not in (ne_rendered_unit.content | b64decode)"
+    fail_msg: >-
+      node_exporter.service still contains a Jinja placeholder; refusing to
+      enable a unit that will enter a restart loop.
 
 - name: node_exporter — enable + start
   ansible.builtin.service:

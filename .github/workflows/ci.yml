@@ -354,11 +354,12 @@ jobs:
       # inventory. Syntax-check does not evaluate Jinja, so it would not catch
       # a template stored in the wrong role directory or a missing HTTP-SD
       # target for the split-box compute fleet.
-      - name: prometheus template convergence
+      - name: observability template convergence
         run: |
           set -euo pipefail
           cd deploy/ansible
           test ! -e roles/prometheus/files/prometheus.service
+          test ! -e roles/node_exporter/files/node_exporter.service
           ansible control_plane -i inventory/hosts.ini -c local \
             -e @roles/prometheus/defaults/main.yml \
             -e ansible_hostname=ci-control-plane \
@@ -376,6 +377,16 @@ jobs:
             echo 'rendered Prometheus systemd unit contains an unresolved template placeholder' >&2
             exit 1
           fi
+          ansible compute_nodes -i inventory/hosts.ini -c local \
+            -e @roles/node_exporter/defaults/main.yml \
+            -m ansible.builtin.template \
+            -a "src=$(pwd)/roles/node_exporter/templates/node_exporter.service.j2 dest=$RUNNER_TEMP/node_exporter.service"
+          grep -q -- '--web.listen-address=127.0.0.1:9100' "$RUNNER_TEMP/node_exporter.service"
+          if grep -q '{{' "$RUNNER_TEMP/node_exporter.service"; then
+            echo 'rendered node_exporter systemd unit contains an unresolved template placeholder' >&2
+            exit 1
+          fi
+          grep -q -- '--cluster.listen-address=' roles/alertmanager/files/alertmanager.service
 
           rules_dir="$RUNNER_TEMP/prometheus-rules"
           mkdir -p "$rules_dir"

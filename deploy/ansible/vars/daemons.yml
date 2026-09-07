@@ -21,6 +21,14 @@ faas_legacy_units:
   - faas-gatewayd.service
   - faas-spool-sync.service
 
+# Observability servers run once on the control plane. They are separate from
+# the FaaS daemon registry above, but role_convergence must remove stale
+# single-box installations when a host is adopted as compute-only.
+faas_control_plane_observability_units:
+  - prometheus.service
+  - alertmanager.service
+  - grafana-server.service
+
 # probe: systemd (is-active fallback) | unix (socket path fallback) | tcp
 # (host:port fallback). readyz_url is the dependency-aware HTTP gate and is
 # preferred by fleet_verify. Mirrors daemonunitspec.Lifecycle.
