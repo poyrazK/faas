@@ -1040,6 +1040,9 @@ func (c *Client) ScanProject(
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, productionBranch, installID, only, exclude, persistExclude); err != nil {
 		return PlanResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
+	if err := w.Close(); err != nil {
+		return PlanResponse{}, fmt.Errorf("close multipart writer: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/projects/scan", &b)
 	if err != nil {
 		return PlanResponse{}, err
@@ -1067,6 +1070,9 @@ func (c *Client) ApplyProjectPlan(
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, productionBranch, installID, only, exclude, persistExclude); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
 	endpoint := c.baseURL + "/v1/projects"
 	if planToken != "" {
