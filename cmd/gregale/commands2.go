@@ -29,11 +29,12 @@ import (
 // Subcommand names — lifted to constants so goconst stops flagging the
 // repeated "list"/"add"/"rm" string literals in the dispatch tables below.
 const (
-	subList   = "list"
-	subAdd    = "add"
-	subUpdate = "update"
-	subRm     = "rm"
-	subRuns   = "runs"
+	subList    = "list"
+	subAdd     = "add"
+	subUpdate  = "update"
+	subRm      = "rm"
+	subRestore = "restore"
+	subRuns    = "runs"
 	// subRotate is reused across every resource's `… rotate …`
 	// subcommand literal (host-age, keys, pki, secrets, sign-keys,
 	// node-key, etc.) so goconst stops flagging the repeated
@@ -670,6 +671,27 @@ func cmdAppsRm(args []string) int {
 		return printErr("Delete failed", err)
 	}
 	PrintOK(osStdout, "Deleted %s", slug)
+	return 0
+}
+
+// cmdAppsRestore implements `gregale apps restore <slug>`.
+func cmdAppsRestore(args []string) int {
+	if len(args) != 1 {
+		PrintUsage(os.Stderr, "usage: gregale apps restore <slug>", "apps")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	app, err := client.RestoreApp(context.Background(), args[0])
+	if err != nil {
+		return printErr("Restore failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(app))
+	}
+	PrintOK(osStdout, "Restored %s", app.Slug)
 	return 0
 }
 

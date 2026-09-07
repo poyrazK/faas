@@ -210,6 +210,10 @@ List your apps
 
 Alias for the default list action
 
+### apps restore
+
+Restore an app during its deletion grace window
+
 ### apps routes
 
 List admitted per-route labels for one app (ADR-093)

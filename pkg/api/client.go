@@ -1014,6 +1014,12 @@ func (c *Client) DeleteApp(ctx context.Context, slug string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug, nil, nil)
 }
 
+// RestoreApp brings a soft-deleted app back before its grace deadline.
+func (c *Client) RestoreApp(ctx context.Context, slug string) (AppResponse, error) {
+	var out AppResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restore", nil, &out)
+}
+
 // DestroyPreview tears down a preview app (issue #961 Mega-C
 // PR-1, leaf 3). Distinct from DeleteApp because the preview
 // teardown also stamps apps.preview_pr_state='torn_down' so the

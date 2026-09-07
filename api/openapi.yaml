@@ -2368,6 +2368,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
     patch:
       tags: [apps]
       operationId: updateApp
@@ -2402,6 +2403,24 @@ paths:
         '204': { description: No body. The resource was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/restore:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: restoreApp
+      summary: Restore an app during its deletion grace window.
+      responses:
+        '200':
+          description: The restored app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/preview/{slug}/destroy:
@@ -13572,6 +13591,8 @@ components:
         idle_timeout_s: { type: [integer, "null"] }
         min_instances: { type: integer }
         status: { type: string , example: "active"}
+        deleted_at: { type: [string, "null"], format: date-time }
+        delete_grace_until: { type: [string, "null"], format: date-time }
         url: { type: string, format: uri }
         manifest: { $ref: '#/components/schemas/AppManifest' }
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):

@@ -22,6 +22,10 @@ import (
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (
+	// AppDeleteGraceDays is the restore window for customer app deletes.
+	// App metadata and deployment artifacts remain available during this
+	// period, after which the grace sweeper permanently removes the app.
+	AppDeleteGraceDays = 7
 	// Bounds for operator-specified object-storage safety policies; no customer
 	// allowance or price is inferred when the policy is missing.
 	MaxObjectStoragePolicyValue         int64 = 1 << 60
