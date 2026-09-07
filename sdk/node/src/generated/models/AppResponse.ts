@@ -33,6 +33,8 @@ export type AppResponse = {
   idle_timeout_s?: number | null;
   min_instances: number;
   status: string;
+  deleted_at?: string | null;
+  delete_grace_until?: string | null;
   url: string;
   manifest: AppManifest;
   /**

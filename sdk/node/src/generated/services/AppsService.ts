@@ -186,6 +186,36 @@ export class AppsService {
     });
   }
   /**
+   * Restore an app during its deletion grace window.
+   * @returns AppResponse The restored app.
+   * @throws ApiError
+   */
+  public static restoreApp({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/restore',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Per-app request metrics (issue
    * Time-windowed rollup of one app's gateway activity. The `range`
    * parameter is a closed vocabulary bounded by Prometheus
