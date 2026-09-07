@@ -12229,11 +12229,10 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 	return nil
 }
 
-// ListSnapshotsForGC returns every usable snapshot plus snapshots made
-// lifecycle-invalid by a deleted app or terminal deployment. Those invalid
-// rows are returned even after the lifecycle trigger marks them stale so
-// imaged can reclaim their backing files immediately. Other stale rows remain
-// in the retention sweep.
+// ListSnapshotsForGC returns every non-stale snapshot joined with its
+// deployment + app + account, ordered newest-first. Snapshots made stale by a
+// deleted app or an unusable terminal deployment remain in the result because
+// imaged needs the join metadata to remove their on-disk files immediately.
 //
 // The JOIN is bounded by snapshotDashboardCap (10k) for the same reason
 // ListLiveSnapshotStats is: the GC algorithm is O(N) per tick and a 10k

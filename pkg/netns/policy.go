@@ -12,7 +12,9 @@
 // `ip daddr 10.0.0.0/8 drop` lines, not eyeball a YAML string.
 //
 // Spec §11 says: "Tenant egress: deny 25/465/587, deny RFC1918 + link-local +
-// metadata ranges." This file owns the deny-lists. Forward chains see traffic
+// metadata ranges." This file owns the deny-lists; the explicit Hobby SMTP
+// exception is limited to destination CIDRs and ports 465/587. Forward chains
+// see traffic
 // from the per-instance netns bridged via `BridgeName`; input chains see
 // public traffic to the host. Both honor spec §11.
 //
@@ -154,6 +156,14 @@ type HostPolicy struct {
 	// is the byte-identical pre-ADR-119 output for hosts that
 	// have no static-egress-pinned apps.
 	StaticEgressRules []StaticEgressRule
+
+	// SMTPAllowlistRules is the host-layer exception list for outbound
+	// submission traffic. Each rule is scoped to one VM host-side source
+	// address and an explicit destination CIDR set. Rules are rendered
+	// after the internal/private deny entries and before the universal
+	// SMTP drop, so deny precedence is never bypassed. Only ports 465 and
+	// 587 are accepted; port 25 remains blocked for every tenant.
+	SMTPAllowlistRules []SMTPAllowlistRule
 }
 
 // StaticEgressRule (ADR-119 redesign) is one (per-VM host IP →
@@ -184,6 +194,17 @@ type StaticEgressRule struct {
 	CustomerIP  netip.Addr
 	AccountID   string
 	AppID       string
+}
+
+// SMTPAllowlistRule permits authenticated SMTP submission from one live
+// tenant VM to explicitly allowlisted IPv4 destinations. SourceIP is the
+// VM's host-side lease address, which scopes the exception to that app's
+// instance at the host firewall layer.
+type SMTPAllowlistRule struct {
+	SourceIP     netip.Addr
+	Destinations []netip.Prefix
+	AccountID    string
+	AppID        string
 }
 
 // DefaultHostPolicy is the platform-wide host nftables policy. Source of
@@ -439,6 +460,16 @@ func (h HostPolicy) Render() string {
 				r.AccountID, r.AppID, r.PerVMHostIP, h.MasqueradeCIDR))
 		}
 	}
+	for _, r := range h.SMTPAllowlistRules {
+		if !r.SourceIP.IsValid() || !r.SourceIP.Is4() {
+			panic(fmt.Sprintf("netns: HostPolicy.Render: SMTPAllowlistRules has invalid IPv4 SourceIP for app=%s account=%s", r.AppID, r.AccountID))
+		}
+		for _, p := range r.Destinations {
+			if !p.IsValid() || !p.Addr().Is4() || p.Bits() == 0 {
+				panic(fmt.Sprintf("netns: HostPolicy.Render: SMTPAllowlistRules has invalid destination %s for app=%s account=%s", p, r.AppID, r.AccountID))
+			}
+		}
+	}
 
 	denyPorts := h.DenySet.SMTPPortsCommaSet()
 	allowPorts := joinInts(h.InputAllowTCPPorts, ",")
@@ -507,7 +538,6 @@ func (h HostPolicy) Render() string {
 	b.WriteString("    # aggregate `ip daddr { … } drop` shape produced one anonymous bucket\n")
 	b.WriteString("    # for the entire list — useless for the per-tenant / per-CIDR observability\n")
 	b.WriteString("    # question.\n")
-	fmt.Fprintf(&b, "    tcp dport { %s } drop\n", denyPorts)
 	for _, e := range h.DenySet.Entries {
 		family := familyKeywordV4
 		if e.Family == FamilyV6 {
@@ -516,6 +546,28 @@ func (h HostPolicy) Render() string {
 		fmt.Fprintf(&b, "    %s daddr %s counter name %q drop\n",
 			family, e.Prefix.String(), e.CounterName)
 	}
+	// Hobby+ SMTP exception: explicit per-app destination CIDRs may use
+	// authenticated submission ports. These rules intentionally follow
+	// the internal/private deny block and precede the universal SMTP drop.
+	// Port 25 is not included and therefore remains blocked everywhere.
+	for _, r := range h.SMTPAllowlistRules {
+		var v4 []string
+		for _, p := range r.Destinations {
+			if p.IsValid() && p.Addr().Is4() {
+				v4 = append(v4, p.String())
+			}
+		}
+		if len(v4) == 0 {
+			continue
+		}
+		comment := ""
+		if r.AccountID != "" || r.AppID != "" {
+			comment = fmt.Sprintf("     # account=%s app=%s", r.AccountID, r.AppID)
+		}
+		fmt.Fprintf(&b, "    iifname %q ip saddr %s ip daddr { %s } tcp dport { 465,587 } accept%s\n",
+			h.BridgeName, r.SourceIP.String(), strings.Join(v4, ","), comment)
+	}
+	fmt.Fprintf(&b, "    tcp dport { %s } drop\n", denyPorts)
 	// Mega-PR-B Commit 2: per-overlay accept rules emitted AFTER the
 	// per-CIDR deny block and BEFORE the broad bridged-tenant allow.
 	// The deny-set stays identical (lateral-movement contract intact);

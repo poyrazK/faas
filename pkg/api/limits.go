@@ -1077,19 +1077,16 @@ type Limits struct {
 	TriggerPayloadMaxBytes int
 
 	// EgressAllowlistAllowed toggles the per-app outbound IP allowlist
-	// (ADR-031, tier-2 of the network roadmap). Free + Hobby keep
-	// allowlist opt-out because the abuse-desk use case is a
-	// Pro+ concern (Scale customers are the ones with the budget to
-	// care about egress hygiene). Pro/Scale cap their max entries
-	// differently — Pro is 16, Scale 64 — the higher scale tier gets
-	// a larger entry budget because SaaS-scale apps tend to integrate
-	// with more upstream services. apid's updateApp handler rejects a
-	// PATCH with 403 plan_egress_allowlist_not_allowed when this is
-	// false.
+	// (ADR-031, tier-2 of the network roadmap). Free stays off; Hobby
+	// gets a deliberately small destination budget for authenticated
+	// SMTP submission (ports 465/587), while Pro/Scale retain their
+	// larger general egress-hygiene budgets. apid's updateApp handler
+	// rejects a PATCH with 403 plan_egress_allowlist_not_allowed when
+	// this is false.
 	EgressAllowlistAllowed bool
 	// EgressAllowlistMaxSize is the per-app count cap on CIDR entries.
-	// 0 with Allowed=false (Free/Hobby); non-zero with Allowed=true
-	// (Pro: 16; Scale: 64). apid's updateApp rejects with 400
+	// 0 with Allowed=false (Free); non-zero with Allowed=true
+	// (Hobby: 8; Pro: 16; Scale: 64). apid's updateApp rejects with 400
 	// egress_allowlist_too_long when the PATCH body has more entries.
 	EgressAllowlistMaxSize int
 
@@ -1099,7 +1096,7 @@ type Limits struct {
 	// MASQUERADE sibling rewrites matching tenant source traffic to
 	// the customer's IP. Free/Hobby/Pro keep this off — the B2B
 	// allowlist use case is a paid Scale concern, mirroring how
-	// EgressAllowlistAllowed gates Pro+. apid's updateApp handler
+	// EgressAllowlistAllowed gates Hobby+. apid's updateApp handler
 	// rejects a PATCH with 402 plan_static_egress_ip_not_allowed
 	// when this is false.
 	StaticEgressIPAllowed bool
@@ -1967,6 +1964,12 @@ var planLimits = map[Plan]Limits{
 		MaxAsyncInvocationsPerAccount:     1000,
 		MaxAsyncInvocationDeadlineSeconds: 3600,
 		MaxAsyncResultRetentionSeconds:    604800,
+		// SMTP submission (ADR-031 amendment): Hobby may explicitly
+		// allow a small set of provider CIDRs for ports 465/587.
+		// Port 25 remains blocked universally; the per-netns and host
+		// firewalls enforce the port distinction.
+		EgressAllowlistAllowed: true,
+		EgressAllowlistMaxSize: 8,
 		// Autoscale: Hobby is gated on Pro+ for both RPS and CPU
 		// (2026-07-28: ADR-037 amendment — Hobby→Pro re-tier on
 		// ScaleUpTargetRPSAllowed). CPU-driven scaling is gated
@@ -4475,9 +4478,9 @@ func (p Plan) SidecarAllowed() bool {
 }
 
 // EgressAllowlistAllowed reports whether the plan may set a per-app
-// outbound IP allowlist (ADR-031). Pro + Scale opt in; Free + Hobby
-// stay off — the abuse-desk hygiene this surface gives is a paid
-// concern. apid's updateApp handler gates `req.EgressAllowlist` on
+// outbound IP allowlist (ADR-031). Hobby, Pro, and Scale opt in;
+// Free stays off. Hobby's cap is intentionally small for explicit
+// SMTP submission destinations. apid's updateApp handler gates `req.EgressAllowlist` on
 // this; the CLI surfaces the rejection with
 // CodePlanEgressAllowlistNotAllowed. Unknown plans fail closed
 // (return false) so a missing row never silently unlocks a
@@ -4491,8 +4494,8 @@ func (p Plan) EgressAllowlistAllowed() bool {
 }
 
 // EgressAllowlistMaxSize returns the per-plan CIDR-entry cap for an
-// allowlist (ADR-031). 0 for Free/Hobby (the gate above rejects
-// before this matters); 16 for Pro; 64 for Scale. apid rejects a
+// allowlist (ADR-031). 0 for Free; 8 for Hobby; 16 for Pro; 64 for
+// Scale. apid rejects a
 // PATCH whose `req.EgressAllowlist` has more entries with 400
 // egress_allowlist_too_long. Returning 0 on unknown plans makes a
 // missing plan row a fail-closed denial, not a silent default.

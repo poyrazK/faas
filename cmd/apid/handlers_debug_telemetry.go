@@ -59,7 +59,15 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 200 {
 			limit = n
+		} else {
+			api.WriteProblem(w, api.ErrValidation("limit must be an integer between 1 and 200"))
+			return
 		}
+	}
+	route := r.URL.Query().Get("route")
+	if len(route) > 256 {
+		api.WriteProblem(w, api.ErrValidation("route must be at most 256 characters"))
+		return
 	}
 	now := time.Now().UTC()
 	rows, err := s.store.ListRequestTelemetryByApp(r.Context(), sqlc.ListRequestTelemetryByAppParams{
@@ -67,6 +75,7 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-sinceDur), Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
 		Limit:        int32(limit),
+		Route:        route,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list request telemetry"))
@@ -139,6 +148,7 @@ func debugTelemetryRowToItem(row sqlc.ListRequestTelemetryByAppRow) api.DebugTel
 		row.Method,
 		row.Status,
 		row.LatencyMs,
+		row.Count,
 		row.ColdBoot,
 		row.TraceID,
 		row.ReceivedAt,
@@ -153,6 +163,7 @@ func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIDRow) api.D
 		row.Method,
 		row.Status,
 		row.LatencyMs,
+		row.Count,
 		row.ColdBoot,
 		row.TraceID,
 		row.ReceivedAt,
@@ -163,6 +174,7 @@ func debugTelemetryItemFromFields(
 	id, deploymentID pgtype.UUID,
 	route, method string,
 	status, latencyMS int32,
+	count int32,
 	coldBoot bool,
 	traceID pgtype.Text,
 	receivedAt pgtype.Timestamptz,
@@ -177,6 +189,7 @@ func debugTelemetryItemFromFields(
 		Method:       method,
 		Status:       int(status),
 		LatencyMS:    int(latencyMS),
+		Count:        int(count),
 		ColdBoot:     coldBoot,
 		ReceivedAt:   timeFromPg(receivedAt),
 	}

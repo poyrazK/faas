@@ -9557,9 +9557,10 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 		if !ok {
 			continue
 		}
-		// Lifecycle-invalid rows are intentionally still projected: imaged
-		// must reclaim their storage immediately. Other stale rows are held
-		// for the retention sweep and stay out of this hot-path list.
+		// Lifecycle triggers mark snapshots stale as soon as an app is
+		// deleted or a deployment becomes unusable. Keep those terminal rows
+		// in this projection so the immediate GC pass can remove their files;
+		// ordinary stale rows remain owned by the retention sweep.
 		if s.Stale && app.Status != AppDeleted &&
 			dep.Status != DeployFailed && dep.Status != DeployCancelled {
 			continue

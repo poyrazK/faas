@@ -103,6 +103,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DUNNING_INTERVAL` | meterd | `default` |  |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` | must never be set on a production host |
 | `FAAS_EGRESS_SOCKET` | shared | `dropin` |  |
+| `FAAS_ENVIRONMENT` | shared | `default` | optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value |
 | `FAAS_FLOOR_INTERVAL_SECONDS` | schedd | `default` |  |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged, shared | `unit` |  |
 | `FAAS_FUNCTION_RUNNER_GO124_ALPINE` | imaged, shared | `unit` |  |
@@ -180,6 +181,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MAIL_RESEND_WEBHOOK_SECRET` | apid | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_TRANSPORT` | apid, meterd, shared | `secrets-env` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MANAGED_POSTGRES_CONFIG` | shared | `default` | optional provider-registry JSON path; apid loads the dark-wired Neon adapter and reconciler, while the file's provisioning_enabled flag defaults false (ADR-155) |
+| `FAAS_MANAGED_POSTGRES_QUALIFIED` | shared | `default` | explicit staging-only provider qualification approval; provisioning stays disabled unless true and the remaining qualification gates match |
+| `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` | shared | `default` | exact managed PostgreSQL backend ID approved by the isolated qualification run |
+| `FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT` | shared | `default` | exact non-secret backend fingerprint approved by the isolated qualification run |
+| `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` | shared | `default` | RFC3339 expiry for the staging qualification approval; expired approvals fail closed |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |
 | `FAAS_MFA_RECOVERY_HMAC_KEY` | apid | `secrets-env` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
