@@ -42,3 +42,4 @@ export type AlertRuleResponse = {
   created_at: string;
   updated_at: string;
 };
+

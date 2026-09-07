@@ -27,3 +27,4 @@ export type CreateAlertRuleRequest = {
    */
   action?: 'webhook' | 'rollback' | 'demote' | 'promote';
 };
+
