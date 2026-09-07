@@ -198,6 +198,14 @@ check-state-coverage: ## Assert pkg/state coverage ≥ 70% from existing profile
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
 	bash scripts/ci/check_memstore_stubs.sh
 
+.PHONY: fix-has-test-check
+fix-has-test-check: ## Require fix-shaped pull requests to change a Go regression test (issue #1529 / PR-4a)
+	bash scripts/ci/check_fix_has_test.sh
+
+.PHONY: fix-has-test-check-test
+fix-has-test-check-test: ## Exercise the fix-has-test CI gate with synthetic pull request events
+	bash scripts/ci/check_fix_has_test_test.sh
+
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live in the `floors` dict inside the python heredoc below
 # (no separate Make variable — keeping the table adjacent to the verifier
