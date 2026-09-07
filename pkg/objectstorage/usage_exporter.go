@@ -114,6 +114,7 @@ func WriteUsageReportsAtomic(path string, reports []api.ObjectStorageUsageReport
 	// Syncing the directory makes the rename durable across a host restart on
 	// filesystems that support directory fsync. The report is still valid when
 	// a platform declines this optional operation.
+	//nolint:forbidigo // dir is the parent of the trusted operator-configured export path; syncing it is only for rename durability.
 	if dirFile, err := os.Open(dir); err == nil {
 		_ = dirFile.Sync()
 		_ = dirFile.Close()
