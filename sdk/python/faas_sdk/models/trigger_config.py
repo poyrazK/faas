@@ -13,6 +13,8 @@ T = TypeVar("T", bound="TriggerConfig")
 class TriggerConfig:
     """Per-kind opaque configuration. Decode with the per-kind
     struct (KafkaTriggerConfig, NATSTriggerConfig, etc).
+    Kafka responses replace write-only password/client-key
+    leaves with boolean `password_set`/`client_key_set` markers.
 
         Example:
             {'brokers': ['broker:9092'], 'topic': 'orders.v1', 'group': 'faas-orders'}

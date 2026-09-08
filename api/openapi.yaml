@@ -7480,8 +7480,10 @@ paths:
       summary: Create a trigger.
       description: |
         Idempotent via Idempotency-Key header. Returns 402
-        `triggers_not_allowed` for Free plan, 403 `trigger_quota_exceeded`
-        on per-app or per-account cap; see ADR-100.
+        `plan_triggers_not_allowed` for Free plan. A 403 may be
+        `trigger_kind_not_allowed`, `plan_trigger_quota`,
+        `trigger_batch_window_too_large`, or
+        `trigger_tls_skip_verify_not_allowed`; see ADR-100.
       requestBody:
         required: true
         content:
@@ -7501,6 +7503,7 @@ paths:
         '403': { $ref: '#/components/responses/TriggerQuotaExceeded' }
         '422': { $ref: '#/components/responses/TriggerImmutable' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/TriggerSecretUnavailable' }
 
   /v1/triggers:batch_create:
     post:
@@ -7566,6 +7569,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/TriggerImmutable' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/TriggerSecretUnavailable' }
     delete:
       tags: [triggers]
       operationId: deleteTrigger
@@ -17121,8 +17125,10 @@ components:
         Read shape returned by GET / POST / PATCH on /v1/triggers.
         The `config` blob is opaque at the wire level — each kind
         decodes its own per-shape struct lazily. The SDK round-trip
-        preserves the raw JSON so unknown fields survive client
-        versions older than the server.
+        preserves unknown fields across client versions. Kafka
+        credentials are never returned: `password_set` and
+        `client_key_set` report their presence without exposing
+        plaintext or the internal sealed envelope.
       type: object
       required:
         [id, account_id, app_id, kind, config, batch_size_max, batch_window_ms,
@@ -17144,22 +17150,25 @@ components:
           description: |
             Per-kind opaque configuration. Decode with the per-kind
             struct (KafkaTriggerConfig, NATSTriggerConfig, etc).
+            Kafka responses replace write-only password/client-key
+            leaves with boolean `password_set`/`client_key_set` markers.
           example:
             {brokers: ["broker:9092"], topic: orders.v1, group: faas-orders}
         batch_size_max:
           type: integer
           minimum: 1
           maximum: 5000
-          description: "Records per batch upper bound (per-plan cap in /v1/limits)."
+          description: "Records per batch upper bound. Omitted create values use min(64, the account plan cap)."
         batch_window_ms:
           type: integer
           minimum: 10
           maximum: 600000
-          description: "Milliseconds a partial batch may wait before dispatch."
+          description: "Milliseconds a partial batch may wait before dispatch. Omitted create values use min(1000, the account plan cap)."
         max_attempts:
           type: integer
           minimum: 1
           maximum: 25
+          description: "Omitted create values use min(5, the account plan cap)."
         payload_max_bytes:
           type: integer
           minimum: 1024
@@ -17169,7 +17178,7 @@ components:
             Records above this size are DLQ'd at insert time with
             reason='payload_too_large' rather than silently truncated.
             Plan-level ceiling in /v1/limits TriggerPayloadMaxBytes.
-            Default 6291456 (6 MiB) when omitted on create.
+            Omitted create values use min(6291456, the account plan cap).
         broker_poison_strategy:
           type: string
           enum: [commit, seek-to-offset]
@@ -17215,6 +17224,8 @@ components:
         gating mirrors pkg/gregalemanifest.validateKindConfig:
           - cron: requires schedule + path (slug ignored)
           - non-cron: requires slug + config
+        Omitted delivery settings use the platform default capped to the
+        selected account plan; explicit over-cap values are rejected.
       type: object
       required: [app_id, kind]
       properties:
@@ -17227,7 +17238,7 @@ components:
         config:
           type: object
           additionalProperties: true
-          description: "Per-kind opaque config blob."
+          description: "Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence."
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
@@ -17254,7 +17265,9 @@ components:
         Partial trigger update. nil means "leave unchanged" (same
         semantics as UpdateCronRequest). Kind is NOT a member — it
         is immutable. To change kind, create a new trigger and
-        delete the old one.
+        delete the old one. Inside a supplied Kafka sasl/tls block,
+        omitting the write-only credential preserves its stored value;
+        omitting the whole block removes that block and its credential.
       type: object
       properties:
         enabled: { type: [boolean, "null"] }
@@ -17302,15 +17315,21 @@ components:
         SCRAM client keypairs from Username + Password at dial
         time.
       type: object
-      required: [mechanism, username, password]
+      required: [mechanism, username]
       properties:
         mechanism: { $ref: '#/components/schemas/KafkaSASLMechanism' }
         username: { type: string, minLength: 1, maxLength: 256 }
         password:
           type: string
           format: password
+          writeOnly: true
           minLength: 1
-          maxLength: 1024
+          maxLength: 4096
+          description: "Plaintext-on-write only. Omit inside a supplied SASL block to preserve the stored password."
+        password_set:
+          type: boolean
+          readOnly: true
+          description: "Response-only marker indicating that a password is configured; no credential material is returned."
 
     KafkaTLSConfig:
       description: |
@@ -17332,7 +17351,13 @@ components:
         client_key:
           type: string
           format: password
-          description: "PEM-encoded client key for mTLS."
+          writeOnly: true
+          maxLength: 65536
+          description: "PEM-encoded client key for mTLS, accepted only on writes. Omit inside a supplied TLS block to preserve the stored key."
+        client_key_set:
+          type: boolean
+          readOnly: true
+          description: "Response-only marker indicating that a client key is configured; no credential material is returned."
         skip_verify:
           type: boolean
           default: false
@@ -23669,13 +23694,19 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
     TriggerNotAllowed:
-      description: 'code: triggers_not_allowed — Free plan cannot create triggers; upgrade required.'
+      description: 'code: plan_triggers_not_allowed — Free plan cannot create triggers; upgrade required.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
 
     TriggerQuotaExceeded:
-      description: 'code: trigger_quota_exceeded — per-app or per-account trigger cap reached (see TriggerLimitPerApp / TriggerLimitPerAccount in /v1/limits).'
+      description: 'code: trigger_kind_not_allowed | plan_trigger_quota | trigger_batch_window_too_large | trigger_tls_skip_verify_not_allowed — source-kind or delivery configuration exceeds the account plan capabilities returned by GET /v1/account.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    TriggerSecretUnavailable:
+      description: 'code: secret_store_unavailable — Kafka credentials could not be sealed or opened safely because host age key material is unavailable.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

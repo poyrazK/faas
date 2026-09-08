@@ -22,9 +22,13 @@ export type KafkaTLSConfig = {
    */
   client_cert?: string;
   /**
-   * PEM-encoded client key for mTLS.
+   * PEM-encoded client key for mTLS, accepted only on writes. Omit inside a supplied TLS block to preserve the stored key.
    */
   client_key?: string;
+  /**
+   * Response-only marker indicating that a client key is configured; no credential material is returned.
+   */
+  readonly client_key_set?: boolean;
   /**
    * Skip TLS verification. Hobby plan rejects this
    * (TLSSkipVerifyAllowed=false in pkg/api/limits.go);

@@ -82,7 +82,7 @@ func TestAccount_OK(t *testing.T) {
 	if !ok {
 		t.Fatalf("limits not an object: %+v", body["limits"])
 	}
-	for _, k := range []string{"plan", "ram_mb", "max_concurrency", "deployed_apps", "developer_apps", "included_gb_hours", "app_layer_max_mb", "ephemeral_disk_max_mb"} {
+	for _, k := range []string{"plan", "ram_mb", "max_concurrency", "deployed_apps", "developer_apps", "included_gb_hours", "app_layer_max_mb", "ephemeral_disk_max_mb", "triggers_allowed", "trigger_kinds", "trigger_limit_per_app", "trigger_limit_per_account", "trigger_batch_size_max", "trigger_batch_window_max_ms", "trigger_max_attempts_max", "trigger_payload_max_bytes", "trigger_tls_skip_verify_allowed"} {
 		if _, ok := limits[k]; !ok {
 			t.Errorf("missing required AccountLimits field %q in limits: %+v", k, limits)
 		}

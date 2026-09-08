@@ -8,8 +8,10 @@ import type { TriggerKind } from './TriggerKind.js';
  * Read shape returned by GET / POST / PATCH on /v1/triggers.
  * The `config` blob is opaque at the wire level — each kind
  * decodes its own per-shape struct lazily. The SDK round-trip
- * preserves the raw JSON so unknown fields survive client
- * versions older than the server.
+ * preserves unknown fields across client versions. Kafka
+ * credentials are never returned: `password_set` and
+ * `client_key_set` report their presence without exposing
+ * plaintext or the internal sealed envelope.
  *
  */
 export type Trigger = {
@@ -25,24 +27,29 @@ export type Trigger = {
   /**
    * Per-kind opaque configuration. Decode with the per-kind
    * struct (KafkaTriggerConfig, NATSTriggerConfig, etc).
+   * Kafka responses replace write-only password/client-key
+   * leaves with boolean `password_set`/`client_key_set` markers.
    *
    */
   config: Record<string, any>;
   /**
-   * Records per batch upper bound (per-plan cap in /v1/limits).
+   * Records per batch upper bound. Omitted create values use min(64, the account plan cap).
    */
   batch_size_max: number;
   /**
-   * Milliseconds a partial batch may wait before dispatch.
+   * Milliseconds a partial batch may wait before dispatch. Omitted create values use min(1000, the account plan cap).
    */
   batch_window_ms: number;
+  /**
+   * Omitted create values use min(5, the account plan cap).
+   */
   max_attempts: number;
   /**
    * Per-record broker payload byte cap (migration 00274).
    * Records above this size are DLQ'd at insert time with
    * reason='payload_too_large' rather than silently truncated.
    * Plan-level ceiling in /v1/limits TriggerPayloadMaxBytes.
-   * Default 6291456 (6 MiB) when omitted on create.
+   * Omitted create values use min(6291456, the account plan cap).
    *
    */
   payload_max_bytes: number;
