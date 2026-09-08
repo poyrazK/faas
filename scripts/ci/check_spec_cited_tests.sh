@@ -51,6 +51,14 @@ if ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
     echo "::error::spec-cited-tests-check: could not fetch base commit $base_sha" >&2
     exit 1
   }
+  # Fetching the branch tip does not guarantee base_sha itself is reachable
+  # (the base branch may have been force-pushed, or the commit may predate a
+  # shallow boundary). Without this check the diff below fails and, before the
+  # fail-closed guard, the gate reported OK.
+  git cat-file -e "${base_sha}^{commit}" 2>/dev/null || {
+    echo "::error::spec-cited-tests-check: base commit $base_sha is still unavailable after fetching $base_ref" >&2
+    exit 1
+  }
 fi
 if ! git cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
   [[ "$pr_number" =~ ^[0-9]+$ ]] || {
@@ -62,6 +70,10 @@ if ! git cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
     echo "::error::spec-cited-tests-check: could not fetch head commit $head_sha for PR #$pr_number" >&2
     exit 1
   }
+  git cat-file -e "${head_sha}^{commit}" 2>/dev/null || {
+    echo "::error::spec-cited-tests-check: head commit $head_sha is still unavailable after fetching PR #$pr_number" >&2
+    exit 1
+  }
 fi
 
 owners=()
@@ -71,10 +83,27 @@ while IFS= read -r path; do
   owners+=("${path%/}")
 done < "$owners_file"
 
-# Use a three-dot diff so commits that landed on the base branch after the
-# feature branch was created are not misclassified as PR changes. This matters
-# for long-running branches: the checker must inspect the merge-base-to-head
-# delta, not the symmetric base-to-head difference.
+# Diff from the MERGE BASE to head, so commits that landed on the base branch
+# after the feature branch was created are not misclassified as PR changes.
+# The two-dot form shipped in #1624 blocked PR #1634 on seven pkg/sched and
+# pkg/gateway tests it never touched.
+#
+# The merge base is resolved explicitly rather than relying on the three-dot
+# shorthand so that an unresolvable base fails here, loudly, with both SHAs in
+# the message.
+merge_base="$(git merge-base "$base_sha" "$head_sha" 2>/dev/null)" || {
+  echo "::error::spec-cited-tests-check: no merge base between base $base_sha and head $head_sha" >&2
+  exit 1
+}
+
+# Capture the diff into a variable instead of piping it into `while read`:
+# inside a process substitution a git failure is invisible to `set -e`, so a
+# broken diff yielded an empty file list and the gate reported OK. Fail closed.
+changed_files="$(git diff --name-only --diff-filter=ACMRTUXB "$merge_base" "$head_sha")" || {
+  echo "::error::spec-cited-tests-check: git diff ${merge_base}..${head_sha} failed" >&2
+  exit 1
+}
+
 owned_tests=()
 while IFS= read -r path; do
   [[ "$path" == *_test.go ]] || continue
@@ -84,7 +113,7 @@ while IFS= read -r path; do
       break
     fi
   done
-done < <(git diff --name-only --diff-filter=ACMRTUXB "$base_sha...$head_sha")
+done <<< "$changed_files"
 
 if ((${#owned_tests[@]} == 0)); then
   echo "spec-cited-tests-check: OK — PR changes no TESTOWNERS Go tests"
