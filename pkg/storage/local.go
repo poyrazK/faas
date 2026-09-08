@@ -82,12 +82,19 @@ func (l *LocalStorageBackend) Root() string { return l.root }
 // they stage or open the returned path. This capability keeps local restores
 // zero-copy while the StorageBackend Get contract remains streaming-friendly.
 func (l *LocalStorageBackend) LocalPath(key string) (string, bool, error) {
+	path, _, ok, err := l.LocalPathWithSource(key)
+	return path, ok, err
+}
+
+// LocalPathWithSource is LocalPath with stable source classification for
+// restore-path telemetry.
+func (l *LocalStorageBackend) LocalPathWithSource(key string) (string, LocalPathSource, bool, error) {
 	if err := validateKey(key); err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	full, err := l.join(key)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	// A local storage key may be a compatibility symlink (the production
 	// image bootstrap keeps base/base-amd64.ext4 as one). Returning the
@@ -102,13 +109,13 @@ func (l *LocalStorageBackend) LocalPath(key string) (string, bool, error) {
 		}
 		rel, relErr := filepath.Rel(root, resolved)
 		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-			return "", false, fmt.Errorf("%w: symlink target for %q escapes root", ErrInvalidKey, key)
+			return "", "", false, fmt.Errorf("%w: symlink target for %q escapes root", ErrInvalidKey, key)
 		}
 		full = resolved
 	} else if info, statErr := os.Lstat(full); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", false, fmt.Errorf("storage: resolve %q: %w", key, resolveErr)
+		return "", "", false, fmt.Errorf("storage: resolve %q: %w", key, resolveErr)
 	}
-	return full, true, nil
+	return full, LocalPathSourceBackend, true, nil
 }
 
 // join is the single point where a validated key becomes an absolute

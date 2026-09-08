@@ -50,6 +50,7 @@ const (
 	// WakeRestoreBreakdown — vmmd's detailed snapshot-restore phases.
 	// Payload: {wake_id, app_id, instance_id, chroot_ms,
 	// materialize_mem_ms, materialize_vmstate_ms, resolve_images_ms,
+	// resolve_artifacts[{artifact, source, duration_ms}],
 	// stage_drives_ms, stage_snapshot_ms, helper_ms, start_jailer_ms,
 	// bind_tun_ms, load_snapshot_ms, resume_hook_ms, wait_ready_ms,
 	// total_ms}. Emitted after a successful restore so operators can
@@ -354,6 +355,15 @@ type RestoreBreakdown struct {
 	ResumeHookMs         int64
 	WaitReadyMs          int64
 	TotalMs              int64
+	ResolveArtifacts     []RestoreArtifactResolution
+}
+
+// RestoreArtifactResolution attributes one member of resolve_images_ms.
+// Source is backend_local, cache_hit, or materialized.
+type RestoreArtifactResolution struct {
+	Artifact   string `json:"artifact"`
+	Source     string `json:"source"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 func (e RestoreBreakdown) Kind() string     { return WakeRestoreBreakdown }
@@ -368,6 +378,7 @@ func (e RestoreBreakdown) Payload() map[string]any {
 		"materialize_mem_ms":     e.MaterializeMemMs,
 		"materialize_vmstate_ms": e.MaterializeVMStateMs,
 		"resolve_images_ms":      e.ResolveImagesMs,
+		"resolve_artifacts":      e.ResolveArtifacts,
 		"stage_drives_ms":        e.StageDrivesMs,
 		"stage_snapshot_ms":      e.StageSnapshotMs,
 		"helper_ms":              e.HelperMs,

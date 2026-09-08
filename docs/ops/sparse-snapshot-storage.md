@@ -27,4 +27,4 @@ well as eviction by logical byte size. The storage race suite also passes.
 
 This change is useful preparation for anonymous-memory restore experiments.
 It does not select a different Firecracker binary, enable huge pages, or by
-itself establish the full-wake p95 below 350 ms requirement.
+itself establish the platform-only snapshot wake p95 below 350 ms requirement.

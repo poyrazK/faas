@@ -256,17 +256,29 @@ func (c *LocalCacheBackend) Root() string { return c.root }
 // they do not scan a stale compatibility file or copy the whole image again.
 // Remote parents intentionally return ok=false through this delegation.
 func (c *LocalCacheBackend) LocalPath(key string) (string, bool, error) {
-	if resolver, ok := c.parent.(LocalPathResolver); ok {
+	path, _, ok, err := c.LocalPathWithSource(key)
+	return path, ok, err
+}
+
+// LocalPathWithSource reports whether the parent supplied a backend-local
+// file or this wrapper supplied a cache hit. It never calls parent.Get, so a
+// cache hit cannot fall through to a remote existence check or blob copy.
+func (c *LocalCacheBackend) LocalPathWithSource(key string) (string, LocalPathSource, bool, error) {
+	if resolver, ok := c.parent.(LocalPathSourceResolver); ok {
+		if p, source, local, err := resolver.LocalPathWithSource(key); err == nil && local {
+			return p, source, true, nil
+		}
+	} else if resolver, ok := c.parent.(LocalPathResolver); ok {
 		if p, local, err := resolver.LocalPath(key); err == nil && local {
-			return p, true, nil
+			return p, LocalPathSourceBackend, true, nil
 		}
 	}
 	cacheFile, _ := c.cacheFileFor(key)
 	if fi, err := os.Stat(cacheFile); err == nil && !fi.IsDir() && fi.Size() > 0 {
 		c.touchCacheFile(cacheFile)
-		return cacheFile, true, nil
+		return cacheFile, LocalPathSourceCache, true, nil
 	}
-	return "", false, nil
+	return "", "", false, nil
 }
 
 // cacheFileFor hashes the storage key into a path-safe

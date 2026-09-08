@@ -7,8 +7,7 @@
 //	M0 — boot a hello-Firecracker VM from the pinned kernel + a busybox rootfs.
 //	M1 — boot 50 × 128 MB VMs concurrently and leak zero netns/TAPs/uids on
 //	     teardown.
-//	M3 — park→wake p50 ≤ 350 ms over 100 cycles restoring from a snapshot each
-//	     time.
+//	M3 — platform-only park→RUNNING p95 < 350 ms over 100 snapshot restores.
 package fcvm
 
 import (
@@ -124,8 +123,8 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 	}
 }
 
-// TestMetalParkWakeCycle is the M3 latency gate (spec §14, V2): park→wake p50
-// ≤ 350 ms over 100 cycles, restoring from a snapshot each wake.
+// TestMetalParkWakeCycle is the platform-only M3 latency gate (spec §14, V2):
+// park→RUNNING p95 < 350 ms over 100 snapshot restores on the reference SSD.
 func TestMetalParkWakeCycle(t *testing.T) {
 	kernel, base, layer := metalImages(t)
 
@@ -200,11 +199,8 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	p50 := latencies[len(latencies)/2]
 	p95 := latencies[len(latencies)*95/100]
 	t.Logf("wake latency over %d cycles: p50=%s p95=%s", cycles, p50, p95)
-	if p50 > 350*time.Millisecond {
-		t.Errorf("wake p50 = %s, want ≤ 350 ms (spec §6.3)", p50)
-	}
-	if p95 > 800*time.Millisecond {
-		t.Errorf("wake p95 = %s, want ≤ 800 ms (spec §6.3)", p95)
+	if p95 >= 350*time.Millisecond {
+		t.Errorf("platform snapshot wake p95 = %s, want < 350 ms (spec §6.3)", p95)
 	}
 	if m.LeasedCount() != 0 {
 		t.Errorf("leaked leases after cycles: %d", m.LeasedCount())
@@ -830,3 +826,5 @@ func TestMetalGuestEgressToPublicViaMASQUERADE(t *testing.T) {
 		t.Fatalf("§11 SMTP drop regression — guest reached 8.8.8.8:25 (per-netns layer should have dropped)")
 	}
 }
+
+// spec: §6.3

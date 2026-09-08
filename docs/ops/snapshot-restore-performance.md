@@ -1,5 +1,11 @@
 # SSD snapshot restore canary — 2026-09-05
 
+> **Current release-gate boundary (2026-09-09):** the sub-350 ms p95 target is
+> platform-only: `wake.boot_started` through `wake.boot_completed`, with
+> `wake.restore_breakdown.total_ms` as the VMMD corroboration. Public-edge,
+> proxy-first-byte, application response, client network, and physical-distance
+> timings below are diagnostic and do not pass or fail that restore gate.
+
 The basic Node 22 function met the idle internal-gateway target in this cohort:
 20/20 HTTP 200 responses, full-response p95 **281.22 ms**, maximum **324.60 ms**.
 Every request began with zero live instances; all 20 created distinct instances
@@ -72,5 +78,6 @@ for this PR. The rebased PR itself has not been redeployed or rebenchmarked.
 - [Final retained-input metal summary](evidence/20260905-ssd-restore/tsc-final-summary.json)
 - [Firecracker source audit](evidence/20260905-ssd-restore/final-source-audit.json)
 
-Remaining acceptance: normal traffic and bursts within host capacity, public-edge
-latency, and the full x86 metal suite on the integrated release candidate.
+Remaining acceptance for the platform restore gate: normal traffic and bursts
+within host capacity plus the full x86 metal suite on the integrated release
+candidate. Public-edge latency is tracked separately.

@@ -70,6 +70,7 @@ func TestRestoreBreakdown_Shape(t *testing.T) {
 		MaterializeVMStateMs: 4, ResolveImagesMs: 5, StageDrivesMs: 6,
 		StageSnapshotMs: 7, HelperMs: 8, StartJailerMs: 9, BindTunMs: 10,
 		LoadSnapshotMs: 400, ResumeHookMs: 11, WaitReadyMs: 131, TotalMs: 596,
+		ResolveArtifacts: []RestoreArtifactResolution{{Artifact: "kernel", Source: "cache_hit", DurationMs: 2}},
 	}
 	if got := ev.Kind(); got != WakeRestoreBreakdown {
 		t.Errorf("Kind = %q, want %q", got, WakeRestoreBreakdown)
@@ -84,6 +85,10 @@ func TestRestoreBreakdown_Shape(t *testing.T) {
 		if got := p[key]; got != want {
 			t.Errorf("payload[%q] = %v, want %v", key, got, want)
 		}
+	}
+	artifacts, ok := p["resolve_artifacts"].([]RestoreArtifactResolution)
+	if !ok || len(artifacts) != 1 || artifacts[0].Source != "cache_hit" {
+		t.Errorf("payload.resolve_artifacts = %#v, want one cache_hit", p["resolve_artifacts"])
 	}
 }
 

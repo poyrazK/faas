@@ -352,7 +352,7 @@ func TestLocalCacheBackend_LocalPathDelegates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocalCacheBackend: %v", err)
 	}
-	got, ok, err := cache.LocalPath("base/runner-builder-amd64.ext4")
+	got, source, ok, err := cache.LocalPathWithSource("base/runner-builder-amd64.ext4")
 	if err != nil {
 		t.Fatalf("LocalPath: %v", err)
 	}
@@ -362,6 +362,9 @@ func TestLocalCacheBackend_LocalPathDelegates(t *testing.T) {
 	want := filepath.Join(parent.root, "base/runner-builder-amd64.ext4")
 	if got != want {
 		t.Errorf("LocalPath = %q, want %q", got, want)
+	}
+	if source != storage.LocalPathSourceBackend {
+		t.Errorf("LocalPath source = %q, want %q", source, storage.LocalPathSourceBackend)
 	}
 }
 
