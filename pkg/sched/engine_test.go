@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -3630,12 +3631,18 @@ func TestCaptureWarmSnapshot_HappyPath(t *testing.T) {
 	if initSnap.Tier != state.SnapshotTierInit {
 		t.Errorf("init row tier = %q, want init", initSnap.Tier)
 	}
+	if initSnap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
+		t.Errorf("init row base image version = %q, want %q", initSnap.BaseImageVersion, fcvm.FAAS_BASE_IMAGE_VERSION)
+	}
 	warmSnap, err := store.LatestSnapshotForTier(context.Background(), dep.ID, state.SnapshotTierWarm)
 	if err != nil {
 		t.Fatalf("LatestSnapshotForTier warm: %v", err)
 	}
 	if warmSnap.Tier != state.SnapshotTierWarm {
 		t.Errorf("warm row tier = %q, want warm", warmSnap.Tier)
+	}
+	if warmSnap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
+		t.Errorf("warm row base image version = %q, want %q", warmSnap.BaseImageVersion, fcvm.FAAS_BASE_IMAGE_VERSION)
 	}
 	// Publication must name the warm memory generation, not an init key
 	// or a host path masquerading as a storage key.
@@ -3690,13 +3697,15 @@ func (m *mockImaged) handle(payload []byte) error {
 	}
 	depID, _ := p["deployment_id"].(string)
 	storageKey, _ := p["storage_key"].(string)
+	baseImageVersion, _ := p["base_image_version"].(string)
 	memBytes, _ := p["mem_bytes"].(float64)
 	_, err := m.store.CreateSnapshot(context.Background(), state.Snapshot{
-		DeploymentID: depID,
-		FCVersion:    m.fcVer,
-		MemBytes:     int64(memBytes),
-		StorageKey:   storageKey,
-		Tier:         tier,
+		DeploymentID:     depID,
+		FCVersion:        m.fcVer,
+		BaseImageVersion: baseImageVersion,
+		MemBytes:         int64(memBytes),
+		StorageKey:       storageKey,
+		Tier:             tier,
 	})
 	return err
 }
@@ -3931,7 +3940,7 @@ func TestUsableSnapshotForWake_PlanGate(t *testing.T) {
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	// Free plan returns the init row even though a warm row exists.
-	snap, ok, tier := e.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanFree), 256)
+	snap, ok, tier := e.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanFree), 256, api.AppProtocolHTTP1)
 	if !ok {
 		t.Fatal("PlanFree: usableSnapshotForWake returned no snap")
 	}
@@ -3946,7 +3955,7 @@ func TestUsableSnapshotForWake_PlanGate(t *testing.T) {
 	}
 
 	// Pro plan returns the warm row (warm > init on tie).
-	snap, ok, tier = e.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro), 256)
+	snap, ok, tier = e.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro), 256, api.AppProtocolHTTP1)
 	if !ok {
 		t.Fatal("PlanPro: usableSnapshotForWake returned no snap")
 	}
@@ -3982,7 +3991,7 @@ func TestUsableSnapshotForWake_RAMMismatchFallsBackAndRetires(t *testing.T) {
 	}
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 
-	snap, ok, tier := e.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro), 256)
+	snap, ok, tier := e.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro), 256, api.AppProtocolHTTP1)
 	if !ok || tier != wakeTierInit || snap.Tier != state.SnapshotTierInit {
 		t.Fatalf("selection = ok:%t tier:%q snapshot:%q, want compatible init", ok, tier, snap.Tier)
 	}
@@ -4011,7 +4020,7 @@ func TestUsableSnapshotForWake_AllRAMMismatchesColdBoot(t *testing.T) {
 	}
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 
-	_, ok, tier := e.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro), 256)
+	_, ok, tier := e.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanPro), 256, api.AppProtocolHTTP1)
 	if ok || tier != wakeTierColdBootFallback {
 		t.Fatalf("selection = ok:%t tier:%q, want cold boot fallback", ok, tier)
 	}
@@ -4019,6 +4028,39 @@ func TestUsableSnapshotForWake_AllRAMMismatchesColdBoot(t *testing.T) {
 		if _, err := store.LatestSnapshotForTier(context.Background(), dep.ID, snapshotTier); !errors.Is(err, state.ErrNotFound) {
 			t.Errorf("RAM-incompatible %s snapshot remained usable: %v", snapshotTier, err)
 		}
+	}
+}
+
+func TestUsableSnapshotForWake_H2CBaseImageCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		protocol         string
+		baseImageVersion string
+		wantUsable       bool
+	}{
+		{name: "http2 current", protocol: api.AppProtocolHTTP2, baseImageVersion: fcvm.FAAS_BASE_IMAGE_VERSION, wantUsable: true},
+		{name: "http2 old", protocol: api.AppProtocolHTTP2, baseImageVersion: "old", wantUsable: false},
+		{name: "grpc legacy blank", protocol: api.AppProtocolGRPC, baseImageVersion: "", wantUsable: false},
+		{name: "http1 ignores base generation", protocol: api.AppProtocolHTTP1, baseImageVersion: "", wantUsable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			_, _, dep := seedApp(t, store, api.PlanFree, 256, 5)
+			if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+				DeploymentID: dep.ID, FCVersion: "1.10.0",
+				BaseImageVersion: tc.baseImageVersion,
+				MemBytes:         256 << 20,
+				StorageKey:       state.SnapMemKey(dep.ID),
+				Tier:             state.SnapshotTierInit,
+			}); err != nil {
+				t.Fatalf("CreateSnapshot: %v", err)
+			}
+			e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+			_, usable, tier := e.usableSnapshotForWake(context.Background(), dep.ID, string(api.PlanFree), 256, tc.protocol)
+			if usable != tc.wantUsable {
+				t.Fatalf("usable = %v, want %v (tier=%s)", usable, tc.wantUsable, tier)
+			}
+		})
 	}
 }
 

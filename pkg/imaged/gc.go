@@ -13,7 +13,9 @@ package imaged
 
 import (
 	"sort"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -22,11 +24,10 @@ import (
 // and app slug are what the filesystem cleanup needs (snap blobs are
 // keyed on deployment id, drive1 ext4 layers on (slug, deployment id)).
 //
-// Tier (issue #470 / PR C / ADR-074) drives the storage key the
-// filesystem cleanup uses: warm-tier targets delete WarmSnapMemKey +
-// WarmSnapVMStateKey; init-tier targets delete SnapMemKey +
-// SnapVMStateKey. Per-app ext4 is always deleted (it's shared across
-// tiers for a given (app, deployment) pair — see sched.AppLayerKey).
+// Tier (issue #470 / PR C / ADR-074) drives the storage key the filesystem
+// cleanup uses: warm-tier targets delete WarmSnapMemKey + WarmSnapVMStateKey;
+// init-tier targets delete SnapMemKey + SnapVMStateKey. The shared per-app
+// ext4 is deleted only after the deployment has no remaining snapshot tier.
 type deleteTarget struct {
 	StorageKey   string
 	ID           string
@@ -104,6 +105,105 @@ func perAppKeepTierFloor(rows []state.SnapshotForGC) []deleteTarget {
 	return drop
 }
 
+// perAppKeepRollbackWindow returns the snapshot rows that fall outside the
+// bounded rollback window. Unlike the legacy per-tier floor above, this policy
+// protects deployment generations rather than an arbitrary number of rows per
+// tier: the newest keepDeployments deployments keep their non-stale snapshots
+// so an operator rollback can restore the target without a cold boot.
+//
+// Warm-enabled apps retain both the warm and init snapshot for each protected
+// deployment. Warm-disabled apps retain only init rows; vestigial warm rows
+// are still eligible for cleanup. The input is never mutated and output order
+// is deterministic for equal timestamps.
+func perAppKeepRollbackWindow(rows []state.SnapshotForGC, keepDeployments int) []deleteTarget {
+	if len(rows) == 0 {
+		return nil
+	}
+	if keepDeployments < 1 {
+		keepDeployments = 1
+	}
+	type deploymentGroup struct {
+		id      string
+		rows    []state.SnapshotForGC
+		newest  state.SnapshotForGC
+		warmSet bool
+	}
+	byApp := make(map[string]map[string]*deploymentGroup, len(rows))
+	var drop []deleteTarget
+	for _, r := range rows {
+		// Lifecycle-triggered stale rows for deleted apps and failed/cancelled
+		// deployments are included in the projection specifically so their
+		// storage can be reclaimed immediately. They must not consume a
+		// rollback slot for a healthy deployment generation.
+		if r.AppStatus == state.AppDeleted ||
+			r.DeploymentStatus == state.DeployFailed ||
+			r.DeploymentStatus == state.DeployCancelled {
+			drop = append(drop, targetForSnapshot(r))
+			continue
+		}
+		byDeployment := byApp[r.AppID]
+		if byDeployment == nil {
+			byDeployment = make(map[string]*deploymentGroup)
+			byApp[r.AppID] = byDeployment
+		}
+		group := byDeployment[r.DeploymentID]
+		if group == nil {
+			group = &deploymentGroup{id: r.DeploymentID, newest: r, warmSet: r.AppWarmSnapshotEnabled}
+			byDeployment[r.DeploymentID] = group
+		}
+		group.rows = append(group.rows, r)
+		if r.CreatedAt.After(group.newest.CreatedAt) ||
+			(r.CreatedAt.Equal(group.newest.CreatedAt) && r.ID < group.newest.ID) {
+			group.newest = r
+		}
+	}
+
+	for _, byDeployment := range byApp {
+		groups := make([]*deploymentGroup, 0, len(byDeployment))
+		for _, group := range byDeployment {
+			groups = append(groups, group)
+		}
+		sort.SliceStable(groups, func(i, j int) bool {
+			if groups[i].newest.CreatedAt.Equal(groups[j].newest.CreatedAt) {
+				return groups[i].id < groups[j].id
+			}
+			return groups[i].newest.CreatedAt.After(groups[j].newest.CreatedAt)
+		})
+		for index, group := range groups {
+			sort.SliceStable(group.rows, func(i, j int) bool {
+				if group.rows[i].CreatedAt.Equal(group.rows[j].CreatedAt) {
+					if group.rows[i].Tier == group.rows[j].Tier {
+						return group.rows[i].ID < group.rows[j].ID
+					}
+					return group.rows[i].Tier < group.rows[j].Tier
+				}
+				return group.rows[i].CreatedAt.After(group.rows[j].CreatedAt)
+			})
+			for _, r := range group.rows {
+				protected := index < keepDeployments &&
+					(group.warmSet || r.Tier != state.SnapshotTierWarm)
+				if protected {
+					continue
+				}
+				drop = append(drop, targetForSnapshot(r))
+			}
+		}
+	}
+	// App groups are accumulated through a map, so normalize the result before
+	// handing it to the bulk deleter. The filesystem work is order-independent,
+	// but deterministic targets make retries and diagnostics reproducible.
+	sort.SliceStable(drop, func(i, j int) bool {
+		if drop[i].DeploymentID != drop[j].DeploymentID {
+			return drop[i].DeploymentID < drop[j].DeploymentID
+		}
+		if drop[i].ID != drop[j].ID {
+			return drop[i].ID < drop[j].ID
+		}
+		return drop[i].Tier < drop[j].Tier
+	})
+	return drop
+}
+
 func targetForSnapshot(r state.SnapshotForGC) deleteTarget {
 	return deleteTarget{
 		ID:           r.ID,
@@ -141,8 +241,9 @@ func targetForSnapshot(r state.SnapshotForGC) deleteTarget {
 // evictable row exists (the box is past the alarm threshold but every
 // remaining row belongs to a deployment that someone is actively using).
 //
-// The "keep current + previous per app" rule is honoured even under
-// pressure — we never evict the most-recent snapshot for any app.
+// The rollback retention window is honoured even under pressure — we do not
+// evict a snapshot for a protected deployment unless the policy has no older
+// candidate left.
 //
 // F-06: the per-app floor previously used `appRows[skip:]` after sorting
 // OLDEST-first, which kept the NEWEST len-skip rows instead of the
@@ -183,12 +284,10 @@ func evictOldestFromHeaviestAccount(rows []state.SnapshotForGC) []deleteTarget {
 			heavyRows = append(heavyRows, r)
 		}
 	}
-	// Per (appID, snap-row): sort OLDEST-first; pick the per-app floor
-	// (keep newest N=2) and from the remainder take the single oldest.
-	// Issue #470 / PR C / ADR-074: warm-enabled apps keep 2 warm + 2
-	// init (4 total) under pressure; warm-disabled keep 2 init only.
-	// The single evicted row is therefore drawn from whatever pool
-	// exceeds its per-tier floor.
+	// Per app, keep the newest rollback window of deployment generations and
+	// from the remainder take the single oldest snapshot. Warm-enabled apps
+	// keep both tiers for every protected deployment; warm-disabled apps keep
+	// only init rows.
 	evictable := make(map[string][]state.SnapshotForGC, len(heavyRows))
 	for _, r := range heavyRows {
 		evictable[r.AppID] = append(evictable[r.AppID], r)
@@ -202,21 +301,16 @@ func evictOldestFromHeaviestAccount(rows []state.SnapshotForGC) []deleteTarget {
 			}
 			return appRows[i].CreatedAt.Before(appRows[j].CreatedAt)
 		})
-		// Pick the per-app floor based on warm_snapshot_enabled.
-		// warmEnabled=true: floor = 2 (init floor only); warm
-		// rows don't reduce the init quota, so we never evict
-		// either tier's protected rows under pressure without
-		// breaking the wake path's safety net.
 		warmEnabled := len(appRows) > 0 && appRows[0].AppWarmSnapshotEnabled
-		const floor = 2
-		_ = floor
-		// Build the eviction candidate pool by per-tier ranking.
-		candidates := perAppEvictionCandidates(appRows, warmEnabled)
+		// Build the eviction candidate pool by deployment-generation ranking.
+		candidates := perAppRollbackEvictionCandidates(appRows, warmEnabled,
+			api.SnapshotRollbackRetentionDeployments)
 		if len(candidates) == 0 {
 			continue
 		}
 		cand := candidates[0] // already oldest-first
-		if oldest == nil || cand.CreatedAt.Before(oldest.CreatedAt) {
+		if oldest == nil || cand.CreatedAt.Before(oldest.CreatedAt) ||
+			(cand.CreatedAt.Equal(oldest.CreatedAt) && cand.ID < oldest.ID) {
 			r := cand
 			oldest = &r
 			oldestTier = cand.Tier
@@ -235,6 +329,74 @@ func evictOldestFromHeaviestAccount(rows []state.SnapshotForGC) []deleteTarget {
 		AppSlug:      oldest.AppSlug,
 		Tier:         oldestTier,
 	}}
+}
+
+// perAppRollbackEvictionCandidates returns snapshots that are outside the
+// protected deployment-generation window, sorted oldest-first. It is the
+// pressure-GC counterpart to perAppKeepRollbackWindow and deliberately keeps
+// the same warm-disabled cleanup rule.
+func perAppRollbackEvictionCandidates(appRows []state.SnapshotForGC, warmEnabled bool, keepDeployments int) []state.SnapshotForGC {
+	if keepDeployments < 1 {
+		keepDeployments = 1
+	}
+	type deploymentGroup struct {
+		id     string
+		rows   []state.SnapshotForGC
+		newest time.Time
+	}
+	byDeployment := make(map[string]*deploymentGroup, len(appRows))
+	for _, r := range appRows {
+		group := byDeployment[r.DeploymentID]
+		if group == nil {
+			group = &deploymentGroup{id: r.DeploymentID, newest: r.CreatedAt}
+			byDeployment[r.DeploymentID] = group
+		}
+		group.rows = append(group.rows, r)
+		if r.CreatedAt.After(group.newest) {
+			group.newest = r.CreatedAt
+		}
+	}
+	groups := make([]*deploymentGroup, 0, len(byDeployment))
+	for _, group := range byDeployment {
+		groups = append(groups, group)
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		if groups[i].newest.Equal(groups[j].newest) {
+			return groups[i].id < groups[j].id
+		}
+		return groups[i].newest.After(groups[j].newest)
+	})
+	protected := make(map[string]struct{}, keepDeployments)
+	for i, group := range groups {
+		if i >= keepDeployments {
+			break
+		}
+		protected[group.id] = struct{}{}
+	}
+
+	candidates := make([]state.SnapshotForGC, 0, len(appRows))
+	for _, r := range appRows {
+		// Terminal rows are cleanup debt, not rollback material. They remain
+		// evictable even when their deployment ID happens to fall inside the
+		// newest-generation window.
+		if r.AppStatus == state.AppDeleted ||
+			r.DeploymentStatus == state.DeployFailed ||
+			r.DeploymentStatus == state.DeployCancelled {
+			candidates = append(candidates, r)
+			continue
+		}
+		if _, ok := protected[r.DeploymentID]; ok && (warmEnabled || r.Tier != state.SnapshotTierWarm) {
+			continue
+		}
+		candidates = append(candidates, r)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].CreatedAt.Equal(candidates[j].CreatedAt) {
+			return candidates[i].ID < candidates[j].ID
+		}
+		return candidates[i].CreatedAt.Before(candidates[j].CreatedAt)
+	})
+	return candidates
 }
 
 // perAppEvictionCandidates (issue #470 / PR C / ADR-074) ranks the

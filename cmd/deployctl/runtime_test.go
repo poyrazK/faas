@@ -191,6 +191,58 @@ func TestServicesInUnitDirRejectsUnknownDaemon(t *testing.T) {
 	}
 }
 
+func TestRemoveCanaryExecOverridesPreservesConfigurationCanaries(t *testing.T) {
+	unitDir := t.TempDir()
+	dropInDir := filepath.Join(unitDir, "faas-vmmd.service.d")
+	if err := os.Mkdir(dropInDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"zz-old-daemon.conf":  "[Service]\nExecStart=\nExecStart=\"/opt/faas/canaries/restore/bin/vmmd\" --config /etc/faas/vmmd.toml\n",
+		"zz-firecracker.conf": "[Service]\nEnvironment=PATH=/opt/faas/canaries/tsc-runtime:/usr/bin\n",
+		"99-managed.conf":     "[Service]\nEnvironment=FAAS_NODE_NAME=fsn-2.faas\n",
+		"zz-local.conf":       "[Service]\nExecStart=\nExecStart=/opt/faas/current/bin/vmmd --config /etc/faas/vmmd.toml\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dropInDir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := removeCanaryExecOverrides(unitDir, []string{"vmmd", "imaged"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dropInDir, "zz-old-daemon.conf")); !os.IsNotExist(err) {
+		t.Fatalf("canary ExecStart override still exists: %v", err)
+	}
+	for _, name := range []string{"zz-firecracker.conf", "99-managed.conf", "zz-local.conf"} {
+		if _, err := os.Stat(filepath.Join(dropInDir, name)); err != nil {
+			t.Fatalf("preserved drop-in %s changed: %v", name, err)
+		}
+	}
+}
+
+func TestIsCanaryExecOverrideIgnoresCommentsAndEnvironment(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "quoted exec", body: "ExecStart=\"/opt/faas/canaries/test/bin/apid\"", want: true},
+		{name: "unquoted exec", body: "ExecStart=/opt/faas/canaries/test/bin/apid", want: true},
+		{name: "environment path", body: "Environment=PATH=/opt/faas/canaries/tsc:/usr/bin", want: false},
+		{name: "comment", body: "# ExecStart=/opt/faas/canaries/test/bin/apid", want: false},
+		{name: "release binary", body: "ExecStart=/opt/faas/current/bin/apid", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isCanaryExecOverride(tt.body); got != tt.want {
+				t.Fatalf("isCanaryExecOverride() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestReconcileServiceTopologyRemovesOppositeRoleResidue(t *testing.T) {
 	unitDir := t.TempDir()
 	for _, name := range []string{"faas-vmmd.service", "faas-gatewayd.service"} {

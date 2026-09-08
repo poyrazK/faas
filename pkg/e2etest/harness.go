@@ -57,6 +57,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -145,10 +146,9 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	t.Helper()
 
 	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatalf("e2etest: mkdir bin: %v", err)
-	}
+	// Daemon binaries are built once per process and shared across tests;
+	// see EnsureSharedBinaries for why this is not under t.TempDir().
+	bin := buildBinaries(t)
 	appsRoot := filepath.Join(tmp, "apps")
 	if err := os.MkdirAll(appsRoot, 0o755); err != nil {
 		t.Fatalf("e2etest: mkdir apps: %v", err)
@@ -176,11 +176,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	if dbURL == "" {
 		dbURL = "postgres:///faas?host=/run/postgresql&user=faas"
 	}
-	if schema := pgtest.SchemaOf(pool); schema != "" {
-		dbURL = injectSearchPath(dbURL, schema)
-	}
-
-	buildBinaries(t, bin)
+	dbURL = daemonDSN(dbURL, pool)
 
 	// Block until the schema is at the current migration target. The
 	// meterd subprocess (issue #52) reads accounts on its first tick and
@@ -249,6 +245,14 @@ kernel_path = %q
 		waitUnix(t, sockPath, 10*time.Second)
 	}
 
+	// Start the gateway before imaged when the reference-node acceptance opts
+	// into the public API-hosting smoke. imaged needs the gateway origin before
+	// it handles snapshot_written; the default path remains unchanged because
+	// the smoke is opt-in for metal acceptance only.
+	if which&Gatewayd != 0 {
+		startGatewayd(t, h, bin, dbURL, nil)
+	}
+
 	if which&Imaged != 0 {
 		// guest/init lives at repo root in dev; tests don't run a real guest,
 		// but imaged still wants the path. Use a placeholder file so its
@@ -285,11 +289,11 @@ kernel_path = %q
 		if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
 			env = append(env, "FAAS_TEST_DEPLOY_BASE_REF="+dbr)
 		}
+		if os.Getenv("FAAS_E2E_API_HOSTING_SMOKE") == "1" && h.GatewayURL != "" {
+			env = append(env, "FAAS_API_HOSTING_SMOKE_URL="+h.GatewayURL)
+			env = append(env, "FAAS_APPS_DOMAIN="+testDomain)
+		}
 		h.procs = append(h.procs, startProc(t, bin, "imaged", env))
-	}
-
-	if which&Gatewayd != 0 {
-		startGatewayd(t, h, bin, dbURL, nil)
 	}
 
 	if which&Meterd != 0 {
@@ -661,10 +665,8 @@ const e2eMigrationTarget = 416
 func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []string) *Harness {
 	t.Helper()
 	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatalf("e2etest: mkdir bin: %v", err)
-	}
+	// Shared, built-once daemon binaries — see EnsureSharedBinaries.
+	bin := buildBinaries(t)
 	appsRoot := filepath.Join(tmp, "apps")
 	if err := os.MkdirAll(appsRoot, 0o755); err != nil {
 		t.Fatalf("e2etest: mkdir apps: %v", err)
@@ -683,10 +685,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	if dbURL == "" {
 		dbURL = "postgres:///faas?host=/run/postgresql&user=faas"
 	}
-	if schema := pgtest.SchemaOf(pool); schema != "" {
-		dbURL = injectSearchPath(dbURL, schema)
-	}
-	buildBinaries(t, bin)
+	dbURL = daemonDSN(dbURL, pool)
 
 	// Gate every daemon launch on the schema arriving at the current
 	// migration target. Without this, meterd's first tick races the
@@ -1146,53 +1145,105 @@ func (h *Harness) Stop() {
 	h.stop()
 }
 
-// buildBinaries runs `go build` for each daemon listed in whichDaeamons into
-// the bin dir. The Go build cache means the second run in the same test
-// process is a no-op.
+// DaemonBinaries is every daemon the harness can start. EnsureSharedBinaries
+// builds all of them once per test process; individual Start variants pick
+// the subset they launch via Which.
 //
-// Uses the full module import path (not the ./cmd/<d> form) so the subprocess
-// doesn't need to know the test's CWD — `go test` runs with the test's
+// Tier A7 (ADR-070) PR-A: the legacy 'gatewayd' binary is gone (its source
+// moved into cmd/gatewayd-internal/). gatewayd-public is not in this list
+// because no e2e boots the public edge yet.
+var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "meterd", "builderd"}
+
+var (
+	sharedBinOnce sync.Once
+	sharedBinDir  string
+	sharedBinErr  error
+)
+
+// EnsureSharedBinaries builds DaemonBinaries once per test process into a
+// private temp directory and returns that directory. Every later call returns
+// the same directory without touching `go build`.
+//
+// Why once per process and not per test: the Go build cache covers compiled
+// packages but never the final link, so building into a fresh t.TempDir() on
+// every Start re-linked all seven daemons per test — about a minute of pure
+// link time per e2e test on a CI runner, which was the entire wall clock of
+// the e2e shards. Sharing the directory across tests is safe because nothing
+// writes into it after the build; daemons only read their own binary.
+//
+// The directory outlives any single test, so t.TempDir cannot own it. Call
+// RemoveSharedBinaries from the package's TestMain after m.Run; without a
+// TestMain the directory is left under os.TempDir() for the OS to reap.
+//
+// Uses the full module import path (not the ./cmd/<d> form) so the build
+// doesn't depend on the test's CWD — `go test` runs with the package
 // directory as CWD, which breaks the relative-path form.
-func buildBinaries(t *testing.T, bin string) {
-	t.Helper()
-	modulePath := modulePath(t)
-	// Tier A7 (ADR-070) PR-A: the legacy 'gatewayd' binary is gone
-	// (its source moved into cmd/gatewayd-internal/). PR-B will boot
-	// the split pair (gatewayd-public + gatewayd-internal) in
-	// startGatewayd; for now we just build the new daemons so the
-	// binary dir is consistent.
-	for _, d := range []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "meterd", "builderd"} {
-		out := filepath.Join(bin, d)
-		cmd := exec.Command("go", "build", "-o", out, modulePath+"/cmd/"+d)
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("e2etest: go build %s: %v", d, err)
+func EnsureSharedBinaries() (string, error) {
+	sharedBinOnce.Do(func() {
+		mod, err := moduleImportPath()
+		if err != nil {
+			sharedBinErr = err
+			return
 		}
+		dir, err := os.MkdirTemp("", "faas-e2e-bin-*")
+		if err != nil {
+			sharedBinErr = fmt.Errorf("e2etest: mkdir shared bin dir: %w", err)
+			return
+		}
+		for _, d := range DaemonBinaries {
+			var out bytes.Buffer
+			cmd := exec.Command("go", "build", "-o", filepath.Join(dir, d), mod+"/cmd/"+d)
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+			if err := cmd.Run(); err != nil {
+				_ = os.RemoveAll(dir)
+				sharedBinErr = fmt.Errorf("e2etest: go build %s: %w\n%s", d, err, out.String())
+				return
+			}
+		}
+		sharedBinDir = dir
+	})
+	return sharedBinDir, sharedBinErr
+}
+
+// RemoveSharedBinaries deletes the directory EnsureSharedBinaries created.
+// Intended for TestMain after m.Run; safe to call when nothing was built.
+func RemoveSharedBinaries() {
+	if sharedBinDir != "" {
+		_ = os.RemoveAll(sharedBinDir)
 	}
 }
 
-// modulePath derives the module path from this file's location (the package
-// source is at <module>/pkg/e2etest/, so two dirs up is the module root and
-// `go list -m` reports the path). Falls back to reading go.mod if go list
-// fails (sandbox without network).
-func modulePath(t *testing.T) string {
+// buildBinaries is the *testing.T-flavoured wrapper the Start variants use:
+// it returns the shared binary directory or fails the test with the build
+// output.
+func buildBinaries(t *testing.T) string {
 	t.Helper()
+	dir, err := EnsureSharedBinaries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// moduleImportPath reports the main module's import path via `go list -m`,
+// falling back to parsing go.mod when go list fails (sandbox without network).
+func moduleImportPath() (string, error) {
 	out, err := exec.Command("go", "list", "-m").Output()
 	if err == nil {
-		return strings.TrimSpace(string(out))
+		return strings.TrimSpace(string(out)), nil
 	}
 	// Last-resort: parse go.mod manually.
 	data, rerr := os.ReadFile("go.mod")
 	if rerr != nil {
-		t.Fatalf("e2etest: cannot determine module path (go list: %v, go.mod: %v)", err, rerr)
+		return "", fmt.Errorf("e2etest: cannot determine module path (go list: %w, go.mod: %w)", err, rerr)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
 		}
 	}
-	t.Fatal("e2etest: go.mod has no module line")
-	return ""
+	return "", fmt.Errorf("e2etest: go.mod has no module line")
 }
 
 // safeBuffer is a sync.Mutex-guarded *bytes.Buffer. The harness's
@@ -1308,6 +1359,49 @@ func (h *Harness) VmmdLogs() string {
 // injectSearchPath adds (or replaces) the search_path query parameter on a
 // pgx DSN. The test's pool uses <schema>,public — match that so the daemon
 // subprocess reads the same tables the test wrote to.
+// daemonDSN derives the DSN the daemon subprocesses must use so their
+// reads and writes land where the test seeded rows. pgtest isolates each
+// test one of two ways, and the daemons have to follow whichever is in use:
+//
+//   - pgtest.Open: a per-test schema on the shared database, selected via
+//     search_path — inject that schema into the DSN.
+//   - pgtest.OpenMigrated with FAAS_PGTEST_TEMPLATE_DATABASE=1: a per-test
+//     database cloned from a once-migrated template — point the DSN at the
+//     clone. This is what lets the e2e shards skip replaying every
+//     migration inside apid on each test.
+func daemonDSN(base string, pool *pgxpool.Pool) string {
+	if schema := pgtest.SchemaOf(pool); schema != "" {
+		return injectSearchPath(base, schema)
+	}
+	if db := pool.Config().ConnConfig.Database; db != "" {
+		return injectDatabase(base, db)
+	}
+	return base
+}
+
+// injectDatabase rewrites the database name in a DSN. URL-form DSNs
+// (postgres://user@host/db?opts, including the socket form
+// postgres:///db?host=/run/postgresql) carry it in the path; keyword-form
+// DSNs carry it as dbname=.
+func injectDatabase(dsn, db string) string {
+	if strings.Contains(dsn, "://") {
+		u, err := url.Parse(dsn)
+		if err == nil {
+			u.Path = "/" + db
+			return u.String()
+		}
+	}
+	const key = "dbname="
+	if i := strings.Index(dsn, key); i >= 0 {
+		end := strings.IndexByte(dsn[i+len(key):], ' ')
+		if end < 0 {
+			return dsn[:i] + key + db
+		}
+		return dsn[:i] + key + db + dsn[i+len(key)+end:]
+	}
+	return dsn + " " + key + db
+}
+
 func injectSearchPath(dsn, schema string) string {
 	const key = "search_path="
 	if i := strings.Index(dsn, key); i >= 0 {

@@ -52,6 +52,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -80,7 +81,7 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		t.Skip("FAAS_BUILDER_BASE_PATH unset; skipping metal source-deploy→wake test")
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -99,6 +100,10 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+	// Opt the reference-node acceptance into the public gateway smoke. The
+	// harness passes the actual gateway origin to imaged, so this verifies the
+	// same route a developer's first API request will use.
+	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
 
 	// Full metal set: deploy_wake_metal_test.go uses DeployWake
 	// (no builderd) but the source-deploy path needs builderd to claim
@@ -155,6 +160,19 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		}
 		if dep.AppID != appID {
 			t.Errorf("deployment.AppID = %s, want %s", dep.AppID, appID)
+		}
+		receipt, err := apihostingreceipt.Decode(dep.APIHostingReceipt)
+		if err != nil {
+			t.Fatalf("hosting receipt: %v", err)
+		}
+		if receipt.DeploymentID != dep.ID || receipt.AppID != appID {
+			t.Fatalf("hosting receipt identity = deployment %s/app %s, want %s/%s", receipt.DeploymentID, receipt.AppID, dep.ID, appID)
+		}
+		if receipt.Profile.Framework != "node" || receipt.Profile.HealthPath == "" {
+			t.Fatalf("hosting profile = %+v, want inferred node profile", receipt.Profile)
+		}
+		if receipt.Smoke.Status != apihostingreceipt.SmokeVerified || receipt.Smoke.StatusCode < http.StatusOK || receipt.Smoke.StatusCode >= http.StatusMultipleChoices {
+			t.Fatalf("hosting smoke = %+v, want verified 2xx", receipt.Smoke)
 		}
 		t.Logf("source-deployed-live: dep=%s build=%s live", dep.ID, buildID)
 	})

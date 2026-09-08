@@ -295,6 +295,7 @@ func TestPg_MarkAllSnapshotsStaleByAppProtocol(t *testing.T) {
 	http1App := seedAppProtocolPg(t, pool, "http1", "aprot-pg-h1")
 	http2App := seedAppProtocolPg(t, pool, "http2", "aprot-pg-h2")
 	grpcApp := seedAppProtocolPg(t, pool, "grpc", "aprot-pg-g")
+	http2CurrentApp := seedAppProtocolPg(t, pool, "http2", "aprot-pg-h2-current")
 
 	// One deployment per app.
 	mkDep := func(appID, label string) string {
@@ -311,25 +312,27 @@ func TestPg_MarkAllSnapshotsStaleByAppProtocol(t *testing.T) {
 	http1Dep := mkDep(http1App, "h1")
 	http2Dep := mkDep(http2App, "h2")
 	grpcDep := mkDep(grpcApp, "g")
+	http2CurrentDep := mkDep(http2CurrentApp, "h2-current")
 
 	// One snapshot per deployment.
-	mkSnap := func(depID, label string) string {
+	mkSnap := func(depID, label, baseImageVersion string) string {
 		var id string
 		if err := pool.QueryRow(ctx, `
-			insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, storage_key, stale, tier)
-			values ($1::uuid, 'fc-1.0', 1000, 500, 'snap/' || $1::text || '/mem', false, 'init')
+			insert into snapshots (deployment_id, fc_version, base_image_version, mem_bytes, disk_bytes, storage_key, stale, tier)
+			values ($1::uuid, 'fc-1.0', $2, 1000, 500, 'snap/' || $1::text || '/mem', false, 'init')
 			returning id::text
-		`, depID).Scan(&id); err != nil {
+		`, depID, baseImageVersion).Scan(&id); err != nil {
 			t.Fatalf("seed snap %s: %v", label, err)
 		}
 		return id
 	}
-	http1Snap := mkSnap(http1Dep, "h1")
-	http2Snap := mkSnap(http2Dep, "h2")
-	grpcSnap := mkSnap(grpcDep, "g")
+	http1Snap := mkSnap(http1Dep, "h1", "v0")
+	http2Snap := mkSnap(http2Dep, "h2", "v0")
+	grpcSnap := mkSnap(grpcDep, "g", "v0")
+	http2CurrentSnap := mkSnap(http2CurrentDep, "h2-current", "v1")
 
 	// Bulk sweep — F3 close-set is {http2, grpc}.
-	n, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http2", "grpc"})
+	n, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http2", "grpc"}, "v1")
 	if err != nil {
 		t.Fatalf("MarkAllSnapshotsStaleByAppProtocol: %v", err)
 	}
@@ -357,9 +360,12 @@ func TestPg_MarkAllSnapshotsStaleByAppProtocol(t *testing.T) {
 	if !staleOf(grpcSnap) {
 		t.Error("grpc snapshot NOT flipped stale — bulk sweep broken")
 	}
+	if staleOf(http2CurrentSnap) {
+		t.Error("current-version http2 snapshot flipped stale on imaged restart")
+	}
 
 	// Idempotency — second call finds zero non-stale rows.
-	n2, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http2", "grpc"})
+	n2, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http2", "grpc"}, "v1")
 	if err != nil {
 		t.Fatalf("MarkAllSnapshotsStaleByAppProtocol (2nd): %v", err)
 	}
@@ -368,12 +374,15 @@ func TestPg_MarkAllSnapshotsStaleByAppProtocol(t *testing.T) {
 	}
 
 	// Empty filter is no-op (matches the SQL behaviour).
-	n3, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, nil)
+	n3, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, nil, "v1")
 	if err != nil {
 		t.Fatalf("MarkAllSnapshotsStaleByAppProtocol(nil): %v", err)
 	}
 	if n3 != 0 {
 		t.Errorf("empty filter flipped %d, want 0", n3)
+	}
+	if _, err := s.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http2"}, ""); err == nil {
+		t.Fatal("empty current base image version must fail")
 	}
 }
 

@@ -116,6 +116,7 @@ var AllowedAlertRuleMetrics = []string{
 	"account_spend_eur",
 	"deployment_failed",
 	"cert_expiry_seconds",
+	"cert_issuance_failed",
 	"queue_depth",
 	"new_error_fingerprint",
 	"cold_wake_rate_pct",

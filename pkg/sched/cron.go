@@ -3,6 +3,7 @@ package sched
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -12,6 +13,10 @@ import (
 // expressions. The stringified error carries the parser message so
 // apid's API layer can surface it in the 400 response.
 var ErrInvalidSchedule = errors.New("sched: invalid cron schedule")
+
+// DefaultCronTimezone is used for legacy rows and requests that omit a
+// timezone. UTC keeps behavior deterministic across schedd hosts.
+const DefaultCronTimezone = "UTC"
 
 // cronParser is the package-private parser used by ParseSchedule. The
 // 5-field syntax (minute hour day-of-month month day-of-week) is what
@@ -35,10 +40,37 @@ type Schedule struct {
 // malformed string returns ErrInvalidSchedule wrapping the parser's
 // own diagnostic.
 func ParseSchedule(raw string) (*Schedule, error) {
+	return ParseScheduleWithTimezone(raw, DefaultCronTimezone)
+}
+
+// NormalizeTimezone validates an IANA timezone name and applies the UTC
+// default used by legacy cron rows. The returned name is the location's
+// canonical String value, suitable for CRON_TZ= parsing and persistence.
+func NormalizeTimezone(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return DefaultCronTimezone, nil
+	}
+	loc, err := time.LoadLocation(raw)
+	if err != nil {
+		return "", fmt.Errorf("sched: invalid timezone %q: %w", raw, err)
+	}
+	return loc.String(), nil
+}
+
+// ParseScheduleWithTimezone validates a 5-field expression in the supplied
+// IANA timezone. robfig/cron's CRON_TZ prefix gives each schedule its own DST
+// rules while preserving the raw expression on the API object.
+func ParseScheduleWithTimezone(raw, timezone string) (*Schedule, error) {
 	if raw == "" {
 		return nil, fmt.Errorf("%w: empty", ErrInvalidSchedule)
 	}
-	parsed, err := cronParser.Parse(raw)
+	normalized, err := NormalizeTimezone(timezone)
+	if err != nil {
+		return nil, errors.Join(ErrInvalidSchedule, err)
+	}
+	spec := "CRON_TZ=" + normalized + " " + raw
+	parsed, err := cronParser.Parse(spec)
 	if err != nil {
 		// errorlint: errors.Join keeps ErrInvalidSchedule in the chain
 		// (so `errors.Is` matches) and surfaces the parser message

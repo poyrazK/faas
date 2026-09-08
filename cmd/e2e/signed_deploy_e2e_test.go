@@ -117,7 +117,7 @@ func jsonBase64(b []byte) string {
 // row is inserted into the DB, so the customer sees the failure
 // at the wire surface (not as a delayed FAILED row).
 func TestSignedDeploy_PreFlightFailClosed(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -186,7 +186,7 @@ func TestSignedDeploy_PreFlightFailClosed(t *testing.T) {
 // pin (the previous racy 1-second heuristic was replaced by the
 // PostgreSQL (xmax = 0) idiom in the upsert RETURNING).
 func TestSignedDeploy_TrustedSignerRotation(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -256,7 +256,7 @@ func TestSignedDeploy_TrustedSignerRotation(t *testing.T) {
 // directory at verify time. After a PUT, the file MUST exist on
 // disk within the LISTEN round-trip window (≤2s on local postgres).
 func TestSignedDeploy_OnDiskMirror(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -330,7 +330,7 @@ func TestSignedDeploy_OnDiskMirror(t *testing.T) {
 // written. This is the per-plan boundary documented in
 // pkg/api/limits.go.
 func TestSignedDeploy_FreePlanRefuses(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -361,7 +361,7 @@ func TestSignedDeploy_FreePlanRefuses(t *testing.T) {
 // pin is "non-403, non-deploy_signature_invalid": a 400 from the
 // body validator, not a 403 from the gate.
 func TestSignedDeploy_TarballBypassesGate(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

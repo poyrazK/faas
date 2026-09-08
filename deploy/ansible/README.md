@@ -80,10 +80,13 @@ answering its dependency-aware `/readyz` endpoint, then `gregalectl doctor`):
 make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini verify-fleet
 ```
 
-Both bootstrap plays end with the same `fleet_verify` role in lenient mode,
-so a re-run after a config change fails loudly when a daemon did not come
-back. Every unit, drop-in and config task notifies a `try-restart` handler
-(ADR-143): active daemons pick the change up, disabled ones are left alone.
+Both standalone bootstrap plays end with the same `fleet_verify` role in
+lenient mode, so a re-run after a config change fails loudly when a daemon did
+not come back. `node_join.yml` defers this pre-install verification because it
+stages new config and trust material before replacing the active release; its
+final play restarts and verifies every compute daemon after installation.
+Every unit, drop-in and config task notifies a `try-restart` handler (ADR-143):
+active daemons pick the change up, disabled ones are left alone.
 
 ## Configuration contract (ADR-143)
 

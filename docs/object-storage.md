@@ -15,17 +15,22 @@ Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
    config path, e.g. `/etc/faas/object-storage.json`. Set the real namespace,
    provider placement, region, and exact browser origins. Use a dedicated
    upstream account/project, not one containing unrelated infrastructure buckets.
-3. For `s3`, supply the named access/secret environment variables to **apid
-   only** through the deployment's secret mechanism. For `gcs`, use Application
-   Default Credentials (ADC) and the configured service account; do not create a
-   downloaded key. Never put credentials in JSON, app envs, source control, URLs,
-   or logs. Optional S3 `session_token_env` supports temporary credentials;
-   restart/rotate before their expiration.
+3. For `s3`, supply the named access/secret environment variables only to
+   **apid and s3-gatewayd** through the deployment's secret mechanism. For
+   `gcs`, give both daemons Application Default Credentials (ADC) for the
+   configured service account; do not create a downloaded key. Never put
+   credentials in JSON, app envs, source control, URLs, or logs. Optional S3
+   `session_token_env` supports temporary credentials; restart/rotate before
+   their expiration.
 4. Set `FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json` for apid and
-   restart all replicas with identical settings. This loads provider configuration
-   but does not enable provisioning or signing. Missing config disables the
-   feature. Invalid config or missing credentials fails startup. Provider config
-   and credentials still require a restart; the enable flag does not.
+   s3-gatewayd, then restart every replica with identical settings. Set
+   `public_endpoint` to `https://s3.gregale.dev` and `public_region` to
+   `us-east-1`; those customer-facing values are independent of the upstream
+   provider endpoint and signing region. Loading the configuration does not
+   enable provisioning or the data plane. Missing config disables object
+   storage in apid and prevents s3-gatewayd from starting. Invalid config or
+   missing credentials fails startup. Provider config and credentials still
+   require a restart; the enable flag does not.
 5. Run the qualification checks below before admitting customers.
 
 ### Run the live provider qualification
@@ -66,9 +71,10 @@ other runtime settings. Existing operator authorization, audit, and rollback
 rules apply. No additional environment enable flag or account allowlist exists.
 
 The existing database notification subscriber propagates changes across API
-replicas, with a five-second repair poll for missed notifications while the DB
-is reachable. This is not a synchronous global revocation barrier. In-flight
-operations can finish, and already-issued URLs remain usable until expiration.
+and S3 gateway replicas, with a five-second repair poll for missed notifications
+while the DB is reachable. This is not a synchronous global revocation barrier.
+In-flight operations can finish, and already-issued internal provider requests
+remain usable only inside the gateway until their short expiration.
 Disabling blocks new bucket provisioning, GET/PUT URL issuance, multipart
 initiation and part-URL issuance, and pauses background provisioning. Bucket
 metadata, object listing, object deletion, empty-bucket deletion, multipart
@@ -81,11 +87,66 @@ without a loaded registry does not make storage usable.
 Rollout: apply the recovery migration, then update every apid replica before
 relying on this flag. Older binaries treat a loaded registry as enabled and do
 not honor `s3_enabled`; keep customer storage traffic disabled during a mixed-
-version rollout. Before rollback, disable signing, abort or finish every live
+version rollout. Before rollback, disable signing and the branded endpoint,
+abort or finish every live
 multipart session, wait out issued URLs, restore `max_upload_bytes` to at most
 5 GiB, and verify no capacity grant exceeds 5 GiB. Then stop recovery workers
 before rolling the schema back; the down migration deliberately refuses to
 discard a larger safety reservation silently.
+
+## Branded S3 endpoint
+
+Gregale-issued S3 credentials are bucket-scoped and use the stable customer
+contract below, regardless of whether the bucket is placed on OVH, R2, GCS, or
+a future Gregale-owned storage cluster:
+
+- endpoint: `https://s3.gregale.dev`
+- signing region: `us-east-1`
+- addressing: path-style only (`https://s3.gregale.dev/{bucket}/{key}`)
+
+Path-style is intentional. The available `*.gregale.dev` certificate covers
+`s3.gregale.dev`, but it does not cover bucket hosts such as
+`assets.s3.gregale.dev`. Create a DNS-only Cloudflare record for
+`s3.gregale.dev` during the initial rollout so Cloudflare's proxy upload-size
+and request-duration limits are not accidentally presented as Gregale storage
+limits. Caddy terminates TLS and forwards this hostname to s3-gatewayd on
+`127.0.0.1:8084`; preserve the original Host header. Do not share the
+`api.gregale.dev` reverse-proxy route, request-body limits, or auth middleware.
+
+Create a credential with
+`POST /v1/apps/{slug}/buckets/{bucket-id}/s3-credentials` and a body such as
+`{"label":"laptop","permission":"read_write"}`. The response contains the
+access key ID, secret access key, endpoint, region, and addressing style. The
+secret is returned once. List active credentials with `GET` on the same path
+and revoke one with `DELETE .../s3-credentials/{credential-id}`. Revocation is
+checked from Gregale's database on every new request.
+
+For an AWS CLI profile, store the returned credentials through the CLI's normal
+credential mechanism, then set:
+
+```sh
+aws configure set profile.gregale.region us-east-1
+aws configure set profile.gregale.s3.addressing_style path
+aws --profile gregale --endpoint-url https://s3.gregale.dev \
+  s3api list-objects-v2 --bucket assets
+```
+
+This first endpoint slice supports ListBuckets for the credential's one bucket,
+HeadBucket, GetBucketLocation, ListObjectsV2 without delimiters, and
+GetObject/HeadObject/PutObject/DeleteObject. It validates header-based AWS
+Signature V4 and upload SHA-256/Content-MD5 before writing upstream. It emits
+Gregale-owned S3 XML errors and filters provider response headers, URLs, bucket
+names, and credentials. At most four PUTs per gateway are staged concurrently;
+additional authenticated uploads receive S3 `SlowDown` without consuming more
+spool disk. Use `s3api put-object` for uploads in this slice: the high-level
+`aws s3 cp` command can automatically select multipart uploads.
+
+Presigned-query authentication, SigV4 streaming/chunked uploads, multipart S3
+operations, delimiter/common-prefix listing, CopyObject, object metadata/tags,
+bucket lifecycle APIs, versioning, ACLs, and bucket create/delete through the
+S3 protocol are explicit `NotImplemented` gaps. Bucket lifecycle remains on the
+authenticated Gregale API so a customer credential cannot escape its assigned
+logical bucket.
 
 ## Recovery and operator attention
 
@@ -444,5 +505,6 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
   hard-deletion; confirmed-deleted bucket metadata is purged with the account.
   Do not bypass these guards and orphan customer data.
 
-Deferred: native S3 credentials/endpoint, public hosting, lifecycle/version
-management, non-destructive capacity reclamation and automatic migrations.
+Deferred: the S3 compatibility gaps listed above, production edge/service
+activation, lifecycle/version management, non-destructive capacity reclamation
+and automatic migrations.

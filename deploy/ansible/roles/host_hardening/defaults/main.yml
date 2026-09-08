@@ -29,6 +29,13 @@ faas_hardening_sshd_client_alive_count_max: 2
 faas_hardening_fail2ban_bantime: 1h
 faas_hardening_fail2ban_findtime: 10m
 faas_hardening_fail2ban_maxretry: 5
+# Host-key verification opens an SSH connection without authenticating. Fleet
+# rollout preflights therefore look like failed logins to fail2ban. Keep the
+# loopback defaults here; the template also adds the manifest-derived overlay
+# and control-plane CIDRs so trusted deployment traffic cannot ban itself.
+faas_hardening_fail2ban_ignoreip:
+  - 127.0.0.0/8
+  - ::1
 
 # unattended-upgrades — security pocket only, never auto-reboot: a reboot
 # destroys every parked snapshot's tmpfs jail (spec Gotchas) and must be an

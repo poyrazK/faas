@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -8,7 +9,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -44,9 +48,12 @@ func TestGoogleAuthRedirect(t *testing.T) {
 	if !strings.Contains(loc, "accounts.google.com/o/oauth2/v2/auth") {
 		t.Errorf("expected Location header pointing to Google OAuth, got %s", loc)
 	}
+	if !strings.Contains(loc, "&nonce=") {
+		t.Errorf("expected OAuth redirect to carry a nonce, got %s", loc)
+	}
 
 	cookies := resp.Cookies()
-	var foundStateCookie bool
+	var foundStateCookie, foundNonceCookie bool
 	for _, c := range cookies {
 		if c.Name == googleAuthStateCookie {
 			foundStateCookie = true
@@ -54,10 +61,22 @@ func TestGoogleAuthRedirect(t *testing.T) {
 				t.Errorf("expected non-empty state cookie value")
 			}
 		}
+		if c.Name == googleAuthNonceCookie {
+			foundNonceCookie = true
+			if c.Value == "" {
+				t.Errorf("expected non-empty nonce cookie value")
+			}
+			if c.Path != googleCallbackPath {
+				t.Errorf("nonce cookie path = %q, want %q", c.Path, googleCallbackPath)
+			}
+		}
 	}
 
 	if !foundStateCookie {
 		t.Errorf("expected faas_google_state CSRF cookie to be set")
+	}
+	if !foundNonceCookie {
+		t.Errorf("expected faas_google_nonce cookie to be set")
 	}
 }
 
@@ -106,5 +125,53 @@ func TestGoogleAuthCallbackCSRFMismatch(t *testing.T) {
 	resp := w.Result()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected status 400 Bad Request for CSRF state mismatch, got %d", resp.StatusCode)
+	}
+}
+
+func TestGoogleAuthCallbackRequiresNonceCookie(t *testing.T) {
+	store := state.NewMemStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := newServer(store, log, "gregale.dev", noopNotifier{}).WithOAuthConfig(auth.SignInConfig{
+		Google: auth.SignInProvider{
+			Status:       auth.SignInProviderConfigured,
+			ClientID:     "test_google_client_id",
+			ClientSecret: "test_google_client_secret",
+		},
+	})
+
+	req := httptest.NewRequest("GET", "/v1/auth/google/callback?state=state&code=test_code", nil)
+	req.AddCookie(&http.Cookie{Name: googleAuthStateCookie, Value: "state"})
+	w := httptest.NewRecorder()
+
+	srv.handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for missing nonce cookie, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "invalid_nonce") {
+		t.Fatalf("expected invalid_nonce problem, got %s", w.Body.String())
+	}
+}
+
+func TestGoogleAuthCallbackRejectsUntrustedSignedIDToken(t *testing.T) {
+	priv, pub := googleIDTokenRSAFixture(t, "google-test")
+	set := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{pub}}
+	jwks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(set)
+	}))
+	t.Cleanup(jwks.Close)
+
+	verifier := newGoogleIDTokenVerifier(nil).(*googleJWKSVerifier)
+	verifier.jwksURL = jwks.URL
+	token := mintGoogleIDToken(t, priv, "google-test", jwt.Claims{
+		Issuer:   "https://attacker.example",
+		Subject:  "google-subject",
+		Audience: jwt.Audience{"client-123"},
+		Expiry:   jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+	}, map[string]any{"nonce": "nonce-123"})
+
+	if _, err := verifier.Verify(context.Background(), token, "client-123", "nonce-123"); err == nil {
+		t.Fatal("Google callback verifier accepted an ID token signed by an untrusted issuer")
 	}
 }

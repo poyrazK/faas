@@ -16,6 +16,13 @@ faas_verify_probe_timeout_s: 15
 # dependency instead of only reporting an unreachable port.
 faas_verify_readyz_timeout_s: 2
 faas_verify_readyz_retries: 30
+# imaged reconciles every runtime base assigned to the node before it becomes
+# ready. A new base generation includes extraction and vulnerability scanning,
+# which can legitimately take several minutes on HDD-backed nodes. Keep the
+# short failure window for every other daemon while allowing that bounded
+# startup work to finish.
+faas_verify_readyz_retries_by_unit:
+  faas-imaged.service: 600
 faas_verify_readyz_delay_s: 2
 faas_verify_run_doctor: true
 faas_verify_gregalectl: /usr/local/bin/gregalectl

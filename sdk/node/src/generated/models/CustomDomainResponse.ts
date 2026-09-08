@@ -25,7 +25,7 @@ export type CustomDomainResponse = {
    */
   cert_sans?: Array<string>;
   /**
-   * Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, or failed; issue #1397 / F1). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge.
+   * Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, failed, or dns_drifted; issue #1397 / F3). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge.
    */
   cert_status?: string | null;
   /**

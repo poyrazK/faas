@@ -564,7 +564,7 @@ paths:
 
   /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}:
     parameters:
-      - { name: slug, description: App that owns the logical bucket., in: path, required: true, schema: { type: string } }
+      - { name: slug, description: App whose API-key bucket grant is being managed., in: path, required: true, schema: { type: string } }
       - { name: bucket, description: Bucket whose API-key grant is being managed., in: path, required: true, schema: { type: string, format: uuid } }
       - { name: key, description: Account API-key identifier., in: path, required: true, schema: { type: string, format: uuid } }
     put:
@@ -597,6 +597,66 @@ paths:
         '204': { description: Grant deleted }
         default:
           description: Grant or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/s3-credentials:
+    parameters:
+      - { name: slug, description: App whose new S3 credential will be bucket-scoped., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket receiving the S3 credential., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectS3Credentials
+      summary: List active Gregale S3 credentials for a bucket
+      description: Requires storage:manage or admin. Secret access keys are never returned by this endpoint.
+      tags: [storage]
+      responses:
+        '200':
+          description: Active bucket-scoped S3 credentials; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectS3CredentialList' }
+        default:
+          description: S3 credential listing denied or its bucket is unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: createObjectS3Credential
+      summary: Create a bucket-scoped credential for s3.gregale.dev
+      description: The secret access key is returned exactly once, sealed at rest, and never recoverable through the control-plane API. At most ten active credentials may exist per bucket.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateObjectS3CredentialRequest' }
+      responses:
+        '201':
+          description: One-time S3 credential response; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectS3CredentialSecret' }
+        default:
+          description: Invalid request, credential limit, unavailable sealing key, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}:
+    parameters:
+      - { name: slug, description: App whose S3 credential is being revoked., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket whose credential is being revoked., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: credential, description: Gregale S3 credential identifier., in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      operationId: revokeObjectS3Credential
+      summary: Revoke a Gregale S3 credential
+      description: Revocation is immediate for new requests at s3.gregale.dev. Existing provider-signed internal requests are never exposed to the customer.
+      tags: [storage]
+      responses:
+        '204': { description: Credential revoked }
+        default:
+          description: Credential or bucket missing, or access denied
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -12542,6 +12602,45 @@ components:
       required: [permission]
       properties:
         permission: { type: string, enum: [read, write, read_write] }
+    ObjectS3Credential:
+      description: Bucket-scoped Gregale S3 credential metadata. The secret access key is never included in this shape.
+      type: object
+      required: [id, bucket_id, access_key_id, label, permission, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        bucket_id: { type: string, format: uuid }
+        access_key_id: { type: string, pattern: '^GRGA[A-Z2-7]{16}$' }
+        label: { type: string, minLength: 1, maxLength: 64 }
+        permission: { type: string, enum: [read, write, read_write] }
+        status: { type: string, enum: [active, revoked] }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+    ObjectS3CredentialList:
+      description: Active Gregale S3 credentials for one logical bucket.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ObjectS3Credential' } }
+    CreateObjectS3CredentialRequest:
+      description: Label and least-privilege access level for a new bucket-scoped S3 credential.
+      type: object
+      additionalProperties: false
+      required: [label, permission]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 64 }
+        permission: { type: string, enum: [read, write, read_write] }
+    ObjectS3CredentialSecret:
+      description: One-time S3 credential creation response. Configure AWS clients for the returned endpoint, region, and path-style addressing.
+      allOf:
+        - $ref: '#/components/schemas/ObjectS3Credential'
+        - type: object
+          required: [secret_access_key, endpoint, region, addressing_style]
+          properties:
+            secret_access_key: { type: string, minLength: 40, maxLength: 40, readOnly: true }
+            endpoint: { type: string, format: uri, example: 'https://s3.gregale.dev' }
+            region: { type: string, example: 'us-east-1' }
+            addressing_style: { type: string, enum: [path] }
     ObjectStoragePolicy:
       description: Operator safety limits; zero values mean unconfigured and block signing.
       type: object
@@ -12618,7 +12717,7 @@ components:
       additionalProperties: false
       required: [method, key]
       properties:
-        method: { type: string, enum: [GET, PUT] }
+        method: { type: string, enum: [GET, HEAD, PUT] }
         key: { type: string, minLength: 1, maxLength: 1024 }
         expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
         size_bytes: { type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET. }
@@ -12629,7 +12728,7 @@ components:
       required: [url, method, headers, expires_at]
       properties:
         url: { type: string, format: uri }
-        method: { type: string, enum: [GET, PUT] }
+        method: { type: string, enum: [GET, HEAD, PUT] }
         headers: { type: object, additionalProperties: { type: string } }
         expires_at: { type: string, format: date-time }
 
@@ -16510,7 +16609,7 @@ components:
         default: { type: boolean, description: "True when this domain is the app's default (issue #961 / Mega-A PR-3). Set via `gregale domains set-default`." }
         cert_not_after: { type: [string, "null"], format: date-time, description: "Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the cert expiry renders against this field." }
         cert_sans: { type: array, items: { type: string }, description: "Cert subject alt names (DNSNames). Useful for the `gregale domains show` listing — if the customer's CNAME points at a CDN, the SANs reveal which CDN." }
-        cert_status: { type: [string, "null"], description: "Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, or failed; issue #1397 / F1). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge." }
+        cert_status: { type: [string, "null"], description: "Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, failed, or dns_drifted; issue #1397 / F3). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge." }
         cert_expires_at: { type: [string, "null"], format: date-time, description: "Durable certificate expiry timestamp recorded by the cert observer." }
         cert_last_error: { type: [string, "null"], description: "Most recent certificate issuance/renewal error, when cert_status is failed." }
         dns_last_checked_at: { type: [string, "null"], format: date-time, description: "Timestamp of the most recent DNS verification/doctor probe." }
@@ -16637,15 +16736,17 @@ components:
     # ─── Crons ────────────────────────────────────────────────────────────
 
     CronResponse:
-      description: "A cron trigger: schedule (cron expression), target URL, last/next run timestamps, and enabled flag."
+      description: "A cron trigger with an optional IANA timezone and overlap policy."
       type: object
-      required: [id, app_id, schedule, path, enabled, created_at]
+      required: [id, app_id, schedule, path, enabled, timezone, skip_if_running, created_at]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         schedule: { type: string , example: "*/5 * * * *"}
         path: { type: string }
         enabled: { type: boolean }
+        timezone: { type: string, description: "IANA timezone used to evaluate the schedule; defaults to UTC.", example: "America/New_York" }
+        skip_if_running: { type: boolean, description: "When true, consume a scheduled occurrence while a prior cron invocation is pending or dispatching." }
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
 
@@ -16714,7 +16815,7 @@ components:
         account_id: { type: string, format: uuid }
 
     CreateCronRequest:
-      description: "Cron creation payload: schedule expression and target URL."
+      description: "Cron creation payload: schedule expression, target URL, and optional timezone/overlap policy."
       type: object
       required: [app_id, schedule]
       properties:
@@ -16722,6 +16823,8 @@ components:
         schedule: { type: string , example: "*/5 * * * *"}
         path: { type: string }
         enabled: { type: [boolean, "null"] }
+        timezone: { type: string, description: "IANA timezone; defaults to UTC.", example: "Europe/Istanbul" }
+        skip_if_running: { type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running." }
 
     UpdateCronRequest:
       description: "Partial cron update."
@@ -16730,6 +16833,8 @@ components:
         schedule: { type: [string, "null"] , example: "*/5 * * * *"}
         path: { type: [string, "null"] }
         enabled: { type: [boolean, "null"] }
+        timezone: { type: [string, "null"], description: "IANA timezone; an empty value resets to UTC." }
+        skip_if_running: { type: [boolean, "null"], description: "Enable or disable overlap skipping for scheduled fires." }
 
     # ─── Jobs (issue #1184 Workstream A / ADR-099) ─────────────
     # Run-to-completion jobs. Each job is a stored template
@@ -17963,6 +18068,7 @@ components:
             - account_spend_eur
             - deployment_failed
             - cert_expiry_seconds
+            - cert_issuance_failed
             - queue_depth
             - new_error_fingerprint
             - cold_wake_rate_pct
@@ -18013,7 +18119,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -18048,7 +18154,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

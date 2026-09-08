@@ -34,11 +34,11 @@ type HealthStatus struct {
 //
 // Semantics: a tick is "stale" when it has never fired, or when
 // now − lastFire > StaleAfterMultiplier × interval. Any single stale
-// tick flips Healthy to false. The first-tick warm-up caveat:
-// meterd reports 503 from boot until the first sample tick (default
-// 60 s), which systemd's watchdog treats as a slow start — documented
-// on cmd/meterd/main.go::/healthz. Keep the duplicate tick names here
-// in lockstep with runTicks / runQuotaTicks literal "name" arguments.
+// tick flips Healthy to false. A newly constructed Loop is unhealthy until
+// Run starts; Run performs the core sample and quota passes immediately while
+// maintenance loops retain their configured delayed first tick. Keep the
+// duplicate tick names here in lockstep with runTicks / runQuotaTicks literal
+// "name" arguments.
 //
 // Loop.Run only wires dunning when l.dunning != nil (loop.go:64-69);
 // reflect that here so a test (or production misconfig) running without
@@ -60,6 +60,24 @@ func (l *Loop) Health(now time.Time) HealthStatus {
 	if l.partitionCreate == nil {
 		delete(intervals, "upstream_part")
 	}
+	return l.health(now, intervals)
+}
+
+// Readiness computes the process-readiness verdict used by meterd's /readyz
+// endpoint. Only the sample and quota loops gate activation: they exercise the
+// database, schedd, and core metering path within the normal one-minute startup
+// window. Hourly provider push, dunning, and partition-maintenance loops remain
+// part of Health so their stale or failed state is still visible to operators,
+// but a newly restarted daemon does not have to wait an hour before a release
+// can be activated.
+func (l *Loop) Readiness(now time.Time) HealthStatus {
+	return l.health(now, map[string]time.Duration{
+		"sample": l.cfg.SampleInterval,
+		"quota":  l.cfg.QuotaInterval,
+	})
+}
+
+func (l *Loop) health(now time.Time, intervals map[string]time.Duration) HealthStatus {
 	s := HealthStatus{Failed: make(map[string]string), Ticks: make(map[string]string, len(intervals))}
 	for name, interval := range intervals {
 		threshold := StaleAfterMultiplier * interval

@@ -39,6 +39,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -86,15 +87,31 @@ type BroadcasterIf interface {
 // call. Mirrors the existing Topic constants in broadcaster.go.
 const TopicWake = "wake"
 
-// Platform is the per-daemon wake-event fan-out. Constructed once
-// per daemon and held on the engine/server. The single Emit method
-// is what every wake-timeline site calls.
+// Platform is the per-daemon wake-event fan-out. Constructed once per daemon
+// and held on the engine/server. Wake sites choose synchronous Emit or bounded
+// EmitAsync while sharing the same persistence and publication logic.
 type Platform struct {
 	actor       string
 	store       state.Store
 	log         *slog.Logger
 	ops         Ops
 	broadcaster BroadcasterIf
+	asyncOnce   sync.Once
+	asyncQueue  chan asyncWakeEmit
+}
+
+const (
+	asyncWakeQueueCapacity = 512
+	asyncWakeWriteTimeout  = time.Second
+)
+
+type asyncWakeEmit struct {
+	ctx context.Context
+	ev  WakeEvent
+}
+
+type appendEventAtStore interface {
+	AppendEventAt(ctx context.Context, actor, kind string, subject *string, data []byte, at time.Time) error
 }
 
 // NewPlatform builds a Platform. actor is the literal value written
@@ -123,17 +140,59 @@ func NewPlatform(actor string, store state.Store, log *slog.Logger, ops Ops, bro
 // actor attribution.
 func (p *Platform) Actor() string { return p.actor }
 
-// Emit writes one wake-timeline row. The WakeEvent interface is
+// EmitAsync queues one best-effort wake event without putting the events-table
+// write on the customer request path. The queue is process-local and bounded;
+// a stalled database can lose observational rows, but cannot accumulate
+// goroutines or delay the wake lifecycle. The worker keeps correlation values
+// from ctx while detaching from request cancellation and bounds each write.
+func (p *Platform) EmitAsync(ctx context.Context, ev WakeEvent) {
+	if ev == nil {
+		return
+	}
+	p.asyncOnce.Do(func() { //nolint:contextcheck // process-lived worker; each item carries a detached context
+		p.asyncQueue = make(chan asyncWakeEmit, asyncWakeQueueCapacity)
+		// The worker is process-lived. Each queued write supplies its own
+		// request-derived, cancellation-detached context below.
+		go p.runAsyncWakeEvents() //nolint:contextcheck
+	})
+	req := asyncWakeEmit{ctx: context.WithoutCancel(ctx), ev: ev}
+	select {
+	case p.asyncQueue <- req:
+	default:
+		phase := wakePhaseFromKind(ev.Kind())
+		if p.ops != nil {
+			p.ops.WakePhaseEmitted(phase, "failed").Inc()
+		}
+		p.log.Warn("events: async wake queue full",
+			"actor", p.actor, "kind", ev.Kind(), "capacity", asyncWakeQueueCapacity)
+	}
+}
+
+func (p *Platform) runAsyncWakeEvents() {
+	for req := range p.asyncQueue {
+		ctx, cancel := context.WithTimeout(req.ctx, asyncWakeWriteTimeout)
+		// req.ctx is intentionally detached from request cancellation before
+		// enqueueing so telemetry can finish after the response returns.
+		p.emitWake(ctx, req.ev, true) //nolint:contextcheck
+		cancel()
+	}
+}
+
+// Emit writes one wake-timeline row synchronously. The WakeEvent interface is
 // the schema — concrete payload structs (QueueAccepted, Admitted,
-// BootStarted, etc., in wake.go) implement it. Emit is the only
-// sanctioned emission path; callers MUST instantiate a typed
-// struct rather than rolling their own map.
+// BootStarted, etc., in wake.go) implement it. Emit and EmitAsync share the
+// same sanctioned path; callers MUST instantiate a typed struct rather than
+// rolling their own map.
 //
 // Best-effort: every step (marshal, AppendEvent, counter, publish,
 // log) is guarded — a failure in one step does not abort the
 // others. The wake lifecycle is the source of truth; the audit
 // row + counter + publish are observation.
 func (p *Platform) Emit(ctx context.Context, ev WakeEvent) {
+	p.emitWake(ctx, ev, false)
+}
+
+func (p *Platform) emitWake(ctx context.Context, ev WakeEvent, preserveAt bool) {
 	if ev == nil {
 		return
 	}
@@ -162,7 +221,11 @@ func (p *Platform) Emit(ctx context.Context, ev WakeEvent) {
 	// here logs Warn, increments the counter under result="failed",
 	// and returns. The wake lifecycle is the source of truth.
 	start := time.Now()
-	err = p.store.AppendEvent(ctx, p.actor, kind, subject, body)
+	if timed, ok := p.store.(appendEventAtStore); preserveAt && ok {
+		err = timed.AppendEventAt(ctx, p.actor, kind, subject, body, at)
+	} else {
+		err = p.store.AppendEvent(ctx, p.actor, kind, subject, body)
+	}
 	dur := time.Since(start)
 	result := "ok"
 	if err != nil {

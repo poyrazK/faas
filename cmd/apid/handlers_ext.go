@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"os"
@@ -2124,7 +2125,9 @@ func (s *server) loadDomain(w http.ResponseWriter, r *http.Request, acct state.A
 func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomain) (api.CustomDomainResponse, error) {
 	resp := domainResponse(d)
 	if !d.Verified() {
-		resp.CertStatus = certStatusPending
+		if d.CertStatus != state.CustomDomainCertDNSDrifted {
+			resp.CertStatus = certStatusPending
+		}
 		return resp, nil
 	}
 	cert, err := dialCert(ctx, d.Domain)
@@ -2272,38 +2275,11 @@ func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (a
 func (s *server) refreshDoctorObservation(ctx context.Context, domain string) error {
 	rctx, cancel := context.WithTimeout(ctx, probeTimeout+2*time.Second)
 	defer cancel()
-	dnsFound, pointsToG, caa, aaaa := runProbesParallel(rctx, domain)
-	obs := state.DomainDoctorObservation{
-		Domain:          domain,
-		ObservedAt:      time.Now().UTC(),
-		DNSRecordFound:  probeToBool(dnsFound.Status, true),
-		PointsToGregale: probeToBool(pointsToG.Status, false),
-		IPv6Conflict:    probeToBool(aaaa.Status, false),
-		ObservedTarget:  pointsToG.Observed,
-		ObservedAAAA:    aaaa.Observed,
-		CAAObserved:     caa.Observed,
-		DNSCheckedAt:    earliest(dnsFound.ObservedAt, pointsToG.ObservedAt, caa.ObservedAt, aaaa.ObservedAt),
+	log := s.log
+	if log == nil {
+		log = slog.Default()
 	}
-	switch caa.Status {
-	case probeOK:
-		v := true
-		obs.CAAPermits = &v
-	case probeFail:
-		v := false
-		obs.CAAPermits = &v
-	}
-	if s.store != nil {
-		if surface, sErr := s.store.TenantSurfaceByHostname(rctx, domain); sErr == nil {
-			obs.SurfaceID = surface.ID
-			obs.CertState = string(surface.CertState)
-			obs.CertNotAfter = surface.CertNotAfter
-		}
-	}
-	if obs.CertState == "" {
-		obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(rctx, domain)
-		obs.CertCheckedAt = time.Now().UTC()
-	}
-	return s.store.UpsertDoctorObservation(rctx, obs)
+	return s.runDoctorForDomain(rctx, log, domain)
 }
 
 // doctorReportFromObs translates the persistence struct
@@ -2364,6 +2340,11 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		report.Healthy = false
 		tlsDetail = "cert engine reported failure: " + obs.LastError
 		tlsRem = "Check the cert engine logs; the renewal loop will retry automatically."
+	case string(state.CustomDomainCertDNSDrifted):
+		tlsStatus = probeFail
+		report.Healthy = false
+		tlsDetail = "DNS target drifted away from Gregale"
+		tlsRem = "Restore the Gregale CNAME and publish the verification TXT record again."
 	case certStatusDialFailed:
 		tlsStatus = probeFail
 		report.Healthy = false
@@ -2448,6 +2429,20 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 
 // --- crons -----------------------------------------------------------------
 
+const defaultCronTimezone = "UTC"
+
+func normalizeCronTimezone(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultCronTimezone, nil
+	}
+	loc, err := time.LoadLocation(raw)
+	if err != nil {
+		return "", err
+	}
+	return loc.String(), nil
+}
+
 func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateCronRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -2456,6 +2451,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	if !validCron(req.Schedule) {
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)"))
+		return
+	}
+	timezone, err := normalizeCronTimezone(req.Timezone)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCronInvalid("timezone must be a valid IANA location (for example, America/New_York)"))
 		return
 	}
 	// Plan-tier gate (spec §4.4 / paid-only event-shaped primitives).
@@ -2492,7 +2492,13 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if path == "" {
 		path = "/"
 	}
-	c, err := s.store.CreateCronIfUnderQuota(r.Context(), app.ID, req.Schedule, path, enabled, limits)
+	skipIfRunning := false
+	if req.SkipIfRunning != nil {
+		skipIfRunning = *req.SkipIfRunning
+	}
+	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
+		Timezone: timezone, SkipIfRunning: skipIfRunning,
+	})
 	if err != nil {
 		var qe *state.CronQuotaError
 		switch {
@@ -2513,11 +2519,13 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	// gets a 402 and never reaches this line, so no audit row is
 	// emitted for the rejected attempt.
 	s.audit.Emit(r.Context(), "cron.created", &acct.ID, map[string]any{
-		"cron_id":  c.ID,
-		"app_id":   c.AppID,
-		"schedule": c.Schedule,
-		"path":     c.Path,
-		"enabled":  c.Enabled,
+		"cron_id":         c.ID,
+		"app_id":          c.AppID,
+		"schedule":        c.Schedule,
+		"path":            c.Path,
+		"enabled":         c.Enabled,
+		"timezone":        c.Timezone,
+		"skip_if_running": c.SkipIfRunning,
 	})
 	writeJSON(w, http.StatusCreated, cronResponse(c))
 }
@@ -2553,6 +2561,15 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
 		return
 	}
+	var timezone string
+	if req.Timezone != nil {
+		var err error
+		timezone, err = normalizeCronTimezone(*req.Timezone)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCronInvalid("timezone must be a valid IANA location (for example, America/New_York)"))
+			return
+		}
+	}
 	c, err := s.store.CronByID(r.Context(), id)
 	if err != nil {
 		s.notFound(w, "no such cron")
@@ -2563,7 +2580,11 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		s.notFound(w, "no such cron")
 		return
 	}
-	updated, err := s.store.UpdateCron(r.Context(), id, req.Schedule, req.Path, req.Enabled, nil)
+	var timezonePatch *string
+	if req.Timezone != nil {
+		timezonePatch = &timezone
+	}
+	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return
@@ -2587,6 +2608,14 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.Enabled != nil {
 		oldCron["enabled"] = c.Enabled
 		newCron["enabled"] = updated.Enabled
+	}
+	if req.Timezone != nil {
+		oldCron["timezone"] = c.Timezone
+		newCron["timezone"] = updated.Timezone
+	}
+	if req.SkipIfRunning != nil {
+		oldCron["skip_if_running"] = c.SkipIfRunning
+		newCron["skip_if_running"] = updated.SkipIfRunning
 	}
 	s.audit.Emit(r.Context(), "cron.updated", &acct.ID, map[string]any{
 		"cron_id": updated.ID,
@@ -4330,13 +4359,18 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 }
 
 func cronResponse(c state.Cron) api.CronResponse {
+	if c.Timezone == "" {
+		c.Timezone = defaultCronTimezone
+	}
 	resp := api.CronResponse{
-		ID:        c.ID,
-		AppID:     c.AppID,
-		Schedule:  c.Schedule,
-		Path:      c.Path,
-		Enabled:   c.Enabled,
-		CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339),
+		ID:            c.ID,
+		AppID:         c.AppID,
+		Schedule:      c.Schedule,
+		Path:          c.Path,
+		Enabled:       c.Enabled,
+		Timezone:      c.Timezone,
+		SkipIfRunning: c.SkipIfRunning,
+		CreatedAt:     c.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)

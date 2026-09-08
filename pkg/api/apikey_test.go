@@ -3,8 +3,29 @@ package api
 import (
 	"bytes"
 	"reflect"
+	"regexp"
 	"testing"
 )
+
+func TestGenerateObjectS3Credential(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 1000; i++ {
+		accessKeyID, secretAccessKey, err := GenerateObjectS3Credential()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !regexp.MustCompile(`^GRGA[A-Z2-7]{16}$`).MatchString(accessKeyID) {
+			t.Fatalf("access key %q has an invalid AWS-compatible shape", accessKeyID)
+		}
+		if !regexp.MustCompile(`^[A-Za-z0-9+/]{40}$`).MatchString(secretAccessKey) {
+			t.Fatal("secret access key has an invalid shape")
+		}
+		if seen[accessKeyID] {
+			t.Fatalf("duplicate S3 access key generated: %s", accessKeyID)
+		}
+		seen[accessKeyID] = true
+	}
+}
 
 func TestGenerateAPIKey(t *testing.T) {
 	pt, hash, err := GenerateAPIKey()
