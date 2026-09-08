@@ -31,6 +31,12 @@ type Fixture struct {
 
 // Run executes the shared state.Store contract. Keep each case independent:
 // state tests intentionally mutate rows to make divergence visible.
+//
+// Assert ABSOLUTE expected values, never merely that the two stores agree.
+// The live-state readers were broken identically in both implementations —
+// uppercase state literals in PgStore's SQL and in MemStore's
+// isInstanceStateLive — so both returned zero and an agreement check would
+// have passed. Only "three live instances must count as three" caught it.
 func Run(t *testing.T, open Open) {
 	t.Helper()
 	tests := []struct {
@@ -42,6 +48,7 @@ func Run(t *testing.T, open Open) {
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
+		{"live_state_readers_count_running_instances", testLiveStateReaders},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -244,5 +251,93 @@ func testInvalidInstanceState(t *testing.T, fx *Fixture) {
 	}
 	if err := fx.Store.UpdateInstanceState(fx.Ctx, ins.ID, string(state.StateParked)); err != nil {
 		t.Fatalf("UpdateInstanceState(valid): %v", err)
+	}
+}
+
+// testLiveStateReaders pins every reader that filters on the three live
+// instance states. instances.state is lowercase (machine.go, and the SQL
+// CHECK since migration 00001); both stores once compared it against
+// 'RUNNING' / 'WAKING' / 'COLD_BOOTING' and so counted nothing:
+// PgStore in four SQL statements, MemStore via isInstanceStateLive.
+//
+// The per-node assertions sum across rows rather than looking a node up by
+// name, because PerNodeStats.NodeName is genuinely implementation-defined:
+// PgStore joins compute_nodes and returns the name, MemStore returns the
+// node uuid and leaves the mapping to the caller. The counts are the
+// contract; the label is not.
+func testLiveStateReaders(t *testing.T, fx *Fixture) {
+	live := []struct {
+		st    state.State
+		ramMB int
+	}{
+		{state.StateRunning, 512},
+		{state.StateWaking, 256},
+		{state.StateColdBooting, 128},
+	}
+	var wantRAM int64
+	for _, l := range live {
+		if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID, string(l.st), l.ramMB, fx.Node.ID, uuid.NewString()); err != nil {
+			t.Fatalf("CreateInstance(%s): %v", l.st, err)
+		}
+		wantRAM += int64(l.ramMB) + 8
+	}
+	// A parked instance must not be counted by any of them.
+	parked, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateRunning), 1024, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance(to-park): %v", err)
+	}
+	if err := fx.Store.UpdateInstanceState(fx.Ctx, parked.ID, string(state.StateParked)); err != nil {
+		t.Fatalf("UpdateInstanceState(parked): %v", err)
+	}
+	const wantLive = 3
+
+	if got, err := fx.Store.ConcurrencyForDeployment(fx.Ctx, fx.App.ID, fx.Deployment.ID); err != nil {
+		t.Fatalf("ConcurrencyForDeployment: %v", err)
+	} else if got != wantLive {
+		t.Errorf("ConcurrencyForDeployment = %d, want %d", got, wantLive)
+	}
+
+	if got, err := fx.Store.CountLiveInstancesByDeployment(fx.Ctx, fx.Deployment.ID); err != nil {
+		t.Fatalf("CountLiveInstancesByDeployment: %v", err)
+	} else if got != wantLive {
+		t.Errorf("CountLiveInstancesByDeployment = %d, want %d", got, wantLive)
+	}
+
+	rows, err := fx.Store.PerNodeLiveStats(fx.Ctx)
+	if err != nil {
+		t.Fatalf("PerNodeLiveStats: %v", err)
+	}
+	var gotLive, gotRunning, gotWaking, gotCold, gotRAM int64
+	for _, r := range rows {
+		gotLive += r.InstancesLive
+		gotRunning += r.InstancesRunning
+		gotWaking += r.InstancesWaking
+		gotCold += r.InstancesColdBooting
+		gotRAM += r.RAMUsedMB
+	}
+	if gotLive != wantLive {
+		t.Errorf("PerNodeLiveStats live total = %d, want %d (zero here means the operator per-node pane reads empty while instances run)", gotLive, wantLive)
+	}
+	if gotRunning != 1 || gotWaking != 1 || gotCold != 1 {
+		t.Errorf("PerNodeLiveStats per-state totals = running %d / waking %d / cold_booting %d, want 1/1/1", gotRunning, gotWaking, gotCold)
+	}
+	if gotRAM != wantRAM {
+		t.Errorf("PerNodeLiveStats RAM total = %d, want %d (plan RAM + 8 per live instance)", gotRAM, wantRAM)
+	}
+
+	snap, err := fx.Store.OperatorCapacity(fx.Ctx)
+	if err != nil {
+		t.Fatalf("OperatorCapacity: %v", err)
+	}
+	var capLive, capRAM int64
+	for _, n := range snap.Nodes {
+		capLive += n.InstancesLive
+		capRAM += n.RAMUsedMB
+	}
+	if capLive != wantLive {
+		t.Errorf("OperatorCapacity live total = %d, want %d", capLive, wantLive)
+	}
+	if capRAM != wantRAM {
+		t.Errorf("OperatorCapacity RAM total = %d, want %d", capRAM, wantRAM)
 	}
 }
