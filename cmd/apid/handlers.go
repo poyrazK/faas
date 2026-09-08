@@ -626,7 +626,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 	// the time it lands in the store, so we never see one here.
 	ea := egressStringList(a.EgressAllowlist)
 	return api.AppResponse{
-		ID: a.ID, Slug: a.Slug, Type: string(a.Type), Runtime: a.Runtime,
+		ID: a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
 		RAMMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
 		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,

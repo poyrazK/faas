@@ -120,7 +120,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
 		return "Delivery"
-	case "alerts", "analytics", "audit-events", "debug", "logs", "metrics", "slo", "status", "tail", "throttle-suggestions":
+	case "alerts", "analytics", "audit-events", "debug", "inspect", "logs", "metrics", "slo", "status", "tail", "throttle-suggestions":
 		return "Observe"
 	default:
 		return "Core"
@@ -751,12 +751,12 @@ var cliCommands = []cliCommand{
 	{
 		Name:        dispatchInspect,
 		DocSlug:     "inspect",
-		Short:       "Read-only operator surface (inspect <slug> --upstreams [--scope <scope>] [--json])",
-		Audience:    cliAudienceOperator,
+		Short:       "Explain an app from its runtime, deployment, API, data, scaling, and release signals",
 		Positionals: []string{"<slug>"},
 		// Leaf-selectors are flags on this verb, not positional
 		// sub-verbs (issue #952 UX: `gregale inspect <slug>
-		// --upstreams`). Future leaves (--env, --crons,
+		// --upstreams`). The bare form renders the application-
+		// intelligence summary. Future leaves (--env, --crons,
 		// --instances) add another `cliFlag` entry below. The
 		// completion backend and man-page renderer read this
 		// Flags block to surface the right verb shape.
