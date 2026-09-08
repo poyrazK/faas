@@ -242,6 +242,77 @@ func TestEnsureBaseExt4_SkipsWhenDigestMatches(t *testing.T) {
 	}
 }
 
+func TestEnsureBaseExt4_DigestMatchDoesNotCopyLocalBaseIntoCache(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	const baseKey = "base/runtime.ext4"
+	const digKey = "base/runtime.ext4.digest"
+	parentRoot := t.TempDir()
+	parent, err := storage.NewLocalStorageBackend(parentRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := bytes.Repeat([]byte("x"), 512<<10)
+	if err := parent.Put(context.Background(), baseKey, bytes.NewReader(base)); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := mp.PullManifest(context.Background(), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := parent.Put(context.Background(), digKey, strings.NewReader(baseDigestSidecarValue(manifest.Config.Digest))); err != nil {
+		t.Fatal(err)
+	}
+
+	cacheRoot := t.TempDir()
+	cache, err := storage.NewLocalCacheBackend(parent, cacheRoot, 2<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPath := filepath.Join(parentRoot, filepath.FromSlash(baseKey))
+	wantPath, err = filepath.EvalSymlinks(wantPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := (&Handler{
+		oci:     mp,
+		builder: &callCountingBuilder{},
+		log:     silentLogger(),
+		storage: cache,
+		grypeRun: func(context.Context, string) (*ScanResult, error) {
+			return &ScanResult{}, nil
+		},
+	}).WithBaseArtifactValidator(func(_ context.Context, path string, _ []string) error {
+		if path != wantPath {
+			t.Fatalf("validated path = %q, want canonical parent path %q", path, wantPath)
+		}
+		return nil
+	})
+	res, err := h.EnsureBaseExt4(context.Background(),
+		"ghcr.io/onebox-faas/builder-base:latest", baseKey, digKey, "", "", "")
+	if err != nil {
+		t.Fatalf("EnsureBaseExt4: %v", err)
+	}
+	if !res.Skipped {
+		t.Fatal("Skipped=false on matching digest, want true")
+	}
+
+	var cachedBytes int64
+	if err := filepath.Walk(cacheRoot, func(_ string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.Mode().IsRegular() {
+			cachedBytes += info.Size()
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if cachedBytes >= int64(len(base))/2 {
+		t.Fatalf("cache contains %d bytes after skip; local %d-byte base was redundantly materialized", cachedBytes, len(base))
+	}
+}
+
 func TestEnsureBaseExt4_RestagesWhenGuestInitChanges(t *testing.T) {
 	mp := newTwoLayerPuller(t)
 	const baseKey = "base/runtime.ext4"

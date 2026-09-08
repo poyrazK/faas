@@ -122,22 +122,19 @@ func (h *Handler) EnsureBaseExt4(
 		// installed artifact rather than taking the whole daemon down. The
 		// fallback is deliberately limited to an artifact that the storage
 		// backend can open; a missing base remains fail-closed below.
-		if rc, getErr := be.Get(ctx, baseKey); getErr == nil {
-			_ = rc.Close()
+		if existingErr := h.validateExistingBaseArtifact(ctx, be, baseKey); existingErr == nil {
 			if baseSidecarGuestInitCurrent(ctx, be, digestKey, guestInitDigest) {
-				if validationErr := h.validateBaseArtifact(ctx, be, baseKey); validationErr == nil {
-					h.log.Warn("imaged: base manifest pull failed; using existing on-disk base image",
-						"ref", ref, "key", baseKey, "err", err)
-					return BaseStageResult{
-						OutImage:   outImage,
-						StorageKey: baseKey,
-						Skipped:    true,
-					}, nil
-				} else {
-					h.log.Warn("imaged: existing base failed content validation; refusing fallback",
-						"ref", ref, "key", baseKey, "err", validationErr)
-				}
+				h.log.Warn("imaged: base manifest pull failed; using existing on-disk base image",
+					"ref", ref, "key", baseKey, "err", err)
+				return BaseStageResult{
+					OutImage:   outImage,
+					StorageKey: baseKey,
+					Skipped:    true,
+				}, nil
 			}
+		} else {
+			h.log.Warn("imaged: existing base failed content validation; refusing fallback",
+				"ref", ref, "key", baseKey, "err", existingErr)
 		}
 		return BaseStageResult{}, fmt.Errorf("imaged: pull base manifest %s: %w", ref, err)
 	}
@@ -158,32 +155,29 @@ func (h *Handler) EnsureBaseExt4(
 		haveBytes, rerr := io.ReadAll(haveRC)
 		_ = haveRC.Close()
 		if rerr == nil && baseDigestSidecarMatches(string(haveBytes), wantDigest, guestInitDigest) {
-			if rc, err := be.Get(ctx, baseKey); err == nil {
-				_ = rc.Close()
-				if validationErr := h.validateBaseArtifact(ctx, be, baseKey); validationErr != nil {
-					h.log.Warn("imaged: digest sidecar matched but base failed content validation; rebuilding",
-						"key", baseKey, "err", validationErr)
-				} else {
-					// A digest match proves the ext4 bytes are current, but
-					// older imaged versions could have written the scan sidecar
-					// from the legacy compatibility path. Refresh a sidecar that
-					// does not record the canonical scan source; once refreshed,
-					// subsequent restarts keep the cheap idempotent path.
-					scanCurrent := h.scanSidecarSourceCurrent(ctx, be, baseKey, outImage, ref)
-					if !scanCurrent {
-						if scanErr := h.writeScanSidecar(ctx, baseKey, ref, outImage); scanErr != nil {
-							h.log.Warn("imaged: refresh grype scan sidecar", "key", wire.ScanKeyForBaseKey(baseKey), "err", scanErr)
-						}
-					} else if markErr := markCachedBaseGeneration(be, baseKey, ref); markErr != nil {
-						h.log.Warn("imaged: mark cached base generation", "key", baseKey, "err", markErr)
+			if existingErr := h.validateExistingBaseArtifact(ctx, be, baseKey); existingErr == nil {
+				// A digest match proves the ext4 bytes are current, but
+				// older imaged versions could have written the scan sidecar
+				// from the legacy compatibility path. Refresh a sidecar that
+				// does not record the canonical scan source; once refreshed,
+				// subsequent restarts keep the cheap idempotent path.
+				scanCurrent := h.scanSidecarSourceCurrent(ctx, be, baseKey, outImage, ref)
+				if !scanCurrent {
+					if scanErr := h.writeScanSidecar(ctx, baseKey, ref, outImage); scanErr != nil {
+						h.log.Warn("imaged: refresh grype scan sidecar", "key", wire.ScanKeyForBaseKey(baseKey), "err", scanErr)
 					}
-					return BaseStageResult{
-						OutImage:     outImage,
-						StorageKey:   baseKey,
-						ConfigDigest: wantDigest,
-						Skipped:      true,
-					}, nil
+				} else if markErr := markCachedBaseGeneration(be, baseKey, ref); markErr != nil {
+					h.log.Warn("imaged: mark cached base generation", "key", baseKey, "err", markErr)
 				}
+				return BaseStageResult{
+					OutImage:     outImage,
+					StorageKey:   baseKey,
+					ConfigDigest: wantDigest,
+					Skipped:      true,
+				}, nil
+			} else {
+				h.log.Warn("imaged: digest sidecar matched but base failed content validation; rebuilding",
+					"key", baseKey, "err", existingErr)
 			}
 		}
 	}
@@ -540,6 +534,39 @@ func (h *Handler) validateBaseArtifact(ctx context.Context, be storage.StorageBa
 		return fmt.Errorf("base artifact %q has no local path", baseKey)
 	}
 	return h.baseArtifactValidator(ctx, path, requiredBaseArtifactPaths(baseKey))
+}
+
+// validateExistingBaseArtifact proves that a staged base still exists before
+// taking the digest-sidecar skip path. Prefer LocalPath when the backend can
+// expose one: calling Get on a read-through cache materializes the entire ext4
+// into the cache, even when its parent already stores the canonical local file.
+// Runtime bases are hundreds of MiB, so that redundant copy can dominate every
+// imaged restart and evict otherwise useful cache entries.
+func (h *Handler) validateExistingBaseArtifact(ctx context.Context, be storage.StorageBackend, baseKey string) error {
+	if resolver, ok := be.(storage.LocalPathResolver); ok {
+		path, exists, err := resolver.LocalPath(baseKey)
+		if err != nil {
+			return fmt.Errorf("resolve existing base path: %w", err)
+		}
+		if exists && path != "" {
+			if _, err := os.Stat(path); err != nil {
+				return fmt.Errorf("stat existing base %q: %w", baseKey, err)
+			}
+			if h.baseArtifactValidator == nil {
+				return nil
+			}
+			return h.baseArtifactValidator(ctx, path, requiredBaseArtifactPaths(baseKey))
+		}
+	}
+
+	rc, err := be.Get(ctx, baseKey)
+	if err != nil {
+		return err
+	}
+	if err := rc.Close(); err != nil {
+		return fmt.Errorf("close existing base %q: %w", baseKey, err)
+	}
+	return h.validateBaseArtifact(ctx, be, baseKey)
 }
 
 // mountOverlayFn / umountOverlayFn (the package-level test seams)
