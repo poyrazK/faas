@@ -205,6 +205,12 @@ plan, and whether it works today.
 2. Run every fixture through detect, build, boot, readiness, public request,
    idle park, snapshot wake, logs, and teardown. Keep the quick subset in CI and
    the Firecracker subset on the reference-node gate.
+
+   The reference-node target runs catalog fixtures tagged `runtime` and
+   `quick` by default; set `FAAS_E2E_API_HOSTING_CATALOG=full` to exercise the
+   complete runtime-tagged matrix. Each selected fixture must leave a durable
+   hosting receipt, pass the public smoke, survive park/wake, and leave no
+   resident instance behind.
 3. Create one machine-readable capability registry containing maturity,
    entitlement, documentation URL, operator flag, and acceptance test. Generate
    the public feature matrix and dashboard capability response from it. Keep
