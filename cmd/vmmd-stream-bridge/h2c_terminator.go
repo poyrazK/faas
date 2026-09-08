@@ -193,7 +193,7 @@ func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, gue
 	if len(pools) > 0 {
 		pool = pools[0]
 	}
-	var transport *http2.Transport
+	var transport http.RoundTripper
 	if pool != nil {
 		transport = pool.h2c(guestPort)
 	} else {

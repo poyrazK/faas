@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/net/http2"
 )
 
 func TestGuestTransportPoolReusesTransportsPerPort(t *testing.T) {
@@ -45,6 +48,71 @@ func TestGuestTransportPoolBoundsPortEntries(t *testing.T) {
 	}
 	if _, ok := pool.entries[1]; ok {
 		t.Fatal("oldest port entry was not evicted after reaching the bound")
+	}
+}
+
+func TestGuestTransportPoolRetriesAndPrewarmsH2CConnection(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	var connections atomic.Int32
+	var requests atomic.Int32
+	server := &http2.Server{}
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			if connections.Add(1) == 1 {
+				// A restored guest can briefly accept TCP before its H2 server is
+				// ready. Prove prewarming survives that first reset.
+				_ = conn.Close()
+				continue
+			}
+			go server.ServeConn(conn, &http2.ServeConnOpts{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				_, _ = io.WriteString(w, "ok")
+			})})
+		}
+	}()
+
+	_, portText, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := newGuestTransportPool("127.0.0.1")
+	defer pool.closeIdleConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := pool.prewarmH2C(ctx, uint16(port)); err != nil {
+		t.Fatalf("prewarmH2C: %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("guest requests during protocol prewarm = %d, want zero", got)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+portText+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := pool.h2c(uint16(port)).RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := connections.Load(); got != 2 {
+		t.Fatalf("guest TCP connections = %d, want one reset plus the reused prewarmed connection", got)
 	}
 }
 
