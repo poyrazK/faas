@@ -3,6 +3,7 @@
 enabled = true
 mode = aggressive
 backend = systemd
+ignoreip = {{ (faas_hardening_fail2ban_ignoreip + (overlay_cidrs | default([])) + (faas_control_plane_allowed_cidrs | default([]))) | unique | join(' ') }}
 bantime = {{ faas_hardening_fail2ban_bantime }}
 findtime = {{ faas_hardening_fail2ban_findtime }}
 maxretry = {{ faas_hardening_fail2ban_maxretry }}

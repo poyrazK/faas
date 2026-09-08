@@ -52,7 +52,7 @@ func TestE2E_TenantSurfaces_VerticalSlice(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("MigrateUp: %v", err)
@@ -257,7 +257,7 @@ func TestE2E_TenantSurfaces_FreePlanBlocks(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("MigrateUp: %v", err)

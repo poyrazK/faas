@@ -18,7 +18,7 @@ func TestE2E_Workflows_PlanCap_FreePlanRejects(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		t.Skip("pgtest.Open returned nil")
 	}
@@ -48,7 +48,7 @@ func TestE2E_Workflows_Lifecycle(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		t.Skip("pgtest.Open returned nil")
 	}

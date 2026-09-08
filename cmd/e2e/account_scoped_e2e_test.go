@@ -102,7 +102,7 @@ func seedDeployment(t *testing.T, h *e2etest.Harness, ctx context.Context, appID
 // each on one account, then asserts GET /v1/instances returns all 6
 // rows with their app_ids populated.
 func TestE2E_ListInstancesForAccount_AcrossApps(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -184,7 +184,7 @@ func TestE2E_ListInstancesForAccount_AcrossApps(t *testing.T) {
 // cursor-by-id walk pins (the unit test only checks the page shape
 // because MemStore's random newID() can't model UUIDv7 monotonicity).
 func TestE2E_ListInstancesForAccount_CursorPagination(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -243,7 +243,7 @@ func TestE2E_ListInstancesForAccount_CursorPagination(t *testing.T) {
 // does NOT include B's instances, and vice versa. Pins the SQL JOIN
 // on apps.account_id = $1 (the only IDOR guard; no per-handler check).
 func TestE2E_ListInstancesForAccount_CrossAccountIsolation(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -303,7 +303,7 @@ func TestE2E_ListInstancesForAccount_CrossAccountIsolation(t *testing.T) {
 // GET /v1/secrets response body. Mirrors the unit test shape but on
 // the real PgStore path with real age-sealed ciphertext.
 func TestE2E_ListSecretsForAccount_PlaintextInvariant(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -379,7 +379,7 @@ func TestE2E_ListSecretsForAccount_PlaintextInvariant(t *testing.T) {
 // returns ONLY its own row. The pgstore's JOIN on apps.account_id = $1
 // is the only IDOR guard.
 func TestE2E_ListSecretsForAccount_CrossAccountIsolation(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -450,7 +450,7 @@ func TestE2E_ListSecretsForAccount_CrossAccountIsolation(t *testing.T) {
 // the handler short-circuits to `source: "degraded: prometheus not
 // configured"` with apps=nil — the dashboard's empty-state contract.
 func TestE2E_GetAppsMetrics_Degraded(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -487,7 +487,7 @@ func TestE2E_GetAppsMetrics_Degraded(t *testing.T) {
 // TestE2E_GetAppsMetrics_InvalidRange pins the strict-mode 400 on
 // ?range= outside the closed vocabulary (5m|15m|1h|6h|24h|7d|15d).
 func TestE2E_GetAppsMetrics_InvalidRange(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

@@ -47,7 +47,7 @@ import (
 )
 
 func TestE2E_Diff_HobbyPlanQuotaGate(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return // pgtest already t.Skip'd
 	}

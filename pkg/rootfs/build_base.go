@@ -239,7 +239,7 @@ type BuildFullRootfsInput struct {
 // alpine shape) land on the image's declared uid rather than uid 0
 // inside the guest.
 func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) (BuildResult, error) {
-	limits, ok := api.LimitsFor(in.Plan)
+	limits, ok := limitsFor(in.Plan)
 	if !ok {
 		return BuildResult{}, fmt.Errorf("rootfs: unknown plan %q", in.Plan)
 	}

@@ -102,7 +102,7 @@ func countBuildsForProject(t *testing.T, pool *pgxpool.Pool, projectID string) (
 // row pair. This is the assertion that catches the gap PR-A
 // closes — pre-PR-A the count was zero.
 func TestApplyProject_Builds_OneBuildPerWorkload(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -127,7 +127,7 @@ func TestApplyProject_Builds_OneBuildPerWorkload(t *testing.T) {
 // The MemStore/PgStore parity trap (plan §A4) would surface here
 // if anyone reintroduced an empty kind default.
 func TestApplyProject_Builds_KindTarball(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -176,7 +176,7 @@ func collectAppIDs(apps []api.ApplyResponseApp) []string {
 // that builderd never claims (it filters on status='queued' for
 // the build row, not the deployment status).
 func TestApplyProject_Builds_DeploymentStatusBuilding(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -210,7 +210,7 @@ func TestApplyProject_Builds_DeploymentStatusBuilding(t *testing.T) {
 // at the repo root. After apply, find each workload's staged
 // tarball and check the sentinel is present.
 func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -318,7 +318,7 @@ func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
 // "the notify was sent" marker; a missing row catches both a
 // failed notify AND a missing audit row.)
 func TestApplyProject_Builds_BuildQueuedNotifyFires(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -348,7 +348,7 @@ func TestApplyProject_Builds_BuildQueuedNotifyFires(t *testing.T) {
 // shape of ApplyResponse.Builds: every workload has a (deployment_id,
 // build_id) pair, no errors.
 func TestApplyProject_Builds_ApplyResponseBuildsSlice(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -396,7 +396,7 @@ func TestApplyProject_Builds_ApplyResponseBuildsSlice(t *testing.T) {
 // and returns ErrNotExist. The apply loop's per-app Error path
 // catches it and continues.
 func TestApplyProject_Builds_PartialFailureLeavesOthersIntact(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -456,7 +456,7 @@ func TestApplyProject_Builds_PartialFailureLeavesOthersIntact(t *testing.T) {
 // apply; the count must be exactly len(ar.Apps) — one per app,
 // not two.
 func TestApplyProject_Builds_UnchangedWorkloadsGetNoBuild(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -486,7 +486,7 @@ func TestApplyProject_Builds_UnchangedWorkloadsGetNoBuild(t *testing.T) {
 // apply path's build IDs come from state.Build.ID — pin the
 // shape so a future refactor doesn't break the wire contract.
 func TestApplyProject_Builds_BuildIDIsUUIDv7(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -515,7 +515,7 @@ func TestApplyProject_Builds_BuildIDIsUUIDv7(t *testing.T) {
 // first (every apply produces a fresh deployment row). Catches
 // a bug where the helper accidentally returns a cached ID.
 func TestApplyProject_Builds_DeploymentIDStableAcrossReapply(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -544,7 +544,7 @@ func TestApplyProject_Builds_DeploymentIDStableAcrossReapply(t *testing.T) {
 // effort and the durable recovery (state.Store.ClaimNextQueuedBuild)
 // would dedup, but the audit row count is the canonical pin.
 func TestApplyProject_Builds_NoDoubleNotifyOnUnchangedApply(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

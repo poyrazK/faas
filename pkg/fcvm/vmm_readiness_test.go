@@ -153,9 +153,17 @@ func TestEmitRestoreBreakdown_EmitsTimelineRow(t *testing.T) {
 		TotalMs:              596,
 	})
 
-	rows, err := store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0)
-	if err != nil {
-		t.Fatalf("ListEventsByWakeID: %v", err)
+	var rows []state.Event
+	deadline := time.Now().Add(time.Second)
+	for len(rows) == 0 && time.Now().Before(deadline) {
+		var err error
+		rows, err = store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0)
+		if err != nil {
+			t.Fatalf("ListEventsByWakeID: %v", err)
+		}
+		if len(rows) == 0 {
+			time.Sleep(time.Millisecond)
+		}
 	}
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))

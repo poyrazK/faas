@@ -94,7 +94,7 @@ func TestBuildMetal(t *testing.T) {
 		t.Skip("FAAS_BUILDER_BASE_PATH unset; skipping metal build test (no builder-base.ext4 path)")
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

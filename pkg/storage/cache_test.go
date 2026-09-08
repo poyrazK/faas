@@ -604,15 +604,17 @@ func TestLocalCacheBackend_ListUsesAuthoritativeParent(t *testing.T) {
 func TestLocalCacheBackend_LRUEvictsOldest(t *testing.T) {
 	tmp := t.TempDir()
 	parent := newFakeBackend()
-	// 10 bytes per blob, budget 25 bytes → at most 2 blobs.
-	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(tmp, "cache"), 25)
+	// Use block-sized dense blobs so logical and allocated usage match on the
+	// filesystems used by the Linux and macOS test jobs.
+	const blobSize = 8192
+	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(tmp, "cache"), 2*blobSize)
 	if err != nil {
 		t.Fatalf("NewLocalCacheBackend: %v", err)
 	}
 	ctx := context.Background()
 	// Use distinct mtimes so eviction is deterministic.
 	for _, k := range []string{"a", "b", "c"} {
-		if err := cache.Put(ctx, "snap/"+k, strings.NewReader(strings.Repeat("x", 10))); err != nil {
+		if err := cache.Put(ctx, "snap/"+k, strings.NewReader(strings.Repeat("x", blobSize))); err != nil {
 			t.Fatalf("Put %q: %v", k, err)
 		}
 		// Stagger mtimes 1s apart so LRU ordering is stable.
@@ -624,9 +626,9 @@ func TestLocalCacheBackend_LRUEvictsOldest(t *testing.T) {
 			t.Fatalf("Chtimes: %v", err)
 		}
 	}
-	// Write the 4th blob — 40 bytes total > 25 byte budget,
+	// Write the 4th blob — four allocated blobs exceed the two-blob budget,
 	// so the two oldest by mtime (a, b) are evicted; c, d remain.
-	if err := cache.Put(ctx, "snap/d", strings.NewReader(strings.Repeat("x", 10))); err != nil {
+	if err := cache.Put(ctx, "snap/d", strings.NewReader(strings.Repeat("x", blobSize))); err != nil {
 		t.Fatalf("Put d: %v", err)
 	}
 	keys, err := cache.List(ctx, "")
@@ -924,7 +926,13 @@ func TestLocalCacheBackend_GetsTouchMtime(t *testing.T) {
 			t.Fatalf("Get a: %v", err)
 		}
 	}
-	afterA := mtimeOf(t, hashCachePath(t, filepath.Join(tmp, "cache"), "snap/a"))
+	pathA := hashCachePath(t, filepath.Join(tmp, "cache"), "snap/a")
+	deadline := time.Now().Add(time.Second)
+	afterA := mtimeOf(t, pathA)
+	for !afterA.After(beforeA) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		afterA = mtimeOf(t, pathA)
+	}
 	afterB := mtimeOf(t, hashCachePath(t, filepath.Join(tmp, "cache"), "snap/b"))
 	if !afterA.After(beforeA) {
 		t.Errorf("snap/a mtime did not advance on read: before=%s, after=%s", beforeA, afterA)

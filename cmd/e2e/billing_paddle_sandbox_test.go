@@ -256,7 +256,7 @@ func startAPIDForPaddleSandbox(t *testing.T, pool *pgxpool.Pool, apiKey, webhook
 func TestPaddleSandbox_ChangePlanReturnsCheckoutURL(t *testing.T) {
 	apiKey, webhookSecret := loadSandboxSecrets(t)
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("MigrateUp: %v", err)
@@ -527,7 +527,7 @@ func TestPaddleSandbox_TransactionCompletedIsNoop(t *testing.T) {
 func TestPaddleSandbox_PerWindowClaimRoundTrip(t *testing.T) {
 	apiKey, _ := loadSandboxSecrets(t)
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("MigrateUp: %v", err)
