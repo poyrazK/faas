@@ -54,6 +54,12 @@ type guestH2CRoundTripper struct {
 
 	mu      sync.RWMutex
 	prewarm *http2.ClientConn
+	// prewarmDone is non-nil while the restore-time H2C handshake is in
+	// progress. The first customer request waits on it instead of opening a
+	// second connection and racing the handshake that is already underway.
+	prewarmDone chan struct{}
+	prewarming  bool
+	closed      bool
 }
 
 func newGuestH2CRoundTripper(guestIP string, port uint16) *guestH2CRoundTripper {
@@ -70,35 +76,73 @@ func newGuestH2CRoundTripper(guestIP string, port uint16) *guestH2CRoundTripper 
 }
 
 func (t *guestH2CRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	t.mu.RLock()
-	conn := t.prewarm
-	t.mu.RUnlock()
-	if conn == nil || !conn.CanTakeNewRequest() {
-		return t.base.RoundTrip(req)
-	}
-	resp, err := conn.RoundTrip(req)
-	if err != nil && !conn.CanTakeNewRequest() {
-		t.mu.Lock()
-		if t.prewarm == conn {
-			t.prewarm = nil
+	for {
+		t.mu.RLock()
+		conn := t.prewarm
+		prewarming := t.prewarming
+		prewarmDone := t.prewarmDone
+		closed := t.closed
+		t.mu.RUnlock()
+
+		if conn != nil && conn.CanTakeNewRequest() {
+			resp, err := conn.RoundTrip(req)
+			if err != nil && !conn.CanTakeNewRequest() {
+				t.mu.Lock()
+				if t.prewarm == conn {
+					t.prewarm = nil
+				}
+				t.mu.Unlock()
+			}
+			return resp, err
 		}
-		t.mu.Unlock()
+		if !prewarming || prewarmDone == nil || closed {
+			return t.base.RoundTrip(req)
+		}
+
+		select {
+		case <-prewarmDone:
+			// Re-read the published connection under the lock. A failed
+			// prewarm falls through to the normal transport on the next loop.
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
 	}
-	return resp, err
 }
 
 func (t *guestH2CRoundTripper) prewarmConnection(ctx context.Context) error {
 	if t == nil {
 		return nil
 	}
+
 	for {
-		t.mu.RLock()
-		ready := t.prewarm != nil && t.prewarm.CanTakeNewRequest()
-		t.mu.RUnlock()
-		if ready {
+		t.mu.Lock()
+		if t.closed {
+			t.mu.Unlock()
+			return net.ErrClosed
+		}
+		if t.prewarm != nil && t.prewarm.CanTakeNewRequest() {
+			t.mu.Unlock()
 			return nil
 		}
+		if t.prewarming {
+			prewarmDone := t.prewarmDone
+			t.mu.Unlock()
+			select {
+			case <-prewarmDone:
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		t.prewarming = true
+		t.prewarmDone = make(chan struct{})
+		t.mu.Unlock()
+		break
+	}
 
+	var warmed *http2.ClientConn
+	defer func() { t.finishPrewarm(warmed) }()
+	for {
 		dialer := net.Dialer{Timeout: 50 * time.Millisecond}
 		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(t.guestIP, strconv.FormatUint(uint64(t.port), 10)))
 		if err == nil {
@@ -107,19 +151,8 @@ func (t *guestH2CRoundTripper) prewarmConnection(ctx context.Context) error {
 				connErr = clientConn.Ping(ctx)
 			}
 			if connErr == nil {
-				t.mu.Lock()
-				if t.prewarm == nil || !t.prewarm.CanTakeNewRequest() {
-					old := t.prewarm
-					t.prewarm = clientConn
-					t.mu.Unlock()
-					if old != nil {
-						_ = old.Close()
-					}
-					return nil
-				}
-				t.mu.Unlock()
-				_ = clientConn.Close()
-				err = connErr
+				warmed = clientConn
+				return nil
 			} else {
 				_ = conn.Close()
 				err = connErr
@@ -139,15 +172,61 @@ func (t *guestH2CRoundTripper) prewarmConnection(ctx context.Context) error {
 	}
 }
 
+func (t *guestH2CRoundTripper) finishPrewarm(warmed *http2.ClientConn) {
+	var closeConn *http2.ClientConn
+	var old *http2.ClientConn
+
+	t.mu.Lock()
+	if warmed != nil {
+		if t.closed {
+			closeConn = warmed
+		} else if t.prewarm == nil || !t.prewarm.CanTakeNewRequest() {
+			old = t.prewarm
+			t.prewarm = warmed
+		} else {
+			closeConn = warmed
+		}
+	}
+	prewarmDone := t.prewarmDone
+	if t.prewarming {
+		t.prewarming = false
+		t.prewarmDone = nil
+	} else {
+		prewarmDone = nil
+	}
+	t.mu.Unlock()
+
+	if prewarmDone != nil {
+		close(prewarmDone)
+	}
+	if old != nil {
+		_ = old.Close()
+	}
+	if closeConn != nil {
+		_ = closeConn.Close()
+	}
+}
+
 func (t *guestH2CRoundTripper) closeIdleConnections() {
 	if t == nil {
 		return
 	}
 	t.base.CloseIdleConnections()
 	t.mu.Lock()
+	t.closed = true
 	conn := t.prewarm
 	t.prewarm = nil
+	prewarmDone := t.prewarmDone
+	if t.prewarming {
+		t.prewarming = false
+		t.prewarmDone = nil
+	} else {
+		prewarmDone = nil
+	}
 	t.mu.Unlock()
+	if prewarmDone != nil {
+		close(prewarmDone)
+	}
 	if conn != nil {
 		_ = conn.Close()
 	}
