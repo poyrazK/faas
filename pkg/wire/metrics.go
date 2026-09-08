@@ -4609,7 +4609,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditLogWriteTotal:                                    auditLogWriteTotal,
 		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,
-		operatorActionTraceCompletenessFirstTickCompleted:     operatorActionTraceCompletenessFirstTickCompleted,
+		operatorActionTraceCompletenessFirstTickCompleted:   operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp: operatorActionTraceCompletenessLastSuccessTimestamp,
 		uploadSessionCreatedTotal:                           uploadSessionCreatedTotal,
 		uploadSessionCommittedTotal:                         uploadSessionCommittedTotal,
