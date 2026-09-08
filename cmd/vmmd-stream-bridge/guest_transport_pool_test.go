@@ -116,6 +116,116 @@ func TestGuestTransportPoolRetriesAndPrewarmsH2CConnection(t *testing.T) {
 	}
 }
 
+func TestGuestTransportPoolFirstRequestWaitsForH2CPrewarm(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	firstAccepted := make(chan struct{})
+	serveFirst := make(chan struct{})
+	var connections atomic.Int32
+	server := &http2.Server{}
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			if connections.Add(1) == 1 {
+				close(firstAccepted)
+				go func() {
+					<-serveFirst
+					server.ServeConn(conn, &http2.ServeConnOpts{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						_, _ = io.WriteString(w, "ok")
+					})})
+				}()
+				continue
+			}
+			go server.ServeConn(conn, &http2.ServeConnOpts{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, "ok")
+			})})
+		}
+	}()
+
+	_, portText, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := newGuestTransportPool("127.0.0.1")
+	defer pool.closeIdleConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	prewarmResult := make(chan error, 1)
+	go func() { prewarmResult <- pool.prewarmH2C(ctx, uint16(port)) }()
+	select {
+	case <-firstAccepted:
+	case <-ctx.Done():
+		t.Fatalf("waiting for prewarm connection: %v", ctx.Err())
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+portText+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type roundTripResult struct {
+		status int
+		err    error
+	}
+	requestResult := make(chan roundTripResult, 1)
+	go func() {
+		resp, roundTripErr := pool.h2c(uint16(port)).RoundTrip(req)
+		if roundTripErr != nil {
+			requestResult <- roundTripResult{err: roundTripErr}
+			return
+		}
+		defer resp.Body.Close()
+		_, roundTripErr = io.Copy(io.Discard, resp.Body)
+		requestResult <- roundTripResult{status: resp.StatusCode, err: roundTripErr}
+	}()
+
+	// Keep the prewarm handshake blocked long enough for the request to enter
+	// RoundTrip. It must wait instead of dialing a second guest connection.
+	var result roundTripResult
+	haveResult := false
+	select {
+	case result = <-requestResult:
+		haveResult = true
+		t.Errorf("RoundTrip completed before prewarm: %v", result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if got := connections.Load(); got != 1 {
+		t.Errorf("guest TCP connections while prewarm was in flight = %d, want one", got)
+	}
+	close(serveFirst)
+
+	if err := <-prewarmResult; err != nil {
+		t.Fatalf("prewarmH2C: %v", err)
+	}
+	if !haveResult {
+		select {
+		case result = <-requestResult:
+		case <-ctx.Done():
+			t.Fatalf("waiting for first request: %v", ctx.Err())
+		}
+	}
+	if result.err != nil {
+		t.Fatalf("RoundTrip: %v", result.err)
+	}
+	if result.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", result.status)
+	}
+	if got := connections.Load(); got != 1 {
+		t.Fatalf("guest TCP connections = %d, want the reused prewarmed connection", got)
+	}
+}
+
 func TestPersistentH1HandlerReusesGuestConnection(t *testing.T) {
 	var connections atomic.Int32
 	guest := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
