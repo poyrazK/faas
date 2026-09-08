@@ -355,31 +355,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
-          # The images workflow rebuilds all runtime bases when any runtime
-          # contract input changes. Releases may be cut by a later daemon-only
-          # commit, so select the newest first-parent commit in that same
-          # contract rather than resolving a moving :latest tag.
+          # Runtime base images contain only their Dockerfile layers and the
+          # shared rootfs skeleton. Runtime control-plane code is shipped in
+          # this signed daemon bundle, so a change under pkg/imaged,
+          # pkg/builderd, or guest/runners must not force a release to wait for
+          # eight byte-identical images to be republished. Select the newest
+          # commit that could have changed or revalidated the image bytes.
           RUNTIME_SOURCE_SHA="$(git log --first-parent --format='%H' -n 1 "$GIT_SHA" -- \
-            images \
-            guest/init \
-            guest/runners \
-            pkg/builderd \
-            pkg/imaged \
-            pkg/oci \
-            pkg/rootfs \
-            pkg/api \
-            cmd/imaged \
-            cmd/apid/handlers_templates.go \
-            cmd/apid/handlers_templates_test.go \
-            cmd/gregale/templates \
-            cmd/gregale/cli_meta.go \
-            cmd/gregale/commands_init* \
-            migrations/*runtime*.sql \
-            docs/runtimes \
-            docs/faas_implementation_spec.md \
+            images/base-debian-parent.Dockerfile \
+            images/base-minimal.Dockerfile \
+            images/runner-node22.Dockerfile \
+            images/runner-node24.Dockerfile \
+            images/runner-python312.Dockerfile \
+            images/runner-python313.Dockerfile \
+            images/runner-go124.Dockerfile \
+            images/runner-go124-alpine.Dockerfile \
+            images/rootfs-skel \
+            images/Dockerfile.lock \
+            scripts/ci/install-grype.sh \
+            scripts/ci/update-grype-db.sh \
+            scripts/ci/scan-oci-image.sh \
             scripts/ci/validate-runtime-image.sh \
             scripts/ci/smoke-runtime-image.sh \
-            scripts/ci/validate-runtime-docs.sh \
             .github/workflows/images.yml)"
           [[ "$RUNTIME_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
             echo "::error::could not find a runtime-base source commit in release history" >&2
