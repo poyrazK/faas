@@ -165,12 +165,20 @@ func TestMigrations_00203_AppEnvsScope(t *testing.T) {
 	// so the ONLY way the row gets a scope value is via the
 	// NOT NULL DEFAULT clause. A future regression that drops
 	// the DEFAULT would fail this assertion and surface here.
+	//
+	// app_envs.account_id is FK'd to accounts (app_envs_account_id_fkey,
+	// ON DELETE CASCADE), so the row needs real parents — a
+	// gen_random_uuid() account trips 23503 before the DEFAULT is ever
+	// exercised. Seed the account + app and let the ONLY omitted column
+	// be `scope`.
+	accountID := seedAccount(t, ctx, pool)
+	appID := seedApp(t, ctx, pool, accountID)
 	var gotScope string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO app_envs (account_id, app_id, key, value)
-		VALUES (gen_random_uuid(), gen_random_uuid(), 'PR_A_BACKFILL_KEY', 'v')
+		VALUES ($1, $2, 'PR_A_BACKFILL_KEY', 'v')
 		RETURNING scope
-	`).Scan(&gotScope); err != nil {
+	`, accountID, appID).Scan(&gotScope); err != nil {
 		t.Fatalf("backfill insert: %v", err)
 	}
 	if gotScope != "default" {

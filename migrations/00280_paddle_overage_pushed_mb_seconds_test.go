@@ -68,9 +68,17 @@ func TestMigrations_00280_PaddleOveragePushedMBSeconds(t *testing.T) {
 	// `_ = mbSeconds` line at pgstore.go:9956 returning) will
 	// flip this assertion red.
 	s := state.NewPgStore(pool)
-	acctID := "acct-mig-00280-" + time.Now().UTC().Format("150405.000000000")
-	if _, err := s.CreateAccount(ctx, acctID+"@mig.example.test", api.PlanFree); err != nil {
+	// paddle_overage_dedupe.account_id is uuid and FK-shaped, so the
+	// claim path must be handed the account id CreateAccount minted —
+	// a synthetic "acct-…" string 22P02s inside the dedupe upsert.
+	email := "acct-mig-00280-" + time.Now().UTC().Format("150405.000000000") + "@mig.example.test"
+	acct, err := s.CreateAccount(ctx, email, api.PlanFree)
+	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
+	}
+	acctID := acct.ID
+	if acctID == "" {
+		t.Fatal("CreateAccount returned an empty account id")
 	}
 	window := time.Now().UTC().Truncate(time.Hour)
 	if claimed, err := s.ClaimPaddleOverageWindow(ctx, acctID, window, "pod-mig", 5*time.Minute); err != nil || !claimed {

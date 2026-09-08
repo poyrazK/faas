@@ -38,13 +38,35 @@ func TestMigrations_00206_WebhookEventAllowlist_CronFiredManually(t *testing.T) 
 	}
 
 	// Seed the bare-minimum rows so the FK constraints from
-	// app_webhooks + apps + accounts hold. We don't inspect the
-	// dispatcher's downstream claims — only the CHECK shape — so a
-	// throwaway UUID for webhook_id and a non-null payload + status
-	// is all the test needs.
-	hookID := "00000000-0000-0000-0000-000000000001"
-	appID := "00000000-0000-0000-0000-000000000002"
+	// app_webhook_deliveries hold: account → app → webhook. We don't
+	// inspect the dispatcher's downstream claims — only the CHECK
+	// shape — so one minimal row per parent table plus a non-null
+	// payload + status is all the test needs.
 	acctID := "00000000-0000-0000-0000-000000000003"
+	appID := "00000000-0000-0000-0000-000000000002"
+	hookID := "00000000-0000-0000-0000-000000000001"
+
+	if _, err := pool.Exec(ctx, `
+		insert into accounts (id, email, plan, created_at)
+		values ($1, 'cron-fired-manually-test@example.com', 'scale', now())
+		on conflict (id) do nothing
+	`, acctID); err != nil {
+		t.Fatalf("seed accounts: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		insert into apps (id, account_id, slug, type, ram_mb, max_concurrency, status, created_at)
+		values ($1, $2, 'cron-fired-manually-test', 'app', 128, 1, 'active', now())
+		on conflict (id) do nothing
+	`, appID, acctID); err != nil {
+		t.Fatalf("seed apps: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		insert into app_webhooks (id, app_id, account_id, target_url, secret_sealed)
+		values ($1, $2, $3, 'https://example.com/cron-fired-manually', '\x00'::bytea)
+		on conflict (id) do nothing
+	`, hookID, appID, acctID); err != nil {
+		t.Fatalf("seed app_webhooks: %v", err)
+	}
 
 	// (1) New event name must be accepted by the CHECK. The migration
 	// widens the vocab to include `cron.fired.manually`, mirroring

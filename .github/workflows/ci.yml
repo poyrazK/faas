@@ -1351,7 +1351,8 @@ jobs:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     name: migrations (IDs + apply)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 20 min: the full per-migration package (~240 Postgres tests) runs here.
+    timeout-minutes: 20
     steps:
       # 2026-07-31: pre-pull postgres with 3-attempt retry. This job
       # is the one that actually hit the Docker Hub pull timeout on
@@ -1455,6 +1456,16 @@ jobs:
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
         run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+
+      # The per-migration Postgres tests (migrations/*_test.go, ~240 of them)
+      # ran nowhere: the pg shards exclude the package with `grep -v
+      # /migrations` and the two steps above name single tests with -run.
+      # They rotted accordingly — 82 of them failed against main until the
+      # PR that added this step. Running the whole package here is what
+      # stops that happening again. Each test gets its own schema from
+      # pkg/db/pgtest, so -p 4 is safe and keeps the wall time down.
+      - name: migrations per-migration tests (full package)
+        run: go test -race -count=1 -p 4 -timeout=15m ./migrations/...
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.

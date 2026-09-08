@@ -106,10 +106,10 @@ func TestMigrations_00272_ReleaseBundles(t *testing.T) {
 		sha      string
 		manifest string
 	}{
-		{"short git_sha", "abc123", "sha256:" + sha256hex(0)},
-		{"non-hex git_sha", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "sha256:" + sha256hex(0)},
-		{"bad manifest_hash shape", sha256hex40(0), "not-sha256:" + sha256hex(0)},
-		{"short manifest_hash", sha256hex40(0), "sha256:" + sha256hex(20)},
+		{"short git_sha", "abc123", "sha256:" + hexOfLen(64)},
+		{"non-hex git_sha", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "sha256:" + hexOfLen(64)},
+		{"bad manifest_hash shape", hexOfLen(40), "not-sha256:" + hexOfLen(64)},
+		{"short manifest_hash", hexOfLen(40), "sha256:" + hexOfLen(20)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := pool.Exec(ctx, `
@@ -158,7 +158,7 @@ func TestMigrations_00272_ReleaseBundles(t *testing.T) {
 	// (5) Canonical PR-3a "ship a bundle" smoke test: insert only
 	//     git_sha + manifest_hash, confirm the defaults.
 	const gitSHA = "0123456789abcdef0123456789abcdef01234567" // 40 hex
-	manifest := "sha256:" + sha256hex(0)                      // var because sha256hex is a function call
+	manifest := "sha256:" + hexOfLen(64)                      // var because hexOfLen is a function call
 	var (
 		gotDaemonHashes string
 		gotCreatedAt    time.Time
@@ -183,15 +183,13 @@ func TestMigrations_00272_ReleaseBundles(t *testing.T) {
 	}
 }
 
-// sha256hex returns a 64-char string of "0" hex chars. PostgreSQL
-// accepts lowercase hex in the CHECK shape; the value itself is
-// not load-bearing.
-func sha256hex(_ int) string {
-	return "0000000000000000000000000000000000000000000000000000000000000000"
-}
-
-// sha256hex40 returns a 40-char string of valid hex for the
-// git_sha-shape CHECK constraint.
-func sha256hex40(_ int) string {
-	return "0123456789abcdef0123456789abcdef01234567"
+// hexOfLen returns an n-char lowercase-hex string. The release_bundles
+// CHECKs are pure shape regexes (`^[a-f0-9]{40}$` for git_sha,
+// `^sha256:[a-f0-9]{64}$` for manifest_hash), so the digits themselves
+// are not load-bearing — the LENGTH is. The predecessor helpers took an
+// int and ignored it, which quietly made the "short manifest_hash"
+// negative case feed a perfectly valid 64-char digest and assert
+// nothing; keep the length a real parameter.
+func hexOfLen(n int) string {
+	return strings.Repeat("0", n)
 }

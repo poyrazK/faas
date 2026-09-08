@@ -65,8 +65,11 @@ func TestMigrations_00229_EdgeRulesKindGeo(t *testing.T) {
 		t.Fatalf("seed account: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
+		-- status='active' — apps_status_check admits
+		-- active | evicted_cold | deleted ('live' is the
+		-- deployments-side vocabulary, not the apps one).
 		insert into apps (id, account_id, slug, runtime, status, created_at, ram_mb)
-		values ($1, $2, 'edge-rules-test-app', 'node22', 'live', now(), 256)
+		values ($1, $2, 'edge-rules-test-app', 'node22', 'active', now(), 256)
 		on conflict (id) do nothing
 	`, appID, acctID); err != nil {
 		t.Fatalf("seed app: %v", err)
@@ -131,12 +134,20 @@ func TestMigrations_00229_EdgeRulesKindGeo(t *testing.T) {
 	// falls through to a no-op and the OLD CHECK (without 'geo')
 	// survives — which is exactly the regression this test
 	// surfaces.
+	// The discovery predicate must accept BOTH renderings
+	// pg_get_constraintdef emits for a closed set: the literal
+	// `IN (...)` form and the `= ANY (ARRAY[...])` form Postgres
+	// normalises longer lists into. Matching only `%kind%IN%` finds
+	// nothing once the vocabulary is stored as an ARRAY, which would
+	// make this pin silently unreachable.
 	var constraintName string
 	if err := pool.QueryRow(ctx, `
 		SELECT conname FROM pg_constraint
 		WHERE conrelid = 'edge_rules'::regclass
 		  AND contype = 'c'
-		  AND pg_get_constraintdef(oid) LIKE '%kind%IN%'
+		  AND pg_get_constraintdef(oid) LIKE '%kind%'
+		  AND (pg_get_constraintdef(oid) LIKE '%IN (%'
+		       OR pg_get_constraintdef(oid) LIKE '%= ANY (%')
 		ORDER BY conname
 		LIMIT 1
 	`).Scan(&constraintName); err != nil {

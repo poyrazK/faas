@@ -136,10 +136,21 @@ func TestMigrations_00224_AppsCORSDefaults(t *testing.T) {
 	// surface here, before any production wake runs against a
 	// pre-PR app.
 	accountID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO accounts (id, email, plan)
+		VALUES ($1::uuid, $1::text || '@cors-defaults-test.example.com', 'hobby')
+		ON CONFLICT (id) DO NOTHING
+	`, accountID); err != nil {
+		t.Fatalf("seed accounts: %v", err)
+	}
+	// `apps` has no `name` column — the human-facing identifier is
+	// `slug` (apps_slug_key UNIQUE). The historical column list here
+	// deliberately omits cors_default_enabled so the NOT NULL DEFAULT
+	// false clause is the only thing that can populate it.
 	var gotEnabled bool
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO apps (id, account_id, slug, name, ram_mb)
-		VALUES (gen_random_uuid(), $1, $1, $1, 256)
+		INSERT INTO apps (id, account_id, slug, ram_mb)
+		VALUES (gen_random_uuid(), $1::uuid, $1::text, 256)
 		RETURNING cors_default_enabled
 	`, accountID).Scan(&gotEnabled); err != nil {
 		t.Fatalf("backfill insert: %v", err)
@@ -159,8 +170,8 @@ func TestMigrations_00224_AppsCORSDefaults(t *testing.T) {
 	appID := uuid.NewString()
 	slug := "corsdefaults-" + uuid.NewString()[:8]
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO apps (id, account_id, slug, name, ram_mb)
-		VALUES ($1, $2, $3, $3, 256)
+		INSERT INTO apps (id, account_id, slug, ram_mb)
+		VALUES ($1, $2, $3, 256)
 	`, appID, accountID, slug); err != nil {
 		t.Fatalf("insert app for round-trip: %v", err)
 	}

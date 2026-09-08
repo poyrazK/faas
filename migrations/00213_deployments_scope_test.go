@@ -67,7 +67,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -155,12 +154,15 @@ func TestMigrations_00213_DeploymentsScope(t *testing.T) {
 	// future regression that drops the partial index would
 	// silently allow two live deployments on the same scope,
 	// reintroducing the non-deterministic wake-target selector
-	// that ADR-091 eliminates. app_id is pinned via
-	// uuid.NewString() so the two rows truly collide on
-	// (app_id, scope); gen_random_uuid() would make both rows
-	// differ at app_id and the test would silently pass even
-	// if the partial index regressed.
-	appID := uuid.NewString()
+	// that ADR-091 eliminates. Both rows reuse ONE seeded app_id so
+	// they truly collide on (app_id, scope); a gen_random_uuid()
+	// per row would differ at app_id and the test would silently
+	// pass even if the partial index regressed. The app has to be a
+	// real apps row: deployments.app_id is FK'd to apps
+	// (deployments_app_id_fkey), so a bare uuid trips 23503 and the
+	// collision is never reached.
+	accountID := seedAccount(t, ctx, pool)
+	appID := seedApp(t, ctx, pool, accountID)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (id, app_id, status, image_digest, scope)
 		VALUES (gen_random_uuid(), $1, 'live', 'sha256:test1', 'prod')
@@ -192,12 +194,16 @@ func TestMigrations_00213_DeploymentsScope(t *testing.T) {
 	// drops the DEFAULT would fail this assertion and surface
 	// here, before any production wake runs against a
 	// pre-PR deployment.
+	// Own app so the row can never interact with the (app_id, scope)
+	// collision seeded above; status='pending' keeps it out of the
+	// partial unique either way.
+	backfillAppID := seedApp(t, ctx, pool, accountID)
 	var gotScope string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO deployments (id, app_id, status, image_digest)
-		VALUES (gen_random_uuid(), gen_random_uuid(), 'pending', 'sha256:backfill')
+		VALUES (gen_random_uuid(), $1, 'pending', 'sha256:backfill')
 		RETURNING scope
-	`).Scan(&gotScope); err != nil {
+	`, backfillAppID).Scan(&gotScope); err != nil {
 		t.Fatalf("backfill insert: %v", err)
 	}
 	if gotScope != "default" {

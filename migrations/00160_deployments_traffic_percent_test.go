@@ -22,9 +22,11 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
@@ -57,10 +59,15 @@ func TestMigrations_00160_DeploymentTrafficPercent(t *testing.T) {
 		t.Errorf("traffic_percent nullable = %q, want NO (NOT NULL DEFAULT 100)", nullable)
 	}
 
-	// (3) CHECK constraint shape. pg_get_constraintdef emits the
-	// BETWEEN form for range CHECKs per
-	// pg-get-constraintdef-shapes.md; assert the closed range
-	// and the constraint name are present.
+	// (3) CHECK constraint exists and names the closed [0, 100] range.
+	//
+	// The rendering is NOT pinned: pg_get_constraintdef normalises
+	// `BETWEEN 0 AND 100` into `(traffic_percent >= 0) AND
+	// (traffic_percent <= 100)`, so a substring probe for "BETWEEN"
+	// asserts which spelling the migration author happened to use
+	// rather than what the constraint does. Both spellings are
+	// accepted here; the "it is a range, not an enumeration" semantics
+	// are pinned by the accept/reject cases in steps (4) and (5).
 	var def string
 	err := pool.QueryRow(ctx, `
 		select pg_get_constraintdef(c.oid)
@@ -74,8 +81,11 @@ func TestMigrations_00160_DeploymentTrafficPercent(t *testing.T) {
 	if !strings.Contains(def, "0") || !strings.Contains(def, "100") {
 		t.Errorf("constraint def %q missing 0 or 100 (range CHECK must cover [0, 100])", def)
 	}
-	if !strings.Contains(strings.ToUpper(def), "BETWEEN") {
-		t.Errorf("constraint def %q missing BETWEEN (range CHECK must use BETWEEN, not IN)", def)
+	upper := strings.ToUpper(def)
+	isBetween := strings.Contains(upper, "BETWEEN")
+	isComparison := strings.Contains(def, ">=") && strings.Contains(def, "<=")
+	if !isBetween && !isComparison {
+		t.Errorf("constraint def %q is neither a BETWEEN nor a >=/<= range (a range CHECK must bound both ends, not enumerate values)", def)
 	}
 
 	// (4) Bad value rejected. Insert a row with traffic_percent =
@@ -99,37 +109,57 @@ func TestMigrations_00160_DeploymentTrafficPercent(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("seed apps: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
+	const insertTrafficPercent = `
 		insert into deployments (app_id, image_digest, status, traffic_percent)
-		values ('00000000-0000-0000-0000-000000000160',
-		        'sha256:' || repeat('a', 64),
-		        'building',
-		        101)`); err == nil {
-		t.Errorf("insert traffic_percent=101 succeeded; want 23514 CHECK violation")
-	} else if !strings.Contains(err.Error(), "23514") {
-		t.Errorf("insert traffic_percent=101 error = %v, want 23514 SQLSTATE", err)
+		values ('00000000-0000-0000-0000-000000000160', $1, 'building', $2)`
+
+	// Both ends of the range must be closed. Matching the constraint
+	// name (not just the SQLSTATE) is what keeps this from passing
+	// because some unrelated CHECK rejected the row first.
+	for _, tc := range []struct {
+		name    string
+		digest  string
+		percent int
+	}{
+		{"above 100", "sha256:" + strings.Repeat("f", 64), 101},
+		{"negative", "sha256:" + strings.Repeat("e", 64), -1},
+	} {
+		_, err := pool.Exec(ctx, insertTrafficPercent, tc.digest, tc.percent)
+		if err == nil {
+			t.Errorf("insert traffic_percent=%d (%s) succeeded; want 23514 CHECK violation", tc.percent, tc.name)
+			continue
+		}
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) {
+			t.Errorf("insert traffic_percent=%d (%s): got %v, want a *pgconn.PgError", tc.percent, tc.name, err)
+			continue
+		}
+		if pgErr.Code != "23514" {
+			t.Errorf("insert traffic_percent=%d (%s): got SQLSTATE %s, want 23514", tc.percent, tc.name, pgErr.Code)
+		}
+		if pgErr.ConstraintName != "deployments_traffic_percent_chk" {
+			t.Errorf("insert traffic_percent=%d (%s): got constraint %q, want deployments_traffic_percent_chk", tc.percent, tc.name, pgErr.ConstraintName)
+		}
 	}
 
-	// (5) Boundary values accepted. 0 and 100 are both legal
-	// (0 = "this row receives no traffic" used during rollback;
-	// 100 = "this row is the sole live deployment"). Each row
-	// uses a distinct image_digest so the deployments.image_digest
-	// uniqueness (if any) doesn't trip — current schema doesn't
-	// have a uniqueness constraint on image_digest, but the
-	// belt-and-braces approach matches how 00147 seeds.
-	for i, v := range []int{0, 100} {
-		// Each boundary row uses a distinct image_digest so the
-		// deployments.image_digest uniqueness (if any) doesn't
-		// trip — current schema doesn't enforce it, but the
-		// belt-and-braces approach matches how 00147 seeds.
+	// (5) Boundaries AND the interior are accepted. 0 and 100 are both
+	// legal (0 = "this row receives no traffic" used during rollback;
+	// 100 = "this row is the sole live deployment"), and 50 is the
+	// assertion that makes step (3) unnecessary as a rendering probe:
+	// a constraint written as `traffic_percent IN (0, 100)` would pass
+	// every other check in this test and fail here. That, plus the
+	// -1/101 rejections above, is the closed range [0, 100] pinned by
+	// behaviour rather than by the spelling pg_get_constraintdef
+	// happens to emit.
+	//
+	// Each row uses a distinct image_digest so the
+	// deployments.image_digest uniqueness (if any) doesn't trip —
+	// current schema doesn't enforce it, but the belt-and-braces
+	// approach matches how 00147 seeds.
+	for i, v := range []int{0, 50, 100} {
 		digest := "sha256:" + strings.Repeat(string(rune('a'+i)), 64)
-		if _, err := pool.Exec(ctx, `
-			insert into deployments (app_id, image_digest, status, traffic_percent)
-			values ('00000000-0000-0000-0000-000000000160',
-			        $1,
-			        'building',
-			        $2)`, digest, v); err != nil {
-			t.Errorf("insert traffic_percent=%d failed: %v (boundary must be accepted)", v, err)
+		if _, err := pool.Exec(ctx, insertTrafficPercent, digest, v); err != nil {
+			t.Errorf("insert traffic_percent=%d failed: %v (in-range value must be accepted)", v, err)
 		}
 	}
 

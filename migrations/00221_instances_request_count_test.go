@@ -19,13 +19,11 @@
 //     and has DEFAULT 0. PG introspected via information_schema
 //     — a typo in the column name would otherwise fail at
 //     daemon boot, not at migration apply.
-//  3. Pre-existing instances rows backfill to 0 (NOT NULL
-//     DEFAULT 0 is metadata-only on PG11+; no UPDATE rewrite).
-//     The test seeds a row before the migration would land in
-//     a separate DB, but here we rely on the shadow DB
-//     populated by TestMigrations_00210_CronsUniqueAppSchedulePath
-//     path — the column is backfilled lazily on INSERT without
-//     a separate pass.
+//  3. A freshly inserted instances row lands on request_count = 0
+//     (NOT NULL DEFAULT 0 is metadata-only on PG11+; no UPDATE
+//     rewrite). pgtest.Open hands every test its own empty schema,
+//     so the row is seeded here together with its FK parents
+//     (account -> app -> deployment, plus a compute node).
 //  4. UPDATE on instances SET request_count = request_count + 1
 //     works (the writer in pkg/state/pgstore.go
 //     IncInstanceRequestCount runs this statement). The
@@ -87,37 +85,25 @@ func TestMigrations_00221_InstancesRequestCount(t *testing.T) {
 	// bump, then re-bump — the second increment must land
 	// exactly on the first + delta (no double-write on
 	// Phase-4-loser re-applies).
-	var (
-		appIDTag, orgIDTag, deploymentIDTag, nodeIDTag string
-		ramMB                                          int
-	)
-	err = pool.QueryRow(ctx, `
-		insert into instances (app_id, deployment_id, state, ram_mb, node_id)
-		values (
-			'00000000-0000-0000-0000-000000000001'::uuid,
-			'00000000-0000-0000-0000-000000000002'::uuid,
-			'running',
-			256,
-			'00000000-0000-0000-0000-000000000003'::uuid
-		)
-		returning app_id::text, deployment_id::text, node_id::text, ram_mb
-	`).Scan(&appIDTag, &deploymentIDTag, &nodeIDTag, &ramMB)
-	if err != nil {
-		t.Fatalf("seed instance: %v", err)
-	}
-	_ = appIDTag
-	_ = orgIDTag
+	//
+	// instances has three FK parents — app_id -> apps,
+	// deployment_id -> deployments, node_id -> compute_nodes — so the
+	// row needs the whole chain seeded. Placeholder literal UUIDs
+	// (…0001/…0002/…0003) trip instances_app_id_fkey before the
+	// column under test is ever touched.
+	accountID := seedAccount(t, ctx, pool)
+	appID := seedApp(t, ctx, pool, accountID)
+	deploymentID := seedDeployment(t, ctx, pool, appID, "live")
+	nodeID := seedComputeNode(t, ctx, pool)
 
-	// Find the seeded instance id by querying the just-inserted row.
 	var insID string
 	err = pool.QueryRow(ctx, `
-		select id::text from instances
-		where deployment_id = '00000000-0000-0000-0000-000000000002'::uuid
-		order by started_at desc nulls last
-		limit 1
-	`).Scan(&insID)
+		insert into instances (app_id, deployment_id, state, ram_mb, node_id)
+		values ($1::uuid, $2::uuid, 'running', 256, $3::uuid)
+		returning id::text
+	`, appID, deploymentID, nodeID).Scan(&insID)
 	if err != nil {
-		t.Fatalf("locate seeded instance: %v", err)
+		t.Fatalf("seed instance: %v", err)
 	}
 
 	// First increment: 0 -> 3.

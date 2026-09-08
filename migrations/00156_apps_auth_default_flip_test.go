@@ -46,6 +46,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -270,7 +271,10 @@ func TestMigrations_00156_AppsAuthDefaultFlip(t *testing.T) {
 	// INSERT is guarded by WHERE NOT EXISTS); the grandfather stamps
 	// are unchanged (the UPDATE is guarded by IS NULL). ADR-041
 	// contract.
-	var stampBefore string
+	// auth_default_flipped_at is timestamptz (pinned at (2) above), so
+	// the scan target is time.Time — scanning a timestamptz into a
+	// string fails under pgx's binary protocol.
+	var stampBefore time.Time
 	if err := pool.QueryRow(ctx,
 		`select auth_default_flipped_at from apps where id = '00000000-0000-0000-0000-000000001563'`,
 	).Scan(&stampBefore); err != nil {
@@ -283,14 +287,15 @@ func TestMigrations_00156_AppsAuthDefaultFlip(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("replay-safety: second UPDATE failed: %v", err)
 	}
-	var stampAfter string
+	var stampAfter time.Time
 	if err := pool.QueryRow(ctx,
 		`select auth_default_flipped_at from apps where id = '00000000-0000-0000-0000-000000001563'`,
 	).Scan(&stampAfter); err != nil {
 		t.Fatalf("replay-safety: read stamp after: %v", err)
 	}
-	if stampBefore != stampAfter {
-		t.Errorf("replay-safety: grand-father stamp changed across re-apply (%q → %q); the UPDATE must NOT re-stamp existing rows", stampBefore, stampAfter)
+	if !stampAfter.Equal(stampBefore) {
+		t.Errorf("replay-safety: grand-father stamp changed across re-apply (%s → %s); the UPDATE must NOT re-stamp existing rows",
+			stampBefore.Format(time.RFC3339Nano), stampAfter.Format(time.RFC3339Nano))
 	}
 	// Stamped count unchanged.
 	if err := pool.QueryRow(ctx,

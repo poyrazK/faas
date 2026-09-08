@@ -25,12 +25,63 @@ package migrations_test
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
+
+// explainNoSeqScan returns the text EXPLAIN of query with
+// enable_seqscan disabled for the duration of a single transaction.
+//
+// Index-usage assertions in this package would otherwise be at the
+// mercy of planner cost estimates: on a freshly-migrated test schema
+// every table holds a handful of rows, so a Seq Scan is genuinely the
+// cheapest plan and the planner is right to pick it. Disabling seqscan
+// turns the question from "is the index cheaper today?" (a cost
+// question, not a schema question) into "can the planner use this
+// index for this predicate at all?" — which is the schema contract the
+// migration actually established. If the index is dropped, renamed, or
+// its partial predicate stops being implied by the query, the plan
+// falls back to a Seq Scan even with the penalty applied and the
+// assertion fires.
+//
+// The SET must be `set local` inside an explicit transaction: pgxpool
+// hands out an arbitrary connection per call, so a session-level SET
+// would not reliably apply to the EXPLAIN that follows.
+func explainNoSeqScan(ctx context.Context, t *testing.T, pool *pgxpool.Pool, query string, args ...any) (string, error) {
+	t.Helper()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `set local enable_seqscan = off`); err != nil {
+		return "", fmt.Errorf("set local enable_seqscan: %w", err)
+	}
+	rows, err := tx.Query(ctx, "explain (format text) "+query, args...)
+	if err != nil {
+		return "", fmt.Errorf("explain: %w", err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			return "", fmt.Errorf("explain scan: %w", err)
+		}
+		plan.WriteString(line)
+		plan.WriteString("\n")
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("explain rows: %w", err)
+	}
+	return plan.String(), nil
+}
 
 func TestMigrations_00072_ComputeNodesRegionZone(t *testing.T) {
 	ctx := context.Background()
@@ -81,33 +132,65 @@ func TestMigrations_00072_ComputeNodesRegionZone(t *testing.T) {
 		t.Errorf("default-local.zone = %q, want \"local\" (migration backfill)", zone)
 	}
 
-	// (3) The partial index exists on (region, zone) WHERE active.
-	//     pg_indexes view is the canonical probe; rename-detector.
-	var idxDef string
+	// (3) The partial index exists, keys on (region, zone), and its
+	//     predicate is restricted to active nodes.
+	//
+	//     The index name is the wire contract the chooser relies on; if
+	//     a future migration renames it the chooser's filter-and-sort
+	//     scan falls back to a full table scan — not a failure, so the
+	//     rename would otherwise be silent. This makes it loud.
+	//
+	//     We read the catalog's *structure* (pg_index.indkey,
+	//     pg_index.indpred) rather than the rendered indexdef string.
+	//     Postgres normalises boolean predicates: `WHERE active = true`
+	//     used to print as "WHERE (active = true)" and now prints as
+	//     "WHERE active", so a substring probe on the rendering pins a
+	//     formatting detail rather than the index shape.
+	var isPartial bool
+	var predicate string
+	var keyCols []string
 	if err := pool.QueryRow(ctx, `
-		select indexdef
-		  from pg_indexes
-		 where schemaname = current_schema()
-		   and tablename  = 'compute_nodes'
-		   and indexname  = 'compute_nodes_region_zone_idx'
-	`).Scan(&idxDef); err != nil {
+		select i.indpred is not null                     as is_partial,
+		       coalesce(pg_get_expr(i.indpred, i.indrelid), '') as predicate,
+		       (select array_agg(a.attname order by k.ord)
+		          from unnest(i.indkey) with ordinality as k(attnum, ord)
+		          join pg_attribute a
+		            on a.attrelid = i.indrelid
+		           and a.attnum   = k.attnum)            as key_cols
+		  from pg_index i
+		  join pg_class     c on c.oid = i.indexrelid
+		  join pg_namespace n on n.oid = c.relnamespace
+		 where n.nspname  = current_schema()
+		   and c.relname  = 'compute_nodes_region_zone_idx'
+	`).Scan(&isPartial, &predicate, &keyCols); err != nil {
 		t.Errorf("compute_nodes_region_zone_idx missing: %v", err)
 	} else {
-		// Cheap shape probe — the index name is the wire contract
-		// the chooser relies on; if a future migration renames it
-		// the chooser's filter-and-sort scan will fall back to a
-		// full table scan, not a failure, so the rename is silent.
-		// This assertion makes the rename loud.
-		//
-		// PostgreSQL formats partial-index predicates as
-		// "WHERE (active = true)" (parenthesised boolean) starting
-		// from PG 9.x; a bare "WHERE active" form is never emitted.
-		// The substring probe below matches that real output while
-		// still rejecting a non-partial index (which would have no
-		// "WHERE" predicate at all).
-		if !strings.Contains(idxDef, "WHERE (active") {
-			t.Errorf("compute_nodes_region_zone_idx indexdef = %q, want substring %q (partial predicate on active)", idxDef, "WHERE (active")
+		if !isPartial {
+			t.Errorf("compute_nodes_region_zone_idx is not a partial index; it must be restricted to active nodes so drained/unavailable rows stay out of the chooser's index")
 		}
+		if !strings.Contains(predicate, "active") {
+			t.Errorf("compute_nodes_region_zone_idx predicate = %q, want a predicate over the active column", predicate)
+		}
+		if want := []string{"region", "zone"}; !slices.Equal(keyCols, want) {
+			t.Errorf("compute_nodes_region_zone_idx key columns = %v, want %v (the chooser looks up by region then zone)", keyCols, want)
+		}
+	}
+
+	// (3b) Semantics, not rendering: the predicate must actually be
+	//      usable for the chooser's lookup. With seqscan disabled inside
+	//      a transaction, the planner has to reach for the index — which
+	//      it can only do if the query's predicate implies the index's
+	//      partial predicate. A predicate that drifted (say, to
+	//      `lifecycle = 'active'`) would still be "partial" but would no
+	//      longer be implied by `active`, and this EXPLAIN would fall
+	//      back to a Seq Scan.
+	if plan, err := explainNoSeqScan(ctx, t, pool, `
+		select id from compute_nodes
+		 where region = $1 and zone = $2 and active
+	`, "local", "local"); err != nil {
+		t.Errorf("explain region/zone lookup: %v", err)
+	} else if !strings.Contains(plan, "compute_nodes_region_zone_idx") {
+		t.Errorf("planner did not reach compute_nodes_region_zone_idx for the chooser's (region, zone, active) lookup:\n%s", plan)
 	}
 
 	// (4) INSERT a row without region/zone — must succeed because

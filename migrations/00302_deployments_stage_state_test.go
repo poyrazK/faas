@@ -74,33 +74,48 @@ func TestMigrations_00302_DeploymentsStageState(t *testing.T) {
 		t.Fatalf("db.MigrateUp: %v (regression: missing migration slot — 00301 reserve_slot fence on main must not collide)", err)
 	}
 
-	// (2) Default shape + NOT NULL.
+	// (2) Default shape + NOT NULL. The sentinel deployment is seeded
+	// unconditionally: assertion (4) below UPDATEs this exact id, so an
+	// unrelated pre-existing row must never stand in for it (that would
+	// silently turn the CHECK probe into a 0-row no-op).
+	//
+	// The sentinel needs its FK parents (deployments_app_id_fkey → apps
+	// → accounts) plus the two NOT NULL columns that carry no default
+	// (image_digest, status). stage_state is deliberately NOT listed so
+	// the column DEFAULT is the only thing that can populate it.
+	if _, err := pool.Exec(ctx, `
+		insert into accounts (id, email, plan)
+		values ('00000000-0000-0000-0000-00000000302a',
+		        'stage-state-test@example.com', 'scale')
+		on conflict (id) do nothing`); err != nil {
+		t.Fatalf("seed accounts: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		insert into apps (id, account_id, slug, type, ram_mb, max_concurrency, idle_timeout_s, status, created_at)
+		values ('00000000-0000-0000-0000-00000000302a',
+		        '00000000-0000-0000-0000-00000000302a',
+		        'stage-state-test', 'function', 256, 1, 30, 'active', now())
+		on conflict (id) do nothing`); err != nil {
+		t.Fatalf("seed apps: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		insert into deployments (id, app_id, image_digest, status)
+		values ('00000000-0000-0000-0000-00000000302a',
+		        '00000000-0000-0000-0000-00000000302a',
+		        'sha256:' || repeat('c', 64),
+		        'pending')
+		on conflict (id) do nothing`); err != nil {
+		t.Fatalf("insert sentinel deployment row: %v", err)
+	}
 	var (
 		stageState []byte
 		isNull     bool
 	)
-	err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(ctx, `
 		select stage_state, stage_state IS NULL
 		  from deployments
-		 limit 1`).Scan(&stageState, &isNull)
-	if err != nil {
-		// Empty deployments table — insert a sentinel row so the
-		// SELECT below can probe the default. A fresh pgtest
-		// schema is empty, so we always land here.
-		if _, ierr := pool.Exec(ctx, `
-			insert into deployments (id, app_id, status)
-			values ('00000000-0000-0000-0000-00000000302a',
-			        '00000000-0000-0000-0000-00000000302a',
-			        'pending')`); ierr != nil {
-			t.Fatalf("insert sentinel deployment row: %v", ierr)
-		}
-		err = pool.QueryRow(ctx, `
-			select stage_state, stage_state IS NULL
-			  from deployments
-			 where id = '00000000-0000-0000-0000-00000000302a'`).Scan(&stageState, &isNull)
-		if err != nil {
-			t.Fatalf("select stage_state default: %v", err)
-		}
+		 where id = '00000000-0000-0000-0000-00000000302a'`).Scan(&stageState, &isNull); err != nil {
+		t.Fatalf("select stage_state default: %v", err)
 	}
 	if isNull {
 		t.Fatal("stage_state IS NULL after default backfill (column must be NOT NULL DEFAULT …)")
@@ -111,7 +126,7 @@ func TestMigrations_00302_DeploymentsStageState(t *testing.T) {
 
 	// (3) + (5) CHECK constraint shape + constraint name pin.
 	var def string
-	err = pool.QueryRow(ctx, `
+	err := pool.QueryRow(ctx, `
 		select pg_get_constraintdef(c.oid)
 		  from pg_constraint c
 		  join pg_namespace n on n.oid = c.connamespace
