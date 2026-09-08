@@ -87,7 +87,6 @@ CompletePaddleOverageWindow
 ComputeNodeByID
 ComputeNodeByName
 ComputeNodeUsedMB
-ConsumeAccountCredit
 ConsumeCliAuthCode
 ConsumeEmailVerificationToken
 ConsumeLoginToken
@@ -128,7 +127,6 @@ CountWakeBootStarted24h
 CreateAPIKey
 CreateAPIKeyWithExpiry
 CreateAPIKeyWithExpiryAndProvenance
-CreateAccountCredit
 CreateAccountWithPersonalOrg
 CreateAlertRule
 CreateAlertRuleIfUnderQuota
@@ -142,7 +140,6 @@ CreateConsumerKey
 CreateCorsPresetIfUnderQuota
 CreateCreditLedgerEntry
 CreateCron
-CreateCronIfUnderQuota
 CreateCronIfUnderQuotaWithOptions
 CreateCronWithOptions
 CreateCustomDomain
@@ -236,7 +233,6 @@ GetAPIKey
 GetAccountAsyncQuota
 GetAccountEgressAllowlistExtra
 GetAccountKeyGraceWindow
-GetAccountOverageCapCents
 GetAppErrorSample
 GetAppOpenAPIDoc
 GetAppRegistryCredential
@@ -338,7 +334,6 @@ LatestSnapshotForTier
 LatestSupersededDeployment
 ListAPIKeys
 ListAccountCredits
-ListActiveCreditsForConsumption
 ListActiveRegressionsByApp
 ListAlertDeliveriesForRule
 ListAlertPresets
@@ -654,7 +649,6 @@ TrafficAnomalyAggregateByNode
 TransferOrgOwnership
 TriggerByID
 TriggerRecordIDByItemIdentifier
-UpdateAccountOverageCapCents
 UpdateAccountPlan
 UpdateAccountProviderCustomerID
 UpdateAccountStatus
