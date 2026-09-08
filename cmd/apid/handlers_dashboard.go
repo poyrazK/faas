@@ -728,6 +728,29 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			domainItems = append(domainItems, item)
 		}
 	}
+	// Customer runtime log drains are a best-effort observability panel. The
+	// store row contains sealed credentials; project only the masked sentinel
+	// so a dashboard render can never expose plaintext or ciphertext.
+	var logDrainItems []dashboard.LogDrainItem
+	if drains, derr := s.store.ListAppLogDrainsForApp(ctx, app.ID); derr != nil {
+		log.Warn("dashboard renderAppDetail: list log drains", "account_id", acct.ID, "app_id", app.ID, "err", derr)
+	} else {
+		logDrainItems = make([]dashboard.LogDrainItem, 0, len(drains))
+		for _, d := range drains {
+			masked := ""
+			if len(d.AuthHeaderSealed) > 0 {
+				masked = api.AppLogDrainAuthHeaderMasked
+			}
+			item := dashboard.LogDrainItem{
+				ID: d.ID, Kind: string(d.Kind), TargetURL: d.TargetURL,
+				AuthHeaderMasked: masked, Enabled: d.Enabled,
+			}
+			if !d.UpdatedAt.IsZero() {
+				item.UpdatedAt = d.UpdatedAt.UTC().Format(time.RFC3339)
+			}
+			logDrainItems = append(logDrainItems, item)
+		}
+	}
 	analyticsRoute, analyticsMethod, _ := parseRequestAnalyticsRouteFilter(r.URL.Query().Get("analytics_route"), r.URL.Query().Get("analytics_method"))
 	analyticsGroupBy, _ := parseRequestAnalyticsGroupBy(r.URL.Query().Get("analytics_by"), "route")
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
@@ -742,6 +765,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		Workflows:       workflowItems,
 		Previews:        previews,
 		Domains:         domainItems,
+		LogDrains:       logDrainItems,
 		RecentInstances: recentItems,
 		// Issue #791 PR-E / ADR-090 closure — cron fire-now
 		// post-redirect banner. Reads ?fired=1 / ?fired=error and

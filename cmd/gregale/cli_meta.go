@@ -781,7 +781,11 @@ var cliCommands = []cliCommand{
 		Name:    "logs",
 		DocSlug: "logs",
 		Short:   "Tail app or deployment logs (--follow)",
-		Flags:   []cliFlag{{Name: "follow", Short: "stream logs until interrupted"}},
+		Subcommands: []cliSub{
+			{Name: "tail", Short: "Follow app logs until interrupted"},
+			{Name: "drain", Short: "Manage external runtime log destinations (list|add|info|update|rm)"},
+		},
+		Flags: []cliFlag{{Name: "follow", Short: "stream logs until interrupted"}},
 	},
 	{
 		Name:    "metrics",

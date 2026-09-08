@@ -457,6 +457,18 @@ type DomainItem struct {
 	DoctorURL        string
 }
 
+// LogDrainItem is the dashboard-safe projection of one customer runtime log
+// destination. AuthHeaderMasked is deliberately a sentinel (or empty), never
+// the sealed or plaintext credential.
+type LogDrainItem struct {
+	ID               string
+	Kind             string
+	TargetURL        string
+	AuthHeaderMasked string
+	Enabled          bool
+	UpdatedAt        string
+}
+
 // AppDomainsData is the dashboard-facing payload for the per-app custom
 // domains page. The page is read-only: domain mutations continue through the
 // existing API/CLI paths, while this view combines durable TLS state with the
@@ -776,6 +788,10 @@ type AppDetailData struct {
 	// section as a warning); an empty slice renders the empty-state
 	// line. RecentDeliveries per rule is capped at 5 by the handler.
 	Alerts *AlertDetailData
+	// LogDrains is the customer-visible runtime log destination list. The
+	// handler projects only masked auth-header state; credentials never reach
+	// the template.
+	LogDrains []LogDrainItem
 	// Presets is the per-app alert-preset catalog rendered as a
 	// grid between the Alerts panel and the recent-deliveries
 	// sub-table (issue #1233 / ADR-123). Each row carries the

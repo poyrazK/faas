@@ -708,6 +708,27 @@
         <p>No crons scheduled.</p>
       {{end}}
 
+      <h2>Log drains</h2>
+      {{if .Data.LogDrains}}
+        <table>
+          <thead><tr><th>ID</th><th>Kind</th><th>Target</th><th>State</th><th>Auth</th><th>Updated</th></tr></thead>
+          <tbody>
+            {{range .Data.LogDrains}}
+              <tr>
+                <td><code>{{.ID}}</code></td>
+                <td><code>{{.Kind}}</code></td>
+                <td>{{.TargetURL}}</td>
+                <td>{{if .Enabled}}<span class="enabled-true">enabled</span>{{else}}<span class="enabled-false">disabled</span>{{end}}</td>
+                <td>{{if .AuthHeaderMasked}}<code>{{.AuthHeaderMasked}}</code>{{else}}not configured{{end}}</td>
+                <td>{{.UpdatedAt}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p>No log drains configured. Add one with <code>gregale logs drain add --app {{.Data.App.Slug}} --kind http_json --target-url https://…</code>.</p>
+      {{end}}
+
       {{/* Issue #396 / ADR-045 — alert rule + recent deliveries panel.
            The handler (fetchDashboardAlerts) attaches a non-nil
            AlertDetailData; .Rules may be empty (renders the empty-state
