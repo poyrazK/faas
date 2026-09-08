@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,43 @@ func TestNodeJoinLeaseRefreshInterval(t *testing.T) {
 				t.Fatalf("nodeJoinLeaseRefreshInterval(%s) = %s, want %s", tt.ttl, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
+	ansibleDir := t.TempDir()
+	for _, dir := range []string{"group_vars", "roles/example/tasks"} {
+		if err := os.MkdirAll(filepath.Join(ansibleDir, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, body := range map[string]string{
+		"bootstrap.yml":                "---\n",
+		"requirements.yml":             "collections: []\n",
+		"group_vars/all.yml":           "faas_box_role: compute-only\n",
+		"roles/example/tasks/main.yml": "---\n",
+	} {
+		if err := os.WriteFile(filepath.Join(ansibleDir, path), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	before, err := joinBootstrapContractHash(ansibleDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != len("sha256:")+sha256.Size*2 || !strings.HasPrefix(before, "sha256:") {
+		t.Fatalf("bootstrap contract hash = %q", before)
+	}
+	if err := os.WriteFile(filepath.Join(ansibleDir, "roles/example/tasks/main.yml"), []byte("---\n- debug: msg=changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := joinBootstrapContractHash(ansibleDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == before {
+		t.Fatalf("bootstrap contract hash did not change after a role change: %s", after)
 	}
 }
 
@@ -539,6 +577,17 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(ansibleDir, "node_join.yml"), []byte("---\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ansibleDir, "bootstrap.yml"), []byte("---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ansibleDir, "requirements.yml"), []byte("---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"group_vars", "roles"} {
+		if err := os.MkdirAll(filepath.Join(ansibleDir, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	artifactDir := t.TempDir()
