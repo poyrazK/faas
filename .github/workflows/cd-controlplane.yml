@@ -260,4 +260,23 @@ jobs:
             root@${{ env.CP_HOST }} \
             "/opt/faas/releases/${RELEASE_ID}/bin/deployctl bundle-check /opt/faas/releases/${RELEASE_ID} && /opt/faas/releases/${RELEASE_ID}/bin/deployctl deploy ${RELEASE_ID}"
 
+      - name: Restart configured optional S3 gateway
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} 'set -euo pipefail
+            if ! systemctl is-enabled --quiet faas-s3-gatewayd.service; then
+              echo "faas-s3-gatewayd is not enabled; optional object storage remains unchanged"
+              exit 0
+            fi
+            systemctl restart faas-s3-gatewayd.service
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --max-time 2 http://127.0.0.1:9096/readyz >/dev/null; then
+                exit 0
+              fi
+              sleep 2
+            done
+            journalctl -u faas-s3-gatewayd.service -n 100 --no-pager >&2
+            exit 1'
+
       # Legacy mutable upload/restart steps removed; deployment is handled by the immutable release controller above.

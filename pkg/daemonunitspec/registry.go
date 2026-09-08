@@ -114,6 +114,26 @@ var Registry = []Entry{
 	{Name: "builderd", Unit: UnitBuilderd, Role: RoleComputeOnly, Critical: true, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/builderd.sock", ReadyzURL: "http://127.0.0.1:9105/readyz"}},
 }
 
+// OptionalRegistry contains systemd-managed add-ons that require explicit
+// operator configuration before they can start. They are generated and
+// deployed from the same Unit source of truth as Registry entries, but they
+// are deliberately excluded from the core activation, role-templating,
+// release-health, and image-first-boot loops.
+var OptionalRegistry = []Entry{
+	{Name: "s3-gatewayd", Unit: UnitS3Gateway, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8084", ReadyzURL: "http://127.0.0.1:9096/readyz"}},
+}
+
+// UnitEntries returns fresh registry storage containing both always-on and
+// explicitly configured units. Callers that start or health-gate daemons must
+// continue using Registry; generators and static contract checks use this
+// combined view.
+func UnitEntries() []Entry {
+	out := make([]Entry, 0, len(Registry)+len(OptionalRegistry))
+	out = append(out, Registry...)
+	out = append(out, OptionalRegistry...)
+	return out
+}
+
 // UnitByName returns the daemonunit.Unit for the given daemon name.
 // The mapping is the canonical manifest.HostKeys → daemonunitspec.Unit
 // name (the manifest uses underscores in two cases — gatewayd_internal,

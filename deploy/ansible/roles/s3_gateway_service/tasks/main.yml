@@ -1,0 +1,212 @@
+---
+- name: s3_gateway_service — require a qualified provider registry when enabled
+  ansible.builtin.assert:
+    that:
+      - faas_box_role == 'control-plane'
+      - faas_object_storage_config_src | length > 0
+    fail_msg: >-
+      The branded S3 gateway runs only on a control-plane host and requires
+      faas_object_storage_config_src to name a qualified provider-registry JSON.
+  when: faas_object_storage_gateway_enabled | bool
+
+- name: s3_gateway_service — install provider-registry example
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../object-storage.example.json"
+    dest: /etc/faas/object-storage.json.example
+    owner: root
+    group: faas
+    mode: "0640"
+
+- name: s3_gateway_service — install systemd unit
+  ansible.builtin.copy:
+    src: faas-s3-gatewayd.service
+    dest: /etc/systemd/system/faas-s3-gatewayd.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: faas_s3_gateway_unit
+  notify: restart faas-s3-gatewayd
+
+- name: s3_gateway_service — reload systemd after installing the unit
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: faas_s3_gateway_unit.changed
+
+- name: s3_gateway_service — create unit drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-s3-gatewayd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: s3_gateway_service — install production role gate
+  ansible.builtin.template:
+    src: 99-faas-role.conf.j2
+    dest: /etc/systemd/system/faas-s3-gatewayd.service.d/99-faas-role.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-s3-gatewayd
+
+- name: s3_gateway_service — create bounded upload spool
+  ansible.builtin.file:
+    path: /var/spool/faas/s3-gatewayd
+    state: directory
+    owner: faas
+    group: faas
+    mode: "0700"
+
+- name: s3_gateway_service — create provider secret directory
+  ansible.builtin.file:
+    path: /etc/faas/secrets/object-storage
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: faas_object_storage_gateway_enabled | bool
+
+- name: s3_gateway_service — install provider registry
+  ansible.builtin.copy:
+    src: "{{ faas_object_storage_config_src }}"
+    dest: /etc/faas/object-storage.json
+    owner: root
+    group: faas
+    mode: "0640"
+  when: faas_object_storage_gateway_enabled | bool
+  notify:
+    - restart faas-s3-gatewayd
+    - restart faas-apid for object storage
+
+- name: s3_gateway_service — install optional provider credentials
+  ansible.builtin.copy:
+    src: "{{ faas_object_storage_provider_env_src }}"
+    dest: /etc/faas/secrets/object-storage/provider.env
+    owner: root
+    group: root
+    mode: "0400"
+  when:
+    - faas_object_storage_gateway_enabled | bool
+    - faas_object_storage_provider_env_src | length > 0
+  no_log: true
+  notify:
+    - restart faas-s3-gatewayd
+    - restart faas-apid for object storage
+
+- name: s3_gateway_service — remove stale provider credentials for ADC backends
+  ansible.builtin.file:
+    path: /etc/faas/secrets/object-storage/provider.env
+    state: absent
+  when:
+    - faas_object_storage_gateway_enabled | bool
+    - faas_object_storage_provider_env_src | length == 0
+  notify:
+    - restart faas-s3-gatewayd
+    - restart faas-apid for object storage
+
+- name: s3_gateway_service — read installed provider registry
+  ansible.builtin.slurp:
+    src: /etc/faas/object-storage.json
+  register: faas_object_storage_registry_file
+  when: faas_object_storage_gateway_enabled | bool
+
+- name: s3_gateway_service — enforce stable public S3 contract
+  ansible.builtin.assert:
+    that:
+      - (faas_object_storage_registry_file.content | b64decode | from_json).public_endpoint == 'https://s3.gregale.dev'
+      - (faas_object_storage_registry_file.content | b64decode | from_json).public_region == 'us-east-1'
+    fail_msg: >-
+      object-storage.json must expose https://s3.gregale.dev with SigV4 region
+      us-east-1; upstream provider endpoint and region remain independent.
+  when: faas_object_storage_gateway_enabled | bool
+
+- name: s3_gateway_service — create apid drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: s3_gateway_service — wire provider registry into apid
+  ansible.builtin.template:
+    src: 99-faas-object-storage.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-object-storage.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_object_storage_gateway_enabled | bool
+  notify: restart faas-apid for object storage
+
+- name: s3_gateway_service — remove apid object-storage wiring when disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d/99-faas-object-storage.conf
+    state: absent
+  when: not (faas_object_storage_gateway_enabled | bool)
+  notify: restart faas-apid for object storage
+
+- name: s3_gateway_service — inspect Caddy prerequisites
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ faas_object_storage_caddy_binary }}"
+    - "{{ faas_object_storage_caddyfile }}"
+  register: faas_object_storage_caddy_prerequisites
+  when: faas_object_storage_gateway_enabled | bool
+
+- name: s3_gateway_service — require existing Caddy installation
+  ansible.builtin.assert:
+    that: item.stat.exists
+    fail_msg: "required Caddy path is missing: {{ item.item }}"
+  loop: "{{ faas_object_storage_caddy_prerequisites.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: faas_object_storage_gateway_enabled | bool
+
+- name: s3_gateway_service — manage isolated Caddy route
+  ansible.builtin.blockinfile:
+    path: "{{ faas_object_storage_caddyfile }}"
+    marker: "# {mark} ANSIBLE MANAGED Gregale object storage"
+    state: "{{ 'present' if faas_object_storage_gateway_enabled else 'absent' }}"
+    block: |
+      s3.gregale.dev {
+          reverse_proxy 127.0.0.1:8084 {
+              header_up Host {host}
+          }
+      }
+    validate: "{{ faas_object_storage_caddy_binary }} validate --adapter caddyfile --config %s"
+  notify: reload Caddy for object storage
+
+# Apply config-triggered restarts before probing. Without this flush an
+# already-running gateway could satisfy the check with its old configuration,
+# then restart only after the play had reported success.
+- name: s3_gateway_service — apply configuration handlers before readiness
+  ansible.builtin.meta: flush_handlers
+
+- name: s3_gateway_service — enable and start configured gateway
+  ansible.builtin.systemd_service:
+    name: faas-s3-gatewayd.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: faas_object_storage_gateway_enabled | bool
+
+- name: s3_gateway_service — stop and disable gateway when requested
+  ansible.builtin.systemd_service:
+    name: faas-s3-gatewayd.service
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when: not (faas_object_storage_gateway_enabled | bool)
+
+- name: s3_gateway_service — verify dependency-aware readiness
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9096/readyz
+    method: GET
+    status_code: 200
+    timeout: 2
+  register: faas_object_storage_gateway_ready
+  until: faas_object_storage_gateway_ready.status | default(0) == 200
+  retries: 15
+  delay: 2
+  when: faas_object_storage_gateway_enabled | bool
