@@ -628,6 +628,8 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	store := state.NewMemStore()
 	app := seedApp(t, store, "limited", api.PlanScale)
 	app.MaxConcurrency = 1
+	app.IdleTimeoutS = 17
+	app.NodeID = "node-ssd"
 	r := pgRouter{store: store}
 	got, ok, err := r.toApp(context.Background(), app)
 	if err != nil || !ok {
@@ -635,6 +637,9 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	}
 	if got.MaxConcurrency != 1 {
 		t.Fatalf("app ceiling = %d, want 1", got.MaxConcurrency)
+	}
+	if got.IdleTimeoutS != 17 || got.NodeID != "node-ssd" {
+		t.Fatalf("routing fields = idle:%d node:%q, want 17/node-ssd", got.IdleTimeoutS, got.NodeID)
 	}
 	if got.Type != gateway.AppTypeApp {
 		t.Fatalf("app type = %q, want %q", got.Type, gateway.AppTypeApp)

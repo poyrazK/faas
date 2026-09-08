@@ -233,19 +233,17 @@ type PGBackend struct {
 	// mint; tests inject a fake that records the call.
 	certIssuer CertIssuer
 
-	// appResolver (Phase 2 / Gate A) maps appID → state.App so the
-	// per-node client cache can find apps.node_id without a second
-	// store hop. Optional: nil falls through to the legacy single-sched
-	// path. Production wires this to a closure that calls
+	// appResolver (Phase 2 / Gate A) maps appID → App when the normal
+	// hostname lookup has not already populated the app cache. Optional: nil
+	// falls through to the single-sched path. Production wires this to
 	// state.Store.AppByID; tests can return a synthetic App.
 	appResolver func(ctx context.Context, appID string) (App, bool, error)
 
 	// clientForApp (Phase 2 / Gate A) returns the schedd client that
-	// owns the given app. Mandatory when appResolver is set. Production
-	// wires this to scheddRouter.ScheddForApp; tests inject a closure
-	// that returns a static fake. Returning ok=false forces a fallback
-	// to the legacy b.sched field — useful for tests that exercise the
-	// single-sched path.
+	// owns the given app. Mandatory when appResolver is set. Production wires
+	// this to scheddRouter.ScheddForApp using the cached NodeID; tests inject a
+	// closure that returns a static fake. Returning ok=false surfaces a
+	// definitive routing error.
 	clientForApp func(ctx context.Context, app App) (Scheduler, bool, error)
 
 	// liveTargetLoader hydrates the process-local picker when schedd reports
@@ -1722,12 +1720,17 @@ func (b *PGBackend) RequestCertForSurface(ctx context.Context, surfaceID string)
 // fallback itself (no callers remain after PR-7).
 func (b *PGBackend) resolveSched(ctx context.Context, appID string) (Scheduler, error) {
 	if b.appResolver != nil && b.clientForApp != nil {
-		app, ok, err := b.appResolver(ctx, appID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("gatewayd-internal: app %s: not found (transient resolver miss; legacy single-box fallback removed in PR-7)", appID)
+		app, ok := b.getApp(appID)
+		if !ok || app.NodeID == "" {
+			var err error
+			app, ok, err = b.appResolver(ctx, appID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, fmt.Errorf("gatewayd-internal: app %s: not found (transient resolver miss; legacy single-box fallback removed in PR-7)", appID)
+			}
+			b.putApp(app)
 		}
 		if app.NodeID == "" {
 			return nil, fmt.Errorf("gatewayd-internal: app %s has empty NodeID (pre-migration row; legacy single-box fallback removed in PR-7)", appID)

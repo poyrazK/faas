@@ -2532,7 +2532,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 	}
 	if e.events != nil {
-		e.events.Emit(ctx, events.QueueAccepted{
+		e.events.EmitAsync(ctx, events.QueueAccepted{
 			EmitAt:    time.Now().UTC(),
 			WakeID:    wakeID,
 			AppID:     appID,
@@ -2549,7 +2549,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// GDPR export can isolate per-account wake timelines.
 	if e.events != nil {
 		now := time.Now().UTC()
-		e.events.Emit(ctx, events.Admitted{
+		e.events.EmitAsync(ctx, events.Admitted{
 			EmitAt:    now,
 			WakeID:    wakeID,
 			AppID:     appID,
@@ -2803,7 +2803,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		method = "restore"
 	}
 	if e.events != nil {
-		e.events.Emit(bootCtx, events.BootStarted{
+		e.events.EmitAsync(bootCtx, events.BootStarted{
 			EmitAt:             time.Now().UTC(),
 			WakeID:             bootInput.wakeID,
 			AppID:              bootInput.appID,
@@ -3126,7 +3126,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	if e.events != nil {
 		now := time.Now().UTC()
-		e.events.Emit(ctx, events.BootCompleted{
+		e.events.EmitAsync(ctx, events.BootCompleted{
 			EmitAt:             now,
 			WakeID:             bootInput.wakeID,
 			AppID:              bootInput.appID,

@@ -3420,7 +3420,7 @@ func (v *JailerVMM) emitReadiness200(ctx context.Context, l Lease, healthcheckPa
 	}
 	now := time.Now()
 	elapsed := now.Sub(v.readinessStartedAt)
-	v.events.Emit(ctx, events.Readiness200{
+	v.events.EmitAsync(ctx, events.Readiness200{
 		EmitAt:          now.UTC(),
 		WakeID:          wakeID,
 		AppID:           appID,
@@ -3443,7 +3443,7 @@ func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.T
 	if !ok || fields.WakeID == "" {
 		return
 	}
-	v.events.Emit(ctx, events.RestoreBreakdown{
+	v.events.EmitAsync(ctx, events.RestoreBreakdown{
 		EmitAt:               at.UTC(),
 		WakeID:               fields.WakeID,
 		AppID:                fields.AppID,
