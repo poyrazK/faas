@@ -76,6 +76,7 @@ func TestPGAllowlist_AllowsVerifiedDomain(t *testing.T) {
 	}
 }
 
+// adr: 167
 func TestPGAllowlistWithWildcard_AllowsVerifiedSubdomain(t *testing.T) {
 	custom := newFakeDomainLookup()
 	wildcard := func(_ context.Context, host string) (any, error) {
