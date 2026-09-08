@@ -85,13 +85,63 @@
     mode: "0770"
   when: arch == "amd64"
 
-- name: supply_chain_scanners — refresh Grype vulnerability database
+- name: supply_chain_scanners — inspect the installed Grype database
   ansible.builtin.command:
-    cmd: "{{ install_root }}/bin/grype db update"
+    argv:
+      - "{{ install_root }}/bin/grype"
+      - db
+      - status
+      - --output
+      - json
+  environment:
+    GRYPE_DB_CACHE_DIR: "{{ grype_db_cache_dir }}"
+  register: faas_grype_db_status
+  changed_when: false
+  failed_when: false
+  when: arch == "amd64"
+
+- name: supply_chain_scanners — record Grype database validity
+  ansible.builtin.set_fact:
+    faas_grype_db_valid: >-
+      {{
+        faas_grype_db_status.rc == 0 and
+        ((faas_grype_db_status.stdout | from_json).valid | default(false) | bool)
+      }}
+  when: arch == "amd64"
+
+- name: supply_chain_scanners — check for a newer Grype database
+  ansible.builtin.command:
+    argv:
+      - "{{ install_root }}/bin/grype"
+      - db
+      - check
+      - --output
+      - json
+  environment:
+    GRYPE_DB_CACHE_DIR: "{{ grype_db_cache_dir }}"
+  register: faas_grype_db_check
+  changed_when: false
+  failed_when: false
+  when:
+    - arch == "amd64"
+    - faas_grype_db_valid | bool
+
+- name: supply_chain_scanners — update Grype vulnerability database when required
+  ansible.builtin.command:
+    argv:
+      - "{{ install_root }}/bin/grype"
+      - db
+      - update
   environment:
     GRYPE_DB_CACHE_DIR: "{{ grype_db_cache_dir }}"
   changed_when: false
-  when: arch == "amd64"
+  when:
+    - arch == "amd64"
+    - >-
+      not (faas_grype_db_valid | bool) or
+      (faas_grype_db_check.rc | default(1) | int) != 0 or
+      (((faas_grype_db_check.stdout | default('{}', true) | from_json).updateAvailable |
+      default(false)) | bool)
 
 # The database updater initially runs as root, and older bootstrap images left
 # the version shard root-only. imaged runs as faas-imaged:faas and must be able

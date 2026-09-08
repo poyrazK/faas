@@ -452,7 +452,11 @@
          (faas_release_install.stderr | default('')))
       changed_when: true
 
-    - name: Retry release installation after SBoM baseline initialization
+    # The first install already verified the Cosign bundle and extracted the
+    # release before the missing-baseline gate stopped activation. Reuse that
+    # staged release here so the retry runs the catalog and SBoM gates without
+    # repeating tarball verification and extraction.
+    - name: Retry staged release installation after SBoM baseline initialization
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -460,8 +464,6 @@
           - install
           - --git-sha
           - "{{ faas_join_release_git_sha }}"
-          - --tarball-path
-          - /var/lib/faas/bootstrap/release.tar.gz
           - --node
           - "{{ faas_join_database_node }}"
           - --role

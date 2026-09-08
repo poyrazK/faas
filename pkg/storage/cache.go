@@ -495,6 +495,9 @@ func (c *LocalCacheBackend) CachedGeneration(key string) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("storage: cache: read generation %q: %w", key, err)
 	}
+	if !regularFileExists(path) && !c.parentLocalArtifactExists(key) {
+		return "", false, nil
+	}
 	generation := strings.TrimSpace(string(b))
 	return generation, generation != "", nil
 }
@@ -510,11 +513,16 @@ func (c *LocalCacheBackend) MarkGeneration(key, generation string) error {
 		return fmt.Errorf("storage: cache: invalid generation for %q", key)
 	}
 	path, _ := c.cacheFileFor(key)
+	parentLocal := c.parentLocalArtifactExists(key)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, err := os.Stat(path); err != nil {
-		return fmt.Errorf("storage: cache: mark generation %q without cached blob: %w", key, err)
+	if !regularFileExists(path) && !parentLocal {
+		return fmt.Errorf("storage: cache: mark generation %q without cached blob: %w", key, os.ErrNotExist)
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o770); err != nil {
+		return fmt.Errorf("storage: cache: create generation directory %q: %w", key, err)
+	}
+	_ = os.Chmod(filepath.Dir(path), 0o770|os.ModeSetgid)
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".faas-cache-generation-*")
 	if err != nil {
 		return fmt.Errorf("storage: cache: create generation marker %q: %w", key, err)
@@ -536,6 +544,23 @@ func (c *LocalCacheBackend) MarkGeneration(key, generation string) error {
 		return fmt.Errorf("storage: cache: install generation marker %q: %w", key, err)
 	}
 	return nil
+}
+
+func regularFileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+// parentLocalArtifactExists reports whether the wrapped backend already owns
+// a canonical local copy. Generation markers for those keys describe that
+// parent artifact, so they do not need a duplicate blob in this cache.
+func (c *LocalCacheBackend) parentLocalArtifactExists(key string) bool {
+	resolver, ok := c.parent.(LocalPathResolver)
+	if !ok {
+		return false
+	}
+	path, local, err := resolver.LocalPath(key)
+	return err == nil && local && path != "" && regularFileExists(path)
 }
 
 // refresh reports whether the next Get must read the parent and replace the
@@ -853,7 +878,9 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 		if err := os.Remove(metaPath); err == nil {
 			_ = err
 		}
-		_ = os.Remove(e.path + ".generation")
+		if !c.parentLocalArtifactExists(e.key) {
+			_ = os.Remove(e.path + ".generation")
+		}
 	}
 	return nil
 }
