@@ -25,14 +25,17 @@
 package sched
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/prometheus/client_golang/prometheus"
@@ -40,6 +43,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/triggerconfig"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -62,6 +66,109 @@ type fakeDeadLetterStore struct {
 	// return ("", nil) for the listed item_identifiers
 	// regardless of the records map.
 	forceMissingIDs map[string]bool
+}
+
+func installPollerFactory(t *testing.T, kind string, factory func(sqlc.Trigger) (triggerSource, error)) {
+	t.Helper()
+	defaultRegistry.mu.Lock()
+	previous, hadPrevious := defaultRegistry.factories[kind]
+	defaultRegistry.factories[kind] = factory
+	defaultRegistry.mu.Unlock()
+	t.Cleanup(func() {
+		defaultRegistry.mu.Lock()
+		defer defaultRegistry.mu.Unlock()
+		if hadPrevious {
+			defaultRegistry.factories[kind] = previous
+		} else {
+			delete(defaultRegistry.factories, kind)
+		}
+	})
+}
+
+func TestNewPollerForTriggerPreservesFactoryError(t *testing.T) {
+	want := errors.New("bad poller config")
+	installPollerFactory(t, "failing-test-kind", func(sqlc.Trigger) (triggerSource, error) {
+		return nil, want
+	})
+	source, registered, err := newPollerForTrigger(sqlc.Trigger{Kind: "failing-test-kind"})
+	if source != nil || !registered || !errors.Is(err, want) {
+		t.Fatalf("newPollerForTrigger = (%v, %v, %v), want (nil, true, target error)", source, registered, err)
+	}
+}
+
+func TestDispatchTriggerOpensSealedKafkaCredentialsForFactory(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("GenerateX25519Identity: %v", err)
+	}
+	sealed, err := triggerconfig.Seal(api.TriggerKindKafka,
+		json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password":"runtime-secret"}}`),
+		identity.Recipient())
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	var factoryConfig []byte
+	installPollerFactory(t, string(api.TriggerKindKafka), func(trigger sqlc.Trigger) (triggerSource, error) {
+		factoryConfig = append([]byte(nil), trigger.Config...)
+		return &fakePollerForFilter{}, nil
+	})
+	l := makeLoopForDLQ().WithTriggerSecretIdentities([]*age.X25519Identity{identity})
+	trigger := sqlc.Trigger{
+		ID:   pgtypeUUIDFromString(t, "00000000-0000-0000-0000-000000000099"),
+		Kind: string(api.TriggerKindKafka), Config: sealed,
+	}
+	if err := l.dispatchOneTrigger(context.Background(), trigger, &fakeDeadLetterStore{}, func(string) api.Plan { return api.PlanPro }); err != nil {
+		t.Fatalf("dispatchOneTrigger: %v", err)
+	}
+	if !bytes.Contains(factoryConfig, []byte("runtime-secret")) || bytes.Contains(factoryConfig, []byte("password_sealed")) {
+		t.Fatalf("factory config was not opened: %s", factoryConfig)
+	}
+	if bytes.Contains(trigger.Config, []byte("runtime-secret")) {
+		t.Fatalf("original trigger row was mutated: %s", trigger.Config)
+	}
+}
+
+func TestDispatchTriggerAcceptsLegacyPlaintextKafkaConfig(t *testing.T) {
+	legacy := []byte(`{"brokers":["b:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password":"legacy-secret"}}`)
+	var factoryConfig []byte
+	installPollerFactory(t, string(api.TriggerKindKafka), func(trigger sqlc.Trigger) (triggerSource, error) {
+		factoryConfig = append([]byte(nil), trigger.Config...)
+		return &fakePollerForFilter{}, nil
+	})
+	l := makeLoopForDLQ()
+	trigger := sqlc.Trigger{
+		ID:   pgtypeUUIDFromString(t, "00000000-0000-0000-0000-000000000098"),
+		Kind: string(api.TriggerKindKafka), Config: legacy,
+	}
+	if err := l.dispatchOneTrigger(context.Background(), trigger, &fakeDeadLetterStore{}, func(string) api.Plan { return api.PlanPro }); err != nil {
+		t.Fatalf("dispatchOneTrigger: %v", err)
+	}
+	if !bytes.Equal(factoryConfig, legacy) {
+		t.Fatalf("factory config = %s, want legacy plaintext", factoryConfig)
+	}
+}
+
+func TestDispatchTriggerRejectsCorruptSecretWithoutDisclosure(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("GenerateX25519Identity: %v", err)
+	}
+	installPollerFactory(t, string(api.TriggerKindKafka), func(sqlc.Trigger) (triggerSource, error) {
+		t.Fatal("factory must not run for corrupt credentials")
+		return nil, nil
+	})
+	l := makeLoopForDLQ().WithTriggerSecretIdentities([]*age.X25519Identity{identity})
+	const ciphertext = "bm90LWFnZQ=="
+	trigger := sqlc.Trigger{
+		ID:     pgtypeUUIDFromString(t, "00000000-0000-0000-0000-000000000097"),
+		Kind:   string(api.TriggerKindKafka),
+		Config: []byte(`{"sasl":{"password_sealed":"` + ciphertext + `"}}`),
+	}
+	err = l.dispatchOneTrigger(context.Background(), trigger, &fakeDeadLetterStore{}, func(string) api.Plan { return api.PlanPro })
+	if err == nil || !strings.Contains(err.Error(), "open kafka trigger credentials") ||
+		strings.Contains(err.Error(), ciphertext) {
+		t.Fatalf("dispatch error = %v, want sanitized open error", err)
+	}
 }
 
 func (f *fakeDeadLetterStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error) {

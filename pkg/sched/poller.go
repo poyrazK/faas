@@ -170,24 +170,24 @@ func registerPoller(kind string, factory func(t sqlc.Trigger) (triggerSource, er
 }
 
 // newPollerForTrigger looks up the registered poller factory for
-// t.Kind and instantiates one. Returns (nil, false) on miss — the
+// t.Kind and instantiates one. Returns (nil, false, nil) on miss — the
 // dispatcher logs the gap and continues.
 //
 // Concurrency: the registry is read-mostly (writes happen at init
 // time). We don't need an RWMutex; the writers hold the lock
 // briefly and readers after init never block.
-func newPollerForTrigger(t sqlc.Trigger) (triggerSource, bool) {
+func newPollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	defaultRegistry.mu.Lock()
 	factory, ok := defaultRegistry.factories[t.Kind]
 	defaultRegistry.mu.Unlock()
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	src, err := factory(t)
 	if err != nil {
-		return nil, false
+		return nil, true, err
 	}
-	return src, true
+	return src, true, nil
 }
 
 var defaultRegistry = pollerRegistry{}
