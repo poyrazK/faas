@@ -12,7 +12,9 @@
 # The CLI compatibility asset remains in the first job. The daemon bundle
 # job below is the production release surface: it builds the immutable
 # multi-daemon tarball, signs it with GitHub OIDC, emits an SPDX SBOM, and
-# publishes all of the install-time verification material together.
+# publishes all of the install-time verification material together. Those
+# independent builds run concurrently; the final publication job waits for
+# both so a failed CLI build cannot leave a canonical bundle attached alone.
 #
 # Tag strategy: every release commits to a `release/v<tag>` branch AND
 # force-updates the MAJOR moving tag (vN from vN.M.P) so that
@@ -186,7 +188,6 @@ jobs:
 
   daemon-bundle:
     name: Build and sign canonical daemon bundle
-    needs: build
     runs-on: ubuntu-22.04
     # The builder-base publisher is a separate workflow and can use most of
     # its 25-minute budget before the immutable tag is available. Leave room
@@ -204,13 +205,20 @@ jobs:
 
       - name: Install pinned release tooling
         env:
+          COSIGN_VERSION: "2.4.1"
+          COSIGN_SHA256: "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
           SYFT_VERSION: "1.49.0"
           SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
           CRANE_VERSION: "0.21.1"
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release-tools"
-          GOBIN="$RUNNER_TEMP/release-tools" go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.1
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            -o "$RUNNER_TEMP/release-tools/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  $RUNNER_TEMP/release-tools/cosign" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/release-tools/cosign"
           # Syft is released as a pinned binary because v1.49.0 requires
           # Go >= 1.26.3 while the repository's Go toolchain remains pinned
           # to the 1.25 line for the application and CI vulnerability gate.
@@ -509,6 +517,18 @@ jobs:
           name: gregale-daemon-release-${{ github.sha }}
           path: ${{ runner.temp }}/gregale-release/
           if-no-files-found: error
+          retention-days: 1
+
+  publish-daemon-bundle:
+    name: Attach canonical daemon bundle
+    needs: [build, daemon-bundle]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download canonical release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: gregale-daemon-release-${{ github.sha }}
+          path: ${{ runner.temp }}/gregale-release
 
       - name: Attach canonical release artifacts
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
