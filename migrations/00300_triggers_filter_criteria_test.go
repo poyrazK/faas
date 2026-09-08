@@ -92,7 +92,7 @@ func TestMigrations_00300_TriggersFilterCriteria(t *testing.T) {
 	err := pool.QueryRow(ctx, `
 		SELECT data_type, is_nullable, column_default
 		  FROM information_schema.columns
-		 WHERE table_schema = 'public' AND table_name = 'triggers' AND column_name = 'filter_criteria'
+		 WHERE table_schema = current_schema() AND table_name = 'triggers' AND column_name = 'filter_criteria'
 	`).Scan(&dataType, &isNullable, &colDflt)
 	if err != nil {
 		t.Fatalf("query filter_criteria column: %v (the migration must add the column to `triggers`; absence here means the ADD COLUMN statement did not run)", err)

@@ -37,11 +37,15 @@ func TestMigrations_00333_DeploymentAuditBackfill(t *testing.T) {
 	// Seed three events rows: one in scope, one out of scope by
 	// age, one out of scope by malformed deployment_id.
 	const deploymentID = "11111111-2222-3333-4444-555555555555"
+	// jsonb_build_object takes "any" arguments, so an uncast $1 gives
+	// the server nothing to infer from (42P18). The explicit ::text
+	// also pins the JSON shape the backfill's ->>'deployment_id'
+	// regex guard reads: a JSON string, not a JSON number/object.
 	_, err := pool.Exec(ctx, `
 		INSERT INTO events (at, actor, kind, subject, data) VALUES
 		  (now() - INTERVAL '10 days', 'apid', 'app.deployed',
 		   '00000000-0000-0000-0000-000000000001'::uuid,
-		   jsonb_build_object('deployment_id', $1, 'app_id',
+		   jsonb_build_object('deployment_id', $1::text, 'app_id',
 		                      '00000000-0000-0000-0000-000000000001')),
 		  (now() - INTERVAL '100 days', 'apid', 'app.deployed',
 		   '00000000-0000-0000-0000-000000000002'::uuid,

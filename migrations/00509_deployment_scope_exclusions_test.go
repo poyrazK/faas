@@ -74,8 +74,8 @@ func seedExclusionFixture(ctx context.Context, t *testing.T, pool poolIface) (ac
 		t.Fatalf("seed project: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, project_id, status, created_at)
-		values ($3, $1, 'checkout-api', $2, 'active', now())
+		insert into apps (id, account_id, slug, project_id, status, created_at, ram_mb)
+		values ($3, $1, 'checkout-api', $2, 'active', now(), 256)
 		on conflict (id) do nothing
 	`, accountID, projectID, appID); err != nil {
 		t.Fatalf("seed app: %v", err)

@@ -91,6 +91,9 @@ func TestMigration_00095_1_ColumnShape(t *testing.T) {
 func TestMigration_00095_2_AllowsNull(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -104,9 +107,7 @@ func TestMigration_00095_2_AllowsNull(t *testing.T) {
 	}
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "rebal-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}
@@ -141,6 +142,9 @@ func TestMigration_00095_2_AllowsNull(t *testing.T) {
 func TestMigration_00095_3_AllowsPastTimestamp(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -153,9 +157,7 @@ func TestMigration_00095_3_AllowsPastTimestamp(t *testing.T) {
 	}
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "past-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}
@@ -192,6 +194,9 @@ func TestMigration_00095_3_AllowsPastTimestamp(t *testing.T) {
 func TestMigration_00095_4_RejectsFutureTimestamp(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -204,9 +209,7 @@ func TestMigration_00095_4_RejectsFutureTimestamp(t *testing.T) {
 	}
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "future-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}

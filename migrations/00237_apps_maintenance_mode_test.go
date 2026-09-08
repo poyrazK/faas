@@ -117,17 +117,27 @@ func TestMigrations_00237_AppsMaintenanceMode(t *testing.T) {
 		t.Errorf("trigger event_manipulation = %q, want 'UPDATE' (the trigger fires on AFTER UPDATE)", triggerEvent)
 	}
 
-	// pg_proc.prosrc pin.
-	var proSrc string
+	// pg_proc.prosrc pin. The trigger and its function share the
+	// name `apps_maintenance_mode_notify` (see 00237_apps_maintenance_mode.sql
+	// and schema.sql) — resolve the function through pg_trigger so
+	// this stays pinned to whatever function the trigger actually
+	// executes, even if a later migration renames it.
+	var proName, proSrc string
 	err = pool.QueryRow(ctx, `
-		select prosrc
-		  from pg_proc p
-		  join pg_namespace n on n.oid = p.pronamespace
-		 where n.nspname = current_schema()
-		   and p.proname = 'apps_maintenance_mode_notify_fn'
-	`).Scan(&proSrc)
+		select p.proname, p.prosrc
+		  from pg_trigger tg
+		  join pg_class c on c.oid = tg.tgrelid
+		  join pg_proc p on p.oid = tg.tgfoid
+		 where c.relnamespace = current_schema()::regnamespace
+		   and c.relname = 'apps'
+		   and tg.tgname = 'apps_maintenance_mode_notify'
+		   and not tg.tgisinternal
+	`).Scan(&proName, &proSrc)
 	if err != nil {
-		t.Fatalf("query apps_maintenance_mode_notify_fn function body: %v", err)
+		t.Fatalf("query apps_maintenance_mode_notify trigger function body: %v", err)
+	}
+	if proName != "apps_maintenance_mode_notify" {
+		t.Errorf("trigger function name = %q, want 'apps_maintenance_mode_notify'", proName)
 	}
 	for _, want := range []string{
 		"pg_notify",

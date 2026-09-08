@@ -26,12 +26,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00194_CronFireNowRequests(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// Table presence + status enum CHECK.
 	checkRows, err := pool.Query(ctx, `

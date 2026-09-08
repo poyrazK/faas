@@ -26,12 +26,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00191_AppSecretsKid(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// Column shape: must be text, nullable. kid is the age-1...
 	// recipient string of the host identity that sealed the row

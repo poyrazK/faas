@@ -28,6 +28,7 @@ package migrations_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -218,6 +219,11 @@ func TestMigrations_00293_ValidateMode(t *testing.T) {
 // primary key. Pattern mirrors probeUUID in the 00345 companion
 // test.
 func validateModeProbeUUID(i int) string {
-	const hex = "0123456789abcdef"
-	return "00000000-0000-0000-0000-0000000029" + string([]byte{hex[(i/16)%16], hex[i%16]}) + "0"
+	// The final UUID group is exactly 12 hex digits. The previous
+	// hand-counted literal carried an 11-digit prefix and appended two
+	// more, producing a 13-digit group that Postgres rejects with
+	// 22P02. %012x keeps the width structural instead of hand-counted.
+	// 0x2900 keeps the "29" (00293) marker and stays clear of the
+	// fixed probe ids used above (…2933, …2939).
+	return fmt.Sprintf("00000000-0000-0000-0000-%012x", 0x2900+i)
 }

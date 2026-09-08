@@ -30,12 +30,16 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// (1) The column must exist with NOT NULL DEFAULT false. pg's
 	// information_schema is the canonical source of truth — a typo
@@ -45,7 +49,7 @@ func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	err := pool.QueryRow(ctx, `
 		select is_nullable, column_default
 		from information_schema.columns
-		where table_schema = 'public'
+		where table_schema = current_schema()
 		  and table_name = 'apps'
 		  and column_name = 'route_metrics_enabled'
 	`).Scan(&isNullable, &columnDefault)
@@ -65,7 +69,7 @@ func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	err = pool.QueryRow(ctx, `
 		select indexdef
 		from pg_indexes
-		where schemaname = 'public'
+		where schemaname = current_schema()
 		  and tablename = 'apps'
 		  and indexname = 'apps_route_metrics_enabled_idx'
 	`).Scan(&indexDef)
@@ -84,13 +88,33 @@ func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	// gatewayd handler here — only the column is exercised.
 	acctID := "00000000-0000-0000-0000-000000002121"
 	appID := "00000000-0000-0000-0000-000000002122"
+	// The plan lives on `accounts`, not on `apps` — apps rows inherit
+	// their plan through account_id (apps_account_id_fkey). Seeding the
+	// parent account keeps the hobby-plan intent of this fixture.
+	if _, err := pool.Exec(ctx, `
+		insert into accounts (id, email, plan)
+		values ($1, 'route-metrics-test@example.com', 'hobby')
+		on conflict (id) do nothing
+	`, acctID); err != nil {
+		t.Fatalf("seed accounts: %v", err)
+	}
 	_, err = pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, plan, route_metrics_enabled)
-		values ($1, $2, 'route-metrics-test', 'hobby', true)
+		insert into apps (id, account_id, slug, route_metrics_enabled, ram_mb)
+		values ($1, $2, 'route-metrics-test', true, 256)
 		on conflict (id) do update set route_metrics_enabled = excluded.route_metrics_enabled
 	`, appID, acctID)
 	if err != nil {
 		t.Errorf("expected route_metrics_enabled=true to be accepted, got: %v", err)
+	}
+	// Positive round-trip: the value the insert wrote must read back.
+	var gotEnabled bool
+	if err := pool.QueryRow(ctx, `
+		select route_metrics_enabled from apps where id = $1
+	`, appID).Scan(&gotEnabled); err != nil {
+		t.Fatalf("read back route_metrics_enabled: %v", err)
+	}
+	if !gotEnabled {
+		t.Errorf("route_metrics_enabled = false after insert of true; want true")
 	}
 
 	// (4) Replay safety: a second ADD COLUMN IF NOT EXISTS must
@@ -101,7 +125,7 @@ func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	var count int
 	err = pool.QueryRow(ctx, `
 		select count(*) from information_schema.columns
-		where table_schema = 'public'
+		where table_schema = current_schema()
 		  and table_name = 'apps'
 		  and column_name = 'route_metrics_enabled'
 	`).Scan(&count)
@@ -120,8 +144,8 @@ func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	// 22P02 (invalid_text_representation) error guard nails
 	// the type down.
 	_, err = pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, plan, route_metrics_enabled)
-		values ('00000000-0000-0000-0000-000000002123', $1, 'route-metrics-bad', 'hobby', 'not-a-boolean')
+		insert into apps (id, account_id, slug, route_metrics_enabled, ram_mb)
+		values ('00000000-0000-0000-0000-000000002123', $1, 'route-metrics-bad', 'not-a-boolean', 256)
 		on conflict (id) do nothing
 	`, acctID)
 	var pgErr *pgconn.PgError

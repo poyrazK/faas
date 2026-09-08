@@ -179,6 +179,9 @@ func TestMigration_00090_2_ScheddTargetURLColumnShape(t *testing.T) {
 func TestMigration_00090_3_EmptyUUIDCheck(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -197,9 +200,7 @@ func TestMigration_00090_3_EmptyUUIDCheck(t *testing.T) {
 	}
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "empty-uuid-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}
@@ -250,14 +251,15 @@ func TestMigration_00090_3_EmptyUUIDCheck(t *testing.T) {
 func TestMigration_00090_4_ScheddTargetURLSchemeCheck(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "scheme-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}

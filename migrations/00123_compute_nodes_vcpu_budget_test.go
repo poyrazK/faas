@@ -87,6 +87,9 @@ func TestMigration_00123_1_VCPUBudgetColumnShape(t *testing.T) {
 func TestMigration_00123_2_CheckConstraintRejectsZero(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -95,9 +98,7 @@ func TestMigration_00123_2_CheckConstraintRejectsZero(t *testing.T) {
 	// vcpu_budget alone).
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "chk-zero-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}
@@ -122,14 +123,15 @@ func TestMigration_00123_2_CheckConstraintRejectsZero(t *testing.T) {
 func TestMigration_00123_3_CanonicalRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active, vcpu_budget)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true, 320)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle, vcpu_budget) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle, 320)
 	`, nodeID, "rt-"+nodeID[:8]); err != nil {
 		t.Fatalf("insert with vcpu_budget=320: %v", err)
 	}
@@ -153,14 +155,15 @@ func TestMigration_00123_3_CanonicalRoundTrip(t *testing.T) {
 func TestMigration_00123_4_DefaultBackfill(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "dflt-"+nodeID[:8]); err != nil {
 		t.Fatalf("insert without vcpu_budget: %v", err)
 	}
@@ -265,9 +268,7 @@ func TestMigration_00123_7_DownSymmetry(t *testing.T) {
 	// Probe: round-trip a value through the re-created column.
 	var nodeID = uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active, vcpu_budget)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true, 240)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle, vcpu_budget) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle, 240)
 	`, nodeID, "rsym-"+nodeID[:8]); err != nil {
 		t.Fatalf("insert after re-create: %v", err)
 	}
