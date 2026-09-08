@@ -3,6 +3,7 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -183,5 +184,38 @@ func TestNewStagingProvisioningGateRequiresExactQualification(t *testing.T) {
 				t.Fatal("unqualified staging gate opened")
 			}
 		})
+	}
+}
+
+func TestNewStagingCanaryAccountGate(t *testing.T) {
+	values := map[string]string{}
+	getenv := func(key string) string { return values[key] }
+	gate := NewStagingCanaryAccountGate(getenv)
+	if !gate("account-a") {
+		t.Fatal("empty allowlist should keep staging accounts eligible")
+	}
+
+	values[CanaryAccountsEnv] = " account-a,account-b "
+	if !gate("account-a") || !gate("account-b") {
+		t.Fatal("listed account was rejected")
+	}
+	if gate("account-c") {
+		t.Fatal("unlisted account was admitted")
+	}
+
+	for name, raw := range map[string]string{
+		"empty entry":       "account-a,,account-b",
+		"oversized account": "account-a," + strings.Repeat("x", 256),
+	} {
+		t.Run(name, func(t *testing.T) {
+			values[CanaryAccountsEnv] = raw
+			if gate("account-a") {
+				t.Fatal("malformed allowlist opened the gate")
+			}
+		})
+	}
+	values[CanaryAccountsEnv] = strings.Repeat("account-a,", 100) + "account-a"
+	if gate("account-a") {
+		t.Fatal("oversized allowlist opened the gate")
 	}
 }

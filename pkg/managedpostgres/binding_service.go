@@ -16,6 +16,10 @@ type BindingServiceOptions struct {
 	LeaseDuration       time.Duration
 	ProviderTimeout     time.Duration
 	ProvisioningEnabled func() bool
+	// ProvisioningAllowed optionally narrows an enabled rollout to specific
+	// accounts. It is intended for staging canaries; deletion remains
+	// available regardless of this gate.
+	ProvisioningAllowed func(context.Context, string) bool
 	Now                 func() time.Time
 	NewID               func() string
 	NewLeaseToken       func() string
@@ -34,6 +38,7 @@ type BindingService struct {
 	leaseDuration       time.Duration
 	providerTimeout     time.Duration
 	provisioningEnabled func() bool
+	provisioningAllowed func(context.Context, string) bool
 	now                 func() time.Time
 	newID               func() string
 	newLeaseToken       func() string
@@ -61,6 +66,9 @@ func NewBindingService(registry *Registry, databases Store, bindings BindingStor
 	if options.ProvisioningEnabled == nil {
 		options.ProvisioningEnabled = func() bool { return false }
 	}
+	if options.ProvisioningAllowed == nil {
+		options.ProvisioningAllowed = func(context.Context, string) bool { return true }
+	}
 	if options.LeaseDuration < time.Second || options.ProviderTimeout < time.Second {
 		return nil, ErrInvalid
 	}
@@ -81,6 +89,7 @@ func NewBindingService(registry *Registry, databases Store, bindings BindingStor
 		leaseDuration:       options.LeaseDuration,
 		providerTimeout:     options.ProviderTimeout,
 		provisioningEnabled: options.ProvisioningEnabled,
+		provisioningAllowed: options.ProvisioningAllowed,
 		now:                 options.Now,
 		newID:               options.NewID,
 		newLeaseToken:       options.NewLeaseToken,
@@ -95,6 +104,9 @@ func (s *BindingService) Create(ctx context.Context, request CreateBindingReques
 		!validBindingScope(request.Scope) || !validEnvironmentKey(request.EnvironmentKey) ||
 		(request.Access != CredentialReadWrite && request.Access != CredentialReadOnly) {
 		return Binding{}, ErrInvalid
+	}
+	if !s.provisioningAllowed(ctx, request.AccountID) {
+		return Binding{}, ErrUnavailable
 	}
 	now := s.now()
 	binding, _, err := s.bindings.ReserveBinding(ctx, Binding{
@@ -136,7 +148,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	case BindingStateReady:
 		return binding, nil
 	case BindingStateProvisioning, BindingStateFailed:
-		if !s.provisioningEnabled() {
+		if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
 			return Binding{}, ErrUnavailable
 		}
 	case BindingStateDeleting, BindingStateDeleted:

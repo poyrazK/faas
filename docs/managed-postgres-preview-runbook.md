@@ -4,6 +4,16 @@ This runbook covers the dark/isolated preview. Customer provisioning remains
 disabled until the staging qualification evidence is reviewed and the exact
 backend fingerprint is approved.
 
+## Staging canary rollout
+
+Keep the global qualification gates enabled only in the isolated staging
+environment. To start with one or a small set of accounts, set
+`FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS` to their exact account IDs separated by
+commas. Verify a database create and binding smoke for each listed account,
+then expand the list deliberately. Leave the variable empty only when every
+qualified staging account is an intentional canary. The gate is fail-closed on
+malformed entries and never blocks database deletion or credential revocation.
+
 ## Admission failures
 
 - `managed_postgres_usage_stale`: stop new reservations, verify the provider

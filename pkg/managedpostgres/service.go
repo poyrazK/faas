@@ -21,6 +21,10 @@ type ServiceOptions struct {
 	ProviderTimeout     time.Duration
 	PollInterval        time.Duration
 	ProvisioningEnabled func() bool
+	// ProvisioningAllowed optionally narrows an enabled rollout to specific
+	// accounts. It is intended for staging canaries; deletion remains
+	// available regardless of this gate.
+	ProvisioningAllowed func(context.Context, string) bool
 	Now                 func() time.Time
 	NewID               func() string
 	NewLeaseToken       func() string
@@ -38,6 +42,7 @@ type Service struct {
 	providerTimeout        time.Duration
 	pollInterval           time.Duration
 	provisioningEnabled    func() bool
+	provisioningAllowed    func(context.Context, string) bool
 	now                    func() time.Time
 	newID                  func() string
 	newLeaseToken          func() string
@@ -74,6 +79,9 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 	if options.ProvisioningEnabled == nil {
 		options.ProvisioningEnabled = func() bool { return false }
 	}
+	if options.ProvisioningAllowed == nil {
+		options.ProvisioningAllowed = func(context.Context, string) bool { return true }
+	}
 	if options.LeaseDuration < time.Second || options.ProviderTimeout < time.Second || options.PollInterval < time.Second {
 		return nil, ErrInvalid
 	}
@@ -98,6 +106,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		providerTimeout:        options.ProviderTimeout,
 		pollInterval:           options.PollInterval,
 		provisioningEnabled:    options.ProvisioningEnabled,
+		provisioningAllowed:    options.ProvisioningAllowed,
 		now:                    options.Now,
 		newID:                  options.NewID,
 		newLeaseToken:          options.NewLeaseToken,
@@ -126,6 +135,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	}
 	if err := request.Spec.Validate(); err != nil {
 		return Database{}, err
+	}
+	if !s.provisioningAllowed(ctx, request.AccountID) {
+		return Database{}, ErrUnavailable
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
@@ -191,6 +203,9 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 	}
 	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() {
 		return Database{}, ErrInvalid
+	}
+	if !s.provisioningAllowed(ctx, request.AccountID) {
+		return Database{}, ErrUnavailable
 	}
 	source, err := s.store.Get(ctx, request.AccountID, request.SourceDatabaseID)
 	if err != nil {
@@ -276,7 +291,7 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	case StateDeleting, StateDeleted:
 		return Database{}, ErrConflict
 	case StateProvisioning, StateFailed:
-		if !s.provisioningEnabled() {
+		if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
 			return Database{}, ErrUnavailable
 		}
 	default:
