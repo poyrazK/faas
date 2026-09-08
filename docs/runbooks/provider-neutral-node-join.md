@@ -109,6 +109,13 @@ host is a valid runner when it is dedicated to deployment work. A GitHub-hosted
 runner is not sufficient because it cannot reach the private control-plane
 database and mesh.
 
+The workflow runs the complete-fleet preflight by default. For a rollout of an
+existing node after a recent successful complete-fleet preflight, set
+`skip_fleet_preflight=true` when another manifest peer is intentionally powered
+off or otherwise unavailable. This input passes the CLI's explicit
+`--skip-fleet-preflight` assertion; do not use it when adopting a new node or
+after changing the fleet topology.
+
 Bootstrap the runner once with `deploy/ansible/fleet_runner.yml` or the
 `bootstrap-fleet-runner` Make target. The role pins the runner archive, creates
 its non-root system account, installs the runner's native dependencies, and
