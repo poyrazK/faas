@@ -6,11 +6,69 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/browser"
 )
+
+type devBrowserLauncher struct {
+	urls []string
+	err  error
+}
+
+func (l *devBrowserLauncher) Launch(url string) error {
+	l.urls = append(l.urls, url)
+	return l.err
+}
+
+func TestOpenDeveloperEnvironment(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStdout string
+		wantStderr string
+	}{
+		{
+			name:       "opens browser",
+			wantStdout: "Opening https://dev.example.test\n",
+		},
+		{
+			name:       "falls back to URL",
+			err:        errors.New("no display"),
+			wantStdout: "Opening https://dev.example.test\n",
+			wantStderr: "Open this URL manually:\n  https://dev.example.test",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			launcher := &devBrowserLauncher{err: tt.err}
+			oldBrowser := browser.Default
+			browser.Default = launcher
+			t.Cleanup(func() { browser.Default = oldBrowser })
+
+			stdout, restoreStdout := captureStdout(t)
+			t.Cleanup(restoreStdout)
+			stderr, restoreStderr := captureStderr(t)
+			t.Cleanup(restoreStderr)
+
+			openDeveloperEnvironment("https://dev.example.test")
+
+			if len(launcher.urls) != 1 || launcher.urls[0] != "https://dev.example.test" {
+				t.Fatalf("browser URLs = %v, want one dev URL", launcher.urls)
+			}
+			if got := stdout.String(); got != tt.wantStdout {
+				t.Errorf("stdout = %q, want %q", got, tt.wantStdout)
+			}
+			if got := stderr.String(); !strings.Contains(got, tt.wantStderr) {
+				t.Errorf("stderr = %q, want substring %q", got, tt.wantStderr)
+			}
+		})
+	}
+}
 
 func TestDevSourceFingerprintTracksDeployableFiles(t *testing.T) {
 	dir := t.TempDir()

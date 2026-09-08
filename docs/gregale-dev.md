@@ -41,8 +41,14 @@ gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
 gregale dev status             # show developer-environment quota usage
 gregale dev --no-logs          # keep the watcher quiet for scripts
+gregale dev --open             # open the verified dev URL after the first live sync
 gregale dev --env-file .env.dev # opt in to syncing local config as secrets
 ```
+
+`--open` launches the stable developer URL in the default browser after the
+first successful sync. It opens at most once per session, including with
+`--once`; a browser-launch failure is non-fatal and leaves a copyable URL in
+the terminal. JSON output never launches a browser.
 
 `--env-file` is explicit and additive/update-only. Each non-empty, non-comment
 `KEY=VALUE` entry is written to the developer app's sealed default secret

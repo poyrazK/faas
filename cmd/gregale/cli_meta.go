@@ -591,6 +591,7 @@ var cliCommands = []cliCommand{
 			{Name: "once", Short: "deploy once and exit"},
 			{Name: "stop", Short: "tear down the developer environment"},
 			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
+			{Name: "open", Short: "open the developer environment URL after the first live sync"},
 		},
 		Subcommands: []cliSub{
 			{Name: "status", Short: "show developer-environment quota usage"},

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/browser"
 )
 
 const (
@@ -285,16 +286,20 @@ func cmdDev(args []string) int {
 	once := fs.Bool("once", false, "deploy once and exit instead of watching for changes")
 	stop := fs.Bool("stop", false, "tear down this project's developer environment")
 	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream")
+	open := fs.Bool("open", false, "open the developer environment URL after the first live sync")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs]", "dev")
+		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs] [--open]", "dev")
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs]", "dev")
+		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs] [--open]", "dev")
 		return 1
 	}
 	if *once && *stop {
 		return printErr("Invalid flags", fmt.Errorf("--once and --stop are mutually exclusive"))
+	}
+	if *open && *stop {
+		return printErr("Invalid flags", fmt.Errorf("--open cannot be combined with --stop"))
 	}
 	if *stop && *envFile != "" {
 		return printErr("Invalid flags", fmt.Errorf("--env-file cannot be combined with --stop"))
@@ -369,6 +374,14 @@ func cmdDev(args []string) int {
 	runtimeLogCtx, cancelRuntimeLogs := context.WithCancel(ctx)
 	defer cancelRuntimeLogs()
 	runtimeLogsStarted := false
+	devBrowserOpened := false
+	openDevBrowser := func() {
+		if !*open || jsonOutput || devBrowserOpened {
+			return
+		}
+		devBrowserOpened = true
+		openDeveloperEnvironment(session.App.URL)
+	}
 	lastSynced, err := devSourceFingerprint(sourceDir, envFilePath)
 	if err != nil {
 		return printErr("Could not watch developer source", err)
@@ -411,6 +424,9 @@ func cmdDev(args []string) int {
 			code := cmdDeployTarballToExisting(deployCtx, config.deployArgs(session.App.Slug, sourceDir), true, execution)
 			if code == 0 && !jsonOutput {
 				PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
+			}
+			if code == 0 {
+				openDevBrowser()
 			}
 			return code
 		},
@@ -481,6 +497,17 @@ func cmdDev(args []string) int {
 			return printErr("Could not watch developer source", waitErr)
 		},
 	})
+}
+
+// openDeveloperEnvironment opens a verified developer environment in the
+// user's default browser. Browser failures are non-fatal: the URL is always
+// printed so a headless or unsupported environment can continue manually.
+func openDeveloperEnvironment(url string) {
+	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", url)
+	if err := browser.Open(url); err != nil {
+		PrintFail(osStderr, "Could not open browser: %v", err)
+		_, _ = fmt.Fprintf(osStderr, "  Open this URL manually:\n  %s\n", url)
+	}
 }
 
 // cmdDevStatus reports the account-wide developer-environment budget. It is
