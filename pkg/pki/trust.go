@@ -19,10 +19,10 @@ func ValidateTrustBundle(rootDir, hostRole string, extraSANs AltNames) error {
 }
 
 // ValidateTrustBundleForNode is the topology-aware trust-bundle validator.
-// In addition to the canonical daemon CNs, it requires the vmmd leaves on a
-// compute-only box to use nodeCN. That CN is the compute_nodes identity used
-// by the handshake verifier; accepting the generic vmmd.faas CN here would
-// allow a bundle to pass staging and then be drained by schedd's verifier.
+// In addition to the canonical daemon CNs, it requires compute-only leaves
+// that connect to control-plane node verifiers to use nodeCN. That CN is the
+// compute_nodes identity used by the handshake verifier; accepting a generic
+// daemon CN here would let a bundle pass staging and fail in production.
 func ValidateTrustBundleForNode(rootDir, hostRole string, extraSANs AltNames, nodeCN string) error {
 	return validateTrustBundle(rootDir, hostRole, extraSANs, nodeCN)
 }
@@ -61,7 +61,7 @@ func validateTrustBundle(rootDir, hostRole string, extraSANs AltNames, nodeCN st
 			return fmt.Errorf("pki: leaf %q is outside its validity window", certPath)
 		}
 		expectedCN := role.CommonName
-		if nodeCN != "" && hostRole == "compute-only" && role.Directory == "vmmd" {
+		if nodeCN != "" && hostRole == "compute-only" && RoleUsesNodeIdentity(role) {
 			expectedCN = nodeCN
 		}
 		if cert.Subject.CommonName != expectedCN {

@@ -136,3 +136,8 @@
     - role: log_archive
     - role: role_convergence
     - role: fleet_verify
+      # node_join imports this bootstrap before it installs the requested
+      # release. Existing enabled daemons may still execute an older binary
+      # against already-staged new config and trust material, so their
+      # readiness is intentionally proved by node_join after installation.
+      when: not (faas_join_defer_service_handlers | default(false) | bool)

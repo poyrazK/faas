@@ -92,6 +92,7 @@ func TestValidateRuntimeBasesEnvRequiresAllPinnedRefs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runtime-bases.env")
 	valid := strings.Join([]string{
 		"FAAS_DEPLOY_BASE_REF_MINIMAL=ghcr.io/example/base-minimal@sha256:" + strings.Repeat("0", 64),
+		"FAAS_DEPLOY_BASE_REF_DEBIAN_PARENT=ghcr.io/example/base-debian-parent@sha256:" + strings.Repeat("7", 64),
 		"FAAS_DEPLOY_BASE_REF_NODE22=ghcr.io/example/runner-node22@sha256:" + strings.Repeat("a", 64),
 		"FAAS_DEPLOY_BASE_REF_PYTHON312=ghcr.io/example/runner-python312@sha256:" + strings.Repeat("b", 64),
 		"FAAS_DEPLOY_BASE_REF_GO124=ghcr.io/example/runner-go124@sha256:" + strings.Repeat("c", 64),
@@ -120,6 +121,7 @@ func TestValidateRuntimeBasesEnvMatchesSignedManifestRefs(t *testing.T) {
 	body := "FAAS_DEPLOY_BASE_REF_NODE22=" + ref + "\n"
 	for _, line := range []string{
 		"FAAS_DEPLOY_BASE_REF_MINIMAL=ghcr.io/example/base-minimal@sha256:" + strings.Repeat("0", 64),
+		"FAAS_DEPLOY_BASE_REF_DEBIAN_PARENT=ghcr.io/example/base-debian-parent@sha256:" + strings.Repeat("7", 64),
 		"FAAS_DEPLOY_BASE_REF_PYTHON312=ghcr.io/example/runner-python312@sha256:" + strings.Repeat("b", 64),
 		"FAAS_DEPLOY_BASE_REF_GO124=ghcr.io/example/runner-go124@sha256:" + strings.Repeat("c", 64),
 		"FAAS_DEPLOY_BASE_REF_GO124_ALPINE=ghcr.io/example/runner-go124-alpine@sha256:" + strings.Repeat("d", 64),
@@ -132,13 +134,14 @@ func TestValidateRuntimeBasesEnvMatchesSignedManifestRefs(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := map[string]string{
-		"minimal":      "ghcr.io/example/base-minimal@sha256:" + strings.Repeat("0", 64),
-		"node22":       ref,
-		"python312":    "ghcr.io/example/runner-python312@sha256:" + strings.Repeat("b", 64),
-		"go124":        "ghcr.io/example/runner-go124@sha256:" + strings.Repeat("c", 64),
-		"go124_alpine": "ghcr.io/example/runner-go124-alpine@sha256:" + strings.Repeat("d", 64),
-		"node24":       "ghcr.io/example/runner-node24@sha256:" + strings.Repeat("e", 64),
-		"python313":    "ghcr.io/example/runner-python313@sha256:" + strings.Repeat("f", 64),
+		"minimal":       "ghcr.io/example/base-minimal@sha256:" + strings.Repeat("0", 64),
+		"debian_parent": "ghcr.io/example/base-debian-parent@sha256:" + strings.Repeat("7", 64),
+		"node22":        ref,
+		"python312":     "ghcr.io/example/runner-python312@sha256:" + strings.Repeat("b", 64),
+		"go124":         "ghcr.io/example/runner-go124@sha256:" + strings.Repeat("c", 64),
+		"go124_alpine":  "ghcr.io/example/runner-go124-alpine@sha256:" + strings.Repeat("d", 64),
+		"node24":        "ghcr.io/example/runner-node24@sha256:" + strings.Repeat("e", 64),
+		"python313":     "ghcr.io/example/runner-python313@sha256:" + strings.Repeat("f", 64),
 	}
 	if err := validateRuntimeBasesEnv(path, expected); err != nil {
 		t.Fatalf("signed runtime contract rejected: %v", err)
@@ -401,7 +404,7 @@ func TestCopyTrustBundleNeverCopiesCAKey(t *testing.T) {
 	extra := pki.AltNames{DNSNames: []string{"fsn-2.gregale.dev"}}
 	for _, role := range pki.RolesForBox(roleComputeOnly) {
 		var err error
-		if role.Directory == "vmmd" {
+		if pki.RoleUsesNodeIdentity(role) {
 			err = pki.EnsureLeafWithCNAndSANs(source, role, "fsn-2.faas", caCert, caKey, false, extra)
 		} else {
 			err = pki.EnsureLeafWithSANs(source, role, caCert, caKey, false, extra)
@@ -547,6 +550,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	runtimeBasesEnv := filepath.Join(artifactDir, "runtime-bases.env")
 	if err := os.WriteFile(runtimeBasesEnv, []byte(
 		"FAAS_DEPLOY_BASE_REF_MINIMAL=ghcr.io/example/base-minimal@sha256:0000000000000000000000000000000000000000000000000000000000000000\n"+
+			"FAAS_DEPLOY_BASE_REF_DEBIAN_PARENT=ghcr.io/example/base-debian-parent@sha256:7777777777777777777777777777777777777777777777777777777777777777\n"+
 			"FAAS_DEPLOY_BASE_REF_NODE22=ghcr.io/example/runner-node22@sha256:1111111111111111111111111111111111111111111111111111111111111111\n"+"FAAS_DEPLOY_BASE_REF_PYTHON312=ghcr.io/example/runner-python312@sha256:2222222222222222222222222222222222222222222222222222222222222222\n"+"FAAS_DEPLOY_BASE_REF_GO124=ghcr.io/example/runner-go124@sha256:3333333333333333333333333333333333333333333333333333333333333333\n"+"FAAS_DEPLOY_BASE_REF_GO124_ALPINE=ghcr.io/example/runner-go124-alpine@sha256:4444444444444444444444444444444444444444444444444444444444444444\n"+"FAAS_DEPLOY_BASE_REF_NODE24=ghcr.io/example/runner-node24@sha256:5555555555555555555555555555555555555555555555555555555555555555\n"+"FAAS_DEPLOY_BASE_REF_PYTHON313=ghcr.io/example/runner-python313@sha256:6666666666666666666666666666666666666666666666666666666666666666\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -564,7 +568,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}
 	for _, role := range pki.RolesForBox(roleComputeOnly) {
 		var err error
-		if role.Directory == "vmmd" {
+		if pki.RoleUsesNodeIdentity(role) {
 			err = pki.EnsureLeafWithCNAndSANs(pkiDir, role, "fsn-2.faas", caCertObj, caKeyObj, false, pki.AltNames{DNSNames: []string{"fsn-2.gregale.dev"}})
 		} else {
 			err = pki.EnsureLeafWithSANs(pkiDir, role, caCertObj, caKeyObj, false, pki.AltNames{DNSNames: []string{"fsn-2.gregale.dev"}})

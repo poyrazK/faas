@@ -157,7 +157,7 @@ INSERT INTO mirror_invocation_results (
 // mirror VM — the goroutine classifies the canned response
 // (200, "ok") and increments the metric.
 func TestE2E_MirrorDispatch_HappyPath(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -189,7 +189,7 @@ func TestE2E_MirrorDispatch_HappyPath(t *testing.T) {
 // gateway's INSERT and the rollup's SELECT surfaces here, not
 // at 3am in a customer dashboard.
 func TestE2E_MirrorRollup_AggregatesByRuleHour(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -247,7 +247,7 @@ WHERE rule_id = $1
 // table only has rows for the trailing week, and the per-hour
 // summary preserves the totals".
 func TestE2E_MirrorSweep_DeletesOnlyStaleRows(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

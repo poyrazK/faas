@@ -680,6 +680,15 @@
         - builderd
         - imaged
 
+    - name: Require dependency-aware readiness after release installation
+      ansible.builtin.include_role:
+        name: fleet_verify
+      vars:
+        faas_verify_strict: true
+        # The node-scoped doctor already ran against the installed release
+        # before service activation. This pass proves live dependencies.
+        faas_verify_run_doctor: false
+
     - name: Report local node readiness to the controller
       ansible.builtin.debug:
         msg: >-

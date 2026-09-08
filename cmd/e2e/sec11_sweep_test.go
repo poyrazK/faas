@@ -57,7 +57,7 @@ import (
 // quota_e2e_test.go / secrets_e2e_test.go.
 func openSchemaPG(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		t.Skip("pgtest.Open skipped (no DATABASE_URL)")
 	}
@@ -152,48 +152,20 @@ func waitTCP(t *testing.T, addr string, d time.Duration) {
 // *before* any KVM/listener binding, so the test is CI-safe (no
 // /dev/kvm needed, no root needed).
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "faas-sec11-bin-*")
+	// Build every daemon binary exactly once for the whole cmd/e2e test
+	// process. The harness's Start variants reuse the same directory, so
+	// the ~1 min of link time is paid once per shard instead of once per
+	// test (see e2etest.EnsureSharedBinaries).
+	dir, err := e2etest.EnsureSharedBinaries()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sec11_test: mkdir tmp: %v\n", err)
+		fmt.Fprintf(os.Stderr, "e2e TestMain: %v\n", err)
 		os.Exit(2)
 	}
-
-	// The test binary's cwd is the package directory; resolve to the
-	// module root so `go build ./cmd/{apid,vmmd}` finds the packages.
-	wd, _ := os.Getwd()
-	root := wd
-	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(root)
-		if parent == root {
-			fmt.Fprintf(os.Stderr, "sec11_test: cannot find module root from %s\n", wd)
-			os.Exit(2)
-		}
-		root = parent
-	}
-
-	build := func(pkg, out string) {
-		var buf bytes.Buffer
-		c := exec.Command("go", "build", "-o", out, "./"+pkg)
-		c.Dir = root
-		c.Stdout = &buf
-		c.Stderr = &buf
-		if err := c.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "sec11_test: go build %s: %v\n%s", pkg, err, buf.String())
-			os.Exit(2)
-		}
-	}
-
 	apidBinary = filepath.Join(dir, "apid")
-	build("cmd/apid", apidBinary)
-
 	vmmdBinary = filepath.Join(dir, "vmmd")
-	build("cmd/vmmd", vmmdBinary)
 
 	code := m.Run()
-	_ = os.RemoveAll(dir)
+	e2etest.RemoveSharedBinaries()
 	os.Exit(code)
 }
 

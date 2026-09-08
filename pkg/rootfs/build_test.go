@@ -590,6 +590,63 @@ func TestNormalizeFunctionHandler_NodeExportAdapterRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNormalizeFunctionHandler_NodeFetchAdapterRoundTrip(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed")
+	}
+	staging := t.TempDir()
+	appDir := filepath.Join(staging, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "package.json"), []byte(`{"type":"module"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const handler = `export default {
+  async fetch(request, env, ctx) {
+    const body = await request.json();
+    return new Response(JSON.stringify({
+      method: request.method,
+      path: new URL(request.url).pathname,
+      query: new URL(request.url).search,
+      trace: request.headers.get('x-trace-id'),
+      body,
+      runtime: env.FAAS_RUNTIME,
+      hasWaitUntil: typeof ctx.waitUntil === 'function',
+    }), { status: 207, headers: { 'content-type': 'application/json', 'x-fetch-adapter': 'yes' } });
+  },
+};
+`
+	if err := os.WriteFile(filepath.Join(appDir, "handler.js"), []byte(handler), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := NormalizeFunctionHandler(staging, "/app/node22.js"); err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := os.ReadFile(filepath.Join(appDir, "node22.js"))
+	if err != nil {
+		t.Fatalf("node22.js: %v", err)
+	}
+	if !bytes.Contains(adapter, []byte("new Request")) || !bytes.Contains(adapter, []byte("arrayBuffer")) {
+		t.Fatalf("node22.js is missing Fetch API translation: %q", adapter)
+	}
+	cmd := exec.Command("node", filepath.Join(appDir, "node22.js"))
+	cmd.Dir = appDir
+	cmd.Env = append(os.Environ(), "FAAS_RUNTIME=node22")
+	cmd.Stdin = strings.NewReader(`{"method":"POST","path":"/fetch","headers":{"x-trace-id":"trace-1"},"query":"a=1","body_b64":"eyJ4Ijo3fQ=="}
+{"method":"POST","path":"/fetch","headers":{"x-trace-id":"trace-2"},"query":"a=2","body_b64":"eyJ4Ijo4fQ=="}`)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("node Fetch API adapter: %v", err)
+	}
+	if got := strings.Count(string(out), `"status":207`); got != 2 {
+		t.Fatalf("Fetch API adapter responses = %d, want 2: %s", got, out)
+	}
+	if !strings.Contains(string(out), `"body_b64":"eyJtZXRob2QiOiJQT1NUIiwicGF0aCI6Ii9mZXRjaCIsInF1ZXJ5IjoiP2E9MSIsInRyYWNlIjoidHJhY2UtMSIsImJvZHkiOnsieCI6N30sInJ1bnRpbWUiOiJub2RlMjIiLCJoYXNXYWl0VW50aWwiOnRydWV9"`) {
+		t.Fatalf("unexpected Fetch API response: %s", out)
+	}
+}
+
 func TestNormalizeFunctionHandler_NodeCommonJSAdapterRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is not installed")
@@ -851,21 +908,15 @@ func TestBuild_TranslatesTarballCapToProblem(t *testing.T) {
 		t.Fatalf("mkdir staging: %v", err)
 	}
 	tarball := filepath.Join(dir, "src.tar.gz")
-	// 256 MiB body, over Free's 256 MiB cap. The cap is enforced against
-	// the declared header size, so we don't need to stream 256 MiB through
-	// io.CopyN — just a header that claims 256 MiB. The tar file itself
-	// remains small; only the cap check runs against the declared size.
-	writeGzTar(t, tarball, "handler.js", bytes.Repeat([]byte("z"), 256*1024*1024))
+	// Shrink Free's cap to 1 MiB and ship a 2 MiB body. The cap is applied
+	// to the cumulative unpacked size, so this takes the same path as a
+	// 300 MiB tarball against the production 256 MiB cap without writing
+	// hundreds of megabytes through gzip on every run.
+	limits := withAppLayerCapMB(t, api.PlanFree, 1)
+	writeGzTar(t, tarball, "handler.js", bytes.Repeat([]byte("z"), 2*1024*1024))
 
-	limits, ok := api.LimitsFor(api.PlanFree)
-	if !ok {
-		t.Fatal("api.LimitsFor(Free) not ok")
-	}
-
-	// Override the build's plan cap to a tiny value so the post-unpack
-	// cap matches the tarball. We don't go through the apid-side
-	// SourceTarballMaxMB gate — Build() applies the cap directly from
-	// in.Plan/AppLayerMaxMB.
+	// We don't go through the apid-side SourceTarballMaxMB gate — Build()
+	// applies the cap directly from in.Plan via limitsFor.
 	b := NewBuilder(&fakeRunner{})
 	// Build a manifest that fits, no OCI layers. The only path that
 	// matters is the tarball-cap path.

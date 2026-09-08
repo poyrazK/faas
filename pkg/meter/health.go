@@ -34,11 +34,11 @@ type HealthStatus struct {
 //
 // Semantics: a tick is "stale" when it has never fired, or when
 // now − lastFire > StaleAfterMultiplier × interval. Any single stale
-// tick flips Healthy to false. The first-tick warm-up caveat:
-// meterd reports 503 from boot until the first sample tick (default
-// 60 s), which systemd's watchdog treats as a slow start — documented
-// on cmd/meterd/main.go::/healthz. Keep the duplicate tick names here
-// in lockstep with runTicks / runQuotaTicks literal "name" arguments.
+// tick flips Healthy to false. A newly constructed Loop is unhealthy until
+// Run starts; Run performs the core sample and quota passes immediately while
+// maintenance loops retain their configured delayed first tick. Keep the
+// duplicate tick names here in lockstep with runTicks / runQuotaTicks literal
+// "name" arguments.
 //
 // Loop.Run only wires dunning when l.dunning != nil (loop.go:64-69);
 // reflect that here so a test (or production misconfig) running without

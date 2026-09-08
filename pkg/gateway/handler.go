@@ -89,6 +89,10 @@ type App struct {
 	// The gateway uses it as an immediate burst signal while schedd remains the
 	// authority for admissions and sustained autoscaling decisions.
 	AutoscaleTargetRPS int
+	// IdleTimeoutS mirrors apps.idle_timeout_s. Zero uses the plan default.
+	// It bounds how long a cached target may go untouched before the gateway
+	// checks authoritative instance state at the next request.
+	IdleTimeoutS int
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can
@@ -441,7 +445,11 @@ type Target struct {
 	NodeID     string
 	InstanceID string
 	WakeID     string
-	AddedAt    time.Time
+	// AddedAt is refreshed after each successful proxied request. Once it is
+	// older than the app's idle timeout, the handler validates the target
+	// against authoritative instance state before forwarding. This closes the
+	// small LISTEN/NOTIFY race at the RUNNING -> PARKED boundary.
+	AddedAt time.Time
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment
 	// override port copied from AdmitInstanceResponse.port. 0 =
 	// legacy 8080 (vmmd wire-boundary default). The forwarder
@@ -583,6 +591,19 @@ type liveTargetReconciler interface {
 // that intentionally model a pick failure after admission.
 type warmPathPicker interface {
 	PickWarm(appID string) PickResult
+}
+
+// liveTargetValidator checks an idle-aged cached target against durable
+// instance state. It is called only on the first request after an idle window,
+// keeping normal warm traffic entirely in memory.
+type liveTargetValidator interface {
+	ValidateLiveTarget(ctx context.Context, appID, instanceID string) (bool, error)
+}
+
+// targetActivityRecorder advances a cached target's local activity stamp after
+// a successful response so busy targets do not pay idle validation reads.
+type targetActivityRecorder interface {
+	TouchTarget(appID, instanceID string, at time.Time)
 }
 
 // staleTargetRecovery is an optional production capability. When the
@@ -5346,6 +5367,19 @@ haveApp:
 	if warmPicker, ok := h.backend.(warmPathPicker); ok {
 		pick = warmPicker.PickWarm(app.ID)
 	}
+	if pick.OK && h.warmTargetNeedsValidation(app, pick.Target, time.Now()) {
+		if validator, ok := h.backend.(liveTargetValidator); ok {
+			live, validateErr := validator.ValidateLiveTarget(r.Context(), app.ID, pick.Target.InstanceID)
+			if validateErr != nil {
+				if h.log != nil {
+					h.log.Warn("gateway: validate idle-aged target", "app_id", app.ID,
+						"instance_id", pick.Target.InstanceID, "err", validateErr)
+				}
+			} else if !live {
+				pick = PickResult{}
+			}
+		}
+	}
 	if !pick.OK {
 		// Per-app fan-out admission (issue #168). The WakeGate's
 		// shouldWake predicate runs HealthyCount against the plan's
@@ -6029,7 +6063,11 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// not evidence of activity (a misconfigured client can hammer a dead
 	// instance with 401s forever and we'd never park it).
 	if h.lastSeen != nil && status >= 200 && status < 300 && target.InstanceID != "" {
-		h.lastSeen.Touch(target.InstanceID, time.Now())
+		now := time.Now()
+		h.lastSeen.Touch(target.InstanceID, now)
+		if recorder, ok := h.backend.(targetActivityRecorder); ok {
+			recorder.TouchTarget(appID, target.InstanceID, now)
+		}
 	}
 	// ADR-127: enqueue a request-telemetry row at the single
 	// exit funnel. nil-safe — the recorder is wired at boot in
@@ -6835,6 +6873,25 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 		return false, "", WakeMethodUnspecified, err
 	}
 	return cold, wakeID, method, nil
+}
+
+func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Time) bool {
+	idleSeconds := app.IdleTimeoutS
+	if idleSeconds <= 0 {
+		if limits, ok := api.LimitsFor(app.Plan); ok {
+			idleSeconds = limits.IdleTimeoutS
+		}
+	}
+	if idleSeconds <= 0 || target.InstanceID == "" {
+		return false
+	}
+	lastActivity := target.AddedAt
+	if h.lastSeen != nil {
+		if seen, ok := h.lastSeen.Get(target.InstanceID); ok && seen.After(lastActivity) {
+			lastActivity = seen
+		}
+	}
+	return lastActivity.IsZero() || !now.Before(lastActivity.Add(time.Duration(idleSeconds)*time.Second))
 }
 
 // coldStart is path 1 of ensureCapacity: HealthyCount == 0, so we go

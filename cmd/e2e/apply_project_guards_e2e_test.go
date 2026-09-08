@@ -169,7 +169,7 @@ func applyProjectRaw(t *testing.T, h *e2etest.Harness, key, slug, prodBranch str
 // TestApplyProject_Guard_NeverEmpty pins that an empty repo (no
 // detectable workloads) trips the neverEmpty guard with 422.
 func TestApplyProject_Guard_NeverEmpty(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -197,7 +197,7 @@ func TestApplyProject_Guard_NeverEmpty(t *testing.T) {
 // rows. (Same shape as the quota tests — the store Tx must roll
 // back cleanly on guard failure.)
 func TestApplyProject_Guard_NeverEmptyNoRows(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -221,7 +221,7 @@ func TestApplyProject_Guard_NeverEmptyNoRows(t *testing.T) {
 // path: an apply whose prod_branch matches the project's existing
 // production_branch is accepted.
 func TestApplyProject_Guard_ProductionBranchMatch(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -252,7 +252,7 @@ func TestApplyProject_Guard_ProductionBranchMatch(t *testing.T) {
 // this would break the apply default — this test pins the
 // current behaviour so a regression surfaces here first.
 func TestApplyProject_Guard_ProductionBranchEmptySkips(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -274,7 +274,7 @@ func TestApplyProject_Guard_ProductionBranchEmptySkips(t *testing.T) {
 // project's existing branch trips state.ErrProdBranchMismatch.
 // The handler maps this to 409 prod_branch_mismatch.
 func TestApplyProject_Guard_ProductionBranchMismatch(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -300,7 +300,7 @@ func TestApplyProject_Guard_ProductionBranchMismatch(t *testing.T) {
 // convention < compose in the rank table, so the downgrade guard
 // trips and the handler returns 409.
 func TestApplyProject_Guard_ScanSourceStable(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -333,7 +333,7 @@ func TestApplyProject_Guard_ScanSourceStable(t *testing.T) {
 // an upgrade is always accepted (a convention project can adopt
 // compose). No downgrade, so no rejection.
 func TestApplyProject_Guard_ScanSourceUpgrade(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -361,7 +361,7 @@ func TestApplyProject_Guard_ScanSourceUpgrade(t *testing.T) {
 // row would render nothing. We tolerate the table not existing
 // (older schemas) but check for the row when it does.
 func TestApplyProject_Guard_NoWorkloadsAuditRow(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

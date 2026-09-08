@@ -96,7 +96,7 @@ func findOrgInvitationByEmail(t *testing.T, h *e2etest.Harness, orgID, email str
 //     token_hash_prefix of exactly 8 chars
 //   - the state row's revoked_at stamp lands within the test window
 func TestE2E_InvitationAcceptAndRevokeRoundtrip(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -203,7 +203,7 @@ func TestE2E_InvitationAcceptAndRevokeRoundtrip(t *testing.T) {
 //   - Free → {used:1, limit:0, plan:"free"} (fail-closed accessor)
 //   - Hobby → {used:1, limit:10, plan:"hobby"}
 func TestE2E_SeatUsageEndpoint(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

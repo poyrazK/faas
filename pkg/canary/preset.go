@@ -60,6 +60,29 @@ type MirrorSummaryStore interface {
 	MirrorSummaryForDeployment(ctx context.Context, appID, deploymentID string, since time.Time) (MirrorSummary, error)
 }
 
+// SafeReleaseHealthStore exposes the durable health signals that are allowed
+// to block a canary promotion. The meterd adapter implements this by reading
+// enabled alert rules; keeping the interface here avoids importing pkg/state
+// into the runtime package.
+//
+// Only rules with an explicit rollback/demote action are returned. A
+// webhook-only alert is notification-only and must not unexpectedly freeze a
+// customer's rollout.
+type SafeReleaseHealthStore interface {
+	FiringSafeReleaseSignals(ctx context.Context, appID string) ([]HealthSignal, error)
+}
+
+// HealthSignal is the small, log-safe projection of a firing safe-release
+// alert. It intentionally excludes thresholds and observed values because the
+// progression worker only needs an explanation for why it held the ladder.
+type HealthSignal struct {
+	RuleID      string
+	RuleName    string
+	Metric      string
+	Action      string
+	LastFiredAt time.Time
+}
+
 // rolloutRecoveryClient is the optional APID recovery surface used when a
 // mirror_clean condition observes a drift. The production api.Client
 // implements it; tests that exercise ordinary wall-clock progression do not
@@ -262,6 +285,9 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 			stats.SkippedNotElapsed++
 			continue
 		}
+		if !p.safeReleaseHealthReady(ctx, row, &stats) {
+			continue
+		}
 		// Advance through APID's atomic state transition. The endpoint
 		// derives nextStage.Percent from the persisted preset, so the
 		// runtime cannot apply a stale or caller-invented traffic value.
@@ -314,6 +340,47 @@ func (p *Progression) mirrorCleanReady(ctx context.Context, row CanaryRow, condi
 	return true
 }
 
+// safeReleaseHealthReady holds promotion while an explicitly actionable
+// health alert is firing. This closes the race where the alert evaluator has
+// detected a regression but the independent wall-clock progression tick would
+// otherwise promote before the rollback/demotion request lands.
+//
+// The store is optional for the package's small unit-test seam. Production's
+// canaryStoreAdapter always implements it; when present, a read error fails
+// closed and leaves the canary at its current traffic share.
+func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow, stats *Stats) bool {
+	checker, ok := p.Store.(SafeReleaseHealthStore)
+	if !ok {
+		return true
+	}
+	signals, err := checker.FiringSafeReleaseSignals(ctx, row.AppID)
+	if err != nil {
+		p.Log.Warn("canary: safe-release health gate unavailable; holding promotion",
+			"deployment_id", row.ID, "err", err)
+		stats.Errors++
+		return false
+	}
+	if len(signals) == 0 {
+		return true
+	}
+	stats.SkippedHealthGate++
+	if p.Ops != nil {
+		if c := p.Ops.CanaryProgressionHealthGateBlockedTotal(); c != nil {
+			c.Inc()
+		}
+	}
+	first := signals[0]
+	p.Log.Warn("canary: promotion held by firing safe-release health alert",
+		"deployment_id", row.ID,
+		"rule_id", first.RuleID,
+		"rule_name", first.RuleName,
+		"metric", first.Metric,
+		"action", first.Action,
+		"last_fired_at", first.LastFiredAt,
+		"firing_rules", len(signals))
+	return false
+}
+
 func (p *Progression) abortMirrorDrift(ctx context.Context, row CanaryRow, windowSeconds int, summary MirrorSummary, stats *Stats) {
 	recovery, ok := p.APID.(rolloutRecoveryClient)
 	if !ok || row.AppSlug == "" {
@@ -353,4 +420,5 @@ type Stats struct {
 	SkippedAlreadyTerminal int
 	SkippedNotElapsed      int
 	SkippedMirrorNotReady  int
+	SkippedHealthGate      int
 }

@@ -16,6 +16,7 @@ package canary
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -36,6 +37,8 @@ type stubStore struct {
 	listErr       error
 	mirrorSummary MirrorSummary
 	mirrorErr     error
+	healthSignals []HealthSignal
+	healthErr     error
 }
 
 func (s *stubStore) ListCanaryInFlight(ctx context.Context) ([]CanaryRow, error) {
@@ -51,6 +54,15 @@ func (s *stubStore) ListCanaryInFlight(ctx context.Context) ([]CanaryRow, error)
 
 func (s *stubStore) MirrorSummaryForDeployment(_ context.Context, _, _ string, _ time.Time) (MirrorSummary, error) {
 	return s.mirrorSummary, s.mirrorErr
+}
+
+func (s *stubStore) FiringSafeReleaseSignals(_ context.Context, _ string) ([]HealthSignal, error) {
+	if s.healthErr != nil {
+		return nil, s.healthErr
+	}
+	out := make([]HealthSignal, len(s.healthSignals))
+	copy(out, s.healthSignals)
+	return out, nil
 }
 
 // stubAPID satisfies the APIDClient interface for tests by capturing
@@ -144,6 +156,68 @@ func TestProgressionOnce_MirrorCleanGate(t *testing.T) {
 				t.Errorf("abort reason = %q; want substring %q", apid.recoveries[0].reason, tc.wantReason)
 			}
 		})
+	}
+}
+
+func TestProgressionOnce_HealthGateHoldsPromotion(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	store := &stubStore{
+		rows: []CanaryRow{{
+			ID:                "00000000-0000-0000-0000-000000000001",
+			AppID:             "00000000-0000-0000-0000-000000000002",
+			CanaryPreset:      "balanced",
+			CanaryStep:        0,
+			CanaryTotalSteps:  4,
+			CanaryStepStarted: now.Add(-time.Hour),
+			RolloutState:      "rolling_out",
+		}},
+		healthSignals: []HealthSignal{{
+			RuleID:   "rule-1",
+			RuleName: "checkout errors",
+			Metric:   "error_rate_pct",
+			Action:   "rollback",
+		}},
+	}
+	apid := &stubAPID{}
+	prog := NewProgression(store, apid, nil, slog.Default())
+	prog.Now = func() time.Time { return now }
+
+	stats, err := prog.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.SkippedHealthGate != 1 {
+		t.Fatalf("SkippedHealthGate = %d, want 1", stats.SkippedHealthGate)
+	}
+	if stats.Advanced != 0 || len(apid.advances) != 0 {
+		t.Fatalf("health-gated canary advanced: stats=%+v advances=%d", stats, len(apid.advances))
+	}
+}
+
+func TestProgressionOnce_HealthGateReadErrorFailsClosed(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	store := &stubStore{
+		rows: []CanaryRow{{
+			ID:                "00000000-0000-0000-0000-000000000001",
+			AppID:             "00000000-0000-0000-0000-000000000002",
+			CanaryPreset:      "balanced",
+			CanaryStep:        0,
+			CanaryTotalSteps:  4,
+			CanaryStepStarted: now.Add(-time.Hour),
+			RolloutState:      "rolling_out",
+		}},
+		healthErr: errors.New("alert store unavailable"),
+	}
+	apid := &stubAPID{}
+	prog := NewProgression(store, apid, nil, slog.Default())
+	prog.Now = func() time.Time { return now }
+
+	stats, err := prog.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.Errors != 1 || stats.Advanced != 0 || len(apid.advances) != 0 {
+		t.Fatalf("health-gate read error was not fail-closed: stats=%+v advances=%d", stats, len(apid.advances))
 	}
 }
 

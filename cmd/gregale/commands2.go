@@ -3039,16 +3039,16 @@ func cmdOpen(args []string) int {
 		// before opening — the user would otherwise see a 502 from the
 		// gateway. Probe errors collapse
 		// to "Opening." (don't block on a flaky probe).
-		state, err := probeWakeState(target, 2*time.Second)
+		state, err := probeWakeState(target, openWakeProbeTimeout)
 		switch {
 		case err != nil:
 			_, _ = fmt.Fprintln(osStdout, "Opening.")
 		case state:
 			_, _ = fmt.Fprintln(osStdout, "Waking app (cold start) — opening in your browser.")
-			deadline := time.Now().Add(8 * time.Second)
+			deadline := time.Now().Add(openWakeDeadline)
 			for state && time.Now().Before(deadline) {
-				time.Sleep(500 * time.Millisecond)
-				state, _ = probeWakeState(target, 2*time.Second)
+				time.Sleep(openWakePollInterval)
+				state, _ = probeWakeState(target, openWakeProbeTimeout)
 			}
 		default:
 			_, _ = fmt.Fprintln(osStdout, "App is warm — opening.")
@@ -3815,6 +3815,17 @@ func pollDeploymentFinalUntilContext(ctx context.Context, c *Client, dep api.Dep
 // Returns (BuildResponse, true) on terminal status; (zero, false)
 // on deadline elapse or persistent transient error so the SSE caller
 // can fall back to the "follow manually" hint.
+// Real-time knobs for the wait loops below. Package-level so tests can
+// shrink wall-clock budgets to milliseconds; production never changes
+// them. See docs: `gregale open` cold-wake wait (UX §6.4) and the build
+// status poll (PROV-6).
+var (
+	openWakeProbeTimeout    = 2 * time.Second
+	openWakeDeadline        = 8 * time.Second
+	openWakePollInterval    = 500 * time.Millisecond
+	buildPollInitialBackoff = 1 * time.Second
+)
+
 func pollBuildStatus(c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.BuildResponse, bool) {
 	return pollBuildStatusContext(context.Background(), c, dep, deadline)
 }
@@ -3832,7 +3843,7 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 	parent, cancelParent := context.WithTimeout(ctx, deadline)
 	defer cancelParent()
 	end := time.Now().Add(deadline)
-	backoff := 1 * time.Second
+	backoff := buildPollInitialBackoff
 	for time.Now().Before(end) {
 		// Per-call timeout: remaining budget, capped at the SDK's
 		// 30s per-request timeout (lower of the two wins). Keeps

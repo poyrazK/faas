@@ -118,7 +118,7 @@ func TestCpuFairnessMetal(t *testing.T) {
 		t.Skipf("/sys/fs/cgroup not mounted: %v", err)
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -267,7 +267,7 @@ func deployApp(t *testing.T, h *e2etest.Harness, registry *e2etest.FakeRegistry,
 //     the wake latency; subsequent hits are hot).
 func measureQuietLatency(t *testing.T, h *e2etest.Harness, quiet []deployment, n int, hotApp *deployment) []time.Duration {
 	t.Helper()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	url := gatewayAppURL(h, "")
 	client := h.HTTPClient()
 

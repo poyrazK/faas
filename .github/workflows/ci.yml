@@ -115,20 +115,49 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          # PR-4a compares the PR head against the event's base SHA and
+          # scans every commit subject for fix-shaped changes.
+          fetch-depth: 0
+
+      # S4 PR-4a: a fix claim must carry a changed Go regression test. The
+      # script reads title/body/labels from GITHUB_EVENT_PATH and is a no-op
+      # for pushes and local invocations. Intentional exceptions require the
+      # no-regression-test label plus a non-empty Why no test: explanation.
+      - name: fix-shaped changes require regression tests
+        run: make fix-has-test-check
+      - name: fix-has-test checker tests
+        run: make fix-has-test-check-test
 
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          # cache: true + cache-dependency-path is the canonical Go Actions
-          # warm-cache idiom — shaves ~60s off every job on a non-first run.
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
 
       # golangci-lint replaces bare gofmt + go vet with a curated set of
       # checks. v2.4.0+ is built with Go 1.25 and supports a go.mod
       # targeting Go 1.25 (golangci-lint v1.x is built with Go 1.23 and
       # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
       # action v8 requires golangci-lint >= v2.1.0; v9 is current.
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
         with:
@@ -138,7 +167,9 @@ jobs:
           # observed cold-cache runtime so timing is not reported as a lint
           # failure while the job-level timeout remains bounded.
           args: --timeout=8m
-          # Cache is built into the action; default cache key works.
+          # The action's own cache is keyed per 7-day interval and never re-saved
+          # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
+          skip-cache: true
 
       # Re-runs the same checks golangci-lint covers as a fallback, in case
       # the lint step is skipped (e.g. workflow_dispatch with no Go file
@@ -258,6 +289,664 @@ jobs:
       - name: forbid +incompatible direct deps
         run: make lint-incompatible-mods
 
+      # Daemon smoke: every cmd/<daemon>/main.go is a one-box binary that wires
+      # through pkg/wire.Daemon. `--help` must exit 0 with non-empty usage text
+      # (a silent success here usually means init() truncated on a bad flag
+      # spec). Catches nil-deref and broken flag wiring that `make build` alone
+      # won't, in ~1 s. Mirrors the PR template checklist line `make build`.
+      - name: daemon smoke (--help)
+        run: |
+          set -e
+          # Tier A7 (ADR-070) split the legacy cmd/gatewayd/ daemon into
+          # gatewayd-public + gatewayd-internal. PR-A of the tier-a7 finishing
+          # cluster moves every file from cmd/gatewayd/ into cmd/gatewayd-internal/
+          # and removes the legacy binary entirely; the cd-controlplane BINARIES
+          # list and FAAS_SERVICES no longer reference 'gatewayd' either.
+          for d in apid builderd gregale gatewayd-public gatewayd-internal imaged meterd schedd vmmd; do
+            out=$(./bin/$d --help 2>&1)
+            if [ -z "$out" ]; then
+              echo "::error::$d --help returned no output"
+              exit 1
+            fi
+            printf '%-9s %4d bytes\n' "$d" "${#out}"
+          done
+
+      # M1+ (ADR-013): *.pb.go is checked in; this step verifies it's in sync
+      # with the .proto sources. The Makefile's proto-normalize target
+      # strips the 'protoc v X.Y.Z' header comment so toolchain patch
+      # bumps don't break CI; the wire bytes protoc produces are
+      # unaffected. The pin stays on the 33.x line that the previous
+      # arduino/setup-protoc@v3 '33.x' selection resolved to (v33.6).
+      #
+      # Replaces arduino/setup-protoc@v3 (memory
+      # ci-arduino-protoc-rate-limit-flake.md): that action hit GitHub's
+      # release-resolution REST API and flaked on per-IP rate limits at
+      # peak load. The direct curl+sha256 download matches the vacuum +
+      # sqlc + grype install precedent (ci.yml:469-500 / 948-973 /
+      # 686-696) and is gated by `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION`
+      # not being needed. `GITHUB_TOKEN` raises the asset-fetch quota
+      # from 60/hr unauth to 5000/hr authenticated.
+      - name: install protoc
+        # Forward GITHUB_TOKEN explicitly into the step env. The runner
+        # auto-injects it as a workflow-level var, but `set -u` requires
+        # the variable to be referenced from inside an `env:` block —
+        # otherwise `${GITHUB_TOKEN}` is unbound and the script fails
+        # before the curl call lands. arduino/setup-protoc@v3 hid this
+        # because it read the token via the GitHub Action runtime API.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$(uname -m)" != "x86_64" ]; then
+            echo "::error::protoc install assumes x86_64; runner is $(uname -m)"
+            exit 1
+          fi
+          PROTOC_TARBALL="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          PROTOC_URL="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_TARBALL}"
+          ZIP="$RUNNER_TEMP/${PROTOC_TARBALL}"
+          echo "→ downloading $PROTOC_URL"
+          # Authenticated release-asset fetch: 5000/hr per-token
+          # (vs 60/hr per-IP unauthenticated) so the download can't
+          # be tripped by the same fleet-wide rate limit the arduino
+          # action used to hit. SHA-256 below is the supply-chain
+          # anchor — a malicious or substituted tarball would change
+          # the digest and fail the `--check --strict` step.
+          curl --fail --silent --show-error --location \
+            --output "$ZIP" --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "$PROTOC_URL"
+          echo "→ verifying SHA-256"
+          echo "${PROTOC_SHA256_LINUX_AMD64}  $ZIP" | sha256sum --check --strict
+          echo "→ extracting"
+          # The zip lays out bin/protoc + include/google/protobuf/*.proto
+          # (e.g. timestamp.proto, any.proto — every well-known type the
+          # repo's .proto files import). We install BOTH into
+          # /usr/local: the binary lands on PATH automatically, and the
+          # include dir lands at protoc's default search path
+          # (/usr/local/include/google/protobuf/...). No Makefile change
+          # needed — the local-dev recipe (brew install protobuf)
+          # produces the same /usr/local/include layout.
+          (cd "$RUNNER_TEMP" && unzip -q "$ZIP")
+          sudo install -m 0755 "$RUNNER_TEMP/bin/protoc" /usr/local/bin/protoc
+          sudo cp -r "$RUNNER_TEMP/include/google" /usr/local/include/
+          echo "→ installed: $(protoc --version)"
+          echo "→ includes:"
+          ls /usr/local/include/google/protobuf/ | head -5
+      - name: install protoc plugins
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+      - name: proto-check
+        run: make proto-check
+
+# Race-enabled unit test suite + pgx-backed Store integration tests.
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+  # Owns the 4:20 long pole — runs in parallel with `test` and `spec-check`
+  # so the wall time is bounded by the slowest of the three (≈ 4:40).
+  # Postgres service + DATABASE_URL mirror the previous combined job.
+  #
+  # Timeout was 10 min (2026-07-29 cut it twice on the rebased PR #414
+  # head; race detector + recent additions to pkg/sched/scaleup +
+  # pkg/sched/instancestats pushed the wall past the 10 min budget).
+  # Bumped to 20 min (PR #414 follow-up) so the long pole has two
+  # budgets of headroom — wall is still ~5 min in steady state, this
+  # is contingency for slow windows on a shared GH runner pool.
+  # Shard 1 (Postgres-heavy A): cmd/apid, migrations, pkg/meter, pkg/db, pkg/alerts
+  unit-tests-pg-1:
+    name: unit tests (pg shard 1 — apid/meter/migrations)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:15
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+    steps:
+      - name: pre-pull postgres image
+        run: |
+          for attempt in 1 2 3; do
+            if docker pull mirror.gcr.io/library/postgres:15; then
+              echo "pulled on attempt ${attempt}"
+              break
+            fi
+            echo "pull attempt ${attempt} failed; sleeping 10s"
+            sleep 10
+            if [ "${attempt}" = "3" ]; then
+              echo "::error::postgres image pull failed after 3 attempts"
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false  # managed by the restore/save steps below
+
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pg-1-${{ runner.os }}-
+      - name: unit tests (pg shard 1)
+        run: |
+          mkdir -p coverage
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts)')
+          go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+
+      - name: sdk-check
+        run: make sdk-check
+
+      - name: upload to Codecov (pg shard 1)
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        with:
+          files: coverage/cover-shard1.out
+          flags: unittests
+          use_oidc: true
+          fail_ci_if_error: true
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  # Shard 2 (Postgres-heavy B) is split into two jobs because pkg/state and
+  # cmd/gregale are independent race-enabled hot spots. Both jobs keep their
+  # own Postgres service so a slow package group cannot hold the other group
+  # behind it.
+  unit-tests-pg-2:
+    name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: a
+            label: state/reconcile/reposcan
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            coverage_file: cover-shard2a.out
+            state_coverage: true
+          - id: b
+            label: gregale/gregalectl/daemons
+            package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump)(/|$)'
+            coverage_file: cover-shard2b.out
+            state_coverage: false
+    # The state suite uses a migrated template database and clones a clean
+    # database per fixture, so the test binary has a strict 20-minute budget.
+    # Leave a small amount of job-level headroom for coverage and upload.
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:15
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+    steps:
+      - name: pre-pull postgres image
+        run: |
+          for attempt in 1 2 3; do
+            if docker pull mirror.gcr.io/library/postgres:15; then
+              echo "pulled on attempt ${attempt}"
+              break
+            fi
+            echo "pull attempt ${attempt} failed; sleeping 10s"
+            sleep 10
+            if [ "${attempt}" = "3" ]; then
+              echo "::error::postgres image pull failed after 3 attempts"
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false  # managed by the restore/save steps below
+
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pg-2-${{ matrix.id }}-${{ runner.os }}-
+      - name: unit tests (pg shard 2${{ matrix.id }})
+        run: |
+          mkdir -p coverage
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}')
+          test -n "$PKGS"
+          printf '%s\n' "$PKGS"
+          go test -race -count=1 -p 4 -timeout=20m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+
+      - name: pkg/state coverage gate
+        if: ${{ matrix.state_coverage }}
+        run: make check-state-coverage COVERFILE=coverage/${{ matrix.coverage_file }}
+
+      - name: coverage floor (ship-blocking packages)
+        # Validates the ship-blocking package floors via the shared
+        # coverage-floor gate (see Makefile). Packages not exercised by
+        # this matrix entry's PKGS list print "(no statements — skip)"
+        # and don't fail the gate.
+        run: make coverage-floor COVERDIR=coverage
+
+      - name: upload to Codecov (pg shard 2${{ matrix.id }})
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        with:
+          files: coverage/${{ matrix.coverage_file }}
+          flags: unittests
+          use_oidc: true
+          fail_ci_if_error: true
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
+  unit-tests-pure-1:
+    name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # stale between dependency bumps; here every push to main saves
+          # a fresh one and pull requests restore the newest.
+          cache: false  # managed by the restore/save steps below
+
+
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pure-1-${{ runner.os }}-
+      - name: unit tests (pure Go shard 1)
+        env:
+          # Pull requests let Go's test cache skip packages whose transitive
+          # inputs are unchanged since the last main push. This shard is
+          # hermetic (no Postgres, Docker, or network), so a cached pass is
+          # the same observation a re-run would make. Pushes to main re-run
+          # everything and shuffle test order to surface order dependence.
+          # (Expression shape matters: an empty string is falsy in GitHub
+          # expressions, so `cond && '' || X` always yields X.)
+          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}
+        run: |
+          mkdir -p coverage
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
+          go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard3.out -covermode=atomic $PKGS
+
+
+      - name: coverage floor (ship-blocking packages)
+        # Validates pkg/fcvm, pkg/sched, pkg/gateway ≥ floors defined in
+        # Makefile (coverage-floor target). Packages not exercised by
+        # this shard's PKGS list print "(no statements — skip)" and
+        # don't fail the gate.
+        run: make coverage-floor COVERDIR=coverage
+
+      - name: upload to Codecov (pure Go shard 1)
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        with:
+          files: coverage/cover-shard3.out
+          flags: unittests
+          use_oidc: true
+          fail_ci_if_error: true
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  # Shard 4 (pure Go light): all remaining packages. No Postgres needed.
+  unit-tests-pure-2:
+    name: unit tests (pure Go shard 2 — light packages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false  # managed by the restore/save steps below
+
+
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pure-2-${{ runner.os }}-
+      - name: unit tests (pure Go shard 2)
+        env:
+          # See pure shard 1: PRs use Go's test cache; main re-runs + shuffles.
+          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}
+        run: |
+          mkdir -p coverage
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
+          go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
+
+
+      - name: coverage floor (ship-blocking packages)
+        # Validates pkg/vmmdgrpc, pkg/vmmdmount ≥ floors defined in
+        # Makefile (coverage-floor target). Packages not exercised by
+        # this shard's PKGS list print "(no statements — skip)" and
+        # don't fail the gate.
+        run: make coverage-floor COVERDIR=coverage
+
+      # Property-based tests pin the §6.2 invariants in CLAUDE.md.
+      # No KVM/DB needed — pure logic. Lands in this shard because
+      # the package list is `tests/property/...` (everything else
+      # bucket).
+      - name: property-based tests (§6.2 invariants)
+        run: make test-property
+
+      - name: upload to Codecov (pure Go shard 2)
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        with:
+          files: coverage/cover-shard4.out
+          flags: unittests
+          use_oidc: true
+          fail_ci_if_error: true
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  checks:
+    # Nine gates that each finished in well under two minutes used to run
+    # as nine separate jobs. Each one paid ~40 s of runner spin-up +
+    # checkout + setup-go, and — the part that actually hurt — each one
+    # occupied one of the account's 20 concurrent-job slots, so a 25-job
+    # run could not even start in full and PRs spent a median 17 min
+    # queued before a job began (measured on run 34137697561). Folding
+    # them into one sequential job trades ~4 min of serial runtime for
+    # eight freed slots per run. Every step below is the former job's
+    # step, unchanged; the former job names are kept as section markers
+    # so `git log -S` still finds them.
+    name: checks (drift + contract gates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      GOVULNCHECK_VERSION: "1.7.0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false  # managed by the restore/save steps below
+      # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-checks-${{ runner.os }}-
+      - name: actionlint
+        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+        with:
+          version: v1.7.12
+          args: -shellcheck ''
+      - name: native builder Go toolchain bundle contract
+        run: bash scripts/ci/package-go-toolchain_test.sh
+      # ---- former job `capabilities-check`: product capability registry ----
+      - name: product capability registry and generated matrix
+        run: make capabilities-check
+      # ---- former job `api-hosting-contract-check`: framework fixture matrix ----
+      - name: framework fixture matrix
+        run: make api-hosting-contract-check
+      # ---- former job `daemonunit-check`: daemonunit generated drift ----
+      - name: generate-check
+        run: make generate-check
+      # ---- former job `sqlc-check`: sqlc generated drift ----
+      - name: install sqlc
+        # Belt + suspenders: refuse to run on a non-x86_64 runner instead
+        # of silently picking the wrong tarball. Matches the spec-check
+        # job's vacuum install step.
+        run: |
+          if [ "$(uname -m)" != "x86_64" ]; then
+            echo "::error::sqlc install assumes x86_64; runner is $(uname -m)"
+            exit 1
+          fi
+          SQLC_TARBALL="sqlc_${SQLC_VERSION}_linux_amd64.tar.gz"
+          SQLC_URL="https://github.com/sqlc-dev/sqlc/releases/download/v${SQLC_VERSION}/${SQLC_TARBALL}"
+          mkdir -p "$HOME/.local/sqlc/bin"
+          TAR="$RUNNER_TEMP/${SQLC_TARBALL}"
+          echo "→ downloading $SQLC_URL"
+          curl --fail --silent --show-error --location --output "$TAR" "$SQLC_URL"
+          echo "→ verifying SHA-256"
+          echo "${SQLC_SHA256_LINUX_AMD64}  $TAR" | sha256sum --check --strict
+          echo "→ extracting"
+          # The tarball is flat (just `sqlc`) — no version directory —
+          # so we extract into a temp scratch and copy the binary to the
+          # stable install path.
+          tar --extract --gzip --file "$TAR" --directory "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/sqlc" "$HOME/.local/sqlc/bin/sqlc"
+          chmod +x "$HOME/.local/sqlc/bin/sqlc"
+          echo "→ installed: $("$HOME/.local/sqlc/bin/sqlc" version)"
+          echo "$HOME/.local/sqlc/bin" >> "$GITHUB_PATH"
+      - name: sqlc-check
+        # The install sqlc step above appends $HOME/.local/sqlc/bin to
+        # $GITHUB_PATH, so `make sqlc` finds the binary via PATH lookup
+        # and short-circuits before the `go install` fallback.
+        run: make sqlc-check
+      # ---- former job `spec-check`: OpenAPI lint + AST parity ----
+      - name: install vacuum
+        run: |
+          # Belt + suspenders: refuse to run on a non-x86_64 runner instead
+          # of silently picking the wrong tarball. This matches the
+          # `runs-on: ubuntu-latest` job contract.
+          if [ "$(uname -m)" != "x86_64" ]; then
+            echo "::error::vacuum install assumes x86_64; runner is $(uname -m)"
+            exit 1
+          fi
+
+          # All interpolation happens in the shell — the env block above
+          # only carries the version + SHA-256 pin, both of which MUST be
+          # raw strings (no shell interpolation) so a future bump is a
+          # single edit. `${VACUUM_VERSION}` in an env: value is NOT
+          # expanded by GitHub Actions — we build the URL here.
+          VACUUM_TARBALL="vacuum_${VACUUM_VERSION}_linux_x86_64.tar.gz"
+          VACUUM_URL="https://github.com/daveshanley/vacuum/releases/download/v${VACUUM_VERSION}/${VACUUM_TARBALL}"
+          mkdir -p "$HOME/.local/vacuum/bin"
+          TAR="$RUNNER_TEMP/${VACUUM_TARBALL}"
+          echo "→ downloading $VACUUM_URL"
+          curl --fail --silent --show-error --location --output "$TAR" "$VACUUM_URL"
+          echo "→ verifying SHA-256"
+          echo "${VACUUM_SHA256_LINUX_AMD64}  $TAR" | sha256sum --check --strict
+          echo "→ extracting"
+          # The tarball is flat (LICENSE, README.md, vacuum) — no version
+          # directory — so we extract into a temp scratch and copy the
+          # binary to the stable install path.
+          tar --extract --gzip --file "$TAR" --directory "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/vacuum" "$HOME/.local/vacuum/bin/vacuum"
+          chmod +x "$HOME/.local/vacuum/bin/vacuum"
+          echo "→ installed: $("$HOME/.local/vacuum/bin/vacuum" version)"
+          echo "$HOME/.local/vacuum/bin" >> "$GITHUB_PATH"
+      - name: spec-check
+        # The install vacuum step above appends $HOME/.local/vacuum/bin
+        # to $GITHUB_PATH, so `make spec-install` finds the binary via
+        # `command -v vacuum` (PATH lookup) and short-circuits before
+        # the `go install` fallback. No GOBIN override needed: the
+        # Makefile's `$(GOBIN)` default (`go env GOPATH/bin`) is the
+        # correct install location for the local-dev `go install` path.
+        run: make spec-check
+      # ---- former job `sdk-go`: Go SDK build + vet + test ----
+      - name: go build
+        working-directory: sdk/go
+        run: go build ./...
+      - name: go vet
+        working-directory: sdk/go
+        run: go vet ./...
+      - name: go test
+        working-directory: sdk/go
+        run: go test -count=1 ./...
+      # ---- former job `packer-validate`: Packer syntax gate (ADR-111) ----
+      - name: install-packer (pinned)
+        run: scripts/install-packer.sh
+      - name: packer validate -syntax-only
+        run: make image-validate
+      # ---- former job `image-scan`: govulncheck (severity high+) ----
+      - name: download Go modules with retry
+        env:
+          GOPROXY: https://proxy.golang.org,direct
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if timeout 120s go mod download; then
+              echo "Go modules downloaded on attempt ${attempt}"
+              exit 0
+            fi
+            if [[ "${attempt}" == 3 ]]; then
+              echo "Go module download failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
+
+      - name: install govulncheck
+        run: go install "golang.org/x/vuln/cmd/govulncheck@v${GOVULNCHECK_VERSION}"
+      - name: govulncheck (severity high+)
+        # govulncheck exit code 3 = findings at or above the
+        # requested level. Failure propagates as a non-zero step.
+        # The level filter is the issue #299 acceptance bullet
+        # ("fail on Severity HIGH+"); the default mode is 'source'
+        # which mirrors what the `test` job at line 95-101 runs (no
+        # behavior regression on daemons that don't expose
+        # high-severity findings today).
+        run: |
+          set -euo pipefail
+          govulncheck -mode=source -show=verbose ./...
+      # ---- moved from `lint + build`: Prometheus rule + ansible gates ----
+      # These need pip (ansible-core, ansible-lint), a pinned promtool and
+      # ~90 s of wall time, none of which the Go lint/build critical path
+      # should carry. `make ansible-scale-check` builds ./bin/gregalectl
+      # itself when `make build` has not run in this job.
       # promtool check rules — gate for spec §12 alert rules. Downloads
       # the same Prometheus release the ansible role pins
       # (deploy/ansible/roles/prometheus/defaults/main.yml:prom_version)
@@ -400,482 +1089,16 @@ jobs:
           sed "s#/etc/prometheus#$rules_dir#g" \
             "$RUNNER_TEMP/prometheus.yml" > "$RUNNER_TEMP/prometheus-checked.yml"
           promtool check config "$RUNNER_TEMP/prometheus-checked.yml"
-
-      # Daemon smoke: every cmd/<daemon>/main.go is a one-box binary that wires
-      # through pkg/wire.Daemon. `--help` must exit 0 with non-empty usage text
-      # (a silent success here usually means init() truncated on a bad flag
-      # spec). Catches nil-deref and broken flag wiring that `make build` alone
-      # won't, in ~1 s. Mirrors the PR template checklist line `make build`.
-      - name: daemon smoke (--help)
-        run: |
-          set -e
-          # Tier A7 (ADR-070) split the legacy cmd/gatewayd/ daemon into
-          # gatewayd-public + gatewayd-internal. PR-A of the tier-a7 finishing
-          # cluster moves every file from cmd/gatewayd/ into cmd/gatewayd-internal/
-          # and removes the legacy binary entirely; the cd-controlplane BINARIES
-          # list and FAAS_SERVICES no longer reference 'gatewayd' either.
-          for d in apid builderd gregale gatewayd-public gatewayd-internal imaged meterd schedd vmmd; do
-            out=$(./bin/$d --help 2>&1)
-            if [ -z "$out" ]; then
-              echo "::error::$d --help returned no output"
-              exit 1
-            fi
-            printf '%-9s %4d bytes\n' "$d" "${#out}"
-          done
-
-      # M1+ (ADR-013): *.pb.go is checked in; this step verifies it's in sync
-      # with the .proto sources. The Makefile's proto-normalize target
-      # strips the 'protoc v X.Y.Z' header comment so toolchain patch
-      # bumps don't break CI; the wire bytes protoc produces are
-      # unaffected. The pin stays on the 33.x line that the previous
-      # arduino/setup-protoc@v3 '33.x' selection resolved to (v33.6).
-      #
-      # Replaces arduino/setup-protoc@v3 (memory
-      # ci-arduino-protoc-rate-limit-flake.md): that action hit GitHub's
-      # release-resolution REST API and flaked on per-IP rate limits at
-      # peak load. The direct curl+sha256 download matches the vacuum +
-      # sqlc + grype install precedent (ci.yml:469-500 / 948-973 /
-      # 686-696) and is gated by `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION`
-      # not being needed. `GITHUB_TOKEN` raises the asset-fetch quota
-      # from 60/hr unauth to 5000/hr authenticated.
-      - name: install protoc
-        # Forward GITHUB_TOKEN explicitly into the step env. The runner
-        # auto-injects it as a workflow-level var, but `set -u` requires
-        # the variable to be referenced from inside an `env:` block —
-        # otherwise `${GITHUB_TOKEN}` is unbound and the script fails
-        # before the curl call lands. arduino/setup-protoc@v3 hid this
-        # because it read the token via the GitHub Action runtime API.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ "$(uname -m)" != "x86_64" ]; then
-            echo "::error::protoc install assumes x86_64; runner is $(uname -m)"
-            exit 1
-          fi
-          PROTOC_TARBALL="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
-          PROTOC_URL="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_TARBALL}"
-          ZIP="$RUNNER_TEMP/${PROTOC_TARBALL}"
-          echo "→ downloading $PROTOC_URL"
-          # Authenticated release-asset fetch: 5000/hr per-token
-          # (vs 60/hr per-IP unauthenticated) so the download can't
-          # be tripped by the same fleet-wide rate limit the arduino
-          # action used to hit. SHA-256 below is the supply-chain
-          # anchor — a malicious or substituted tarball would change
-          # the digest and fail the `--check --strict` step.
-          curl --fail --silent --show-error --location \
-            --output "$ZIP" --header "Authorization: Bearer ${GITHUB_TOKEN}" \
-            "$PROTOC_URL"
-          echo "→ verifying SHA-256"
-          echo "${PROTOC_SHA256_LINUX_AMD64}  $ZIP" | sha256sum --check --strict
-          echo "→ extracting"
-          # The zip lays out bin/protoc + include/google/protobuf/*.proto
-          # (e.g. timestamp.proto, any.proto — every well-known type the
-          # repo's .proto files import). We install BOTH into
-          # /usr/local: the binary lands on PATH automatically, and the
-          # include dir lands at protoc's default search path
-          # (/usr/local/include/google/protobuf/...). No Makefile change
-          # needed — the local-dev recipe (brew install protobuf)
-          # produces the same /usr/local/include layout.
-          (cd "$RUNNER_TEMP" && unzip -q "$ZIP")
-          sudo install -m 0755 "$RUNNER_TEMP/bin/protoc" /usr/local/bin/protoc
-          sudo cp -r "$RUNNER_TEMP/include/google" /usr/local/include/
-          echo "→ installed: $(protoc --version)"
-          echo "→ includes:"
-          ls /usr/local/include/google/protobuf/ | head -5
-      - name: install protoc plugins
-        run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
-      - name: proto-check
-        run: make proto-check
-
-# Race-enabled unit test suite + pgx-backed Store integration tests.
-  # Owns the 4:20 long pole — runs in parallel with `test` and `spec-check`
-  # so the wall time is bounded by the slowest of the three (≈ 4:40).
-  # Postgres service + DATABASE_URL mirror the previous combined job.
-  #
-  # Timeout was 10 min (2026-07-29 cut it twice on the rebased PR #414
-  # head; race detector + recent additions to pkg/sched/scaleup +
-  # pkg/sched/instancestats pushed the wall past the 10 min budget).
-  # Bumped to 20 min (PR #414 follow-up) so the long pole has two
-  # budgets of headroom — wall is still ~5 min in steady state, this
-  # is contingency for slow windows on a shared GH runner pool.
-  # Shard 1 (Postgres-heavy A): cmd/apid, migrations, pkg/meter, pkg/db, pkg/alerts
-  unit-tests-pg-1:
-    name: unit tests (pg shard 1 — apid/meter/migrations)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      id-token: write
-    services:
-      postgres:
-        image: mirror.gcr.io/library/postgres:15
-        env:
-          POSTGRES_USER: faas
-          POSTGRES_PASSWORD: faas
-          POSTGRES_DB: faas
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U faas -d faas"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
-    steps:
-      - name: pre-pull postgres image
-        run: |
-          for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
-              echo "pulled on attempt ${attempt}"
-              break
-            fi
-            echo "pull attempt ${attempt} failed; sleeping 10s"
-            sleep 10
-            if [ "${attempt}" = "3" ]; then
-              echo "::error::postgres image pull failed after 3 attempts"
-              exit 1
-            fi
-          done
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: unit tests (pg shard 1)
-        run: |
-          mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts)')
-          go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
-
-      - name: sdk-check
-        run: make sdk-check
-
-      - name: upload to Codecov (pg shard 1)
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
-        with:
-          files: coverage/cover-shard1.out
-          flags: unittests
-          use_oidc: true
-          fail_ci_if_error: true
-
-  # Shard 2 (Postgres-heavy B) is split into two jobs because pkg/state and
-  # cmd/gregale are independent race-enabled hot spots. Both jobs keep their
-  # own Postgres service so a slow package group cannot hold the other group
-  # behind it.
-  unit-tests-pg-2:
-    name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: a
-            label: state/reconcile/reposcan
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
-            coverage_file: cover-shard2a.out
-            state_coverage: true
-          - id: b
-            label: gregale/gregalectl/daemons
-            package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump)(/|$)'
-            coverage_file: cover-shard2b.out
-            state_coverage: false
-    # The state suite uses a migrated template database and clones a clean
-    # database per fixture, so the test binary has a strict 20-minute budget.
-    # Leave a small amount of job-level headroom for coverage and upload.
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      id-token: write
-    services:
-      postgres:
-        image: mirror.gcr.io/library/postgres:15
-        env:
-          POSTGRES_USER: faas
-          POSTGRES_PASSWORD: faas
-          POSTGRES_DB: faas
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U faas -d faas"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
-      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
-    steps:
-      - name: pre-pull postgres image
-        run: |
-          for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
-              echo "pulled on attempt ${attempt}"
-              break
-            fi
-            echo "pull attempt ${attempt} failed; sleeping 10s"
-            sleep 10
-            if [ "${attempt}" = "3" ]; then
-              echo "::error::postgres image pull failed after 3 attempts"
-              exit 1
-            fi
-          done
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: unit tests (pg shard 2${{ matrix.id }})
-        run: |
-          mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}')
-          test -n "$PKGS"
-          printf '%s\n' "$PKGS"
-          go test -race -count=1 -p 4 -timeout=20m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
-
-      - name: pkg/state coverage gate
-        if: ${{ matrix.state_coverage }}
-        run: make check-state-coverage COVERFILE=coverage/${{ matrix.coverage_file }}
-
-      - name: coverage floor (ship-blocking packages)
-        # Validates the ship-blocking package floors via the shared
-        # coverage-floor gate (see Makefile). Packages not exercised by
-        # this matrix entry's PKGS list print "(no statements — skip)"
-        # and don't fail the gate.
-        run: make coverage-floor COVERDIR=coverage
-
-      - name: upload to Codecov (pg shard 2${{ matrix.id }})
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
-        with:
-          files: coverage/${{ matrix.coverage_file }}
-          flags: unittests
-          use_oidc: true
-          fail_ci_if_error: true
-
-  # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
-  unit-tests-pure-1:
-    name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: unit tests (pure Go shard 1)
-        run: |
-          mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
-          go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard3.out -covermode=atomic $PKGS
-
-      - name: coverage floor (ship-blocking packages)
-        # Validates pkg/fcvm, pkg/sched, pkg/gateway ≥ floors defined in
-        # Makefile (coverage-floor target). Packages not exercised by
-        # this shard's PKGS list print "(no statements — skip)" and
-        # don't fail the gate.
-        run: make coverage-floor COVERDIR=coverage
-
-      - name: upload to Codecov (pure Go shard 1)
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
-        with:
-          files: coverage/cover-shard3.out
-          flags: unittests
-          use_oidc: true
-          fail_ci_if_error: true
-
-  # Shard 4 (pure Go light): all remaining packages. No Postgres needed.
-  unit-tests-pure-2:
-    name: unit tests (pure Go shard 2 — light packages)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: unit tests (pure Go shard 2)
-        run: |
-          mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
-          go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
-
-      - name: coverage floor (ship-blocking packages)
-        # Validates pkg/vmmdgrpc, pkg/vmmdmount ≥ floors defined in
-        # Makefile (coverage-floor target). Packages not exercised by
-        # this shard's PKGS list print "(no statements — skip)" and
-        # don't fail the gate.
-        run: make coverage-floor COVERDIR=coverage
-
-      # Property-based tests pin the §6.2 invariants in CLAUDE.md.
-      # No KVM/DB needed — pure logic. Lands in this shard because
-      # the package list is `tests/property/...` (everything else
-      # bucket).
-      - name: property-based tests (§6.2 invariants)
-        run: make test-property
-
-      - name: upload to Codecov (pure Go shard 2)
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
-        with:
-          files: coverage/cover-shard4.out
-          flags: unittests
-          use_oidc: true
-          fail_ci_if_error: true
-
-  # OpenAPI spec gate (PR #129). The spec is the source of truth for
-  # documentation; the code is the source of truth for behavior; this
-  # gate is the bridge. Same regenerate-and-diff pattern as proto-check /
-  # sqlc-check / egress-check: vacuum lint + AST parity + git clean.
-  # Fails the PR if a route / DTO / Code* constant drifts without a
-  # matching spec change.
-  #
-  # Split out of the `test` job in PR #167 so its ~4 min of vacuum lint +
-  # AST work runs alongside the Go build/lint/test pipeline instead of
-  # after it.
-  #
-  # vacuum is downloaded as a pre-built binary from GitHub Releases
-  # (verified against VACUUM_SHA256_LINUX_AMD64) instead of `go install`'d
-  # — the source build takes ~3 min cross-compiling vacuum against the
-  # runner's Go toolchain. The binary is ~20 MB and downloads in <5 s.
-  # The same precedent is used by every other binary in the EX44
-  # ansible roles (deploy/ansible/roles/{alertmanager,node_exporter,
-  # prometheus,firecracker,grafana}/), so the supply-chain pin pattern
-  # matches the production host.
-  spec-check:
-    name: spec-check (OpenAPI lint + AST parity)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      # setup-go is needed because `make spec-check` invokes
-      # `$(GO) test -count=1 -run TestSpecCompliance ./cmd/apid/...` for
-      # the AST parity assertion (~0.4 s locally, negligible in CI).
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          # No Go cache: spec-check runs a single tiny test, not worth
-          # the cache hit; this also keeps the job self-contained without
-          # sharing Go module downloads with `test` / `unit-tests`.
-      - name: install vacuum
-        run: |
-          # Belt + suspenders: refuse to run on a non-x86_64 runner instead
-          # of silently picking the wrong tarball. This matches the
-          # `runs-on: ubuntu-latest` job contract.
-          if [ "$(uname -m)" != "x86_64" ]; then
-            echo "::error::vacuum install assumes x86_64; runner is $(uname -m)"
-            exit 1
-          fi
-
-          # All interpolation happens in the shell — the env block above
-          # only carries the version + SHA-256 pin, both of which MUST be
-          # raw strings (no shell interpolation) so a future bump is a
-          # single edit. `${VACUUM_VERSION}` in an env: value is NOT
-          # expanded by GitHub Actions — we build the URL here.
-          VACUUM_TARBALL="vacuum_${VACUUM_VERSION}_linux_x86_64.tar.gz"
-          VACUUM_URL="https://github.com/daveshanley/vacuum/releases/download/v${VACUUM_VERSION}/${VACUUM_TARBALL}"
-          mkdir -p "$HOME/.local/vacuum/bin"
-          TAR="$RUNNER_TEMP/${VACUUM_TARBALL}"
-          echo "→ downloading $VACUUM_URL"
-          curl --fail --silent --show-error --location --output "$TAR" "$VACUUM_URL"
-          echo "→ verifying SHA-256"
-          echo "${VACUUM_SHA256_LINUX_AMD64}  $TAR" | sha256sum --check --strict
-          echo "→ extracting"
-          # The tarball is flat (LICENSE, README.md, vacuum) — no version
-          # directory — so we extract into a temp scratch and copy the
-          # binary to the stable install path.
-          tar --extract --gzip --file "$TAR" --directory "$RUNNER_TEMP"
-          cp "$RUNNER_TEMP/vacuum" "$HOME/.local/vacuum/bin/vacuum"
-          chmod +x "$HOME/.local/vacuum/bin/vacuum"
-          echo "→ installed: $("$HOME/.local/vacuum/bin/vacuum" version)"
-          echo "$HOME/.local/vacuum/bin" >> "$GITHUB_PATH"
-      - name: spec-check
-        # The install vacuum step above appends $HOME/.local/vacuum/bin
-        # to $GITHUB_PATH, so `make spec-install` finds the binary via
-        # `command -v vacuum` (PATH lookup) and short-circuits before
-        # the `go install` fallback. No GOBIN override needed: the
-        # Makefile's `$(GOBIN)` default (`go env GOPATH/bin`) is the
-        # correct install location for the local-dev `go install` path.
-        run: make spec-check
-
-  # Product truth gate (API-hosting roadmap Phase 0 / PR 1). The registry is
-  # the source of truth for maturity, entitlements, docs, and acceptance
-  # evidence; this job catches a hand-edited matrix or invalid claim before it
-  # can reach the customer-facing site.
-  capabilities-check:
-    name: capabilities-check (product registry + matrix)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: product capability registry and generated matrix
-        run: make capabilities-check
-
-  # Metal-free API-hosting contract gate (roadmap Phase 0 / PR 2). These
-  # production-shaped fixtures exercise framework inference locally; the
-  # reference-node job remains the authority for Firecracker boot and wake.
-  api-hosting-contract-check:
-    name: api-hosting-contract-check (framework fixtures)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: framework fixture matrix
-        run: make api-hosting-contract-check
-
-  # Go SDK build + test gate (issue #266, PR 2). The SDK is a nested
-  # Go module at sdk/go/ (module github.com/poyrazK/faas/sdk/go). The
-  # daemon's `make test` walks the daemon's package tree only; the
-  # SDK module needs its own gate so a regression in sdk/go/internal/api/*
-  # fails the PR. Decoupled from `test` for the same reasons as
-  # spec-check: short, parallel, no shared cache needed.
-  #
-  # Steps mirror the daemon's local recipe:
-  #   cd sdk/go && go build ./... && go test ./... && go vet ./...
-  # No postgres, no KVM, no test database — the SDK is hermetic.
-  sdk-go:
-    name: sdk-go build + test
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          # No Go cache: the SDK module has zero external deps (no
-          # go.sum), so cache hit rate is zero anyway. Self-contained
-          # job, no shared downloads with `test` / `unit-tests`.
-      - name: go build
-        working-directory: sdk/go
-        run: go build ./...
-      - name: go vet
-        working-directory: sdk/go
-        run: go vet ./...
-      - name: go test
-        working-directory: sdk/go
-        run: go test -count=1 ./...
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # fakeapid fixture (issue #266, PR 4). The cross-language smoke
   # fixture for the public SDKs — a stdlib-only Go binary that
@@ -991,57 +1214,6 @@ jobs:
         run: python -m pytest tests/ --ignore=tests/debug_chain.py -v
 
 
-  # issue #299 — supply-chain scan: govulncheck (HIGH+ severity floor).
-  # Actual OCI vulnerability scanning lives in images.yml, where the exact
-  # artifacts produced by each image matrix job are available. Keeping a
-  # Grype `dir:images/` invocation here was misleading: Dockerfiles are
-  # source text, not package databases, so a clean result did not establish
-  # anything about the resulting rootfs.
-  image-scan:
-    name: supply-chain-scan (govulncheck high+)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    env:
-      GOVULNCHECK_VERSION: "1.7.0"
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-      - name: download Go modules with retry
-        env:
-          GOPROXY: https://proxy.golang.org,direct
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if timeout 120s go mod download; then
-              echo "Go modules downloaded on attempt ${attempt}"
-              exit 0
-            fi
-            if [[ "${attempt}" == 3 ]]; then
-              echo "Go module download failed after ${attempt} attempts" >&2
-              exit 1
-            fi
-            sleep $((attempt * 5))
-          done
-
-      - name: install govulncheck
-        run: go install "golang.org/x/vuln/cmd/govulncheck@v${GOVULNCHECK_VERSION}"
-      - name: govulncheck (severity high+)
-        # govulncheck exit code 3 = findings at or above the
-        # requested level. Failure propagates as a non-zero step.
-        # The level filter is the issue #299 acceptance bullet
-        # ("fail on Severity HIGH+"); the default mode is 'source'
-        # which mirrors what the `test` job at line 95-101 runs (no
-        # behavior regression on daemons that don't expose
-        # high-severity findings today).
-        run: |
-          set -euo pipefail
-          govulncheck -mode=source -show=verbose ./...
   load:
     # M4 acceptance gate (spec §14 row 2): "1,000 rps to hot app adds < 2 ms p50".
     # Decoupled from the `test` job because (a) it is a load test, not a
@@ -1067,8 +1239,25 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-load-${{ runner.os }}-
       - name: download Go modules with retry
         env:
           GOPROXY: https://proxy.golang.org,direct
@@ -1089,6 +1278,16 @@ jobs:
           done
       - name: make test-load
         run: make test-load
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   metal:
     # Manual trigger from the Actions tab. Marked workflow_dispatch so the
@@ -1170,8 +1369,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
       # PR-P4 — assert deploy/scripts/verify-secrets.sh is shaped
       # correctly (executable, bash-parseable, presence of the
       # Paddle + Stripe blocks added by Streams A + B). The
@@ -1181,6 +1379,24 @@ jobs:
       # SECRETS_FILE override (an empty fixture that the script
       # must not reject as malformed). see cmd/gregale/_test for
       # the equivalent CLI flag parse-tripwire pattern.
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-migrations-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-migrations-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-migrations-${{ runner.os }}-
       - name: verify-secrets.sh static check
         run: |
           set -euo pipefail
@@ -1230,141 +1446,16 @@ jobs:
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
         run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
-
-  sqlc-check:
-    # Drift gate between queries.sql + schema.sql and the committed
-    # pkg/state/sqlc/* baseline (issue #125). ADR-017 keeps PgStore
-    # hand-written until M5.1; this checks generated drift only, not
-    # semantic parity between pgstore.go and queries.sql.
-    name: sqlc-check (generated drift)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-      - name: install sqlc
-        # Belt + suspenders: refuse to run on a non-x86_64 runner instead
-        # of silently picking the wrong tarball. Matches the spec-check
-        # job's vacuum install step.
-        run: |
-          if [ "$(uname -m)" != "x86_64" ]; then
-            echo "::error::sqlc install assumes x86_64; runner is $(uname -m)"
-            exit 1
-          fi
-          SQLC_TARBALL="sqlc_${SQLC_VERSION}_linux_amd64.tar.gz"
-          SQLC_URL="https://github.com/sqlc-dev/sqlc/releases/download/v${SQLC_VERSION}/${SQLC_TARBALL}"
-          mkdir -p "$HOME/.local/sqlc/bin"
-          TAR="$RUNNER_TEMP/${SQLC_TARBALL}"
-          echo "→ downloading $SQLC_URL"
-          curl --fail --silent --show-error --location --output "$TAR" "$SQLC_URL"
-          echo "→ verifying SHA-256"
-          echo "${SQLC_SHA256_LINUX_AMD64}  $TAR" | sha256sum --check --strict
-          echo "→ extracting"
-          # The tarball is flat (just `sqlc`) — no version directory —
-          # so we extract into a temp scratch and copy the binary to the
-          # stable install path.
-          tar --extract --gzip --file "$TAR" --directory "$RUNNER_TEMP"
-          cp "$RUNNER_TEMP/sqlc" "$HOME/.local/sqlc/bin/sqlc"
-          chmod +x "$HOME/.local/sqlc/bin/sqlc"
-          echo "→ installed: $("$HOME/.local/sqlc/bin/sqlc" version)"
-          echo "$HOME/.local/sqlc/bin" >> "$GITHUB_PATH"
-      - name: sqlc-check
-        # The install sqlc step above appends $HOME/.local/sqlc/bin to
-        # $GITHUB_PATH, so `make sqlc` finds the binary via PATH lookup
-        # and short-circuits before the `go install` fallback.
-        run: make sqlc-check
-
-  daemonunit-check:
-    # DEPLOY-2 / ADR-078 / issue #649: regen-and-diff gate on
-    # pkg/daemonunitspec. Asserts that the systemd unit files in the
-    # three deploy trees (cp-cp, cp-sys, cp-ans) + daemons.json are
-    # byte-equal to what `make generate` would emit from the current
-    # spec files. PR-1: cp-cp is the v1 deploy/controlplane/systemd
-    # tree (tombstone now; deletion in PR-1 Phase 2 after PR-X); the
-    # CD pipeline rewired in PR-1 reads units from per-role ansible
-    # files/ instead. cp-cp stays in the gate until Phase 2 lands so
-    # a daemonunitspec change cannot silently drift. Pattern matches
-    # proto-check / sqlc-check / egress-check (regenerate-to-tmpdir
-    # + git diff --exit-code). PR authors who edit a UnitXxx() must
-    # run `make generate` locally and
-    # commit the regenerated trees.
-    name: daemonunit-check (generated drift)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-      - name: generate-check
-        run: make generate-check
-
-  # Workflow YAML semantic lint. Recent 8-commit churn on
-  # .github/codeql/codeql-config.yml (worktree-issue-995-edge-protection
-  # series) is exactly the kind of regression actionlint catches in <5 s:
-  # - shellcheck SC2086/SC2046/SC2012 inside `run:` blocks
-  # - unknown self-hosted runner labels
-  # - missing `jobs:` / `on:` sections when a non-workflow YAML is
-  #   accidentally scanned
-  # - typos in `uses:` versions / branch refs
-  #
-  # Mirrors daemonunit-check / sqlc-check / packer-validate shape:
-  # stateless, fast (~5 s), runs on every PR.
-  #
-  # `-shellcheck ''` disables actionlint's bundled shellcheck
-  # integration. actionlint's job is workflow YAML semantic lint
-  # (the recent 8-commit churn on .github/codeql/codeql-config.yml is
-  # exactly what it catches); shellcheck findings on bash snippets in
-  # `run:` blocks are a separate concern and the 6 pre-existing
-  # SC2046/SC2012/SC2086 findings in ci.yml would fail the gate on
-  # every PR — fixing each is out of scope for this cluster. Re-enable
-  # after the shellcheck findings land in a follow-up cleanup PR.
-  #
-  # Bumping actionlint: edit the SHA + version together (mirror codecov-
-  # action pinning at ci.yml:383). Latest stable at PR time is v1.7.12;
-  # SHA `914e7df21a07ef503a81201c76d2b11c789d3fca` matches tag v1.7.12.
-  workflow-lint:
-    name: workflow-lint (actionlint)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - name: actionlint
-        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
-        with:
-          version: v1.7.12
-          args: -shellcheck ''
-      - name: native builder Go toolchain bundle contract
-        run: bash scripts/ci/package-go-toolchain_test.sh
-
-  packer-validate:
-    # ADR-111: Packer-builder syntax gate. PR #928 lands
-    # deploy/packer/{common,ubuntu-2404,role-overlay}.pkr.hcl + the
-    # per-cloud builders in PR #929 (hcloud + amazon-ebs). PR #927's ADR
-    # decides that production host provisioning flows through a Packer-
-    # built image; this CI job is the tripwire that fails PRs with a
-    # syntactically broken .pkr.hcl before any builder creds would have
-    # to be touched.
-    #
-    # `packer validate -syntax-only` works without cloud creds because
-    # the source blocks don't actually resolve until a real builder runs.
-    # Mirrors daemonunit-check / sqlc-check / egress-check: stateless,
-    # fast, runs on every PR.
-    name: packer-validate (ADR-111)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - name: install-packer (pinned)
-        run: scripts/install-packer.sh
-      - name: packer validate -syntax-only
-        run: make image-validate
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-migrations-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
@@ -1390,6 +1481,9 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_SKIP_PG_TESTS: ""
+      # Clone each test database from a once-migrated template instead of
+      # letting apid replay every migration per test (pkg/db/pgtest).
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
@@ -1409,14 +1503,41 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
       - name: install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
       - name: e2e tests (shard 1 — 18 tests)
         run: go test -race -count=1 -timeout=15m -run '^Test(C|D|Docs|Domain|E2E_[A-E])' ./cmd/e2e/...
+      - name: save Go build + test cache
+        # Saved even when a test step failed: the compile cache is
+        # content-addressed, so partial warmth is still warmth.
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   e2e-shard2:
     name: e2e (shard 2 — 15 tests)
@@ -1439,6 +1560,9 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_SKIP_PG_TESTS: ""
+      # Clone each test database from a once-migrated template instead of
+      # letting apid replay every migration per test (pkg/db/pgtest).
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
@@ -1458,8 +1582,25 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
       - name: install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -1488,6 +1629,9 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_SKIP_PG_TESTS: ""
+      # Clone each test database from a once-migrated template instead of
+      # letting apid replay every migration per test (pkg/db/pgtest).
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
@@ -1507,8 +1651,25 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
       - name: install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -1537,6 +1698,9 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_SKIP_PG_TESTS: ""
+      # Clone each test database from a once-migrated template instead of
+      # letting apid replay every migration per test (pkg/db/pgtest).
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
@@ -1556,8 +1720,25 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false  # managed by the restore/save steps below
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; pushes to main save at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
       - name: install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)

@@ -3631,12 +3631,18 @@ func TestCaptureWarmSnapshot_HappyPath(t *testing.T) {
 	if initSnap.Tier != state.SnapshotTierInit {
 		t.Errorf("init row tier = %q, want init", initSnap.Tier)
 	}
+	if initSnap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
+		t.Errorf("init row base image version = %q, want %q", initSnap.BaseImageVersion, fcvm.FAAS_BASE_IMAGE_VERSION)
+	}
 	warmSnap, err := store.LatestSnapshotForTier(context.Background(), dep.ID, state.SnapshotTierWarm)
 	if err != nil {
 		t.Fatalf("LatestSnapshotForTier warm: %v", err)
 	}
 	if warmSnap.Tier != state.SnapshotTierWarm {
 		t.Errorf("warm row tier = %q, want warm", warmSnap.Tier)
+	}
+	if warmSnap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
+		t.Errorf("warm row base image version = %q, want %q", warmSnap.BaseImageVersion, fcvm.FAAS_BASE_IMAGE_VERSION)
 	}
 	// Publication must name the warm memory generation, not an init key
 	// or a host path masquerading as a storage key.
@@ -3691,13 +3697,15 @@ func (m *mockImaged) handle(payload []byte) error {
 	}
 	depID, _ := p["deployment_id"].(string)
 	storageKey, _ := p["storage_key"].(string)
+	baseImageVersion, _ := p["base_image_version"].(string)
 	memBytes, _ := p["mem_bytes"].(float64)
 	_, err := m.store.CreateSnapshot(context.Background(), state.Snapshot{
-		DeploymentID: depID,
-		FCVersion:    m.fcVer,
-		MemBytes:     int64(memBytes),
-		StorageKey:   storageKey,
-		Tier:         tier,
+		DeploymentID:     depID,
+		FCVersion:        m.fcVer,
+		BaseImageVersion: baseImageVersion,
+		MemBytes:         int64(memBytes),
+		StorageKey:       storageKey,
+		Tier:             tier,
 	})
 	return err
 }

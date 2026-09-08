@@ -259,6 +259,15 @@ func Roles() []Role {
 	return all
 }
 
+// RoleUsesNodeIdentity reports whether a compute-only leaf authenticates the
+// host itself to the control plane. Those leaves must use the matching
+// compute_nodes.name as their subject CN so the handshake verifier can bind
+// the connection to an active node. Other leaves keep their daemon-role CNs
+// for service-to-service authorization.
+func RoleUsesNodeIdentity(role Role) bool {
+	return role.Directory == "vmmd" || (role.Directory == "gatewayd" && role.Filename == "apid-client")
+}
+
 // RolesForBox returns the subset of Roles() that a box running with
 // `faas_box_role = role` actually needs on disk. Gate-B cross-box mTLS
 // hardening (issue #297 / ADR-025 §Tier 2) — issuing every leaf on every
