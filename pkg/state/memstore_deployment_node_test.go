@@ -45,26 +45,19 @@ func memDeploymentFixture(t *testing.T) (*MemStore, context.Context, Account, Ap
 }
 
 // memLiveInstance seeds an instance on the fixture's app + deployment
-// with the lowercase "running" state — the form that
-// FailRunningInstanceOnDeadNode + MarkInstanceMigrating expect.
+// with the lowercase "running" state — the only form Postgres accepts
+// (instances_state_check since migration 00001).
+//
+// A second helper, memLiveInstanceUpper, used to sit directly below this
+// one and seed the literal "RUNNING", justified by a comment saying that
+// was "the form ConcurrencyForDeployment's switch recognises" and that
+// "both code paths must stay covered". Uppercase was never a code path:
+// isInstanceStateLive compared against uppercase literals, so it matched
+// nothing a deployment can produce, and the duplicate kept that reader
+// green by manufacturing a state the SQL CHECK rejects.
 func memLiveInstance(t *testing.T, m *MemStore, ctx context.Context, appID, deploymentID, nodeID string) Instance {
 	t.Helper()
 	inst, err := m.CreateInstance(ctx, appID, deploymentID, string(StateRunning), 256, nodeID, uuid.NewString())
-	if err != nil {
-		t.Fatalf("CreateInstance: %v", err)
-	}
-	return inst
-}
-
-// memLiveInstanceUpper seeds an instance whose state string is the
-// uppercase "RUNNING" — the form that ConcurrencyForDeployment's
-// switch recognises. The codebase has historically been inconsistent
-// between lowercase (created via StateRunning constant) and uppercase
-// (used in ConcurrencyForDeployment's filter); both code paths must
-// stay covered.
-func memLiveInstanceUpper(t *testing.T, m *MemStore, ctx context.Context, appID, deploymentID, nodeID string) Instance {
-	t.Helper()
-	inst, err := m.CreateInstance(ctx, appID, deploymentID, "RUNNING", 256, nodeID, uuid.NewString())
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -224,11 +217,10 @@ func TestMemStore_ConcurrencyForDeployment_NoInstance(t *testing.T) {
 func TestMemStore_ConcurrencyForDeployment_CountsRunning(t *testing.T) {
 	t.Parallel()
 	m, ctx, _, app, dep := memDeploymentFixture(t)
-	// ConcurrencyForDeployment's switch recognises "RUNNING" /
-	// "WAKING" / "COLD_BOOTING" (uppercase). memLiveInstanceUpper
-	// seeds instances with that exact state string.
-	_ = memLiveInstanceUpper(t, m, ctx, app.ID, dep.ID, "node-a")
-	_ = memLiveInstanceUpper(t, m, ctx, app.ID, dep.ID, "node-a")
+	// Two live instances in the canonical lowercase state — what a
+	// real deployment produces and what Postgres will store.
+	_ = memLiveInstance(t, m, ctx, app.ID, dep.ID, "node-a")
+	_ = memLiveInstance(t, m, ctx, app.ID, dep.ID, "node-a")
 	got, err := m.ConcurrencyForDeployment(ctx, app.ID, dep.ID)
 	if err != nil {
 		t.Fatalf("ConcurrencyForDeployment: %v", err)

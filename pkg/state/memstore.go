@@ -2934,14 +2934,19 @@ func isInstanceStateLive(state string) bool {
 
 // instanceStateRunning / instanceStateWaking / instanceStateColdBooting
 // are the live-state literals from the spec §6.1 state machine.
-// Mirrored here only to feed isInstanceStateLive — the rest of
-// the codebase continues to use the bare string literals because
-// the SQL CHECK constraint is the load-bearing enforcement and
-// any wider refactor is out of scope.
+//
+// They are DERIVED from the canonical constants in machine.go rather than
+// re-typed. Re-typing them is what broke them: they were spelled 'RUNNING'
+// / 'WAKING' / 'COLD_BOOTING' while instances.state has been lowercase
+// since migration 00001, so isInstanceStateLive returned false for every
+// instance and ConcurrencyForDeployment, PerNodeLiveStats and
+// OperatorCapacity all reported zero. PgStore had the same typo in SQL, so
+// the two implementations agreed — which is why comparing them would not
+// have found it.
 const (
-	instanceStateRunning     = "RUNNING"
-	instanceStateWaking      = "WAKING"
-	instanceStateColdBooting = "COLD_BOOTING"
+	instanceStateRunning     = string(StateRunning)
+	instanceStateWaking      = string(StateWaking)
+	instanceStateColdBooting = string(StateColdBooting)
 )
 
 // ConcurrencyForDeployment mirrors PgStore.ConcurrencyForDeployment.
@@ -9108,7 +9113,7 @@ func (m *MemStore) ReadActiveInstanceForWakeID(_ context.Context, wakeID string)
 		if ins.WakeID != wakeID {
 			continue
 		}
-		if ins.State != "WAKING" && ins.State != "COLD_BOOTING" && ins.State != "RUNNING" {
+		if !isInstanceStateLive(ins.State) {
 			continue
 		}
 		if best == nil || ins.StartedAt.After(best.StartedAt) {
