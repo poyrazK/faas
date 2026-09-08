@@ -71,23 +71,23 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 	}
 }
 
-func TestNodeJoinDynamicBootstrapPreservesRoleDefaults(t *testing.T) {
+func TestNodeJoinFullBootstrapPreservesPlayLevelRoleSemantics(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	playbook := string(body)
-	loadDefaults := strings.Index(playbook, "Load the Firecracker defaults required by compute admission")
-	roleGraph := strings.Index(playbook, "Run the production compute bootstrap role graph")
-	if loadDefaults < 0 || roleGraph < 0 || loadDefaults >= roleGraph {
-		t.Fatalf("node_join.yml must load Firecracker defaults before the dynamic compute role graph")
+	converge := strings.Index(playbook, "Converge the adopted node with the production bootstrap")
+	record := strings.Index(playbook, "Record successful compute bootstrap convergence")
+	if converge < 0 || record < 0 || converge >= record {
+		t.Fatalf("node_join.yml is missing the full bootstrap convergence block")
 	}
-	if !strings.Contains(playbook[loadDefaults:roleGraph], "roles/firecracker/defaults/main.yml") {
-		t.Fatalf("node_join.yml does not load the Firecracker role defaults required by compute_admission")
+	block := playbook[converge:record]
+	if !strings.Contains(block, "import_playbook: bootstrap.yml") {
+		t.Fatalf("full node convergence must retain bootstrap.yml play-level role semantics")
 	}
-	roleGraphEnd := strings.Index(playbook[roleGraph:], "loop:")
-	if roleGraphEnd < 0 || !strings.Contains(playbook[roleGraph:roleGraph+roleGraphEnd], "public: true") {
-		t.Fatalf("dynamic compute roles must expose defaults and vars to later roles")
+	if !strings.Contains(block, "faas_join_bootstrap_contract_current") {
+		t.Fatalf("full bootstrap convergence must remain conditional on the managed-host contract")
 	}
 }
 
