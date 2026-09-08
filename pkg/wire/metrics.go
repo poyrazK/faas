@@ -845,6 +845,8 @@ type OpsMetrics struct {
 	safedeployOrchestratorStuckDetectedTotal         prometheus.Counter
 	safedeployOrchestratorAuditEmitFailedTotal       prometheus.Counter
 	safedeployOrchestratorStuckCheckMissingTimestamp prometheus.Counter
+	safedeployOrchestratorAutoAbortedTotal           prometheus.Counter
+	safedeployOrchestratorAutoAbortFailedTotal       prometheus.Counter
 	// SAFE-RELEASES-OBS PR-A: deployment-audit health counters.
 	deploymentAuditEmittedTotal  *prometheus.CounterVec
 	deploymentAuditGCFailedTotal prometheus.Counter
@@ -2693,6 +2695,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_safedeploy_orchestrator_stuck_check_missing_timestamp_total",
 		Help: "Count of rolling_out rows missing a canary step timestamp during stuck detection.",
 	})
+	safedeployOrchestratorAutoAbortedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_auto_aborted_total",
+		Help: "Count of stuck rollouts automatically aborted through the APID recovery transaction.",
+	})
+	safedeployOrchestratorAutoAbortFailedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_auto_abort_failed_total",
+		Help: "Count of stuck rollout automatic-abort attempts that failed.",
+	})
 	deploymentAuditEmittedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_deployment_audit_emitted_total",
 		Help: "Count of deployment_audit emit calls, labelled by kind and outcome.",
@@ -3257,6 +3267,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		safedeployOrchestratorStuckDetectedTotal,
 		safedeployOrchestratorAuditEmitFailedTotal,
 		safedeployOrchestratorStuckCheckMissingTimestamp,
+		safedeployOrchestratorAutoAbortedTotal,
+		safedeployOrchestratorAutoAbortFailedTotal,
 		deploymentAuditEmittedTotal,
 		deploymentAuditGCFailedTotal,
 		safedeployInFlightRollouts,
@@ -4489,6 +4501,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		safedeployOrchestratorStuckDetectedTotal:   safedeployOrchestratorStuckDetectedTotal,
 		safedeployOrchestratorAuditEmitFailedTotal: safedeployOrchestratorAuditEmitFailedTotal,
 		safedeployOrchestratorStuckCheckMissingTimestamp:      safedeployOrchestratorStuckCheckMissingTimestamp,
+		safedeployOrchestratorAutoAbortedTotal:                safedeployOrchestratorAutoAbortedTotal,
+		safedeployOrchestratorAutoAbortFailedTotal:            safedeployOrchestratorAutoAbortFailedTotal,
 		deploymentAuditEmittedTotal:                           deploymentAuditEmittedTotal,
 		deploymentAuditGCFailedTotal:                          deploymentAuditGCFailedTotal,
 		safedeployInFlightRollouts:                            safedeployInFlightRollouts,
@@ -4595,7 +4609,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditLogWriteTotal:                                    auditLogWriteTotal,
 		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,
-		operatorActionTraceCompletenessFirstTickCompleted:   operatorActionTraceCompletenessFirstTickCompleted,
+		operatorActionTraceCompletenessFirstTickCompleted:     operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp: operatorActionTraceCompletenessLastSuccessTimestamp,
 		uploadSessionCreatedTotal:                           uploadSessionCreatedTotal,
 		uploadSessionCommittedTotal:                         uploadSessionCommittedTotal,
@@ -7067,6 +7081,24 @@ func (m *OpsMetrics) SafedeployOrchestratorStuckCheckMissingTimestampTotal() pro
 		return nil
 	}
 	return m.safedeployOrchestratorStuckCheckMissingTimestamp
+}
+
+// SafedeployOrchestratorAutoAbortedTotal returns the bounded automatic
+// recovery counter for stuck rollouts.
+func (m *OpsMetrics) SafedeployOrchestratorAutoAbortedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorAutoAbortedTotal
+}
+
+// SafedeployOrchestratorAutoAbortFailedTotal returns the automatic recovery
+// failure counter for stuck rollouts.
+func (m *OpsMetrics) SafedeployOrchestratorAutoAbortFailedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorAutoAbortFailedTotal
 }
 
 // DeploymentAuditEmittedTotal returns the bounded kind/outcome counter.

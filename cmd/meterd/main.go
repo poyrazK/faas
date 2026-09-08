@@ -1472,12 +1472,12 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 // a follow-up operator-config PR). When ON:
 //
 //   - FAAS_SAFEDEPLOY_TOKEN is the apid-issued service-account
-//     bearer the orchestrator uses for any future apid HTTP calls
-//     (today the orchestrator only stamps pkg/state.Store — no
-//     apid HTTP — but the bearer stays wired for forward-compat
-//     with pre-deploy diff checks).
+//     bearer that enables the rollout state machine and automatic
+//     stuck-recovery path.
 //   - FAAS_APID_BASE_URL is reused from the canary_progression
-//     configuration (the same apid instance serves both ticks).
+//     configuration (the same apid instance serves both ticks). The
+//     client is used for idempotent automatic aborts when a rollout
+//     remains stuck beyond the configured safety window.
 //
 // Returns nil when the token is missing — the call sites
 // nil-check the orchestrator and skip the goroutine, preserving
@@ -1502,6 +1502,12 @@ func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsM
 	storeAdapter := &safedeployStoreAdapter{store: store}
 	const actorSentinel = "meterd:safedeploy"
 	orchestrator := safedeploy.NewOrchestrator(storeAdapter, log, actorSentinel, actorSentinel)
+	// SAFE-RELEASES GitHub lifecycle follow-up: give the orchestrator the
+	// same APID recovery client used by alert actions. Stuck canaries are
+	// aborted through APID's atomic transaction so traffic redistribution,
+	// idempotency, and deployment audit remain authoritative in one place.
+	orchestrator.Targets = store
+	orchestrator.Recovery = apidClient
 	// SAFE-RELEASES-OBS PR-A: wire the daemon's wire.OpsMetrics
 	// so emitAudit can bump the deployment_audit_emitted_total
 	// counter on every successful + failed audit emit. nil-allowed
