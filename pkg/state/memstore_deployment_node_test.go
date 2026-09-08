@@ -45,28 +45,16 @@ func memDeploymentFixture(t *testing.T) (*MemStore, context.Context, Account, Ap
 }
 
 // memLiveInstance seeds an instance on the fixture's app + deployment
-// with the lowercase "running" state — the form that
-// FailRunningInstanceOnDeadNode + MarkInstanceMigrating expect.
-func memLiveInstance(t *testing.T, m *MemStore, ctx context.Context, appID, deploymentID, nodeID string) Instance {
-	t.Helper()
-	inst, err := m.CreateInstance(ctx, appID, deploymentID, string(StateRunning), 256, nodeID, uuid.NewString())
-	if err != nil {
-		t.Fatalf("CreateInstance: %v", err)
-	}
-	return inst
-}
-
-// memLiveInstance seeds a live instance using the canonical lowercase
-// state, which is the only form Postgres accepts (instances_state_check
-// since migration 00001).
+// with the lowercase "running" state — the only form Postgres accepts
+// (instances_state_check since migration 00001).
 //
-// It used to seed "RUNNING" and was named memLiveInstanceUpper, on the
-// reasoning that uppercase was "the form ConcurrencyForDeployment's
-// switch recognises" and that "both code paths must stay covered". That
-// was the bug, not a code path: isInstanceStateLive compared against
-// uppercase literals, so it matched nothing a real deployment produces,
-// and this test kept it green by manufacturing states the SQL CHECK
-// would have rejected.
+// A second helper, memLiveInstanceUpper, used to sit directly below this
+// one and seed the literal "RUNNING", justified by a comment saying that
+// was "the form ConcurrencyForDeployment's switch recognises" and that
+// "both code paths must stay covered". Uppercase was never a code path:
+// isInstanceStateLive compared against uppercase literals, so it matched
+// nothing a deployment can produce, and the duplicate kept that reader
+// green by manufacturing a state the SQL CHECK rejects.
 func memLiveInstance(t *testing.T, m *MemStore, ctx context.Context, appID, deploymentID, nodeID string) Instance {
 	t.Helper()
 	inst, err := m.CreateInstance(ctx, appID, deploymentID, string(StateRunning), 256, nodeID, uuid.NewString())
