@@ -595,6 +595,7 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	if port > 0 {
 		env = StampOverridePortEnv(env, port)
 	}
+	env = StampWorkloadIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	if directRoot != "" {
 		// exec.Command resolves bare names against the guest-init process's
