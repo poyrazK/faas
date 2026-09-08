@@ -1,6 +1,7 @@
 # Native builder CI
 
-`builder-native.yml` is the post-merge hardware gate for the Gregale builder.
+`builder-native.yml` is the post-merge hardware gate for the Gregale builder
+and the first native fcvm lifecycle smoke.
 It starts after a successful `images` workflow on `main` when that run published
 `builder-base`, runs nightly, and can be dispatched manually from `main`.
 Non-runtime `images` runs are skipped. Nightly and manual runs select the most
@@ -25,6 +26,13 @@ The target instance has instance-level `enable-oslogin=TRUE` metadata and must
 contain `/etc/faas/builder-acceptance-host`. Removing that marker disables the
 test before it changes service state. The runner also refuses a host with an
 active Firecracker process or any resource detected by `make leakcheck`.
+
+The nightly and manually dispatched workflow also transfers the exact current
+`main` source plus the pinned Go toolchain, creates fresh hello base/layer ext4
+fixtures, and runs `pkg/fcvm::TestMetalHelloBoot`. This proves the production
+jailer, Firecracker, TAP, network namespace, cgroup, readiness, destroy, and
+leak-check path on amd64. The metal smoke waits for the builder job and both
+jobs serialize through `/var/lock/faas-builder-acceptance.lock`.
 
 The remote command runs as a transient systemd service. Losing the GitHub SSH
 connection therefore does not kill cleanup halfway through. The root wrapper

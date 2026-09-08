@@ -7,7 +7,7 @@ name: ci
 #   - golangci-lint (catches errcheck, staticcheck, ineffassign beyond go vet)
 #   - govulncheck (Go vulnerability DB scan)
 #   - Codecov coverage (project gate >= 70%; informational patch)
-#   - workflow_dispatch on the metal job (manual trigger from Actions tab)
+#   - workflow_dispatch for the non-hardware CI bundle
 #   - status badge in README, PR template for milestone gating
 #
 # Dependabot (.github/dependabot.yml) and CodeQL (.github/workflows/codeql.yml)
@@ -1297,25 +1297,6 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
-
-  metal:
-    # Manual trigger from the Actions tab. Marked workflow_dispatch so the
-    # job can be invoked on-demand once a self-hosted runner is registered
-    # (the spec gates the EX44 acceptance tests on KVM + root). The
-    # `runs-on: [self-hosted, kvm]` label combo fails fast on stock runners.
-    name: metal (KVM + root, manual)
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, kvm]
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: metal tests
-        run: sudo make test-metal
-      - name: leak check
-        run: sudo make leakcheck
 
   migrations:
     # ADR-142 freezes the legacy 1..590 sequence and moves all new migrations

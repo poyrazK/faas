@@ -195,3 +195,95 @@ jobs:
           path: ${{ runner.temp }}/native-builder-acceptance.log
           if-no-files-found: warn
           retention-days: 14
+
+  metal-smoke:
+    name: metal smoke (Firecracker amd64, nightly)
+    needs: acceptance
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Build exact-source transfer bundle
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          bundle="$RUNNER_TEMP/native-metal-bundle"
+          mkdir -p "$bundle/source" "$bundle/tools/go"
+          git archive "$SOURCE_SHA" | tar -x -C "$bundle/source"
+          printf '%s\n' "$SOURCE_SHA" > "$bundle/source/.faas-metal-source-sha"
+
+          go_root="$(go env GOROOT)"
+          bash scripts/ci/package-go-toolchain.sh "$go_root" "$bundle/go.tar.gz"
+          tar -C "$bundle" -czf "$RUNNER_TEMP/native-metal-bundle.tar.gz" source go.tar.gz
+
+      - name: Authenticate to GCP with GitHub OIDC
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Run one native fcvm cold boot on compute node 2
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-metal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-metal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "mkdir -p '$remote_root'"
+          gcloud compute scp "$RUNNER_TEMP/native-metal-bundle.tar.gz" \
+            "$GCP_INSTANCE:$remote_root/bundle.tar.gz" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go' && sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=25m --property='StandardOutput=append:$remote_root/metal-smoke.log' --property='StandardError=append:$remote_root/metal-smoke.log' --working-directory='$remote_root/source' --setenv=FAAS_METAL_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_METAL_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_METAL_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_METAL_TRANSFER_ROOT='$remote_root' /bin/bash scripts/ci/run-native-metal-smoke.sh"
+
+      - name: Refresh GCP authentication for cleanup
+        if: always()
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Remove remote transfer bundle
+        if: always()
+        run: |
+          remote_root="/var/tmp/faas-metal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          log="$RUNNER_TEMP/native-metal-smoke.log"
+          gcloud compute scp "$GCP_INSTANCE:$remote_root/metal-smoke.log" "$log" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
+          if [[ -f "$log" ]]; then
+            cat "$log"
+          fi
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo rm -rf '$remote_root'" || true
+
+      - name: Upload metal smoke log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-metal-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/native-metal-smoke.log
+          if-no-files-found: warn
+          retention-days: 14

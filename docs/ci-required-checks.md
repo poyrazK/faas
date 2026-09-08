@@ -54,9 +54,6 @@ Runtime OCI vulnerability scanning is enforced by the `images.yml` builder and
 runtime matrix jobs. Those jobs scan the exact locally-built or published
 artifacts; Dockerfile source text is not treated as an image scan.
 
-`metal (KVM + root, manual)` is intentionally **not** a required
-check — it is manual-only via `workflow_dispatch`.
-
 `builder native (Firecracker amd64)` runs in `builder-native.yml` after a
 successful `images` workflow on `main` that published `builder-base`, once per
 night, and by manual dispatch from `main`. Non-publishing image runs are skipped;
@@ -69,6 +66,17 @@ untrusted pull-request code with root access to a persistent compute node.
 Changes to `pkg/fcvm/builder_acceptance_metal_test.go` are included in the
 runtime change detector so the post-merge native gate publishes and tests the
 commit containing the updated acceptance fixture.
+
+`metal smoke (Firecracker amd64, nightly)` runs in the same trusted workflow
+after the nightly builder gate, and by manual dispatch from `main`. It packages
+the exact current `main` source and a pinned Go toolchain, builds fresh
+guest-init/base/layer fixtures on the host, and runs `TestMetalHelloBoot` plus
+the pre/post leak checks. It shares the builder gate's host lock, service
+quiescing, restoration, marker, and workflow-bound OIDC identity. It replaces
+the old `ci.yml` manual job that targeted a nonexistent `[self-hosted, kvm]`
+runner. This first slice is post-merge-only; untrusted pull-request code is not
+given root execution on the persistent compute node.
+
 Every successful Dockerfile and Railpack fixture must also complete its Grype
 scan. The hardened Python 3.13 runtime rejects every CRITICAL finding to match
 vmmd admission. Legacy runtime bases and builder artifacts retain their
