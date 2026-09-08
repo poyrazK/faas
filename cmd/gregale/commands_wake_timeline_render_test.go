@@ -167,3 +167,23 @@ func TestRenderWakeTimelinePage_DefaultSummaryHidesInternalPhases(t *testing.T) 
 		t.Errorf("verbose output missing internal restore phase:\n%s", buf.String())
 	}
 }
+
+func TestRenderWakeTimelinePage_ColdBootCPUAllowance(t *testing.T) {
+	resp := api.WakeTimelineResponse{
+		WakeID: "wake-cold", AppID: "app-cold", Limit: 50,
+		Events: []api.WakeTimelineEvent{
+			{At: "2026-08-31T12:13:57.696394Z", Kind: "wake.cold_boot_cpu", Actor: "vmmd",
+				Data: map[string]any{
+					"total_ms": float64(2401), "startup_cpu_millicores": float64(1000),
+					"configured_cpu_millicores": float64(250),
+				}},
+			{At: "2026-08-31T12:13:58.302741Z", Kind: "wake.readiness_200", Actor: "vmmd",
+				Data: map[string]any{"elapsed_ms": float64(2200)}},
+		},
+	}
+	var buf bytes.Buffer
+	renderWakeTimelinePage(&buf, resp)
+	if got := buf.String(); !strings.Contains(got, "cold start: cold_boot=2401ms cpu=1000m->250m readiness=2200ms") {
+		t.Errorf("cold-boot summary missing CPU transition:\n%s", got)
+	}
+}

@@ -103,6 +103,7 @@ Rejected: `kind string + data map[string]any` (mirrors
 | `wake.admitted` | `{wake_id, app_id, request_id, account_id, plan, admitted_at}` | schedd admission gate |
 | `wake.boot_started` | `{wake_id, app_id, instance_id, node_id, method, requested_at}` | schedd boot path + vmmd mirror in `pkg/vmmdgrpc/server.go::CreateFromSnapshot` |
 | `wake.restore_breakdown` | `{wake_id, app_id, instance_id, chroot_ms, materialize_mem_ms, materialize_vmstate_ms, resolve_images_ms, resolve_artifacts[{artifact, source, duration_ms}], stage_drives_ms, stage_snapshot_ms, helper_ms, start_jailer_ms, bind_tun_ms, load_snapshot_ms, resume_hook_ms, wait_ready_ms, total_ms}` | vmmd `pkg/fcvm/vmm.go::Restore` after successful snapshot readiness |
+| `wake.cold_boot_cpu` | `{wake_id, app_id, instance_id, startup_cpu_millicores, configured_cpu_millicores, pre_ready_ms, wait_ready_ms, quota_restore_ms, total_ms}` | vmmd after cold-boot readiness and successful restoration of the configured host `cpu.max` |
 | `wake.boot_completed` | `{wake_id, app_id, instance_id, node_id, method, started_at, completed_at}` | schedd post-`RecordRuntime` |
 | `wake.boot_failed` | `{wake_id, app_id, instance_id, node_id, method, reason, failed_at}` | schedd boot path alongside `wake_boot_error` audit row |
 | `wake.readiness_200` | `{wake_id, app_id, instance_id, node_id, healthcheck_path, probe_count, elapsed_ms}` | vmmd `pkg/fcvm/vmm.go::waitReady` on the first 2xx probe |

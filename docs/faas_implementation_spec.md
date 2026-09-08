@@ -1849,6 +1849,12 @@ Firecracker machine config (cold boot):
   "entropy": {} }
 ```
 
+For app cold boots, VMMD installs a temporary host `cpu.max` allowance of
+`min(1000m, plan ceiling)` before releasing the Firecracker config FIFO. It
+restores the app's configured sustained quota after readiness and before the
+boot can return as routable. Snapshot restore keeps the configured quota for
+the entire platform-only restore window. See [ADR-168](adr/168-cold-boot-startup-cpu.md).
+
 nftables tenant egress (excerpt):
 
 ```

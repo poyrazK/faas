@@ -535,6 +535,7 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheck
 }
 
 func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) (err error) {
+	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
 		return err
@@ -576,8 +577,18 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
 		return err
 	}
+	var coldBootCPU coldBootCPUProfile
+	trackColdBootCPU := !skipReady && !l.IsBuilder && l.Plan.Valid()
 	if l.IsBuilder || l.Plan.Valid() {
-		if err = v.applyPreBootCgroupFence(l, workloads); err != nil {
+		fenceLease := l
+		if trackColdBootCPU {
+			coldBootCPU, err = resolveColdBootCPUProfile(l.Plan, l.CPUMillicores)
+			if err != nil {
+				return fmt.Errorf("vmm: resolve cold-boot CPU profile: %w", err)
+			}
+			fenceLease.CPUMillicores = coldBootCPU.StartupMillicores
+		}
+		if err = v.applyPreBootCgroupFence(fenceLease, workloads); err != nil {
 			return fmt.Errorf("vmm: apply pre-boot cgroup fence: %w", err)
 		}
 	}
@@ -589,8 +600,25 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	// vsockUDSSock is created by the time startJailer returns. No
 	// post-start PUT needed.
 	if !skipReady {
+		readinessStartedAt := time.Now()
 		if err = v.waitReady(ctx, l, healthcheckPath, startupDeadlineS); err != nil {
 			return fmt.Errorf("vmm: readiness: %w", err)
+		}
+		readyAt := time.Now()
+		if trackColdBootCPU {
+			quotaRestoreStartedAt := time.Now()
+			if err = v.restoreColdBootCPUFence(l, workloads, coldBootCPU.ConfiguredMillicores); err != nil {
+				return fmt.Errorf("vmm: restore configured CPU fence: %w", err)
+			}
+			completedAt := time.Now()
+			v.emitColdBootCPU(ctx, l, completedAt, events.ColdBootCPU{
+				StartupCPUMillicores:    coldBootCPU.StartupMillicores,
+				ConfiguredCPUMillicores: coldBootCPU.ConfiguredMillicores,
+				PreReadyMs:              readyAt.Sub(bootStartedAt).Milliseconds(),
+				WaitReadyMs:             readyAt.Sub(readinessStartedAt).Milliseconds(),
+				QuotaRestoreMs:          completedAt.Sub(quotaRestoreStartedAt).Milliseconds(),
+				TotalMs:                 completedAt.Sub(bootStartedAt).Milliseconds(),
+			})
 		}
 	}
 	return nil
@@ -672,6 +700,25 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 		if err := writeWorkloadCgroup(parentScope, workload.Name, workload.RamMB, workload.CPUMillicores); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// restoreColdBootCPUFence lowers the temporary startup allowance after the
+// readiness probe succeeds. The parent scope contains Firecracker and is the
+// enforcement boundary. The optional main-workload child is kept in sync for
+// accurate cgroup inspection even though guest processes do not join that
+// host-side leaf.
+func (v *JailerVMM) restoreColdBootCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
+	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	if err := writeAppCPUMaxTo(parentScope, l.Plan, configuredMillicores); err != nil {
+		return err
+	}
+	if len(workloads) <= 1 {
+		return nil
+	}
+	if err := writeWorkloadCgroup(parentScope, WorkloadNameMain, l.MemoryMaxMiB, configuredMillicores); err != nil {
+		return fmt.Errorf("restore main workload CPU fence: %w", err)
 	}
 	return nil
 }
@@ -3488,6 +3535,24 @@ func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.T
 		TotalMs:              b.TotalMs,
 		ResolveArtifacts:     eventRestoreArtifactTimings(b.ResolveArtifacts),
 	})
+}
+
+// emitColdBootCPU records the temporary startup allowance only after the
+// configured quota has been restored. Operator calls without a wake envelope
+// remain log-only so the customer timeline never receives an unjoinable row.
+func (v *JailerVMM) emitColdBootCPU(ctx context.Context, l Lease, at time.Time, event events.ColdBootCPU) {
+	if v.events == nil {
+		return
+	}
+	fields, ok := wire.FromContext(ctx)
+	if !ok || fields.WakeID == "" {
+		return
+	}
+	event.EmitAt = at.UTC()
+	event.WakeID = fields.WakeID
+	event.AppID = fields.AppID
+	event.InstanceID = l.Instance
+	v.events.EmitAsync(ctx, event)
 }
 
 func eventRestoreArtifactTimings(timings []restoreArtifactTiming) []events.RestoreArtifactResolution {

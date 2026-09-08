@@ -177,10 +177,14 @@ func renderWakeTimingSummary(w io.Writer, events []api.WakeTimelineEvent) {
 		queueAcceptedAt  time.Time
 		admittedAt       time.Time
 		restoreMs        int64
+		coldBootMs       int64
+		startupCPU       int64
+		configuredCPU    int64
 		readinessMs      int64
 		proxyFirstByteMs int64
 		wakeToRunningMs  int64
 		haveRestore      bool
+		haveColdBoot     bool
 		haveReadiness    bool
 		haveProxy        bool
 		haveWakeRunning  bool
@@ -199,6 +203,13 @@ func renderWakeTimingSummary(w io.Writer, events []api.WakeTimelineEvent) {
 				restoreMs = ms
 				haveRestore = true
 			}
+		case "wake.cold_boot_cpu":
+			if ms, ok := timelineMillis(ev.Data["total_ms"]); ok {
+				coldBootMs = ms
+				haveColdBoot = true
+			}
+			startupCPU, _ = timelineMillis(ev.Data["startup_cpu_millicores"])
+			configuredCPU, _ = timelineMillis(ev.Data["configured_cpu_millicores"])
 		case "wake.readiness_200":
 			if ms, ok := timelineMillis(ev.Data["elapsed_ms"]); ok {
 				readinessMs = ms
@@ -218,14 +229,21 @@ func renderWakeTimingSummary(w io.Writer, events []api.WakeTimelineEvent) {
 			}
 		}
 	}
-	if !haveRestore {
+	if !haveRestore && !haveColdBoot {
 		return
 	}
 	parts := []string{}
 	if !queueAcceptedAt.IsZero() && !admittedAt.IsZero() && !admittedAt.Before(queueAcceptedAt) {
 		parts = append(parts, fmt.Sprintf("queue_to_admit=%dms", admittedAt.Sub(queueAcceptedAt).Milliseconds()))
 	}
-	parts = append(parts, fmt.Sprintf("restore=%dms", restoreMs))
+	if haveRestore {
+		parts = append(parts, fmt.Sprintf("restore=%dms", restoreMs))
+	} else {
+		parts = append(parts, fmt.Sprintf("cold_boot=%dms", coldBootMs))
+		if startupCPU > 0 && configuredCPU > 0 {
+			parts = append(parts, fmt.Sprintf("cpu=%dm->%dm", startupCPU, configuredCPU))
+		}
+	}
 	if haveReadiness {
 		parts = append(parts, fmt.Sprintf("readiness=%dms", readinessMs))
 	}
