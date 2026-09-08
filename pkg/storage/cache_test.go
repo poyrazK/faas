@@ -924,7 +924,13 @@ func TestLocalCacheBackend_GetsTouchMtime(t *testing.T) {
 			t.Fatalf("Get a: %v", err)
 		}
 	}
-	afterA := mtimeOf(t, hashCachePath(t, filepath.Join(tmp, "cache"), "snap/a"))
+	pathA := hashCachePath(t, filepath.Join(tmp, "cache"), "snap/a")
+	deadline := time.Now().Add(time.Second)
+	afterA := mtimeOf(t, pathA)
+	for !afterA.After(beforeA) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		afterA = mtimeOf(t, pathA)
+	}
 	afterB := mtimeOf(t, hashCachePath(t, filepath.Join(tmp, "cache"), "snap/b"))
 	if !afterA.After(beforeA) {
 		t.Errorf("snap/a mtime did not advance on read: before=%s, after=%s", beforeA, afterA)
