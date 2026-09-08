@@ -784,6 +784,15 @@ jobs:
       GOVULNCHECK_VERSION: "1.7.0"
     steps:
       - uses: actions/checkout@v7
+        with:
+          # PR-4b compares changed core-path tests against the event base SHA.
+          fetch-depth: 0
+      # S4 PR-4b: tests in scheduler, gateway, meter, billing, and Firecracker
+      # paths must name the spec section or ADR that defines their behavior.
+      - name: spec-cited core-path tests
+        run: make spec-cited-tests-check
+      - name: spec-cited-tests checker tests
+        run: make spec-cited-tests-check-test
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
