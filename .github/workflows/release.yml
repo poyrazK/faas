@@ -48,10 +48,29 @@ jobs:
           # gzipped output, not the repo history.
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.23"
-          cache: true
+          go-version-file: go.mod
+          cache: false
+
+      # Tags have their own cache scope, so setup-go's automatic cache missed
+      # on every release candidate and saved a new archive that the next tag
+      # could not restore. Main CI already builds these targets and publishes
+      # this dated cache after each push; release tags can restore the
+      # default-branch cache without spending another two minutes compiling.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore main-branch Go build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-
 
       - name: Cross-build gregale (linux-amd64)
         env:
@@ -201,7 +220,21 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore main-branch Go build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-
 
       - name: Install pinned release tooling
         env:
@@ -522,7 +555,6 @@ jobs:
             --kernel-digest "$KERNEL_DIGEST" \
             --runtime-bases-env "$OUT_DIR/runtime-bases.env" \
             --output "$MANIFEST_FILE"
-          go run ./cmd/gregalectl manifest validate --file "$MANIFEST_FILE"
           MANIFEST_FILE="$MANIFEST_FILE" \
             GIT_SHA="$GIT_SHA" \
             OUT_DIR="$OUT_DIR" \

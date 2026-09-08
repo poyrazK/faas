@@ -63,6 +63,14 @@ make -C "$repo_root" \
   BINDIR="$work_root/$git_sha/bin" \
   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 VERSION="$git_sha" build-release-batch
 
+# Validate with the exact gregalectl binary that will be signed into the
+# release. The tag workflow used to invoke `go run ./cmd/gregalectl` before
+# this build, compiling and linking the same large command graph twice on a
+# cold runner.
+if [[ -n "$manifest_file" ]]; then
+  "$work_root/$git_sha/bin/gregalectl" manifest validate --file "$manifest_file"
+fi
+
 if [[ -n "${KERNEL_FILE:-}" ]]; then
   [[ -f "$KERNEL_FILE" ]] || {
     echo "KERNEL_FILE does not exist: $KERNEL_FILE" >&2
