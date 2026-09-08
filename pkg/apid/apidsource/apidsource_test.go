@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -72,6 +73,15 @@ func (r *recordingNotifier) lastPayload() (string, error) {
 type errNotifier struct{ err error }
 
 func (e errNotifier) Notify(_ context.Context, _, _ string) error { return e.err }
+
+type recordingHostingObserver struct {
+	flow, phase, outcome string
+	dur                  time.Duration
+}
+
+func (r *recordingHostingObserver) ObserveAPIHostingPhase(flow, phase, outcome string, dur time.Duration) {
+	r.flow, r.phase, r.outcome, r.dur = flow, phase, outcome, dur
+}
 
 // quietLogger returns a slog.Logger that swallows everything; the
 // helper's logs are not asserted in unit tests.
@@ -171,6 +181,28 @@ func TestEnqueue_HappyPath_FirstDeploy(t *testing.T) {
 	logPath := filepath.Join(spoolDir, res.DeploymentID, "build.log")
 	if _, err := os.Stat(logPath); err != nil {
 		t.Fatalf("build.log not staged: %v", err)
+	}
+}
+
+func TestEnqueue_ReportsPrivacySafeSourceDetectionTiming(t *testing.T) {
+	st := state.NewMemStore()
+	app := mustSeedApp(t, st)
+	srcPath, srcBytes := stageSource(t, t.TempDir())
+	observer := &recordingHostingObserver{}
+
+	_, err := Enqueue(context.Background(), st, &recordingNotifier{}, EnqueueParams{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: srcPath,
+		SourceBytes: srcBytes, LogSpool: t.TempDir(), Log: quietLogger(),
+		HostingObserver: observer, HostingFlow: "first_deploy",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if observer.flow != "first_deploy" || observer.phase != "source_detected" || observer.outcome != "failed" {
+		t.Fatalf("observer = %+v, want first_deploy/source_detected/failed for the intentionally non-tar source", observer)
+	}
+	if observer.dur < 0 {
+		t.Fatalf("observer duration = %s, want non-negative", observer.dur)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
@@ -74,6 +75,17 @@ func spoolRoot() string {
 // WHERE id=$1 AND status='active' FOR UPDATE).
 func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, developerSource bool) {
 	limits := api.MustLimitsFor(acct.Plan)
+	hostingFlow := "first_deploy"
+	if developerSource || state.IsDeveloperApp(app) {
+		hostingFlow = "dev"
+	}
+	uploadStarted := time.Now()
+	uploadOutcome := "failed"
+	defer func() {
+		if s.ops != nil {
+			s.ops.ObserveAPIHostingPhase(hostingFlow, "upload", uploadOutcome, time.Since(uploadStarted))
+		}
+	}()
 
 	// The body has already been wrapped in http.MaxBytesReader at the
 	// dispatch site (handlers.go:createDeployment) so r.MultipartReader()
@@ -191,6 +203,13 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if developerSource {
+		deltaStarted := time.Now()
+		deltaOutcome := "failed"
+		defer func() {
+			if s.ops != nil {
+				s.ops.ObserveAPIHostingPhase(hostingFlow, "source_delta", deltaOutcome, time.Since(deltaStarted))
+			}
+		}()
 		preparedPath, preparedBytes, prob := s.prepareDevSource(acct, app, sourcePath, devSource, limits)
 		if prob != nil {
 			api.WriteProblem(w, prob)
@@ -201,6 +220,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			sourcePath = preparedPath
 		}
 		sourceBytes = preparedBytes
+		deltaOutcome = "completed"
 	}
 	if sourceRoot != "" {
 		present, rootErr := archiveHasSourceRoot(sourcePath, sourceRoot)
@@ -277,18 +297,20 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// dockerfile deploys and produced misleading split-by-source
 		// dashboards.
 		_, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-			AppID:       app.ID,
-			Kind:        kind,
-			SourcePath:  sourcePath,
-			SourceBytes: sourceBytes,
-			SourceRoot:  sourceRoot,
-			Handler:     handler,
-			LogSpool:    spoolRoot(),
-			Log:         s.log,
-			ActorUserID: acct.ID,
-			ActorVia:    routeKindForRequest(r),
-			ActorFromIP: middleware.ClientIP(r),
-			Workflows:   marshalWorkflowDefinitions(workflows),
+			AppID:           app.ID,
+			Kind:            kind,
+			SourcePath:      sourcePath,
+			SourceBytes:     sourceBytes,
+			SourceRoot:      sourceRoot,
+			Handler:         handler,
+			LogSpool:        spoolRoot(),
+			Log:             s.log,
+			ActorUserID:     acct.ID,
+			ActorVia:        routeKindForRequest(r),
+			ActorFromIP:     middleware.ClientIP(r),
+			Workflows:       marshalWorkflowDefinitions(workflows),
+			HostingObserver: s.ops,
+			HostingFlow:     hostingFlow,
 		})
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
@@ -300,6 +322,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		sourceAccepted = true
+		uploadOutcome = "completed"
 		// Look up the durable deployment row to build the wire
 		// response. LatestDeployment returns the row we just
 		// inserted (state.Store.CreateDeployment is its own tx

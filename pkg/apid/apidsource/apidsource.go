@@ -73,6 +73,14 @@ type Notifier interface {
 	Notify(ctx context.Context, channel, payload string) error
 }
 
+// HostingPhaseObserver is the narrow observability seam for the API-hosting
+// activation funnel. The implementation (wire.OpsMetrics) enforces the
+// closed flow/phase/outcome vocabulary; this package stays independent of
+// Prometheus and never passes source paths or repository names to it.
+type HostingPhaseObserver interface {
+	ObserveAPIHostingPhase(flow, phase, outcome string, dur time.Duration)
+}
+
 // EnqueueParams carries everything the deploy+build flow needs to
 // produce one (deployment, build) pair + the two notifications.
 //
@@ -184,6 +192,11 @@ type EnqueueParams struct {
 	// Workflows is the validated definition set carried by a multipart source
 	// deploy and stored with the deployment for run snapshotting.
 	Workflows json.RawMessage
+	// HostingObserver and HostingFlow are optional. They let HTTP source paths
+	// report privacy-safe source-detection timing without adding customer,
+	// repository, path, URL, or environment labels.
+	HostingObserver HostingPhaseObserver
+	HostingFlow     string
 }
 
 // EnqueueResult is the durable artifact the caller writes back to
@@ -310,7 +323,19 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		if err != nil {
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source integrity: %w", err)
 		}
+		profileStart := time.Now()
 		profile, profileErr := frameworkprofile.AnalyzeTarballAtRoot(p.SourcePath, p.SourceRoot)
+		if p.HostingObserver != nil {
+			outcome := "completed"
+			if profileErr != nil {
+				outcome = "failed"
+			}
+			flow := p.HostingFlow
+			if flow == "" {
+				flow = "first_deploy"
+			}
+			p.HostingObserver.ObserveAPIHostingPhase(flow, "source_detected", outcome, time.Since(profileStart))
+		}
 		if profileErr != nil {
 			// The archive has already passed apid's shape validation. Static
 			// profiling is durable evidence, not a second deployment gate;

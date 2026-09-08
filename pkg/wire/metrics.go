@@ -1480,6 +1480,14 @@ type OpsMetrics struct {
 	// every (stage, status) tuple so /metrics surfaces zero on
 	// boot; only imaged increments via ObserveDeployStageDuration.
 	deployStageDuration *prometheus.HistogramVec
+	// apiHostingPhaseTotal and apiHostingPhaseDuration are the privacy-safe
+	// activation/edit-to-live funnel. Both use only closed flow, phase, and
+	// outcome vocabularies; notably there is no app, account, repository,
+	// source-path, URL, or environment label. This keeps the product signal
+	// useful while making customer data and unbounded cardinality impossible
+	// at the metrics boundary.
+	apiHostingPhaseTotal    *prometheus.CounterVec
+	apiHostingPhaseDuration *prometheus.HistogramVec
 	// deployScanTotal: scanned-deploy counter, labelled by
 	// result ∈ {complete, failed, skipped}. The complete/failed
 	// labels increment once per scan after the 1-retry backoff;
@@ -3388,6 +3396,28 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			deployStageDuration.WithLabelValues(stage, status)
 		}
 	}
+	// API-hosting activation and edit-to-live funnel. The vocabulary is
+	// intentionally closed and pre-instantiated: these metrics are product
+	// evidence, not a request log, so customer identifiers and arbitrary
+	// failure text must never become labels.
+	apiHostingPhaseTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_api_hosting_phase_total",
+		Help: "Privacy-safe API-hosting funnel observations, labelled only by flow, phase, and outcome. flow ∈ {first_deploy, dev}; phase ∈ {source_detected, source_delta, upload, dependency_cache, build, boot, readiness, verified_url, route_switch}; outcome ∈ {completed, failed, skipped}. No customer, repository, path, URL, or environment labels are permitted.",
+	}, []string{"flow", "phase", "outcome"})
+	apiHostingPhaseDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_api_hosting_phase_duration_seconds",
+		Help:    "Privacy-safe API-hosting funnel phase duration in seconds. Labels are the same closed flow/phase/outcome vocabulary as api_hosting_phase_total; no customer-derived labels are permitted.",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300},
+	}, []string{"flow", "phase", "outcome"})
+	commonCollectors = append(commonCollectors, apiHostingPhaseTotal, apiHostingPhaseDuration)
+	for _, flow := range []string{"first_deploy", "dev"} {
+		for _, phase := range []string{"source_detected", "source_delta", "upload", "dependency_cache", "build", "boot", "readiness", "verified_url", "route_switch"} {
+			for _, outcome := range []string{"completed", "failed", "skipped"} {
+				apiHostingPhaseTotal.WithLabelValues(flow, phase, outcome)
+				apiHostingPhaseDuration.WithLabelValues(flow, phase, outcome)
+			}
+		}
+	}
 	deployScanTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_deploy_scan_total",
 		Help: "Per-deploy grype scan outcomes, labelled by result ∈ {complete, failed, skipped} (issue #464 / ADR-055). One increment per deploy after the 1-retry backoff; skipped comes from the pre-feature backfill or a feature-flag-off imaged build.",
@@ -4560,6 +4590,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		imageScanVulns:                                        imageScanVulns,
 		deployScanDuration:                                    deployScanDuration,
 		deployStageDuration:                                   deployStageDuration,
+		apiHostingPhaseTotal:                                  apiHostingPhaseTotal,
+		apiHostingPhaseDuration:                               apiHostingPhaseDuration,
 		deployScanTotal:                                       deployScanTotal,
 		deployScanVulns:                                       deployScanVulns,
 		liveMigrationDecisions:                                liveMigrationDecisions,
@@ -6800,6 +6832,44 @@ func (m *OpsMetrics) ObserveDeployStageDuration(stage, status string, dur time.D
 		return
 	}
 	m.deployStageDuration.WithLabelValues(stage, status).Observe(dur.Seconds())
+}
+
+const (
+	APIHostingFlowFirstDeploy = "first_deploy"
+	APIHostingFlowDev         = "dev"
+	APIHostingOutcomeComplete = "completed"
+	APIHostingOutcomeFailed   = "failed"
+	APIHostingOutcomeSkipped  = "skipped"
+)
+
+func validAPIHostingFlow(v string) bool {
+	return v == APIHostingFlowFirstDeploy || v == APIHostingFlowDev
+}
+
+func validAPIHostingPhase(v string) bool {
+	switch v {
+	case "source_detected", "source_delta", "upload", "dependency_cache", "build", "boot", "readiness", "verified_url", "route_switch":
+		return true
+	default:
+		return false
+	}
+}
+
+func validAPIHostingOutcome(v string) bool {
+	return v == APIHostingOutcomeComplete || v == APIHostingOutcomeFailed || v == APIHostingOutcomeSkipped
+}
+
+// ObserveAPIHostingPhase records one privacy-safe activation or edit-to-live
+// phase. The flow, phase, and outcome vocabularies are closed; invalid values
+// are dropped instead of minting a new Prometheus series. No customer-derived
+// value may be passed to this method. Safe on a nil receiver.
+func (m *OpsMetrics) ObserveAPIHostingPhase(flow, phase, outcome string, dur time.Duration) {
+	if m == nil || m.apiHostingPhaseTotal == nil || m.apiHostingPhaseDuration == nil ||
+		!validAPIHostingFlow(flow) || !validAPIHostingPhase(phase) || !validAPIHostingOutcome(outcome) || dur < 0 {
+		return
+	}
+	m.apiHostingPhaseTotal.WithLabelValues(flow, phase, outcome).Inc()
+	m.apiHostingPhaseDuration.WithLabelValues(flow, phase, outcome).Observe(dur.Seconds())
 }
 
 // ObserveBuildDuration records one build's wall-clock duration in the
