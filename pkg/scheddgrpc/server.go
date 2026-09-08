@@ -455,10 +455,12 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 			return nil, grpcerr.ToStatus(toProblem(err))
 		}
 		return &scheddpb.AdmitInstanceResponse{
-			InstanceId: res.InstanceID,
-			NodeId:     res.NodeID,
-			Method:     mapMethod(res.Method),
-			WakeId:     res.WakeID,
+			InstanceId:   res.InstanceID,
+			NodeId:       res.NodeID,
+			Method:       mapMethod(res.Method),
+			WakeId:       res.WakeID,
+			DeploymentId: res.DeploymentID,
+			Port:         int32(res.Port),
 		}, nil
 	}
 	// PR-B (issue #272): scope threaded through AdmitInstance the

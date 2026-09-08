@@ -36,9 +36,9 @@ class CustomDomainResponse:
     """Cert subject alt names (DNSNames). Useful for the `gregale domains show` listing — if the customer's CNAME
     points at a CDN, the SANs reveal which CDN."""
     cert_status: None | str | Unset = UNSET
-    """Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, or failed; issue #1397 / F1).
-    The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the
-    edge."""
+    """Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, failed, or dns_drifted; issue
+    #1397 / F3). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot
+    reach the edge."""
     cert_expires_at: datetime.datetime | None | Unset = UNSET
     """Durable certificate expiry timestamp recorded by the cert observer."""
     cert_last_error: None | str | Unset = UNSET

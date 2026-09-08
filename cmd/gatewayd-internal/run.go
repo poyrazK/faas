@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -362,6 +363,8 @@ func dnsTokenLookupFromEnv(provider string) string {
 // meter (spec §4.4, M7).
 type synthAdapter struct {
 	backend          gateway.Backend
+	store            state.Store
+	log              *slog.Logger
 	wake             func(ctx context.Context, appID string) error
 	invoke           func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
 	invokeWithStatus func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error)
@@ -381,6 +384,10 @@ func (a *synthAdapter) Wake(ctx context.Context, appID string) error { return a.
 // the HTTP response; that response becomes the Invocation.Result the
 // caller writes back via Store.CompleteInvocation.
 func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+	if isDebugMirrorReplayInvocation(inv) {
+		out, _, err := a.replayMirror(ctx, appID, inv)
+		return out, err
+	}
 	if a.invoke == nil {
 		return inv, fmt.Errorf("gateway synth: invoke is not wired (legacy wake-only adapter)")
 	}
@@ -388,11 +395,167 @@ func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invoc
 }
 
 func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+	if isDebugMirrorReplayInvocation(inv) {
+		return a.replayMirror(ctx, appID, inv)
+	}
 	if a.invokeWithStatus != nil {
 		return a.invokeWithStatus(ctx, appID, inv)
 	}
 	out, err := a.Invoke(ctx, appID, inv)
 	return out, http.StatusOK, err
+}
+
+// replayMirror executes the debugger's metadata-only replay against the
+// selected ADR-125 mirror deployment. The request telemetry table never
+// stores raw bodies or credentials, so the mirror receives an empty body and
+// no customer headers; the durable result still records status and latency
+// against the original request's source measurements.
+func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+	metadata, err := debugReplayMetadata(inv)
+	if err != nil {
+		// A malformed platform-generated envelope cannot recover by retrying;
+		// surface the scheduler sentinel so the durable row is terminally
+		// failed instead of churning forever.
+		return inv, 0, fmt.Errorf("%w: %w", schedpkg.ErrPermanentInvoke, err)
+	}
+	rule, ok, err := a.lookupReplayRule(ctx, appID, metadata[api.DebugReplayMirrorRuleIDHeader])
+	if err != nil {
+		return inv, 0, err
+	}
+	if !ok {
+		return inv, 0, fmt.Errorf("gateway synth: debug replay mirror rule is unavailable")
+	}
+	target, err := a.scheduleReplayTarget(ctx, appID, rule)
+	if err != nil {
+		return inv, 0, err
+	}
+	start := time.Now()
+	mirrorInv := inv
+	// Metadata is consumed at the gateway boundary and must never be sent to
+	// the customer's mirror deployment. The body is intentionally empty.
+	mirrorInv.Payload = nil
+	mirrorInv.Headers = nil
+	mirrorInv.InstanceID = target.InstanceID
+	// A retained trace id is safe correlation metadata, unlike customer
+	// headers. Re-attach it under the canonical platform trace header so the
+	// mirror request and its ledger row remain joinable without replaying
+	// authentication or other request credentials.
+	if traceID := strings.TrimSpace(metadata[api.DebugReplayTraceIDHeader]); traceID != "" {
+		mirrorInv.Headers, err = json.Marshal(map[string]string{middleware.TraceIDHeader: traceID})
+		if err != nil {
+			return inv, 0, fmt.Errorf("gateway synth: encode debug replay trace metadata: %w", err)
+		}
+	}
+	out, statusCode, err := a.forwardInvocationWithStatus(ctx, target, mirrorInv)
+	latencyMs := int(time.Since(start) / time.Millisecond)
+	if err != nil {
+		statusCode = 0
+	}
+	sourceStatus, _ := strconv.Atoi(metadata[api.DebugReplaySourceStatusHeader])
+	sourceLatency, _ := strconv.Atoi(metadata[api.DebugReplaySourceLatencyHeader])
+	statusDiff := sourceStatus != statusCode
+	crashed := statusCode == 0 || statusCode >= http.StatusInternalServerError
+	result := struct {
+		SourceStatusCode int  `json:"source_status_code"`
+		MirrorStatusCode int  `json:"mirror_status_code"`
+		SourceLatencyMs  int  `json:"source_latency_ms"`
+		MirrorLatencyMs  int  `json:"mirror_latency_ms"`
+		StatusDiff       bool `json:"status_diff"`
+		Crashed          bool `json:"crashed"`
+	}{sourceStatus, statusCode, sourceLatency, latencyMs, statusDiff, crashed}
+	if encoded, marshalErr := json.Marshal(result); marshalErr == nil {
+		out.Result = encoded
+	}
+	if a.store != nil {
+		if storeErr := a.store.InsertMirrorResult(ctx, state.MirrorInvocationResult{
+			MirrorRuleID:       rule.ID,
+			AccountID:          rule.AccountID,
+			AppID:              appID,
+			SourceDeploymentID: metadata[api.DebugReplayDeploymentIDHeader],
+			MirrorDeploymentID: rule.MirrorDeploymentID,
+			InstanceID:         target.InstanceID,
+			StatusCode:         statusCode,
+			SourceStatusCode:   sourceStatus,
+			LatencyMs:          latencyMs,
+			SourceLatencyMs:    sourceLatency,
+			StatusDiff:         statusDiff,
+			Crashed:            crashed,
+			RequestID:          metadata[api.DebugReplayRequestIDHeader],
+			CompletedAt:        time.Now().UTC(),
+		}); storeErr != nil && a.log != nil {
+			a.log.Warn("gateway synth: debug replay ledger write failed", "err", storeErr, "request_id", metadata[api.DebugReplayRequestIDHeader])
+		}
+	}
+	if err != nil {
+		return out, statusCode, err
+	}
+	return out, statusCode, nil
+}
+
+func (a *synthAdapter) lookupReplayRule(ctx context.Context, appID, ruleID string) (gateway.MirrorRuleRow, bool, error) {
+	if a.backend == nil {
+		return gateway.MirrorRuleRow{}, false, fmt.Errorf("gateway synth: replay backend is not wired")
+	}
+	if b, ok := a.backend.(gateway.MirrorReplayRuleBackend); ok {
+		return b.LookupMirrorRuleForReplay(ctx, appID, ruleID)
+	}
+	rules, ok := a.backend.LookupMirrorRules(ctx, appID)
+	if !ok {
+		return gateway.MirrorRuleRow{}, false, nil
+	}
+	for _, rule := range rules {
+		if rule.ID == ruleID {
+			return rule, true, nil
+		}
+	}
+	return gateway.MirrorRuleRow{}, false, nil
+}
+
+func (a *synthAdapter) scheduleReplayTarget(ctx context.Context, appID string, rule gateway.MirrorRuleRow) (gateway.Target, error) {
+	if b, ok := a.backend.(gateway.MirrorTargetBackend); ok {
+		return b.ScheduleMirrorTarget(ctx, appID, rule.MirrorDeploymentID, rule.ID)
+	}
+	instanceID, wakeID, err := a.backend.ScheduleMirror(ctx, appID, rule.MirrorDeploymentID, rule.ID)
+	if err != nil {
+		return gateway.Target{}, err
+	}
+	pick := a.backend.Pick(appID)
+	if !pick.OK || pick.Target.NodeID == "" {
+		return gateway.Target{}, fmt.Errorf("gateway synth: mirror replay target has no forwarding node")
+	}
+	target := pick.Target
+	target.InstanceID = instanceID
+	target.WakeID = wakeID
+	target.DeploymentID = rule.MirrorDeploymentID
+	return target, nil
+}
+
+func isDebugMirrorReplayInvocation(inv state.Invocation) bool {
+	if inv.Source != state.InvocationReplay || len(inv.Headers) == 0 {
+		return false
+	}
+	var headers map[string]string
+	if err := json.Unmarshal(inv.Headers, &headers); err != nil {
+		return false
+	}
+	return headers[api.DebugReplayRequestIDHeader] != ""
+}
+
+func debugReplayMetadata(inv state.Invocation) (map[string]string, error) {
+	var metadata map[string]string
+	if err := json.Unmarshal(inv.Headers, &metadata); err != nil {
+		return nil, fmt.Errorf("gateway synth: decode debug replay metadata: %w", err)
+	}
+	for _, key := range []string{
+		api.DebugReplayRequestIDHeader,
+		api.DebugReplayDeploymentIDHeader,
+		api.DebugReplayMirrorRuleIDHeader,
+	} {
+		if strings.TrimSpace(metadata[key]) == "" {
+			return nil, fmt.Errorf("gateway synth: debug replay metadata missing %s", key)
+		}
+	}
+	return metadata, nil
 }
 
 // InvokeWithTarget is the pre-woken synthetic invocation path. Schedd owns
@@ -975,6 +1138,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// state.Deployment to gateway.DeploymentWeightsRow
 		// (the gateway package does not import pkg/state).
 		WithStore(weightsStoreAdapter{store: pgStore}).
+		// Issue #72 / ADR-125: mirror dispatch and debugger replay
+		// consume the same enabled-rule cache. The adapter keeps the
+		// gateway package independent of pkg/state while allowing replay
+		// to refresh the rule authoritatively when a notify is stale.
+		WithMirrorStore(mirrorRulesStoreAdapter{store: pgStore}).
 		// ADR-100 / issue #879: arm the per-surface cert-remint
 		// engine so a tenant_surface_changed notification
 		// re-mints the SAN-aggregated cert for the affected
@@ -1040,6 +1208,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	var synth *synthAdapter
 	synth = &synthAdapter{
 		backend: backend,
+		store:   pgStore,
+		log:     log,
 		wake: func(ctx context.Context, appID string) error {
 			// wake_id is discarded on the synth path (gaps analysis
 			// 2026-07-23): synthesized requests don't return a
@@ -2908,6 +3078,36 @@ func (a weightsStoreAdapter) LiveDeployments(ctx context.Context, appID string) 
 		out = append(out, gateway.DeploymentWeightsRow{
 			ID:             d.ID,
 			TrafficPercent: d.TrafficPercent,
+		})
+	}
+	return out, nil
+}
+
+// mirrorRulesStoreAdapter adapts the state-layer mirror rule projection to
+// gateway.PGBackend's cache seam. Both the customer mirror fan-out and the
+// debugger replay path use this adapter; replay additionally performs an
+// authoritative read before admitting a target.
+type mirrorRulesStoreAdapter struct {
+	store *state.PgStore
+}
+
+func (a mirrorRulesStoreAdapter) ListMirrorRules(ctx context.Context, appID string) ([]gateway.MirrorRuleRow, error) {
+	rules, err := a.store.ListMirrorRules(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]gateway.MirrorRuleRow, 0, len(rules))
+	for _, r := range rules {
+		out = append(out, gateway.MirrorRuleRow{
+			ID:                 r.ID,
+			AccountID:          r.AccountID,
+			AppID:              r.AppID,
+			SourceDeploymentID: r.SourceDeploymentID,
+			MirrorDeploymentID: r.MirrorDeploymentID,
+			Percent:            r.Percent,
+			Enabled:            r.Enabled,
+			IncludeBody:        r.IncludeBody,
+			RedactHeaders:      r.RedactHeaders,
 		})
 	}
 	return out, nil

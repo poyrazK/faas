@@ -14,7 +14,8 @@
 //
 // The request verbs are direct API lookups: "get" returns metadata,
 // "evidence" returns bounded span evidence plus the deterministic
-// explanation, and "replay" queues the existing replay contract.
+// explanation, and "replay" queues metadata-only execution through the
+// request's enabled mirror rule.
 
 package main
 
@@ -161,9 +162,8 @@ func cmdDebugRequestsGet(args []string) int {
 	return jsonOut(writeJSON(resp))
 }
 
-// cmdDebugRequestsReplay queues a replay. PR-B returns a
-// stable "queued" status (PR-A2 wires the actual mirror
-// invocation).
+// cmdDebugRequestsReplay queues a metadata-only replay through the request's
+// enabled mirror rule. The response includes the durable invocation ID.
 func cmdDebugRequestsReplay(args []string) int {
 	if len(args) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale debug requests replay <slug> <req_id>", debugCmdDocsTopic)
