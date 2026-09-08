@@ -446,7 +446,7 @@ func requestTelemetryLatencyBucketUpperBound(latencyMS int) int {
 	if latencyMS <= 0 {
 		return 0
 	}
-	width := 10
+	width := 5_000
 	switch {
 	case latencyMS <= 1_000:
 		width = 10
@@ -456,8 +456,6 @@ func requestTelemetryLatencyBucketUpperBound(latencyMS int) int {
 		width = 250
 	case latencyMS <= 30_000:
 		width = 1_000
-	default:
-		width = 5_000
 	}
 	rem := latencyMS % width
 	if rem == 0 {

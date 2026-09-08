@@ -1,5 +1,6 @@
 // request_telemetry_publisher_test.go — table-driven tests for the
 // PR-B collapseRequestTelemetry aggregate.
+// adr: 127
 //
 // The PR-A pass-through behavior is gone: every row drained from the
 // recorder is now collapsed by

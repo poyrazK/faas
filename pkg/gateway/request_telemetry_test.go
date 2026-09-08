@@ -1,5 +1,6 @@
 // request_telemetry_test.go — table-driven tests for the recorder +
 // publisher (ADR-127).
+// adr: 127
 //
 // Covers:
 //   - RecordFromObserve kill-switch pass-through when Enabled=false
