@@ -797,10 +797,7 @@ func sameReleaseDaemonHashes(left, right map[string]string) bool {
 }
 
 func refreshNodeJoinLease(ctx context.Context, store nodejoin.Store, nodeName, owner string, ttl time.Duration, done <-chan struct{}) {
-	interval := ttl / 3
-	if interval < time.Second {
-		interval = time.Second
-	}
+	interval := nodeJoinLeaseRefreshInterval(ttl)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -813,6 +810,14 @@ func refreshNodeJoinLease(ctx context.Context, store nodejoin.Store, nodeName, o
 			_ = store.RefreshLease(ctx, nodeName, owner, ttl)
 		}
 	}
+}
+
+func nodeJoinLeaseRefreshInterval(ttl time.Duration) time.Duration {
+	interval := ttl / 3
+	if interval < time.Second {
+		return time.Second
+	}
+	return interval
 }
 
 func verifyAndActivateJoinedNode(ctx context.Context, report *deployJoinReport, expectedManifestHash string) error {
