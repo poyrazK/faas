@@ -115,6 +115,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          # PR-4a compares the PR head against the event's base SHA and
+          # scans every commit subject for fix-shaped changes.
+          fetch-depth: 0
+
+      # S4 PR-4a: a fix claim must carry a changed Go regression test. The
+      # script reads title/body/labels from GITHUB_EVENT_PATH and is a no-op
+      # for pushes and local invocations. Intentional exceptions require the
+      # no-regression-test label plus a non-empty Why no test: explanation.
+      - name: fix-shaped changes require regression tests
+        run: make fix-has-test-check
+      - name: fix-has-test checker tests
+        run: make fix-has-test-check-test
 
       - uses: actions/setup-go@v7
         with:
