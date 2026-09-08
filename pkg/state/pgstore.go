@@ -5285,7 +5285,7 @@ func (s *PgStore) ListDeploymentsByNodeID(ctx context.Context, nodeID string) ([
 // ConcurrencyForDeployment returns the live-instance count for a
 // (app, deployment) pair. Used by the floor trigger's per-deployment
 // floor arithmetic and the reaper's per-deployment idle floor
-// check. The three live states (RUNNING, WAKING, COLD_BOOTING) match
+// check. The three live states (waking, cold_booting, running) match
 // pkg/state/machine.go CountsForConcurrency. PARKING / PARKED /
 // STOPPED do not count (they're shutting down or idle).
 //
@@ -5303,7 +5303,7 @@ func (s *PgStore) ConcurrencyForDeployment(ctx context.Context, appID, deploymen
 		select count(*) from instances
 		 where app_id = $1
 		   and deployment_id = $2
-		   and state in ('RUNNING', 'WAKING', 'COLD_BOOTING')
+		   and state in ('waking', 'cold_booting', 'running')
 	`, appID, deploymentID).Scan(&n)
 	if err != nil {
 		return 0, err
@@ -13167,13 +13167,13 @@ func (s *PgStore) PerNodeLiveStats(ctx context.Context) ([]PerNodeStats, error) 
 	rows, err := s.pool.Query(ctx, `
 		select n.name                                           as node_name,
 		       count(*)                                         as instances_live,
-		       count(*) filter (where i.state = 'RUNNING')     as instances_running,
-		       count(*) filter (where i.state = 'WAKING')      as instances_waking,
-		       count(*) filter (where i.state = 'COLD_BOOTING') as instances_cold_booting,
+		       count(*) filter (where i.state = 'running')      as instances_running,
+		       count(*) filter (where i.state = 'waking')       as instances_waking,
+		       count(*) filter (where i.state = 'cold_booting') as instances_cold_booting,
 		       coalesce(sum(i.ram_mb + 8), 0)                    as ram_used_mb
 		from instances i
 		join compute_nodes n on n.id = i.node_id
-		where i.state in ('RUNNING', 'WAKING', 'COLD_BOOTING')
+		where i.state in ('waking', 'cold_booting', 'running')
 		group by n.name
 		order by n.name
 	`)
@@ -13214,12 +13214,12 @@ func (s *PgStore) OperatorCapacity(ctx context.Context) (OperatorCapacitySnapsho
 		with live as (
 			select i.node_id,
 			       count(*) as instances_live,
-			       count(*) filter (where i.state = 'RUNNING') as instances_running,
-			       count(*) filter (where i.state = 'WAKING') as instances_waking,
-			       count(*) filter (where i.state = 'COLD_BOOTING') as instances_cold_booting,
+			       count(*) filter (where i.state = 'running') as instances_running,
+			       count(*) filter (where i.state = 'waking') as instances_waking,
+			       count(*) filter (where i.state = 'cold_booting') as instances_cold_booting,
 			       coalesce(sum(i.ram_mb + 8), 0)::bigint as ram_used_mb
 			  from instances i
-			 where i.state in ('RUNNING', 'WAKING', 'COLD_BOOTING')
+			 where i.state in ('waking', 'cold_booting', 'running')
 			 group by i.node_id
 		), placed as (
 			select a.node_id,
