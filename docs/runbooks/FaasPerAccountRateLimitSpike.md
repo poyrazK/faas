@@ -7,7 +7,7 @@ Severity: warn.
 
 ## Symptom
 
-Per-account gateway rejections exceed 100/min fleet-total over the
+Per-account gateway rejections exceed 300/min fleet-total over the
 rolling 5-minute window. The `account_id` label is the customer's
 uuid (joined from `apps.account_id` in `pgRouter.toApp`); the
 `plan` label is one of `free`, `hobby`, `pro`, `scale`.
@@ -21,10 +21,8 @@ is in play; investigate before paging.
 The PR-#292 threat model is a **botnet rotating across a single
 customer's many apps**. Each app individually stays under
 `RateLimitRPS`, but the sum easily blows past the account's plan
-budget. This alert is the coordination signal — a single
-misbehaving customer peaks well below 100/min fleet-total, so the
-threshold is tuned to fire on aggregate abuse, not on a noisy
-single-tenant spike.
+budget. This alert signals sustained customer throttling above the
+smallest plan's account allowance and needs operator review.
 
 ## Verify
 
@@ -59,7 +57,7 @@ canonical causes are:
   follow-ups); today's only knob is SIGHUP which drops every
   bucket (see Recover below).
 - **Config regression**: a plan row in `pkg/api/limits.go` dropped
-  to zero (Free 50, Hobby 200, Pro 1000, Scale 5000 are the
+  to zero (Free 300, Hobby 1200, Pro 6000, Scale 30000 are the
   expected values — pin via
   `pkg/api/limits_test.go::TestPlanLimitsMatchSpec`). The
   `UnknownPlanFailsClosed` guard in `pkg/gateway/ratelimit.go`
