@@ -26,6 +26,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 165 | [Remote snapshot memory compression](165-remote-snapshot-memory-compression.md) | proposed | SSD-node snapshot publication measurement; reader-first OCI wire-format rollout |
 | 158 | [Provider-neutral resumable multipart object uploads](158-provider-neutral-multipart-uploads.md) | accepted | Large-object and interrupted-upload hardening for S3 preview |
 | 164 | [Container workload networking v1](164-container-workload-networking.md) | accepted | Loopback endpoint contract for main and sidecar workloads |
+| 167 | [Container cross-VM service endpoint registry](167-container-cross-vm-service-discovery.md) | accepted | Loopback projection of the gateway's multi-node replica target cache |
 | 166 | [Container cross-drive whiteouts](166-container-cross-drive-whiteouts.md) | accepted | Preserve OCI deletions in the optimized two-drive upper filesystem |
 | 158 | [Per-action CSRF cookies on multi-form dashboard pages](158-dashboard-multi-form-csrf.md): additive named-cookie issue/verify helpers; first consumer is typed-confirmed dashboard API-key revocation | accepted | issue #248 slice A; establishes the secure pattern for plan change and deployment rollback |
 | 159 | [Dockerfile developer cache parity](159-developer-dockerfile-cache.md): extend the disposable tenant/workspace-scoped BuildKit cache to `gregale dev` Dockerfile builds | accepted | `gregale dev` custom-build latency follow-up to ADR-153 |
