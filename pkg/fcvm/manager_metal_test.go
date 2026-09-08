@@ -221,8 +221,9 @@ func TestMetalParkWakeCycle(t *testing.T) {
 // measure latency here — M3 owns that — only correctness: VM live,
 // VM gone, zero leaks (invariant §6.2-4/5).
 //
-// The staged base carries guest-init and the hello app. A distinct writable
-// layer exercises the same two-drive overlay contract as production.
+// The staged base carries guest-init while the hello manifest lives under the
+// distinct writable layer's /upper, exercising the same two-drive overlay
+// contract as production.
 func TestMetalHelloBoot(t *testing.T) {
 	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)

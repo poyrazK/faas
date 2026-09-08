@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pin the production-shape contracts used by the native metal wrapper: the
-# shell -> make -> go test argument expansion and the read-only base mountpoints
-# guest-init needs before it can attach the writable app layer.
+# shell -> make -> go test argument expansion, the read-only base mountpoints
+# guest-init needs, and the production-shaped writable app layer.
 
 set -euo pipefail
 
@@ -45,5 +45,18 @@ grep -Fq "mkdir -p \"\${base_skeleton}/\${mountpoint}\"" "${runner}" || {
   echo "native metal base mountpoints are not created in the fixture" >&2
   exit 1
 }
+
+grep -Fq "\"\${layer_skeleton}/upper/etc/faas\" \"\${layer_skeleton}/upper/tmp\"" "${runner}" || {
+  echo "native metal app fixture is not staged under the overlay upper directory" >&2
+  exit 1
+}
+grep -Fq "> \"\${layer_skeleton}/upper/etc/faas/app.json\"" "${runner}" || {
+  echo "native metal app manifest is not staged in the writable app layer" >&2
+  exit 1
+}
+if grep -Fq '/etc/faas/uuid.txt' "${runner}"; then
+  echo "native metal hello app must not mutate platform-owned /etc/faas" >&2
+  exit 1
+fi
 
 echo "native metal wrapper contracts OK"

@@ -65,7 +65,7 @@ flock -w "${FAAS_METAL_LOCK_TIMEOUT_SECONDS:-900}" 9 ||
 
 mkdir -p "${base_skeleton}/bin" "${base_skeleton}/sbin" \
   "${base_skeleton}/etc/faas" \
-  "${layer_skeleton}/etc/faas" "${layer_skeleton}/tmp" \
+  "${layer_skeleton}/upper/etc/faas" "${layer_skeleton}/upper/tmp" \
   "${cache_root}/go-build" "${cache_root}/go-mod" "${cache_root}/home"
 for mountpoint in "${base_mountpoints[@]}"; do
   mkdir -p "${base_skeleton}/${mountpoint}"
@@ -142,8 +142,8 @@ for name in bin/sh bin/ash bin/cat; do
   ln -s /bin/busybox "${base_skeleton}/${name}"
 done
 printf '%s\n' \
-  '{"entrypoint":["/bin/sh","-c","cat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt && exec /bin/busybox httpd -f -p 8080 -h /"],"port":8080}' \
-  > "${base_skeleton}/etc/faas/app.json"
+  '{"entrypoint":["/bin/busybox","httpd","-f","-p","8080","-h","/"],"port":8080}' \
+  > "${layer_skeleton}/upper/etc/faas/app.json"
 
 truncate -s 64M "${base_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${base_skeleton}" -L faas-metal-smoke -F "${base_path}"
