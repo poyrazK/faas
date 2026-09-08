@@ -173,6 +173,39 @@ export FAAS_TEST_BASE_ROOTFS="${base_path}"
 export FAAS_TEST_LAYER_ROOTFS="${layer_path}"
 export FAAS_TEST_FC_VERSION="${fc_version}"
 
-echo "native metal smoke: run TestMetalHelloBoot"
+# Run the whole pkg/fcvm metal package, not a single boot.
+#
+# TestMetalHelloBoot proved the path works; it is one of 142 metal-tagged
+# tests in this package, and the rest had never executed anywhere — the old
+# self-hosted `metal` job in ci.yml required a runner label no runner
+# carried, so every dispatch of it was cancelled or failed.
+#
+# Tests whose fixtures this script does not stage (FAAS_TEST_VMMD_HELPER,
+# FAAS_TEST_EGRESS_URL, the V6 rootfs pair, and so on) skip themselves
+# cleanly, so the package is safe to run whole. The tally below reports how
+# many actually ran so the remaining gap stays visible instead of being
+# implied by a green check.
+#
+# -run is deliberately absent. Adding one here is how a suite quietly
+# shrinks back to a single test.
+echo "native metal smoke: run the pkg/fcvm metal package"
+metal_log="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal.log"
+set +e
 make GO="${FAAS_METAL_GO}" PKGS=./pkg/fcvm \
-  RUN_ARGS='-run=^TestMetalHelloBoot$$ -timeout=5m -v' test-metal
+  RUN_ARGS='-timeout=30m -v' test-metal 2>&1 | tee "${metal_log}"
+metal_rc="${PIPESTATUS[0]}"
+set -e
+
+passed="$(grep -cE '^--- PASS: ' "${metal_log}" || true)"
+skipped="$(grep -cE '^--- SKIP: ' "${metal_log}" || true)"
+failed="$(grep -cE '^--- FAIL: ' "${metal_log}" || true)"
+echo "native metal smoke: pkg/fcvm metal — ${passed} passed, ${skipped} skipped, ${failed} failed"
+if [[ "${skipped}" -gt 0 ]]; then
+  echo "native metal smoke: skipped tests (each names the fixture it wants):"
+  grep -E '^--- SKIP: ' "${metal_log}" | sed 's/^/  /'
+fi
+if [[ "${passed}" -eq 0 ]]; then
+  echo "native metal smoke: no metal test executed; the fixtures or the build tag are wrong" >&2
+  metal_rc=1
+fi
+[[ "${metal_rc}" -eq 0 ]] || exit "${metal_rc}"

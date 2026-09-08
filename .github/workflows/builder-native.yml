@@ -204,7 +204,8 @@ jobs:
       (github.event_name == 'schedule' ||
        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 60 min: the whole pkg/fcvm metal package now runs here, not one boot.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
