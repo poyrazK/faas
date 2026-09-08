@@ -31,3 +31,23 @@ func (c *Client) ListDeploymentsAll(ctx context.Context) ([]DeploymentResponse, 
 		}
 	}
 }
+
+// ListAppDeploymentsAll walks the app-scoped deployment cursor to completion.
+func (c *Client) ListAppDeploymentsAll(ctx context.Context, slug string) ([]DeploymentResponse, error) {
+	var out []DeploymentResponse
+	cursor := ""
+	for {
+		page, err := c.ListAppDeployments(ctx, slug, cursor, 200)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, page.Items...)
+		if page.NextBefore == "" {
+			return out, nil
+		}
+		cursor = page.NextBefore
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+	}
+}

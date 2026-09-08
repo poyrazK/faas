@@ -226,7 +226,7 @@ func run(args []string) (status int) {
 		}
 		return cmdApps()
 	case dispatchDeployments:
-		// `gregale deployments [--limit N|--before C|--all]` — list.
+		// `gregale deployments [--app SLUG] [--limit N|--before C|--all]` — list.
 		// Place before appSlugFallback so the singular never shadows it.
 		return cmdDeployments(args[1:])
 	case dispatchDeployment:

@@ -253,6 +253,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/rollback":               "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":       "RecoverRollout",
 	"POST /v1/apps/{slug}/deployments":            "Deploy",
+	"GET /v1/apps/{slug}/deployments":             "ListAppDeployments",
 	"GET /v1/apps/{slug}/deployments/latest":      "GetLatestAppDeployment",
 	"POST /v1/apps/{slug}/deployments/dev-source": "DeployDevSource",
 	"POST /v1/apps/{slug}/deployments/source-ref": "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy

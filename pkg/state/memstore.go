@@ -5448,6 +5448,26 @@ func (m *MemStore) ListDeploymentsForApp(_ context.Context, appID string, limit,
 	return all, nil
 }
 
+// ListDeploymentsForAppBefore is the cursor-shaped counterpart to
+// ListDeploymentsForApp. It keeps the in-memory backend's ordering and
+// before semantics aligned with PgStore for handler and conformance tests.
+func (m *MemStore) ListDeploymentsForAppBefore(_ context.Context, appID string, before time.Time, limit int) ([]Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var all []Deployment
+	for _, d := range m.deployments {
+		if d.AppID != appID || (!before.IsZero() && !d.CreatedAt.Before(before)) {
+			continue
+		}
+		all = append(all, d)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	if limit > 0 && limit < len(all) {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 // ListDeploymentsForAccount walks every app the account owns, collects
 // its deployments, and returns them sorted DESC by created_at with
 // before acting as the inclusive upper bound. Cursor pagination

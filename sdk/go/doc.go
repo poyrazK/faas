@@ -60,6 +60,7 @@
 // method is sufficient (Free/Hobby plans don't paginate).
 //
 //	all, err := c.ListDeploymentsAll(ctx)
+//	appDeployments, err := c.ListAppDeploymentsAll(ctx, "hello-world")
 //
 // # Streaming
 //

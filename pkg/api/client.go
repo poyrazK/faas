@@ -3363,6 +3363,24 @@ func (c *Client) ListDeployments(ctx context.Context, before string, limit int) 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListAppDeployments returns one cursor page of deployments for slug. The
+// app-scoped route avoids making app-centric callers scan account-wide pages.
+func (c *Client) ListAppDeployments(ctx context.Context, slug, before string, limit int) (DeploymentListResponse, error) {
+	var out DeploymentListResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/deployments"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetBillingPortal returns the active provider's billing
 // portal URL for the authenticated account (issue #253). Empty string
 // means the box has FAAS_BILLING_PORTAL_URL unset — the CLI prints a

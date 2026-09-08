@@ -1150,6 +1150,23 @@ func (c *Client) ListDeployments(ctx context.Context, before string, limit int) 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListAppDeployments returns one cursor page of deployments for an app slug.
+func (c *Client) ListAppDeployments(ctx context.Context, slug, before string, limit int) (DeploymentListResponse, error) {
+	var out DeploymentListResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	path := "/v1/apps/" + slug + "/deployments"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // Org surface (issue #190 / IAM-6 / ADR-061, PR 5). The 11 methods
 // below mirror the spec routes documented under api/openapi.yaml
 // paths /v1/orgs*, /v1/invitations/{token}. Each maps 1:1 to a

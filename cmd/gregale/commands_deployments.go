@@ -125,13 +125,14 @@ func truncateReason(s string, max int) string {
 	return string(runes[:max]) + "…"
 }
 
-// cmdDeployments implements `gregale deployments [--limit N] [--before C] [--all]`
+// cmdDeployments implements `gregale deployments [--app SLUG] [--limit N] [--before C] [--all]`
 // and the `exclude` subcommand family
 // (`gregale deployments exclude clear --slug=... [--project-slug=...]`).
 // Mirrors cmdApps (commands.go:251) except pagination is exposed.
-// Wire shape: GET /v1/deployments (paginated; cursor=before, limit=limit)
-// and DELETE /v1/projects/{slug}/exclusions/{slug} (ADR-124 code-review
-// fix #2 escape hatch).
+// Wire shape: GET /v1/deployments (paginated; cursor=before, limit=limit),
+// GET /v1/apps/{slug}/deployments for --app, and DELETE
+// /v1/projects/{slug}/exclusions/{slug} (ADR-124 code-review fix #2
+// escape hatch).
 func cmdDeployments(args []string) int {
 	// Subcommand dispatch — must run BEFORE flag parsing or the
 	// FlagSet chokes on the unrecognised "exclude" verb.
@@ -142,6 +143,7 @@ func cmdDeployments(args []string) int {
 		}
 	}
 	fs := flag.NewFlagSet("deployments", flag.ContinueOnError)
+	app := fs.String("app", "", "app slug (use app-scoped deployment history)")
 	limit := fs.Int("limit", 50, "page size (1-200)")
 	before := fs.String("before", "", "pagination cursor (RFC3339Nano)")
 	all := fs.Bool("all", false, "walk every page (ignores --limit/--before)")
@@ -157,7 +159,7 @@ func cmdDeployments(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployments [--limit N] [--before CURSOR] [--all] [--wide]", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale deployments [--app SLUG] [--limit N] [--before CURSOR] [--all] [--wide]", "deployments")
 		return 1
 	}
 	if *limit < 0 || *limit > 200 {
@@ -170,9 +172,17 @@ func cmdDeployments(args []string) int {
 	}
 	ctx := context.Background()
 	if *all {
+		if *app != "" {
+			return cmdAppDeploymentsAll(ctx, client, *app, *wide)
+		}
 		return cmdDeploymentsAll(ctx, client, *wide)
 	}
-	page, err := client.ListDeployments(ctx, *before, *limit)
+	var page api.DeploymentListResponse
+	if *app != "" {
+		page, err = client.ListAppDeployments(ctx, *app, *before, *limit)
+	} else {
+		page, err = client.ListDeployments(ctx, *before, *limit)
+	}
 	if err != nil {
 		return printErr("Request failed", err)
 	}
@@ -181,7 +191,11 @@ func cmdDeployments(args []string) int {
 		return jsonOut(writeJSON(page))
 	}
 	if len(page.Items) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "No deployments yet.")
+		if *app != "" {
+			_, _ = fmt.Fprintf(osStdout, "No deployments yet for app %q.\n", *app)
+		} else {
+			_, _ = fmt.Fprintln(osStdout, "No deployments yet.")
+		}
 		_, _ = fmt.Fprintln(osStdout, "Deploy one: `gregale deploy --tarball path/to/source.tar.gz` (or `gregale deploy --image <ref>`).")
 		return 0
 	}
@@ -288,6 +302,28 @@ func cmdDeploymentsAll(ctx context.Context, client *api.Client, wide bool) int {
 	}
 	if len(items) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "No deployments yet.")
+		return 0
+	}
+	for _, d := range items {
+		if wide {
+			renderDeploymentRowWide(osStdout, d)
+		} else {
+			renderDeploymentRow(osStdout, d)
+		}
+	}
+	return 0
+}
+
+func cmdAppDeploymentsAll(ctx context.Context, client *api.Client, slug string, wide bool) int {
+	items, err := client.ListAppDeploymentsAll(ctx, slug)
+	if err != nil {
+		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(items))
+	}
+	if len(items) == 0 {
+		_, _ = fmt.Fprintf(osStdout, "No deployments yet for app %q.\n", slug)
 		return 0
 	}
 	for _, d := range items {

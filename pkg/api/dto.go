@@ -2676,7 +2676,8 @@ func (u UsageResponse) TotalEgressGB() float64 {
 	return float64(u.TXBytes+u.NetTxBytes) / (1024 * 1024 * 1024)
 }
 
-// DeploymentListResponse is the page shape for GET /v1/deployments.
+// DeploymentListResponse is the page shape for GET /v1/deployments and
+// GET /v1/apps/{slug}/deployments.
 // Items is the page (in created_at DESC order); NextBefore is the
 // cursor the caller should pass on the next request to page BACKWARDS
 // (the dashboard's "older deploys" link). Empty NextBefore means the

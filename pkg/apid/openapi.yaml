@@ -3530,6 +3530,36 @@ paths:
   /v1/apps/{slug}/deployments:
     parameters:
       - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listAppDeployments
+      summary: List deployments for an app.
+      description: |
+        Paged backwards (newest first) for the app identified by `slug`.
+        `next_before` is an opaque RFC3339Nano cursor from the last row in
+        the page; pass it as `before` to fetch older deployments. Unknown or
+        cross-account app slugs return the same IDOR-safe 404 surface as the
+        other app-scoped endpoints.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Page size for this app (1–200; default 50).
+        - name: before
+          in: query
+          schema: { type: string, format: date-time }
+          description: RFC3339Nano cursor from a previous response's next_before.
+      responses:
+        '200':
+          description: A paginated list of deployments for the app.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentListResponse'
+                example: {"items":[],"next_before":null}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [deployments]
       operationId: createDeployment
