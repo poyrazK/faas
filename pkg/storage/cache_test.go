@@ -276,6 +276,46 @@ func TestLocalCacheBackend_BudgetEvictionPreservesLocalParentGeneration(t *testi
 	}
 }
 
+func TestLocalCacheBackend_BudgetEvictionPreservesPinnedRemoteArtifact(t *testing.T) {
+	ctx := context.Background()
+	parent := newFakeBackend()
+	cacheRoot := t.TempDir()
+	cache, err := storage.NewLocalCacheBackend(parent, cacheRoot, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const baseKey = "base/runner-python313-amd64.ext4"
+	if err := cache.Put(ctx, baseKey, strings.NewReader("verified-base")); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkGeneration(baseKey, "digest-pinned-ref"); err != nil {
+		t.Fatal(err)
+	}
+	baseCachePath := hashCachePath(t, cacheRoot, baseKey)
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(baseCachePath, past, past); err != nil {
+		t.Fatal(err)
+	}
+
+	const snapshotKey = "snap/new"
+	if err := cache.Put(ctx, snapshotKey, strings.NewReader("new-snapshot")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(baseCachePath); err != nil {
+		t.Fatalf("pinned base cache blob was evicted: %v", err)
+	}
+	if _, err := os.Stat(hashCachePath(t, cacheRoot, snapshotKey)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unpinned snapshot cache stat = %v; want eviction", err)
+	}
+	parentGets := parent.gets.Load()
+	if got, err := readAll(ctx, cache, baseKey); err != nil || got != "verified-base" {
+		t.Fatalf("pinned base Get = %q, %v; want local verified-base", got, err)
+	}
+	if got := parent.gets.Load(); got != parentGets {
+		t.Fatalf("parent gets after pinned base read = %d, want %d", got, parentGets)
+	}
+}
+
 func TestCacheBackendForKey_UsesRouterDispatch(t *testing.T) {
 	cache, err := storage.NewLocalCacheBackend(newFakeBackend(), filepath.Join(t.TempDir(), "cache"), 0)
 	if err != nil {

@@ -277,6 +277,58 @@ func TestEnsureBaseExt4_PinnedSourceSidecarSkipsManifestPull(t *testing.T) {
 	}
 }
 
+func TestEnsureBaseExt4_PinsCompleteRemoteCacheGroup(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	const baseKey = "base/runtime.ext4"
+	const digestKey = baseKey + ".digest"
+	const ref = "ghcr.io/onebox-faas/runner-node22@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	parent := newFakeOCIPutter()
+	cacheRoot := t.TempDir()
+	cache, err := storage.NewLocalCacheBackend(parent, cacheRoot, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newHandler := func(be storage.StorageBackend) *Handler {
+		return &Handler{
+			oci:     mp,
+			builder: &callCountingBuilder{},
+			log:     silentLogger(),
+			storage: be,
+			grypeRun: func(context.Context, string) (*ScanResult, error) {
+				return &ScanResult{}, nil
+			},
+		}
+	}
+	if _, err := newHandler(cache).EnsureBaseExt4(context.Background(), ref, baseKey, digestKey, "", "", ""); err != nil {
+		t.Fatalf("initial stage: %v", err)
+	}
+	for _, key := range []string{baseKey, digestKey, wire.ScanKeyForBaseKey(baseKey)} {
+		if got, ok, err := cache.CachedGeneration(key); err != nil || !ok || got != ref {
+			t.Fatalf("CachedGeneration(%q) = %q, %t, %v; want %q", key, got, ok, err, ref)
+		}
+	}
+
+	parentGets := parent.gets
+	manifestCalls := mp.manifestCalls
+	restartedCache, err := storage.NewLocalCacheBackend(parent, cacheRoot, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := newHandler(restartedCache).EnsureBaseExt4(context.Background(), ref, baseKey, digestKey, "", "", "")
+	if err != nil {
+		t.Fatalf("restart stage: %v", err)
+	}
+	if !res.Skipped {
+		t.Fatal("restart stage did not reuse the pinned local group")
+	}
+	if parent.gets != parentGets {
+		t.Fatalf("parent Get calls = %d, want unchanged %d", parent.gets, parentGets)
+	}
+	if mp.manifestCalls != manifestCalls {
+		t.Fatalf("manifest calls = %d, want unchanged %d", mp.manifestCalls, manifestCalls)
+	}
+}
+
 func TestEnsureBaseExt4_BackfillsPinnedSourceRefAfterRegistryCheck(t *testing.T) {
 	mp := newTwoLayerPuller(t)
 	const baseKey = "base/runtime.ext4"
@@ -1636,7 +1688,7 @@ func TestWriteScanSidecar_KeySetStable(t *testing.T) {
 				},
 			}
 
-			if err := h.writeScanSidecar(context.Background(), baseKey, ref, outImage); err != nil {
+			if err := h.writeScanSidecar(context.Background(), baseKey, baseKey+".digest", ref, outImage); err != nil {
 				t.Fatalf("writeScanSidecar: %v", err)
 			}
 
@@ -1750,6 +1802,7 @@ func TestWriteScanSidecar_UsesPublishedLocalPath(t *testing.T) {
 	}
 	if err := h.writeScanSidecar(context.Background(),
 		"base/runner-builder-amd64.ext4",
+		"base/runner-builder-amd64.ext4.digest",
 		"ghcr.io/poyrazk/builder-base@sha256:deadbeef",
 		"/srv/fc/base/builder-base.ext4"); err != nil {
 		t.Fatalf("writeScanSidecar: %v", err)
