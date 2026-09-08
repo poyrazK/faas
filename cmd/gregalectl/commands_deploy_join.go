@@ -1087,13 +1087,14 @@ func validateRuntimeBasesEnv(path string, expected map[string]string) error {
 		return err
 	}
 	required := map[string]string{
-		"FAAS_DEPLOY_BASE_REF_MINIMAL":      "minimal",
-		"FAAS_DEPLOY_BASE_REF_NODE22":       "node22",
-		"FAAS_DEPLOY_BASE_REF_PYTHON312":    "python312",
-		"FAAS_DEPLOY_BASE_REF_GO124":        "go124",
-		"FAAS_DEPLOY_BASE_REF_GO124_ALPINE": "go124_alpine",
-		"FAAS_DEPLOY_BASE_REF_NODE24":       "node24",
-		"FAAS_DEPLOY_BASE_REF_PYTHON313":    "python313",
+		"FAAS_DEPLOY_BASE_REF_MINIMAL":       "minimal",
+		"FAAS_DEPLOY_BASE_REF_DEBIAN_PARENT": "debian_parent",
+		"FAAS_DEPLOY_BASE_REF_NODE22":        "node22",
+		"FAAS_DEPLOY_BASE_REF_PYTHON312":     "python312",
+		"FAAS_DEPLOY_BASE_REF_GO124":         "go124",
+		"FAAS_DEPLOY_BASE_REF_GO124_ALPINE":  "go124_alpine",
+		"FAAS_DEPLOY_BASE_REF_NODE24":        "node24",
+		"FAAS_DEPLOY_BASE_REF_PYTHON313":     "python313",
 	}
 	values := make(map[string]string, len(required))
 	for _, line := range strings.Split(string(body), "\n") {
