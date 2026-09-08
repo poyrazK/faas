@@ -17,6 +17,10 @@ export type AppResponse = {
   slug: string;
   type: 'app' | 'function';
   /**
+   * Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot may replace it. Distinct from type, which selects the app-vs-function execution contract.
+   */
+  workload_class?: 'http' | 'graphql' | 'grpc' | 'job' | 'worker';
+  /**
    * Runtime for `type: function` apps. Omit for `type: app` (the default).
    */
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';

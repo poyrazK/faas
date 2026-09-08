@@ -34,7 +34,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt;) |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
-| [`inspect`](#inspect) | Read-only operator surface (inspect &lt;slug&gt; --upstreams [--scope &lt;scope&gt;] [--json]) |
+| [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]) |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get &lt;id&gt;) |
 | [`debug`](#debug) | Production debugger (ADR-127) |
@@ -952,7 +952,7 @@ Scaffold a reference project from a built-in template (--template NAME --path DI
 
 ## inspect
 
-Read-only operator surface (inspect &lt;slug&gt; --upstreams [--scope &lt;scope&gt;] [--json])
+Explain an app from its runtime, deployment, API, data, scaling, and release signals
 
 `gregale inspect <slug> [--upstreams] [--scope <scope>] [--errors]`
 

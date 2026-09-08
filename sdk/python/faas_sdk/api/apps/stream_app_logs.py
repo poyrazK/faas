@@ -157,6 +157,11 @@ def sync_detailed(
       Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
       outside the window with 403 + `log_archive_retention_exceeded`.
 
+    Each `event: log` payload preserves the original `line`. When that
+    line is a valid JSON object with a recognized `level` or `severity`
+    field, the server adds a canonical `level` value (`info`, `warn`, or
+    `error`); plain-text and unclassified lines omit the field.
+
     Args:
         slug (str):
         follow (StreamAppLogsFollow | Unset):  Default: 0.
@@ -232,6 +237,11 @@ def sync(
       Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
       outside the window with 403 + `log_archive_retention_exceeded`.
 
+    Each `event: log` payload preserves the original `line`. When that
+    line is a valid JSON object with a recognized `level` or `severity`
+    field, the server adds a canonical `level` value (`info`, `warn`, or
+    `error`); plain-text and unclassified lines omit the field.
+
     Args:
         slug (str):
         follow (StreamAppLogsFollow | Unset):  Default: 0.
@@ -301,6 +311,11 @@ async def asyncio_detailed(
       one-day archive window. The per-plan retention cap (Free 1d /
       Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
       outside the window with 403 + `log_archive_retention_exceeded`.
+
+    Each `event: log` payload preserves the original `line`. When that
+    line is a valid JSON object with a recognized `level` or `severity`
+    field, the server adds a canonical `level` value (`info`, `warn`, or
+    `error`); plain-text and unclassified lines omit the field.
 
     Args:
         slug (str):
@@ -374,6 +389,11 @@ async def asyncio(
       one-day archive window. The per-plan retention cap (Free 1d /
       Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
       outside the window with 403 + `log_archive_retention_exceeded`.
+
+    Each `event: log` payload preserves the original `line`. When that
+    line is a valid JSON object with a recognized `level` or `severity`
+    field, the server adds a canonical `level` value (`info`, `warn`, or
+    `error`); plain-text and unclassified lines omit the field.
 
     Args:
         slug (str):

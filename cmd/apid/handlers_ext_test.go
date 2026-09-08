@@ -1102,7 +1102,7 @@ func TestGetApp_PostPatchEmptyAllowlist(t *testing.T) {
 // TestGetApp_HappyPath confirms getApp returns the seeded app.
 func TestGetApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "my-api")
+	mustSeedAppWithWorkloadClass(t, e, "my-api", state.WorkloadClassHTTP)
 	rec := e.do(t, "GET", "/v1/apps/my-api", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -1113,6 +1113,9 @@ func TestGetApp_HappyPath(t *testing.T) {
 	}
 	if out.Slug != "my-api" {
 		t.Errorf("slug = %q, want my-api", out.Slug)
+	}
+	if out.WorkloadClass != string(state.WorkloadClassHTTP) {
+		t.Errorf("workload_class = %q, want http", out.WorkloadClass)
 	}
 }
 
