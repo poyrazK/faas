@@ -177,11 +177,9 @@ func (h *Handler) EnsureBaseExt4(
 				// subsequent restarts keep the cheap idempotent path.
 				scanCurrent := h.scanSidecarSourceCurrent(ctx, be, baseKey, outImage, ref)
 				if !scanCurrent {
-					if scanErr := h.writeScanSidecar(ctx, baseKey, ref, outImage); scanErr != nil {
+					if scanErr := h.writeScanSidecar(ctx, baseKey, digestKey, ref, outImage); scanErr != nil {
 						h.log.Warn("imaged: refresh grype scan sidecar", "key", wire.ScanKeyForBaseKey(baseKey), "err", scanErr)
 					}
-				} else if markErr := markCachedBaseGeneration(be, baseKey, ref); markErr != nil {
-					h.log.Warn("imaged: mark cached base generation", "key", baseKey, "err", markErr)
 				}
 				// Older sidecars did not record the immutable manifest ref. Add
 				// it after the registry-backed config-digest check so later
@@ -190,6 +188,9 @@ func (h *Handler) EnsureBaseExt4(
 					if sidecarErr := h.writeBaseDigestSidecar(ctx, be, digestKey, wantDigest, guestInitDigest, ref); sidecarErr != nil {
 						h.log.Warn("imaged: refresh base digest sidecar source ref", "key", digestKey, "err", sidecarErr)
 					}
+				}
+				if markErr := markCachedBaseGeneration(be, baseKey, digestKey, ref); markErr != nil {
+					h.log.Warn("imaged: mark cached base generation", "key", baseKey, "err", markErr)
 				}
 				return BaseStageResult{
 					OutImage:     outImage,
@@ -266,7 +267,7 @@ func (h *Handler) EnsureBaseExt4(
 	if err := h.writeBaseDigestSidecar(ctx, be, digestKey, wantDigest, guestInitDigest, ref); err != nil {
 		h.log.Warn("imaged: write base digest sidecar", "err", err)
 	}
-	if err := h.writeScanSidecar(ctx, baseKey, ref, outImage); err != nil {
+	if err := h.writeScanSidecar(ctx, baseKey, digestKey, ref, outImage); err != nil {
 		h.log.Warn("imaged: write grype scan sidecar",
 			"key", wire.ScanKeyForBaseKey(baseKey), "err", err)
 	}
@@ -394,7 +395,7 @@ func (h *Handler) trySkipPinnedBaseLocally(
 			h.log.Warn("imaged: upgrade legacy base digest sidecar source ref", "key", digestKey, "err", sidecarErr)
 		}
 	}
-	if markErr := markCachedBaseGeneration(be, baseKey, ref); markErr != nil {
+	if markErr := markCachedBaseGeneration(be, baseKey, digestKey, ref); markErr != nil {
 		h.log.Warn("imaged: mark cached base generation", "key", baseKey, "err", markErr)
 	}
 	h.log.Info("imaged: reused pinned base from local evidence",
@@ -612,7 +613,7 @@ func (h *Handler) ensureBaseExt4ParentRef(
 	if err := h.writeBaseDigestSidecar(ctx, be, digestKey, wantDigest, guestInitDigest, ref); err != nil {
 		h.log.Warn("imaged: write base digest sidecar", "err", err)
 	}
-	if err := h.writeScanSidecar(ctx, baseKey, ref, outImage); err != nil {
+	if err := h.writeScanSidecar(ctx, baseKey, digestKey, ref, outImage); err != nil {
 		h.log.Warn("imaged: write grype scan sidecar",
 			"key", wire.ScanKeyForBaseKey(baseKey), "err", err)
 	}
@@ -753,7 +754,7 @@ func (r *stringReaderImpl) Read(p []byte) (int, error) {
 // base (Critical #1 of the PR #385 review). The mapped path
 // is recorded in the sidecar's `image` field for dashboard
 // traceability.
-func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, ref, outImage string) error {
+func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, digestKey, ref, outImage string) error {
 	be, err := h.storageFor()
 	if err != nil {
 		return fmt.Errorf("imaged: writeScanSidecar storageFor: %w", err)
@@ -814,19 +815,27 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, ref, outImage s
 	if err := be.Put(ctx, scanKey, bytes.NewReader(scanBlob)); err != nil {
 		return fmt.Errorf("imaged: write scan sidecar %q: %w", scanKey, err)
 	}
-	if err := markCachedBaseGeneration(be, baseKey, ref); err != nil {
+	if err := markCachedBaseGeneration(be, baseKey, digestKey, ref); err != nil {
 		return err
 	}
 	return nil
 }
 
-func markCachedBaseGeneration(be storage.StorageBackend, baseKey, generation string) error {
-	cache, cacheKey, err := storage.CacheBackendForKey(be, baseKey)
-	if err != nil || cache == nil {
-		return err
-	}
-	if err := cache.MarkGeneration(cacheKey, generation); err != nil {
-		return fmt.Errorf("imaged: mark cached base generation %q: %w", baseKey, err)
+func markCachedBaseGeneration(be storage.StorageBackend, baseKey, digestKey, generation string) error {
+	// The base marker is the commit record consumed by vmmd. Mark the two
+	// sidecars first so observing the base generation also means every local
+	// artifact needed to validate it is protected from cache eviction.
+	for _, key := range []string{digestKey, wire.ScanKeyForBaseKey(baseKey), baseKey} {
+		cache, cacheKey, err := storage.CacheBackendForKey(be, key)
+		if err != nil {
+			return err
+		}
+		if cache == nil {
+			continue
+		}
+		if err := cache.MarkGeneration(cacheKey, generation); err != nil {
+			return fmt.Errorf("imaged: mark cached base generation %q: %w", key, err)
+		}
 	}
 	return nil
 }

@@ -698,6 +698,7 @@ type cacheEntry struct {
 	path    string
 	size    int64
 	modTime time.Time
+	pinned  bool
 }
 
 // openCache opens a cache entry without loading its contents into memory.
@@ -849,8 +850,13 @@ func (c *LocalCacheBackend) evictCache(key string) {
 }
 
 // enforceBudgetLocked walks the cache directory, sums allocated filesystem
-// bytes, and evicts the oldest entries by mtime until the
-// total drops under maxBytes. Caller holds c.mu.
+// bytes, and evicts the oldest unpinned entries by mtime until the total drops
+// under maxBytes. A generation marker means imaged has verified the complete
+// runtime-base artifact group for an immutable release. Those remote artifacts
+// stay resident so an unrelated snapshot write cannot turn the next daemon
+// restart into a multi-gigabyte registry download. Generation-marked entries
+// backed by a canonical local parent remain evictable because the parent is
+// already the local fast path. Caller holds c.mu.
 func (c *LocalCacheBackend) enforceBudgetLocked() error {
 	entries, err := c.snapshotCacheLocked()
 	if err != nil {
@@ -870,6 +876,9 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 	for _, e := range entries {
 		if total <= c.maxBytes {
 			break
+		}
+		if e.pinned {
+			continue
 		}
 		if err := os.Remove(e.path); err == nil {
 			total -= e.size
@@ -925,11 +934,13 @@ func (c *LocalCacheBackend) snapshotCacheLocked() ([]cacheEntry, error) {
 				// the original storage key is unknowable.
 				continue
 			}
+			_, generationErr := os.Stat(path + ".generation")
 			out = append(out, cacheEntry{
 				key:     string(metaBytes),
 				path:    path,
 				size:    cacheDiskUsage(info),
 				modTime: info.ModTime(),
+				pinned:  generationErr == nil && !c.parentLocalArtifactExists(string(metaBytes)),
 			})
 		}
 	}
