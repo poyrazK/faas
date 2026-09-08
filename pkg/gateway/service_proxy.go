@@ -257,7 +257,9 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		request.Header.Set("X-Faas-Instance", endpoint.InstanceID)
 		signal := &staleTargetSignal{onStale: func() { p.quarantine(appID, endpoint.InstanceID) }}
 		buffer := newServiceProxyResponseWriter(w)
-		forwardReq := request.WithContext(withStaleTargetSignal(request.Context(), signal))
+		// withStaleTargetSignal intentionally inherits the inbound request
+		// context so the bridge can report a stale target to this retry loop.
+		forwardReq := request.WithContext(withStaleTargetSignal(request.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
 		p.forward(Target{NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, Port: endpoint.Port}).ServeHTTP(buffer, forwardReq)
 		if retry && !buffer.committed && signal.stale.Load() && attempt+1 < ServiceProxyMaxAttempts {
 			continue
