@@ -34,6 +34,13 @@ type Config struct {
 	// CacheDir is the on-disk root for content-addressed build cache.
 	// Defaults to /var/cache/faas/builds.
 	CacheDir string `toml:"cache_dir"`
+	// SourceSpoolDir is the shared root for source archives and build logs.
+	// Persisted paths outside this root are rejected by pkg/builderd. The
+	// FAAS_SPOOL_ROOT environment variable is the split-box override.
+	SourceSpoolDir string `toml:"source_spool_dir"`
+	// BuildLogMaxBytes caps each persisted build log. The package layer also
+	// enforces a hard ceiling if an operator supplies an excessive value.
+	BuildLogMaxBytes int64 `toml:"build_log_max_bytes"`
 	// MetricsAddr is the bind address for /metrics. The loopback default keeps
 	// the listener private while making the daemon's metrics port canonical for
 	// single-box Prometheus; an explicit empty TOML value still disables it.
@@ -224,6 +231,8 @@ func LoadConfig(path string) (*Config, error) {
 	c := &Config{
 		VMMDSocket:       "/run/faas/vmmd.sock",
 		CacheDir:         "/var/cache/faas/builds",
+		SourceSpoolDir:   envOr("FAAS_SPOOL_ROOT", "/var/spool/faas/builds"),
+		BuildLogMaxBytes: 8 << 20,
 		BuilderBase:      "/srv/fc/base/runner-builder-" + runtime.GOARCH + ".ext4",
 		BuildDriveDir:    "/srv/fc/builder/drive",
 		BuildExportDir:   "/srv/fc/builder/out",
@@ -275,6 +284,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if err := toml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("builderd: parse %q: %w", path, err)
+	}
+	if v := os.Getenv("FAAS_SPOOL_ROOT"); v != "" {
+		c.SourceSpoolDir = v
 	}
 	c.normalizeConfig()
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
