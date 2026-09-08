@@ -27,8 +27,9 @@ import (
 // PullLayers) is implemented as no-op-error because the base path doesn't
 // call them.
 type minimalManifestPuller struct {
-	manifest oci.Manifest
-	layers   map[string][]byte // digest -> gzipped tarball bytes
+	manifest      oci.Manifest
+	layers        map[string][]byte // digest -> gzipped tarball bytes
+	manifestCalls int
 }
 
 func (f *minimalManifestPuller) PullDigest(_ context.Context, ref string) (string, error) {
@@ -40,7 +41,9 @@ func (f *minimalManifestPuller) PullImageConfig(_ context.Context, _ string) (oc
 func (f *minimalManifestPuller) PullLayers(_ context.Context, _ string) (oci.PullLayersResult, error) {
 	return oci.PullLayersResult{}, nil
 }
+
 func (f *minimalManifestPuller) PullManifest(_ context.Context, _ string) (oci.Manifest, error) {
+	f.manifestCalls++
 	return f.manifest, nil
 }
 func (f *minimalManifestPuller) PullBlob(_ context.Context, _ string, digest string) (io.ReadCloser, error) {
@@ -153,8 +156,9 @@ func TestEnsureBaseExt4_StagesOnFirstRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read digest sidecar: %v", err)
 	}
-	if string(haveDigest) != baseDigestSidecarValue(res.ConfigDigest) {
-		t.Errorf("sidecar %q != expected %q", string(haveDigest), baseDigestSidecarValue(res.ConfigDigest))
+	wantSidecar := baseDigestSidecarValueWithSource(res.ConfigDigest, "", "ghcr.io/onebox-faas/builder-base:latest")
+	if string(haveDigest) != wantSidecar {
+		t.Errorf("sidecar %q != expected %q", string(haveDigest), wantSidecar)
 	}
 }
 
@@ -239,6 +243,189 @@ func TestEnsureBaseExt4_SkipsWhenDigestMatches(t *testing.T) {
 	body, _ := io.ReadAll(rc)
 	if string(body) != "existing ext4" {
 		t.Errorf("file body changed during skip path: %q", string(body))
+	}
+}
+
+func TestEnsureBaseExt4_PinnedSourceSidecarSkipsManifestPull(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	const baseKey = "base/runtime.ext4"
+	const digKey = "base/runtime.ext4.digest"
+	const ref = "ghcr.io/onebox-faas/runner-node22@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	hs := newBaseHarness(t, mp, &callCountingBuilder{})
+
+	first, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", "")
+	if err != nil {
+		t.Fatalf("first EnsureBaseExt4: %v", err)
+	}
+	if first.Skipped {
+		t.Fatal("first stage unexpectedly skipped")
+	}
+
+	manifestCalls := mp.manifestCalls
+	second, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", "")
+	if err != nil {
+		t.Fatalf("local pinned-ref skip: %v", err)
+	}
+	if !second.Skipped {
+		t.Fatal("local pinned-ref path returned Skipped=false")
+	}
+	if second.ConfigDigest != first.ConfigDigest {
+		t.Fatalf("local ConfigDigest = %q, want %q", second.ConfigDigest, first.ConfigDigest)
+	}
+	if mp.manifestCalls != manifestCalls {
+		t.Fatalf("PullManifest calls = %d, want unchanged %d", mp.manifestCalls, manifestCalls)
+	}
+}
+
+func TestEnsureBaseExt4_BackfillsPinnedSourceRefAfterRegistryCheck(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	const baseKey = "base/runtime.ext4"
+	const digKey = "base/runtime.ext4.digest"
+	const ref = "ghcr.io/onebox-faas/runner-node22@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	hs := newBaseHarness(t, mp, &callCountingBuilder{})
+	if err := hs.be.Put(context.Background(), baseKey, strings.NewReader("existing ext4")); err != nil {
+		t.Fatal(err)
+	}
+	if err := hs.be.Put(context.Background(), digKey, strings.NewReader(baseDigestSidecarValue(mp.manifest.Config.Digest))); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", "")
+	if err != nil {
+		t.Fatalf("registry-backed migration: %v", err)
+	}
+	if !first.Skipped || mp.manifestCalls != 1 {
+		t.Fatalf("migration result = skipped:%v manifest_calls:%d, want true,1", first.Skipped, mp.manifestCalls)
+	}
+	rc, err := hs.be.Get(context.Background(), digKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidecar, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, sourceRef, current := parseBaseDigestSidecar(string(sidecar), ""); !current || sourceRef != ref {
+		t.Fatalf("migrated sidecar source = %q, current=%v; want %q", sourceRef, current, ref)
+	}
+
+	if _, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", ""); err != nil {
+		t.Fatalf("post-migration local skip: %v", err)
+	}
+	if mp.manifestCalls != 1 {
+		t.Fatalf("post-migration PullManifest calls = %d, want 1", mp.manifestCalls)
+	}
+}
+
+func TestEnsureBaseExt4_BackfillsLegacySourceRefFromCurrentScan(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	const baseKey = "base/runtime.ext4"
+	const digKey = "base/runtime.ext4.digest"
+	const ref = "ghcr.io/onebox-faas/runner-node22@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	hs := newBaseHarness(t, mp, &callCountingBuilder{})
+	first, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", "")
+	if err != nil {
+		t.Fatalf("first EnsureBaseExt4: %v", err)
+	}
+	// Simulate a pre-source-ref digest sidecar while keeping the scan record
+	// written for the exact pinned ref and canonical artifact path.
+	if err := hs.be.Put(context.Background(), digKey, strings.NewReader(baseDigestSidecarValue(first.ConfigDigest))); err != nil {
+		t.Fatal(err)
+	}
+	manifestCalls := mp.manifestCalls
+	second, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", "")
+	if err != nil {
+		t.Fatalf("local legacy migration: %v", err)
+	}
+	if !second.Skipped || mp.manifestCalls != manifestCalls {
+		t.Fatalf("second stage = skipped:%v manifest_calls:%d, want skipped:true calls:%d", second.Skipped, mp.manifestCalls, manifestCalls)
+	}
+	rc, err := hs.be.Get(context.Background(), digKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, sourceRef, current := parseBaseDigestSidecar(string(updated), ""); !current || sourceRef != ref {
+		t.Fatalf("updated sidecar current=%v source_ref=%q, want %q", current, sourceRef, ref)
+	}
+}
+
+func TestEnsureBaseExt4_PinnedFastPathRequiresCurrentScan(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	const baseKey = "base/runtime.ext4"
+	const digKey = "base/runtime.ext4.digest"
+	const ref = "ghcr.io/onebox-faas/runner-node22@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	hs := newBaseHarness(t, mp, &callCountingBuilder{})
+	if _, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", ""); err != nil {
+		t.Fatalf("first EnsureBaseExt4: %v", err)
+	}
+	if err := hs.be.Delete(context.Background(), wire.ScanKeyForBaseKey(baseKey)); err != nil {
+		t.Fatalf("delete scan sidecar: %v", err)
+	}
+	manifestCalls := mp.manifestCalls
+	if _, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", ""); err != nil {
+		t.Fatalf("registry-backed fallback: %v", err)
+	}
+	if mp.manifestCalls != manifestCalls+1 {
+		t.Fatalf("PullManifest calls = %d, want %d after missing scan sidecar", mp.manifestCalls, manifestCalls+1)
+	}
+}
+
+func TestEnsureBaseExt4_PinnedFastPathRejectsMutableTag(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	const baseKey = "base/runtime.ext4"
+	const digKey = "base/runtime.ext4.digest"
+	const ref = "ghcr.io/onebox-faas/runner-node22:latest"
+	hs := newBaseHarness(t, mp, &callCountingBuilder{})
+	if _, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", ""); err != nil {
+		t.Fatalf("first EnsureBaseExt4: %v", err)
+	}
+	manifestCalls := mp.manifestCalls
+	if _, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", ""); err != nil {
+		t.Fatalf("registry-backed tag refresh: %v", err)
+	}
+	if mp.manifestCalls != manifestCalls+1 {
+		t.Fatalf("PullManifest calls = %d, want %d for mutable tag", mp.manifestCalls, manifestCalls+1)
+	}
+}
+
+func TestParseBaseDigestSidecar(t *testing.T) {
+	const configDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const guestDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	const ref = "ghcr.io/onebox-faas/runner-node22@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	tests := []struct {
+		name       string
+		sidecar    string
+		guest      string
+		wantSource string
+		wantOK     bool
+	}{
+		{name: "current pinned", sidecar: baseDigestSidecarValueWithSource(configDigest, guestDigest, ref), guest: guestDigest, wantSource: ref, wantOK: true},
+		{name: "legacy current", sidecar: baseDigestSidecarValueWithGuestInit(configDigest, guestDigest), guest: guestDigest, wantOK: true},
+		{name: "stale layout", sidecar: configDigest + "\nfaas-base-layout-v2\nguest-init-sha256=" + guestDigest + "\n" + baseSourceRefPrefix + ref, guest: guestDigest},
+		{name: "changed guest init", sidecar: baseDigestSidecarValueWithSource(configDigest, strings.Repeat("d", 64), ref), guest: guestDigest},
+		{name: "invalid config digest", sidecar: "sha256:nope\n" + baseLayoutVersion + "\n" + baseSourceRefPrefix + ref},
+		{name: "unknown metadata", sidecar: baseDigestSidecarValue(configDigest) + "\nunknown=value"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotDigest, gotSource, gotOK := parseBaseDigestSidecar(tt.sidecar, tt.guest)
+			if gotOK != tt.wantOK {
+				t.Fatalf("current = %v, want %v", gotOK, tt.wantOK)
+			}
+			if !tt.wantOK {
+				return
+			}
+			if gotDigest != configDigest || gotSource != tt.wantSource {
+				t.Fatalf("parse = (%q, %q), want (%q, %q)", gotDigest, gotSource, configDigest, tt.wantSource)
+			}
+		})
 	}
 }
 
