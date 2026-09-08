@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -249,3 +250,99 @@ func (r *stringReaderImpl) Read(p []byte) (int, error) {
 }
 
 func stringReader(s string) *stringReaderImpl { return &stringReaderImpl{s: s} }
+
+// TestMetricsResident_EmptyURLStartsNoPoller pins the short-circuit that
+// NewMetricsResident's doc comment has always described but did not have:
+// an unwired ScheddMetricsURL must not start a poller.
+//
+// Before the fix each empty-URL probe launched a goroutine that
+// re-requested "" every residentPollInterval for the lifetime of the
+// process. On a partially-deployed box that is a wasted goroutine and a
+// failing request per tick; in the test binary it leaked a poller into
+// whatever test ran next, which is how the race on residentPollInterval
+// reached main (-shuffle seed 1788861835470908514).
+//
+// Counting goroutines is noisy by one or two, so this creates enough
+// probes that a regression cannot hide in the noise.
+func TestMetricsResident_EmptyURLStartsNoPoller(t *testing.T) {
+	const probes = 50
+
+	// A short interval means a leaked poller schedules promptly and is
+	// counted, rather than sitting in the first tick wait.
+	old := residentPollInterval
+	residentPollInterval = time.Millisecond
+	t.Cleanup(func() { residentPollInterval = old })
+
+	settle := func() int {
+		best := runtime.NumGoroutine()
+		for i := 0; i < 20; i++ {
+			time.Sleep(5 * time.Millisecond)
+			if n := runtime.NumGoroutine(); n < best {
+				best = n
+			}
+		}
+		return best
+	}
+
+	before := settle()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for i := 0; i < probes; i++ {
+		p := NewMetricsResident(ctx, "")
+		// The posture must be unchanged by the short-circuit.
+		if got := p.ResidentMB(); got != denyOpportunisticResidentMB {
+			t.Fatalf("empty-URL probe %d = %d MB, want denyOpportunisticResidentMB (%d)",
+				i, got, denyOpportunisticResidentMB)
+		}
+	}
+
+	if grew := settle() - before; grew > probes/2 {
+		t.Errorf("%d empty-URL probes grew the goroutine count by %d; want no pollers started", probes, grew)
+	}
+}
+
+// TestMetricsResidentLoop_UsesPassedInterval pins that loop polls on the
+// interval it is GIVEN, not on whatever residentPollInterval happens to
+// hold when the goroutine is first scheduled.
+//
+// The old code read the package var inside loop and claimed in a comment
+// that capturing it "at loop start" avoided racing tests that swap it. It
+// does not: the read lands whenever the goroutine gets scheduled, which
+// can be after the test that started it has finished. Setting the package
+// var to an hour here means a regression cannot reach the second scrape.
+func TestMetricsResidentLoop_UsesPassedInterval(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		fmt.Fprint(w, "fcvm_resident_ram_pct 10\n")
+	}))
+	defer srv.Close()
+
+	old := residentPollInterval
+	residentPollInterval = time.Hour
+	t.Cleanup(func() { residentPollInterval = old })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// startLoop=false so the prime scrape happens here and the loop below
+	// is the only thing polling.
+	p := newMetricsResident(ctx, srv.URL+"/metrics", false)
+	primed := hits.Load()
+
+	done := make(chan struct{})
+	go func() { defer close(done); p.loop(ctx, 5*time.Millisecond) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && hits.Load()-primed < 3 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	if polls := hits.Load() - primed; polls < 3 {
+		t.Errorf("loop polled %d times in 2s on a 5ms interval; want >= 3 (a read of residentPollInterval, set to 1h here, would give 0)", polls)
+	}
+}
