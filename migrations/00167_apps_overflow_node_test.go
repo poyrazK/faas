@@ -87,6 +87,9 @@ func TestMigration_00167_1_ColumnShape(t *testing.T) {
 func TestMigration_00167_2_AllowsNull(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -100,9 +103,7 @@ func TestMigration_00167_2_AllowsNull(t *testing.T) {
 	}
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "overflow-null-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}
@@ -137,6 +138,9 @@ func TestMigration_00167_2_AllowsNull(t *testing.T) {
 func TestMigration_00167_3_AllowsValidUUID(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -149,17 +153,13 @@ func TestMigration_00167_3_AllowsValidUUID(t *testing.T) {
 	}
 	ownerID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://owner:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://owner:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, ownerID, "owner-"+ownerID[:8]); err != nil {
 		t.Fatalf("seed owner: %v", err)
 	}
 	overflowID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://overflow:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://overflow:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, overflowID, "overflow-"+overflowID[:8]); err != nil {
 		t.Fatalf("seed overflow target: %v", err)
 	}
@@ -195,6 +195,9 @@ func TestMigration_00167_3_AllowsValidUUID(t *testing.T) {
 func TestMigration_00167_4_RejectsEmptyUUID(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -207,9 +210,7 @@ func TestMigration_00167_4_RejectsEmptyUUID(t *testing.T) {
 	}
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "empty-uuid-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}
@@ -241,6 +242,9 @@ func TestMigration_00167_4_RejectsEmptyUUID(t *testing.T) {
 func TestMigration_00167_5_FKEnforced(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -253,9 +257,7 @@ func TestMigration_00167_5_FKEnforced(t *testing.T) {
 	}
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "fk-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}
@@ -289,6 +291,9 @@ func TestMigration_00167_5_FKEnforced(t *testing.T) {
 func TestMigration_00167_6_OnDeleteSetNull(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -301,17 +306,13 @@ func TestMigration_00167_6_OnDeleteSetNull(t *testing.T) {
 	}
 	ownerID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://owner:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://owner:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, ownerID, "owner-set-null-"+ownerID[:8]); err != nil {
 		t.Fatalf("seed owner: %v", err)
 	}
 	overflowID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://overflow:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://overflow:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, overflowID, "overflow-set-null-"+overflowID[:8]); err != nil {
 		t.Fatalf("seed overflow target: %v", err)
 	}

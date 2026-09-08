@@ -104,9 +104,9 @@ func TestMigrations_00265_EdgeRulesKindThrottle(t *testing.T) {
 	// kind=throttle action jsonb shape (requests_per_second:float
 	// + burst:int). pgstore.MigrateUp has already applied
 	// 00265 — the row goes through the active CHECK.
-	accountID := "00000000-0000-0000-0000-000000002244a"
-	appID := "00000000-0000-0000-0000-000000022441b"
-	ruleID := "00000000-0000-0000-0000-000000022244c"
+	accountID := "00000000-0000-0000-0000-00000002244a"
+	appID := "00000000-0000-0000-0000-00000022441b"
+	ruleID := "00000000-0000-0000-0000-00000022244c"
 	if _, err := pool.Exec(ctx, `
 		insert into accounts (id, plan, email)
 		values ($1, 'scale', 'throttle-kind-test@example.com')

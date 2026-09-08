@@ -65,8 +65,8 @@ func TestMigrations_00229_EdgeRulesKindGeo(t *testing.T) {
 		t.Fatalf("seed account: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, runtime, status, created_at)
-		values ($1, $2, 'edge-rules-test-app', 'node22', 'live', now())
+		insert into apps (id, account_id, slug, runtime, status, created_at, ram_mb)
+		values ($1, $2, 'edge-rules-test-app', 'node22', 'live', now(), 256)
 		on conflict (id) do nothing
 	`, appID, acctID); err != nil {
 		t.Fatalf("seed app: %v", err)

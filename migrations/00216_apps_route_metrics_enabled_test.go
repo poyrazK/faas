@@ -30,12 +30,16 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// (1) The column must exist with NOT NULL DEFAULT false. pg's
 	// information_schema is the canonical source of truth — a typo
@@ -45,7 +49,7 @@ func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	err := pool.QueryRow(ctx, `
 		select is_nullable, column_default
 		from information_schema.columns
-		where table_schema = 'public'
+		where table_schema = current_schema()
 		  and table_name = 'apps'
 		  and column_name = 'route_metrics_enabled'
 	`).Scan(&isNullable, &columnDefault)
@@ -65,7 +69,7 @@ func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	err = pool.QueryRow(ctx, `
 		select indexdef
 		from pg_indexes
-		where schemaname = 'public'
+		where schemaname = current_schema()
 		  and tablename = 'apps'
 		  and indexname = 'apps_route_metrics_enabled_idx'
 	`).Scan(&indexDef)
@@ -85,8 +89,8 @@ func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	acctID := "00000000-0000-0000-0000-000000002121"
 	appID := "00000000-0000-0000-0000-000000002122"
 	_, err = pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, plan, route_metrics_enabled)
-		values ($1, $2, 'route-metrics-test', 'hobby', true)
+		insert into apps (id, account_id, slug, plan, route_metrics_enabled, ram_mb)
+		values ($1, $2, 'route-metrics-test', 'hobby', true, 256)
 		on conflict (id) do update set route_metrics_enabled = excluded.route_metrics_enabled
 	`, appID, acctID)
 	if err != nil {
@@ -101,7 +105,7 @@ func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	var count int
 	err = pool.QueryRow(ctx, `
 		select count(*) from information_schema.columns
-		where table_schema = 'public'
+		where table_schema = current_schema()
 		  and table_name = 'apps'
 		  and column_name = 'route_metrics_enabled'
 	`).Scan(&count)
@@ -120,8 +124,8 @@ func TestMigrations_00216_AppsRouteMetricsEnabled(t *testing.T) {
 	// 22P02 (invalid_text_representation) error guard nails
 	// the type down.
 	_, err = pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, plan, route_metrics_enabled)
-		values ('00000000-0000-0000-0000-000000002123', $1, 'route-metrics-bad', 'hobby', 'not-a-boolean')
+		insert into apps (id, account_id, slug, plan, route_metrics_enabled, ram_mb)
+		values ('00000000-0000-0000-0000-000000002123', $1, 'route-metrics-bad', 'hobby', 'not-a-boolean', 256)
 		on conflict (id) do nothing
 	`, acctID)
 	var pgErr *pgconn.PgError

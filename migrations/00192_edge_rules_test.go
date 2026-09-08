@@ -81,10 +81,10 @@ func TestMigrations_00192_EdgeRules(t *testing.T) {
 		t.Fatalf("seed account: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, runtime, status, created_at)
+		insert into apps (id, account_id, slug, runtime, status, created_at, ram_mb)
 		values ('00000000-0000-0000-0000-000000000292',
 		        '00000000-0000-0000-0000-000000000192',
-		        'edge-rules-test-app', 'node22', 'live', now())
+		        'edge-rules-test-app', 'node22', 'live', now(), 256)
 		on conflict (id) do nothing
 	`); err != nil {
 		t.Fatalf("seed app: %v", err)

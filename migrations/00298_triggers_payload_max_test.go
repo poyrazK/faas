@@ -48,7 +48,7 @@ func TestMigrations_00298_TriggersPayloadMax(t *testing.T) {
 	err := pool.QueryRow(ctx, `
 		SELECT data_type, column_default, is_nullable
 		  FROM information_schema.columns
-		 WHERE table_schema = 'public' AND table_name = 'triggers' AND column_name = 'payload_max_bytes'
+		 WHERE table_schema = current_schema() AND table_name = 'triggers' AND column_name = 'payload_max_bytes'
 	`).Scan(&typ, &colDflt, &isNotNull)
 	if err != nil {
 		t.Fatalf("query payload_max_bytes column: %v", err)

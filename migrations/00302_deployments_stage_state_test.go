@@ -89,15 +89,15 @@ func TestMigrations_00302_DeploymentsStageState(t *testing.T) {
 		// schema is empty, so we always land here.
 		if _, ierr := pool.Exec(ctx, `
 			insert into deployments (id, app_id, status)
-			values ('00000000-0000-0000-0000-000000000302a',
-			        '00000000-0000-0000-0000-000000000302a',
+			values ('00000000-0000-0000-0000-00000000302a',
+			        '00000000-0000-0000-0000-00000000302a',
 			        'pending')`); ierr != nil {
 			t.Fatalf("insert sentinel deployment row: %v", ierr)
 		}
 		err = pool.QueryRow(ctx, `
 			select stage_state, stage_state IS NULL
 			  from deployments
-			 where id = '00000000-0000-0000-0000-000000000302a'`).Scan(&stageState, &isNull)
+			 where id = '00000000-0000-0000-0000-00000000302a'`).Scan(&stageState, &isNull)
 		if err != nil {
 			t.Fatalf("select stage_state default: %v", err)
 		}
@@ -136,7 +136,7 @@ func TestMigrations_00302_DeploymentsStageState(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		update deployments
 		   set stage_state = jsonb_set(stage_state, '{current}', '"imagee_build"')
-		 where id = '00000000-0000-0000-0000-000000000302a'`); err != nil {
+		 where id = '00000000-0000-0000-0000-00000000302a'`); err != nil {
 		stageStateTypoErr = err
 	}
 	if stageStateTypoErr == nil {

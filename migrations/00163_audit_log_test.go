@@ -23,12 +23,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00163_AuditLog(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// Column shape + nullability. Filtered on current_schema() so a
 	// parallel test in another schema can't pollute the assertions.

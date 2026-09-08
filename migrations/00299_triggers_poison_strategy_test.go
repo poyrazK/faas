@@ -49,7 +49,7 @@ func TestMigrations_00299_TriggersPoisonStrategy(t *testing.T) {
 	err := pool.QueryRow(ctx, `
 		SELECT data_type, column_default, is_nullable
 		  FROM information_schema.columns
-		 WHERE table_schema = 'public' AND table_name = 'triggers' AND column_name = 'broker_poison_strategy'
+		 WHERE table_schema = current_schema() AND table_name = 'triggers' AND column_name = 'broker_poison_strategy'
 	`).Scan(&typ, &colDflt, &isNotNull)
 	if err != nil {
 		t.Fatalf("query broker_poison_strategy column: %v", err)

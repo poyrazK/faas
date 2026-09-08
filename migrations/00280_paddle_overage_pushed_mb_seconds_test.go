@@ -49,7 +49,7 @@ func TestMigrations_00280_PaddleOveragePushedMBSeconds(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		select data_type, is_nullable
 		from information_schema.columns
-		where table_schema = 'public'
+		where table_schema = current_schema()
 		  and table_name = 'paddle_overage_dedupe'
 		  and column_name = 'pushed_mb_seconds'
 	`).Scan(&dataType, &isNullable); err != nil {

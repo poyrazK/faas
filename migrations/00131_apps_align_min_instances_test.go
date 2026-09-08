@@ -69,14 +69,14 @@ func TestMigrations_00131_AppsAlignMinInstances(t *testing.T) {
 		t.Fatalf("seed accounts: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, min_instances, scaling_policy)
+		insert into apps (id, account_id, slug, min_instances, scaling_policy, ram_mb)
 		values
 		  ('00000000-0000-0000-0000-000000000131', '00000000-0000-0000-0000-000000000131',
-		   'align-test', 3, '{"min_instances":0}'::jsonb),
+		   'align-test', 3, '{"min_instances":0}'::jsonb, 256),
 		  ('00000000-0000-0000-0000-000000000231', '00000000-0000-0000-0000-000000000131',
-		   'align-noop', 0, '{}'::jsonb),
+		   'align-noop', 0, '{}'::jsonb, 256),
 		  ('00000000-0000-0000-0000-000000000331', '00000000-0000-0000-0000-000000000131',
-		   'align-jsonb-wins', 1, '{"min_instances":5}'::jsonb)
+		   'align-jsonb-wins', 1, '{"min_instances":5}'::jsonb, 256)
 	`); err != nil {
 		t.Fatalf("seed apps: %v", err)
 	}

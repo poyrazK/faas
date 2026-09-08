@@ -219,5 +219,5 @@ func TestMigrations_00293_ValidateMode(t *testing.T) {
 // test.
 func validateModeProbeUUID(i int) string {
 	const hex = "0123456789abcdef"
-	return "00000000-0000-0000-0000-0000000029" + string([]byte{hex[(i/16)%16], hex[i%16]}) + "0"
+	return "00000000-0000-0000-0000-00000000029" + string([]byte{hex[(i/16)%16], hex[i%16]})
 }

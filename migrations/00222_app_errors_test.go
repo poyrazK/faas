@@ -53,12 +53,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00222_AppErrors(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// (1) Both tables exist.
 	for _, table := range []string{"app_errors", "app_error_requests"} {
@@ -214,8 +218,8 @@ func TestMigrations_00222_AppErrors(t *testing.T) {
 	// account; both rows must disappear. Then re-insert + delete
 	// the deployment to confirm deployment_id SET NULL.
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO apps (id, account_id, slug, status)
-		VALUES (gen_random_uuid(), $1, 'app-errors-fk-test', 'active')
+		INSERT INTO apps (id, account_id, slug, status, ram_mb)
+		VALUES (gen_random_uuid(), $1, 'app-errors-fk-test', 'active', 256)
 		ON CONFLICT (account_id, slug) DO NOTHING
 	`, accountID); err != nil {
 		t.Fatalf("seed app for FK test: %v", err)

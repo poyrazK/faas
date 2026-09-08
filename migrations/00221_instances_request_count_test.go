@@ -46,12 +46,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00221_InstancesRequestCount(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// (1) The column must exist with NOT NULL DEFAULT 0 and the
 	// right type. pg's information_schema is the canonical source
@@ -61,7 +65,7 @@ func TestMigrations_00221_InstancesRequestCount(t *testing.T) {
 	err := pool.QueryRow(ctx, `
 		select data_type, is_nullable, column_default
 		from information_schema.columns
-		where table_schema = 'public'
+		where table_schema = current_schema()
 		  and table_name = 'instances'
 		  and column_name = 'request_count'
 	`).Scan(&dataType, &isNullable, &columnDefault)
@@ -158,7 +162,7 @@ func TestMigrations_00221_InstancesRequestCount(t *testing.T) {
 			from information_schema.check_constraints cc
 			join information_schema.constraint_column_usage ccu
 			  on ccu.constraint_name = cc.constraint_name
-			where ccu.table_schema = 'public'
+			where ccu.table_schema = current_schema()
 			  and ccu.table_name = 'instances'
 			  and ccu.column_name = 'request_count'
 		)

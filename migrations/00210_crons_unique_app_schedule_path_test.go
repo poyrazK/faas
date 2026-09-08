@@ -25,12 +25,16 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00210_CronsUniqueAppSchedulePath(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// Seed the bare-minimum FK targets so the crons row can insert.
 	// Two apps (under the same account) let us assert the "different
@@ -53,16 +57,16 @@ func TestMigrations_00210_CronsUniqueAppSchedulePath(t *testing.T) {
 		t.Fatalf("seed account: %v", err)
 	}
 	_, err = pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, created_at)
-		values ($1, $3, 'crons-unique-app-1', now())
+		insert into apps (id, account_id, slug, created_at, ram_mb)
+		values ($1, $3, 'crons-unique-app-1', now(), 256)
 		on conflict (id) do nothing
 	`, appID1, appID2, acctID)
 	if err != nil {
 		t.Fatalf("seed app1: %v", err)
 	}
 	_, err = pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, created_at)
-		values ($2, $3, 'crons-unique-app-2', now())
+		insert into apps (id, account_id, slug, created_at, ram_mb)
+		values ($2, $3, 'crons-unique-app-2', now(), 256)
 		on conflict (id) do nothing
 	`, appID1, appID2, acctID)
 	if err != nil {

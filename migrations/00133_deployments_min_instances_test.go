@@ -91,10 +91,10 @@ func TestMigrations_00133_DeploymentsMinInstances(t *testing.T) {
 		t.Fatalf("seed accounts: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into apps (id, account_id, slug)
+		insert into apps (id, account_id, slug, ram_mb)
 		values ('00000000-0000-0000-0000-000000000133',
 		        '00000000-0000-0000-0000-000000000133',
-		        'min-test')
+		        'min-test', 256)
 	`); err != nil {
 		t.Fatalf("seed apps: %v", err)
 	}

@@ -113,8 +113,8 @@ func TestMigrations_00336_AppsStaticEgressIP(t *testing.T) {
 
 	var appID string
 	if err := pool.QueryRow(ctx, `
-		insert into apps (id, account_id, slug)
-		values (gen_random_uuid(), $1::uuid, 'static-ip-test-' || gen_random_uuid()::text)
+		insert into apps (id, account_id, slug, ram_mb)
+		values (gen_random_uuid(), $1::uuid, 'static-ip-test-' || gen_random_uuid()::text, 256)
 		returning id::text`, accountID).Scan(&appID); err != nil {
 		t.Fatalf("insert app: %v", err)
 	}
@@ -157,8 +157,8 @@ func TestMigrations_00336_AppsStaticEgressIP(t *testing.T) {
 	// account, attempt to pin the same IP, expect SQLSTATE 23505.
 	var dupAppID string
 	if err := pool.QueryRow(ctx, `
-		insert into apps (id, account_id, slug)
-		values (gen_random_uuid(), $1::uuid, 'static-ip-test-dup-' || gen_random_uuid()::text)
+		insert into apps (id, account_id, slug, ram_mb)
+		values (gen_random_uuid(), $1::uuid, 'static-ip-test-dup-' || gen_random_uuid()::text, 256)
 		returning id::text`, accountID).Scan(&dupAppID); err != nil {
 		t.Fatalf("insert second app for dup test: %v", err)
 	}

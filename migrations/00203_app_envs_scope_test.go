@@ -45,12 +45,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00203_AppEnvsScope(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// (2) scope column shape: text NOT NULL DEFAULT 'default'.
 	rows, err := pool.Query(ctx, `

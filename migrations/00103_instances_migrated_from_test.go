@@ -129,6 +129,9 @@ func TestMigration_00103_1_ColumnShape(t *testing.T) {
 func TestMigration_00103_2_AllowsNull(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -143,9 +146,7 @@ func TestMigration_00103_2_AllowsNull(t *testing.T) {
 	}
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "live-mig-null-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}
@@ -210,6 +211,9 @@ func TestMigration_00103_2_AllowsNull(t *testing.T) {
 func TestMigration_00103_3_AllowsPastTimestamp(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -224,18 +228,14 @@ func TestMigration_00103_3_AllowsPastTimestamp(t *testing.T) {
 	}
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "live-mig-past-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}
 
 	fromNodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50052', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50052', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, fromNodeID, "live-mig-past-from-"+fromNodeID[:8]); err != nil {
 		t.Fatalf("seed from-node: %v", err)
 	}
@@ -302,6 +302,9 @@ func TestMigration_00103_3_AllowsPastTimestamp(t *testing.T) {
 func TestMigration_00103_4_RejectsFutureTimestamp(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -316,9 +319,7 @@ func TestMigration_00103_4_RejectsFutureTimestamp(t *testing.T) {
 	}
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "live-mig-future-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed compute_nodes: %v", err)
 	}
@@ -366,6 +367,9 @@ func TestMigration_00103_4_RejectsFutureTimestamp(t *testing.T) {
 func TestMigration_00103_5_FKOnDelete(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -381,17 +385,13 @@ func TestMigration_00103_5_FKOnDelete(t *testing.T) {
 	// that we'll delete.
 	nodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 	`, nodeID, "live-mig-fk-keep-"+nodeID[:8]); err != nil {
 		t.Fatalf("seed keep-node: %v", err)
 	}
 	fromNodeID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, $2, 'tcp://test:50052', 160, 56000, 200, 47600, false)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, $2, 'tcp://test:50052', 160, 56000, 200, 47600, 'unavailable'::compute_node_lifecycle)
 	`, fromNodeID, "live-mig-fk-drop-"+fromNodeID[:8]); err != nil {
 		t.Fatalf("seed from-node: %v", err)
 	}

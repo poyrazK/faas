@@ -47,6 +47,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -54,6 +55,9 @@ import (
 func TestMigrations_00224_AppsCORSDefaults(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// (2) cors_default_enabled column shape: boolean NOT NULL
 	// DEFAULT false. The PG normalized form is
@@ -134,8 +138,8 @@ func TestMigrations_00224_AppsCORSDefaults(t *testing.T) {
 	accountID := uuid.NewString()
 	var gotEnabled bool
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO apps (id, account_id, slug, name)
-		VALUES (gen_random_uuid(), $1, $1, $1)
+		INSERT INTO apps (id, account_id, slug, name, ram_mb)
+		VALUES (gen_random_uuid(), $1, $1, $1, 256)
 		RETURNING cors_default_enabled
 	`, accountID).Scan(&gotEnabled); err != nil {
 		t.Fatalf("backfill insert: %v", err)
@@ -155,8 +159,8 @@ func TestMigrations_00224_AppsCORSDefaults(t *testing.T) {
 	appID := uuid.NewString()
 	slug := "corsdefaults-" + uuid.NewString()[:8]
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO apps (id, account_id, slug, name)
-		VALUES ($1, $2, $3, $3)
+		INSERT INTO apps (id, account_id, slug, name, ram_mb)
+		VALUES ($1, $2, $3, $3, 256)
 	`, appID, accountID, slug); err != nil {
 		t.Fatalf("insert app for round-trip: %v", err)
 	}

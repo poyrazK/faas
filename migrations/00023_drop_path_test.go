@@ -169,7 +169,7 @@ func TestMigrations_00023_TripwireUnscopedQueryFailsWithForeignSchema(t *testing
 	var foreignCount int
 	if err := pool.QueryRow(ctx, `
 		select count(*) from information_schema.columns
-		 where table_schema = 'public'
+		 where table_schema = current_schema()
 		   and table_name = 'snapshots' and column_name = 'path'
 	`).Scan(&foreignCount); err != nil {
 		t.Fatalf("sanity probe on public.snapshots: %v", err)

@@ -75,12 +75,12 @@ func TestMigrations_00115_APIKeyExpiryRotation(t *testing.T) {
 	// rotated_from_id -> olderKey). Defaults + lineage round
 	// trip in one go.
 	if _, err := pool.Exec(ctx, `
-		insert into api_keys (id, account_id, key_sha256, label, scopes)
+		insert into api_keys (id, account_id, key_sha256, label, scopes, org_id)
 		values
 		    ($1, $2, decode('aaaa00000000000000000000000000000000000000000000000000000000', 'hex'),
-		        'pre-mig', ARRAY['admin']),
+		        'pre-mig', ARRAY['admin'], '00000000-0000-0000-0000-0000000000aa'),
 		    ($3, $2, decode('bbbb00000000000000000000000000000000000000000000000000000000', 'hex'),
-		        'rotated', ARRAY['admin'])
+		        'rotated', ARRAY['admin'], '00000000-0000-0000-0000-0000000000aa')
 		on conflict (id) do nothing
 	`, olderKey, acctID, newerKey); err != nil {
 		t.Fatalf("seed keys: %v", err)
@@ -132,10 +132,10 @@ func TestMigrations_00115_APIKeyExpiryRotation(t *testing.T) {
 	// the SQL error to surface a 23514 (check_violation); any
 	// error is fine for this pin, the constraint is the wall.
 	_, err := pool.Exec(ctx, `
-		insert into api_keys (id, account_id, key_sha256, label, scopes, status)
+		insert into api_keys (id, account_id, key_sha256, label, scopes, status, org_id)
 		values ('00000000-0000-0000-0000-0000000000ff', $1,
 		        decode('ffff00000000000000000000000000000000000000000000000000000000', 'hex'),
-		        'bad', ARRAY['admin'], 'unknown')
+		        'bad', ARRAY['admin'], 'unknown', '00000000-0000-0000-0000-0000000000aa')
 	`, acctID)
 	if err == nil {
 		t.Errorf("expected CHECK violation for status='unknown'")
@@ -165,11 +165,11 @@ func TestMigrations_00115_APIKeyExpiryRotation(t *testing.T) {
 
 	// (6) FK rejects a dangling rotated_from_id.
 	_, err = pool.Exec(ctx, `
-		insert into api_keys (id, account_id, key_sha256, label, scopes, rotated_from_id)
+		insert into api_keys (id, account_id, key_sha256, label, scopes, rotated_from_id, org_id)
 		values ('00000000-0000-0000-0000-0000000000fe', $1,
 		        decode('fefe00000000000000000000000000000000000000000000000000000000', 'hex'),
 		        'dangling', ARRAY['admin'],
-		        '00000000-0000-0000-0000-deadbeefdead')
+		        '00000000-0000-0000-0000-deadbeefdead', '00000000-0000-0000-0000-0000000000aa')
 	`, acctID)
 	if err == nil {
 		t.Errorf("expected FK violation for dangling rotated_from_id")

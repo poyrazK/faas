@@ -156,7 +156,7 @@ func TestMigrations_00134_APIKeysOrgBound(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		SELECT is_nullable
 		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
+		 WHERE table_schema = current_schema()
 		   AND table_name = 'api_keys'
 		   AND column_name = 'org_id'
 	`).Scan(&isNullable); err != nil {

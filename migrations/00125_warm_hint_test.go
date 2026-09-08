@@ -222,7 +222,7 @@ func TestMigrations_00126_PgRateLimit(t *testing.T) {
 	// 3c: negative tokens.
 	if _, err := pool.Exec(ctx, `
 		insert into pg_ratelimit_counters (scope, subject_id, plan, tokens)
-		values ('app', '00000000-0000-0000-0000-0000-000000000416', 'hobby', -1)
+		values ('app', '00000000-0000-0000-0000-000000000416', 'hobby', -1)
 	`); err == nil {
 		t.Errorf("expected CHECK failure on negative tokens; got nil")
 	} else if !isCheckViolation(err) {

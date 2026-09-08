@@ -115,8 +115,7 @@ func TestMigrations_00072_ComputeNodesRegionZone(t *testing.T) {
 	//     operator-added rows accept the 00072 schema without a
 	//     one-time backfill transaction.
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, active)
-		values ('00072-no-region-test', 'tcp://127.0.0.1:1', 1, 256, 1, 256, true)
+		insert into compute_nodes (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ('00072-no-region-test', 'tcp://127.0.0.1:1', 1, 256, 1, 256, 'active'::compute_node_lifecycle)
 	`); err != nil {
 		t.Errorf("insert compute_nodes with NULL region/zone (must succeed under nullable): %v", err)
 	}
