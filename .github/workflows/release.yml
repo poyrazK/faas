@@ -12,7 +12,9 @@
 # The CLI compatibility asset remains in the first job. The daemon bundle
 # job below is the production release surface: it builds the immutable
 # multi-daemon tarball, signs it with GitHub OIDC, emits an SPDX SBOM, and
-# publishes all of the install-time verification material together.
+# publishes all of the install-time verification material together. Those
+# independent builds run concurrently; the final publication job waits for
+# both so a failed CLI build cannot leave a canonical bundle attached alone.
 #
 # Tag strategy: every release commits to a `release/v<tag>` branch AND
 # force-updates the MAJOR moving tag (vN from vN.M.P) so that
@@ -186,7 +188,6 @@ jobs:
 
   daemon-bundle:
     name: Build and sign canonical daemon bundle
-    needs: build
     runs-on: ubuntu-22.04
     # The builder-base publisher is a separate workflow and can use most of
     # its 25-minute budget before the immutable tag is available. Leave room
@@ -516,6 +517,18 @@ jobs:
           name: gregale-daemon-release-${{ github.sha }}
           path: ${{ runner.temp }}/gregale-release/
           if-no-files-found: error
+          retention-days: 1
+
+  publish-daemon-bundle:
+    name: Attach canonical daemon bundle
+    needs: [build, daemon-bundle]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download canonical release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: gregale-daemon-release-${{ github.sha }}
+          path: ${{ runner.temp }}/gregale-release
 
       - name: Attach canonical release artifacts
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
