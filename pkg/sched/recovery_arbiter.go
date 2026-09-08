@@ -173,6 +173,12 @@ func (a *Arbiter) Decide(node state.ComputeNode, instance state.RecoveryInstance
 			return DecisionLiveMigrate
 		}
 		return DecisionNone
+	case state.NodeLifecycleForceDraining:
+		switch instanceState {
+		case string(state.StateColdBooting), string(state.StateWaking):
+			return DecisionRecreate
+		}
+		return DecisionLiveMigrate
 	case state.NodeLifecycleRecovering:
 		switch instanceState {
 		case string(state.StateRunning):
@@ -201,6 +207,7 @@ func (a *Arbiter) Decide(node state.ComputeNode, instance state.RecoveryInstance
 func (a *Arbiter) Tick(ctx context.Context, nodes []state.ComputeNode, instancesByNode map[string][]state.RecoveryInstance) (liveMig, recreate, skipped int, err error) {
 	for _, node := range nodes {
 		if node.Lifecycle != state.NodeLifecycleDraining &&
+			node.Lifecycle != state.NodeLifecycleForceDraining &&
 			node.Lifecycle != state.NodeLifecycleUnavailable &&
 			node.Lifecycle != state.NodeLifecycleRecovering {
 			continue

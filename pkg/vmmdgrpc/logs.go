@@ -165,6 +165,7 @@ func lineToPb(l logbuf.Line) *vmmdpb.LogsResponse {
 		Seq:       l.Seq,
 		Stream:    l.Stream,
 		Line:      l.Line,
+		Level:     l.Level,
 		WrittenAt: timestamppb.New(l.WrittenAt),
 	}
 }

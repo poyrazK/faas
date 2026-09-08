@@ -196,7 +196,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -258,6 +258,7 @@ func cmdApp(args []string) int {
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL unless --public-auth is also set")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
+	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
 	// ADR-124: per-app wire-protocol selector. Single string
 	// flag (closed set {http1, http2, grpc}) — empty value
 	// means "use the per-plan default" (http1 universal). The
@@ -443,6 +444,15 @@ func cmdApp(args []string) int {
 		v := *headWakes
 		req.HeadWakes = &v
 	}
+	if explicit["crawler-policy"] {
+		v := *crawlerPolicy
+		switch v {
+		case api.CrawlerPolicyWake, api.CrawlerPolicyCached, api.CrawlerPolicyBlock:
+		default:
+			return printErr("Invalid --crawler-policy", fmt.Errorf("must be 'wake', 'cached', or 'block'; got %q", v))
+		}
+		req.CrawlerPolicy = &v
+	}
 	// ADR-124: per-app wire-protocol selector. Validate the
 	// closed set locally so a typo surfaces as a usage error
 	// before the round-trip (the apid side returns the same
@@ -507,7 +517,7 @@ func cmdApp(args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil && req.HeadWakes == nil {
+		req.OverflowNode == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -610,6 +620,7 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %s\n", "require authn:", "disabled")
 		}
+		fmt.Printf("%-30s %s\n", "crawler policy:", a.Manifest.EffectiveCrawlerPolicy())
 		// Tier A10 / ADR-088: surface the resolved overflow_node
 		// preference (the UUID apid returns) so the customer can
 		// verify their PATCH round-tripped. nil on the wire means
@@ -973,6 +984,10 @@ func (e deployExecution) notifyQueued(dep api.DeploymentResponse) {
 // probe; this also avoids incorrectly tripping the app-count quota while
 // redeploying an existing developer environment.
 func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp bool, executions ...deployExecution) int {
+	// The preflight flag is package-global because the packer lives in a
+	// separate file. Reset it per invocation so a previous strict deploy
+	// cannot suppress scans in the next CLI command or test.
+	doctorPreflightRan = false
 	execution := deployExecution{}
 	if len(executions) > 0 {
 		execution = executions[0]
@@ -1140,6 +1155,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// doctor can scan); the server-side validators still run on
 	// upload.
 	doctorStrict := fs.Bool("doctor-strict", false, "run `gregale doctor` first; abort the deploy on any error-class finding (warnings are warn-only)")
+	noDoctor := fs.Bool("no-doctor", false, "skip the automatic local doctor preflight")
 	// Issue #977 / ADR-116: deployment annotations surface. Four
 	// flags on the cmdDeployTarball path; the zero-config path
 	// auto-captures deployed_by from `git config user.name` and
@@ -1156,7 +1172,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff] [--doctor-strict] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
 		return 1
 	}
 	// run() consumes the global --json before dispatch. Keep the
@@ -1182,6 +1198,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// both is unambiguous noise; reject before any side effects.
 	if *requireAuthn && *noRequireAuthn {
 		return printErr("Invalid flags", fmt.Errorf("--require-authn and --no-require-authn are mutually exclusive"))
+	}
+	if *doctorStrict && *noDoctor {
+		return printErr("Invalid flags", fmt.Errorf("--doctor-strict and --no-doctor are mutually exclusive"))
 	}
 	if *profile != "" {
 		if _, ok := api.ResourceProfileSpecFor(*profile); !ok {
@@ -1350,12 +1369,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintFail(os.Stderr, "--repo cannot be combined with --only or --project-slug")
 			return 1
 		}
-		return cmdDeployRepoSourceRefContext(ctx, slug, *repo, *ref, api.DeployAnnotations{
+		return cmdDeployRepoSourceRefContextWithWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
 			Reason:     *reason,
 			Tag:        *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy),
 			PRNumber:   *prNumber,
-		})
+		}, waitForDeploy)
 	}
 
 	// --template materializes an embedded starter project. For function
@@ -1507,7 +1526,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 	}
-	// Cluster A: --doctor-strict pre-upload gate. Runs runDoctorChecks
+	// Cluster A: local doctor preflight. Zero-config deploys run the
+	// deterministic source checks automatically in warn-only mode; the
+	// explicit --doctor-strict variant keeps the fail-fast policy gate.
+	// Runs runDoctorChecks
 	// against the selected source directory BEFORE any HTTP / pack. Errors exit 1 with the
 	// doctor report printed to stderr (pre-network, no half-state).
 	// Warnings render but don't fail (mirrors the standalone cmdDoctor
@@ -1518,9 +1540,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// cwd itself is unreachable (cwdErr != nil) does the gate
 	// skip — in that case the server-side validators on upload are
 	// the catch.
-	if *doctorStrict && sourceDir != "" {
+	localZeroConfig := *image == "" && *tarball == ""
+	doctorEnabled := *doctorStrict || (!*noDoctor && localZeroConfig)
+	if doctorEnabled && sourceDir != "" {
 		rep := runDoctorChecks(sourceDir)
-		if rep.HasErrors() {
+		if *doctorStrict && rep.HasErrors() {
 			if jsonOutput {
 				_ = json.NewEncoder(osStderr).Encode(struct {
 					Doctor doctorReport `json:"doctor"`
@@ -1531,8 +1555,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			return 1
 		}
-		if rep.HasWarnings() && !jsonOutput {
+		if *doctorStrict && rep.HasWarnings() && !jsonOutput {
 			renderDoctorHuman(osStderr, rep)
+		}
+		if !*doctorStrict && (rep.HasErrors() || rep.HasWarnings() || rep.HasProfileWarnings()) {
+			renderDoctorDeployPreflight(rep, jsonOutput)
 		}
 		// Cluster A (F7 perf): doctor already walked cwd. Signal
 		// runPackPreflight to skip its own loopback-bind and

@@ -153,13 +153,13 @@
       `gregalectl doctor` line up by construction.
   - **Image rollout (`make upgrade-node IMAGE_TAG=...`):**
     drain-first, health-gate-second, flip-active-last:
-    1. `gregalectl compute-nodes drain --node <fqdn>` emits
-       `UPDATE compute_nodes SET active=false WHERE name=<fqdn>`.
-    2. Wait `MigrateLiveLeaseSeconds` (90s, per ADR-066) + 5s grace
-       for live instances to land on peers. If any are still on
+    1. `gregalectl compute-nodes drain --node <fqdn>` submits an
+       authenticated, audited `node_drain` intent through apid.
+    2. Poll until schedd clears live instances and holds the node in the
+       non-admitting `maintenance` lifecycle. If instances are still on
        the node, emit a loud `WARNING: N instances still on
        <fqdn>, manual drain required` and exit 1 (the operator
-       runs `gregalectl compute-nodes force-drain` to override).
+       runs `gregalectl compute-nodes force-drain --yes` to override).
     3. Signal the cloud-specific image-rollout mechanism
        (Hetzner: rebuild server from new snapshot; AWS: terminate
        + launch from new AMI; bare-metal: PXE-boot from new image).
@@ -168,8 +168,8 @@
        on every entry in `pkg/daemonunitspec.Registry` reports
        ready (reuses `cmd/deployctl/runtime.go:295-299 waitPath /
        waitTCP` — no new probe code).
-    5. Flip `compute_nodes.active=true` only after every probe
-       passes. The new node is now eligible for placement.
+    5. Submit `node_activate` only after every probe passes. The new node is
+       now eligible for placement.
   - **CI gates (PR #928+):**
     - `packer-validate` job runs `packer init + packer validate
       -syntax-only` on every builder, fails on syntax error.

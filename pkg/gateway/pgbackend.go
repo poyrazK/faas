@@ -1358,6 +1358,9 @@ func (b *PGBackend) RefreshMirrorRules(ctx context.Context, appID string) error 
 		}
 	}
 	b.mirrorMu.Lock()
+	if b.mirrorRules == nil {
+		b.mirrorRules = make(map[string][]MirrorRuleRow)
+	}
 	b.mirrorRules[appID] = enabled
 	b.mirrorMu.Unlock()
 	return nil
@@ -1405,6 +1408,113 @@ func (b *PGBackend) ScheduleMirror(ctx context.Context, appID, mirrorDeploymentI
 		return "", "", err
 	}
 	return sched.AdmitMirrorInstance(ctx, appID, mirrorDeploymentID, mirrorRuleID)
+}
+
+// MirrorTargetBackend is the optional richer mirror-admission seam used by
+// debugger replays. The legacy ScheduleMirror method remains unchanged for
+// the fire-and-forget customer mirror path; this variant also returns the
+// node/port needed to forward a replay to the admitted shadow instance.
+type MirrorTargetBackend interface {
+	ScheduleMirrorTarget(ctx context.Context, appID, mirrorDeploymentID, mirrorRuleID string) (Target, error)
+}
+
+// MirrorReplayRuleBackend is the optional authoritative rule lookup used by
+// debugger replays. Unlike the customer hot path, replay always consults the
+// store when one is wired so a stale cache cannot resurrect a disabled rule.
+type MirrorReplayRuleBackend interface {
+	LookupMirrorRuleForReplay(ctx context.Context, appID, ruleID string) (MirrorRuleRow, bool, error)
+}
+
+// LookupMirrorRuleForReplay reads the current enabled rule set for a replay.
+// The store-backed path refreshes the cache as a side effect; cache-only
+// adapters are retained for tests and single-process development.
+func (b *PGBackend) LookupMirrorRuleForReplay(ctx context.Context, appID, ruleID string) (MirrorRuleRow, bool, error) {
+	if b == nil || appID == "" || ruleID == "" {
+		return MirrorRuleRow{}, false, nil
+	}
+	// Replay is a control-plane action, so prefer an authoritative store read
+	// whenever one is wired. The hot-path cache can lag a disable/update notify;
+	// trusting it here could replay against a rule the operator just removed.
+	if b.mirrorStore != nil {
+		rows, err := b.mirrorStore.ListMirrorRules(ctx, appID)
+		if err != nil {
+			return MirrorRuleRow{}, false, err
+		}
+		var selected MirrorRuleRow
+		enabled := make([]MirrorRuleRow, 0, len(rows))
+		for _, rule := range rows {
+			if rule.Enabled {
+				enabled = append(enabled, rule)
+			}
+			if rule.Enabled && rule.ID == ruleID {
+				selected = rule
+			}
+		}
+		b.mirrorMu.Lock()
+		if b.mirrorRules == nil {
+			b.mirrorRules = make(map[string][]MirrorRuleRow)
+		}
+		b.mirrorRules[appID] = enabled
+		b.mirrorMu.Unlock()
+		if selected.ID == "" {
+			return MirrorRuleRow{}, false, nil
+		}
+		return selected, true, nil
+	}
+
+	// Test/dev adapters may not have a store; retain the cache-only fallback
+	// used by the existing mirror dispatch seam in that case.
+	b.mirrorMu.RLock()
+	defer b.mirrorMu.RUnlock()
+	for _, rule := range b.mirrorRules[appID] {
+		if rule.ID == ruleID && rule.Enabled {
+			return rule, true, nil
+		}
+	}
+	return MirrorRuleRow{}, false, nil
+}
+
+// ScheduleMirrorTarget admits a mirror VM and returns a forwarding target
+// without publishing it to the public request picker. Production schedd
+// clients provide the node directly. Older scheduler implementations fall
+// back to the source target's node, which is safe for the single-box mirror
+// topology and preserves compatibility with existing test doubles.
+func (b *PGBackend) ScheduleMirrorTarget(ctx context.Context, appID, mirrorDeploymentID, mirrorRuleID string) (Target, error) {
+	sched, err := b.resolveSched(ctx, appID)
+	if err != nil {
+		return Target{}, err
+	}
+	if sched == nil {
+		return Target{}, errors.New("gateway: mirror admission scheduler is not configured")
+	}
+	if rich, ok := sched.(interface {
+		AdmitMirrorInstanceTarget(context.Context, string, string, string) (string, string, string, string, int, error)
+	}); ok {
+		instanceID, nodeID, deploymentID, wakeID, port, err := rich.AdmitMirrorInstanceTarget(ctx, appID, mirrorDeploymentID, mirrorRuleID)
+		if err != nil {
+			return Target{}, err
+		}
+		if instanceID == "" || nodeID == "" {
+			return Target{}, errors.New("gateway: mirror admission returned incomplete target")
+		}
+		if deploymentID == "" {
+			deploymentID = mirrorDeploymentID
+		}
+		return Target{InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}, nil
+	}
+	instanceID, wakeID, err := sched.AdmitMirrorInstance(ctx, appID, mirrorDeploymentID, mirrorRuleID)
+	if err != nil {
+		return Target{}, err
+	}
+	pick := b.Pick(appID)
+	if !pick.OK || pick.Target.NodeID == "" {
+		return Target{}, errors.New("gateway: mirror admission has no forwarding node")
+	}
+	target := pick.Target
+	target.InstanceID = instanceID
+	target.WakeID = wakeID
+	target.DeploymentID = mirrorDeploymentID
+	return target, nil
 }
 
 // buildDeploymentWeights filters rows to Percent > 0 and sorts

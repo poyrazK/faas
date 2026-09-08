@@ -9216,6 +9216,9 @@ func (m *MemStore) LookupBootStartedForWakes(_ context.Context, wakeIDs []string
 		if t, ok := payload["trigger"].(string); ok {
 			meta.Trigger = t
 		}
+		if tc, ok := payload["trigger_class"].(string); ok {
+			meta.TriggerClass = tc
+		}
 		if method, ok := payload["method"].(string); ok {
 			meta.Method = method
 		}
@@ -10714,11 +10717,11 @@ func (m *MemStore) NodeSetLifecycle(_ context.Context, id string, expected, next
 	n.Active = next == NodeLifecycleActive || next == NodeLifecycleRecovering
 	now := time.Now()
 	switch next {
-	case NodeLifecycleDraining:
+	case NodeLifecycleDraining, NodeLifecycleForceDraining:
 		n.DrainInitiatedAt = &now
 	case NodeLifecycleRecovering:
 		n.RecoveryInitiatedAt = &now
-	case NodeLifecycleActive:
+	case NodeLifecycleMaintenance:
 		if expected == NodeLifecycleDraining {
 			n.DrainCompletedAt = &now
 		}
@@ -10770,8 +10773,8 @@ func (m *MemStore) NodeListDrainable(_ context.Context) ([]ComputeNode, error) {
 	return out, nil
 }
 
-// NodeMarkDrainCompleted flips lifecycle 'draining' → 'active' and
-// stamps drain_completed_at (CAS on 'draining').
+// NodeMarkDrainCompleted flips lifecycle 'draining' → 'maintenance' and
+// stamps drain_completed_at (CAS on a draining state).
 func (m *MemStore) NodeMarkDrainCompleted(_ context.Context, id string, completedAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -10779,11 +10782,11 @@ func (m *MemStore) NodeMarkDrainCompleted(_ context.Context, id string, complete
 	if !ok {
 		return ErrNotFound
 	}
-	if n.Lifecycle != NodeLifecycleDraining {
+	if n.Lifecycle != NodeLifecycleDraining && n.Lifecycle != NodeLifecycleForceDraining {
 		return ErrConflict
 	}
-	n.Lifecycle = NodeLifecycleActive
-	n.Active = true
+	n.Lifecycle = NodeLifecycleMaintenance
+	n.Active = false
 	n.DrainCompletedAt = &completedAt
 	m.computeNodes[id] = n
 	return nil

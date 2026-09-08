@@ -8,12 +8,9 @@
 // the upgrade orchestrator was dead on arrival — the CLI fell into the
 // default case (cmd/gregalectl/main.go:155-157) and exited 1.
 //
-// Wire shape: every subcommand takes --node=<fqdn>; the state package
-// owns the canonical SQL UPDATE (pkg/state.MarkComputeNodeInactive for
-// drain, pkg/state.SetComputeNodeActive(ctx, id, true) for activate).
-// drain-status queries pkg/state.ListInstancesOnNodeID and counts rows
-// in {WAKING, COLD_BOOTING, RUNNING}; > 0 means the upgrade orchestrator
-// blocks until the operator runs force-drain.
+// Wire shape: every lifecycle subcommand takes --node=<fqdn> and calls the
+// authenticated apid operator-intent surface. Direct state.Store access is
+// reserved for the explicit --break-glass-db path.
 
 package main
 
@@ -25,9 +22,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -115,39 +114,28 @@ func openComputeNodesStore() (state.Store, func(), error) {
 // deleting the import in a refactor.
 var _ = (*pgxpool.Pool)(nil)
 
-// cmdComputeNodesDrain resolves the operator-facing node name to its row ID,
-// then runs `UPDATE compute_nodes SET active=false` via
-// state.Store.MarkComputeNodeInactive.
+// Lifecycle mutations use apid's authenticated, audited durable-intent path.
+// The database implementation remains only behind the loud
+// --break-glass-db --yes pair for control-plane recovery.
 func cmdComputeNodesDrain(args []string) int {
 	fs := flag.NewFlagSet("drain", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	fs.SetOutput(osStderr)
 	node := fs.String("node", "", "fqdn of the node to drain")
+	reason := fs.String("reason", "", "audit reason ([a-z0-9_]{1,64})")
+	timeout := fs.Duration("timeout", 30*time.Second, "maximum durable-intent wait")
+	breakGlass := fs.Bool("break-glass-db", false, "bypass apid and write the lifecycle row directly")
+	ack := fs.Bool("yes", false, "acknowledge direct database mutation when --break-glass-db is used")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *node == "" {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes drain: --node required")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes drain: --node required")
 		return 2
 	}
-	st, closeFn, err := computeNodesStoreOpener()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+	if *breakGlass {
+		return mutateComputeNodeBreakGlass(*node, *reason, *ack, "drain")
 	}
-	defer closeFn()
-
-	ctx := context.Background()
-	computeNode, err := st.ComputeNodeByName(ctx, *node)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes drain:", err)
-		return 1
-	}
-	if err := st.MarkComputeNodeInactive(ctx, computeNode.ID); err != nil {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes drain:", err)
-		return 1
-	}
-	_, _ = fmt.Fprintf(os.Stdout, "drained %s\n", *node)
-	return 0
+	return mutateComputeNodeViaAPI(*node, "drain", defaultNodeMutationReason(*reason, "operator_drain"), *timeout)
 }
 
 // cmdComputeNodesDrainStatus reports whether live instances remain on
@@ -161,31 +149,39 @@ func cmdComputeNodesDrain(args []string) int {
 // ListInstancesOnNodeID; we filter to that live subset here.
 func cmdComputeNodesDrainStatus(args []string) int {
 	fs := flag.NewFlagSet("drain-status", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	fs.SetOutput(osStderr)
 	node := fs.String("node", "", "fqdn of the node to check")
+	breakGlass := fs.Bool("break-glass-db", false, "read drain state directly from the database")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *node == "" {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes drain-status: --node required")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes drain-status: --node required")
 		return 2
 	}
+	if !*breakGlass {
+		return computeNodeDrainStatusViaAPI(*node)
+	}
+	return computeNodeDrainStatusFromDB(*node)
+}
+
+func computeNodeDrainStatusFromDB(node string) int {
 	st, closeFn, err := computeNodesStoreOpener()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(osStderr, err)
 		return 1
 	}
 	defer closeFn()
 
 	ctx := context.Background()
-	computeNode, err := st.ComputeNodeByName(ctx, *node)
+	computeNode, err := st.ComputeNodeByName(ctx, node)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes drain-status:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes drain-status:", err)
 		return 1
 	}
 	insts, err := st.ListInstancesOnNodeID(ctx, computeNode.ID)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes drain-status:", err)
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes drain-status:", err)
 		return 1
 	}
 	live := 0
@@ -195,10 +191,14 @@ func cmdComputeNodesDrainStatus(args []string) int {
 		}
 	}
 	if live > 0 {
-		_, _ = fmt.Fprintf(os.Stdout, "instances still on %s: %d\n", *node, live)
+		_, _ = fmt.Fprintf(osStdout, "instances still on %s: %d\n", node, live)
 		return 1
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "drain-safe: %s has 0 live instances\n", *node)
+	if computeNode.Lifecycle != state.NodeLifecycleMaintenance {
+		_, _ = fmt.Fprintf(osStdout, "node %s is %s; waiting for maintenance hold\n", node, effectiveComputeNodeLifecycle(computeNode))
+		return 1
+	}
+	_, _ = fmt.Fprintf(osStdout, "drain-safe: %s is in maintenance with 0 live instances\n", node)
 	return 0
 }
 
@@ -207,76 +207,194 @@ func cmdComputeNodesDrainStatus(args []string) int {
 // every Registry entry reports ready (cmd/deployctl/upgrade.go:waitForReady).
 func cmdComputeNodesActivate(args []string) int {
 	fs := flag.NewFlagSet("activate", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	fs.SetOutput(osStderr)
 	node := fs.String("node", "", "fqdn of the node to activate")
+	reason := fs.String("reason", "", "audit reason ([a-z0-9_]{1,64})")
+	timeout := fs.Duration("timeout", 30*time.Second, "maximum durable-intent wait")
+	breakGlass := fs.Bool("break-glass-db", false, "bypass apid and write the lifecycle row directly")
+	ack := fs.Bool("yes", false, "acknowledge direct database mutation when --break-glass-db is used")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *node == "" {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes activate: --node required")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes activate: --node required")
 		return 2
 	}
-	st, closeFn, err := computeNodesStoreOpener()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+	if *breakGlass {
+		return mutateComputeNodeBreakGlass(*node, *reason, *ack, "activate")
 	}
-	defer closeFn()
-
-	ctx := context.Background()
-	computeNode, err := st.ComputeNodeByName(ctx, *node)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes activate:", err)
-		return 1
-	}
-	if err := st.SetComputeNodeActive(ctx, computeNode.ID, true); err != nil {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes activate:", err)
-		return 1
-	}
-	_, _ = fmt.Fprintf(os.Stdout, "activated %s\n", *node)
-	return 0
+	return mutateComputeNodeViaAPI(*node, "activate", defaultNodeMutationReason(*reason, "operator_activate"), *timeout)
 }
 
 // cmdComputeNodesForceDrain is the operator's escape hatch when an
 // upgrade can't move because live instances are pinned. NOT called by
 // the upgrade orchestrator (the operator runs this manually after
 // acknowledging the loud warning). Same SQL as drain but explicitly
-// named so the operator's intent is auditable.
+// named so the operator's intent is auditable and waking/cold-booting rows are
+// recreated rather than allowed to pin the drain indefinitely.
 func cmdComputeNodesForceDrain(args []string) int {
 	fs := flag.NewFlagSet("force-drain", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	fs.SetOutput(osStderr)
 	node := fs.String("node", "", "fqdn of the node to force-drain")
+	reason := fs.String("reason", "", "audit reason ([a-z0-9_]{1,64})")
+	timeout := fs.Duration("timeout", 30*time.Second, "maximum durable-intent wait")
+	breakGlass := fs.Bool("break-glass-db", false, "bypass apid and write the lifecycle row directly")
 	ack := fs.Bool("yes", false, "acknowledge that live instances may be cold-evicted")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *node == "" {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes force-drain: --node required")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes force-drain: --node required")
 		return 2
 	}
 	if !*ack {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes force-drain: --yes required (live instances may be cold-evicted)")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes force-drain: --yes required (live instances may be cold-evicted)")
+		return 2
+	}
+	if *breakGlass {
+		return mutateComputeNodeBreakGlass(*node, *reason, true, "force-drain")
+	}
+	return mutateComputeNodeViaAPI(*node, "force-drain", defaultNodeMutationReason(*reason, "operator_force_drain"), *timeout)
+}
+
+func defaultNodeMutationReason(reason, fallback string) string {
+	if strings.TrimSpace(reason) == "" {
+		return fallback
+	}
+	return reason
+}
+
+func mutateComputeNodeBreakGlass(node, reason string, ack bool, action string) int {
+	if !ack || strings.TrimSpace(reason) == "" {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes %s: --break-glass-db requires --yes and --reason\n", action)
 		return 2
 	}
 	st, closeFn, err := computeNodesStoreOpener()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(osStderr, err)
 		return 1
 	}
 	defer closeFn()
 
 	ctx := context.Background()
-	computeNode, err := st.ComputeNodeByName(ctx, *node)
+	computeNode, err := st.ComputeNodeByName(ctx, node)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes force-drain:", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes %s: %v\n", action, err)
 		return 1
 	}
-	if err := st.MarkComputeNodeInactive(ctx, computeNode.ID); err != nil {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes force-drain:", err)
-		return 1
+	current := effectiveComputeNodeLifecycle(computeNode)
+	var next state.NodeLifecycle
+	switch action {
+	case "drain":
+		next = state.NodeLifecycleDraining
+	case "force-drain":
+		next = state.NodeLifecycleForceDraining
+	case "activate":
+		next = state.NodeLifecycleActive
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "force-drained %s\n", *node)
+	if current != next {
+		if err := st.NodeSetLifecycle(ctx, computeNode.ID, current, next); err != nil {
+			_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes %s: %v\n", action, err)
+			return 1
+		}
+	}
+	_, _ = fmt.Fprintf(osStderr, "BREAK GLASS: direct database lifecycle mutation; node=%s action=%s reason=%s\n", node, action, reason)
+	_, _ = fmt.Fprintf(osStdout, "%s %s\n", action, node)
 	return 0
+}
+
+func mutateComputeNodeViaAPI(node, action, reason string, timeout time.Duration) int {
+	if timeout <= 0 {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes %s: --timeout must be positive\n", action)
+		return 2
+	}
+	sess, err := loadOperatorSession()
+	if err != nil {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes %s: %v\n", action, err)
+		return 1
+	}
+	client := newOperatorHTTPClient(&sess)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var accepted api.ObsNodeMutationResponse
+	if err := client.doJSON(ctx, http.MethodPost, nodeMutationPath(node, action, reason), nil, &accepted, true, nil); err != nil {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes %s: %v\n", action, err)
+		return 1
+	}
+	var outcome api.OperatorIntentResponse
+	for {
+		if err := client.doJSON(ctx, http.MethodGet, accepted.StatusURL, nil, &outcome, false, nil); err != nil {
+			_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes %s: poll intent %s: %v\n", action, accepted.IntentID, err)
+			return 1
+		}
+		switch state.OperatorIntentStatus(outcome.Status) {
+		case state.OperatorIntentSucceeded:
+			if jsonEnabled() {
+				return emitOperatorJSON(struct {
+					Operation api.ObsNodeMutationResponse `json:"operation"`
+					Outcome   api.OperatorIntentResponse  `json:"outcome"`
+				}{accepted, outcome})
+			}
+			_, _ = fmt.Fprintf(osStdout, "%s accepted for %s; intent=%s status=succeeded lifecycle=%s\n", action, node, accepted.IntentID, accepted.RequestedLifecycle)
+			return 0
+		case state.OperatorIntentFailed, state.OperatorIntentCancelled:
+			_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes %s: intent %s %s: %s\n", action, accepted.IntentID, outcome.Status, outcome.Error)
+			return 1
+		}
+		select {
+		case <-ctx.Done():
+			_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes %s: intent %s did not finish before %s\n", action, accepted.IntentID, timeout)
+			return 1
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+type computeNodeDrainResponse struct {
+	NodeName             string     `json:"node_name"`
+	Lifecycle            string     `json:"lifecycle"`
+	DrainInitiatedAt     *time.Time `json:"drain_initiated_at,omitempty"`
+	DrainCompletedAt     *time.Time `json:"drain_completed_at,omitempty"`
+	DrainedInstanceCount int        `json:"drained_instance_count"`
+}
+
+func computeNodeDrainStatusViaAPI(node string) int {
+	sess, err := loadOperatorSession()
+	if err != nil {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes drain-status:", err)
+		return 1
+	}
+	var status computeNodeDrainResponse
+	path := "/v1/compute-nodes/" + url.PathEscape(node) + "/drain"
+	if err := newOperatorHTTPClient(&sess).doJSON(context.Background(), http.MethodGet, path, nil, &status, false, nil); err != nil {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes drain-status:", err)
+		return 1
+	}
+	if jsonEnabled() {
+		if code := emitOperatorJSON(status); code != 0 {
+			return code
+		}
+	}
+	if status.Lifecycle != string(state.NodeLifecycleMaintenance) {
+		if !jsonEnabled() {
+			_, _ = fmt.Fprintf(osStdout, "node %s lifecycle=%s drained_instances=%d; waiting for maintenance hold\n", node, status.Lifecycle, status.DrainedInstanceCount)
+		}
+		return 1
+	}
+	if !jsonEnabled() {
+		_, _ = fmt.Fprintf(osStdout, "drain-safe: %s is in maintenance with 0 live instances\n", node)
+	}
+	return 0
+}
+
+func effectiveComputeNodeLifecycle(node state.ComputeNode) state.NodeLifecycle {
+	if node.Lifecycle != "" {
+		return node.Lifecycle
+	}
+	if node.Active {
+		return state.NodeLifecycleActive
+	}
+	return state.NodeLifecycleUnavailable
 }
 
 // cmdComputeNodesList is the read-only introspection entry. Walks

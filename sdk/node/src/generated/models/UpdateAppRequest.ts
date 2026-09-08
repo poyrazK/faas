@@ -53,6 +53,10 @@ export type UpdateAppRequest = {
    * Opt into waking a parked app for HEAD /. Omit for no change.
    */
   head_wakes?: boolean | null;
+  /**
+   * Policy for known monitor/crawler requests. Omit for no change.
+   */
+  crawler_policy?: 'wake' | 'cached' | 'block';
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

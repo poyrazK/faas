@@ -1797,10 +1797,10 @@ func (s *server) handler() http.Handler {
 	// ADR-127 PR-B: deployment-vs-deployment compare (POST body
 	// holds the two deployment_ids + optional route filter).
 	mux.HandleFunc("POST /v1/apps/{slug}/debug/compare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugCompareHandler))))
-	// ADR-127 PR-B: replay (PR-A2 of issue #72 wires the
-	// mirror invocation; PR-B returns a stable "queued"
-	// status so customer tooling can wire once).
-	mux.HandleFunc("POST /v1/apps/{slug}/debug/requests/{req_id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.debugReplayHandler))))
+	// ADR-127: replay a retained request through its enabled mirror rule.
+	// Idempotent-wrapped because a retried POST after a network blip must
+	// not enqueue duplicate replay invocations.
+	mux.HandleFunc("POST /v1/apps/{slug}/debug/requests/{req_id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.debugReplayHandler)))))
 
 	// API keys. Minting and revoking keys are admin-only — a leaked
 	// write-scoped key must not be able to grant itself more scopes.

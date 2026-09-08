@@ -698,6 +698,12 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	if !admit || desired <= 0 {
 		return
 	}
+	// Service capacity is a failure-isolation contract. Do not let the
+	// app-level sticky-warm hint place every replica on the same compute node;
+	// each admission still uses the normal capacity and ledger gates, but the
+	// chooser sees current fleet headroom so replicas spread across the
+	// available nodes.
+	ctx = withServiceReplicaPlacementSpread(ctx)
 	for status.managed() < desired {
 		result, admitErr := e.AdmitInstanceForDeployment(
 			ctx, dep.AppID, dep.ID, dep.Scope, TriggerServiceReplica,

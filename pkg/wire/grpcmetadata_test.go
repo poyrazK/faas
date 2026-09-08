@@ -40,6 +40,7 @@ func TestCorrelationRoundTrip(t *testing.T) {
 	// lifted fields and forwards to vmmd.
 	lifted.WakeID = "wake-minted"
 	lifted.AppID = "app-1"
+	lifted.TriggerClass = "monitor"
 	clientCtx := wire.WithCorrelationOutgoing(context.Background(), lifted)
 
 	// Simulate the server side of the receiving vmmd by hand:
@@ -51,9 +52,10 @@ func TestCorrelationRoundTrip(t *testing.T) {
 		t.Fatal("client-side read returned ok=false")
 	}
 	want := wire.CorrelationFields{
-		RequestID: "req-from-gatewayd-internal",
-		WakeID:    "wake-minted",
-		AppID:     "app-1",
+		RequestID:    "req-from-gatewayd-internal",
+		WakeID:       "wake-minted",
+		AppID:        "app-1",
+		TriggerClass: "monitor",
 	}
 	if got != want {
 		t.Errorf("round-trip mismatch:\n got %+v\nwant %+v", got, want)
@@ -92,6 +94,7 @@ func TestWithCorrelationOutgoing_SkipsEmptyFields(t *testing.T) {
 		"x-faas-invocation-id",
 		"x-faas-trace-id",
 		"x-faas-span-id",
+		"x-faas-wake-trigger-class",
 	} {
 		if got := md.Get(key); len(got) > 0 {
 			t.Errorf("expected empty key %q to be skipped, got %v", key, got)

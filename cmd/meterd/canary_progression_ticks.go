@@ -46,6 +46,34 @@ func (a *canaryStoreAdapter) ListCanaryInFlight(ctx context.Context) ([]canary.C
 	return out, nil
 }
 
+// FiringSafeReleaseSignals is the promotion-side health gate. Alert rules
+// with an explicit rollback or demote action are authoritative signals that a
+// canary should not advance while the alert evaluator is still handling the
+// regression. Notification-only webhook rules remain non-blocking.
+func (a *canaryStoreAdapter) FiringSafeReleaseSignals(ctx context.Context, appID string) ([]canary.HealthSignal, error) {
+	rules, err := a.store.ListEnabledAlertRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]canary.HealthSignal, 0)
+	for _, rule := range rules {
+		if rule.AppID != appID || rule.State != state.AlertStateFiring {
+			continue
+		}
+		if rule.Action != state.AlertActionRollback && rule.Action != state.AlertActionDemote {
+			continue
+		}
+		out = append(out, canary.HealthSignal{
+			RuleID:      rule.ID,
+			RuleName:    rule.Name,
+			Metric:      string(rule.Metric),
+			Action:      string(rule.Action),
+			LastFiredAt: rule.LastFiredAt,
+		})
+	}
+	return out, nil
+}
+
 // MirrorSummaryForDeployment aggregates every enabled mirror rule whose
 // source is the in-flight deployment. A stage condition is app-scoped but a
 // deployment can have more than one mirror target, so the decision sees the

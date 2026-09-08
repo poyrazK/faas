@@ -83,6 +83,17 @@ type cliFlag struct {
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
 	{
+		Name:    dispatchOperatorAuth,
+		DocSlug: "operator-auth",
+		Short:   "Manage the MFA-stepped-up session used for provider mutations",
+		Subcommands: []cliSub{
+			{Name: "login", Short: "Sign in and verify TOTP", Flags: []cliFlag{{Name: "email", Short: "FAAS_ADMIN_EMAILS-allowlisted operator email", Req: true}}},
+			{Name: "step-up", Short: "Refresh the five-minute TOTP step-up window"},
+			{Name: "status", Short: "Validate and describe the current operator session"},
+			{Name: "logout", Short: "Revoke and remove the current operator session"},
+		},
+	},
+	{
 		Name:    dispatchGithub,
 		DocSlug: "github-recovery",
 		Short:   "Inspect and retry durable GitHub delivery and Check Run work",
@@ -206,10 +217,40 @@ var cliCommands = []cliCommand{
 					{Name: "json", Short: "emit structured JSON to stdout"},
 				},
 			},
-			{Name: "drain", Short: "Mark the node inactive (UPDATE compute_nodes SET active=false)"},
-			{Name: "drain-status", Short: "Report whether any live instances remain on the node (exit 1 if so)"},
-			{Name: "activate", Short: "Re-mark the node active (UPDATE compute_nodes SET active=true)"},
-			{Name: "force-drain", Short: "Force-drain: --yes override for stuck nodes (operator-acknowledged)"},
+			{
+				Name:  "drain",
+				Short: "Submit and poll an authenticated node-drain intent",
+				Flags: []cliFlag{
+					{Name: "node", Short: "node fqdn", Req: true},
+					{Name: "reason", Short: "durable audit reason"},
+					{Name: "timeout", Short: "intent polling timeout"},
+					{Name: "break-glass-db", Short: "bypass apid for reviewed database repair"},
+					{Name: "yes", Short: "acknowledge break-glass database mutation"},
+				},
+			},
+			{Name: "drain-status", Short: "Exit 0 only when the node is held in maintenance", Flags: []cliFlag{{Name: "node", Short: "node fqdn", Req: true}, {Name: "break-glass-db", Short: "read directly during apid outage"}}},
+			{
+				Name:  "activate",
+				Short: "Submit and poll an authenticated node-activation intent",
+				Flags: []cliFlag{
+					{Name: "node", Short: "node fqdn", Req: true},
+					{Name: "reason", Short: "durable audit reason"},
+					{Name: "timeout", Short: "intent polling timeout"},
+					{Name: "break-glass-db", Short: "bypass apid for reviewed database repair"},
+					{Name: "yes", Short: "acknowledge break-glass database mutation"},
+				},
+			},
+			{
+				Name:  "force-drain",
+				Short: "Force a stuck node through the drain controller",
+				Flags: []cliFlag{
+					{Name: "node", Short: "node fqdn", Req: true},
+					{Name: "reason", Short: "durable audit reason"},
+					{Name: "timeout", Short: "intent polling timeout"},
+					{Name: "yes", Short: "acknowledge possible cold eviction", Req: true},
+					{Name: "break-glass-db", Short: "bypass apid for reviewed database repair"},
+				},
+			},
 		},
 	},
 	{

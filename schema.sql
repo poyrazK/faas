@@ -36,6 +36,8 @@ COMMENT ON EXTENSION citext IS 'data type for case-insensitive character strings
 CREATE TYPE public.compute_node_lifecycle AS ENUM (
     'active',
     'draining',
+    'force_draining',
+    'maintenance',
     'unavailable',
     'recovering'
 );

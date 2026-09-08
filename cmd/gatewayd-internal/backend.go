@@ -217,7 +217,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	favicon, robotsTxt, headWakes := edgeAnswersFromManifest(app.Manifest)
+	favicon, robotsTxt, headWakes, crawlerPolicy := edgeAnswersFromManifest(app.Manifest)
 	return gateway.App{
 		ID:                 app.ID,
 		AccountID:          acct.ID,
@@ -283,6 +283,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		Favicon:            favicon,
 		RobotsTxt:          robotsTxt,
 		HeadWakes:          headWakes,
+		CrawlerPolicy:      crawlerPolicy,
 		PublicAuth: gateway.PublicAuthConfig{
 			Mode:        app.PublicAuthMode,
 			BasicSealed: app.PublicAuthBasicSealed,
@@ -298,8 +299,8 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	}, true, nil
 }
 
-func edgeAnswersFromManifest(manifest state.AppManifest) ([]byte, string, bool) {
-	return append([]byte(nil), manifest.Favicon...), manifest.RobotsTxt, manifest.HeadWakes
+func edgeAnswersFromManifest(manifest state.AppManifest) ([]byte, string, bool, string) {
+	return append([]byte(nil), manifest.Favicon...), manifest.RobotsTxt, manifest.HeadWakes, manifest.CrawlerPolicy
 }
 
 // appsSuffix normalizes a bare apps domain ("gregale.dev") into the

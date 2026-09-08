@@ -1832,6 +1832,13 @@ type scaleOutBurstContinuationKey struct{}
 // the least-loaded compute node instead of repeatedly pinning to that hint.
 type burstPlacementSpreadKey struct{}
 
+// serviceReplicaPlacementSpreadKey marks admissions made to satisfy a
+// service deployment's replica target. Service replicas must be distributed
+// by current fleet headroom instead of following the app's sticky-warm hint;
+// otherwise every replacement can land on the same compute node and a node
+// failure removes the whole service.
+type serviceReplicaPlacementSpreadKey struct{}
+
 func withScaleOutBurstContinuation(ctx context.Context) context.Context {
 	ctx = context.WithValue(ctx, scaleOutBurstContinuationKey{}, true)
 	// The existing gRPC BurstContinuation bit is the transport boundary for
@@ -1872,9 +1879,22 @@ func WithBurstPlacementSpread(ctx context.Context) context.Context {
 	return context.WithValue(ctx, burstPlacementSpreadKey{}, true)
 }
 
+func withServiceReplicaPlacementSpread(ctx context.Context) context.Context {
+	return context.WithValue(ctx, serviceReplicaPlacementSpreadKey{}, true)
+}
+
 func isBurstPlacementSpread(ctx context.Context) bool {
 	value, _ := ctx.Value(burstPlacementSpreadKey{}).(bool)
 	return value
+}
+
+func isServiceReplicaPlacementSpread(ctx context.Context) bool {
+	value, _ := ctx.Value(serviceReplicaPlacementSpreadKey{}).(bool)
+	return value
+}
+
+func isPlacementSpread(ctx context.Context) bool {
+	return isBurstPlacementSpread(ctx) || isServiceReplicaPlacementSpread(ctx)
 }
 
 // IsBurstPlacementSpread reports whether a scheduler admission is a sibling
@@ -2369,7 +2389,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// (cold boot must always work) is preserved: an empty hint
 	// behaves identically to a fresh install.
 	var warmHint string
-	if !isBurstPlacementSpread(ctx) {
+	if !isPlacementSpread(ctx) {
 		warmHint, _ = e.warmAffinity.LastWarmNode(appID)
 	}
 	var snapshotNodes []string
@@ -2788,6 +2808,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		InstanceID:         bootInput.insID,
 		WakeID:             wakeID,
 		Trigger:            bootInput.trigger,
+		TriggerClass:       inboundCorr.TriggerClass,
 		QueuedCount:        bootInput.queuedCount,
 		ConcurrencyAtAdmit: bootInput.concurrencyAtAdmit,
 	})
@@ -2813,6 +2834,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			Tier:               bootInput.chosenTier,
 			RequestedAt:        bootInput.startedAt, // best-effort stamp
 			Trigger:            bootInput.trigger,
+			TriggerClass:       inboundCorr.TriggerClass,
 			QueuedCount:        bootInput.queuedCount,
 			ConcurrencyAtAdmit: bootInput.concurrencyAtAdmit,
 			AtCapacity:         bootInput.atCapacity, // PR-A — see bootInput.atCapacity doc
@@ -3137,6 +3159,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			StartedAt:          bootInput.startedAt,
 			CompletedAt:        now,
 			Trigger:            bootInput.trigger,
+			TriggerClass:       inboundCorr.TriggerClass,
 			QueuedCount:        bootInput.queuedCount,
 			ConcurrencyAtAdmit: bootInput.concurrencyAtAdmit,
 		})

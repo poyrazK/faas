@@ -241,3 +241,14 @@ func TestLogEvent_OldSDKIgnoresInstance(t *testing.T) {
 		t.Errorf("got %+v", ev)
 	}
 }
+
+func TestLogEvent_StructuredLevelIsAdditive(t *testing.T) {
+	raw := []byte(`{"seq":5,"instance":"i-5","stream":"stderr","line":"failed","level":"error","written_at":"2026-09-08T12:00:00Z"}`)
+	var ev LogEvent
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if ev.Level != "error" {
+		t.Errorf("Level = %q, want error", ev.Level)
+	}
+}

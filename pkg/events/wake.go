@@ -325,6 +325,7 @@ type BootStarted struct {
 	Tier               string // warm, init, or cold_boot_fallback
 	RequestedAt        time.Time
 	Trigger            string // ADR-123 — pkg/sched/triggers.go closed enum
+	TriggerClass       string // issue #1398 — user|monitor|crawler|preview_bot|unknown
 	QueuedCount        int    // ADR-123 — ledger.Concurrency at admit
 	ConcurrencyAtAdmit int    // ADR-123 — same reading; 0 is cold start
 	AtCapacity         bool   // PR-A — true when post-admit ledger == plan MaxConcurrency
@@ -401,6 +402,9 @@ func (e BootStarted) Payload() map[string]any {
 	if e.Trigger != "" {
 		p["trigger"] = e.Trigger
 	}
+	if e.TriggerClass != "" {
+		p["trigger_class"] = e.TriggerClass
+	}
 	if e.Tier != "" {
 		p["tier"] = e.Tier
 	}
@@ -429,6 +433,7 @@ type BootCompleted struct {
 	StartedAt          time.Time
 	CompletedAt        time.Time
 	Trigger            string // ADR-123 — pkg/sched/triggers.go closed enum
+	TriggerClass       string // issue #1398 — user|monitor|crawler|preview_bot|unknown
 	QueuedCount        int    // ADR-123 — ledger.Concurrency at admit
 	ConcurrencyAtAdmit int    // ADR-123 — same reading; 0 is cold start
 }
@@ -450,6 +455,9 @@ func (e BootCompleted) Payload() map[string]any {
 	}
 	if e.Trigger != "" {
 		p["trigger"] = e.Trigger
+	}
+	if e.TriggerClass != "" {
+		p["trigger_class"] = e.TriggerClass
 	}
 	if e.Tier != "" {
 		p["tier"] = e.Tier

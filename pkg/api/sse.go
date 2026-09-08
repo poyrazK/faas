@@ -47,11 +47,14 @@ func (c *Client) sseClient() *http.Client {
 //
 // Since: v1.x. The field is empty on the streamDeploymentLogs
 // wire (one deployment = one build VM, no instance granularity).
+// Level is populated when the workload emits a recognized structured JSON
+// severity (`level` or `severity`); plain-text lines leave it empty.
 type LogEvent struct {
 	Seq        int64  `json:"seq"`
 	InstanceID string `json:"instance,omitempty"` // per-instance id (Move 4); empty for deployment logs
 	Stream     string `json:"stream"`             // "stdout" or "stderr"
 	Line       string `json:"line"`
+	Level      string `json:"level,omitempty"` // canonical structured-log severity
 	WrittenAt  string `json:"written_at"`
 }
 

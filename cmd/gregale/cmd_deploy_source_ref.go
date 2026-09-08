@@ -67,6 +67,13 @@ func cmdDeployRepoSourceRef(slug, repo, ref string, ann api.DeployAnnotations) i
 }
 
 func cmdDeployRepoSourceRefContext(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations) int {
+	return cmdDeployRepoSourceRefContextWithWait(ctx, slug, repo, ref, ann, true)
+}
+
+// cmdDeployRepoSourceRefContextWithWait keeps source-ref deploys aligned with
+// local and image deploys: non-blocking mode returns after the API accepts the
+// deployment, while JSON mode always emits its receipt immediately.
+func cmdDeployRepoSourceRefContextWithWait(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy bool) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -111,6 +118,10 @@ func cmdDeployRepoSourceRefContext(ctx context.Context, slug, repo, ref string, 
 		// server-side; see docs/source-ref.md reproducibility
 		// section.
 		return jsonOut(writeJSON(newDeployReceipt(dep, nil, deployedAppURL(slug), "")))
+	}
+	if !waitForDeploy {
+		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
+		return 0
 	}
 	return streamDeployLogsContext(ctx, client, dep, slug)
 }

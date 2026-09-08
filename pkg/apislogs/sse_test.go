@@ -105,6 +105,44 @@ func TestRenderAppLogEvent_PayloadShape(t *testing.T) {
 	}
 }
 
+func TestRenderAppLogEvent_StructuredLevel(t *testing.T) {
+	rec := httptest.NewRecorder()
+	RenderAppLogEvent(rec, rec, scheddgrpc.LogFrame{
+		InstanceID: "i-1",
+		Seq:        7,
+		Stream:     "stderr",
+		Line:       `{"level":"error","msg":"failed"}`,
+		Level:      "error",
+		WrittenAt:  time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC),
+	}, "app-1", nil)
+	var payload struct {
+		Level string `json:"level"`
+		Line  string `json:"line"`
+	}
+	data := strings.TrimSpace(strings.TrimPrefix(rec.Body.String(), "event: log\ndata: "))
+	data = strings.TrimSuffix(data, "\n\n")
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		t.Fatalf("decode payload: %v; body=%q", err, rec.Body.String())
+	}
+	if payload.Level != "error" {
+		t.Errorf("level = %q, want error", payload.Level)
+	}
+	if payload.Line != `{"level":"error","msg":"failed"}` {
+		t.Errorf("line = %q, original JSON was not preserved", payload.Line)
+	}
+}
+
+func TestRenderAppLogEvent_OmitsUnclassifiedLevel(t *testing.T) {
+	rec := httptest.NewRecorder()
+	RenderAppLogEvent(rec, rec, scheddgrpc.LogFrame{
+		Seq: 1, Stream: "stdout", Line: "plain text",
+		WrittenAt: time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC),
+	}, "app-1", nil)
+	if strings.Contains(rec.Body.String(), `"level"`) {
+		t.Fatalf("plain-text event unexpectedly contains level: %s", rec.Body.String())
+	}
+}
+
 // TestRenderAppLogsError_NotFound pins the parked-app path:
 // codes.NotFound → degraded event with `"code":"not_found"` and
 // terminal end with `"reason":"not_found"`. The SDK decoder

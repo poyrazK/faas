@@ -4220,8 +4220,8 @@ type Store interface {
 	// means the handler must surface RFC 7807 `node_draining_refused`
 	// instead.
 	NodeListDrainable(ctx context.Context) ([]ComputeNode, error)
-	// NodeMarkDrainCompleted stamps drain_completed_at + flips
-	// lifecycle back to 'active' (CAS on 'draining'). The recovery
+	// NodeMarkDrainCompleted stamps drain_completed_at + holds the
+	// lifecycle in 'maintenance' (CAS on a draining state). The recovery
 	// arbiter calls this once the migrate-or-recreate sweep
 	// confirms zero live instances remain.
 	NodeMarkDrainCompleted(ctx context.Context, id string, completedAt time.Time) error

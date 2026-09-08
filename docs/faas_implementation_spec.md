@@ -1634,7 +1634,18 @@ create instance transitions or `usage_minutes` rows.
 |---|---|---|---|
 | `gateway_edge_answered_total` | `kind` | `pkg/gateway/metrics.go::ObserveEdgeAnswered` | Counter of gateway answers that bypass an app instance. `kind` is closed to `favicon`, `robots`, and `head`; edge answers are telemetry-only and never billed as resident compute. |
 
-### 12.7 CORS preflight edge answers (issue #1398 M4)
+### 12.7 Known monitor and crawler wakes (issue #1398 M3)
+
+The gateway classifies request User-Agents into the bounded set `user`,
+`monitor`, `crawler`, `preview_bot`, and `unknown`. The class is carried
+through wake correlation metadata and recorded on `wake.boot_started` /
+`wake.boot_completed` events and per-app wake-timeline analytics. Apps may set
+`crawler_policy` to `wake` (default), `cached` (serve only a fresh edge cache
+hit), or `block` (503 with `Retry-After: 60`); cached and blocked misses never
+enter the wake path. The CLI reports the monitor/crawler count and an
+idle-timeout-based resident-cost estimate in `gregale app <slug>`.
+
+### 12.8 CORS preflight edge answers (issue #1398 M4)
 
 When a matching `kind=cors` rule (including a resolved CORS preset) receives
 an `OPTIONS` request, the gateway returns `204` with the resolved
@@ -1712,7 +1723,7 @@ Canonical references (read in order):
 
 | M | Scope | Acceptance (executable) |
 |---|---|---|
-| **WB-1** | `compute_nodes.lifecycle` ENUM (`active`/`draining`/`unavailable`/`recovering`) + STORED GENERATED `active` column + partial index. Migration 00579. | `pkg/state/pgstore_lifecycle_test.go` passes against a real PG; placement filter accepts `lifecycle IN ('active','recovering')` only; existing `compute_nodes_active_idx` callers unchanged. |
+| **WB-1** | `compute_nodes.lifecycle` ENUM (`active`/`draining`/`force_draining`/`maintenance`/`unavailable`/`recovering`) + STORED GENERATED `active` column + partial index. Migration 00579 plus the operator-maintenance extension. | `pkg/state/pgstore_lifecycle_test.go` passes against a real PG; placement filter accepts `lifecycle IN ('active','recovering')` only; completed operator drains stay non-admitting until explicit activation. |
 | **WB-2** | Recovery arbiter (`pkg/sched/recovery_arbiter.go`) as single decision policy; live-migrator + dead-node-reconciler become tail-callers; `Engine.RecreateInstance` primitive with `recovery_recreate` state edge. | 8-case table-driven test `pkg/sched/recovery_arbiter_test.go` passes; `pkg/sched/recreate_test.go` covers happy path + terminal-state skip + nil-engine tolerance. |
 | **WB-3** | Per-deployment snapshot-miss backoff stamps + `Retry-After` surface; capped exponential 5s × 2^n, 300s max. Migration 00585. | `pkg/sched/snapshot_backoff_test.go` pins the closed curve (n=0..6) + retry-after seconds; gateway echoes header on the wake path. |
 | **WB-4** | Public gateway pg_notify invalidation on `compute_node_changed`; recovery audit row family (7 kinds); apid `POST /v1/compute-nodes/{name}/drain` + GET progress. | `cmd/gatewayd-public/compute_gateway_pool_test.go::TestComputeGatewayPoolSnapshotEvictedOnInvalidation`; `cmd/apid/handlers_compute_nodes_drain_test.go` 8 cases pass; recovery events stamped by heartbeat + migration handoff + dead-node reconciler. |

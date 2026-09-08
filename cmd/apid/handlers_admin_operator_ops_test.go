@@ -122,7 +122,7 @@ func TestObsNodeDrain_EnqueuesDurableIntentBeforeMutation(t *testing.T) {
 	if resp.IntentID == "" || resp.StatusURL == "" || resp.Kind != string(state.OperatorIntentKindNodeDrain) {
 		t.Fatalf("missing durable intent receipt: %+v", resp)
 	}
-	if resp.PreviousLifecycle != string(state.NodeLifecycleActive) || resp.RequestedLifecycle != string(state.NodeLifecycleDraining) {
+	if resp.PreviousLifecycle != string(state.NodeLifecycleActive) || resp.RequestedLifecycle != string(state.NodeLifecycleMaintenance) {
 		t.Fatalf("unexpected lifecycle preflight: %+v", resp)
 	}
 

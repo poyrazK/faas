@@ -185,7 +185,7 @@ func TestArchiveStream_HappyPath(t *testing.T) {
 	lines := []string{
 		`{"seq":1,"stream":"stdout","ts":"` + stamp + `","msg":"hello"}`,
 		`{"seq":2,"stream":"stdout","ts":"` + stamp + `","msg":"world"}`,
-		`{"seq":3,"stream":"stderr","ts":"` + stamp + `","msg":"boom"}`,
+		`{"seq":3,"stream":"stderr","ts":"` + stamp + `","msg":"boom","level":"error"}`,
 	}
 	body := gzipJSONL(t, lines)
 
@@ -221,6 +221,9 @@ func TestArchiveStream_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(body_out, `"stream":"stderr"`) {
 		t.Errorf("missing stream in frame payload: %s", body_out)
+	}
+	if !strings.Contains(body_out, `"level":"error"`) {
+		t.Errorf("missing structured level in frame payload: %s", body_out)
 	}
 	if !strings.Contains(body_out, `"reason":"archive_complete"`) {
 		t.Errorf("missing archive_complete terminal: %s", body_out)
@@ -547,7 +550,7 @@ func TestArchiveTerminalForError(t *testing.T) {
 func TestArchiveStream_FramePayloadShape(t *testing.T) {
 	stamp := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02") + "T12:00:00Z"
 	lines := []string{
-		`{"seq":42,"stream":"stdout","ts":"` + stamp + `","msg":"hello"}`,
+		`{"seq":42,"stream":"stdout","ts":"` + stamp + `","msg":"hello","level":"warn"}`,
 	}
 	body := gzipJSONL(t, lines)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -579,7 +582,7 @@ func TestArchiveStream_FramePayloadShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(payload), &got); err != nil {
 		t.Fatalf("payload not JSON: %v\npayload: %s", err, payload)
 	}
-	for _, key := range []string{"seq", "instance", "stream", "line", "written_at"} {
+	for _, key := range []string{"seq", "instance", "stream", "line", "level", "written_at"} {
 		if _, ok := got[key]; !ok {
 			t.Errorf("payload missing key %q: %v", key, got)
 		}
@@ -592,6 +595,9 @@ func TestArchiveStream_FramePayloadShape(t *testing.T) {
 	}
 	if got["stream"].(string) != "stdout" {
 		t.Errorf("stream: got %v, want stdout", got["stream"])
+	}
+	if got["level"].(string) != "warn" {
+		t.Errorf("level: got %v, want warn", got["level"])
 	}
 	if got["instance"].(string) != "inst-abc" {
 		t.Errorf("instance: got %v, want inst-abc", got["instance"])

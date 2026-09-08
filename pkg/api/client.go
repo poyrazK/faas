@@ -4352,11 +4352,9 @@ func (c *Client) CompareAppDebugDeployments(ctx context.Context, slug, source, m
 	return out, c.do(ctx, "POST", path, body, &out)
 }
 
-// ReplayAppDebugRequest queues a replay of a recorded request
-// (ADR-127 / PR-B). PR-B returns a "queued" status — the
-// mirror invocation pipeline lands in issue #72 PR-A2.
-// Customer tooling can wire against the response shape today;
-// the actual replay will land when PR-A2 ships.
+// ReplayAppDebugRequest queues a retained request for execution through its
+// enabled mirror rule (ADR-127). The returned mirror invocation ID can be
+// used to poll the invocation and its comparison result.
 func (c *Client) ReplayAppDebugRequest(ctx context.Context, slug, reqID string) (DebugReplayResponse, error) {
 	var out DebugReplayResponse
 	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/replay"

@@ -211,6 +211,7 @@ type LogLine struct {
 	Seq            int64
 	Stream         string
 	Line           string
+	Level          string
 	WrittenAt      time.Time
 	IsGap          bool
 	GapToWrittenAt time.Time
@@ -827,6 +828,7 @@ func (s *grpcLogStream) Recv() (LogLine, error) {
 		Seq:       resp.GetSeq(),
 		Stream:    resp.GetStream(),
 		Line:      resp.GetLine(),
+		Level:     resp.GetLevel(),
 		IsGap:     resp.GetIsGap(),
 		GapReason: resp.GetGapReason(),
 	}

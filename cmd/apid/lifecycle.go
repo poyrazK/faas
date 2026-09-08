@@ -9,6 +9,10 @@ import (
 )
 
 func lifecycleProblem(plan api.Plan, manifest api.AppManifest, maxConcurrency int) *api.Problem {
+	if err := manifest.ValidateCrawlerPolicy(); err != nil {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid crawler policy", err.Error())
+	}
 	if err := manifest.ValidateLifecyclePlan(plan); err != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid lifecycle configuration", err.Error())
@@ -42,6 +46,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		Favicon:          append([]byte(nil), req.Favicon...),
 		RobotsTxt:        req.RobotsTxt,
 		HeadWakes:        req.HeadWakes,
+		CrawlerPolicy:    req.CrawlerPolicy,
 	}
 }
 
@@ -62,6 +67,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		Favicon:          append([]byte(nil), manifest.Favicon...),
 		RobotsTxt:        manifest.RobotsTxt,
 		HeadWakes:        manifest.HeadWakes,
+		CrawlerPolicy:    manifest.CrawlerPolicy,
 	}
 }
 
@@ -82,13 +88,14 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		Favicon:          append([]byte(nil), manifest.Favicon...),
 		RobotsTxt:        manifest.RobotsTxt,
 		HeadWakes:        manifest.HeadWakes,
+		CrawlerPolicy:    manifest.CrawlerPolicy,
 	}
 }
 
 func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppManifest, bool) {
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.ServiceReplicas != nil ||
-		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil
+		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil
 	if !changed {
 		return api.AppManifest{}, false
 	}
@@ -119,6 +126,9 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	if req.HeadWakes != nil {
 		manifest.HeadWakes = *req.HeadWakes
 	}
+	if req.CrawlerPolicy != nil {
+		manifest.CrawlerPolicy = *req.CrawlerPolicy
+	}
 	return manifest, true
 }
 
@@ -136,5 +146,6 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.Favicon = append([]byte(nil), manifest.Favicon...)
 	updated.RobotsTxt = manifest.RobotsTxt
 	updated.HeadWakes = manifest.HeadWakes
+	updated.CrawlerPolicy = manifest.CrawlerPolicy
 	return &updated, true
 }

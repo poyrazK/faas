@@ -54,9 +54,10 @@ const (
 	// (pkg/vmmdgrpc/server.go:emitBootStartedMirror) carries the same
 	// context as the canonical schedd emit. Empty values are skipped
 	// — a producer that doesn't know ADR-123 sends no keys at all.
-	mdKeyWakeBootTrigger = "x-faas-wake-boot-trigger"
-	mdKeyWakeBootQueued  = "x-faas-wake-boot-queued"
-	mdKeyWakeBootConc    = "x-faas-wake-boot-conc"
+	mdKeyWakeBootTrigger  = "x-faas-wake-boot-trigger"
+	mdKeyWakeTriggerClass = "x-faas-wake-trigger-class"
+	mdKeyWakeBootQueued   = "x-faas-wake-boot-queued"
+	mdKeyWakeBootConc     = "x-faas-wake-boot-conc"
 )
 
 // WithCorrelationOutgoing attaches fields to ctx as gRPC outgoing
@@ -114,6 +115,9 @@ func WithCorrelationOutgoing(ctx context.Context, fields CorrelationFields) cont
 		if fields.ConcurrencyAtAdmit > 0 {
 			pairs = append(pairs, mdKeyWakeBootConc, strconv.Itoa(fields.ConcurrencyAtAdmit))
 		}
+	}
+	if fields.TriggerClass != "" {
+		pairs = append(pairs, mdKeyWakeTriggerClass, fields.TriggerClass)
 	}
 	if len(pairs) == 0 {
 		return ctx
@@ -205,6 +209,10 @@ func CorrelationFromIncoming(ctx context.Context) (CorrelationFields, bool) {
 				out.ConcurrencyAtAdmit = n
 			}
 		}
+	}
+	if v := md.Get(mdKeyWakeTriggerClass); len(v) > 0 && v[0] != "" {
+		out.TriggerClass = v[0]
+		any = true
 	}
 	return out, any
 }

@@ -206,6 +206,14 @@ fix-has-test-check: ## Require fix-shaped pull requests to change a Go regressio
 fix-has-test-check-test: ## Exercise the fix-has-test CI gate with synthetic pull request events
 	bash scripts/ci/check_fix_has_test_test.sh
 
+.PHONY: spec-cited-tests-check
+spec-cited-tests-check: ## Require changed core-path tests to cite a spec section or ADR (issue #1529 / PR-4b)
+	bash scripts/ci/check_spec_cited_tests.sh
+
+.PHONY: spec-cited-tests-check-test
+spec-cited-tests-check-test: ## Exercise the spec-cited-tests CI gate with synthetic pull request events
+	bash scripts/ci/check_spec_cited_tests_test.sh
+
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live in the `floors` dict inside the python heredoc below
 # (no separate Make variable — keeping the table adjacent to the verifier

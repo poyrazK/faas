@@ -81,7 +81,7 @@ func nodeIntentTransitionAllowed(kind state.OperatorIntentKind, current state.No
 	case state.OperatorIntentKindNodeDrain:
 		return current == state.NodeLifecycleActive || current == state.NodeLifecycleDraining
 	case state.OperatorIntentKindNodeActivate:
-		return current == state.NodeLifecycleUnavailable || current == state.NodeLifecycleActive
+		return current == state.NodeLifecycleUnavailable || current == state.NodeLifecycleMaintenance || current == state.NodeLifecycleActive
 	case state.OperatorIntentKindNodeForceDrain:
 		return true
 	default:
@@ -110,13 +110,13 @@ func nodeIntentSpecFor(action string) (nodeIntentSpec, error) {
 	case "drain":
 		return nodeIntentSpec{
 			kind:               state.OperatorIntentKindNodeDrain,
-			requestedLifecycle: state.NodeLifecycleDraining,
+			requestedLifecycle: state.NodeLifecycleMaintenance,
 			requestedActive:    false,
 		}, nil
 	case "force-drain":
 		return nodeIntentSpec{
 			kind:               state.OperatorIntentKindNodeForceDrain,
-			requestedLifecycle: state.NodeLifecycleUnavailable,
+			requestedLifecycle: state.NodeLifecycleMaintenance,
 			requestedActive:    false,
 		}, nil
 	case "activate":

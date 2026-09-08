@@ -1188,6 +1188,18 @@ type AppManifest struct {
 	Favicon          []byte            `json:"favicon,omitempty"`
 	RobotsTxt        string            `json:"robots_txt,omitempty"`
 	HeadWakes        bool              `json:"head_wakes,omitempty"`
+	CrawlerPolicy    string            `json:"crawler_policy,omitempty"`
+}
+
+// EffectiveCrawlerPolicy returns the persisted policy or the backwards-
+// compatible wake default for legacy app rows.
+func (m AppManifest) EffectiveCrawlerPolicy() string {
+	switch m.CrawlerPolicy {
+	case "cached", "block":
+		return m.CrawlerPolicy
+	default:
+		return "wake"
+	}
 }
 
 // IsZero reports whether the manifest carries no runner or lifecycle fields.
@@ -1199,7 +1211,7 @@ func (m AppManifest) IsZero() bool {
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
-		m.RobotsTxt == "" && !m.HeadWakes
+		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == ""
 }
 
 // ScalingPolicy is the per-app autoscaling configuration (issue #462 /
@@ -3571,7 +3583,7 @@ type ComputeNode struct {
 	LastRecoveryOutcome *string
 }
 
-// NodeLifecycle is the 4-state enum from 00579. Constants mirror the
+// NodeLifecycle is the compute-node controller state. Constants mirror the
 // SQL values so the schedd-side switch statements can use named
 // identifiers without re-typing strings. Order matters for sort
 // predicates in the recovery arbiter's listings — keep 'active' first
@@ -3579,16 +3591,18 @@ type ComputeNode struct {
 type NodeLifecycle string
 
 const (
-	NodeLifecycleActive      NodeLifecycle = "active"
-	NodeLifecycleDraining    NodeLifecycle = "draining"
-	NodeLifecycleUnavailable NodeLifecycle = "unavailable"
-	NodeLifecycleRecovering  NodeLifecycle = "recovering"
+	NodeLifecycleActive        NodeLifecycle = "active"
+	NodeLifecycleDraining      NodeLifecycle = "draining"
+	NodeLifecycleForceDraining NodeLifecycle = "force_draining"
+	NodeLifecycleMaintenance   NodeLifecycle = "maintenance"
+	NodeLifecycleUnavailable   NodeLifecycle = "unavailable"
+	NodeLifecycleRecovering    NodeLifecycle = "recovering"
 )
 
 // IsAdmitting returns true for lifecycle states that the placement
-// chooser should consider when assigning new wakes. 'draining' is
-// intentionally excluded: a node in operator-initiated drain must
-// not receive new traffic until the operator explicitly reactives it.
+// chooser should consider when assigning new wakes. Drain and maintenance
+// states are intentionally excluded: an operator-held node must not receive
+// new traffic until the operator explicitly reactivates it.
 func (l NodeLifecycle) IsAdmitting() bool {
 	return l == NodeLifecycleActive || l == NodeLifecycleRecovering
 }
@@ -3774,6 +3788,7 @@ type Event struct {
 //     absent-value convention.
 type WakeBootMeta struct {
 	Trigger            string // pkg/sched/triggers.go closed enum; "" if absent
+	TriggerClass       string // issue #1398 — request source class; "" for non-request wakes
 	Method             string // restore or cold_boot; "" if absent
 	Tier               string // warm, init, or cold_boot_fallback; "" if absent
 	QueuedCount        int    // ledger.Concurrency at admit; 0 if absent

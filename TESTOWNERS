@@ -1,0 +1,7 @@
+# Core production paths whose tests must cite the behavior they pin.
+# The CI gate applies to changed Go test files under these directories.
+pkg/sched
+pkg/gateway
+pkg/meter
+pkg/billing
+pkg/fcvm

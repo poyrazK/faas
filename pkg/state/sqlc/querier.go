@@ -708,9 +708,9 @@ type Querier interface {
 	// Caller is the recovery arbiter; one tick enumerates both classes
 	// and applies the same decision matrix.
 	NodeListRecoverable(ctx context.Context, db DBTX) ([]NodeListRecoverableRow, error)
-	// Stamps drain_completed_at + flips lifecycle='active'. Called once
+	// Stamps drain_completed_at + flips lifecycle='maintenance'. Called once
 	// the drain arbiter confirms zero live instances remain on the node.
-	// CAS on lifecycle='draining' so a concurrent reactivate can't race.
+	// CAS on a draining lifecycle so a concurrent reactivate can't race.
 	NodeMarkDrainCompleted(ctx context.Context, db DBTX, arg NodeMarkDrainCompletedParams) (int64, error)
 	// Stamps last_recovery_outcome='succeeded' and flips lifecycle='active'.
 	// Called by the recovery arbiter after the migrate-or-recreate sweep
@@ -726,13 +726,12 @@ type Querier interface {
 	//   $2 = expected prior lifecycle text
 	//   $3 = new lifecycle text
 	//   $4 = wall-clock timestamp to stamp on the relevant audit column:
-	//        'draining'        → drain_initiated_at
+	//        'draining' | 'force_draining' → drain_initiated_at
 	//        'unavailable'     → NULL (heartbeat gap is the writer; this
 	//                             path is for the rare explicit flip)
 	//        'recovering'      → recovery_initiated_at
-	//        'active'          → drain_completed_at (last step of a
-	//                             successful drain) OR NULL when called
-	//                             from the heartbeat reactivator
+	//        'maintenance'     → drain_completed_at (last step of a
+	//                             successful operator drain)
 	NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLifecycleParams) (int64, error)
 	ObjectBucketAccessCheck(ctx context.Context, db DBTX, arg ObjectBucketAccessCheckParams) (bool, error)
 	ObjectBucketAccessGrantDelete(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantDeleteParams) (int64, error)

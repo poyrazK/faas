@@ -398,6 +398,40 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// "skip locked" path caught us on the next LIST. Skip.
 		return
 	}
+	// Debug replays are mirror-only work. They carry a small set of
+	// platform-owned metadata headers (the request body and credentials are
+	// intentionally absent from request_telemetry), so let gatewayd-internal
+	// select the matching ADR-125 rule and admit the shadow VM. Sending this
+	// through the ordinary EnsureWake path would wake the source deployment
+	// and turn a mirror replay into a customer invocation.
+	if isDebugMirrorReplay(inv) {
+		if d.gateway == nil {
+			err := errors.New("sched: debug replay gateway is not configured")
+			_ = d.store.FailInvocation(ctx, inv.ID, err.Error(), time.Duration(d.retryAfterSeconds)*time.Second, d.queueAttemptBudget(ctx, inv), failOutcome(err))
+			return
+		}
+		dispatched, err := d.gateway.Invoke(ctx, inv.AppID, inv)
+		if err != nil {
+			retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+			if errors.Is(err, ErrPermanentInvoke) {
+				retryAfter = 0
+			}
+			_ = d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, d.queueAttemptBudget(ctx, inv), failOutcome(err))
+			d.log.Warn("drain: debug replay", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
+			return
+		}
+		if dispatched.InstanceID != "" {
+			if err := d.store.StampInstanceInvocation(ctx, inv.ID, dispatched.InstanceID); err != nil {
+				d.log.Warn("drain: stamp debug replay instance", "inv", inv.ID, "inst", dispatched.InstanceID, "err", err)
+			}
+		}
+		if err := d.store.CompleteInvocation(ctx, inv.ID, dispatched.Result); err != nil {
+			d.log.Warn("drain: complete debug replay", "inv", inv.ID, "err", err)
+			return
+		}
+		d.emitDone(ctx, inv)
+		return
+	}
 
 	// 3. EnsureWake coalesces same-app wake attempts while the bounded
 	// dispatch pool lets different apps progress concurrently. Returns
@@ -473,6 +507,22 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	d.emitDone(ctx, inv)
+}
+
+// isDebugMirrorReplay distinguishes the debugger's replay envelope from the
+// existing POST /v1/invocations/{id}/replay surface, which must continue to
+// invoke the source app normally. Headers are JSON in the durable row; a
+// malformed envelope simply follows the normal invocation path and will be
+// handled by the gateway's regular validation.
+func isDebugMirrorReplay(inv state.Invocation) bool {
+	if inv.Source != state.InvocationReplay || len(inv.Headers) == 0 {
+		return false
+	}
+	var headers map[string]string
+	if err := json.Unmarshal(inv.Headers, &headers); err != nil {
+		return false
+	}
+	return headers[api.DebugReplayRequestIDHeader] != ""
 }
 
 // emitDone fires invocation_done so the dashboard SSE hook (a

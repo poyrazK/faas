@@ -153,6 +153,12 @@ func TestArbiter_Decide_Table(t *testing.T) {
 			instance: state.RecoveryInstance{State: "evicting_grace"},
 			want:     DecisionNone,
 		},
+		{
+			name:     "force-draining waking is recreated",
+			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleForceDraining},
+			instance: state.RecoveryInstance{State: "waking"},
+			want:     DecisionRecreate,
+		},
 	}
 	for _, tc := range cases {
 		tc := tc

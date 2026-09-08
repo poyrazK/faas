@@ -472,7 +472,7 @@ func archiveObjectKey(instance, day string) string {
 // renderArchiveLine parses one spoolLine JSON blob and renders
 // the `event: log` SSE frame. The wire shape matches
 // apislogs.RenderAppLogEvent's payload keys
-// ({seq, instance, stream, line, written_at}) so a downstream
+// ({seq, instance, stream, line, level, written_at}) so a downstream
 // consumer reading live + archive streams sees a uniform
 // envelope. The wire-arg here is the raw JSON bytes the spool
 // wrote (spoolLine shape) — we re-marshal into the consumer
@@ -488,17 +488,22 @@ func renderArchiveLine(w http.ResponseWriter, flusher http.Flusher, appID, insta
 		Stream    string    `json:"stream"`
 		WrittenAt time.Time `json:"ts"`
 		Line      string    `json:"msg"`
+		Level     string    `json:"level"`
 	}
 	if err := json.Unmarshal(raw, &line); err != nil {
 		return false
 	}
-	payload, _ := json.Marshal(map[string]any{
+	payloadMap := map[string]any{
 		"seq":        line.Seq,
 		"instance":   instance,
 		"stream":     line.Stream,
 		"line":       line.Line,
 		"written_at": line.WrittenAt.UTC().Format(time.RFC3339Nano),
-	})
+	}
+	if line.Level != "" {
+		payloadMap["level"] = line.Level
+	}
+	payload, _ := json.Marshal(payloadMap)
 	_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", payload)
 	if flusher != nil {
 		flusher.Flush()
