@@ -205,9 +205,9 @@ func TestProjectObsNodeApps_SeparatesLiveStates(t *testing.T) {
 	now := time.Now().UTC()
 	apps := []state.App{{ID: "app-1", AccountID: "acct-1", Slug: "orders", Status: state.AppActive}}
 	instances := []state.Instance{
-		{AppID: "app-1", State: "RUNNING", RAMMB: 128, LastRequestAt: now.Add(-time.Minute)},
-		{AppID: "app-1", State: "COLD_BOOTING", RAMMB: 256, LastRequestAt: now},
-		{AppID: "app-1", State: "PARKED", RAMMB: 512, LastRequestAt: now.Add(-time.Hour)},
+		{AppID: "app-1", State: string(state.StateRunning), RAMMB: 128, LastRequestAt: now.Add(-time.Minute)},
+		{AppID: "app-1", State: string(state.StateColdBooting), RAMMB: 256, LastRequestAt: now},
+		{AppID: "app-1", State: string(state.StateParked), RAMMB: 512, LastRequestAt: now.Add(-time.Hour)},
 	}
 	rows := projectObsNodeApps(apps, instances)
 	if len(rows) != 1 {
@@ -223,10 +223,10 @@ func TestProjectObsNodeApps_SeparatesLiveStates(t *testing.T) {
 
 func TestProjectObsDrainStatus_TracksLiveStates(t *testing.T) {
 	rows := []state.Instance{
-		{State: "RUNNING"},
-		{State: "WAKING"},
-		{State: "COLD_BOOTING"},
-		{State: "PARKED"},
+		{State: string(state.StateRunning)},
+		{State: string(state.StateWaking)},
+		{State: string(state.StateColdBooting)},
+		{State: string(state.StateParked)},
 	}
 	status := projectObsDrainStatus(rows)
 	if status.TotalInstances != 4 || status.LiveInstances != 3 {
@@ -239,7 +239,7 @@ func TestProjectObsDrainStatus_TracksLiveStates(t *testing.T) {
 		t.Fatal("drain marked safe while live instances remain")
 	}
 
-	status = projectObsDrainStatus([]state.Instance{{State: "PARKED"}})
+	status = projectObsDrainStatus([]state.Instance{{State: string(state.StateParked)}})
 	if !status.DrainSafe || status.LiveInstances != 0 {
 		t.Fatalf("parked-only node should be drain safe: %+v", status)
 	}
