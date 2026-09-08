@@ -823,6 +823,8 @@ jobs:
           args: -shellcheck ''
       - name: native builder Go toolchain bundle contract
         run: bash scripts/ci/package-go-toolchain_test.sh
+      - name: native metal invocation contract
+        run: bash scripts/ci/run-native-metal-smoke_test.sh
       # ---- former job `capabilities-check`: product capability registry ----
       - name: product capability registry and generated matrix
         run: make capabilities-check

@@ -169,4 +169,4 @@ export FAAS_TEST_FC_VERSION="${fc_version}"
 
 echo "native metal smoke: run TestMetalHelloBoot"
 make GO="${FAAS_METAL_GO}" PKGS=./pkg/fcvm \
-  RUN_ARGS='-run=^TestMetalHelloBoot$ -timeout=5m -v' test-metal
+  RUN_ARGS='-run=^TestMetalHelloBoot$$ -timeout=5m -v' test-metal
