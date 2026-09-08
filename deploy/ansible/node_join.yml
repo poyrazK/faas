@@ -410,12 +410,43 @@
         faas_private_dns_address: "{{ faas_private_address | default(ansible_facts.default_ipv4.address, true) }}"
       when: not (faas_join_bootstrap_contract_current | default(false) | bool)
 
+    # A play-level `roles:` list exposes every role's defaults before the first
+    # role runs. compute_admission therefore sees fc_release even though the
+    # firecracker role follows it. Dynamic includes do not expose a later
+    # role's defaults, so seed that one forward dependency explicitly while
+    # preserving an inventory or extra-vars override when one is supplied.
+    - name: Load the Firecracker defaults required by compute admission
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/roles/firecracker/defaults/main.yml"
+        name: faas_join_firecracker_defaults
+      when: not (faas_join_bootstrap_contract_current | default(false) | bool)
+
+    - name: Publish the default Firecracker release for compute admission
+      ansible.builtin.set_fact:
+        fc_release: "{{ faas_join_firecracker_defaults.fc_release }}"
+      when:
+        - not (faas_join_bootstrap_contract_current | default(false) | bool)
+        - fc_release is not defined
+
+    - name: Require the Firecracker release before compute admission
+      ansible.builtin.assert:
+        that:
+          - fc_release is defined
+          - fc_release | string | length > 0
+        fail_msg: >-
+          Full compute convergence requires fc_release before the
+          compute_admission role runs.
+      when: not (faas_join_bootstrap_contract_current | default(false) | bool)
+
     # Keep this ordered list aligned with the compute-only play in
     # bootstrap.yml. fleet_verify is intentionally omitted because node_join
     # runs its strict form after installing the release and restarting daemons.
     - name: Run the production compute bootstrap role graph
       ansible.builtin.include_role:
         name: "{{ faas_join_bootstrap_role }}"
+        # Match play-level `roles:` variable visibility for later roles in the
+        # graph while retaining one unexpanded include on the fast path.
+        public: true
       loop:
         - compute_admission
         - cgroups_v2
