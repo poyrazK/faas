@@ -210,6 +210,72 @@ func TestLocalCacheBackend_ExplicitRefreshAndGeneration(t *testing.T) {
 	}
 }
 
+func TestLocalCacheBackend_GenerationCanDescribeCanonicalLocalParent(t *testing.T) {
+	ctx := context.Background()
+	parent, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const key = "base/runner-python313-amd64.ext4"
+	if err := parent.Put(ctx, key, strings.NewReader("canonical-local-base")); err != nil {
+		t.Fatal(err)
+	}
+	cacheRoot := t.TempDir()
+	cache, err := storage.NewLocalCacheBackend(parent, cacheRoot, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkGeneration(key, "digest-pinned-ref"); err != nil {
+		t.Fatalf("MarkGeneration for local parent: %v", err)
+	}
+	if _, err := os.Stat(hashCachePath(t, cacheRoot, key)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cache blob stat = %v; generation metadata must not duplicate the local parent", err)
+	}
+	if got, ok, err := cache.CachedGeneration(key); err != nil || !ok || got != "digest-pinned-ref" {
+		t.Fatalf("CachedGeneration = %q, %t, %v; want digest-pinned-ref", got, ok, err)
+	}
+	if err := parent.Delete(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := cache.CachedGeneration(key); err != nil || ok || got != "" {
+		t.Fatalf("generation after parent removal = %q, %t, %v; want ignored", got, ok, err)
+	}
+}
+
+func TestLocalCacheBackend_BudgetEvictionPreservesLocalParentGeneration(t *testing.T) {
+	ctx := context.Background()
+	parent, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cacheRoot := t.TempDir()
+	cache, err := storage.NewLocalCacheBackend(parent, cacheRoot, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const baseKey = "base/runner-python313-amd64.ext4"
+	if err := cache.Put(ctx, baseKey, strings.NewReader("twelve-bytes!")); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkGeneration(baseKey, "digest-pinned-ref"); err != nil {
+		t.Fatal(err)
+	}
+	baseCachePath := hashCachePath(t, cacheRoot, baseKey)
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(baseCachePath, past, past); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Put(ctx, "snap/new", strings.NewReader("twelve-bytes!")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(baseCachePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("base cache blob stat = %v; want budget eviction", err)
+	}
+	if got, ok, err := cache.CachedGeneration(baseKey); err != nil || !ok || got != "digest-pinned-ref" {
+		t.Fatalf("generation after cache eviction = %q, %t, %v; want preserved local-parent marker", got, ok, err)
+	}
+}
+
 func TestCacheBackendForKey_UsesRouterDispatch(t *testing.T) {
 	cache, err := storage.NewLocalCacheBackend(newFakeBackend(), filepath.Join(t.TempDir(), "cache"), 0)
 	if err != nil {
