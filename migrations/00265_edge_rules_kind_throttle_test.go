@@ -150,10 +150,10 @@ func TestMigrations_00265_EdgeRulesKindThrottle(t *testing.T) {
 	if gotKind != "throttle" {
 		t.Errorf("kind round-trip: got %q, want 'throttle'", gotKind)
 	}
-	if !strings.Contains(string(gotAction), `"requests_per_second":10.5`) {
+	if !strings.Contains(compactJSON(t, gotAction), `"requests_per_second":10.5`) {
 		t.Errorf("action jsonb round-trip: got %s, want action.throttle.requests_per_second=10.5", string(gotAction))
 	}
-	if !strings.Contains(string(gotAction), `"burst":20`) {
+	if !strings.Contains(compactJSON(t, gotAction), `"burst":20`) {
 		t.Errorf("action jsonb round-trip: got %s, want action.throttle.burst=20", string(gotAction))
 	}
 
