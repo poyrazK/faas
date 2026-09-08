@@ -7,11 +7,30 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestNodeJoinLeaseRefreshInterval(t *testing.T) {
+	tests := []struct {
+		name string
+		ttl  time.Duration
+		want time.Duration
+	}{
+		{name: "workflow lease", ttl: 5 * time.Minute, want: 100 * time.Second},
+		{name: "minimum", ttl: time.Second, want: time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nodeJoinLeaseRefreshInterval(tt.ttl); got != tt.want {
+				t.Fatalf("nodeJoinLeaseRefreshInterval(%s) = %s, want %s", tt.ttl, got, tt.want)
+			}
+		})
+	}
+}
 
 func splitboxJoinManifest(t *testing.T) string {
 	t.Helper()
