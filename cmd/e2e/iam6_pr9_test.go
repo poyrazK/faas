@@ -56,7 +56,7 @@ type pr9InvitationListWire struct {
 // auth.step_up_required audit row with strict=true and the
 // accept-path audited route.
 func TestE2E_AcceptInvitation_RequiresStepUp_BearerKey(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -176,7 +176,7 @@ func TestE2E_AcceptInvitation_RequiresStepUp_BearerKey(t *testing.T) {
 // next_before cursor between pages asserts the cursor wire
 // format is the pkg/cursor base64-url-of-JSON encoding.
 func TestE2E_ListOrgInvitations_CursorWalk(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

@@ -59,7 +59,7 @@ func startAPIDWithGraceInterval(t *testing.T, pool *pgxpool.Pool) *e2etest.Harne
 // via the apid API and assert the bundle contains the slice the
 // customer expects.
 func TestE2E_Export_FullBundle(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -98,7 +98,7 @@ func TestE2E_Export_FullBundle(t *testing.T) {
 // every other /v1/* path is gated, but export + restore stay
 // reachable so the customer can take a final dump or cancel.
 func TestE2E_Delete_ExportDuringGrace(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -137,7 +137,7 @@ func TestE2E_Delete_ExportDuringGrace(t *testing.T) {
 // assert the row is gone and the customer can no longer reach
 // /v1/account/export (401). This is the M8 G6 acceptance gate.
 func TestE2E_GraceExpiry_HardDelete(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -212,7 +212,7 @@ func TestE2E_GraceExpiry_HardDelete(t *testing.T) {
 // deletion_requested_at past the grace window; this test stays
 // inside the window by NOT fast-forwarding.
 func TestE2E_Delete_CancelDuringGrace_RestoresAccount(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -282,7 +282,7 @@ func TestE2E_Delete_CancelDuringGrace_RestoresAccount(t *testing.T) {
 // Authorization header. We hand-craft the request so the missing
 // header is part of the test surface.
 func TestE2E_Export_NoAuthHeader_Returns401(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -332,7 +332,7 @@ func TestE2E_Export_NoAuthHeader_Returns401(t *testing.T) {
 // that drops a slice (e.g. "we don't surface builds any more")
 // would silently introduce.
 func TestE2E_Export_MultiApp_BundleShape(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

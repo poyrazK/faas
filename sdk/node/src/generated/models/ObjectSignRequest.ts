@@ -6,7 +6,7 @@
  * Exact object operation to authorize for a short time.
  */
 export type ObjectSignRequest = {
-  method: 'GET' | 'PUT';
+  method: 'GET' | 'HEAD' | 'PUT';
   key: string;
   expires_in?: number;
   /**

@@ -114,3 +114,40 @@ type ObjectBucketAccessGrantList struct {
 type SetObjectBucketAccessGrantRequest struct {
 	Permission string `json:"permission"`
 }
+
+const MaxObjectS3CredentialsPerBucket = 10
+
+// ObjectS3Credential is a Gregale-issued, bucket-scoped S3 credential. The
+// secret is returned only by the create endpoint and is never persisted in
+// plaintext or included in list responses.
+type ObjectS3Credential struct {
+	ID          string     `json:"id"`
+	BucketID    string     `json:"bucket_id"`
+	AccessKeyID string     `json:"access_key_id"`
+	Label       string     `json:"label"`
+	Permission  string     `json:"permission"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+}
+
+type ObjectS3CredentialList struct {
+	Items []ObjectS3Credential `json:"items"`
+}
+
+type CreateObjectS3CredentialRequest struct {
+	Label      string `json:"label"`
+	Permission string `json:"permission"`
+}
+
+// ObjectS3CredentialSecret is the one-time creation response. Endpoint and
+// addressing metadata let callers configure an AWS SDK without learning
+// which upstream provider stores the bucket.
+type ObjectS3CredentialSecret struct {
+	ObjectS3Credential
+	SecretAccessKey string `json:"secret_access_key"`
+	Endpoint        string `json:"endpoint"`
+	Region          string `json:"region"`
+	AddressingStyle string `json:"addressing_style"`
+}

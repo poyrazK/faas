@@ -1727,7 +1727,7 @@ CREATE TABLE public.custom_domains (
     cert_expires_at timestamp with time zone,
     cert_last_error text,
     dns_last_checked_at timestamp with time zone,
-    CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text])))
+    CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text, 'dns_drifted'::text])))
 );
 
 
@@ -8130,7 +8130,42 @@ CREATE TABLE public.object_storage_access_grants (
     CONSTRAINT object_storage_access_grants_pkey PRIMARY KEY (bucket_id, api_key_id)
 );
 
+
+--
+-- Name: object_storage_s3_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_s3_credentials (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    access_key_id text NOT NULL,
+    secret_sealed bytea NOT NULL,
+    kid text NOT NULL,
+    label text NOT NULL,
+    permission text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_used_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
+    CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
+    CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
+    CONSTRAINT object_storage_s3_credentials_label_check CHECK (((length(label) >= 1) AND (length(label) <= 64))),
+    CONSTRAINT object_storage_s3_credentials_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
+    CONSTRAINT object_storage_s3_credentials_secret_sealed_check CHECK ((length(secret_sealed) > 0)),
+    CONSTRAINT object_storage_s3_credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text])))
+);
+
 CREATE INDEX object_storage_access_grants_key_idx ON public.object_storage_access_grants USING btree (account_id, api_key_id, bucket_id);
+
+ALTER TABLE ONLY public.object_storage_s3_credentials
+    ADD CONSTRAINT object_storage_s3_credentials_access_key_id_key UNIQUE (access_key_id);
+
+ALTER TABLE ONLY public.object_storage_s3_credentials
+    ADD CONSTRAINT object_storage_s3_credentials_pkey PRIMARY KEY (id);
+
+CREATE INDEX object_storage_s3_credentials_bucket_active_idx ON public.object_storage_s3_credentials USING btree (account_id, bucket_id, created_at, id) WHERE (status = 'active'::text);
 
 
 --
@@ -8171,6 +8206,12 @@ ALTER TABLE ONLY public.object_storage_access_grants
 
 ALTER TABLE ONLY public.object_storage_access_grants
     ADD CONSTRAINT object_storage_access_grants_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.object_storage_s3_credentials
+    ADD CONSTRAINT object_storage_s3_credentials_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.object_storage_s3_credentials
+    ADD CONSTRAINT object_storage_s3_credentials_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

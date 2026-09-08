@@ -134,6 +134,14 @@ func TestS3Presign(t *testing.T) {
 	if u.Query().Get("response-content-disposition") != "attachment" || u.Query().Get("X-Amz-Expires") != "60" {
 		t.Fatal("unsafe download")
 	}
+	head, err := p.Presign(context.Background(), "gregale-test", SignRequest{Method: http.MethodHead, Key: "index.html", ExpiresIn: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	headURL, _ := url.Parse(head.URL)
+	if head.Method != http.MethodHead || headURL.Query().Has("response-content-disposition") || headURL.Query().Has("response-content-type") {
+		t.Fatalf("invalid HEAD request: %+v", head)
+	}
 }
 
 func TestS3MultipartProtocolAndCompletionRecovery(t *testing.T) {
@@ -328,5 +336,31 @@ func TestValidation(t *testing.T) {
 		if req.Validate(100) == nil {
 			t.Fatalf("accepted %+v", req)
 		}
+	}
+}
+
+func TestPublicS3EndpointDefaultsAndValidation(t *testing.T) {
+	backend := testBackend()
+	base := Config{DefaultRegion: backend.Region, Defaults: map[string]string{backend.Region: backend.ID}, Backends: []BackendConfig{backend}}
+	registry, err := NewRegistry(base, testCredentials, map[string]Factory{"s3": NewS3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registry.PublicEndpoint != "https://s3.gregale.dev" || registry.PublicRegion != "us-east-1" {
+		t.Fatalf("public defaults = %q %q", registry.PublicEndpoint, registry.PublicRegion)
+	}
+
+	for _, endpoint := range []string{"http://s3.gregale.dev", "https://user@s3.gregale.dev", "https://s3.gregale.dev/path", "https://s3.gregale.dev?secret=x", "https://:443"} {
+		config := base
+		config.PublicEndpoint = endpoint
+		if _, err := NewRegistry(config, testCredentials, map[string]Factory{"s3": NewS3}); err == nil {
+			t.Fatalf("accepted public endpoint %q", endpoint)
+		}
+	}
+	base.PublicEndpoint = "https://storage.gregale.dev/"
+	base.PublicRegion = "eu-west-3"
+	registry, err = NewRegistry(base, testCredentials, map[string]Factory{"s3": NewS3})
+	if err != nil || registry.PublicEndpoint != "https://storage.gregale.dev" || registry.PublicRegion != "eu-west-3" {
+		t.Fatalf("custom public endpoint = %#v, %v", registry, err)
 	}
 }

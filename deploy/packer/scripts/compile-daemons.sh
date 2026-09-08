@@ -4,13 +4,13 @@
 # per-daemon systemd units consume; `gregalectl release install --git-sha X`
 # flips current→X at install time.
 #
-# Per ADR-111: 8 daemons + gregale CLI + gregalectl CLI (operator-only).
+# Per ADR-111: production daemons + gregale CLI + gregalectl CLI (operator-only).
 # Build flags match the canonical `-trimpath -ldflags='-s -w'` posture so
 # binaries are reproducible + small.
 #
 # Per ADR-092 + ADR-112: per-role subset is enforced OUTSIDE this script
 # (the per-daemon 99-faas-role.conf drop-in decides which daemons start;
-# this script bakes ALL 8 daemons regardless of role). ADR-112 collapsed
+# this script bakes every daemon regardless of role). ADR-112 collapsed
 # role out of the image entirely — there is no role-overlay.pkr.hcl —
 # so first-boot `gregalectl release install --role` writes the drop-ins.
 # (Trade-off: larger image by ~30 MB; we accept that for the simpler
@@ -20,7 +20,7 @@ set -euo pipefail
 SRC_ROOT="${SRC_ROOT:-/tmp/src}"
 GO_VERSION="${GO_VERSION:-1.25.13}"
 
-DAEMONS=(apid gatewayd-public gatewayd-internal schedd vmmd builderd imaged meterd githubd)
+DAEMONS=(apid gatewayd-public gatewayd-internal s3-gatewayd schedd vmmd builderd imaged meterd githubd)
 CLIS=(gregale gregalectl)
 TOOLS=(vmmd-jail-helper vmmd-raw-bridge vmmd-stream-bridge)
 

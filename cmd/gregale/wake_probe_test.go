@@ -43,8 +43,13 @@ func TestProbeWakeState_Warm(t *testing.T) {
 }
 
 func TestProbeWakeState_Timeout(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(3 * time.Second)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Stall past the probe deadline, but return as soon as the
+		// probe gives up so srv.Close does not wait out the 3 s bound.
+		select {
+		case <-r.Context().Done():
+		case <-time.After(3 * time.Second):
+		}
 	}))
 	defer srv.Close()
 

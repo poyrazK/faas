@@ -29,7 +29,7 @@
 //       notification fan-out without needing a real runner.
 //
 // Build tag: (none). CI-safe. Runs under `go test ./cmd/e2e/...`.
-// Gated at runtime by `pgtest.Open(t)` (returns nil if Postgres is
+// Gated at runtime by `pgtest.OpenMigrated(t)` (returns nil if Postgres is
 // unreachable — test exits silently, mirroring quota_e2e_test.go).
 //
 // Helper policy: reuses doReq / assertProblem / dbMigrateUp from
@@ -69,7 +69,7 @@ func TestE2E_AsyncInvoke_PostEnqueuesRowAndDrainCompletesIt(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		t.Skip("pgtest.Open returned nil")
 	}
@@ -144,7 +144,7 @@ func TestE2E_AsyncInvoke_PlanCap_FreePlanRejects(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		t.Skip("pgtest.Open returned nil")
 	}
@@ -186,7 +186,7 @@ func TestE2E_QueueSend_PlanCap_QueueDepth(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		t.Skip("pgtest.Open returned nil")
 	}
@@ -227,7 +227,7 @@ func TestE2E_QueueSend_DrainLongPoll(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		t.Skip("pgtest.Open returned nil")
 	}
@@ -426,7 +426,7 @@ func pollUntilCompleted(t *testing.T, h *e2etest.Harness, key, id string, deadli
 // minimal "register an app" surface. The plan gate fires on PATCH,
 // which is what the dashboard form actually uses.
 func TestColdWake_MinInstances_Free_Rejects(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -468,7 +468,7 @@ func TestColdWake_MinInstances_Free_Rejects(t *testing.T) {
 // (the kind of drift that handlers_ext_test.go's pure in-memory
 // PgStore can mask).
 func TestColdWake_MinInstances_Hobby_Accepts(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -514,7 +514,7 @@ func TestColdWake_MinInstances_Hobby_Accepts(t *testing.T) {
 // but the UPDATE drops it (the kind of drift that
 // handlers_ext_test.go's pure in-memory PgStore can mask).
 func TestColdWake_MinInstances_Pro_Accepts(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -581,7 +581,7 @@ func TestColdWake_MinInstances_Pro_Accepts(t *testing.T) {
 // If a future refactor collapses "min_instances" into a derived
 // field on wake, the assertion below fires at CI time.
 func TestColdWake_FloorKeepsInstancesWarm(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

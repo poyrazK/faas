@@ -32,7 +32,7 @@ import (
 // PG is unavailable — same shape as the single-node metal tests).
 func poolWithSkip(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	return pgtest.Open(t)
+	return pgtest.OpenMigrated(t)
 }
 
 // TestTwoNode_HeartbeatGapFlipsLifecycleUnavailable — Task #72

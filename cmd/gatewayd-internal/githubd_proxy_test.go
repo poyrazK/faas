@@ -136,6 +136,9 @@ func newTestProxy(t *testing.T, secret []byte, upstream http.Handler) (http.Hand
 }
 
 func TestGithubdProxy_VerifiesAndForwards(t *testing.T) {
+	// Shares "delivery-rec-1" with two sibling tests; the dedupe table is
+	// process-wide, so start from a clean one regardless of test order.
+	webhookdedupe.ResetForTest()
 	secret := []byte("test-webhook-secret")
 	proxy, hits := newTestProxy(t, secret, nil)
 
@@ -370,6 +373,8 @@ func TestGithubdProxy_VerifierMatchesGithubdPackage(t *testing.T) {
 // upstream. Pre-#294 behaviour, but the new code path also writes
 // to the dedupe table.
 func TestGithubdProxy_FirstDelivery_RecordsRow(t *testing.T) {
+	// "First delivery" must not depend on which sibling test ran before.
+	webhookdedupe.ResetForTest()
 	secret := []byte("test-webhook-secret")
 	proxy, hits, _ := newTestProxyWithReplay(t, secret)
 

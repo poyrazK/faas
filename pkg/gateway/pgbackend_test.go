@@ -674,6 +674,34 @@ func (c *capturingScheduler) AdmitMirrorInstance(_ context.Context, _, _, _ stri
 	return "fake-mirror-" + c.id, "w-mirror", nil
 }
 
+func TestPGBackend_ResolveSched_ReusesLookupApp(t *testing.T) {
+	ownerSched := &capturingScheduler{id: "node-ssd"}
+	resolved := gateway.App{ID: "app-cached", NodeID: "node-ssd"}
+	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{
+		"cached.apps.gregale.dev": resolved,
+	}}, gateway.NewFakeScheduler("default-local"), nil).
+		WithAppResolver(func(_ context.Context, _ string) (gateway.App, bool, error) {
+			t.Fatal("app resolver called after hostname lookup populated the cache")
+			return gateway.App{}, false, nil
+		}).
+		WithClientForApp(func(_ context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
+			if app.ID != resolved.ID || app.NodeID != resolved.NodeID {
+				t.Fatalf("client app = %+v, want %+v", app, resolved)
+			}
+			return ownerSched, true, nil
+		})
+
+	if _, ok := b.Lookup(context.Background(), "cached.apps.gregale.dev"); !ok {
+		t.Fatal("Lookup missed")
+	}
+	if _, _, _, err := b.Admit(context.Background(), resolved.ID, "", "", "", 5); err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+	if ownerSched.admitted != 1 {
+		t.Fatalf("owner scheduler admits = %d, want 1", ownerSched.admitted)
+	}
+}
+
 // TestPGBackend_ResolveSched_MultiBox_RejectsTransientMiss covers
 // the headline fix: with the resolver returning ok=false (transient
 // cache miss on AppByID), resolveSched must return an error rather

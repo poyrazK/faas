@@ -30,13 +30,15 @@ import (
 
 // TestGatewayTopTenant_BoundedCardinality asserts the primitive's
 // topNSnapshot never exceeds topAccountSetCap entries even under
-// fuzzed load with 50 000 distinct ids. Mirrors
+// fuzzed load with 5 000 distinct ids (five times the cap: the bound is
+// exercised as soon as the set overflows, and every extra id only costs
+// time under -race — 50 000 ids took ~5 min on a CI runner). Mirrors
 // pkg/wire/topn_test.go::TestTopTenantRPS_BoundedCardinality.
 func TestGatewayTopTenant_BoundedCardinality(t *testing.T) {
 	if testing.Short() {
 		t.Skip("fuzz-heavy; skipped in -short")
 	}
-	const totalIDs = 50_000
+	const totalIDs = 5_000
 	set := newTopAccountSet(topAccountSetCap)
 	for i := 0; i < totalIDs; i++ {
 		set.sample(fmt.Sprintf("app-%08x", i))

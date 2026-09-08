@@ -281,6 +281,11 @@ type Metrics struct {
 	// edgeAnswered counts bounded static answers that never reached an
 	// instance. Kind is the closed M1 set: favicon, robots, or head.
 	edgeAnswered *prometheus.CounterVec
+	// corsPreflightEdge counts CORS OPTIONS responses completed by the
+	// gateway before the request reaches auth, limiting, or wake work.
+	// The app label matches the existing per-app gateway counters and makes
+	// the no-wake benefit attributable to the customer app.
+	corsPreflightEdge *prometheus.CounterVec
 	// edgeRuleCompileError (ADR-091 hardening PR-A): counter of
 	// compile-time failures inside the cmd-side loader
 	// (cmd/gatewayd-internal/edge_rules.go::warnPathGlobErrs). A
@@ -760,6 +765,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_answered_total",
 			Help: "Gateway responses served without waking an app, labelled by edge answer kind (favicon|robots|head). Issue #1398 M1.",
 		}, []string{"kind"}),
+		corsPreflightEdge: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_cors_preflight_edge_total",
+			Help: "CORS preflight responses completed at the gateway without waking an app, labelled by app. Issue #1398 M4.",
+		}, []string{"app"}),
 		// ADR-124 / issue #72 / PR-A3 — mirror dispatch surface.
 		// rule_id cardinality is bounded by Limits.MirrorTargetsPerApp
 		// (≤ 3 per app) so the (app_id, rule_id) pair is closed;
@@ -1440,7 +1449,7 @@ func NewMetrics() *Metrics {
 	// cartesian) is the same pattern as the rest of the family.
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
-	reg.MustRegister(m.requests, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -1757,6 +1766,16 @@ func (m *Metrics) ObserveEdgeAnswered(kind string) {
 	case "favicon", "robots", "head":
 		m.edgeAnswered.WithLabelValues(kind).Inc()
 	}
+}
+
+// ObserveCORSPreflightEdge records a CORS OPTIONS response completed by the
+// gateway before the request reaches an app instance. appID is the resolved
+// app identifier used by the other per-app gateway metrics.
+func (m *Metrics) ObserveCORSPreflightEdge(appID string) {
+	if m == nil || m.corsPreflightEdge == nil || appID == "" {
+		return
+	}
+	m.corsPreflightEdge.WithLabelValues(appID).Inc()
 }
 
 // ObserveAccountRateLimit records a 429 outcome from the per-account

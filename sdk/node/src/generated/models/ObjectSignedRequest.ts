@@ -7,7 +7,7 @@
  */
 export type ObjectSignedRequest = {
   url: string;
-  method: 'GET' | 'PUT';
+  method: 'GET' | 'HEAD' | 'PUT';
   headers: Record<string, string>;
   expires_at: string;
 };

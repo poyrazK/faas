@@ -18,7 +18,7 @@ import (
 )
 
 func TestEdgeRulesCORS_E2E(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -124,7 +124,7 @@ func TestEdgeRulesCORS_E2E(t *testing.T) {
 //
 // Bitmask: APID | Gatewayd (same as the preflight test).
 func TestEdgeRulesCORS_NonPreflight_HappyPath(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

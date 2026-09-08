@@ -45,7 +45,7 @@ import (
 // recipient we generated in setupHostedRecipient — this is the exact
 // "vmmd wrote host.age.pub; apid consumed it" shape from production.
 func TestSecretsMatrixPg(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -170,7 +170,7 @@ func TestSecretsMatrixPg(t *testing.T) {
 // cannot enumerate another customer's secret NAMES, because plain key
 // names (even though public per spec) leak observable state.
 func TestSecretsCrossAccountIsolation(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -227,7 +227,7 @@ func TestSecretsCrossAccountIsolation(t *testing.T) {
 
 // TestSecretsDeleteNotFound returns 400 (the URL resource IS the secret).
 func TestSecretsDeleteNotFound(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

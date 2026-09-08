@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"os"
@@ -2124,7 +2125,9 @@ func (s *server) loadDomain(w http.ResponseWriter, r *http.Request, acct state.A
 func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomain) (api.CustomDomainResponse, error) {
 	resp := domainResponse(d)
 	if !d.Verified() {
-		resp.CertStatus = certStatusPending
+		if d.CertStatus != state.CustomDomainCertDNSDrifted {
+			resp.CertStatus = certStatusPending
+		}
 		return resp, nil
 	}
 	cert, err := dialCert(ctx, d.Domain)
@@ -2272,38 +2275,11 @@ func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (a
 func (s *server) refreshDoctorObservation(ctx context.Context, domain string) error {
 	rctx, cancel := context.WithTimeout(ctx, probeTimeout+2*time.Second)
 	defer cancel()
-	dnsFound, pointsToG, caa, aaaa := runProbesParallel(rctx, domain)
-	obs := state.DomainDoctorObservation{
-		Domain:          domain,
-		ObservedAt:      time.Now().UTC(),
-		DNSRecordFound:  probeToBool(dnsFound.Status, true),
-		PointsToGregale: probeToBool(pointsToG.Status, false),
-		IPv6Conflict:    probeToBool(aaaa.Status, false),
-		ObservedTarget:  pointsToG.Observed,
-		ObservedAAAA:    aaaa.Observed,
-		CAAObserved:     caa.Observed,
-		DNSCheckedAt:    earliest(dnsFound.ObservedAt, pointsToG.ObservedAt, caa.ObservedAt, aaaa.ObservedAt),
+	log := s.log
+	if log == nil {
+		log = slog.Default()
 	}
-	switch caa.Status {
-	case probeOK:
-		v := true
-		obs.CAAPermits = &v
-	case probeFail:
-		v := false
-		obs.CAAPermits = &v
-	}
-	if s.store != nil {
-		if surface, sErr := s.store.TenantSurfaceByHostname(rctx, domain); sErr == nil {
-			obs.SurfaceID = surface.ID
-			obs.CertState = string(surface.CertState)
-			obs.CertNotAfter = surface.CertNotAfter
-		}
-	}
-	if obs.CertState == "" {
-		obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(rctx, domain)
-		obs.CertCheckedAt = time.Now().UTC()
-	}
-	return s.store.UpsertDoctorObservation(rctx, obs)
+	return s.runDoctorForDomain(rctx, log, domain)
 }
 
 // doctorReportFromObs translates the persistence struct
@@ -2364,6 +2340,11 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		report.Healthy = false
 		tlsDetail = "cert engine reported failure: " + obs.LastError
 		tlsRem = "Check the cert engine logs; the renewal loop will retry automatically."
+	case string(state.CustomDomainCertDNSDrifted):
+		tlsStatus = probeFail
+		report.Healthy = false
+		tlsDetail = "DNS target drifted away from Gregale"
+		tlsRem = "Restore the Gregale CNAME and publish the verification TXT record again."
 	case certStatusDialFailed:
 		tlsStatus = probeFail
 		report.Healthy = false

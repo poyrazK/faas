@@ -50,6 +50,18 @@ func eventsForInstance(t *testing.T, store state.Store, wakeID string) []state.E
 	return rows
 }
 
+func eventuallyEventsForInstance(t *testing.T, store state.Store, wakeID string, want int) []state.Event {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		rows := eventsForInstance(t, store, wakeID)
+		if len(rows) >= want || time.Now().After(deadline) {
+			return rows
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // kindsOf returns the `.Kind` slice of an events row set.
 func kindsOf(rows []state.Event) []string {
 	out := make([]string, len(rows))
@@ -92,7 +104,7 @@ func TestEngineWake_EmitsCanonicalSequence(t *testing.T) {
 		"wake.boot_started",
 		"wake.boot_completed",
 	}
-	rows := eventsForInstance(t, store, res.WakeID)
+	rows := eventuallyEventsForInstance(t, store, res.WakeID, len(want))
 	if len(rows) != len(want) {
 		t.Fatalf("rows = %v, want %d (kinds=%v)", kindsOf(rows), len(want), want)
 	}

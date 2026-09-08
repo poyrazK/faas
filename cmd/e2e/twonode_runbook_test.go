@@ -30,7 +30,7 @@ import (
 // runbook's first drill end-to-end: stale the heartbeat, observe
 // the lifecycle flip + the node.failed event row.
 func TestRunbook_Drill1_HeartbeatGapFlipsUnavailable(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	h := e2etest.StartTwoNode(t, pool)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 	// Runbook step 1: stale the heartbeat on node-b by 120s.
@@ -66,7 +66,7 @@ func TestRunbook_Drill1_HeartbeatGapFlipsUnavailable(t *testing.T) {
 // rather than POSTing to apid — the apid HTTP gate has its own
 // coverage in cmd/apid/handlers_compute_nodes_drain_test.go.
 func TestRunbook_Drill2_DrainCascade(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	h := e2etest.StartTwoNode(t, pool)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 	if err := fi.Drain(h.NodeA); err != nil {
@@ -96,7 +96,7 @@ func TestRunbook_Drill2_DrainCascade(t *testing.T) {
 // end state. This test exists so the runbook step has a Go
 // counterpart in CI for the daemon-boot path.
 func TestRunbook_Drill3_PgNotifyRecovery(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	h := e2etest.StartTwoNode(t, pool)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 	// StaleHeartbeat is the row-level analog of a SIGSTOP'd

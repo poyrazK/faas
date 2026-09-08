@@ -23,7 +23,7 @@
 // FAAS_SKIP_PG_TESTS) and a buildable ./cmd/apid.
 //
 // Without Postgres (e.g. a dev box without a Postgres service
-// container) pgtest.Open(t) returns nil at every test entry and
+// container) pgtest.OpenMigrated(t) returns nil at every test entry and
 // the tests skip — exactly the same pattern as
 // personal_org_backfill_e2e_test.go (PR 3). The unit tests in
 // pkg/authz/loadorg_test.go cover the middleware per-request
@@ -65,7 +65,7 @@ type orgMeWire struct {
 // header the middleware passes through; with X-Active-Org set to
 // the personal slug the endpoint returns the org with role=owner.
 func TestE2E_LoadOrg_PersonalOrg(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -121,7 +121,7 @@ func TestE2E_LoadOrg_PersonalOrg(t *testing.T) {
 // stays account-scoped. This is the load-bearing seam that lets
 // every pre-PR-5 route remain unaffected.
 func TestE2E_LoadOrg_HeaderMiss(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -151,7 +151,7 @@ func TestE2E_LoadOrg_HeaderMiss(t *testing.T) {
 // of the platform relies on: "does not exist" is a distinct 4xx
 // from "exists but you can't see it".
 func TestE2E_LoadOrg_UnknownSlug(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -180,7 +180,7 @@ func TestE2E_LoadOrg_UnknownSlug(t *testing.T) {
 // org_role_forbidden. This is the test that proves LoadOrg
 // is membership-aware, not slug-string-equality.
 func TestE2E_LoadOrg_NonMember(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -220,7 +220,7 @@ func TestE2E_LoadOrg_NonMember(t *testing.T) {
 // one browsers can hit naturally (e.g. a dashboard link from an
 // email).
 func TestE2E_LoadOrg_QueryFallback(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -263,7 +263,7 @@ func TestE2E_LoadOrg_QueryFallback(t *testing.T) {
 // that can't set headers (HTML <a>, email links, etc.). A bad
 // header must NOT be silently rescued by a good query.
 func TestE2E_LoadOrg_HeaderBeatsQuery(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

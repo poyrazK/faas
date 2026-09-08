@@ -1108,7 +1108,7 @@ func (r *Release) validate() Errors {
 		}
 	}
 	if len(r.RuntimeBaseRefs) != 0 {
-		expected := []string{"minimal", "node22", "python312", "go124", "go124_alpine", "node24", "python313"}
+		expected := []string{"minimal", "debian_parent", "node22", "python312", "go124", "go124_alpine", "node24", "python313"}
 		seen := make(map[string]struct{}, len(r.RuntimeBaseRefs))
 		for key, ref := range r.RuntimeBaseRefs {
 			seen[key] = struct{}{}

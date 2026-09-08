@@ -104,6 +104,7 @@ export type { CreateManagedPostgresBindingRequest } from './CreateManagedPostgre
 export type { CreateManagedPostgresDatabaseRequest } from './CreateManagedPostgresDatabaseRequest.js';
 export type { CreateMirrorRuleRequest } from './CreateMirrorRuleRequest.js';
 export type { CreateObjectMultipartUploadRequest } from './CreateObjectMultipartUploadRequest.js';
+export type { CreateObjectS3CredentialRequest } from './CreateObjectS3CredentialRequest.js';
 export type { CreateOrgAPIKeyRequest } from './CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './CreateOrgRequest.js';
 export type { CreateTenantSurfaceRequest } from './CreateTenantSurfaceRequest.js';
@@ -260,6 +261,9 @@ export type { ObjectMultipartPartList } from './ObjectMultipartPartList.js';
 export type { ObjectMultipartPartSignRequest } from './ObjectMultipartPartSignRequest.js';
 export type { ObjectMultipartUpload } from './ObjectMultipartUpload.js';
 export type { ObjectMultipartUploadList } from './ObjectMultipartUploadList.js';
+export type { ObjectS3Credential } from './ObjectS3Credential.js';
+export type { ObjectS3CredentialList } from './ObjectS3CredentialList.js';
+export type { ObjectS3CredentialSecret } from './ObjectS3CredentialSecret.js';
 export type { ObjectSignRequest } from './ObjectSignRequest.js';
 export type { ObjectSignedRequest } from './ObjectSignedRequest.js';
 export type { ObjectStorageCharge } from './ObjectStorageCharge.js';

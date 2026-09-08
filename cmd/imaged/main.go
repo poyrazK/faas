@@ -547,6 +547,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
 	}
+	assignedBases, err := h.EnsureAssignedBases(ctx, arch, getenv)
+	if err != nil {
+		return err
+	}
 
 	loop := imaged.NewLoop(imaged.LoopConfig{
 		Handler:     h,
@@ -572,7 +576,9 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		"builder_base_ref", baseRef,
 		"builder_base_digest", baseRes.ConfigDigest,
 		"builder_base_skipped", baseRes.Skipped,
-		"runtime_bases", "on-demand",
+		"runtime_bases", "assigned",
+		"assigned_runtimes", assignedBases.Runtimes,
+		"assigned_minimal", assignedBases.Minimal,
 	)
 
 	// Optional /metrics listener (this PR). Mirrors cmd/apid/main.go

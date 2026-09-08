@@ -188,11 +188,20 @@ func main() {
 		os.Exit(3)
 	}
 
-	srv := buildServer(guestIP, uint16(port), deadline)
 	// the gRPC ForwardHTTPStream returns; the bridge exits cleanly
 	// without truncating an in-flight stream.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	srv, guestPool := buildServerWithGuestPool(guestIP, uint16(port), deadline)
+	if currentBridgeFramingFrom(os.Getenv("FAAS_BRIDGE_PROTOCOL")) == framingH2C {
+		go func() {
+			prewarmCtx, prewarmCancel := context.WithTimeout(ctx, guestH2CPrewarmTimeout)
+			defer prewarmCancel()
+			if err := guestPool.prewarmH2C(prewarmCtx, uint16(port)); err != nil && ctx.Err() == nil {
+				slog.Debug("vmmd-stream-bridge: guest H2C prewarm ended", "err", err)
+			}
+		}()
+	}
 
 	errc := make(chan error, 1)
 	go func() {
@@ -270,6 +279,11 @@ func main() {
 //     long-poll / H2 DATA frames past the deadline) is the
 //     supported shape for both H1 and H2C paths.
 func buildServer(guestIP string, guestPort uint16, deadline time.Time) *http.Server {
+	srv, _ := buildServerWithGuestPool(guestIP, guestPort, deadline)
+	return srv
+}
+
+func buildServerWithGuestPool(guestIP string, guestPort uint16, deadline time.Time) (*http.Server, *guestTransportPool) {
 	guestPool := newGuestTransportPool(guestIP)
 	srv := &http.Server{
 		//nolint:staticcheck // ADR-127 §D2 (Layer 9) — the inner Handler is wrapped with
@@ -303,7 +317,7 @@ func buildServer(guestIP string, guestPort uint16, deadline time.Time) *http.Ser
 		// ReadTimeout is intentionally UNSET. stdlib's ReadTimeout caps the ENTIRE request lifetime (headers + body), not just the headers; a 30s cap would regress slow H1 uploads (Hobby+ plans allow up to 100 MB streaming body) and any H2C request whose body takes >30s. The ReadHeaderTimeout above is the Slowloris defence; the per-request ctx deadline bounds the in-flight request lifetime. WriteTimeout is also UNSET — streaming (SSE / long-poll / H2 DATA frames past the deadline) is the supported shape for both H1 and H2C paths.
 	}
 	srv.RegisterOnShutdown(guestPool.closeIdleConnections)
-	return srv
+	return srv, guestPool
 }
 
 // newHandler builds the H2C handler that proxies requests to the guest at

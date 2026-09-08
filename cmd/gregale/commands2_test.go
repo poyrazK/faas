@@ -753,9 +753,12 @@ func TestCmdOpen_ColdAppWaitsForWarm(t *testing.T) {
 func TestCmdOpen_ColdAppDeadlineExhausts(t *testing.T) {
 	rec := withRecorder(t)
 	t.Setenv("FAAS_TOKEN", "tok")
+	// Shrink the 8 s production budget to 400 ms; the loop shape under test
+	// (probe → poll until deadline → open anyway) is unchanged.
+	fastOpenWake(t)
 
 	probeCalls := int32(0)
-	// Always cold — cmdOpen waits up to 8 s total then opens anyway.
+	// Always cold — cmdOpen waits until the deadline then opens anyway.
 	stub := &wakeStub{coldN: 1000, probeN: &probeCalls}
 	gw := httptest.NewServer(stub)
 	defer gw.Close()
@@ -777,8 +780,8 @@ func TestCmdOpen_ColdAppDeadlineExhausts(t *testing.T) {
 		t.Fatalf("cmdOpen exit = %d, want 0", code)
 	}
 	elapsed := time.Since(start)
-	if elapsed < 7*time.Second || elapsed > 12*time.Second {
-		t.Errorf("elapsed = %v, want ~8 s (deadline budget)", elapsed)
+	if elapsed < openWakeDeadline || elapsed > 3*time.Second {
+		t.Errorf("elapsed = %v, want >= %v (deadline budget) and well under 3 s", elapsed, openWakeDeadline)
 	}
 	if len(rec.urls) != 1 {
 		t.Errorf("browser should still be invoked after deadline; got urls=%v", rec.urls)
@@ -1697,9 +1700,10 @@ func pollBuildStubCounting(t *testing.T, statuses ...string) (*httptest.Server, 
 // TestPollBuildStatus_HappyPath pins: with a sequence that
 // terminates in "succeeded", pollBuildStatus returns (build, true)
 // and the returned status matches the server's last response.
-// We use the smallest possible backoff budget (deadline 4s) so
-// the test settles in well under 10s.
+// The poll backoff is shrunk to 20 ms (fastBuildPoll) so the three
+// status hops settle in well under a second.
 func TestPollBuildStatus_HappyPath(t *testing.T) {
+	fastBuildPoll(t)
 	srv, dep, calls := pollBuildStubCounting(t, "queued", "running", "succeeded")
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
@@ -1722,6 +1726,7 @@ func TestPollBuildStatus_HappyPath(t *testing.T) {
 // loop exits on either terminal value. terminalExitForBuild
 // renders the exit 2 path; that's a separate concern.
 func TestPollBuildStatus_FailedBranch(t *testing.T) {
+	fastBuildPoll(t)
 	srv, dep, _ := pollBuildStubCounting(t, "queued", "running", "failed")
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
@@ -1857,13 +1862,17 @@ func TestTerminalExitForBuild_Failed(t *testing.T) {
 // derived inside pollBuildStatus cancels the request when the
 // remaining deadline budget runs out.
 func TestPollBuildStatus_HungServerHonoursDeadline(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		// Sleep longer than the deadline so the only thing
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Stall longer than the deadline so the only thing
 		// protecting the wall-clock budget is the per-call
-		// context.WithTimeout. Returning 200 + JSON keeps the
-		// handler goroutine finite (no goroutine leak on
-		// httptest.Server.Close), unlike a `<-chan` block.
-		time.Sleep(5 * time.Second)
+		// context.WithTimeout. Return as soon as the client gives
+		// up (r.Context is cancelled when the caller's timeout closes
+		// the connection) so srv.Close does not wait out the full
+		// stall; the 5 s timer is only the upper bound.
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"b","deployment_id":"d","kind":"tarball","source_bytes":0,"status":"running","enqueued_at":"2026-08-10T12:00:00Z"}`)
 	}))

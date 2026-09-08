@@ -17,8 +17,10 @@ default for new function apps. A future PR may flip once fleet-wide
 
 ## Function contract
 
-The customer's source is a Node module exporting `default async
-function handler(req)`, served at `/app/node24.js`. Generated adapters are
+The customer's source is a Node module exporting either `default async
+function handler(event, ctx)` or a Fetch API object (`export default {
+fetch(request, env, ctx) { ... } }`), served at `/app/node24.js`.
+Generated adapters are
 prewarmed during runner startup and process newline-framed §4.9 envelopes in
 one long-lived subprocess; legacy protocol handlers retain one subprocess
 per request. The runner reads the envelope from stdin and the handler writes
@@ -26,6 +28,12 @@ the response envelope to stdout.
 This is identical to the `node22` contract; the only differences are
 the **handler filename** (`/app/node24.js` vs `/app/node22.js`) and
 the runtime id (`node24` vs `node22`).
+
+Fetch API handlers receive a standard WHATWG `Request` whose URL uses the
+`http://faas.local` origin and whose path, query string, headers, and raw body
+come from the incoming envelope. They return a standard `Response`; the
+adapter preserves its status, headers, and bytes. The third `ctx` argument
+includes `waitUntil()` for Workers-compatible handler code.
 
 The runner shim sets `FAAS_RUNTIME=node24` in the handler's environment
 so customers can branch on runtime if they want.
@@ -41,6 +49,19 @@ export default async function handler(req) {
     body_b64: Buffer.from(JSON.stringify({ hello: "world" })).toString("base64"),
   };
 }
+```
+
+### Fetch API handler
+
+```js
+// /app/handler.js
+export default {
+  async fetch(request) {
+    return new Response(`hello ${new URL(request.url).pathname}`, {
+      headers: { "content-type": "text/plain" },
+    });
+  },
+};
 ```
 
 ### Local smoke test

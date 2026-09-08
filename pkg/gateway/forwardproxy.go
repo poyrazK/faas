@@ -490,7 +490,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// otherwise shadows the package).
 			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
-				evs.Emit(r.Context(), evts.ProxyFirstByte{
+				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
 					EmitAt:     time.Now().UTC(),
 					WakeID:     t.WakeID,
 					AppID:      r.Header.Get("x-faas-app"),
@@ -797,7 +797,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// the test corpus).
 			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
-				evs.Emit(r.Context(), evts.ProxyFirstByte{
+				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
 					EmitAt:     time.Now().UTC(),
 					WakeID:     t.WakeID,
 					AppID:      r.Header.Get("x-faas-app"),

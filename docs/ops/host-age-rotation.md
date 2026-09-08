@@ -6,7 +6,7 @@ on the box: per-app `app_secrets` envelopes (apid writes),
 per-instance TOTP MFA secrets (apid reads via
 `LoadCredential=faas_host_age_identity`), per-wake secret env vars
 (vmmd reads), githubd install tokens, alert evaluator webhook
-secrets. Every customer envelope is sealed to the host's
+secrets, and Gregale-issued S3 signing credentials. Every customer envelope is sealed to the host's
 **current** age recipient; if the on-disk key changes without
 plumbing to keep envelopes sealed under the **previous** key
 unsealed, every MFA confirm + every wake secret injection +
@@ -34,21 +34,22 @@ matters when:
    (e.g. a snapshot that was exfiltrated but never decrypted until
    later).
 
-What rotation does NOT do:
+What rotation does NOT do by itself:
 
-- It does NOT re-seal pre-rotation envelopes to the new key.
-  Envelopes sealed under the previous key remain sealed under the
-  previous key; only the unseal side learns the new identity, via
-  the 30-day overlap window.
+- It does NOT re-seal every pre-rotation envelope at the instant the
+  key files are swapped. The optional apid walker re-seals
+  `app_secrets` in the background. `s3-gatewayd` is the exception:
+  after its restart in step 4 it synchronously re-seals all active
+  Gregale S3 credentials before it begins listening.
 - It does NOT change `audit-HMAC` values. The audit-join key is
   independently generated (`/var/lib/faas/audit-hmac.key`,
   0600 root:root — see `docs/ops/secrets-rotation.md`) and stable
   across host.age rotation. `events.data.email_hash` for the same
   email is identical before and after a host.age rotation.
-- It does NOT change customer app secrets. `app_secrets` rows
-  remain under the recipient they were sealed with; the
-  unseal-side identity set just grows to cover both keys during
-  the overlap.
+- It does NOT change customer app-secret plaintext. Until the
+  optional walker runs, existing `app_secrets` rows remain under
+  their original recipient; the unseal-side identity set covers
+  both keys during the overlap.
 
 ## v1 partial-deliverable
 
@@ -97,13 +98,13 @@ operator-facing surfaces.
 
 - The box is in a quiet window (no in-flight cron invocations,
   no build VM running). Rotation is not destructive, but the
-  30-second bounce of four daemons + the 30-day envelope overlap
+  30-second bounce of five daemons + the 30-day envelope overlap
   is best done off-peak.
 
 ## Procedure
 
 Six numbered steps. The expected wall-clock for a clean run is
-under 5 minutes plus the four-daemon bounce.
+under 5 minutes plus the five-daemon bounce.
 
 ### 1. Generate the new key + pre-flight check
 
@@ -193,12 +194,16 @@ sudo systemctl restart faas-apid
 #    and don't care which order they bounce in, so long as vmmd and
 #    apid are already on the new identity.
 sudo systemctl restart faas-meterd faas-githubd
+
+# 4. s3-gatewayd — loads both identities and synchronously re-seals every
+#    active S3 credential under the new current identity before listening.
+sudo systemctl restart faas-s3-gatewayd
 ```
 
-daemons don't watch the file — systemd restart re-reads via
+Daemons don't watch the file — systemd restart re-reads via
 `LoadCredential=faas_host_age_identity` (apid) and the
 `FAAS_HOST_AGE_IDENTITY_PATH` env var + LoadHostKeys(dir) for the
-other three. Without the bounce, daemons still hold the
+other four. Without the bounce, daemons still hold the
 **pre-rotation** identity and the rotation does nothing.
 
 After vmmd's restart, `host.age.pub` now points at the NEW
@@ -212,11 +217,13 @@ sudo ls -la /etc/faas/secrets/
 # host.age.previous    0400 root:root  (old)
 ```
 
-Wait for the daemons to come up clean:
+Wait for the daemons to come up clean. A failed `faas-s3-gatewayd` start is a
+prune blocker: inspect the log, revoke or repair the unreadable credential, and
+restart successfully before removing `host.age.previous`.
 
 ```sh
-sudo systemctl status faas-apid faas-vmmd faas-meterd faas-githubd
-# expect: active (running) on all four
+sudo systemctl status faas-apid faas-vmmd faas-meterd faas-githubd faas-s3-gatewayd
+# expect: active (running) on all five
 ```
 
 ### 5. Verify unseal health post-bounce
@@ -255,7 +262,7 @@ A rotation is healthy when ALL of the following are true:
 | Signal | Source | Healthy value |
 |---|---|---|
 | `gregalectl host-age status` shows both fingerprints | operator CLI | current + previous visible |
-| All four daemon status lines green | `systemctl is-active` | active (running) |
+| All five daemon status lines green | `systemctl is-active` | active (running) |
 | `apid_open_failed_total` (Prometheus) | `/metrics` on apid:9090 | 0 |
 | `vmmd_unseal_failed_total` | `/metrics` on vmmd:9090 | 0 |
 | `alert_evaluator_skipped_total{reason="no_identity"}` | meterd `/metrics` | 0 |
@@ -263,6 +270,7 @@ A rotation is healthy when ALL of the following are true:
 | Customer MFA confirm path returns 200 | manual curl | yes |
 | Customer app-secrets GET returns 200 | manual curl | yes |
 | Newly-sealed envelope sealed under new recipient | manual sqlc query | yes (recipient matches current) |
+| Every active S3 credential has the current recipient KID | `object_s3_credentials.kid` | zero mismatches |
 
 The first row is operator-driven; the next six are telemetry
 that the runbook's PostGres query (or `metric-schema` curl) can
@@ -275,27 +283,32 @@ Up until `gregalectl host-age prune-previous`, the previous key is
 still on disk as `host.age.previous`. Rollback is:
 
 ```sh
-# Stop all four daemons.
-sudo systemctl stop faas-vmmd faas-apid faas-meterd faas-githubd
+# Stop all five daemons.
+sudo systemctl stop faas-vmmd faas-apid faas-meterd faas-githubd faas-s3-gatewayd
 
-# Restore the previous key as the new current.
+# Restore the previous key as current while retaining the rotated key as
+# previous. Do not overwrite either identity: envelopes may exist under both.
+sudo mv /etc/faas/secrets/host.age /etc/faas/secrets/host.age.rotated
 sudo mv /etc/faas/secrets/host.age.previous /etc/faas/secrets/host.age
-sudo chmod 0400 /etc/faas/secrets/host.age
+sudo mv /etc/faas/secrets/host.age.rotated /etc/faas/secrets/host.age.previous
+sudo chmod 0400 /etc/faas/secrets/host.age /etc/faas/secrets/host.age.previous
 
 # Restart in the same order as step 4: vmmd first (it owns
 # host.age.pub), then apid (it reads host.age.pub as its sealing
-# key), then meterd + githubd.
+# key), then meterd + githubd, then s3-gatewayd. The gateway re-seals active
+# S3 credentials back under the restored current key before listening.
 sudo systemctl start faas-vmmd
 sudo systemctl start faas-apid
 sudo systemctl start faas-meterd faas-githubd
+sudo systemctl start faas-s3-gatewayd
 ```
 
-This restores the pre-rotation state exactly: every daemon
-loads the single previous identity, every pre-rotation envelope
-unseals, every post-rotation envelope (sealed between rotate
-and rollback) is permanently unreadable. The cost of a rollback
-is the post-rotation envelopes; for a 5-minute rotation window
-that's effectively zero. **Do not roll back after
+This restores the pre-rotation identity as current while retaining
+the rotated identity for the overlap. Every envelope remains
+readable, including envelopes sealed between rotation and rollback.
+Do not remove the now-previous rotated key until the app-secret
+walker has drained and `faas-s3-gatewayd` has restarted
+successfully. **Do not roll back after
 `prune-previous`** — the previous file is gone and the rotation
 is irreversible until you re-provision a fresh host.age from
 backup.
@@ -539,6 +552,10 @@ store — the walker has nothing to unseal with.
   operator rotates the key file via `gregalectl host-age rotate`;
   the walker only re-seals `app_secrets` rows under the
   already-promoted new identity.
+- It does not re-seal Gregale S3 credentials. `s3-gatewayd` owns
+  those rows and synchronously re-seals all active credentials on
+  startup; this is independent of `FAAS_REKEY_ENABLED`. A gateway
+  startup failure therefore blocks pruning the previous identity.
 - It does not retry a row whose kid already matched the
   current identity. `skipped` is a one-way decision: a row
   sealed under the current kid does not need to be re-sealed.

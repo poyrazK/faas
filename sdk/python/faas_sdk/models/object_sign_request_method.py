@@ -1,9 +1,10 @@
 from typing import Literal
 
-ObjectSignRequestMethod = Literal["GET", "PUT"]
+ObjectSignRequestMethod = Literal["GET", "HEAD", "PUT"]
 
 OBJECT_SIGN_REQUEST_METHOD_VALUES: set[ObjectSignRequestMethod] = {
     "GET",
+    "HEAD",
     "PUT",
 }
 

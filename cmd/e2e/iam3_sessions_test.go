@@ -53,7 +53,7 @@ import (
 // (the load-bearing reason #244 was chosen over #187) is the
 // first assertion.
 func TestIAM3SessionsMatrixPg(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

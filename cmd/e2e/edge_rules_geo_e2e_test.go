@@ -50,7 +50,7 @@ import (
 // gate skips and the request falls through to Backend.Pick
 // (404 — synthetic host, no production mapping).
 func TestEdgeRulesGeo_E2E_FailOpenUnderMissingDB(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -130,7 +130,7 @@ func TestEdgeRulesGeo_E2E_FailOpenUnderMissingDB(t *testing.T) {
 // that distinguishes a passing test for the right reason from a
 // passing test for the general-cap reason.
 func TestEdgeRulesGeo_E2E_FreeQuotaRejected(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

@@ -202,6 +202,25 @@ func TestRenderer_ComputePKIIncludesPrivateEndpointSAN(t *testing.T) {
 	if cert.Subject.CommonName != "fsn-2.faas" {
 		t.Fatalf("vmmd server CN = %q, want fsn-2.faas", cert.Subject.CommonName)
 	}
+
+	certPEM, err = os.ReadFile(filepath.Join(dir, "tls", "gatewayd", "apid-client.crt"))
+	if err != nil {
+		t.Fatalf("read gatewayd apid client cert: %v", err)
+	}
+	block, _ = pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("gatewayd apid client cert is not PEM")
+	}
+	cert, err = x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse gatewayd apid client cert: %v", err)
+	}
+	if cert.Subject.CommonName != "fsn-2.faas" {
+		t.Fatalf("gatewayd apid client CN = %q, want fsn-2.faas", cert.Subject.CommonName)
+	}
+	if !containsString(cert.DNSNames, "gatewayd.faas") || !containsString(cert.DNSNames, "fsn-2.gregale.dev") {
+		t.Fatalf("gatewayd apid client SANs = %v, want role and endpoint identities", cert.DNSNames)
+	}
 }
 
 func TestRenderer_PKITrustOnlyDoesNotRequireCAKey(t *testing.T) {
@@ -534,15 +553,13 @@ func TestRenderer_ResolvesComputeOnlyDaemons(t *testing.T) {
 			}
 		}
 	}
-	// And it MUST emit the compute-only set. (builderd is NOT
-	// in the registry because vmmd spawns it per-build; the
-	// renderer's role filter mirrors the registry.)
+	// And it MUST emit the complete compute-only set.
 	gotPaths := map[string]bool{}
 	for _, o := range report.Outputs {
 		gotPaths[filepath.Base(o.Path)] = true
 	}
 	for _, want := range []string{
-		"vmmd.toml", "imaged.toml", "gatewayd-internal.toml",
+		"vmmd.toml", "imaged.toml", "builderd.toml", "gatewayd-internal.toml",
 		"faas-cp.slice",
 	} {
 		if !gotPaths[want] {

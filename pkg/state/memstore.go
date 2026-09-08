@@ -106,6 +106,7 @@ type MemStore struct {
 	objectReports          []api.ObjectStorageUsageReport
 	objectAuthorizations   map[string]int64
 	objectAccessGrants     map[string]ObjectBucketAccessGrant
+	objectS3Credentials    map[string]ObjectS3Credential
 	objectMultipartUploads map[string]ObjectMultipartUpload
 	mu                     sync.Mutex
 	accounts               map[string]Account
@@ -723,6 +724,7 @@ type builderUsageRow struct {
 func NewMemStore() *MemStore {
 	m := &MemStore{
 		objectAccessGrants:     map[string]ObjectBucketAccessGrant{},
+		objectS3Credentials:    map[string]ObjectS3Credential{},
 		objectMultipartUploads: map[string]ObjectMultipartUpload{},
 		accounts:               map[string]Account{},
 		keys:                   map[string]APIKey{},
@@ -11235,12 +11237,22 @@ func (m *MemStore) AppendEvent(ctx context.Context, actor, kind string, subject 
 	return m.AppendEventWithTrace(ctx, actor, kind, subject, data, nil)
 }
 
+// AppendEventAt mirrors PgStore's timestamp-preserving asynchronous wake-event
+// path so in-memory acceptance tests observe the same timeline ordering.
+func (m *MemStore) AppendEventAt(ctx context.Context, actor, kind string, subject *string, data []byte, at time.Time) error {
+	return m.appendEventWithTraceAt(ctx, actor, kind, subject, data, nil, at)
+}
+
 // AppendEventWithTrace writes one row to the in-memory events
 // mirror with an optional OTel W3C 32-char hex trace_id. The hex
 // format is validated defensively at the boundary so test doubles
 // cannot accept an invalid value (mirrors the migration CHECK at
 // 00486 for PgStore). When traceID is nil the field is left nil.
-func (m *MemStore) AppendEventWithTrace(_ context.Context, actor, kind string, subject *string, data []byte, traceID *string) error {
+func (m *MemStore) AppendEventWithTrace(ctx context.Context, actor, kind string, subject *string, data []byte, traceID *string) error {
+	return m.appendEventWithTraceAt(ctx, actor, kind, subject, data, traceID, time.Now())
+}
+
+func (m *MemStore) appendEventWithTraceAt(_ context.Context, actor, kind string, subject *string, data []byte, traceID *string, at time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var subj *uuid.UUID
@@ -11254,7 +11266,7 @@ func (m *MemStore) AppendEventWithTrace(_ context.Context, actor, kind string, s
 	}
 	e := Event{
 		ID:      int64(len(m.events) + 1),
-		At:      time.Now(),
+		At:      at,
 		Actor:   actor,
 		Kind:    kind,
 		Subject: subj,
@@ -14400,6 +14412,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for grantKey, grant := range m.objectAccessGrants {
 		if grant.AccountID == id {
 			delete(m.objectAccessGrants, grantKey)
+		}
+	}
+	for credentialID, credential := range m.objectS3Credentials {
+		if credential.AccountID == id {
+			delete(m.objectS3Credentials, credentialID)
 		}
 	}
 	for uploadID, upload := range m.objectMultipartUploads {
