@@ -213,6 +213,52 @@ func TestEmitRestoreBreakdown_WithoutWakeIDDoesNotEmit(t *testing.T) {
 	}
 }
 
+// adr: 168
+func TestEmitColdBootCPU_EmitsTimelineRow(t *testing.T) {
+	store := state.NewMemStore()
+	platform := buildReadinessPlatform(t, store)
+	v := &JailerVMM{events: platform}
+	wakeID := "w-cold-cpu-001"
+	ctx := wire.WithContext(context.Background(), wire.CorrelationFields{
+		WakeID: wakeID,
+		AppID:  "app-cold-cpu-001",
+	})
+	v.emitColdBootCPU(ctx, Lease{Instance: "inst-cold-cpu-001"}, time.Now(), events.ColdBootCPU{
+		StartupCPUMillicores:    1000,
+		ConfiguredCPUMillicores: 250,
+		PreReadyMs:              2400,
+		WaitReadyMs:             2200,
+		QuotaRestoreMs:          1,
+		TotalMs:                 2401,
+	})
+
+	var rows []state.Event
+	deadline := time.Now().Add(time.Second)
+	for len(rows) == 0 && time.Now().Before(deadline) {
+		var err error
+		rows, err = store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0)
+		if err != nil {
+			t.Fatalf("ListEventsByWakeID: %v", err)
+		}
+		if len(rows) == 0 {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].Kind != events.WakeColdBootCPU {
+		t.Fatalf("kind = %q, want %q", rows[0].Kind, events.WakeColdBootCPU)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rows[0].Data, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["startup_cpu_millicores"] != float64(1000) || payload["configured_cpu_millicores"] != float64(250) {
+		t.Errorf("CPU payload = startup:%v configured:%v, want 1000/250", payload["startup_cpu_millicores"], payload["configured_cpu_millicores"])
+	}
+}
+
 // silence the unsued import warnings when the metric stubs are
 // inlined into the type — the lockless constructors below exist
 // solely to keep the test self-contained.

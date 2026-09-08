@@ -56,6 +56,12 @@ const (
 	// total_ms}. Emitted after a successful restore so operators can
 	// identify which part of the vmmd restore window exceeded budget.
 	WakeRestoreBreakdown = "wake.restore_breakdown"
+	// WakeColdBootCPU — vmmd temporarily raised the host-side CPU allowance
+	// for an app cold boot, observed readiness, and restored the configured
+	// quota before returning success. Payload: {wake_id, app_id, instance_id,
+	// startup_cpu_millicores, configured_cpu_millicores, pre_ready_ms,
+	// wait_ready_ms, quota_restore_ms, total_ms}.
+	WakeColdBootCPU = "wake.cold_boot_cpu"
 	// WakeBootCompleted — schedd post-RecordRuntime; the instance
 	// is now RUNNING. Sibling of the existing `app.characterized`
 	// audit row (different timings — `app.characterized` follows
@@ -364,6 +370,39 @@ type RestoreArtifactResolution struct {
 	Artifact   string `json:"artifact"`
 	Source     string `json:"source"`
 	DurationMs int64  `json:"duration_ms"`
+}
+
+// ColdBootCPU is emitted after a successful app cold boot and after cpu.max
+// has been lowered to the sustained customer setting. PreReadyMs covers the
+// host boot path through readiness; TotalMs also includes the quota restore.
+type ColdBootCPU struct {
+	EmitAt                  time.Time
+	WakeID                  string
+	AppID                   string
+	InstanceID              string
+	StartupCPUMillicores    int
+	ConfiguredCPUMillicores int
+	PreReadyMs              int64
+	WaitReadyMs             int64
+	QuotaRestoreMs          int64
+	TotalMs                 int64
+}
+
+func (e ColdBootCPU) Kind() string     { return WakeColdBootCPU }
+func (e ColdBootCPU) At() time.Time    { return e.EmitAt }
+func (e ColdBootCPU) Subject() *string { return nil }
+func (e ColdBootCPU) Payload() map[string]any {
+	return map[string]any{
+		"wake_id":                   e.WakeID,
+		"app_id":                    e.AppID,
+		"instance_id":               e.InstanceID,
+		"startup_cpu_millicores":    e.StartupCPUMillicores,
+		"configured_cpu_millicores": e.ConfiguredCPUMillicores,
+		"pre_ready_ms":              e.PreReadyMs,
+		"wait_ready_ms":             e.WaitReadyMs,
+		"quota_restore_ms":          e.QuotaRestoreMs,
+		"total_ms":                  e.TotalMs,
+	}
 }
 
 func (e RestoreBreakdown) Kind() string     { return WakeRestoreBreakdown }

@@ -23,6 +23,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 168 | [Temporary cold-boot CPU allowance](168-cold-boot-startup-cpu.md) | accepted | SSD-node micro-profile cold-boot measurements; issue #1668 |
 | 165 | [Remote snapshot memory compression](165-remote-snapshot-memory-compression.md) | proposed | SSD-node snapshot publication measurement; reader-first OCI wire-format rollout |
 | 158 | [Provider-neutral resumable multipart object uploads](158-provider-neutral-multipart-uploads.md) | accepted | Large-object and interrupted-upload hardening for S3 preview |
 | 164 | [Container workload networking v1](164-container-workload-networking.md) | accepted | Loopback endpoint contract for main and sidecar workloads |
