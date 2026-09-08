@@ -4259,8 +4259,8 @@ func (c *Client) DeleteAppOpenAPI(ctx context.Context, slug string) error {
 }
 
 // ListAppDebugRequests returns the recent per-app request-telemetry
-// rows (status, bounded latency representative, route, deployment_id,
-// trace_id, received_at) for slug (ADR-127 / PR-A). The endpoint is the
+// rows (status, latency_ms, route, deployment_id, trace_id,
+// received_at) for slug (ADR-127 / PR-A). The endpoint is the
 // read-side of the production-debugger data plane; the write-side
 // (gateway publisher → apid gRPC IncrementRequestTelemetry →
 // sqlc INSERT) lands in PR-B.
