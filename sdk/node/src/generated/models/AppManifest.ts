@@ -66,3 +66,4 @@ export type AppManifest = {
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
 };
+

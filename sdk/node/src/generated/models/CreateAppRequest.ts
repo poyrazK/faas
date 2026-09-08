@@ -52,7 +52,7 @@ export type CreateAppRequest = {
    */
   head_wakes?: boolean;
   /**
-   * Policy for known monitor/crawler requests: wake, serve only a fresh edge cache hit, or suppress the wake.
+   * Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the wake.
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
   /**
@@ -100,3 +100,4 @@ export type CreateAppRequest = {
    */
   require_authn?: boolean;
 };
+

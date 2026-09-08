@@ -21296,7 +21296,7 @@ components:
         app: { $ref: '#/components/schemas/WakeTimelineApp' }
         wake_count_24h:
           type: integer
-          description: "Number of instance rows in the trailing 24h window (after the descending-cutoff break)."
+          description: "Number of instance rows in the trailing 24h window (after the descending-cutoff break; the endpoint examines up to 100 recent rows)."
         wake_count_with_meta:
           type: integer
           description: "Denominator for at_capacity_pct — count of rows where the events.wake.boot_started LEFT JOIN succeeded."
@@ -21318,7 +21318,7 @@ components:
           description: "trigger_class → N count of known user/monitor/crawler/preview_bot/unknown classifications. Empty {} on a fresh app, never null."
         rows:
           type: array
-          description: "Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break)."
+          description: "Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break) and capped at 100 recent rows."
           items: { $ref: '#/components/schemas/WakeTimelineJSONRow' }
         as_of:
           type: string

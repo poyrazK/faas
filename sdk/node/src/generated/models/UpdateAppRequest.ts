@@ -56,7 +56,7 @@ export type UpdateAppRequest = {
   /**
    * Policy for known monitor/crawler requests. Omit for no change.
    */
-  crawler_policy?: 'wake' | 'cached' | 'block' | null;
+  crawler_policy?: 'wake' | 'cached' | 'block';
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.
@@ -129,3 +129,4 @@ export type UpdateAppRequest = {
   cors_default_enabled?: boolean | null;
   cors_default_origins?: Array<string>;
 };
+
