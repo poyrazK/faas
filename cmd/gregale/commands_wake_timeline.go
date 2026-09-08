@@ -336,10 +336,35 @@ func renderRestoreBreakdown(ev api.WakeTimelineEvent) string {
 		}
 		parts = append(parts, fmt.Sprintf("%s=%dms", field.label, ms))
 	}
+	if artifacts := renderRestoreArtifacts(ev.Data["resolve_artifacts"]); artifacts != "" {
+		parts = append(parts, "artifacts="+artifacts)
+	}
 	if len(parts) == 0 {
 		return ""
 	}
 	return "restore " + strings.Join(parts, " ")
+}
+
+func renderRestoreArtifacts(value any) string {
+	rows, ok := value.([]any)
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, len(rows))
+	for _, row := range rows {
+		artifact, ok := row.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := artifact["artifact"].(string)
+		source, _ := artifact["source"].(string)
+		ms, durationOK := timelineMillis(artifact["duration_ms"])
+		if name == "" || source == "" || !durationOK {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s/%s=%dms", name, source, ms))
+	}
+	return strings.Join(parts, ",")
 }
 
 func timelineMillis(v any) (int64, bool) {

@@ -114,6 +114,10 @@ func TestRenderRestoreBreakdown_ExactTotalAndPhases(t *testing.T) {
 			"load_snapshot_ms":   float64(400),
 			"wait_ready_ms":      float64(131),
 			"materialize_mem_ms": float64(3),
+			"resolve_artifacts": []any{
+				map[string]any{"artifact": "kernel", "source": "backend_local", "duration_ms": float64(1)},
+				map[string]any{"artifact": "main", "source": "cache_hit", "duration_ms": float64(4)},
+			},
 		},
 	}
 	got := renderRestoreBreakdown(ev)
@@ -122,6 +126,7 @@ func TestRenderRestoreBreakdown_ExactTotalAndPhases(t *testing.T) {
 		"materialize_mem=3ms",
 		"load_snapshot=400ms",
 		"wait_ready=131ms",
+		"artifacts=kernel/backend_local=1ms,main/cache_hit=4ms",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("renderRestoreBreakdown missing %q in %q", want, got)

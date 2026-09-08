@@ -145,6 +145,24 @@ type restoreTimingBreakdown struct {
 	ResumeHookMs         int64
 	WaitReadyMs          int64
 	TotalMs              int64
+	ResolveArtifacts     []restoreArtifactTiming
+}
+
+type restoreArtifactTiming struct {
+	Artifact   string `json:"artifact"`
+	Source     string `json:"source"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+type restoreArtifactSpec struct {
+	artifact     string
+	key          string
+	errorContext string
+}
+
+type restoreArtifactResolution struct {
+	restoreArtifactTiming
+	path string
 }
 
 // instanceRecord tracks one firecracker child + build-specific options so
@@ -759,40 +777,41 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if len(spec.Workloads) == 0 && spec.LayerKey == "" {
 		return fmt.Errorf("vmm: restore spec missing layer: %+v", spec)
 	}
-	kernelSrc, err := v.restoreSourceFromStorage(ctx, l.Instance, spec.KernelKey)
-	if err != nil {
-		return fmt.Errorf("vmm: stage kernel: %w", err)
+	// Resolve hot local inputs together. LocalPath never fetches remote bytes,
+	// so parallel probes collapse independent filesystem metadata stalls while
+	// cache misses retain the existing sequential materialization behavior.
+	artifacts := []restoreArtifactSpec{
+		{artifact: "kernel", key: spec.KernelKey, errorContext: "vmm: stage kernel"},
+		{artifact: "base", key: spec.BaseKey, errorContext: "vmm: stage base"},
 	}
-	baseSrc, err := v.restoreSourceFromStorage(ctx, l.Instance, spec.BaseKey)
-	if err != nil {
-		return fmt.Errorf("vmm: stage base: %w", err)
-	}
-	// Issue #463 / ADR-069 / PR-B: when Workloads is empty, the
-	// legacy single-workload path resolves spec.LayerKey once and
-	// stages it as the rw drive1. When Workloads is non-empty, we
-	// resolve each workload's StorageBackend key in turn and stage
-	// the resolved path as either rw (main, idx==0) or ro (sidecars).
-	var layerSrc string
-	resolvedWorkloads := make([]string, 0, len(spec.Workloads))
 	if len(spec.Workloads) == 0 {
-		layerSrc, err = v.restoreSourceFromStorage(ctx, l.Instance, spec.LayerKey)
-		if err != nil {
-			return fmt.Errorf("vmm: stage layer: %w", err)
-		}
+		artifacts = append(artifacts, restoreArtifactSpec{
+			artifact: "main", key: spec.LayerKey, errorContext: "vmm: stage layer",
+		})
 	} else {
-		for i, w := range spec.Workloads {
-			resolved, mErr := v.restoreSourceFromStorage(ctx, l.Instance, w.StorageKey)
-			if mErr != nil {
-				return fmt.Errorf("vmm: stage workload %d (%s): %w", i, w.Name, mErr)
+		for i, workload := range spec.Workloads {
+			artifact := "main"
+			if i > 0 {
+				artifact = fmt.Sprintf("sidecar:%s", workload.Name)
 			}
-			resolvedWorkloads = append(resolvedWorkloads, resolved)
-			if i == 0 {
-				// Main workload — must be rw so the customer's
-				// container can write to /tmp etc. Sidecars go
-				// ro below.
-				layerSrc = resolved
-			}
+			artifacts = append(artifacts, restoreArtifactSpec{
+				artifact: artifact,
+				key:      workload.StorageKey,
+				errorContext: fmt.Sprintf("vmm: stage workload %d (%s)",
+					i, workload.Name),
+			})
 		}
+	}
+	resolvedArtifacts, err := v.resolveRestoreArtifacts(ctx, l.Instance, artifacts)
+	if err != nil {
+		return err
+	}
+	kernelSrc := resolvedArtifacts[0].path
+	baseSrc := resolvedArtifacts[1].path
+	layerSrc := resolvedArtifacts[2].path
+	resolvedWorkloads := make([]string, 0, len(spec.Workloads))
+	for i := range spec.Workloads {
+		resolvedWorkloads = append(resolvedWorkloads, resolvedArtifacts[i+2].path)
 	}
 	tResolve := time.Now()
 	if _, err := v.stageReadOnlyAs(root, kernelSrc, stableReadOnlyName(kernelSrc, kernelImageName), l.Instance); err != nil {
@@ -903,14 +922,20 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		ResumeHookMs:         tResume.Sub(tLoad).Milliseconds(),
 		WaitReadyMs:          tReady.Sub(tResume).Milliseconds(),
 		TotalMs:              tReady.Sub(t0).Milliseconds(),
+		ResolveArtifacts:     restoreArtifactTimings(resolvedArtifacts),
 	}
 	v.emitRestoreBreakdown(ctx, l, tReady, breakdown)
-	slog.Default().Info("restore timing breakdown",
+	// The durable wake event above is the operator-facing record. Keep the
+	// duplicate structured log at Debug so a slow journald sink cannot delay
+	// the vmmd RPC after readiness and therefore postpone schedd's RUNNING
+	// transition.
+	slog.Default().Debug("restore timing breakdown",
 		"instance", l.Instance,
 		"chroot_ms", breakdown.ChrootMs,
 		"materialize_mem_ms", breakdown.MaterializeMemMs,
 		"materialize_vmstate_ms", breakdown.MaterializeVMStateMs,
 		"resolve_images_ms", breakdown.ResolveImagesMs,
+		"resolve_artifacts", breakdown.ResolveArtifacts,
 		"mem_state_resolve_ms", tMemStateResolve.Sub(tMemStateResolveStart).Milliseconds(),
 		"stage_drives_ms", breakdown.StageDrivesMs,
 		"stage_writable_ms", tStageWritable.Sub(tStageWritableStart).Milliseconds(),
@@ -3461,7 +3486,20 @@ func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.T
 		ResumeHookMs:         b.ResumeHookMs,
 		WaitReadyMs:          b.WaitReadyMs,
 		TotalMs:              b.TotalMs,
+		ResolveArtifacts:     eventRestoreArtifactTimings(b.ResolveArtifacts),
 	})
+}
+
+func eventRestoreArtifactTimings(timings []restoreArtifactTiming) []events.RestoreArtifactResolution {
+	resolved := make([]events.RestoreArtifactResolution, len(timings))
+	for i := range timings {
+		resolved[i] = events.RestoreArtifactResolution{
+			Artifact:   timings[i].Artifact,
+			Source:     timings[i].Source,
+			DurationMs: timings[i].DurationMs,
+		}
+	}
+	return resolved
 }
 
 // healthcheckProbe issues a single GET against
@@ -4028,21 +4066,92 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 // not implement LocalPathResolver and retain the streaming materialization
 // path.
 func (v *JailerVMM) restoreSourceFromStorage(ctx context.Context, instanceID, key string) (string, error) {
-	if key == "" || filepath.IsAbs(key) || v.storage == nil {
-		return v.materializeFromStorage(ctx, instanceID, key)
+	path, _, local, err := v.probeRestoreLocalPath(key)
+	if err != nil {
+		return "", err
 	}
-	if resolver, ok := v.storage.(storage.LocalPathResolver); ok {
-		if path, local, err := resolver.LocalPath(key); err != nil {
-			return "", err
-		} else if local {
-			// Keep the cold-boot path observable while storage backends are
-			// being migrated between local and OCI routing. The key is
-			// canonical and the resolved path contains no customer payload.
-			slog.Default().Info("vmm: resolved local storage path", "key", key, "path", path)
-			return path, nil
-		}
+	if local {
+		return path, nil
 	}
 	return v.materializeFromStorage(ctx, instanceID, key)
+}
+
+// probeRestoreLocalPath is a metadata-only check. It never invokes Get, so a
+// false result is safe to run concurrently for every restore artifact before
+// cache misses are materialized in their original sequential order.
+func (v *JailerVMM) probeRestoreLocalPath(key string) (string, string, bool, error) {
+	if key == "" || filepath.IsAbs(key) || v.storage == nil {
+		return "", "", false, nil
+	}
+	if resolver, ok := v.storage.(storage.LocalPathSourceResolver); ok {
+		path, source, local, err := resolver.LocalPathWithSource(key)
+		return path, string(source), local, err
+	}
+	if resolver, ok := v.storage.(storage.LocalPathResolver); ok {
+		path, local, err := resolver.LocalPath(key)
+		if err != nil || !local {
+			return path, "", local, err
+		}
+		return path, string(storage.LocalPathSourceBackend), true, nil
+	}
+	return "", "", false, nil
+}
+
+// resolveRestoreArtifacts resolves the hot local path in parallel and retains
+// sequential Get/materialization on misses. This removes serial metadata and
+// logging stalls from snapshot readiness without increasing remote fetch
+// concurrency. Results preserve input order so drive staging remains stable.
+func (v *JailerVMM) resolveRestoreArtifacts(ctx context.Context, instanceID string, specs []restoreArtifactSpec) ([]restoreArtifactResolution, error) {
+	results := make([]restoreArtifactResolution, len(specs))
+	errs := make([]error, len(specs))
+	local := make([]bool, len(specs))
+
+	var probes sync.WaitGroup
+	probes.Add(len(specs))
+	for i := range specs {
+		go func(i int) {
+			defer probes.Done()
+			started := time.Now()
+			path, source, hit, err := v.probeRestoreLocalPath(specs[i].key)
+			results[i] = restoreArtifactResolution{
+				restoreArtifactTiming: restoreArtifactTiming{
+					Artifact:   specs[i].artifact,
+					Source:     source,
+					DurationMs: time.Since(started).Milliseconds(),
+				},
+				path: path,
+			}
+			local[i] = hit
+			errs[i] = err
+		}(i)
+	}
+	probes.Wait()
+
+	for i := range specs {
+		if errs[i] != nil {
+			return nil, fmt.Errorf("%s: %w", specs[i].errorContext, errs[i])
+		}
+		if local[i] {
+			continue
+		}
+		started := time.Now()
+		path, err := v.materializeFromStorage(ctx, instanceID, specs[i].key)
+		results[i].DurationMs += time.Since(started).Milliseconds()
+		results[i].Source = "materialized"
+		results[i].path = path
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", specs[i].errorContext, err)
+		}
+	}
+	return results, nil
+}
+
+func restoreArtifactTimings(resolutions []restoreArtifactResolution) []restoreArtifactTiming {
+	timings := make([]restoreArtifactTiming, len(resolutions))
+	for i := range resolutions {
+		timings[i] = resolutions[i].restoreArtifactTiming
+	}
+	return timings
 }
 
 // trackMaterialised records tmpPath against instanceID so Kill /

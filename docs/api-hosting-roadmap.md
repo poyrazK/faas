@@ -95,7 +95,7 @@ by framework and source shape so one fast happy path cannot hide a broken one.
 | Cached edit to live dev URL | p50 <= 5 s; p95 <= 15 s | `gregale dev` telemetry, split by framework |
 | Platform-caused deploy success | >= 99.5% | builds excluding customer-code failures |
 | Actionable failures | 100% of catalogued failures name cause, relevant evidence, and one next action | error-contract tests |
-| Snapshot wake | p50 <= 350 ms; p95 <= 800 ms | reference-node and production histograms |
+| Platform snapshot wake | p95 < 350 ms | `wake.boot_started` to `wake.boot_completed` on the reference SSD node; excludes proxy, public edge, app response, and client distance |
 | Warm gateway overhead | p95 <= 20 ms inside the serving region | gateway minus guest timing |
 | Preview readiness | p95 <= 3 min from GitHub event | webhook-to-verified-URL trace |
 | Rollback recovery | p95 <= 60 s from command to healthy traffic | production-shaped drill |

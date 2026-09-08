@@ -90,14 +90,15 @@ Build logs stream to the terminal in real time (implementation spec §4.5, build
 - `timeout` → "Build exceeded 10 min. …"
 - `infra` → "Our build system hiccuped — we've been alerted and requeued your build automatically." (auto-requeue once)
 
-### 2.5 First request = cold wake (budget: p50 ≤ 350 ms, p95 ≤ 800 ms)
+### 2.5 First request = cold wake (platform snapshot wake: p95 < 350 ms)
 
 On success the CLI prints the live URL and sets expectations honestly:
 
 ```
 ✓ Deployed. https://jane-api.apps.gregale.dev
-  Your app scales to zero when idle. The first request after idle takes
-  ~0.3–0.8s to wake; requests after that are instant. This is normal and free.
+  Your app scales to zero when idle. Gregale restores it from a snapshot;
+  requests after that are instant. Public request time also depends on your
+  app, Cloudflare, and the network distance to the serving region.
 ```
 
 See §6 for how this is surfaced everywhere it matters.

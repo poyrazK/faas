@@ -151,6 +151,10 @@ func TestEmitRestoreBreakdown_EmitsTimelineRow(t *testing.T) {
 		ResumeHookMs:         11,
 		WaitReadyMs:          131,
 		TotalMs:              596,
+		ResolveArtifacts: []restoreArtifactTiming{
+			{Artifact: "kernel", Source: "backend_local", DurationMs: 1},
+			{Artifact: "base", Source: "cache_hit", DurationMs: 4},
+		},
 	})
 
 	var rows []state.Event
@@ -184,6 +188,14 @@ func TestEmitRestoreBreakdown_EmitsTimelineRow(t *testing.T) {
 	if got, ok := payload["total_ms"].(float64); !ok || got != 596 {
 		t.Errorf("payload.total_ms = %v, want 596", payload["total_ms"])
 	}
+	artifacts, ok := payload["resolve_artifacts"].([]any)
+	if !ok || len(artifacts) != 2 {
+		t.Fatalf("payload.resolve_artifacts = %#v, want two entries", payload["resolve_artifacts"])
+	}
+	first, ok := artifacts[0].(map[string]any)
+	if !ok || first["artifact"] != "kernel" || first["source"] != "backend_local" {
+		t.Errorf("payload.resolve_artifacts[0] = %#v", artifacts[0])
+	}
 }
 
 func TestEmitRestoreBreakdown_WithoutWakeIDDoesNotEmit(t *testing.T) {
@@ -205,3 +217,5 @@ func TestEmitRestoreBreakdown_WithoutWakeIDDoesNotEmit(t *testing.T) {
 // inlined into the type — the lockless constructors below exist
 // solely to keep the test self-contained.
 var _ = sync.Mutex{}
+
+// adr: 064

@@ -238,6 +238,14 @@ a registry round trip. Registry I/O occurs once per node and runtime
 generation, so the consistency repair does not consume the 350 ms full-wake
 latency budget after adoption.
 
+**2026-09-09 / issue #1673 amendment.** Local-path resolution exposes a stable
+source classification (`backend_local` or `cache_hit`) through storage wrappers.
+VMMD probes kernel, base, main, and sidecar local paths concurrently. A false
+probe falls back to the existing sequential `Get` materialization path; a true
+probe never calls `Get`, performs no remote existence check, and copies no blob.
+Cache LRU timestamp touches remain queued and best-effort, so slow metadata
+writes cannot delay restore readiness.
+
 ## Rejected alternatives
 
 - **One flat `OCIRegistryStorageBackend` for everything (no
