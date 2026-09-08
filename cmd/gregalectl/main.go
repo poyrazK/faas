@@ -43,6 +43,7 @@ Usage:
   gregalectl <command> [flags]
 
 Commands:
+  auth         Authenticated operator session (auth login|step-up|status|logout)
   manifest     Validate/render a split-box deployment manifest (manifest validate|render; issue #911 / ADR-110)
   release      Materialise / install / rotate a cluster-shipped release bundle (release bundle|install|kgv)
   doctor       Read-only diagnostic for the cluster-shipped release bundle (doctor [--node NAME] [--release SHA] [--deep]; PR-4 / ADR-110)
@@ -172,13 +173,12 @@ func run(args []string) int {
 		// compute node is allowed to start.
 		return cmdArtifactDispatch(args[1:])
 	case dispatchComputeNodes:
-		// PR #929 (image rollout) + PR-A (multi-host scale-out
-		// gap #1). Subcommands: add (operator POST → state.Store.
-		// UpsertComputeNodeFromOperator), drain / drain-status /
-		// activate / force-drain (→ state.Store.MarkComputeNodeInactive
-		// / SetComputeNodeActive). Signature matches every other
-		// dispatch* arm (see commands_release.go:cmdReleaseDispatch).
+		// Node registration/read tools plus authenticated, durable-intent
+		// lifecycle mutations. Direct DB writes require --break-glass-db.
 		return cmdComputeNodesDispatch(args[1:])
+	case dispatchOperatorAuth:
+		// Password + TOTP session used by strict provider mutations.
+		return cmdOperatorAuthDispatch(args[1:])
 	case dispatchInstances:
 		// P2a + P2b — operator recovery primitives. force-park
 		// dials schedd directly via FAAS_SCHEDD_ADDR. force-cold-

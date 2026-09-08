@@ -121,8 +121,9 @@ func TestApplyNodeOperatorIntent_LifecycleTransitions(t *testing.T) {
 		want    state.NodeLifecycle
 	}{
 		{name: "drain", kind: state.OperatorIntentKindNodeDrain, initial: state.NodeLifecycleActive, want: state.NodeLifecycleDraining},
-		{name: "force drain", kind: state.OperatorIntentKindNodeForceDrain, initial: state.NodeLifecycleRecovering, want: state.NodeLifecycleUnavailable},
+		{name: "force drain", kind: state.OperatorIntentKindNodeForceDrain, initial: state.NodeLifecycleRecovering, want: state.NodeLifecycleForceDraining},
 		{name: "activate", kind: state.OperatorIntentKindNodeActivate, initial: state.NodeLifecycleUnavailable, want: state.NodeLifecycleActive},
+		{name: "activate maintenance", kind: state.OperatorIntentKindNodeActivate, initial: state.NodeLifecycleMaintenance, want: state.NodeLifecycleActive},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

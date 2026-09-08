@@ -77,8 +77,13 @@ func captureStderrComputeNodes(t *testing.T, fn func()) string {
 		t.Fatalf("pipe: %v", err)
 	}
 	orig := os.Stderr
+	origWriter := osStderr
 	os.Stderr = w
-	defer func() { os.Stderr = orig }()
+	osStderr = w
+	defer func() {
+		os.Stderr = orig
+		osStderr = origWriter
+	}()
 	fn()
 	_ = w.Close()
 	var buf bytes.Buffer
@@ -895,7 +900,7 @@ func TestCmdComputeNodesActivate_ResolvesName(t *testing.T) {
 		t.Fatalf("create node: %v", err)
 	}
 
-	if code := cmdComputeNodesActivate([]string{"--node", row.Name}); code != 0 {
+	if code := cmdComputeNodesActivate([]string{"--node", row.Name, "--break-glass-db", "--yes", "--reason", "test_repair"}); code != 0 {
 		t.Fatalf("activate exit code = %d, want 0", code)
 	}
 	got, err := st.ComputeNodeByID(context.Background(), row.ID)

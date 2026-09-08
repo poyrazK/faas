@@ -2293,30 +2293,29 @@ ORDER BY name;
 --   $2 = expected prior lifecycle text
 --   $3 = new lifecycle text
 --   $4 = wall-clock timestamp to stamp on the relevant audit column:
---        'draining'        → drain_initiated_at
+--        'draining' | 'force_draining' → drain_initiated_at
 --        'unavailable'     → NULL (heartbeat gap is the writer; this
 --                             path is for the rare explicit flip)
 --        'recovering'      → recovery_initiated_at
---        'active'          → drain_completed_at (last step of a
---                             successful drain) OR NULL when called
---                             from the heartbeat reactivator
+--        'maintenance'     → drain_completed_at (last step of a
+--                             successful operator drain)
 UPDATE compute_nodes
 SET lifecycle = $3::compute_node_lifecycle,
-    drain_initiated_at    = CASE WHEN $3::compute_node_lifecycle = 'draining'  THEN $4 ELSE drain_initiated_at    END,
+    drain_initiated_at    = CASE WHEN $3::compute_node_lifecycle IN ('draining','force_draining') THEN $4 ELSE drain_initiated_at END,
     recovery_initiated_at = CASE WHEN $3::compute_node_lifecycle = 'recovering' THEN $4 ELSE recovery_initiated_at END,
-    drain_completed_at    = CASE WHEN $3::compute_node_lifecycle = 'active'     THEN $4 ELSE drain_completed_at    END
+    drain_completed_at    = CASE WHEN $3::compute_node_lifecycle = 'maintenance' THEN $4 ELSE drain_completed_at    END
 WHERE id = $1
   AND lifecycle::text = $2;
 
 -- name: NodeMarkDrainCompleted :execrows
--- Stamps drain_completed_at + flips lifecycle='active'. Called once
+-- Stamps drain_completed_at + flips lifecycle='maintenance'. Called once
 -- the drain arbiter confirms zero live instances remain on the node.
--- CAS on lifecycle='draining' so a concurrent reactivate can't race.
+-- CAS on a draining lifecycle so a concurrent reactivate can't race.
 UPDATE compute_nodes
-SET lifecycle         = 'active',
+SET lifecycle         = 'maintenance',
     drain_completed_at = $2
 WHERE id = $1
-  AND lifecycle = 'draining';
+  AND lifecycle IN ('draining','force_draining');
 
 -- name: NodeMarkRecovered :execrows
 -- Stamps last_recovery_outcome='succeeded' and flips lifecycle='active'.

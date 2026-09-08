@@ -151,6 +151,10 @@ old name; the dispatcher refuses new code paths to call it.
 ### Compute node state machine
 
 ```
+# Establish the cookie session used by provider mutations. Run this on the
+# same control-plane host that will run deployctl; sessions are IP-bound.
+gregalectl auth login --email operator@gregale.dev
+
 # Pre-register a new compute-only box
 gregalectl compute-nodes add \
     --name fsn-2 \
@@ -164,8 +168,10 @@ gregalectl compute-nodes list [--active-only] [--json]
 # Show one node's row + live_instance_count
 gregalectl compute-nodes show --node fsn-2 [--json]
 
-# Inspect drain progress before a reboot
-gregalectl compute-nodes drain-status --node fsn-2   # exit 1 if live instances remain
+# Drain, verify the maintenance hold, then explicitly reactivate
+gregalectl compute-nodes drain --node fsn-2 --reason planned_kernel_upgrade
+gregalectl compute-nodes drain-status --node fsn-2   # exit 0 only in maintenance
+gregalectl compute-nodes activate --node fsn-2 --reason planned_kernel_upgrade
 ```
 
 `list` / `show` are read-only introspection added in Cluster C1
@@ -173,14 +179,17 @@ gregalectl compute-nodes drain-status --node fsn-2   # exit 1 if live instances 
 `ListComputeNodes` / `ComputeNodeByName` calls; the dispatcher never
 bypasses the schema.
 
-Use the Operations console Fleet page for `Drain`, `Force drain`, and
-`Activate`. These actions create a durable `operator_intents` receipt before
-schedd changes lifecycle state; the receipt retains actor, reason, trace,
-preflight impact, and terminal outcome. The legacy `gregalectl compute-nodes`
-mutation verbs write through the database-backed compatibility path and are
-reserved for the reviewed
-[`database-repair`](../break-glass/database-repair.md) procedure until they are
-migrated to the authenticated operator API.
+The Operations console and `gregalectl` now use the same authenticated API.
+Every mutation requires an MFA-stepped-up operator session and creates a
+durable `operator_intents` receipt retaining actor, reason, trace, preflight
+impact, and terminal outcome. Refresh the five-minute proof with
+`gregalectl auth step-up`; inspect or revoke it with `auth status` / `auth
+logout`.
+
+A successful drain finishes in the non-admitting `maintenance` lifecycle; it
+never automatically reactivates the node. Direct database mutation exists only
+as `--break-glass-db --yes` and is reserved for the reviewed
+[`database-repair`](../break-glass/database-repair.md) procedure.
 
 `target_url` is the VM manager endpoint. `gateway_target_url` is the
 separate private HTTP data-plane endpoint; the manifest/Ansible pipeline

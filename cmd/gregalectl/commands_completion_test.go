@@ -25,6 +25,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 	// Also walk the dispatch constants (constants.go) to recover
 	// the values behind `case dispatchFoo:` forms.
 	dispatchConsts := map[string]string{
+		"dispatchOperatorAuth": "auth",
 		"dispatchHostAge":      "host-age",
 		"dispatchPKI":          "pki",
 		"dispatchSignKeys":     "sign-keys",

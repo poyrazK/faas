@@ -37,8 +37,34 @@ func TestRecoveryRunnerCompletesEmptyDrain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload node: %v", err)
 	}
-	if got.Lifecycle != state.NodeLifecycleActive || got.DrainCompletedAt == nil {
-		t.Fatalf("node after empty drain = %+v, want active with completion timestamp", got)
+	if got.Lifecycle != state.NodeLifecycleMaintenance || got.Active || got.DrainCompletedAt == nil {
+		t.Fatalf("node after empty drain = %+v, want non-admitting maintenance with completion timestamp", got)
+	}
+}
+
+func TestRecoveryRunnerCompletesEmptyForceDrain(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.CreateComputeNode(ctx, state.ComputeNode{
+		Name:      "recovery-runner-force-drain",
+		Lifecycle: state.NodeLifecycleActive,
+		Active:    true,
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if err := store.NodeSetLifecycle(ctx, node.ID, state.NodeLifecycleActive, state.NodeLifecycleForceDraining); err != nil {
+		t.Fatalf("start force drain: %v", err)
+	}
+	if err := NewRecoveryRunner(store, NewArbiter(nil, nil), nil, testLog()).Tick(ctx); err != nil {
+		t.Fatalf("recovery tick: %v", err)
+	}
+	got, err := store.ComputeNodeByName(ctx, node.Name)
+	if err != nil {
+		t.Fatalf("reload node: %v", err)
+	}
+	if got.Lifecycle != state.NodeLifecycleMaintenance || got.Active || got.DrainCompletedAt == nil {
+		t.Fatalf("node after force drain = %+v, want maintenance hold", got)
 	}
 }
 
