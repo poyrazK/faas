@@ -31,7 +31,10 @@ The command performs these phases in order:
    the verified key in an ephemeral `known_hosts` file.
 5. Run the complete-fleet Ansible preflight, unless
    `--skip-fleet-preflight` is explicitly supplied after a recent successful
-   preflight.
+   preflight. Skip mode resolves every stable manifest hostname through DNS,
+   requires exactly one IPv4 address inside the manifest overlay CIDR, and
+   seeds those addresses into the ephemeral inventory without connecting to
+   an unavailable peer.
 6. Stage the root-only database environment, a compute trust bundle, image-signing keys,
    signed release assets, bootstrap `gregalectl`, and the manifest.
 7. Publish the release-pinned Firecracker kernel through the configured shared
@@ -114,7 +117,9 @@ existing node after a recent successful complete-fleet preflight, set
 `skip_fleet_preflight=true` when another manifest peer is intentionally powered
 off or otherwise unavailable. This input passes the CLI's explicit
 `--skip-fleet-preflight` assertion; do not use it when adopting a new node or
-after changing the fleet topology.
+after changing the fleet topology. The runner must resolve each manifest host
+to exactly one IPv4 address inside the declared overlay CIDR; public or
+ambiguous answers fail closed before Ansible runs.
 
 Bootstrap the runner once with `deploy/ansible/fleet_runner.yml` or the
 `bootstrap-fleet-runner` Make target. The role pins the runner archive, creates
@@ -304,8 +309,9 @@ hostname, runtime port, and (when needed) stable device-by-id storage path to
 the manifest, prepare its PKI material, and run one join command. No `host_vars`
 file, `hosts.ini` entry, provider API call, or per-cloud code is required. At
 larger fleet sizes, run a complete preflight once and use
-`--skip-fleet-preflight` only when the fleet facts are still current; the join
-itself remains limited to the new node.
+`--skip-fleet-preflight` only when the fleet facts are still current. Skip mode
+reconstructs the private-address facts from overlay-validated DNS answers; the
+join itself remains limited to the new node.
 
 For a batch, put only provider connection details in a short-lived file and
 let the shared manifest/artifact directory supply everything else:
