@@ -41,6 +41,7 @@ type LogEvent struct {
 	Seq       int64  `json:"seq"`
 	Stream    string `json:"stream"` // "stdout" or "stderr"
 	Line      string `json:"line"`
+	Level     string `json:"level,omitempty"` // canonical structured-log severity
 	WrittenAt string `json:"written_at"`
 }
 

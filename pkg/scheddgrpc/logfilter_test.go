@@ -238,3 +238,16 @@ func TestLogFilter_GrepAndLevelCombine(t *testing.T) {
 		}
 	}
 }
+
+func TestLogFilter_UsesParsedStructuredLevel(t *testing.T) {
+	f, err := ParseLogFilter("warn", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.MatchLineWithLevel(`{"severity":"WARNING","message":"slow"}`, "warn") {
+		t.Error("parsed warn level should pass warn floor")
+	}
+	if f.MatchLineWithLevel(`{"severity":"INFO","message":"ok"}`, "info") {
+		t.Error("parsed info level should fail warn floor")
+	}
+}

@@ -115,6 +115,33 @@ func TestLogs_HappyPath(t *testing.T) {
 	}
 }
 
+func TestLogs_StructuredLevelRoundTrip(t *testing.T) {
+	ring := logbuf.New(1 << 20)
+	line := `{"severity":"WARNING","message":"slow"}`
+	if _, err := ring.Write("stderr", []byte(line+"\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	cl := startLogsTestClient(t, &fakeVMM{
+		logRingFn: func(string) *logbuf.Ring { return ring },
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stream, err := cl.Logs(ctx, &vmmdpb.LogsRequest{Instance: "inst-1", SinceSeq: 1})
+	if err != nil {
+		t.Fatalf("Logs dial: %v", err)
+	}
+	resp, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	if resp.GetLevel() != "warn" {
+		t.Errorf("level = %q, want warn", resp.GetLevel())
+	}
+	if resp.GetLine() != line {
+		t.Errorf("line = %q, want original JSON", resp.GetLine())
+	}
+}
+
 // TestLogs_NotFound pins the wire contract: when the instance is not
 // alive on this vmmd (LogRing returns nil), the handler returns
 // codes.NotFound with no stream opened. apid maps that to its own

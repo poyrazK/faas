@@ -29,7 +29,7 @@ func TestSpool_LayoutAndShape(t *testing.T) {
 	root := t.TempDir()
 	s := NewSpool(root, 1<<20)
 	ts := time.Date(2026, 8, 8, 12, 34, 56, 0, time.UTC)
-	n, err := s.Write("instance-a", 42, "stdout", ts, "hello world")
+	n, err := s.WriteWithLevel("instance-a", 42, "stdout", ts, "hello world", "warn")
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -58,6 +58,7 @@ func TestSpool_LayoutAndShape(t *testing.T) {
 		Stream    string    `json:"stream"`
 		WrittenAt time.Time `json:"ts"`
 		Line      string    `json:"msg"`
+		Level     string    `json:"level"`
 	}
 	if err := json.Unmarshal([]byte(line), &got); err != nil {
 		t.Fatalf("unmarshal %q: %v", line, err)
@@ -73,6 +74,9 @@ func TestSpool_LayoutAndShape(t *testing.T) {
 	}
 	if got.Line != "hello world" {
 		t.Errorf("line = %q, want hello world", got.Line)
+	}
+	if got.Level != "warn" {
+		t.Errorf("level = %q, want warn", got.Level)
 	}
 }
 

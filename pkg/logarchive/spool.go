@@ -6,7 +6,7 @@
 //
 //	{root}/{instanceID}/{YYYY}/{MM}/log-{YYYY-MM-DD}.jsonl.partial
 //
-// Each line is one JSON object with `{ts, stream, seq, msg}`
+// Each line is one JSON object with `{ts, stream, seq, msg, level}`
 // fields. The file is created lazily on first write for the
 // (instance, day) tuple; subsequent evictions on the same day
 // append to the same file. The .partial rename target is
@@ -80,6 +80,7 @@ type spoolLine struct {
 	Stream    string    `json:"stream"`
 	WrittenAt time.Time `json:"ts"`
 	Line      string    `json:"msg"`
+	Level     string    `json:"level,omitempty"`
 }
 
 // spoolKey is the (instance, day) tuple the spool keys on. The
@@ -153,7 +154,7 @@ func existingUnshippedBytes(root string) int64 {
 	return total
 }
 
-// Write persists one evicted logbuf.Line to disk. Safe for
+// Write persists one evicted log line to disk. Safe for
 // concurrent calls from many ring goroutines. Returns the byte
 // count written (so the caller can update a metric) and any
 // error. The daemon-side eviction sink records write failures in
@@ -164,6 +165,17 @@ func existingUnshippedBytes(root string) int64 {
 // has already lost the line so dropping on the floor here is
 // safer than filling the disk (issue #562 risk #6).
 func (s *Spool) Write(instanceID string, seq int64, stream string, ts time.Time, line string) (int, error) {
+	return s.write(instanceID, seq, stream, ts, line, "")
+}
+
+// WriteWithLevel persists an evicted line and its structured-log severity.
+// Write remains the compatibility wrapper for callers that only have the
+// legacy five scalar fields.
+func (s *Spool) WriteWithLevel(instanceID string, seq int64, stream string, ts time.Time, line, level string) (int, error) {
+	return s.write(instanceID, seq, stream, ts, line, level)
+}
+
+func (s *Spool) write(instanceID string, seq int64, stream string, ts time.Time, line, level string) (int, error) {
 	if instanceID == "" || len(instanceID) > MaxInstanceIDLen {
 		return 0, fmt.Errorf("logarchive: invalid instance id (len %d)", len(instanceID))
 	}
@@ -176,6 +188,7 @@ func (s *Spool) Write(instanceID string, seq int64, stream string, ts time.Time,
 		Stream:    stream,
 		WrittenAt: ts.UTC(),
 		Line:      line,
+		Level:     level,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("logarchive: marshal line: %w", err)

@@ -30,7 +30,7 @@ func TestStreamAppLogs_HappyPath(t *testing.T) {
 			if err := sink(sched.LogFrame{InstanceID: "inst-A", Seq: 1, Stream: "stdout", Line: "alpha", WrittenAt: time.Unix(0, 0).UTC()}); err != nil {
 				return err
 			}
-			if err := sink(sched.LogFrame{InstanceID: "inst-A", Seq: 2, Stream: "stdout", Line: "beta", WrittenAt: time.Unix(0, 0).UTC()}); err != nil {
+			if err := sink(sched.LogFrame{InstanceID: "inst-A", Seq: 2, Stream: "stdout", Line: "beta", Level: "warn", WrittenAt: time.Unix(0, 0).UTC()}); err != nil {
 				return err
 			}
 			if err := sink(sched.LogFrame{InstanceID: "inst-B", Seq: 1, Stream: "stderr", Line: "gamma", WrittenAt: time.Unix(0, 0).UTC()}); err != nil {
@@ -51,10 +51,11 @@ func TestStreamAppLogs_HappyPath(t *testing.T) {
 		seq      int64
 		stream   string
 		line     string
+		level    string
 	}{
-		{"inst-A", 1, "stdout", "alpha"},
-		{"inst-A", 2, "stdout", "beta"},
-		{"inst-B", 1, "stderr", "gamma"},
+		{"inst-A", 1, "stdout", "alpha", ""},
+		{"inst-A", 2, "stdout", "beta", "warn"},
+		{"inst-B", 1, "stderr", "gamma", ""},
 	}
 	for i, w := range want {
 		resp, err := stream.Recv()
@@ -72,6 +73,9 @@ func TestStreamAppLogs_HappyPath(t *testing.T) {
 		}
 		if resp.GetLine() != w.line {
 			t.Errorf("frame[%d].Line = %q, want %q", i, resp.GetLine(), w.line)
+		}
+		if resp.GetLevel() != w.level {
+			t.Errorf("frame[%d].Level = %q, want %q", i, resp.GetLevel(), w.level)
 		}
 	}
 	cancel()

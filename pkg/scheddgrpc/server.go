@@ -974,7 +974,7 @@ func (s *Server) StreamAppLogs(req *scheddpb.StreamAppLogsRequest, stream schedd
 		// tests flake (see memory `scheddgrpc-filterleveldropsflake`).
 		// The drop decision is local + atomic; the increment is
 		// safe to honour regardless of stream-side state.
-		if !f.IsGap && !filter.NoFilter() && !filter.MatchLine(f.Line) {
+		if !f.IsGap && !filter.NoFilter() && !filter.MatchLineWithLevel(f.Line, f.Level) {
 			// MatchLine already returned false — the line
 			// failed at least one active filter. Recompute
 			// the per-filter result inline so the counter
@@ -990,7 +990,7 @@ func (s *Server) StreamAppLogs(req *scheddpb.StreamAppLogsRequest, stream schedd
 			// operator looking at the rate can read the
 			// `apid_logs_dropped_total` panel by reason.
 			grepOK := filter.Grep == "" || strings.Contains(strings.ToLower(f.Line), strings.ToLower(filter.Grep))
-			levelOK := filter.Level == nil || filter.Level.Match(f.Line)
+			levelOK := filter.Level == nil || filter.Level.MatchLevelOrLine(f.Level, f.Line)
 			switch {
 			case !grepOK && !levelOK:
 				s.ops.IncLogDropped("filter_level")
@@ -1017,6 +1017,7 @@ func (s *Server) StreamAppLogs(req *scheddpb.StreamAppLogsRequest, stream schedd
 			Seq:        f.Seq,
 			Stream:     f.Stream,
 			Line:       f.Line,
+			Level:      f.Level,
 		}
 		if !f.WrittenAt.IsZero() {
 			resp.WrittenAt = timestamppb.New(f.WrittenAt)

@@ -9,7 +9,7 @@
 // Wire shape (Move 4 acceptance #5, issue #517 / PR-B): the SSE
 // response is `text/event-stream` with the following frames:
 //
-//	event: log\ndata: {"seq":<i>,"instance":<s>,"stream":<s>,"line":<s>,"written_at":<rfc3339>}\n\n
+//	event: log\ndata: {"seq":<i>,"instance":<s>,"stream":<s>,"line":<s>,"level":<s>,"written_at":<rfc3339>}\n\n
 //	event: gap\ndata: {"reason":<s>,"gap_to_written_at":<rfc3339>,"replay_advised":<b>}\n\n
 //	event: ping\ndata: {}\n\n   (heartbeat; sigil form `:\n\n`)
 //	event: degraded\ndata: {...}\n\n
@@ -48,19 +48,25 @@ import (
 
 // RenderAppLogEvent writes a single `event: log` SSE frame for
 // the given schedd frame. The payload matches Move 4 acceptance
-// #5 (the `instance` field is the additive per ADR-016). The
+// #5 (the `instance` field is the additive per ADR-016). A
+// recognized structured-log severity is carried in the additive
+// `level` field; unclassified plain-text lines omit it. The
 // flusher.Flush after each frame is what the htmx-ext-sse
 // auto-reconnect logic relies on — silent frames look like a
 // dead connection. ops is nil-safe (a nil receiver no-ops;
 // tests that don't wire metrics keep working).
 func RenderAppLogEvent(w http.ResponseWriter, flusher http.Flusher, f scheddgrpc.LogFrame, appID string, ops *wire.OpsMetrics) {
-	payload, _ := json.Marshal(map[string]any{
+	payloadMap := map[string]any{
 		"seq":        f.Seq,
 		"instance":   f.InstanceID,
 		"stream":     f.Stream,
 		"line":       f.Line,
 		"written_at": f.WrittenAt.UTC().Format(time.RFC3339Nano),
-	})
+	}
+	if f.Level != "" {
+		payloadMap["level"] = f.Level
+	}
+	payload, _ := json.Marshal(payloadMap)
 	_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", payload)
 	if flusher != nil {
 		flusher.Flush()
@@ -101,6 +107,9 @@ func LogAppLogFrame(log *slog.Logger, f scheddgrpc.LogFrame, accountID, appID, d
 		return
 	}
 	attrs = append(attrs, "line", logsanitize.Field(f.Line))
+	if f.Level != "" {
+		attrs = append(attrs, "level", logsanitize.Field(f.Level))
+	}
 	log.Info("app_log", attrs...)
 }
 

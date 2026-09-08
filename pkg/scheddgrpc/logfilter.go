@@ -76,16 +76,21 @@ func ParseLogFilter(level, grep string) (LogFilter, error) {
 
 // MatchLine applies the filter to a single log line. Returns true if
 // the line should be passed through; false if it should be dropped.
-//
-// Both Grep and Level, when set, must pass. A line matches when it
-// satisfies every active filter. This is the contract the schedd
-// server's sink callback enforces before forwarding a frame to the
-// gateway.
+// It retains the pre-structured-logging API and falls back to the
+// heuristic level detector when no parsed level is available.
 func (f LogFilter) MatchLine(line string) bool {
+	return f.MatchLineWithLevel(line, "")
+}
+
+// MatchLineWithLevel applies the filter using the parsed structured-log level
+// when one is available. This keeps JSON severity aliases (for example,
+// Cloud Logging's WARNING) consistent with the level exposed on the SSE wire,
+// while preserving heuristic matching for legacy plain-text lines.
+func (f LogFilter) MatchLineWithLevel(line, level string) bool {
 	if f.Grep != "" && !strings.Contains(strings.ToLower(line), strings.ToLower(f.Grep)) {
 		return false
 	}
-	if f.Level != nil && !f.Level.Match(line) {
+	if f.Level != nil && !f.Level.MatchLevelOrLine(level, line) {
 		return false
 	}
 	return true
@@ -197,4 +202,17 @@ func (m *LevelMatcher) Match(line string) bool {
 		return false
 	}
 	return detectedRank >= m.ranks[m.floor]
+}
+
+// MatchLevelOrLine prefers a canonical level parsed at ring intake and falls
+// back to the legacy line-shape heuristic when the line is unclassified.
+func (m *LevelMatcher) MatchLevelOrLine(level, line string) bool {
+	if m == nil {
+		return true
+	}
+	if level != "" {
+		rank, ok := m.ranks[level]
+		return ok && rank >= m.ranks[m.floor]
+	}
+	return m.Match(line)
 }
