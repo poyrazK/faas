@@ -56,15 +56,20 @@ func memLiveInstance(t *testing.T, m *MemStore, ctx context.Context, appID, depl
 	return inst
 }
 
-// memLiveInstanceUpper seeds an instance whose state string is the
-// uppercase "RUNNING" — the form that ConcurrencyForDeployment's
-// switch recognises. The codebase has historically been inconsistent
-// between lowercase (created via StateRunning constant) and uppercase
-// (used in ConcurrencyForDeployment's filter); both code paths must
-// stay covered.
-func memLiveInstanceUpper(t *testing.T, m *MemStore, ctx context.Context, appID, deploymentID, nodeID string) Instance {
+// memLiveInstance seeds a live instance using the canonical lowercase
+// state, which is the only form Postgres accepts (instances_state_check
+// since migration 00001).
+//
+// It used to seed "RUNNING" and was named memLiveInstanceUpper, on the
+// reasoning that uppercase was "the form ConcurrencyForDeployment's
+// switch recognises" and that "both code paths must stay covered". That
+// was the bug, not a code path: isInstanceStateLive compared against
+// uppercase literals, so it matched nothing a real deployment produces,
+// and this test kept it green by manufacturing states the SQL CHECK
+// would have rejected.
+func memLiveInstance(t *testing.T, m *MemStore, ctx context.Context, appID, deploymentID, nodeID string) Instance {
 	t.Helper()
-	inst, err := m.CreateInstance(ctx, appID, deploymentID, "RUNNING", 256, nodeID, uuid.NewString())
+	inst, err := m.CreateInstance(ctx, appID, deploymentID, string(StateRunning), 256, nodeID, uuid.NewString())
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -224,11 +229,10 @@ func TestMemStore_ConcurrencyForDeployment_NoInstance(t *testing.T) {
 func TestMemStore_ConcurrencyForDeployment_CountsRunning(t *testing.T) {
 	t.Parallel()
 	m, ctx, _, app, dep := memDeploymentFixture(t)
-	// ConcurrencyForDeployment's switch recognises "RUNNING" /
-	// "WAKING" / "COLD_BOOTING" (uppercase). memLiveInstanceUpper
-	// seeds instances with that exact state string.
-	_ = memLiveInstanceUpper(t, m, ctx, app.ID, dep.ID, "node-a")
-	_ = memLiveInstanceUpper(t, m, ctx, app.ID, dep.ID, "node-a")
+	// Two live instances in the canonical lowercase state — what a
+	// real deployment produces and what Postgres will store.
+	_ = memLiveInstance(t, m, ctx, app.ID, dep.ID, "node-a")
+	_ = memLiveInstance(t, m, ctx, app.ID, dep.ID, "node-a")
 	got, err := m.ConcurrencyForDeployment(ctx, app.ID, dep.ID)
 	if err != nil {
 		t.Fatalf("ConcurrencyForDeployment: %v", err)

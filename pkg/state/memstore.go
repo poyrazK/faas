@@ -9113,7 +9113,7 @@ func (m *MemStore) ReadActiveInstanceForWakeID(_ context.Context, wakeID string)
 		if ins.WakeID != wakeID {
 			continue
 		}
-		if ins.State != "WAKING" && ins.State != "COLD_BOOTING" && ins.State != "RUNNING" {
+		if !isInstanceStateLive(ins.State) {
 			continue
 		}
 		if best == nil || ins.StartedAt.After(best.StartedAt) {
