@@ -480,6 +480,60 @@ func (b *PGBackend) RefreshLiveTargets(ctx context.Context, appID string) error 
 	return err
 }
 
+// ValidateLiveTarget verifies one idle-aged cache entry against the same
+// authoritative RUNNING-instance loader used for reconciliation. Requests that
+// arrive just after the reaper commits PARKED can otherwise race a delayed
+// notification, spend their full budget on the vanished netns, and return 503.
+func (b *PGBackend) ValidateLiveTarget(ctx context.Context, appID, instanceID string) (bool, error) {
+	if b == nil || appID == "" || instanceID == "" || b.liveTargetLoader == nil {
+		return true, nil
+	}
+	value, err, _ := b.liveTargetHydration.Do("validate\x00"+appID+"\x00"+instanceID, func() (any, error) {
+		targets, loadErr := b.liveTargetLoader(ctx, appID)
+		if loadErr != nil {
+			return false, fmt.Errorf("gateway: validate live target for app %s: %w", appID, loadErr)
+		}
+		live := false
+		for _, target := range targets {
+			if target.InstanceID == instanceID {
+				live = true
+			}
+			b.RecordTarget(appID, target)
+		}
+		if !live {
+			b.EvictInstance(appID, instanceID)
+		}
+		return live, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	live, _ := value.(bool)
+	return live, nil
+}
+
+// TouchTarget records successful local activity on the cached target. AddedAt
+// doubles as the last locally confirmed activity stamp, so the idle-age check
+// stays off the normal warm path without maintaining a second target map.
+func (b *PGBackend) TouchTarget(appID, instanceID string, at time.Time) {
+	if b == nil || appID == "" || instanceID == "" || at.IsZero() {
+		return
+	}
+	b.tgtMu.Lock()
+	defer b.tgtMu.Unlock()
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		return
+	}
+	for _, set := range picker.sets {
+		for i := range set.entries {
+			if set.entries[i].InstanceID == instanceID {
+				set.entries[i].AddedAt = at
+			}
+		}
+	}
+}
+
 // EnsureWarm ensures one running instance for an actually cold production
 // app. It uses schedd's Engine.EnsureWake coordinator, which is shared by all
 // wake producers and runs the leader lifecycle on a detached bounded context.
