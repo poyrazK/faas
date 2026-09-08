@@ -9,6 +9,10 @@ from attrs import field as _attrs_field
 
 from ..models.wake_timeline_json_row_kind import WakeTimelineJSONRowKind, check_wake_timeline_json_row_kind
 from ..models.wake_timeline_json_row_tier import WakeTimelineJSONRowTier, check_wake_timeline_json_row_tier
+from ..models.wake_timeline_json_row_trigger_class import (
+    WakeTimelineJSONRowTriggerClass,
+    check_wake_timeline_json_row_trigger_class,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="WakeTimelineJSONRow")
@@ -47,6 +51,8 @@ class WakeTimelineJSONRow:
     trigger: str | Unset = UNSET
     """Closed-enum trigger that admitted the wake (manual.cron / manual.api / scheduled.idle / …). Empty/absent on
     pre-PR-A fleet rows."""
+    trigger_class: WakeTimelineJSONRowTriggerClass | Unset = UNSET
+    """Bounded User-Agent classification for the request that caused the wake. Empty/absent on pre-M3 fleet rows."""
     method: str | Unset = UNSET
     """Wake method (restore or cold_boot), when telemetry is available."""
     tier: WakeTimelineJSONRowTier | Unset = UNSET
@@ -77,6 +83,10 @@ class WakeTimelineJSONRow:
 
         trigger = self.trigger
 
+        trigger_class: str | Unset = UNSET
+        if not isinstance(self.trigger_class, Unset):
+            trigger_class = self.trigger_class
+
         method = self.method
 
         tier: str | Unset = UNSET
@@ -105,6 +115,8 @@ class WakeTimelineJSONRow:
             field_dict["wake_id"] = wake_id
         if trigger is not UNSET:
             field_dict["trigger"] = trigger
+        if trigger_class is not UNSET:
+            field_dict["trigger_class"] = trigger_class
         if method is not UNSET:
             field_dict["method"] = method
         if tier is not UNSET:
@@ -140,6 +152,13 @@ class WakeTimelineJSONRow:
 
         trigger = d.pop("trigger", UNSET)
 
+        _trigger_class = d.pop("trigger_class", UNSET)
+        trigger_class: WakeTimelineJSONRowTriggerClass | Unset
+        if isinstance(_trigger_class, Unset):
+            trigger_class = UNSET
+        else:
+            trigger_class = check_wake_timeline_json_row_trigger_class(_trigger_class)
+
         method = d.pop("method", UNSET)
 
         _tier = d.pop("tier", UNSET)
@@ -163,6 +182,7 @@ class WakeTimelineJSONRow:
             at=at,
             wake_id=wake_id,
             trigger=trigger,
+            trigger_class=trigger_class,
             method=method,
             tier=tier,
             queued_count=queued_count,

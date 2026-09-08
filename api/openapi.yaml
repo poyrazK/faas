@@ -3590,6 +3590,29 @@ paths:
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/deployments/latest:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: getLatestAppDeployment
+      summary: Fetch the latest deployment for an app.
+      description: |
+        Returns the app's newest deployment by `created_at DESC`. The app slug
+        and deployment are resolved within the authenticated account; an
+        unknown or cross-account app and a never-deployed app all return the
+        same IDOR-safe 404 surface.
+      responses:
+        '200':
+          description: The latest deployment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/deployments/dev-source:
     parameters:
       - $ref: '#/components/parameters/Slug'

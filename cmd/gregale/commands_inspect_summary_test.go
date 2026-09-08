@@ -123,8 +123,8 @@ func newInspectSummaryServer(t *testing.T, failOptional bool) *httptest.Server {
 			return
 		}
 		switch r.URL.Path {
-		case "/v1/deployments":
-			writeInspectSummaryJSON(t, w, api.DeploymentListResponse{Items: []api.DeploymentResponse{dep}})
+		case "/v1/apps/" + inspectSlug + "/deployments/latest":
+			writeInspectSummaryJSON(t, w, dep)
 		case "/v1/apps/" + inspectSlug + "/openapi":
 			if r.URL.Query().Get("source") != "auto" {
 				t.Errorf("openapi source = %q, want auto", r.URL.Query().Get("source"))

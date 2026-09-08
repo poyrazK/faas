@@ -153,7 +153,15 @@ func loadInspectSummaryInputs(ctx context.Context, client *Client, app api.AppRe
 	wg.Add(4)
 	go func() {
 		defer wg.Done()
-		out.Deployment, out.DeploymentErr = findLatestDeploymentForApp(ctx, client, app.ID)
+		deployment, err := client.GetLatestAppDeployment(ctx, app.Slug)
+		if isNotFound(err) {
+			return
+		}
+		if err != nil {
+			out.DeploymentErr = err
+			return
+		}
+		out.Deployment = &deployment
 	}()
 	go func() {
 		defer wg.Done()
@@ -169,27 +177,6 @@ func loadInspectSummaryInputs(ctx context.Context, client *Client, app api.AppRe
 	}()
 	wg.Wait()
 	return out
-}
-
-func findLatestDeploymentForApp(ctx context.Context, client *Client, appID string) (*api.DeploymentResponse, error) {
-	const maxPages = 10
-	before := ""
-	for pageNumber := 0; pageNumber < maxPages; pageNumber++ {
-		page, err := client.ListDeployments(ctx, before, 200)
-		if err != nil {
-			return nil, err
-		}
-		for i := range page.Items {
-			if page.Items[i].AppID == appID {
-				return &page.Items[i], nil
-			}
-		}
-		if page.NextBefore == "" {
-			return nil, nil
-		}
-		before = page.NextBefore
-	}
-	return nil, fmt.Errorf("deployment lookup exceeded %d pages", maxPages)
 }
 
 func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSummary {
