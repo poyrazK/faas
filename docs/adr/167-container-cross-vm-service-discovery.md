@@ -1,0 +1,9 @@
+# ADR-167 · Container cross-VM service endpoint registry
+
+- **Status:** accepted
+- **Date:** 2026-09-08
+- **Decision:** Project every app's currently routable service replica from the gateway target cache through the loopback-only control endpoint `GET /v1/internal/apps/{slug}/service-endpoints`. The projection carries the instance ID, compute-node ID, deployment ID, and effective workload port. It reconciles the authoritative running-instance loader when the local gateway cache is empty, sorts results deterministically, and follows the existing `RecordTarget` / `EvictInstance` lifecycle.
+- **Why:** Replica placement now spans compute nodes, but a second registry would drift from the request router during wake, eviction, restart, or deployment changes. Reusing the gateway's routing cache gives the next guest-side proxy a single source of truth and makes multi-node endpoint discovery observable before adding a data-plane transport.
+- **Security boundary:** The endpoint is mounted only on the loopback control listener. `NodeID` is an opaque transport identity, not a guest-reachable address; wake IDs and node network addresses are not exposed. The public listener and customer API do not serve this projection.
+- **Consequences:** In-box control components can discover all healthy replicas, including replicas on different compute nodes, with stable snapshots and restart reconciliation. An empty endpoint list means the app has no currently routable replicas; an unknown slug is a 404 and a registry reconciliation failure is a 503. The projection does not yet provide guest DNS, a guest-reachable address, cross-node forwarding, or mTLS between workloads.
+- **Follow-up:** Add a node-local service proxy and guest resolver that maps a service name to this registry, forwards through the existing per-node vmmd transport, enforces tenant identity, and publishes lease/health expiry. Public multi-port routing remains a separate edge feature.

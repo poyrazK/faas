@@ -2652,6 +2652,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	})
 	var controlMux *http.ServeMux
+	var serviceEndpointProvider gateway.ServiceEndpointProvider
+	if provider, ok := deps.backend.(gateway.ServiceEndpointProvider); ok {
+		serviceEndpointProvider = provider
+	}
 	if deps.opsMetrics != nil {
 		// Serve the wire registry together with gateway.Metrics. The old
 		// control mux exposed only handler.Metrics(), so daemon lifecycle,
@@ -2684,9 +2688,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		controlMux.HandleFunc("/v1/internal/apps/", func(w http.ResponseWriter, r *http.Request) {
 			// Path-keyed: ServeMux's HandleFunc uses prefix
 			// match, so /v1/internal/apps/foo/routes and
-			// /v1/internal/apps/bar/routes both reach here.
-			// The handler itself trims the prefix and reads
-			// the slug from r.URL.Path.
+			// /v1/internal/apps/foo/service-endpoints both
+			// reach this dispatcher. Each reader validates its
+			// complete suffix before serving a response.
 			resolve := gateway.ResolveSlugFn(func(slug string) (string, bool) { //nolint:contextcheck // ADR-093 ResolveSlugFn signature is fixed; ctx captured from per-request r.Context().
 				a, err := pgStore.AppBySlug(r.Context(), slug)
 				if err != nil || a.ID == "" {
@@ -2694,6 +2698,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				return string(a.ID), true
 			})
+			if strings.HasSuffix(r.URL.Path, "/service-endpoints") {
+				internalServiceEndpointsHandler(serviceEndpointProvider, resolve, log).ServeHTTP(w, r)
+				return
+			}
 			internalRoutesHandler(handler, resolve, log).ServeHTTP(w, r)
 		})
 	}

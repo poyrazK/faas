@@ -1029,10 +1029,12 @@ explicitly open issues that the doc otherwise implies are closed.
   app's sticky-warm hint and choose by current fleet headroom, so a two-node
   fleet can keep desired replicas on separate compute nodes. The scheduler
   coverage lives in `TestConvergeServiceReplicasSpreadsAcrossComputeNodes`.
-- **Workload networking** — host ports, public multi-port routing, and
-  cross-VM service discovery remain the next networking slice. Loopback
-  discovery for workloads within one task is the current contract (ADR-164 and
-  ADR-165).
+- **Workload networking** — the gateway now exposes a deterministic,
+  loopback-only cross-VM service endpoint registry (ADR-167), sourced from the
+  same live target cache used for request routing. Guest DNS/proxy transport,
+  host ports, and public multi-port routing remain the next networking slices;
+  loopback discovery for workloads within one task remains the current guest
+  contract (ADR-164 and ADR-165).
 - **Resource and cost isolation** — named RAM/CPU profiles and ephemeral disk
   ceilings are present; per-container CPU/disk enforcement and a combined
   compute + S3 + managed-PostgreSQL usage/budget view remain follow-up work.
