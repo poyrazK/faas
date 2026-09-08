@@ -72,7 +72,7 @@
 - name: builderd_service — validate runtime base env on named compute nodes
   ansible.builtin.shell: |
     set -eu
-    for key in MINIMAL NODE22 PYTHON312 GO124 GO124_ALPINE NODE24 PYTHON313; do
+    for key in MINIMAL DEBIAN_PARENT NODE22 PYTHON312 GO124 GO124_ALPINE NODE24 PYTHON313; do
       grep -Eq "^FAAS_DEPLOY_BASE_REF_${key}=[^#[:space:]]+@sha256:[0-9a-fA-F]{64}$" /etc/faas/runtime-bases.env
     done
   args:
@@ -93,8 +93,9 @@
       - faas_runtime_bases_env_keys.rc == 0
     fail_msg: >-
       /etc/faas/runtime-bases.env must be provisioned as root:root 0600 and
-      define digest-pinned MINIMAL, NODE22, PYTHON312, GO124, GO124_ALPINE,
-      NODE24, and PYTHON313 refs before enabling builderd on a named compute node.
+      define digest-pinned MINIMAL, DEBIAN_PARENT, NODE22, PYTHON312, GO124,
+      GO124_ALPINE, NODE24, and PYTHON313 refs before enabling builderd on a
+      named compute node.
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
 - name: builderd_service — install systemd unit
