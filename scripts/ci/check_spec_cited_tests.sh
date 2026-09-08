@@ -71,6 +71,10 @@ while IFS= read -r path; do
   owners+=("${path%/}")
 done < "$owners_file"
 
+# Use a three-dot diff so commits that landed on the base branch after the
+# feature branch was created are not misclassified as PR changes. This matters
+# for long-running branches: the checker must inspect the merge-base-to-head
+# delta, not the symmetric base-to-head difference.
 owned_tests=()
 while IFS= read -r path; do
   [[ "$path" == *_test.go ]] || continue
@@ -80,7 +84,7 @@ while IFS= read -r path; do
       break
     fi
   done
-done < <(git diff --name-only --diff-filter=ACMRTUXB "$base_sha" "$head_sha")
+done < <(git diff --name-only --diff-filter=ACMRTUXB "$base_sha...$head_sha")
 
 if ((${#owned_tests[@]} == 0)); then
   echo "spec-cited-tests-check: OK — PR changes no TESTOWNERS Go tests"

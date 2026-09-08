@@ -408,13 +408,19 @@ func TestWakeCoord_FanoutStopsAtInstanceCeiling(t *testing.T) {
 	}
 }
 
-// TestWakeCoord_ExistingCapacityPreventsWarmBurstFanout is the regression
-// test for PR #1301. The first fan-out attempt counted coordinator leaders
-// but ignored instances already admitted by the ledger. With 16 healthy
+// spec: §6.2
+// TestWakeCoord_RunningInstancesAbsorbWaiters is the regression pin for
+// PR #1301. The first fan-out attempt counted coordinator leaders but
+// ignored instances already admitted by the ledger. With 16 healthy
 // instances it therefore minted extra leaders for a 50-request burst and
 // degraded production from 99.8% success to 30/50. Existing capacity must
 // keep every caller after the unavoidable first leader on that same wake.
-func TestWakeCoord_ExistingCapacityPreventsWarmBurstFanout(t *testing.T) {
+//
+// This is intentionally a coordinator-level test: it fails on the original
+// fan-out implementation from eb5074b31, before the live-capacity baseline
+// was restored, and keeps the §6.2-1 admission rule executable in the fast
+// unit suite.
+func TestWakeCoord_RunningInstancesAbsorbWaiters(t *testing.T) {
 	coord := newWakeCoord()
 	const app = "app-warm-burst"
 	fanout := WakeFanout{MaxInFlight: 20, PerVM: 80, Existing: 16}

@@ -29,6 +29,13 @@ make_event() {
 EOF_EVENT
 }
 
+make_event_refs() {
+  local dir="$1" base="$2" head="$3"
+  cat > "$dir/event.json" <<EOF_EVENT
+{"pull_request":{"number":43,"base":{"ref":"main","sha":"${base}"},"head":{"ref":"test","sha":"${head}"}}}
+EOF_EVENT
+}
+
 run_check() {
   local dir="$1"
   (cd "$dir" && GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$dir/event.json" bash "$checker")
@@ -95,5 +102,24 @@ git -C "$outside_case" add pkg/other/other_test.go
 git -C "$outside_case" commit -q -m 'test(other): add coverage'
 make_event "$outside_case"
 expect_pass 'non-owned test' "$outside_case"
+
+# Commits that land on main after the feature branch diverges are not PR
+# changes. The old two-dot diff treated this base-only, uncited test as a
+# changed file and blocked an otherwise valid pull request.
+base_advanced_case="$test_root/base-advanced"
+git_init "$base_advanced_case"
+git -C "$base_advanced_case" checkout -q -b feature
+printf 'changed\n' > "$base_advanced_case/pkg/sched/engine.go"
+git -C "$base_advanced_case" add pkg/sched/engine.go
+git -C "$base_advanced_case" commit -q -m 'feat(sched): adjust admission'
+feature_head="$(git -C "$base_advanced_case" rev-parse HEAD)"
+git -C "$base_advanced_case" checkout -q main
+mkdir -p "$base_advanced_case/pkg/sched"
+printf 'package sched\n\nfunc TestBaseOnly(t *testing.T) {}\n' > "$base_advanced_case/pkg/sched/base_only_test.go"
+git -C "$base_advanced_case" add pkg/sched/base_only_test.go
+git -C "$base_advanced_case" commit -q -m 'test(sched): add base coverage'
+base_head="$(git -C "$base_advanced_case" rev-parse HEAD)"
+make_event_refs "$base_advanced_case" "$base_head" "$feature_head"
+expect_pass 'base-only test is not a PR change' "$base_advanced_case"
 
 echo "check_spec_cited_tests: OK"
