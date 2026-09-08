@@ -72,6 +72,12 @@ func TestAppWakeTimeline_HobbyPlanReturns200(t *testing.T) {
 	if len(out.TriggerHistogram) != 0 {
 		t.Errorf("trigger_histogram not empty on fresh app: %+v", out.TriggerHistogram)
 	}
+	if out.TriggerClassHistogram == nil {
+		t.Errorf("trigger_class_histogram is nil — wire shape contract requires non-nil empty map")
+	}
+	if len(out.TriggerClassHistogram) != 0 {
+		t.Errorf("trigger_class_histogram not empty on fresh app: %+v", out.TriggerClassHistogram)
+	}
 	if out.Rows == nil {
 		t.Errorf("rows is nil — wire shape contract requires non-nil empty slice")
 	}

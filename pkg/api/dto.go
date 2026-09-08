@@ -49,6 +49,10 @@ type CreateAppRequest struct {
 	RobotsTxt string `json:"robots_txt,omitempty"`
 	// HeadWakes opts the app into waking a parked app for HEAD /.
 	HeadWakes bool `json:"head_wakes,omitempty"`
+	// CrawlerPolicy controls known monitor/crawler requests. Empty defaults
+	// to wake; cached serves an existing edge cache and never wakes; block
+	// returns 503 + Retry-After.
+	CrawlerPolicy string `json:"crawler_policy,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -184,6 +188,9 @@ type UpdateAppRequest struct {
 	RobotsTxt *string `json:"robots_txt,omitempty"`
 	// HeadWakes controls whether HEAD / may wake this app. Nil is unchanged.
 	HeadWakes *bool `json:"head_wakes,omitempty"`
+	// CrawlerPolicy changes the known monitor/crawler wake policy. Nil is
+	// unchanged; an empty string restores the default wake policy.
+	CrawlerPolicy *string `json:"crawler_policy,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -4167,10 +4174,10 @@ type AppSLOResponse struct {
 //
 // Source conventions:
 //   - WakeCount24h: number of instances in the trailing 24h window
-//     (descending-cutoff break: the SQL is LIMIT 50, so any sane
+//     (descending-cutoff break: the SQL is LIMIT 100, so any sane
 //     customer workload lands inside the 24h window — the dashboard
 //     never claims "true" 24h since it would need a separate SQL
-//     scan; mirrors the HTML page's documented 50-row cap).
+//     scan; mirrors the JSON endpoint's documented 100-row cap).
 //   - WakeCountWithMeta: denominator for AtCapacityPct — the count
 //     of those rows where the events.wake.boot_started LEFT JOIN
 //     succeeded (pre-ADR-123 fleet rows contribute zero to this
@@ -4181,7 +4188,7 @@ type AppSLOResponse struct {
 //   - TriggerHistogram: empty map (NOT null) on a fresh app, or a
 //     trigger → N count of WakeBootMeta.Trigger values across the
 //     meta-bearing rows.
-//   - Rows: every instance in the 50-row slice whose StartedAt is
+//   - Rows: every instance in the 100-row slice whose StartedAt is
 //     within the 24h cutoff, in DESC order. Pre-ADR-123 fleet rows
 //     appear with the Trigger/QueuedCount/ReadyInMS fields absent
 //     (zero-valued); the dashboard renders em-dash on those — the
@@ -4194,14 +4201,15 @@ type AppSLOResponse struct {
 // happen just before, so consumers should treat AsOf as the
 // authoritative "as of" instant for the row set.
 type AppWakeTimelineResponse struct {
-	App               WakeTimelineApp       `json:"app"`
-	WakeCount24h      int                   `json:"wake_count_24h"`
-	WakeCountWithMeta int                   `json:"wake_count_with_meta"`
-	AtCapacityCount   int                   `json:"at_capacity_count"`
-	AtCapacityPct     float64               `json:"at_capacity_pct"`
-	TriggerHistogram  map[string]int        `json:"trigger_histogram"` // empty map, not nil
-	Rows              []WakeTimelineJSONRow `json:"rows"`
-	AsOf              string                `json:"as_of"` // RFC3339Nano UTC
+	App                   WakeTimelineApp       `json:"app"`
+	WakeCount24h          int                   `json:"wake_count_24h"`
+	WakeCountWithMeta     int                   `json:"wake_count_with_meta"`
+	AtCapacityCount       int                   `json:"at_capacity_count"`
+	AtCapacityPct         float64               `json:"at_capacity_pct"`
+	TriggerHistogram      map[string]int        `json:"trigger_histogram"`       // empty map, not nil
+	TriggerClassHistogram map[string]int        `json:"trigger_class_histogram"` // empty map, not nil
+	Rows                  []WakeTimelineJSONRow `json:"rows"`
+	AsOf                  string                `json:"as_of"` // RFC3339Nano UTC
 }
 
 // WakeTimelineApp is the slim per-app DTO embedded inside
@@ -4293,6 +4301,7 @@ type WakeTimelineJSONRow struct {
 	State              string `json:"state"`
 	At                 string `json:"at"` // RFC3339
 	Trigger            string `json:"trigger,omitempty"`
+	TriggerClass       string `json:"trigger_class,omitempty"`
 	Method             string `json:"method,omitempty"`
 	Tier               string `json:"tier,omitempty"`
 	QueuedCount        int32  `json:"queued_count,omitempty"`

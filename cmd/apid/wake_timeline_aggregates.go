@@ -73,11 +73,12 @@ import (
 //     empty map — never nil — the wire-shape contract is
 //     "non-nil empty map", see AppWakeTimelineResponse doc).
 type wakeTimelineAggregates struct {
-	WakeCount24h      int
-	WakeCountWithMeta int
-	AtCapacityCount   int
-	AtCapacityPct     float64
-	TriggerHistogram  map[string]int
+	WakeCount24h          int
+	WakeCountWithMeta     int
+	AtCapacityCount       int
+	AtCapacityPct         float64
+	TriggerHistogram      map[string]int
+	TriggerClassHistogram map[string]int
 }
 
 // aggregateWakeTimeline walks the instances slice and computes
@@ -105,7 +106,8 @@ type wakeTimelineAggregates struct {
 // doc comment in pkg/api/dto.go).
 func aggregateWakeTimeline(instances []state.Instance, bootMetas map[string]state.WakeBootMeta, cutoff time.Time) wakeTimelineAggregates {
 	agg := wakeTimelineAggregates{
-		TriggerHistogram: make(map[string]int),
+		TriggerHistogram:      make(map[string]int),
+		TriggerClassHistogram: make(map[string]int),
 	}
 	for _, ins := range instances {
 		if !ins.StartedAt.IsZero() && ins.StartedAt.UTC().Before(cutoff) {
@@ -120,6 +122,9 @@ func aggregateWakeTimeline(instances []state.Instance, bootMetas map[string]stat
 		agg.WakeCountWithMeta++
 		if meta.Trigger != "" {
 			agg.TriggerHistogram[meta.Trigger]++
+		}
+		if meta.TriggerClass != "" {
+			agg.TriggerClassHistogram[meta.TriggerClass]++
 		}
 		if meta.AtCapacityPresent && meta.AtCapacity {
 			agg.AtCapacityCount++

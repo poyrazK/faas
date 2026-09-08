@@ -30,6 +30,14 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+func withIncomingCorrelation(ctx context.Context) context.Context {
+	fields, ok := wire.CorrelationFromIncoming(ctx)
+	if !ok {
+		return ctx
+	}
+	return wire.WithContext(ctx, fields)
+}
+
 // LogFrameSink is the per-frame callback the StreamAppLogs handler
 // invokes for each frame decoded from the per-instance vmmd Logs
 // RPC. It returns a non-nil error to abort the stream (the gRPC
@@ -379,6 +387,7 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 	// request — the gateway sets it from the parsed
 	// `pr-{N}-{slug}.<zone>` Host header. Empty scope = legacy
 	// prod behaviour, threaded via WithScope at the engine entry.
+	ctx = withIncomingCorrelation(ctx)
 	res, err := s.engine.Wake(ctx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
@@ -458,9 +467,9 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 	// A burst continuation carries the scheduler's narrow cooldown
 	// bypass marker; it does not change any capacity or placement
 	// checks in Engine.AdmitInstance.
-	engineCtx := ctx
+	engineCtx := withIncomingCorrelation(ctx)
 	if req.GetBurstContinuation() {
-		engineCtx = sched.WithBurstContinuation(ctx)
+		engineCtx = sched.WithBurstContinuation(engineCtx)
 	}
 	res, err := s.engine.AdmitInstance(engineCtx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
 	s.ops.Observe(op, time.Since(start), err)
@@ -502,6 +511,7 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 	start := time.Now()
 	var out sched.CoordOutcome
 	var err error
+	ctx = withIncomingCorrelation(ctx)
 	if capacity, ok := s.engine.(interface {
 		EnsureWakeCapacity(context.Context, string, string, int) (sched.CoordOutcome, error)
 	}); ok && req.GetDesiredInstances() > 1 {

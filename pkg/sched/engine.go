@@ -2808,6 +2808,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		InstanceID:         bootInput.insID,
 		WakeID:             wakeID,
 		Trigger:            bootInput.trigger,
+		TriggerClass:       inboundCorr.TriggerClass,
 		QueuedCount:        bootInput.queuedCount,
 		ConcurrencyAtAdmit: bootInput.concurrencyAtAdmit,
 	})
@@ -2833,6 +2834,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			Tier:               bootInput.chosenTier,
 			RequestedAt:        bootInput.startedAt, // best-effort stamp
 			Trigger:            bootInput.trigger,
+			TriggerClass:       inboundCorr.TriggerClass,
 			QueuedCount:        bootInput.queuedCount,
 			ConcurrencyAtAdmit: bootInput.concurrencyAtAdmit,
 			AtCapacity:         bootInput.atCapacity, // PR-A — see bootInput.atCapacity doc
@@ -3157,6 +3159,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			StartedAt:          bootInput.startedAt,
 			CompletedAt:        now,
 			Trigger:            bootInput.trigger,
+			TriggerClass:       inboundCorr.TriggerClass,
 			QueuedCount:        bootInput.queuedCount,
 			ConcurrencyAtAdmit: bootInput.concurrencyAtAdmit,
 		})

@@ -48,6 +48,7 @@ type WakeTimelineRow struct {
 	Kind               string // wake.boot_started | wake.boot_completed | wake.boot_failed | …
 	State              string // mirror the instance State column on the app_detail recent-wakes table
 	Trigger            string // "" if absent
+	TriggerClass       string // request source class; "" for non-request wakes
 	QueuedCount        int    // 0 if absent
 	ConcurrencyAtAdmit int    // 0 if absent
 	AtCapacity         bool   // present value; only meaningful when AtCapacityPresent is true

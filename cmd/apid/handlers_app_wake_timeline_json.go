@@ -119,7 +119,9 @@ func buildAppWakeTimelineWindow(
 	acct state.Account,
 	since, until time.Time,
 ) (api.AppWakeTimelineResponse, error) {
-	instances, err := store.ListLatestInstancesForApp(ctx, app.ID, 50)
+	// Keep enough bounded history for the CLI's "last 100 wakes" cost
+	// summary while retaining a hard cap at the store boundary.
+	instances, err := store.ListLatestInstancesForApp(ctx, app.ID, 100)
 	if err != nil {
 		log.Warn("wake-timeline: list recent instances", "account_id", acct.ID, "app_id", app.ID, "err", err)
 		instances = nil
@@ -176,6 +178,7 @@ func buildAppWakeTimelineWindow(
 		}
 		if meta, hasMeta := bootMetas[ins.WakeID]; hasMeta {
 			row.Trigger = meta.Trigger
+			row.TriggerClass = meta.TriggerClass
 			row.Method = meta.Method
 			row.Tier = meta.Tier
 			row.QueuedCount = int32(meta.QueuedCount)
@@ -193,13 +196,14 @@ func buildAppWakeTimelineWindow(
 			AppID: app.ID,
 			Slug:  app.Slug,
 		},
-		WakeCount24h:      agg.WakeCount24h,
-		WakeCountWithMeta: agg.WakeCountWithMeta,
-		AtCapacityCount:   agg.AtCapacityCount,
-		AtCapacityPct:     agg.AtCapacityPct,
-		TriggerHistogram:  agg.TriggerHistogram, // empty map, not nil — wire shape contract
-		Rows:              rows,
-		AsOf:              time.Now().UTC().Format(time.RFC3339Nano),
+		WakeCount24h:          agg.WakeCount24h,
+		WakeCountWithMeta:     agg.WakeCountWithMeta,
+		AtCapacityCount:       agg.AtCapacityCount,
+		AtCapacityPct:         agg.AtCapacityPct,
+		TriggerHistogram:      agg.TriggerHistogram, // empty map, not nil — wire shape contract
+		TriggerClassHistogram: agg.TriggerClassHistogram,
+		Rows:                  rows,
+		AsOf:                  time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
 }
 

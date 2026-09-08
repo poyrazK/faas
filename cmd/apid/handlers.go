@@ -661,6 +661,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 			Favicon:          append([]byte(nil), a.Manifest.Favicon...),
 			RobotsTxt:        a.Manifest.RobotsTxt,
 			HeadWakes:        a.Manifest.HeadWakes,
+			CrawlerPolicy:    a.Manifest.EffectiveCrawlerPolicy(),
 		},
 		EgressAllowlist: ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger

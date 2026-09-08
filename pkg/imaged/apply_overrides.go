@@ -147,6 +147,7 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 	manifest.RestartPolicy = app.Manifest.RestartPolicy
 	manifest.StartupDeadlineS = app.Manifest.StartupDeadlineS
 	manifest.MaxRetries = app.Manifest.MaxRetries
+	manifest.CrawlerPolicy = app.Manifest.CrawlerPolicy
 	if app.Manifest.ServiceReplicas == nil {
 		manifest.ServiceReplicas = nil
 	} else {

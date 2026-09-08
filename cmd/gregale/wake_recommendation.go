@@ -23,8 +23,12 @@ func renderWakeRecommendation(ctx context.Context, client *api.Client, slug stri
 		Until: now.Format(time.RFC3339Nano),
 	})
 	if err != nil || len(timeline.Rows) < 10 {
+		if err == nil && len(timeline.Rows) > 0 {
+			renderTriggerClassSummary(timeline, app)
+		}
 		return
 	}
+	renderTriggerClassSummary(timeline, app)
 
 	stats := make(map[string]*wakeRecommendationStats)
 	for _, row := range timeline.Rows {
@@ -73,6 +77,36 @@ func renderWakeRecommendation(ctx context.Context, client *api.Client, slug stri
 			_, _ = fmt.Fprintf(osStdout, "  min 1 monthly resident: unavailable on %s plan\n", acct.Plan)
 		}
 	}
+}
+
+// renderTriggerClassSummary makes known non-user wake cost visible beside the
+// existing latency recommendation. The estimate assumes one idle timeout per
+// suppressed wake and uses the platform's published overage rate; it is a
+// planning number, not an invoice calculation.
+func renderTriggerClassSummary(timeline api.AppWakeTimelineResponse, app api.AppResponse) {
+	wakes := len(timeline.Rows)
+	if wakes == 0 {
+		return
+	}
+	known := timeline.TriggerClassHistogram["monitor"] + timeline.TriggerClassHistogram["crawler"]
+	if known == 0 {
+		for _, row := range timeline.Rows {
+			if row.TriggerClass == "monitor" || row.TriggerClass == "crawler" {
+				known++
+			}
+		}
+	}
+	_, _ = fmt.Fprintf(osStdout,
+		"  %d of your last %d wakes were monitors/crawlers (≈ €%.2f estimated resident cost)\n",
+		known, wakes, estimateCrawlerWakeCostEUR(known, app))
+}
+
+func estimateCrawlerWakeCostEUR(wakes int, app api.AppResponse) float64 {
+	if wakes <= 0 || app.RAMMB <= 0 || app.IdleTimeoutS <= 0 {
+		return 0
+	}
+	gbHours := float64(app.RAMMB+api.PerVMOverheadMB) * float64(wakes) * float64(app.IdleTimeoutS) / (1024 * 3600)
+	return gbHours * float64(api.OverageMillicentsPerGBHour) / 100000
 }
 
 func wakeRecommendationTier(row api.WakeTimelineJSONRow) string {
