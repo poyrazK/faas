@@ -5,6 +5,7 @@ package conformance
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -49,6 +50,9 @@ func Run(t *testing.T, open Open) {
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"account_credits_issue_list_and_consume", testAccountCredits},
+		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
+		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -339,5 +343,193 @@ func testLiveStateReaders(t *testing.T, fx *Fixture) {
 	}
 	if capRAM != wantRAM {
 		t.Errorf("OperatorCapacity RAM total = %d, want %d", capRAM, wantRAM)
+	}
+}
+
+// testAccountCredits pins the credit ledger: what is issued, what is
+// visible for consumption, what a consumption deducts, and — the part that
+// costs real money if the two stores disagree — that re-consuming the same
+// provider invoice is a no-op rather than a second deduction.
+func testAccountCredits(t *testing.T, fx *Fixture) {
+	mk := func(cents int64, reason string, expires *time.Time) state.AccountCredit {
+		c, err := fx.Store.CreateAccountCredit(fx.Ctx, state.AccountCredit{
+			AccountID:      fx.Account.ID,
+			CentsRemaining: cents,
+			Reason:         reason,
+			ExpiresAt:      expires,
+		})
+		if err != nil {
+			t.Fatalf("CreateAccountCredit(%s): %v", reason, err)
+		}
+		if c.ID == "" {
+			t.Fatalf("CreateAccountCredit(%s) returned no ID", reason)
+		}
+		return c
+	}
+	past := time.Now().Add(-time.Hour)
+	mk(500, "goodwill", nil)
+	mk(300, "promo", nil)
+	mk(900, "expired", &past)
+
+	// An expired credit must not be consumable. If one store filters on
+	// expires_at and the other does not, a customer is billed against
+	// money that is gone.
+	active, err := fx.Store.ListActiveCreditsForConsumption(fx.Ctx, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("ListActiveCreditsForConsumption: %v", err)
+	}
+	var activeTotal int64
+	for _, c := range active {
+		activeTotal += c.CentsRemaining
+		if c.Reason == "expired" {
+			t.Errorf("expired credit is consumable: %+v", c)
+		}
+	}
+	if activeTotal != 800 {
+		t.Errorf("active credit total = %d, want 800 (500 + 300; the 900 is expired)", activeTotal)
+	}
+
+	const invoice = "in_conformance_1"
+	res, err := fx.Store.ConsumeAccountCredit(fx.Ctx, state.ConsumeAccountCreditParams{
+		AccountID:         fx.Account.ID,
+		TargetCents:       600,
+		Provider:          "stripe",
+		ProviderInvoiceID: invoice,
+		InvoiceID:         invoice,
+		Reason:            "conformance",
+		Actor:             "apid",
+	})
+	if err != nil {
+		t.Fatalf("ConsumeAccountCredit: %v", err)
+	}
+	if res.ConsumedCents != 600 {
+		t.Errorf("ConsumedCents = %d, want 600", res.ConsumedCents)
+	}
+	if res.RemainingCreditsCents != 200 {
+		t.Errorf("RemainingCreditsCents = %d, want 200 (800 - 600)", res.RemainingCreditsCents)
+	}
+	if res.AlreadyConsumedForInvoice {
+		t.Error("first consumption reported AlreadyConsumedForInvoice")
+	}
+
+	// Replaying the same provider invoice must not deduct a second time.
+	//
+	// The contract is deliberately NOT "ConsumedCents == 0" on replay: the
+	// per-(invoice, credit) partial unique index on credit_ledger blocks
+	// the second deduction, and the reducer then re-derives ConsumedCents
+	// from the existing ledger rows so an operator inspecting either call
+	// sees the same total. The money property is the BALANCE, so that is
+	// what this asserts.
+	again, err := fx.Store.ConsumeAccountCredit(fx.Ctx, state.ConsumeAccountCreditParams{
+		AccountID:         fx.Account.ID,
+		TargetCents:       600,
+		Provider:          "stripe",
+		ProviderInvoiceID: invoice,
+		InvoiceID:         invoice,
+		Reason:            "conformance-replay",
+		Actor:             "apid",
+	})
+	if err != nil {
+		t.Fatalf("ConsumeAccountCredit(replay): %v", err)
+	}
+	if !again.AlreadyConsumedForInvoice {
+		t.Error("replaying the same provider invoice was not reported as already consumed")
+	}
+	if again.ConsumedCents != res.ConsumedCents {
+		t.Errorf("replay ConsumedCents = %d, want %d (re-derived from the ledger so both callers see one total)",
+			again.ConsumedCents, res.ConsumedCents)
+	}
+
+	post, err := fx.Store.ListActiveCreditsForConsumption(fx.Ctx, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("ListActiveCreditsForConsumption(post): %v", err)
+	}
+	var postTotal int64
+	for _, c := range post {
+		postTotal += c.CentsRemaining
+	}
+	if postTotal != 200 {
+		t.Errorf("active total after the replay = %d, want 200 — the duplicate invoice deducted real money a second time", postTotal)
+	}
+	if again.RemainingCreditsCents != 200 {
+		t.Errorf("replay RemainingCreditsCents = %d, want 200", again.RemainingCreditsCents)
+	}
+}
+
+// testOverageCap pins the three-way distinction the reader's (cents, ok)
+// shape exists for: no cap at all, a cap of exactly zero meaning "no
+// overage allowed", and a positive cap. A store that collapses SQL NULL
+// into a Go zero would report "no overage allowed" for an account that
+// never set a cap, and stop billing that should happen.
+func testOverageCap(t *testing.T, fx *Fixture) {
+	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+		t.Fatalf("GetAccountOverageCapCents(unset): %v", err)
+	} else if ok {
+		t.Error("a fresh account reported a cap; want ok=false (no cap)")
+	}
+
+	zero := int64(0)
+	if err := fx.Store.UpdateAccountOverageCapCents(fx.Ctx, fx.Account.ID, &zero); err != nil {
+		t.Fatalf("UpdateAccountOverageCapCents(0): %v", err)
+	}
+	cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("GetAccountOverageCapCents(0): %v", err)
+	}
+	if !ok || cents != 0 {
+		t.Errorf("cap of 0 read back as (%d, %v), want (0, true) — 0 means no overage allowed and must not read as unset", cents, ok)
+	}
+
+	fifty := int64(5000)
+	if err := fx.Store.UpdateAccountOverageCapCents(fx.Ctx, fx.Account.ID, &fifty); err != nil {
+		t.Fatalf("UpdateAccountOverageCapCents(5000): %v", err)
+	}
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+		t.Fatalf("GetAccountOverageCapCents(5000): %v", err)
+	} else if !ok || cents != 5000 {
+		t.Errorf("cap read back as (%d, %v), want (5000, true)", cents, ok)
+	}
+
+	if err := fx.Store.UpdateAccountOverageCapCents(fx.Ctx, fx.Account.ID, nil); err != nil {
+		t.Fatalf("UpdateAccountOverageCapCents(nil): %v", err)
+	}
+	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+		t.Fatalf("GetAccountOverageCapCents(cleared): %v", err)
+	} else if ok {
+		t.Error("cap still reported after clearing with nil; want ok=false")
+	}
+}
+
+// testCronQuota pins that the per-app cron cap trips at the limit and
+// reports it as a *CronQuotaError naming the scope, limit and observed
+// count. The limit is a parameter, so the case uses a tiny one rather than
+// creating twenty rows.
+func testCronQuota(t *testing.T, fx *Fixture) {
+	limits := api.MustLimitsFor(api.PlanPro)
+	limits.CronLimitPerApp = 2
+	limits.CronLimitPerAccount = 100
+
+	for i := 0; i < limits.CronLimitPerApp; i++ {
+		if _, err := fx.Store.CreateCronIfUnderQuota(fx.Ctx, fx.App.ID, "*/5 * * * *", "/cron/"+uuid.NewString(), true, limits); err != nil {
+			t.Fatalf("CreateCronIfUnderQuota(%d of %d): %v", i+1, limits.CronLimitPerApp, err)
+		}
+	}
+
+	_, err := fx.Store.CreateCronIfUnderQuota(fx.Ctx, fx.App.ID, "*/5 * * * *", "/cron/"+uuid.NewString(), true, limits)
+	if err == nil {
+		t.Fatalf("cron %d was accepted; the per-app cap is %d", limits.CronLimitPerApp+1, limits.CronLimitPerApp)
+	}
+	var qe *state.CronQuotaError
+	if !errors.As(err, &qe) {
+		t.Fatalf("quota breach returned %v (%T), want *state.CronQuotaError", err, err)
+	}
+	if qe.Scope != state.CronQuotaScopeApp {
+		t.Errorf("Scope = %q, want %q", qe.Scope, state.CronQuotaScopeApp)
+	}
+	if qe.Limit != limits.CronLimitPerApp {
+		t.Errorf("Limit = %d, want %d", qe.Limit, limits.CronLimitPerApp)
+	}
+	if qe.Observed != limits.CronLimitPerApp {
+		t.Errorf("Observed = %d, want %d", qe.Observed, limits.CronLimitPerApp)
 	}
 }
