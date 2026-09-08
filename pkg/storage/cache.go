@@ -43,9 +43,11 @@
 // hash protects against a flat-dir layout where a Put for
 // "a/b" collides with a Put for "a" + "b".
 //
-// The LRU eviction is byte-budgeted: when the cache exceeds its
-// maxBytes budget, the oldest entries by mtime are evicted
-// until the budget is restored. Default budget is 1 GiB;
+// The LRU eviction is allocated-byte-budgeted: when the cache exceeds its
+// maxBytes disk budget, the oldest entries by mtime are evicted
+// until the budget is restored. Sparse snapshot holes consume no disk budget;
+// the per-artifact logical-size gate still rejects a single oversized blob.
+// Default budget is 8 GiB;
 // operators override via FAAS_STORAGE_CACHE_MAX_BYTES.
 //
 // Out of scope (here, deferred to a follow-up ADR):
@@ -821,8 +823,8 @@ func (c *LocalCacheBackend) evictCache(key string) {
 	}
 }
 
-// enforceBudgetLocked walks the cache directory, sums the
-// sizes, and evicts the oldest entries by mtime until the
+// enforceBudgetLocked walks the cache directory, sums allocated filesystem
+// bytes, and evicts the oldest entries by mtime until the
 // total drops under maxBytes. Caller holds c.mu.
 func (c *LocalCacheBackend) enforceBudgetLocked() error {
 	entries, err := c.snapshotCacheLocked()
@@ -899,7 +901,7 @@ func (c *LocalCacheBackend) snapshotCacheLocked() ([]cacheEntry, error) {
 			out = append(out, cacheEntry{
 				key:     string(metaBytes),
 				path:    path,
-				size:    info.Size(),
+				size:    cacheDiskUsage(info),
 				modTime: info.ModTime(),
 			})
 		}
