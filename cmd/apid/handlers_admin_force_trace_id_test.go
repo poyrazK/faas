@@ -46,7 +46,7 @@ const fixedTraceIDForHandlerTests = "4bf92f3577b34da6a3ce929d0e0e4736"
 func runForceParkHandler(t *testing.T, fake *fakeStoreForIntent, setHeader bool) ([]intentInsertCall, int) {
 	t.Helper()
 	srv, store, cookie := newForceHarness(t, fake)
-	insID, _ := seedRunningInstance(t, store, "RUNNING")
+	insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/instances/"+insID+"/force-park?confirm=true&reason=trace_id_wiring_test", nil)
@@ -84,7 +84,7 @@ func runForceColdBootHandler(t *testing.T, fake *fakeStoreForIntent, setHeader b
 func runForceRestartHandler(t *testing.T, fake *fakeStoreForIntent, setHeader bool) ([]intentInsertCall, int) {
 	t.Helper()
 	srv, store, cookie := newForceHarness(t, fake)
-	insID, _ := seedRunningInstance(t, store, "RUNNING")
+	insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/instances/"+insID+"/force-restart?confirm=true&reason=trace_id_wiring_test", nil)
