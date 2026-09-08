@@ -710,7 +710,6 @@ func TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse(t *testing.T) {
 	}
 }
 
-// adr: 040
 // TestAccountRateLimitReturns429 — ADR-040 / issue #292: when the
 // per-account bucket is exhausted the handler must 429 with
 // x-faas-rate-limit-scope: account. Per-app burst is bypassed with
@@ -3880,3 +3879,5 @@ func TestWarmForwardingDoesNotReuseCachedWakeTimeline(t *testing.T) {
 		t.Fatal("request mutated cached target")
 	}
 }
+
+// adr: 040
