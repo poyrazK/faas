@@ -61,7 +61,7 @@ rm -f "$out_dir/release.tar.gz" "$out_dir/release-manifest.json" "$out_dir/relea
 
 make -C "$repo_root" \
   BINDIR="$work_root/$git_sha/bin" \
-  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 VERSION="$git_sha" build
+  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 VERSION="$git_sha" build-release-batch
 
 if [[ -n "${KERNEL_FILE:-}" ]]; then
   [[ -f "$KERNEL_FILE" ]] || {
