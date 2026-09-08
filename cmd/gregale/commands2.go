@@ -842,7 +842,16 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 	if err != nil {
 		return nil, err
 	}
-	if !ok || m == nil || len(m.Workflows) == 0 {
+	if !ok || m == nil {
+		return nil, nil
+	}
+	// Validate the complete manifest before CreateApp. This keeps hosting
+	// overrides and trigger typos from leaving a newly-created app behind
+	// when the later fan-out would otherwise be the first validation point.
+	if err := m.Validate(); err != nil {
+		return nil, err
+	}
+	if len(m.Workflows) == 0 {
 		return nil, nil
 	}
 	acct, err := client.Whoami(ctx)
