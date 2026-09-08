@@ -115,7 +115,7 @@ func mintOrgKey(t *testing.T, h *e2etest.Harness, key, slug string, label string
 // stamped the membership onto the principal), with the new
 // fields (OrgID, Status, etc.) populated on the wire.
 func TestE2E_OrgKeysList(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -186,7 +186,7 @@ func TestE2E_OrgKeysList(t *testing.T) {
 // The new key's RotatedFromID is the predecessor's id, and the
 // rotation response carries the new plaintext + the old key id.
 func TestE2E_OrgKeysCreate_MintAndRotate(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -275,7 +275,7 @@ func TestE2E_OrgKeysCreate_MintAndRotate(t *testing.T) {
 // Revoke is idempotent at the store layer; the e2e here is the
 // happy-path smoke.
 func TestE2E_OrgKeysRevoke(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -339,7 +339,7 @@ func TestE2E_OrgKeysRevoke(t *testing.T) {
 // silently; the customer can't tell whether the key exists
 // under some other org.
 func TestE2E_OrgKeysGet_CrossOrgReturns404(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -400,7 +400,7 @@ func TestE2E_OrgKeysGet_CrossOrgReturns404(t *testing.T) {
 // e2e suite catches a regression where a handler bypasses
 // AuthorizeOrgAction and the role gate silently disappears.
 func TestE2E_OrgKeysAuthorisation(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -486,7 +486,7 @@ func TestE2E_OrgKeysAuthorisation(t *testing.T) {
 // Reads the audit log via GET /v1/audit-events?kind_prefix=key.
 // +api_key. — the same query the dashboard uses.
 func TestE2E_LegacyKeysDualWrite(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

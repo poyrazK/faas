@@ -67,7 +67,7 @@ func TestAppLogsSSE_DegradedFrame(t *testing.T) {
 		t.Skipf("/dev/kvm not available: %v", err)
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -123,7 +123,7 @@ func TestAppLogsSSE_AuthWiringRejectsAnonymous(t *testing.T) {
 	if _, err := os.Stat("/dev/kvm"); err != nil {
 		t.Skipf("/dev/kvm not available: %v", err)
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -159,7 +159,7 @@ func TestAppLogsSSE_MissingAppProblem(t *testing.T) {
 	if _, err := os.Stat("/dev/kvm"); err != nil {
 		t.Skipf("/dev/kvm not available: %v", err)
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

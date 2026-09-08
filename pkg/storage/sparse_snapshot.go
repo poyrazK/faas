@@ -12,7 +12,9 @@ import (
 // copyArtifactContext preserves zero-filled snapshot pages as file holes. dst
 // must be a fresh, empty temporary file. Publication still uses the caller's
 // fsync and atomic rename, and the returned size counts logical bytes for the
-// existing cache budget. Readers see exactly the original snapshot bytes.
+// per-artifact logical-size safety gate. The aggregate cache budget counts
+// allocated disk bytes so sparse holes do not evict unrelated artifacts.
+// Readers see exactly the original snapshot bytes.
 func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key string) (int64, error) {
 	if !strings.HasPrefix(key, "snap/") || !strings.HasSuffix(key, "/mem") {
 		return copyContext(ctx, dst, src)

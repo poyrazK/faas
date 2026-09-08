@@ -21,6 +21,7 @@ import (
 
 const (
 	googleAuthStateCookie = "faas_google_state"
+	googleAuthNonceCookie = "faas_google_nonce"
 	googleAuthPath        = "/v1/auth/google"
 	googleCallbackPath    = "/v1/auth/google/callback"
 	// schemeHTTP + schemeHTTPS are the URL schemes used in the OAuth
@@ -62,11 +63,26 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 		return
 	}
 	stateToken := hex.EncodeToString(stateTokenBytes)
+	nonceBytes := make([]byte, 32)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "failed to generate OAuth nonce"))
+		return
+	}
+	nonce := hex.EncodeToString(nonceBytes)
 
 	// Set CSRF Cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     googleAuthStateCookie,
 		Value:    stateToken,
+		Path:     googleCallbackPath,
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   300, // 5 minutes
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     googleAuthNonceCookie,
+		Value:    nonce,
 		Path:     googleCallbackPath,
 		HttpOnly: true,
 		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
@@ -85,17 +101,19 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 	}
 
 	googleAuthURL := fmt.Sprintf(
-		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=openid%%20email%%20profile&state=%s",
+		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=openid%%20email%%20profile&state=%s&nonce=%s",
 		url.QueryEscape(clientID),
 		url.QueryEscape(redirectURI),
 		url.QueryEscape(stateToken),
+		url.QueryEscape(nonce),
 	)
 
 	http.Redirect(w, r, googleAuthURL, http.StatusFound)
 }
 
 // handleGoogleOAuthCallback (GET /v1/auth/google/callback)
-// Verifies state token, exchanges OAuth code for Google user profile, and signs user in.
+// Verifies state and nonce, validates Google's ID token, exchanges the OAuth
+// code for the user profile, and signs the user in.
 func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	stateCookie, err := r.Cookie(googleAuthStateCookie)
 	if err != nil || stateCookie.Value == "" {
@@ -121,6 +139,20 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "csrf_mismatch", "CSRF Error", "state token mismatch"))
 		return
 	}
+	// Issue #419 / ADR-046: the callback should never be reached if the
+	// provider is disabled, but a stale cookie or direct callback hit still
+	// gets the same operator-facing 503 as the consent redirect.
+	if !s.oauthConfig.Google.Enabled() {
+		s.disabledOAuthResponse(w, auth.GoogleProviderName,
+			"GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET unset",
+			"Google sign-in is not configured on this host. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in /etc/faas/sealed.env and restart.")
+		return
+	}
+	nonceCookie, err := r.Cookie(googleAuthNonceCookie)
+	if err != nil || nonceCookie.Value == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_nonce", "Invalid OAuth Request", "missing OAuth nonce cookie"))
+		return
+	}
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
@@ -134,20 +166,6 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Issue #419 / ADR-046: same guard as the consent redirect —
-	// the callback should never be reached if the provider is
-	// disabled, but a 503 here is the correct shape if a stale
-	// cookie or direct callback hit slips past the dashboard's
-	// disabled-button gating. The auth-result audit row is
-	// emitted at the existing EmitFailedLogin call sites above;
-	// no extra audit is needed on the disabled path because we
-	// have no email yet to hash.
-	if !s.oauthConfig.Google.Enabled() {
-		s.disabledOAuthResponse(w, auth.GoogleProviderName,
-			"GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET unset",
-			"Google sign-in is not configured on this host. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in /etc/faas/sealed.env and restart.")
-		return
-	}
 	clientID := s.oauthConfig.Google.ClientID
 	clientSecret := s.oauthConfig.Google.ClientSecret
 
@@ -191,6 +209,23 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "json_error", "Internal Error", "failed to parse Google token response"))
 		return
 	}
+	if tokenData.IDToken == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "google_id_token_missing", "OAuth Failed", "Google did not return an ID token"))
+		return
+	}
+	verifier := s.googleIDVerifier
+	if verifier == nil {
+		// Keep hand-built test servers safe while preserving the production
+		// constructor's process-wide verifier/cache. Use a local fallback so
+		// concurrent callbacks never race on server construction state.
+		verifier = newGoogleIDTokenVerifier(s.log)
+	}
+	idClaims, err := verifier.Verify(r.Context(), tokenData.IDToken, clientID, nonceCookie.Value)
+	if err != nil {
+		s.log.Warn("google oauth id token rejected", "err", err.Error())
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "google_id_token_invalid", "OAuth Failed", "Google ID token validation failed"))
+		return
+	}
 
 	// Fetch Google User Profile
 	userInfoReq, err := http.NewRequestWithContext(r.Context(), "GET", "https://www.googleapis.com/oauth2/v3/userinfo", nil)
@@ -201,8 +236,14 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	userInfoReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
 
 	userInfoResp, err := http.DefaultClient.Do(userInfoReq)
-	if err != nil || userInfoResp.StatusCode != http.StatusOK {
+	if err != nil {
 		s.log.Error("google userinfo fetch failed", "err", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "failed to fetch user info from Google"))
+		return
+	}
+	if userInfoResp.StatusCode != http.StatusOK {
+		_ = userInfoResp.Body.Close()
+		s.log.Error("google userinfo fetch failed", "status", userInfoResp.StatusCode)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "failed to fetch user info from Google"))
 		return
 	}
@@ -216,6 +257,10 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 
 	if googleUser.Email == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "email_missing", "Missing Email", "Google profile did not contain an email address"))
+		return
+	}
+	if googleUser.ID == "" || googleUser.ID != idClaims.Subject {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "google_identity_mismatch", "OAuth Failed", "Google identity did not match the validated ID token"))
 		return
 	}
 

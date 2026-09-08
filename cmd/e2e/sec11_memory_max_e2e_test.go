@@ -98,7 +98,7 @@ func TestSec11_MemoryMaxFenceEnforced_CrossProcess(t *testing.T) {
 		t.Skipf("/sys/fs/cgroup not mounted: %v", err)
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

@@ -81,7 +81,7 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		t.Skip("FAAS_BUILDER_BASE_PATH unset; skipping metal source-deploy→wake test")
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

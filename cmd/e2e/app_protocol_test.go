@@ -71,7 +71,7 @@ import (
 // to keep the test surface small; the update-side pin is
 // covered by the unit test in pkg/api.
 func TestE2E_AppProtocol_FreePlanGrpcRejected(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -120,7 +120,7 @@ func TestE2E_AppProtocol_FreePlanGrpcRejected(t *testing.T) {
 // (the universal default per ADR-124 §Decision 1 — no per-plan
 // differentiation in this PR).
 func TestE2E_AppProtocol_HobbyPlanDefaultIsHTTP1(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -158,7 +158,7 @@ func TestE2E_AppProtocol_HobbyPlanDefaultIsHTTP1(t *testing.T) {
 // closed-set persistence path end-to-end (apid → sqlc → pgstore
 // → migration 00382 column → GET /v1/apps/{slug} response).
 func TestE2E_AppProtocol_HobbyPlanPersistence(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -216,7 +216,7 @@ func TestE2E_AppProtocol_HobbyPlanPersistence(t *testing.T) {
 // convention) is covered separately from the INSERT-clause
 // path (State.CreateApp).
 func TestE2E_AppProtocol_InvalidValue(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

@@ -31,7 +31,7 @@ import (
 )
 
 func TestE2E_Invoices_CrossAccountIsolation(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

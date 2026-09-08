@@ -14222,6 +14222,27 @@ func (s *PgStore) AppendEvent(ctx context.Context, actor, kind string, subject *
 	return s.AppendEventWithTrace(ctx, actor, kind, subject, data, nil)
 }
 
+// AppendEventAt is the timestamp-preserving writer used by asynchronous wake
+// telemetry. Lifecycle events capture their boundary before leaving the hot
+// path; persisting that time keeps cross-daemon timelines accurate even when
+// the best-effort events worker reaches Postgres later.
+func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject *string, data []byte, at time.Time) error {
+	if at.IsZero() {
+		return s.AppendEvent(ctx, actor, kind, subject, data)
+	}
+	var subj *uuid.UUID
+	if subject != nil {
+		u, err := uuid.Parse(*subject)
+		if err == nil {
+			subj = &u
+		}
+	}
+	_, err := s.pool.Exec(ctx,
+		`insert into events (at, actor, kind, subject, data) values ($1, $2, $3, $4, $5::jsonb)`,
+		at, actor, kind, subj, data)
+	return err
+}
+
 // AppendEventWithTrace writes one row to events with an optional
 // OTel W3C 32-char hex trace_id (migrations/00486). When traceID
 // is nil the column is left NULL — pre-PR rows + cron-fired rows

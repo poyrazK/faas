@@ -397,7 +397,7 @@ jobs:
     if: needs.preflight.result == 'success'
     environment: production
     runs-on: [self-hosted, linux, faas-fleet]
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       NODE: ${{ needs.preflight.outputs.node }}
@@ -697,8 +697,8 @@ jobs:
             --release-tarball "$ARTIFACT_DIR/release.tar.gz"
             --artifact-dir "$ARTIFACT_DIR"
             --repo-root "$GITHUB_WORKSPACE"
-            --timeout 25m
-            --lease-ttl 35m
+            --timeout 40m
+            --lease-ttl 50m
             # A failed preflight or convergence leaves a durable failed job.
             # This workflow is the retry-safe owner of the exact desired
             # node/release state, so resume that state instead of requiring

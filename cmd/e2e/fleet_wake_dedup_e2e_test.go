@@ -70,7 +70,7 @@ import (
 // rejection from the schedd lifecycle so the test is
 // deterministic without standing up two real schedd daemons.
 func TestFleetWakeDedup_TwoScheddsOneWakeID(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)

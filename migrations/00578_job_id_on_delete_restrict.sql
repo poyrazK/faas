@@ -66,7 +66,9 @@ CREATE INDEX IF NOT EXISTS instances_kind_job_task_idx
 DO $$
 BEGIN
     IF EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'instances_job_id_fk'
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'instances_job_id_fk'
+           AND conrelid = 'instances'::regclass
     ) THEN
         ALTER TABLE instances DROP CONSTRAINT instances_job_id_fk;
     END IF;
@@ -75,7 +77,9 @@ END $$;
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'instances_job_id_fk'
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'instances_job_id_fk'
+           AND conrelid = 'instances'::regclass
     ) THEN
         ALTER TABLE instances
             ADD CONSTRAINT instances_job_id_fk

@@ -134,7 +134,7 @@ func seedAccountWithAPIKey(t *testing.T, h *e2etest.Harness,
 // counted under WillDeploy.Action="create"). Removed + Skipped
 // are empty.
 func TestScanPartition_CardinalityComplete(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -276,7 +276,7 @@ func TestScanPartition_CardinalityComplete(t *testing.T) {
 //     audit fix at TestReconcile_ExcludePreventsRemove pins the
 //     apply-side contract; this test pins the scan-side corollary).
 func TestScanPartition_ExcludedExistingAppDualView(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -350,7 +350,7 @@ func TestScanPartition_ExcludedExistingAppDualView(t *testing.T) {
 // where it should, and the scan returns 200 (no crash on an empty
 // account).
 func TestScanPartition_EmptyPlan(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

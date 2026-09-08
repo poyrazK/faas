@@ -57,7 +57,7 @@ import (
 // 100 rows/sec by default, and 6 rows finishes inside one
 // batch (BatchSize=50) and a single progress tick.
 func TestRekeyRunnerPg(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -190,7 +190,7 @@ func TestRekeyRunnerPg(t *testing.T) {
 // being called between phases, this test will flake the same
 // way TestRekeyRunnerPg did pre-fix.
 func TestRekeyRunnerPg_Phase2Isolated(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

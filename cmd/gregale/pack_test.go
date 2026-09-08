@@ -538,15 +538,15 @@ func TestPackDirToTarGz_EmptyDir(t *testing.T) {
 // any HTTP round-trip. Uses many small files so per-file is not the trigger.
 // Bytes are crypto/random so gzip can't compress them away.
 func TestPackDirToTarGz_TotalSizeCap(t *testing.T) {
-	if testing.Short() {
-		t.Skip("size-cap test materialises > 100 MB; skip in -short mode")
-	}
 	dir := t.TempDir()
 	const oneMiB = 1024 * 1024
-	// 110 × 1 MiB of crypto-random bytes (110 MiB raw, ~110 MiB after gzip).
-	// Each file is well under the per-file cap (100 MiB), so the total-cap
-	// stat check is what trips.
-	const totalFiles = defaultZeroConfigSourceCapMB + 10
+	// The cap is a parameter, so the test passes a 3 MiB cap and writes
+	// 5 × 1 MiB of crypto-random bytes (incompressible, so gzip cannot
+	// hide the overshoot). Each file is well under the per-file cap, so
+	// the total-cap stat check is what trips — the same branch the
+	// production 100 MiB default exercises, without materialising 110 MiB.
+	const capMB = 3
+	const totalFiles = capMB + 2
 	for i := 0; i < totalFiles; i++ {
 		chunk := make([]byte, oneMiB)
 		if _, err := io.ReadFull(crypto_rand.Reader, chunk); err != nil {
@@ -556,7 +556,7 @@ func TestPackDirToTarGz_TotalSizeCap(t *testing.T) {
 	}
 
 	dest := filepath.Join(t.TempDir(), "out.tar.gz")
-	_, err := packDirToTarGz(dir, dest, defaultZeroConfigSourceCapMB, nil)
+	_, err := packDirToTarGz(dir, dest, capMB, nil)
 	if err == nil {
 		t.Fatal("packDirToTarGz should reject total size > cap, got nil error")
 	}

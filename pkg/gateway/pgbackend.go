@@ -233,19 +233,17 @@ type PGBackend struct {
 	// mint; tests inject a fake that records the call.
 	certIssuer CertIssuer
 
-	// appResolver (Phase 2 / Gate A) maps appID → state.App so the
-	// per-node client cache can find apps.node_id without a second
-	// store hop. Optional: nil falls through to the legacy single-sched
-	// path. Production wires this to a closure that calls
+	// appResolver (Phase 2 / Gate A) maps appID → App when the normal
+	// hostname lookup has not already populated the app cache. Optional: nil
+	// falls through to the single-sched path. Production wires this to
 	// state.Store.AppByID; tests can return a synthetic App.
 	appResolver func(ctx context.Context, appID string) (App, bool, error)
 
 	// clientForApp (Phase 2 / Gate A) returns the schedd client that
-	// owns the given app. Mandatory when appResolver is set. Production
-	// wires this to scheddRouter.ScheddForApp; tests inject a closure
-	// that returns a static fake. Returning ok=false forces a fallback
-	// to the legacy b.sched field — useful for tests that exercise the
-	// single-sched path.
+	// owns the given app. Mandatory when appResolver is set. Production wires
+	// this to scheddRouter.ScheddForApp using the cached NodeID; tests inject a
+	// closure that returns a static fake. Returning ok=false surfaces a
+	// definitive routing error.
 	clientForApp func(ctx context.Context, app App) (Scheduler, bool, error)
 
 	// liveTargetLoader hydrates the process-local picker when schedd reports
@@ -478,6 +476,60 @@ func (b *PGBackend) RefreshLiveTargets(ctx context.Context, appID string) error 
 		return nil, nil
 	})
 	return err
+}
+
+// ValidateLiveTarget verifies one idle-aged cache entry against the same
+// authoritative RUNNING-instance loader used for reconciliation. Requests that
+// arrive just after the reaper commits PARKED can otherwise race a delayed
+// notification, spend their full budget on the vanished netns, and return 503.
+func (b *PGBackend) ValidateLiveTarget(ctx context.Context, appID, instanceID string) (bool, error) {
+	if b == nil || appID == "" || instanceID == "" || b.liveTargetLoader == nil {
+		return true, nil
+	}
+	value, err, _ := b.liveTargetHydration.Do("validate\x00"+appID+"\x00"+instanceID, func() (any, error) {
+		targets, loadErr := b.liveTargetLoader(ctx, appID)
+		if loadErr != nil {
+			return false, fmt.Errorf("gateway: validate live target for app %s: %w", appID, loadErr)
+		}
+		live := false
+		for _, target := range targets {
+			if target.InstanceID == instanceID {
+				live = true
+			}
+			b.RecordTarget(appID, target)
+		}
+		if !live {
+			b.EvictInstance(appID, instanceID)
+		}
+		return live, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	live, _ := value.(bool)
+	return live, nil
+}
+
+// TouchTarget records successful local activity on the cached target. AddedAt
+// doubles as the last locally confirmed activity stamp, so the idle-age check
+// stays off the normal warm path without maintaining a second target map.
+func (b *PGBackend) TouchTarget(appID, instanceID string, at time.Time) {
+	if b == nil || appID == "" || instanceID == "" || at.IsZero() {
+		return
+	}
+	b.tgtMu.Lock()
+	defer b.tgtMu.Unlock()
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		return
+	}
+	for _, set := range picker.sets {
+		for i := range set.entries {
+			if set.entries[i].InstanceID == instanceID {
+				set.entries[i].AddedAt = at
+			}
+		}
+	}
 }
 
 // EnsureWarm ensures one running instance for an actually cold production
@@ -1681,12 +1733,17 @@ func (b *PGBackend) RequestCertForWildcardDomain(ctx context.Context, domain str
 // fallback itself (no callers remain after PR-7).
 func (b *PGBackend) resolveSched(ctx context.Context, appID string) (Scheduler, error) {
 	if b.appResolver != nil && b.clientForApp != nil {
-		app, ok, err := b.appResolver(ctx, appID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("gatewayd-internal: app %s: not found (transient resolver miss; legacy single-box fallback removed in PR-7)", appID)
+		app, ok := b.getApp(appID)
+		if !ok || app.NodeID == "" {
+			var err error
+			app, ok, err = b.appResolver(ctx, appID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, fmt.Errorf("gatewayd-internal: app %s: not found (transient resolver miss; legacy single-box fallback removed in PR-7)", appID)
+			}
+			b.putApp(app)
 		}
 		if app.NodeID == "" {
 			return nil, fmt.Errorf("gatewayd-internal: app %s has empty NodeID (pre-migration row; legacy single-box fallback removed in PR-7)", appID)

@@ -169,7 +169,7 @@ func applyProjectMultipart(t *testing.T, h *e2etest.Harness, key, slug, planToke
 // the apply path must satisfy; the build-enqueue coverage lives
 // in apply_project_builds_e2e_test.go.
 func TestApplyProject_MultiWorkloadHappyPath(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -233,7 +233,7 @@ func TestApplyProject_MultiWorkloadHappyPath(t *testing.T) {
 // the fixture has docker-compose.yml so ScanSource must be
 // 'compose'.
 func TestApplyProject_ProjectRowAndScanSource(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -268,7 +268,7 @@ func TestApplyProject_ProjectRowAndScanSource(t *testing.T) {
 // Catches accidental removals / renames — the cli + sdk-coverage
 // gate both decode this shape.
 func TestApplyProject_ApplyResponseShape(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -305,7 +305,7 @@ func TestApplyProject_ApplyResponseShape(t *testing.T) {
 // the dir; the test walks the spool root and asserts no leftover
 // dirs remain.
 func TestApplyProject_NoLeakedScanDir(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -345,7 +345,7 @@ func TestApplyProject_NoLeakedScanDir(t *testing.T) {
 // builds so this didn't surface; post-PR-A the build row's kind
 // is the source of truth and a wrong value trips the CHECK.
 func TestApplyProject_DeploymentKindTarball(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -383,7 +383,7 @@ func TestApplyProject_DeploymentKindTarball(t *testing.T) {
 // builds slice (deployment_id, build_id, payload shape, notify)
 // lives in apply_project_builds_e2e_test.go.
 func TestApplyProject_BuildRowCreated(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -416,7 +416,7 @@ func TestApplyProject_BuildRowCreated(t *testing.T) {
 // shares an ID across workloads would break the CLI's "applied
 // X → app_id" line.
 func TestApplyProject_AppIDsAreUnique(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -442,7 +442,7 @@ func TestApplyProject_AppIDsAreUnique(t *testing.T) {
 // so a missing file would surface as a builderd-side error; the
 // apply path's contract is "the file is on disk before we respond".
 func TestApplyProject_StagedTarballOnDisk(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

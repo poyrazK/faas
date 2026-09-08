@@ -39,7 +39,7 @@ import (
 )
 
 func TestEdgeRulesBudget_E2E(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -104,7 +104,7 @@ func TestEdgeRulesBudget_E2E(t *testing.T) {
 // The field is opt-in (default `x-faas-budget-ms` per
 // api.RequestBudgetDefaultOverrideHeader); empty = no override.
 func TestEdgeRulesBudget_OverrideHeader(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

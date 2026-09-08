@@ -51,7 +51,7 @@ import (
 // on assertion N to leave enough context for the operator to see what N-1
 // looked like.
 func TestSecretsScopeSurfacePg(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

@@ -364,7 +364,7 @@ func (s *Server) emitBootStartedMirror(ctx context.Context, instanceID, method s
 		queued = fields.QueuedCount
 		conc = fields.ConcurrencyAtAdmit
 	}
-	s.events.Emit(ctx, events.BootStarted{
+	s.events.EmitAsync(ctx, events.BootStarted{
 		EmitAt:             time.Now().UTC(),
 		WakeID:             wakeID,
 		AppID:              appID,
