@@ -56,6 +56,7 @@ guest_init="${base_skeleton}/sbin/init"
 active_services="${stage_root}/active-services"
 cache_root="/var/cache/faas-metal-smoke"
 services=(faas-vmmd faas-builderd faas-imaged faas-gatewayd-internal)
+base_mountpoints=(dev overlay proc run sys sys/fs/cgroup tmp)
 
 mkdir -p /var/lock
 exec 9>/var/lock/faas-builder-acceptance.lock
@@ -63,10 +64,12 @@ flock -w "${FAAS_METAL_LOCK_TIMEOUT_SECONDS:-900}" 9 ||
   die "another native acceptance run holds the host lock"
 
 mkdir -p "${base_skeleton}/bin" "${base_skeleton}/sbin" \
-  "${base_skeleton}/dev" "${base_skeleton}/sys" "${base_skeleton}/proc" \
-  "${base_skeleton}/etc/faas" "${base_skeleton}/tmp" \
+  "${base_skeleton}/etc/faas" \
   "${layer_skeleton}/etc/faas" "${layer_skeleton}/tmp" \
   "${cache_root}/go-build" "${cache_root}/go-mod" "${cache_root}/home"
+for mountpoint in "${base_mountpoints[@]}"; do
+  mkdir -p "${base_skeleton}/${mountpoint}"
+done
 : > "${active_services}"
 
 cleanup() {
