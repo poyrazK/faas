@@ -9,8 +9,10 @@
  * canonical `wake.*` vocabulary is documented in
  * `docs/adr/064-wake-timeline-canonical-vocabulary.md`
  * (including `wake.restore_breakdown`, which exposes the
- * vmmd snapshot-restore phases in integer milliseconds, plus
- * the aggregate `total_ms`; and build/deploy/boot failure kinds).
+ * vmmd snapshot-restore phases in integer milliseconds;
+ * `wake.cold_boot_cpu`, which records the temporary startup CPU
+ * allowance and configured quota restored before routing; and
+ * build/deploy/boot failure kinds).
  *
  */
 export type WakeTimelineEvent = {
