@@ -6554,14 +6554,15 @@ type RekeyProgress struct {
 }
 
 // OperatorIntentAcceptedResponse is the wire shape returned by
-// POST /v1/admin/instances/{id}/force-park and
-// POST /v1/admin/apps/{slug}/force-cold-boot (PR #1099 P2
-// redesign). Both handlers now return 202 Accepted with an
+// POST /v1/admin/instances/{id}/force-park,
+// POST /v1/admin/apps/{slug}/force-cold-boot, and
+// POST /v1/admin/instances/{id}/force-restart (PR #1099 P2
+// redesign). The handlers return 202 Accepted with an
 // intent_id; the operator polls GET /v1/admin/operator-intents/{id}
 // for terminal status. StatusURL is the relative path; clients
 // prepend the apid base URL.
 //
-// InstanceID + PreviousState are populated for force_park;
+// InstanceID + PreviousState are populated for force_park and force_restart;
 // AppID + DeploymentID for force_cold_boot. Kind disambiguates
 // which fields are meaningful. ExpiresAt is the recommended
 // horizon for the operator to stop polling (5 minutes; matches
