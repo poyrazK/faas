@@ -142,8 +142,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GRACE_INTERVAL` | apid | `default` |  |  | `` |  |
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
-| `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, shared | `unit` |  |  | `` |  |
+| `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, s3-gatewayd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_AGE_KEY` | githubd | `default` |  |  | `` |  |
+| `FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH` | s3-gatewayd | `default` |  |  | `` | optional systemd credential path during host-age rotation overlap |
 | `FAAS_HOST_AGE_PUB` | githubd | `default` |  |  | `` |  |
 | `FAAS_HOST_AGE_RECIPIENT_PATH` | apid, vmmd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_BRIDGE_CIDR` | vmmd | `default` |  |  | `` |  |
@@ -196,7 +197,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |  | `` |  |
-| `FAAS_OBJECT_STORAGE_CONFIG` | apid, shared | `default` |  |  | `` | optional provider-registry JSON path; s3_enabled runtime config separately defaults off (docs/object-storage.md); no production activation is promised |
+| `FAAS_OBJECT_STORAGE_CONFIG` | apid, s3-gatewayd, shared | `default` |  |  | `` | provider-registry JSON path; optional for apid but required by s3-gatewayd; s3_enabled runtime config separately defaults off (docs/object-storage.md) |
 | `FAAS_OCI_BLOB_CACHE_DIR` | imaged | `default` |  |  | `` | defaults to <FAAS_STORAGE_CACHE_DIR>/oci-blobs for OCI-backed deployments; local-storage deployments may opt in explicitly |
 | `FAAS_OCI_BLOB_CACHE_MAX_BYTES` | imaged | `default` |  |  | `` | 8 GiB byte budget for the node-local OCI blob cache; override when sizing compute-node disks |
 | `FAAS_OCI_INSECURE` | imaged | `dev-only` |  |  | `` | must never be set on a production host |
@@ -254,6 +255,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
+| `FAAS_S3_GATEWAY_CONTROL_ADDR` | s3-gatewayd | `default` |  | 127.0.0.1:9096 | `` |  |
+| `FAAS_S3_GATEWAY_LISTEN_ADDR` | s3-gatewayd | `default` |  | 127.0.0.1:8084 | `` |  |
+| `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `default` |  | single-box | `` | production control-plane service must set control-plane explicitly |
+| `FAAS_S3_GATEWAY_SPOOL_DIR` | s3-gatewayd | `default` |  |  | `` | optional single-PUT staging directory; empty uses the OS temporary directory |
 | `FAAS_SAFEDEPLOY_STUCK_AFTER` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_SAFEDEPLOY_TOKEN` | meterd | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); Safe Deploy activation requires this and FAAS_CANARY_PROGRESSION_TOKEN together |
 | `FAAS_SAMPLE_INTERVAL` | meterd | `default` |  |  | `` |  |

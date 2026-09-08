@@ -22,6 +22,9 @@ import (
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (
+	// CertIssuanceFailedAfter is the sustained failure window before the
+	// platform raises the customer-facing certificate issuance alert.
+	CertIssuanceFailedAfter = 15 * time.Minute
 	// AppDeleteGraceDays is the restore window for customer app deletes.
 	// App metadata and deployment artifacts remain available during this
 	// period, after which the grace sweeper permanently removes the app.

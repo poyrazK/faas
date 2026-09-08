@@ -107,6 +107,13 @@ func TestWatchdogSweepKillsStuck(t *testing.T) {
 	if got := rowState(t, store, snap.ID); got != string(state.StateStopped) {
 		t.Errorf("SNAPSHOTTING row → %s, want STOPPED", got)
 	}
+	gotDeployment, err := store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if gotDeployment.Status != state.DeployLive {
+		t.Errorf("live deployment status = %q, want live after customer cold-boot timeout", gotDeployment.Status)
+	}
 
 	// All three reservations must be released.
 	if got := engine.Ledger().ResidentRAM(); got != 0 {
@@ -129,6 +136,29 @@ func TestWatchdogSweepKillsStuck(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(ops.WatchdogKills(string(StuckSnapshotTimeout), string(state.StateStopped))); got != 1 {
 		t.Errorf("watchdog_kills{snapshot_timeout,stopped} = %v, want 1", got)
+	}
+}
+
+func TestColdBootWatchdogFailsDeploymentDuringInitialSnapshot(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	if err := store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus: %v", err)
+	}
+	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateColdBooting), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	if err := engine.KillStuck(context.Background(), ins.ID, app.ID, StuckColdBootTimeout); err != nil {
+		t.Fatalf("KillStuck: %v", err)
+	}
+	got, err := store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if got.Status != state.DeployFailed || got.ErrorCode != api.CodeAppStartupTimeout {
+		t.Fatalf("deployment = status %q code %q, want failed/%s", got.Status, got.ErrorCode, api.CodeAppStartupTimeout)
 	}
 }
 

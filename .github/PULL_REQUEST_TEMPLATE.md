@@ -12,6 +12,11 @@
 <!-- Add the `m8-done` label only when this PR includes a committed EX44
      restore-drill PASS record from the last 30 days. CI enforces that claim. -->
 
+<!-- PR-4a: PRs whose title or a commit subject starts with `fix` must touch a
+     Go `_test.go` file. For an intentional exception, add the
+     `no-regression-test` label and include a non-empty line such as:
+     `Why no test: generated output is covered by the source contract check.` -->
+
 ## What
 
 <!-- 1-3 sentences. What changed and why? -->

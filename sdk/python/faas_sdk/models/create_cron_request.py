@@ -13,12 +13,16 @@ T = TypeVar("T", bound="CreateCronRequest")
 
 @_attrs_define
 class CreateCronRequest:
-    """Cron creation payload: schedule expression and target URL."""
+    """Cron creation payload: schedule expression, target URL, and optional timezone/overlap policy."""
 
     app_id: str
     schedule: str
     path: str | Unset = UNSET
     enabled: bool | None | Unset = UNSET
+    timezone: str | Unset = UNSET
+    """IANA timezone; defaults to UTC."""
+    skip_if_running: bool | None | Unset = UNSET
+    """Skip a scheduled fire when an earlier cron invocation is still running."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,6 +38,14 @@ class CreateCronRequest:
         else:
             enabled = self.enabled
 
+        timezone = self.timezone
+
+        skip_if_running: bool | None | Unset
+        if isinstance(self.skip_if_running, Unset):
+            skip_if_running = UNSET
+        else:
+            skip_if_running = self.skip_if_running
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -46,6 +58,10 @@ class CreateCronRequest:
             field_dict["path"] = path
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
+        if timezone is not UNSET:
+            field_dict["timezone"] = timezone
+        if skip_if_running is not UNSET:
+            field_dict["skip_if_running"] = skip_if_running
 
         return field_dict
 
@@ -67,11 +83,24 @@ class CreateCronRequest:
 
         enabled = _parse_enabled(d.pop("enabled", UNSET))
 
+        timezone = d.pop("timezone", UNSET)
+
+        def _parse_skip_if_running(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        skip_if_running = _parse_skip_if_running(d.pop("skip_if_running", UNSET))
+
         create_cron_request = cls(
             app_id=app_id,
             schedule=schedule,
             path=path,
             enabled=enabled,
+            timezone=timezone,
+            skip_if_running=skip_if_running,
         )
 
         create_cron_request.additional_properties = d

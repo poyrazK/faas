@@ -43,9 +43,11 @@
 // hash protects against a flat-dir layout where a Put for
 // "a/b" collides with a Put for "a" + "b".
 //
-// The LRU eviction is byte-budgeted: when the cache exceeds its
-// maxBytes budget, the oldest entries by mtime are evicted
-// until the budget is restored. Default budget is 1 GiB;
+// The LRU eviction is allocated-byte-budgeted: when the cache exceeds its
+// maxBytes disk budget, the oldest entries by mtime are evicted
+// until the budget is restored. Sparse snapshot holes consume no disk budget;
+// the per-artifact logical-size gate still rejects a single oversized blob.
+// Default budget is 8 GiB;
 // operators override via FAAS_STORAGE_CACHE_MAX_BYTES.
 //
 // Out of scope (here, deferred to a follow-up ADR):
@@ -179,15 +181,26 @@ func (f FuncCacheObserver) OnStaleFallback() {
 // that had otherwise been prepositioned successfully.
 const DefaultCacheMaxBytes int64 = 8 << 30
 
+// cacheTouchQueueSize bounds best-effort LRU timestamp work. Cache reads must
+// never wait for a metadata write: on a cold or contended filesystem even a
+// single Chtimes can take longer than the complete snapshot-restore budget.
+// A single worker preserves write ordering and coalesces concurrent touches of
+// the same artifact. A full queue drops only an LRU hint; cached bytes and the
+// canonical parent remain correct.
+const cacheTouchQueueSize = 256
+
 // LocalCacheBackend is the read-through cache ADR-054 §2
 // describes. Construct one with NewLocalCacheBackend; pass the
 // parent backend (typically OCIRegistryStorageBackend or a
 // PrefixRouter) and the cache root directory.
 type LocalCacheBackend struct {
-	parent   StorageBackend
-	root     string
-	maxBytes int64
-	mu       sync.Mutex
+	parent       StorageBackend
+	root         string
+	maxBytes     int64
+	mu           sync.Mutex
+	touchQueue   chan string
+	touchPending sync.Map // cache path -> struct{}
+	chtimes      func(string, time.Time, time.Time) error
 	// observer is the optional CacheObserver sink. The field is
 	// guarded by mu; readers take a copy under lock (see
 	// recordStaleFallback) so an operator-set observer is visible
@@ -220,11 +233,15 @@ func NewLocalCacheBackend(parent StorageBackend, root string, maxBytes int64) (*
 		return nil, fmt.Errorf("storage: cache: mkdir %q: %w", root, err)
 	}
 	_ = os.Chmod(root, 0o770|os.ModeSetgid)
-	return &LocalCacheBackend{
-		parent:   parent,
-		root:     root,
-		maxBytes: maxBytes,
-	}, nil
+	cache := &LocalCacheBackend{
+		parent:     parent,
+		root:       root,
+		maxBytes:   maxBytes,
+		touchQueue: make(chan string, cacheTouchQueueSize),
+		chtimes:    os.Chtimes,
+	}
+	go cache.runCacheTouches()
+	return cache, nil
 }
 
 // Root returns the on-disk cache root directory. Used by
@@ -679,12 +696,31 @@ func (c *LocalCacheBackend) openCache(key string) (io.ReadCloser, bool) {
 	return f, true
 }
 
-// touchCacheFile updates the mtime used by the byte-budget eviction pass. It
-// is best-effort because cache freshness never affects canonical storage
-// correctness; a read must not fail just because timestamp persistence did.
+// touchCacheFile queues the mtime update used by the byte-budget eviction
+// pass. It is deliberately non-blocking: cache freshness never affects
+// canonical storage correctness, and restore must not wait for filesystem
+// metadata I/O. Concurrent reads of one artifact coalesce while its touch is
+// queued or running.
 func (c *LocalCacheBackend) touchCacheFile(path string) {
-	now := time.Now()
-	_ = os.Chtimes(path, now, now)
+	if c == nil || c.touchQueue == nil {
+		return
+	}
+	if _, loaded := c.touchPending.LoadOrStore(path, struct{}{}); loaded {
+		return
+	}
+	select {
+	case c.touchQueue <- path:
+	default:
+		c.touchPending.Delete(path)
+	}
+}
+
+func (c *LocalCacheBackend) runCacheTouches() {
+	for path := range c.touchQueue {
+		now := time.Now()
+		_ = c.chtimes(path, now, now)
+		c.touchPending.Delete(path)
+	}
 }
 
 // materializeCache streams a parent response into the cache and returns a
@@ -787,8 +823,8 @@ func (c *LocalCacheBackend) evictCache(key string) {
 	}
 }
 
-// enforceBudgetLocked walks the cache directory, sums the
-// sizes, and evicts the oldest entries by mtime until the
+// enforceBudgetLocked walks the cache directory, sums allocated filesystem
+// bytes, and evicts the oldest entries by mtime until the
 // total drops under maxBytes. Caller holds c.mu.
 func (c *LocalCacheBackend) enforceBudgetLocked() error {
 	entries, err := c.snapshotCacheLocked()
@@ -865,7 +901,7 @@ func (c *LocalCacheBackend) snapshotCacheLocked() ([]cacheEntry, error) {
 			out = append(out, cacheEntry{
 				key:     string(metaBytes),
 				path:    path,
-				size:    info.Size(),
+				size:    cacheDiskUsage(info),
 				modTime: info.ModTime(),
 			})
 		}

@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base32"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -23,6 +25,32 @@ const (
 	// apiKeyRandomBytes is the entropy behind each key.
 	apiKeyRandomBytes = 24
 )
+
+const (
+	// ObjectS3AccessKeyPrefix makes Gregale-issued S3 credentials easy to
+	// identify in logs and secret scanners without exposing secret material.
+	ObjectS3AccessKeyPrefix = "GRGA"
+	objectS3AccessKeyBytes  = 10 // 80-bit public lookup identifier.
+	objectS3SecretBytes     = 30 // 240-bit secret, encoded to 40 characters.
+)
+
+// GenerateObjectS3Credential returns an AWS SDK-compatible access-key pair.
+// The secret is shown once and must be sealed before persistence; unlike an
+// API bearer token it must remain recoverable because SigV4 verification
+// recomputes a request HMAC.
+func GenerateObjectS3Credential() (accessKeyID, secretAccessKey string, err error) {
+	access := make([]byte, objectS3AccessKeyBytes)
+	if _, err := rand.Read(access); err != nil {
+		return "", "", fmt.Errorf("api: generate S3 access key: %w", err)
+	}
+	secret := make([]byte, objectS3SecretBytes)
+	if _, err := rand.Read(secret); err != nil {
+		return "", "", fmt.Errorf("api: generate S3 secret: %w", err)
+	}
+	accessKeyID = ObjectS3AccessKeyPrefix + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(access)
+	secretAccessKey = base64.RawStdEncoding.EncodeToString(secret)
+	return accessKeyID, secretAccessKey, nil
+}
 
 // Consumer keys (ADR-120 / issue #975 item #5). End-customer-of-an-app
 // credentials; distinct from api_keys because they are scoped to a

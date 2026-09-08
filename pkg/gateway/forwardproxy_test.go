@@ -860,9 +860,17 @@ func TestForwardingReverseProxyWithEvents_EmitsProxyFirstByte(t *testing.T) {
 	// Read the events table back. The wake.proxy_first_byte row
 	// should be present exactly once under the wake_id we set
 	// on the Target.
-	rows, err := store.ListEventsByWakeID(context.Background(), "wake-proxy-1", time.Time{}, 0)
-	if err != nil {
-		t.Fatalf("ListEventsByWakeID: %v", err)
+	var rows []state.Event
+	deadline := time.Now().Add(time.Second)
+	for len(rows) == 0 && time.Now().Before(deadline) {
+		var err error
+		rows, err = store.ListEventsByWakeID(context.Background(), "wake-proxy-1", time.Time{}, 0)
+		if err != nil {
+			t.Fatalf("ListEventsByWakeID: %v", err)
+		}
+		if len(rows) == 0 {
+			time.Sleep(time.Millisecond)
+		}
 	}
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))

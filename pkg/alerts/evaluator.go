@@ -37,6 +37,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -71,6 +72,7 @@ type Store interface {
 	CountNewErrorFingerprintsSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
 	ColdWakeRatePctSince(ctx context.Context, accountID, appID string, since time.Time) (float64, error)
 	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
+	CountFailedCertIssuancesSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
 	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error)
 	SetAlertRuleState(ctx context.Context, ruleID string, to state.AlertState, at time.Time) (changed bool, err error)
 	SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, at time.Time) error
@@ -773,6 +775,20 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			return 0, false, skipDegraded
 		}
 		observed := float64(observedCents)
+		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricCertIssuanceFailed:
+		// F2: count legacy custom domains that have remained in the failed
+		// state beyond the sustained-failure window. This is deliberately a
+		// durable state read rather than a PromQL guess so alerting survives
+		// a Prometheus restart and shares the same source as the email path.
+		cutoff := e.now().Add(-api.CertIssuanceFailedAfter)
+		n, err := e.store.CountFailedCertIssuancesSince(ctx, rule.AccountID, rule.AppID, cutoff)
+		if err != nil {
+			e.log.Warn("alerts: count failed certificate issuances",
+				"rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		observed := float64(n)
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricSLOBurnRate:
 		// PromQL-backed customer SLO signal. FetchSLOBurnRate folds

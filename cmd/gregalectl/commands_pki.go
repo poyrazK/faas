@@ -102,9 +102,9 @@ type pkiFlags struct {
 	force   bool
 	daemon  string
 	// nodeCN and transportSAN are used when a compute-only box is
-	// provisioned from operator-owned PKI material. vmmd's leaves use
-	// nodeCN as their verifier identity while every selected leaf gets
-	// transportSAN for endpoint validation.
+	// provisioned from operator-owned PKI material. Leaves that authenticate
+	// the host to a control-plane verifier use nodeCN while every selected
+	// leaf gets transportSAN for endpoint validation.
 	nodeCN       string
 	transportSAN string
 	// boxRole selects the per-box PKI subset (Gate-B PR-3). Empty
@@ -395,7 +395,7 @@ func ensureLeafWithIdentity(rootDir string, role pki.Role, caCert *x509.Certific
 	// a compute-node identity. Keep the node CN limited to those client
 	// leaves; gatewayd's listener and its other client leaves retain their
 	// daemon-role CNs for handler-layer authorization.
-	if nodeCN != "" && (role.Directory == "vmmd" || (role.Directory == "gatewayd" && role.Filename == "apid-client")) {
+	if nodeCN != "" && pki.RoleUsesNodeIdentity(role) {
 		return pki.EnsureLeafWithCNAndSANs(rootDir, role, nodeCN, caCert, caKey, force, extraSANs)
 	}
 	if len(extraSANs.DNSNames) != 0 || len(extraSANs.IPAddresses) != 0 {

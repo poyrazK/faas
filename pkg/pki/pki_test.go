@@ -313,7 +313,7 @@ func TestValidateTrustBundleDoesNotNeedCAKey(t *testing.T) {
 	}
 }
 
-func TestValidateTrustBundleForNodeRejectsGenericVMMDIdentity(t *testing.T) {
+func TestValidateTrustBundleForNodeRejectsGenericNodeIdentities(t *testing.T) {
 	root := t.TempDir()
 	caCert, caKey, err := EnsureCA(root, false)
 	if err != nil {
@@ -326,10 +326,21 @@ func TestValidateTrustBundleForNodeRejectsGenericVMMDIdentity(t *testing.T) {
 		}
 	}
 	if err := ValidateTrustBundleForNode(root, "compute-only", extra, "fsn-3.faas"); err == nil {
-		t.Fatal("ValidateTrustBundleForNode accepted generic vmmd CN")
+		t.Fatal("ValidateTrustBundleForNode accepted generic node-bound CNs")
 	}
 	for _, role := range RolesForBox("compute-only") {
 		if role.Directory != "vmmd" {
+			continue
+		}
+		if err := EnsureLeafWithCNAndSANs(root, role, "fsn-3.faas", caCert, caKey, true, extra); err != nil {
+			t.Fatalf("EnsureLeafWithCNAndSANs(%s/%s): %v", role.Directory, role.Filename, err)
+		}
+	}
+	if err := ValidateTrustBundleForNode(root, "compute-only", extra, "fsn-3.faas"); err == nil {
+		t.Fatal("ValidateTrustBundleForNode accepted generic gatewayd apid-client CN")
+	}
+	for _, role := range RolesForBox("compute-only") {
+		if !RoleUsesNodeIdentity(role) {
 			continue
 		}
 		if err := EnsureLeafWithCNAndSANs(root, role, "fsn-3.faas", caCert, caKey, true, extra); err != nil {

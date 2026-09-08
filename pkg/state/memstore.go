@@ -106,6 +106,7 @@ type MemStore struct {
 	objectReports          []api.ObjectStorageUsageReport
 	objectAuthorizations   map[string]int64
 	objectAccessGrants     map[string]ObjectBucketAccessGrant
+	objectS3Credentials    map[string]ObjectS3Credential
 	objectMultipartUploads map[string]ObjectMultipartUpload
 	mu                     sync.Mutex
 	accounts               map[string]Account
@@ -723,6 +724,7 @@ type builderUsageRow struct {
 func NewMemStore() *MemStore {
 	m := &MemStore{
 		objectAccessGrants:     map[string]ObjectBucketAccessGrant{},
+		objectS3Credentials:    map[string]ObjectS3Credential{},
 		objectMultipartUploads: map[string]ObjectMultipartUpload{},
 		accounts:               map[string]Account{},
 		keys:                   map[string]APIKey{},
@@ -7283,10 +7285,21 @@ func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string
 	if !ok {
 		return ErrNotFound
 	}
+	previous := d.CertStatus
 	d.CertStatus = status
 	d.CertExpiresAt = expiresAt
 	d.CertLastError = lastError
 	d.DNSLastCheckedAt = dnsCheckedAt
+	if status == CustomDomainCertFailed {
+		if previous != CustomDomainCertFailed || d.CertFailedAt.IsZero() {
+			d.CertFailedAt = dnsCheckedAt
+			if d.CertFailedAt.IsZero() {
+				d.CertFailedAt = time.Now().UTC()
+			}
+		}
+	} else {
+		d.CertFailedAt = time.Time{}
+	}
 	m.domains[domain] = d
 	return nil
 }
@@ -7376,13 +7389,23 @@ func (m *MemStore) OldestDoctorObservation(_ context.Context) (time.Time, error)
 
 // --- Crons ------------------------------------------------------------------
 
-func (m *MemStore) CreateCron(_ context.Context, appID, schedule, path string, enabled bool) (Cron, error) {
+func (m *MemStore) CreateCron(ctx context.Context, appID, schedule, path string, enabled bool) (Cron, error) {
+	return m.CreateCronWithOptions(ctx, appID, schedule, path, enabled, CronOptions{})
+}
+
+// CreateCronWithOptions is the option-aware cron creation path. The legacy
+// CreateCron method delegates here so existing callers retain UTC/default
+// behavior while API clients can opt into timezone and overlap controls.
+func (m *MemStore) CreateCronWithOptions(_ context.Context, appID, schedule, path string, enabled bool, opts CronOptions) (Cron, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.apps[appID]; !ok {
 		return Cron{}, fmt.Errorf("state: cron for unknown app %q", appID)
 	}
-	c := Cron{ID: newID(), AppID: appID, Schedule: schedule, Path: path, Enabled: enabled, CreatedAt: time.Now()}
+	if opts.Timezone == "" {
+		opts.Timezone = "UTC"
+	}
+	c := Cron{ID: newID(), AppID: appID, Schedule: schedule, Path: path, Enabled: enabled, Timezone: opts.Timezone, SkipIfRunning: opts.SkipIfRunning, CreatedAt: time.Now()}
 	m.crons[c.ID] = c
 	return c, nil
 }
@@ -7397,7 +7420,13 @@ func (m *MemStore) CreateCron(_ context.Context, appID, schedule, path string, e
 //   - *CronQuotaError when either cap trips.
 //   - ErrNotFound when the app row is gone or AppDeleted.
 //   - ErrConflict on a future uuid collision.
-func (m *MemStore) CreateCronIfUnderQuota(_ context.Context, appID, schedule, path string, enabled bool, limits api.Limits) (Cron, error) {
+func (m *MemStore) CreateCronIfUnderQuota(ctx context.Context, appID, schedule, path string, enabled bool, limits api.Limits) (Cron, error) {
+	return m.CreateCronIfUnderQuotaWithOptions(ctx, appID, schedule, path, enabled, limits, CronOptions{})
+}
+
+// CreateCronIfUnderQuotaWithOptions is the option-aware customer-facing
+// variant of CreateCronIfUnderQuota.
+func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, schedule, path string, enabled bool, limits api.Limits, opts CronOptions) (Cron, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[appID]
@@ -7438,13 +7467,18 @@ func (m *MemStore) CreateCronIfUnderQuota(_ context.Context, appID, schedule, pa
 			Observed: accountCount,
 		}
 	}
+	if opts.Timezone == "" {
+		opts.Timezone = "UTC"
+	}
 	c := Cron{
-		ID:        newID(),
-		AppID:     appID,
-		Schedule:  schedule,
-		Path:      path,
-		Enabled:   enabled,
-		CreatedAt: time.Now(),
+		ID:            newID(),
+		AppID:         appID,
+		Schedule:      schedule,
+		Path:          path,
+		Enabled:       enabled,
+		Timezone:      opts.Timezone,
+		SkipIfRunning: opts.SkipIfRunning,
+		CreatedAt:     time.Now(),
 	}
 	m.crons[c.ID] = c
 	return c, nil
@@ -7460,7 +7494,14 @@ func (m *MemStore) CronByID(_ context.Context, id string) (Cron, error) {
 	return c, nil
 }
 
-func (m *MemStore) UpdateCron(_ context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error) {
+func (m *MemStore) UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error) {
+	return m.UpdateCronWithOptions(ctx, id, schedule, path, enabled, nil, nil, createdAt)
+}
+
+// UpdateCronWithOptions updates both the original cron fields and optional
+// timezone/overlap policy fields. A nil pointer leaves a field unchanged;
+// passing a non-nil empty timezone resets it to UTC.
+func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time) (Cron, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.crons[id]
@@ -7475,6 +7516,15 @@ func (m *MemStore) UpdateCron(_ context.Context, id string, schedule, path *stri
 	}
 	if enabled != nil {
 		c.Enabled = *enabled
+	}
+	if timezone != nil {
+		c.Timezone = *timezone
+		if c.Timezone == "" {
+			c.Timezone = "UTC"
+		}
+	}
+	if skipIfRunning != nil {
+		c.SkipIfRunning = *skipIfRunning
 	}
 	if createdAt != nil {
 		c.CreatedAt = *createdAt
@@ -7507,6 +7557,23 @@ func (m *MemStore) MarkCronFired(_ context.Context, id string, at time.Time) err
 	c.LastFiredAt = at
 	m.crons[id] = c
 	return nil
+}
+
+// CountActiveCronInvocations counts scheduled cron rows that have not reached
+// a terminal state. The mutex makes the check atomic with MemStore writers.
+func (m *MemStore) CountActiveCronInvocations(_ context.Context, cronID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, inv := range m.invocations {
+		if inv.CronID == nil || *inv.CronID != cronID || inv.Source != InvocationCron {
+			continue
+		}
+		if inv.State == InvocationPending || inv.State == InvocationDispatching {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // Fire-now request queue (ADR-090 PR-C). In-memory mirrors the
@@ -11170,12 +11237,22 @@ func (m *MemStore) AppendEvent(ctx context.Context, actor, kind string, subject 
 	return m.AppendEventWithTrace(ctx, actor, kind, subject, data, nil)
 }
 
+// AppendEventAt mirrors PgStore's timestamp-preserving asynchronous wake-event
+// path so in-memory acceptance tests observe the same timeline ordering.
+func (m *MemStore) AppendEventAt(ctx context.Context, actor, kind string, subject *string, data []byte, at time.Time) error {
+	return m.appendEventWithTraceAt(ctx, actor, kind, subject, data, nil, at)
+}
+
 // AppendEventWithTrace writes one row to the in-memory events
 // mirror with an optional OTel W3C 32-char hex trace_id. The hex
 // format is validated defensively at the boundary so test doubles
 // cannot accept an invalid value (mirrors the migration CHECK at
 // 00486 for PgStore). When traceID is nil the field is left nil.
-func (m *MemStore) AppendEventWithTrace(_ context.Context, actor, kind string, subject *string, data []byte, traceID *string) error {
+func (m *MemStore) AppendEventWithTrace(ctx context.Context, actor, kind string, subject *string, data []byte, traceID *string) error {
+	return m.appendEventWithTraceAt(ctx, actor, kind, subject, data, traceID, time.Now())
+}
+
+func (m *MemStore) appendEventWithTraceAt(_ context.Context, actor, kind string, subject *string, data []byte, traceID *string, at time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var subj *uuid.UUID
@@ -11189,7 +11266,7 @@ func (m *MemStore) AppendEventWithTrace(_ context.Context, actor, kind string, s
 	}
 	e := Event{
 		ID:      int64(len(m.events) + 1),
-		At:      time.Now(),
+		At:      at,
 		Actor:   actor,
 		Kind:    kind,
 		Subject: subj,
@@ -14337,6 +14414,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.objectAccessGrants, grantKey)
 		}
 	}
+	for credentialID, credential := range m.objectS3Credentials {
+		if credential.AccountID == id {
+			delete(m.objectS3Credentials, credentialID)
+		}
+	}
 	for uploadID, upload := range m.objectMultipartUploads {
 		if upload.AccountID == id {
 			delete(m.objectMultipartUploads, uploadID)
@@ -15513,6 +15595,26 @@ func (m *MemStore) MinCertExpiryForApp(_ context.Context, accountID, appID strin
 		return -1, nil
 	}
 	return *minSec, nil
+}
+
+// CountFailedCertIssuancesSince mirrors the F2 Postgres query. `since` is
+// the cutoff for a failure episode: only domains that have remained failed
+// since at or before that instant are counted.
+func (m *MemStore) CountFailedCertIssuancesSince(_ context.Context, accountID, appID string, since time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, d := range m.domains {
+		if d.CertStatus != CustomDomainCertFailed || d.CertFailedAt.IsZero() || d.CertFailedAt.After(since) {
+			continue
+		}
+		app, ok := m.apps[d.AppID]
+		if !ok || app.AccountID != accountID || (appID != "" && app.ID != appID) {
+			continue
+		}
+		n++
+	}
+	return n, nil
 }
 
 // RefreshCertExpiryStates walks every tenant_surfaces row whose

@@ -2998,7 +2998,7 @@ type CronRun struct {
 }
 
 func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time) {
-	sched, err := ParseSchedule(c.Schedule)
+	sched, err := ParseScheduleWithTimezone(c.Schedule, c.Timezone)
 	if err != nil {
 		l.log.Warn("cron: bad schedule", "cron_id", c.ID, "err", err)
 		return
@@ -3018,6 +3018,22 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 	if sched.NextFireAt(boundary).After(now) {
 		// Already fired in the current window.
 		return
+	}
+	if c.SkipIfRunning {
+		active, err := l.engine.Store().CountActiveCronInvocations(ctx, c.ID)
+		if err != nil {
+			l.log.Warn("cron: count active invocations", "cron_id", c.ID, "err", err)
+			return
+		}
+		if active > 0 {
+			// Consume this scheduled occurrence. Otherwise every tick until
+			// the old invocation finishes would dispatch the same boundary.
+			l.log.Debug("cron: skipping overlapping invocation", "cron_id", c.ID, "active", active)
+			if err := l.engine.Store().MarkCronFired(ctx, c.ID, now); err != nil {
+				l.log.Warn("cron: mark skipped fire", "cron_id", c.ID, "err", err)
+			}
+			return
+		}
 	}
 	res, ok := l.dispatchCronLocked(ctx, c, now, TriggerSchedule)
 	_ = res

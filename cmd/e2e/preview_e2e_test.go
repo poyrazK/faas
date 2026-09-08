@@ -68,7 +68,7 @@ import (
 // untouched). The store's PreviewAppsByParent is the customer-
 // facing surface the dashboard's render path reads.
 func TestPreview_E2E_HappyPath_PreviewAppsByParent(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -145,7 +145,7 @@ func TestPreview_E2E_HappyPath_PreviewAppsByParent(t *testing.T) {
 // env-driven interval + the db.NotifyAppDelete emission path
 // against a real Postgres schema.
 func TestPreview_E2E_TTLExpiry_JanitorSweep(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -204,7 +204,7 @@ func TestPreview_E2E_TTLExpiry_JanitorSweep(t *testing.T) {
 // a future-dated row is mistakenly swept because the SQL
 // predicate dropped the > now() comparison.
 func TestPreview_E2E_OpenPreviewSurvivesJanitorTick(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

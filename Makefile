@@ -13,7 +13,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid gatewayd-public gatewayd-internal schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-stream-bridge builderd imaged meterd githubd hostage-gen
+DAEMONS := apid gatewayd-public gatewayd-internal s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-stream-bridge builderd imaged meterd githubd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -166,13 +166,11 @@ generate-diff: ## Print drift between generated and committed (no exit 1)
 
 .PHONY: test
 test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM needed.
-	# -timeout=18m: ./cmd/e2e under -race walks pkg/e2etest.buildApid
-	# per test (unique -o path → cache miss). PR #541 (apply-time build
-	# enqueue, ADR-068) added ~50 themed apply e2e tests, pushing the
-	# cumulative cmd/e2e wall past the previous 15m ceiling on the
-	# `unit tests` CI job. The dedicated `e2e (cmd/e2e, no metal)` job
-	# also bumped to 20m for the same reason. Memory:
-	# cmd-e2e-coverage-timeout-edge.md
+	# -timeout=18m: headroom for ./cmd/e2e under -race. The daemon
+	# binaries are now linked once per test process
+	# (pkg/e2etest.EnsureSharedBinaries) rather than once per test, so
+	# the e2e wall is dominated by the tests themselves; the ceiling is
+	# kept generous for slow runners. Memory: cmd-e2e-coverage-timeout-edge.md
 	$(GO) test -race -count=1 -timeout=18m $(PKGS)
 
 .PHONY: test-state-coverage
@@ -199,6 +197,14 @@ check-state-coverage: ## Assert pkg/state coverage ≥ 70% from existing profile
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
 	bash scripts/ci/check_memstore_stubs.sh
+
+.PHONY: fix-has-test-check
+fix-has-test-check: ## Require fix-shaped pull requests to change a Go regression test (issue #1529 / PR-4a)
+	bash scripts/ci/check_fix_has_test.sh
+
+.PHONY: fix-has-test-check-test
+fix-has-test-check-test: ## Exercise the fix-has-test CI gate with synthetic pull request events
+	bash scripts/ci/check_fix_has_test_test.sh
 
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live in the `floors` dict inside the python heredoc below

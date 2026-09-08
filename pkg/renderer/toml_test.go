@@ -208,9 +208,9 @@ func TestRenderTOML_VmmdWithComputeNode(t *testing.T) {
 	if !strings.Contains(string(body), "[compute_node]") {
 		t.Errorf("vmmd body missing [compute_node]\nbody:\n%s", body)
 	}
-	// vmmd metrics port is 9095 — the per-daemon table, not 9091.
-	if !strings.Contains(string(body), "metrics_addr = \"127.0.0.1:9095\"") {
-		t.Errorf("vmmd body missing metrics_addr 9095\nbody:\n%s", body)
+	// vmmd metrics and readiness share the registry's canonical listener.
+	if !strings.Contains(string(body), "metrics_addr = \"127.0.0.1:9104\"") {
+		t.Errorf("vmmd body missing metrics_addr 9104\nbody:\n%s", body)
 	}
 	// Validator walk: flatMap must contain every HostKeys.ComputeNodeBlock
 	// key under the "compute_node." prefix.
@@ -329,14 +329,15 @@ func TestRenderTOML_PerDaemonMetricsAddr(t *testing.T) {
 		daemon string
 		want   string
 	}{
-		{"vmmd", "127.0.0.1:9095"},
+		{"vmmd", "127.0.0.1:9104"},
 		{"gatewayd-internal", "127.0.0.1:9090"},
-		{"gatewayd-public", "127.0.0.1:8080"},
-		{"apid", "127.0.0.1:9091"},
-		{"schedd", "127.0.0.1:9091"},
-		{"meterd", "127.0.0.1:9091"},
-		{"githubd", "127.0.0.1:9091"},
-		{"imaged", "127.0.0.1:9091"},
+		{"gatewayd-public", "127.0.0.1:9092"},
+		{"apid", "127.0.0.1:9101"},
+		{"schedd", "127.0.0.1:9103"},
+		{"meterd", "127.0.0.1:9106"},
+		{"githubd", "127.0.0.1:8083"},
+		{"imaged", "127.0.0.1:9102"},
+		{"builderd", "127.0.0.1:9105"},
 	}
 	for _, c := range cases {
 		got := defaultMetricsAddrForDaemon(c.daemon)
@@ -447,7 +448,7 @@ func TestValidateTOMLPlacement_CatchesTombstone(t *testing.T) {
 	flat := map[string]string{
 		// legit keys pass
 		"socket_path":   "/run/faas/vmmd.sock",
-		"metrics_addr":  "127.0.0.1:9095",
+		"metrics_addr":  "127.0.0.1:9104",
 		"tls_cert_path": "/etc/faas/tls/vmmd/server.crt",
 		"tls_key_path":  "/etc/faas/tls/vmmd/server.key",
 		"tls_ca_path":   "/etc/faas/tls/ca/ca.crt",
@@ -466,7 +467,7 @@ func TestValidateTOMLPlacement_CatchesTombstone(t *testing.T) {
 func TestValidateTOMLPlacement_CatchesPrivateKeyInTable(t *testing.T) {
 	flat := map[string]string{
 		"socket_path":   "/run/faas/vmmd.sock",
-		"metrics_addr":  "127.0.0.1:9095",
+		"metrics_addr":  "127.0.0.1:9104",
 		"tls_cert_path": "/etc/faas/tls/vmmd/server.crt",
 		"tls_key_path":  "/etc/faas/tls/vmmd/server.key",
 		"tls_ca_path":   "/etc/faas/tls/ca/ca.crt",
@@ -486,7 +487,7 @@ func TestValidateTOMLPlacement_CatchesPrivateKeyInTable(t *testing.T) {
 func TestValidateTOMLPlacement_PassesValidPlacement(t *testing.T) {
 	flat := map[string]string{
 		"socket_path":                       "/run/faas/vmmd.sock",
-		"metrics_addr":                      "127.0.0.1:9095",
+		"metrics_addr":                      "127.0.0.1:9104",
 		"tls_cert_path":                     "/etc/faas/tls/vmmd/server.crt",
 		"tls_key_path":                      "/etc/faas/tls/vmmd/server.key",
 		"tls_ca_path":                       "/etc/faas/tls/ca/ca.crt",

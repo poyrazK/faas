@@ -31,6 +31,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 )
 
 func signE2E(body []byte, secret []byte) string {
@@ -92,6 +93,10 @@ func TestEndToEnd_RecordedPushReachesUpstream(t *testing.T) {
 	// to a nil-deref-free path. We exercise the no-binding fall-
 	// through instead, since wiring reconcile here would mean
 	// re-implementing the unit-test rig inside cmd/gatewayd-internal.
+	// The replay table in pkg/webhookdedupe is process-wide and two
+	// githubd_proxy tests post the same X-GitHub-Delivery id; under
+	// -shuffle whichever runs first would make this one a rejected replay.
+	webhookdedupe.ResetForTest()
 	secret := []byte("end-to-end-webhook-secret")
 
 	svc := githubd.NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))

@@ -65,7 +65,7 @@ const userSchema = `{
 // NOT a 422 from the validate rule), and a body that violates the
 // schema is rejected with 422 + problem+json + errors[] entry.
 func TestEdgeRulesValidate_E2E_HappyAndReject(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -160,7 +160,7 @@ func TestEdgeRulesValidate_E2E_HappyAndReject(t *testing.T) {
 // is skipped for upgrade requests per handler.go:1576) and the
 // request reaches Backend.Pick.
 func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -245,7 +245,7 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 // POST anything that matches the inline shape (`name`, `email`,
 // `age`) so the rule doesn't 422 on the runtime branch first.
 func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

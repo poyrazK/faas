@@ -88,7 +88,7 @@ import (
 // (TestRollbackApp_ExplicitTarget_Specific,
 // TestRollbackApp_ExplicitTarget_AlreadyLive) — see header.
 func TestRollbackSpecific_E2E(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -204,7 +204,7 @@ func TestRollbackSpecific_E2E(t *testing.T) {
 // Re-seeds in its own Postgres schema so the prior test's state
 // changes don't interfere.
 func TestRollbackSpecific_LegacyEmptyBodyStillSucceeds(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

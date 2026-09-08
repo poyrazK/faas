@@ -195,9 +195,9 @@ update custom_domains set verified_at = now() where domain = $1;
 delete from custom_domains where domain = $1;
 
 -- name: CreateCron :one
-insert into crons (id, app_id, schedule, path, enabled)
-values (gen_random_uuid(), $1, $2, $3, $4)
-returning id, app_id, schedule, path, enabled, created_at;
+insert into crons (id, app_id, schedule, path, enabled, timezone, skip_if_running)
+values (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
+returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at;
 
 -- name: UpdateCron :one
 update crons set
@@ -205,21 +205,21 @@ update crons set
   path = coalesce($3, path),
   enabled = coalesce($4, enabled)
 where id = $1
-returning id, app_id, schedule, path, enabled, created_at;
+returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at;
 
 -- name: DeleteCron :exec
 delete from crons where id = $1 and app_id = $2;
 
 -- name: ListCronsForApp :many
-select id, app_id, schedule, path, enabled, created_at
+select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 from crons where app_id = $1 order by created_at desc;
 
 -- name: ListEnabledCrons :many
-select id, app_id, schedule, path, enabled, created_at
+select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 from crons where enabled = true;
 
 -- name: CronByID :one
-select id, app_id, schedule, path, enabled, created_at
+select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
 from crons where id = $1;
 
 -- name: AppendEvent :exec
@@ -2917,6 +2917,52 @@ WHERE (((state IN ('initiating','completing','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
 ORDER BY retry_at,id LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ObjectS3CredentialLockBucket :one
+SELECT id FROM object_buckets
+WHERE id=$1 AND account_id=$2 AND state='ready' FOR UPDATE;
+
+-- name: ObjectS3CredentialCount :one
+SELECT count(*) FROM object_storage_s3_credentials
+WHERE bucket_id=$1 AND status='active';
+
+-- name: ObjectS3CredentialInsert :one
+INSERT INTO object_storage_s3_credentials
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active') RETURNING *;
+
+-- name: ObjectS3CredentialList :many
+SELECT * FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND status='active'
+ORDER BY created_at,id;
+
+-- name: ObjectS3CredentialRevoke :execrows
+UPDATE object_storage_s3_credentials SET status='revoked',revoked_at=now()
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active';
+
+-- name: ObjectS3CredentialResolve :one
+SELECT c.*, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
+       b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
+       b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
+       b.updated_at AS bucket_updated_at
+FROM object_storage_s3_credentials c
+JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
+WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready';
+
+-- name: ObjectS3CredentialTouch :execrows
+UPDATE object_storage_s3_credentials
+SET last_used_at=sqlc.arg(used_at)::timestamptz
+WHERE id=sqlc.arg(id) AND status='active'
+  AND (last_used_at IS NULL OR last_used_at < sqlc.arg(used_at)::timestamptz - interval '1 minute');
+
+-- name: ObjectS3CredentialListForRekey :many
+SELECT * FROM object_storage_s3_credentials
+WHERE status='active' AND id > $1
+ORDER BY id LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ObjectS3CredentialReseal :execrows
+UPDATE object_storage_s3_credentials SET secret_sealed=$4,kid=$3
+WHERE id=$1 AND kid=$2 AND status='active';
 
 -- name: SnapshotStorageKeys :many
 SELECT storage_key FROM snapshots WHERE deployment_id = $1;

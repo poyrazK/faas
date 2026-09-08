@@ -47,7 +47,7 @@ func TestDunning_PastDue7d_AdvancesToSuspended(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -160,7 +160,7 @@ func TestDunning_Suspended21d_AdvancesToDeletedPending(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -246,7 +246,7 @@ func TestE2E_FreeTierHardDelete_FlowsThroughGrace(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

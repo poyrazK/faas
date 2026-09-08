@@ -1114,7 +1114,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// existing --require-authn / --no-require-authn mutex shape
 	// at commands2.go:791-799.
 	diff := fs.Bool("diff", false, "preview what would change without deploying")
-	diffJSON := fs.Bool("json", false, "emit JSON output (only with --diff)")
+	// `--dry-run` is the discoverable deploy-preflight spelling. Keep
+	// `--diff` as the compatibility spelling, but make the intent clear
+	// to users who are asking "will this deploy work?" rather than
+	// inspecting a state diff. Both paths are strictly read-only: no
+	// CreateApp, upload, deployment, or other write is allowed after the
+	// authenticated client is acquired.
+	dryRun := fs.Bool("dry-run", false, "run deploy preflight without uploading or changing remote state")
+	diffJSON := fs.Bool("json", false, "emit JSON output (with --diff or --dry-run)")
 	diffStrict := fs.Bool("strict", false, "exit non-zero on schema/quota/env breaks (default with --diff)")
 	diffLenient := fs.Bool("lenient", false, "exit zero even on breaks; --diff still renders them")
 	serverDiff := fs.Bool("server-diff", false, "compute the diff on apid via POST /v1/apps/{slug}/diff (PR-1) instead of locally")
@@ -1149,13 +1156,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--doctor-strict] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff] [--doctor-strict] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
 		return 1
 	}
 	// run() consumes the global --json before dispatch. Keep the
 	// deploy-local --json spelling equivalent for the diff path,
 	// whose renderer uses a separate option field.
 	*diffJSON = *diffJSON || jsonOutput
+	preview, previewErr := normalizeDeployPreviewFlags(*dryRun, *diff)
+	if previewErr != nil {
+		return printErr("Invalid flags", previewErr)
+	}
+	// Normalise the new spelling before any source resolution. This keeps
+	// the existing, well-tested read-only diff path as the single
+	// implementation while making `gregale deploy --dry-run` safe by
+	// construction.
+	*diff = preview
 	// --strict / --lenient mutex. Same rationale as
 	// --require-authn / --no-require-authn above.
 	if *diffStrict && *diffLenient {
@@ -1299,6 +1315,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customer can run `gregale deploy --github --name my-app` without
 	// a --ref. The slug is the only required input.
 	if *githubSnippet {
+		if *dryRun {
+			return printErr("Invalid flags", fmt.Errorf("--dry-run cannot be combined with --github"))
+		}
 		return cmdDeployGithubSnippet([]string{"--app", slug})
 	}
 
@@ -1307,6 +1326,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// in PR-B; the server resolves the install token from
 	// github_installations, so CI runs need only FAAS_TOKEN + --ref.
 	if *repo != "" {
+		if *dryRun {
+			return printErr("Invalid flags", fmt.Errorf("--dry-run is not supported with --repo; use a local source with --path or --worktree"))
+		}
 		if *profile != "" {
 			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --repo"))
 		}
@@ -1781,10 +1803,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	// Deploy-diff short-circuit (PR-0 of the deploy-diff cluster).
+	// Deploy preview short-circuit (PR-0 of the deploy-diff cluster).
 	// Runs AFTER authedClient so the SDK reads can resolve, and
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
-	// happen. --diff never ships a deploy.
+	// happen. --diff and --dry-run never ship a deploy.
 	if *diff {
 		if *profile != "" {
 			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --diff"))
@@ -2314,11 +2336,13 @@ func cmdCrons(args []string) int {
 		slug := fs.String("app", "", "app slug (required)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
 		path := fs.String("path", "/", "request path")
+		timezone := fs.String("timezone", "", "IANA timezone (defaults to UTC)")
+		skipIfRunning := fs.Bool("skip-if-running", false, "skip a scheduled fire while the previous cron run is active")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
 		if *slug == "" || *schedule == "" {
-			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' [--path /]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' [--path /] [--timezone UTC] [--skip-if-running]", "crons")
 			return 1
 		}
 		client, err := authedClient()
@@ -2327,6 +2351,7 @@ func cmdCrons(args []string) int {
 		}
 		c, err := client.CreateCron(context.Background(), *slug, api.CreateCronRequest{
 			AppID: *slug, Schedule: *schedule, Path: *path, Enabled: boolPtr(true),
+			Timezone: *timezone, SkipIfRunning: boolPtr(*skipIfRunning),
 		})
 		if err != nil {
 			return printErr("Create failed", err)
@@ -2389,7 +2414,8 @@ func renderCronState(w io.Writer, c api.CronResponse) {
 }
 
 // cmdCronsUpdate implements `gregale crons update <id> [--schedule EXPR]
-// [--path PATH] [--enable|--disable]`. Partial-update semantics:
+// [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap]
+// [--enable|--disable]`. Partial-update semantics:
 // every flag is optional, but at least one patch field must be set
 // (the server happily no-ops an empty body and emits a cron-changed
 // notification — a footgun we'd rather catch at the CLI). Uses
@@ -2400,7 +2426,7 @@ func renderCronState(w io.Writer, c api.CronResponse) {
 // the server's validCron so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
 		return 1
 	}
 	id := args[0]
@@ -2411,17 +2437,24 @@ func cmdCronsUpdate(args []string) int {
 	fs := flag.NewFlagSet("crons-update", flag.ContinueOnError)
 	schedule := fs.String("schedule", "", "cron expression (5 fields)")
 	path := fs.String("path", "", "request path")
+	timezone := fs.String("timezone", "", "IANA timezone (empty resets to UTC)")
 	enable := fs.Bool("enable", false, "enable the cron")
 	disable := fs.Bool("disable", false, "disable the cron")
+	skipIfRunning := fs.Bool("skip-if-running", false, "skip scheduled fires while a prior run is active")
+	allowOverlap := fs.Bool("allow-overlap", false, "allow scheduled fires to overlap")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
 		return 1
 	}
 	if *enable && *disable {
 		PrintUsage(os.Stderr, "usage: gregale crons update --enable | --disable (mutually exclusive)", "crons")
+		return 1
+	}
+	if *skipIfRunning && *allowOverlap {
+		PrintUsage(os.Stderr, "usage: gregale crons update --skip-if-running | --allow-overlap (mutually exclusive)", "crons")
 		return 1
 	}
 	// Reject no-fields-set early; the server otherwise no-ops and
@@ -2429,8 +2462,8 @@ func cmdCronsUpdate(args []string) int {
 	// catch at the CLI before a pointless network round-trip.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if !explicit["schedule"] && !explicit["path"] && !explicit["enable"] && !explicit["disable"] {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--enable|--disable]", "crons")
+	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] {
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
 		return 1
 	}
 	// Local schedule shape check (5 whitespace tokens) mirrors the
@@ -2453,6 +2486,10 @@ func cmdCronsUpdate(args []string) int {
 		p := *path
 		req.Path = &p
 	}
+	if explicit["timezone"] {
+		tz := *timezone
+		req.Timezone = &tz
+	}
 	if explicit["enable"] {
 		v := true
 		req.Enabled = &v
@@ -2460,6 +2497,14 @@ func cmdCronsUpdate(args []string) int {
 	if explicit["disable"] {
 		v := false
 		req.Enabled = &v
+	}
+	if explicit["skip-if-running"] {
+		v := true
+		req.SkipIfRunning = &v
+	}
+	if explicit["allow-overlap"] {
+		v := false
+		req.SkipIfRunning = &v
 	}
 	updated, err := client.UpdateCron(context.Background(), id, req)
 	if err != nil {
@@ -2983,16 +3028,16 @@ func cmdOpen(args []string) int {
 		// before opening — the user would otherwise see a 502 from the
 		// gateway. Probe errors collapse
 		// to "Opening." (don't block on a flaky probe).
-		state, err := probeWakeState(target, 2*time.Second)
+		state, err := probeWakeState(target, openWakeProbeTimeout)
 		switch {
 		case err != nil:
 			_, _ = fmt.Fprintln(osStdout, "Opening.")
 		case state:
 			_, _ = fmt.Fprintln(osStdout, "Waking app (cold start) — opening in your browser.")
-			deadline := time.Now().Add(8 * time.Second)
+			deadline := time.Now().Add(openWakeDeadline)
 			for state && time.Now().Before(deadline) {
-				time.Sleep(500 * time.Millisecond)
-				state, _ = probeWakeState(target, 2*time.Second)
+				time.Sleep(openWakePollInterval)
+				state, _ = probeWakeState(target, openWakeProbeTimeout)
 			}
 		default:
 			_, _ = fmt.Fprintln(osStdout, "App is warm — opening.")
@@ -3759,6 +3804,17 @@ func pollDeploymentFinalUntilContext(ctx context.Context, c *Client, dep api.Dep
 // Returns (BuildResponse, true) on terminal status; (zero, false)
 // on deadline elapse or persistent transient error so the SSE caller
 // can fall back to the "follow manually" hint.
+// Real-time knobs for the wait loops below. Package-level so tests can
+// shrink wall-clock budgets to milliseconds; production never changes
+// them. See docs: `gregale open` cold-wake wait (UX §6.4) and the build
+// status poll (PROV-6).
+var (
+	openWakeProbeTimeout    = 2 * time.Second
+	openWakeDeadline        = 8 * time.Second
+	openWakePollInterval    = 500 * time.Millisecond
+	buildPollInitialBackoff = 1 * time.Second
+)
+
 func pollBuildStatus(c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.BuildResponse, bool) {
 	return pollBuildStatusContext(context.Background(), c, dep, deadline)
 }
@@ -3776,7 +3832,7 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 	parent, cancelParent := context.WithTimeout(ctx, deadline)
 	defer cancelParent()
 	end := time.Now().Add(deadline)
-	backoff := 1 * time.Second
+	backoff := buildPollInitialBackoff
 	for time.Now().Before(end) {
 		// Per-call timeout: remaining budget, capped at the SDK's
 		// 30s per-request timeout (lower of the two wins). Keeps

@@ -82,7 +82,7 @@ func writeSaltFile(t *testing.T) string {
 // The test asserts the row exists with the §11
 // host_redacted_hash label (NOT the plaintext host).
 func TestConnectionAwareE2E_FlagsOn(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -193,7 +193,7 @@ func TestConnectionAwareE2E_FlagsOn(t *testing.T) {
 // chooser must NOT bias. The env table itself is unchanged
 // (env writes are independent of the data-upstream pipeline).
 func TestConnectionAwareE2E_FlagsOff(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -260,7 +260,7 @@ func TestConnectionAwareE2E_FlagsOff(t *testing.T) {
 // to legacy tie-break (PR-D fail-open), which is pinned in
 // pkg/sched/placement_test.go:TestChoosePlacement_NilScores_FailsOpen.
 func TestConnectionAwareE2E_UpstreamDelete(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

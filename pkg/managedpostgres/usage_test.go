@@ -54,6 +54,46 @@ func TestUsageSnapshotExceedsStorageAndHistoryCaps(t *testing.T) {
 	}
 }
 
+func TestUsagePolicyWithCeilingsUsesFailClosedIntersection(t *testing.T) {
+	policy := enabledUsagePolicy()
+	effective := policy.WithCeilings(UsageCeilings{
+		MaxMonthlyCostMillicents:     policy.MaxMonthlyCostMillicents * 2,
+		MaxMonthlyComputeUnitSeconds: policy.MaxMonthlyComputeUnitSeconds / 2,
+		MaxMonthlyStorageByteSeconds: policy.MaxMonthlyStorageByteSeconds / 2,
+		MaxMonthlyHistoryByteSeconds: 1,
+		MaxMonthlyEgressBytes:        policy.MaxMonthlyEgressBytes * 2,
+	})
+	if effective.MaxMonthlyCostMillicents != policy.MaxMonthlyCostMillicents ||
+		effective.MaxMonthlyComputeUnitSeconds != policy.MaxMonthlyComputeUnitSeconds/2 ||
+		effective.MaxMonthlyStorageByteSeconds != policy.MaxMonthlyStorageByteSeconds/2 ||
+		effective.MaxMonthlyHistoryByteSeconds != 1 ||
+		effective.MaxMonthlyEgressBytes != policy.MaxMonthlyEgressBytes {
+		t.Fatalf("effective policy = %+v", effective)
+	}
+}
+
+func TestUsagePolicyAdmitWithCeilingsRejectsPlanStorageCap(t *testing.T) {
+	policy := enabledUsagePolicy()
+	store := NewMemoryStore()
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	store.databases["db-1"] = Database{
+		ID: "db-1", AccountID: "account-1", Name: "orders", State: StateReady,
+		BackendID: "primary-a", BackendFingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		ProviderResourceID: "provider-1", UpdatedAt: now,
+	}
+	if err := store.RecordUsage(context.Background(), []UsageRecord{{
+		AccountID: "account-1", DatabaseID: "db-1", BackendID: "primary-a",
+		BackendFingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		WindowFrom:         now.Add(-time.Hour), WindowTo: now, ObservedAt: now,
+		Meter: MeterStorageByteSeconds, Quantity: 10, CostMillicents: 1,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := policy.AdmitWithCeilings(context.Background(), store, "account-1", now, UsageCeilings{MaxMonthlyStorageByteSeconds: 10}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("admission = %v, want ErrQuotaExceeded", err)
+	}
+}
+
 func TestMemoryUsageLedgerIsIdempotentAndAdmitsFreshAccounts(t *testing.T) {
 	store := NewMemoryStore()
 	backend := "primary-a"

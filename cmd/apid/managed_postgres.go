@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"time"
 
 	"filippo.io/age"
@@ -47,7 +48,18 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			return limit, nil
 		},
 		Admit: func(ctx context.Context, accountID string) error {
-			return registry.UsagePolicy().Admit(ctx, store, accountID, time.Now().UTC())
+			if !registry.UsagePolicy().Enabled {
+				return nil
+			}
+			account, err := accountStore.AccountByID(ctx, accountID)
+			if err != nil {
+				return err
+			}
+			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
+			if !ok || limits.DatabasesMax <= 0 {
+				return managedpostgres.ErrQuotaExceeded
+			}
+			return registry.UsagePolicy().AdmitWithCeilings(ctx, store, accountID, time.Now().UTC(), managedPostgresUsageCeilings(limits))
 		},
 	})
 	if err != nil {
@@ -92,6 +104,26 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, err
 	}
 	return service, reconciler, bindingService, bindingReconciler, usageCollector, nil
+}
+
+// managedPostgresUsageCeilings converts customer-facing storage entitlements
+// into the canonical byte-second meter. Compute, restore-history, egress, and
+// spend remain operator-configured COGS ceilings; the intersection is applied
+// in managedpostgres so adapters never learn about Gregale plan names.
+func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedpostgres.UsageCeilings {
+	if limits.StorageLimitBytes <= 0 || limits.DatabasesMax <= 0 {
+		return managedpostgres.UsageCeilings{}
+	}
+	const secondsPerBillingMonth = int64(31 * 24 * time.Hour / time.Second)
+	accountStorageBytes := limits.StorageLimitBytes
+	if accountStorageBytes > math.MaxInt64/int64(limits.DatabasesMax) {
+		return managedpostgres.UsageCeilings{}
+	}
+	accountStorageBytes *= int64(limits.DatabasesMax)
+	if accountStorageBytes > math.MaxInt64/secondsPerBillingMonth {
+		return managedpostgres.UsageCeilings{}
+	}
+	return managedpostgres.UsageCeilings{MaxMonthlyStorageByteSeconds: accountStorageBytes * secondsPerBillingMonth}
 }
 
 func (s *server) WithManagedPostgres(service *managedpostgres.Service, reconciler *managedpostgres.Reconciler, bindingService *managedpostgres.BindingService, bindingReconciler *managedpostgres.BindingReconciler, usageCollector *managedpostgres.UsageCollector) *server {

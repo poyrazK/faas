@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -72,6 +73,14 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 	for _, d := range pending {
 		checkedAt := time.Now().UTC()
 		if checkTXT(ctx, d.Domain, d.ChallengeToken) {
+			if d.CertStatus == state.CustomDomainCertDNSDrifted {
+				// Drifted domains must repair the routing target before the
+				// TXT challenge can restore verification. This prevents a
+				// stale TXT record from immediately re-enabling a wrong CNAME.
+				if pointsToG := checkPointsToGregale(ctx, d.Domain); pointsToG.Status != probeOK {
+					continue
+				}
+			}
 			if err := s.store.MarkDomainVerified(ctx, d.Domain); err != nil {
 				log.Warn("dns_poller: mark verified failed", "domain", d.Domain, "err", err)
 				continue
@@ -84,8 +93,13 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 			// the right name without a find/replace).
 			_ = s.notif.Notify(ctx, db.NotifyDomainVerify, `{"domain":"`+d.Domain+`"}`)
 			log.Info("domain verified", "domain", d.Domain)
-		} else if err := s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertPending, time.Time{}, "", checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
-			log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
+		} else if d.CertStatus != state.CustomDomainCertDNSDrifted {
+			// Keep dns_drifted durable until the customer has both fixed the
+			// target and satisfied the TXT challenge. A failed TXT lookup on
+			// the next tick must not downgrade the warning back to pending.
+			if err := s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertPending, time.Time{}, "", checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
+				log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
+			}
 		}
 	}
 	// ADR-100 / issue #879: poll tenant hostnames alongside
@@ -182,7 +196,7 @@ func (s *server) pendingUnverifiedDomains(ctx context.Context) ([]pendingDomainR
 		}
 		out = make([]pendingDomainRow, 0, len(domains))
 		for _, d := range domains {
-			out = append(out, pendingDomainRow{Domain: d.Domain, ChallengeToken: d.ChallengeToken})
+			out = append(out, pendingDomainRow{Domain: d.Domain, ChallengeToken: d.ChallengeToken, CertStatus: d.CertStatus})
 		}
 		return out, nil
 	}
@@ -195,6 +209,7 @@ func (s *server) pendingUnverifiedDomains(ctx context.Context) ([]pendingDomainR
 type pendingDomainRow struct {
 	Domain         string
 	ChallengeToken string
+	CertStatus     state.CustomDomainCertStatus
 }
 
 // checkTXT does a TXT lookup for _faas-verify.<domain> and reports whether
@@ -253,7 +268,7 @@ func (s *server) runDoctorOnce(ctx context.Context, log *slog.Logger) {
 	}
 	for _, domain := range domains {
 		domainCtx, cancel := context.WithTimeout(ctx, probeTimeout+2*time.Second)
-		s.runDoctorForDomain(domainCtx, log, domain)
+		_ = s.runDoctorForDomain(domainCtx, log, domain)
 		cancel()
 	}
 	// ADR-120 Tier A1: refresh the apid_domain_doctor_oldest_
@@ -314,7 +329,7 @@ func (s *server) emitDoctorSkip(log *slog.Logger) {
 	log.Debug("doctor pass skipped — FAAS_DOMAIN_DOCTOR_ENABLED off")
 }
 
-func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domain string) {
+func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domain string) error {
 	dnsFound, pointsToG, caa, aaaa := runProbesParallel(ctx, domain)
 	// Translate probe results into the observation row
 	// shape. probeOK → true, probeFail → false, probePending
@@ -361,15 +376,57 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		}
 	}
 	if obs.CertState == "" {
+		var legacy state.CustomDomain
+		var legacyErr error
+		legacyLoaded := false
 		// Legacy custom_domains path. An unverified row is still waiting
 		// on the TXT challenge, so keep it pending and avoid a misleading
 		// port-443 failure while DNS ownership is being established.
-		legacy, legacyErr := s.store.DomainByName(ctx, domain)
+		legacy, legacyErr = s.store.DomainByName(ctx, domain)
+		legacyLoaded = legacyErr == nil
 		if legacyErr == nil && !legacy.Verified() {
 			obs.CertState = certStatusPending
 		} else {
 			obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, domain)
 			obs.CertCheckedAt = time.Now().UTC()
+		}
+
+		// F3: a verified custom domain is revoked when the periodic doctor
+		// sees a definite CNAME mismatch. The state mutation is optional so
+		// narrow Store test doubles remain source-compatible; production
+		// PgStore and MemStore both provide the atomic transition.
+		dnsCheckedAt := obs.DNSCheckedAt
+		if dnsCheckedAt.IsZero() {
+			dnsCheckedAt = time.Now().UTC()
+		}
+		drifted := legacyLoaded && legacy.Verified() && pointsToG.Status == probeFail
+		if legacyLoaded && !legacy.Verified() && legacy.CertStatus == state.CustomDomainCertDNSDrifted {
+			// Preserve the durable drift state on subsequent passes. The TXT
+			// verifier clears it by writing pending when verification succeeds.
+			drifted = true
+		}
+		if drifted {
+			reason := "DNS target no longer points to Gregale"
+			if pointsToG.Observed != "" {
+				reason += ": " + pointsToG.Observed
+			}
+			if ds, ok := s.store.(state.CustomDomainDNSDriftStore); ok {
+				transitioned, err := ds.MarkCustomDomainDNSDrifted(ctx, domain, dnsCheckedAt, reason)
+				if err != nil {
+					log.Warn("dns_poller: mark custom-domain DNS drift failed", "domain", domain, "err", err)
+					drifted = false
+				} else {
+					if transitioned {
+						s.emitDomainDrifted(ctx, log, legacy, pointsToG, dnsCheckedAt, reason)
+					}
+					// Do not let the normal cert mirror overwrite dns_drifted
+					// with the live dial result on this pass.
+					drifted = true
+				}
+			} else {
+				log.Warn("dns_poller: store does not support custom-domain DNS drift state", "domain", domain)
+				drifted = false
+			}
 		}
 		// F1: mirror the doctor's live cert observation onto the legacy
 		// custom_domains row. This makes list/show/status useful without a
@@ -383,17 +440,59 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		case certStatusIssued:
 			status = state.CustomDomainCertIssued
 		}
-		dnsCheckedAt := obs.DNSCheckedAt
-		if dnsCheckedAt.IsZero() {
-			dnsCheckedAt = time.Now().UTC()
-		}
-		if err := s.store.UpdateCustomDomainCertStatus(ctx, domain, status, obs.CertNotAfter, obs.LastError, dnsCheckedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
-			log.Warn("dns_poller: update custom-domain cert status failed", "domain", domain, "err", err)
+		if !drifted {
+			if err := s.store.UpdateCustomDomainCertStatus(ctx, domain, status, obs.CertNotAfter, obs.LastError, dnsCheckedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
+				log.Warn("dns_poller: update custom-domain cert status failed", "domain", domain, "err", err)
+			} else if status == state.CustomDomainCertFailed {
+				if legacyErr == nil && legacy.CertStatus != state.CustomDomainCertFailed && s.ops != nil {
+					if counter := s.ops.CertIssuanceFailedTotal(); counter != nil {
+						counter.Inc()
+					}
+				}
+				if err := s.sendCertIssuanceFailedEmail(ctx, log, domain); err != nil && !errors.Is(err, state.ErrNotFound) {
+					log.Warn("dns_poller: certificate issuance-failed email skipped", "domain", domain, "err", err)
+				}
+			}
 		}
 	}
 	if err := s.store.UpsertDoctorObservation(ctx, obs); err != nil {
 		log.Warn("dns_poller: upsert doctor observation failed", "domain", domain, "err", err)
-		return
+		return err
+	}
+	return nil
+}
+
+// emitDomainDrifted records the customer-visible transition and wakes the
+// dashboard stream. The state mutation is the source of truth; both emits are
+// best-effort, matching the rest of apid's audit/notify paths.
+func (s *server) emitDomainDrifted(ctx context.Context, log *slog.Logger, d state.CustomDomain, probe ProbeResult, checkedAt time.Time, reason string) {
+	var accountID *string
+	if app, err := s.store.AppByID(ctx, d.AppID); err == nil && app.AccountID != "" {
+		id := app.AccountID
+		accountID = &id
+	}
+	data := map[string]any{
+		"domain":          d.Domain,
+		"app_id":          d.AppID,
+		"observed_target": probe.Observed,
+		"checked_at":      checkedAt.UTC().Format(time.RFC3339),
+		"reason":          reason,
+	}
+	if s.audit != nil {
+		s.audit.Emit(ctx, "domain.drifted", accountID, data)
+	}
+	if s.notif != nil {
+		payload, err := json.Marshal(map[string]any{
+			"kind":            "drifted",
+			"domain":          d.Domain,
+			"app_id":          d.AppID,
+			"observed_target": probe.Observed,
+		})
+		if err != nil {
+			log.Warn("dns_poller: marshal domain drift notification failed", "domain", d.Domain, "err", err)
+		} else if err := s.notif.Notify(ctx, db.NotifyDomainChanged, string(payload)); err != nil {
+			log.Warn("dns_poller: notify domain drift failed", "domain", d.Domain, "err", err)
+		}
 	}
 }
 

@@ -2,19 +2,19 @@
 // /readyz probe (issue #571 PR-A2). meterd already exposes
 // /healthz (cmd/meterd/main.go:~1000) which renders a rich JSON
 // verdict via loop.Health(time.Now()). This file adds a
-// short-ASCII /readyz on the same metrics mux that surfaces
-// the same loop.Health verdict via a 1s adapter goroutine.
+// short-ASCII /readyz on the same metrics mux. Readiness is driven by
+// loop.Readiness, which gates activation on the core sample and quota loops;
+// hourly maintenance loops remain visible through /healthz without forcing a
+// clean restart to wait an hour before it can become ready.
 //
 // The adapter goroutine fires the first evaluation
 // synchronously inside the goroutine (before the 1 s ticker
 // starts), so the first /readyz scrape after meterd boot
-// observes a real loop.Health verdict — not a pre-armed
+// observes a real loop.Readiness verdict — not a pre-armed
 // (true, ""). PR #1091 review Finding 7.
 //
-// Why an adapter goroutine (instead of calling loop.Health on
-// the /readyz hot path): the /healthz handler already calls
-// loop.Health on every scrape, so the verdict is always
-// fresh — no point recomputing it. The adapter ticks at 1 s
+// Why an adapter goroutine (instead of calling loop.Readiness on
+// the /readyz hot path): the adapter ticks at 1 s
 // to keep the ReadySignal up-to-date with the LAST tick fire
 // times so a /readyz scrape that lands between two /healthz
 // scrapes still sees the current verdict.
@@ -76,7 +76,7 @@ func BuildReadinessProbe(loop *meter.Loop) *wire.ReadyzProbe {
 				sig.Set(false, "meterd loop nil")
 				return
 			}
-			status := loop.Health(time.Now())
+			status := loop.Readiness(time.Now())
 			if status.Healthy {
 				sig.Set(true, "")
 				return

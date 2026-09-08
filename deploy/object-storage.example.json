@@ -1,5 +1,7 @@
 {
   "default_region": "us-east-1",
+  "public_endpoint": "https://s3.gregale.dev",
+  "public_region": "us-east-1",
   "defaults": { "us-east-1": "managed-virginia-v1" },
   "max_buckets_per_app": 10,
   "max_upload_bytes": 104857600,

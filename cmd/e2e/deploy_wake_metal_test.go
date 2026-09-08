@@ -68,7 +68,7 @@ func TestDeployWakeMetal(t *testing.T) {
 		t.Skipf("/dev/kvm not available: %v", err)
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

@@ -66,7 +66,7 @@ func TestDeployOverridePortMetal(t *testing.T) {
 		return
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

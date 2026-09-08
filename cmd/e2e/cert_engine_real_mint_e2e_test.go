@@ -150,7 +150,7 @@ func skipUnlessLELive(t *testing.T) {
 func TestE2E_CertEngine_RealMintEndToEnd(t *testing.T) {
 	skipUnlessLELive(t)
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("MigrateUp: %v", err)
@@ -302,7 +302,7 @@ func TestE2E_CertEngine_RealMintEndToEnd(t *testing.T) {
 func TestE2E_CertEngine_RealMintAuditRows(t *testing.T) {
 	skipUnlessLELive(t)
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("MigrateUp: %v", err)

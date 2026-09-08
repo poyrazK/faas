@@ -27,7 +27,7 @@ import (
 )
 
 func TestEdgeRulesIP_E2E(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

@@ -14,13 +14,17 @@ T = TypeVar("T", bound="CronResponse")
 
 @_attrs_define
 class CronResponse:
-    """A cron trigger: schedule (cron expression), target URL, last/next run timestamps, and enabled flag."""
+    """A cron trigger with an optional IANA timezone and overlap policy."""
 
     id: str
     app_id: str
     schedule: str
     path: str
     enabled: bool
+    timezone: str
+    """IANA timezone used to evaluate the schedule; defaults to UTC."""
+    skip_if_running: bool
+    """When true, consume a scheduled occurrence while a prior cron invocation is pending or dispatching."""
     created_at: datetime.datetime
     last_fired_at: datetime.datetime | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -35,6 +39,10 @@ class CronResponse:
         path = self.path
 
         enabled = self.enabled
+
+        timezone = self.timezone
+
+        skip_if_running = self.skip_if_running
 
         created_at = self.created_at.isoformat()
 
@@ -55,6 +63,8 @@ class CronResponse:
                 "schedule": schedule,
                 "path": path,
                 "enabled": enabled,
+                "timezone": timezone,
+                "skip_if_running": skip_if_running,
                 "created_at": created_at,
             }
         )
@@ -75,6 +85,10 @@ class CronResponse:
         path = d.pop("path")
 
         enabled = d.pop("enabled")
+
+        timezone = d.pop("timezone")
+
+        skip_if_running = d.pop("skip_if_running")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
@@ -101,6 +115,8 @@ class CronResponse:
             schedule=schedule,
             path=path,
             enabled=enabled,
+            timezone=timezone,
+            skip_if_running=skip_if_running,
             created_at=created_at,
             last_fired_at=last_fired_at,
         )

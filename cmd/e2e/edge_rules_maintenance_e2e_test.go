@@ -55,7 +55,7 @@ import (
 // does NOT shoot down (the rule's match_methods is post-only), so the
 // request reaches Backend.Pick → 404 (no real impl).
 func TestEdgeRulesMaintenance_E2E_MatchReturns503(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -135,7 +135,7 @@ func TestEdgeRulesMaintenance_E2E_MatchReturns503(t *testing.T) {
 // compileMaintenanceRules clamps 0 → api.EdgeRuleMaintenanceRetryAfterSeconds
 // before the applier ever sees the rule.
 func TestEdgeRulesMaintenance_E2E_DefaultRetryAfter(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -189,7 +189,7 @@ func TestEdgeRulesMaintenance_E2E_DefaultRetryAfter(t *testing.T) {
 // (audit emit edge_rule.maintenance_blocked + apply success) —
 // the customer never sees a 503 from a cross-account rule.
 func TestEdgeRulesMaintenance_E2E_CrossAccountFallsThrough(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

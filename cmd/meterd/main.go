@@ -1242,8 +1242,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			_ = json.NewEncoder(w).Encode(status)
 		})
 		// Issue #571 PR-A2: /readyz (operator-side, short ASCII
-		// body for the LB scrape). Driven by the same loop.Health
-		// verdict via a 1s adapter goroutine (see
+		// body for the LB scrape). Driven by the core sample/quota
+		// loop.Readiness verdict via a 1s adapter goroutine (see
 		// cmd/meterd/readiness.go). Stale tick names surface in
 		// the body reason when the probe is 503. /healthz stays
 		// the rich-JSON path for dashboards.

@@ -9,7 +9,7 @@ import (
 )
 
 func TestClientObjectStorage(t *testing.T) {
-	for _, method := range []string{"list", "create", "delete-bucket", "objects", "delete-object", "sign", "create-multipart", "list-multipart", "get-multipart", "list-parts", "sign-part", "complete-multipart", "abort-multipart", "usage", "report"} {
+	for _, method := range []string{"list", "create", "delete-bucket", "list-s3-credentials", "create-s3-credential", "revoke-s3-credential", "objects", "delete-object", "sign", "create-multipart", "list-multipart", "get-multipart", "list-parts", "sign-part", "complete-multipart", "abort-multipart", "usage", "report"} {
 		t.Run(method, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer gregale-test-token" {
@@ -47,14 +47,22 @@ func TestClientObjectStorage(t *testing.T) {
 				if method == "list-multipart" && r.URL.Path != "/v1/apps/demo/buckets/bucket/multipart-uploads" {
 					t.Error(r.URL.Path)
 				}
-				if method == "delete-bucket" || method == "delete-object" || method == "abort-multipart" {
+				if method == "list-s3-credentials" || method == "create-s3-credential" {
+					if r.URL.Path != "/v1/apps/demo/buckets/bucket/s3-credentials" {
+						t.Error(r.URL.Path)
+					}
+				}
+				if method == "revoke-s3-credential" && r.URL.Path != "/v1/apps/demo/buckets/bucket/s3-credentials/credential" {
+					t.Error(r.URL.Path)
+				}
+				if method == "delete-bucket" || method == "delete-object" || method == "abort-multipart" || method == "revoke-s3-credential" {
 					if r.Method != http.MethodDelete {
 						t.Error(r.Method)
 					}
 					w.WriteHeader(204)
 					return
 				}
-				if method == "create" || method == "sign" || method == "create-multipart" || method == "sign-part" || method == "complete-multipart" {
+				if method == "create" || method == "create-s3-credential" || method == "sign" || method == "create-multipart" || method == "sign-part" || method == "complete-multipart" {
 					if r.Method != http.MethodPost {
 						t.Error(r.Method)
 					}
@@ -78,6 +86,12 @@ func TestClientObjectStorage(t *testing.T) {
 				_, err = client.CreateObjectBucket(ctx, "demo", CreateObjectBucketRequest{Name: "assets"})
 			case "delete-bucket":
 				err = client.DeleteObjectBucket(ctx, "demo", "bucket")
+			case "list-s3-credentials":
+				_, err = client.ListObjectS3Credentials(ctx, "demo", "bucket")
+			case "create-s3-credential":
+				_, err = client.CreateObjectS3Credential(ctx, "demo", "bucket", CreateObjectS3CredentialRequest{Label: "production", Permission: "read_write"})
+			case "revoke-s3-credential":
+				err = client.RevokeObjectS3Credential(ctx, "demo", "bucket", "credential")
 			case "objects":
 				_, err = client.ListBucketObjects(ctx, "demo", "bucket", "folder +/", "opaque+token", 100)
 			case "delete-object":

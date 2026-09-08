@@ -97,7 +97,7 @@ type inviteWire struct {
 // Steps 6 + 10 are tested through the Store because the only
 // remaining surface the acceptance flow needs lands in PR 8 / 9.
 func TestE2E_OrgLifecycle_HappyPath(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -385,7 +385,7 @@ func TestE2E_OrgLifecycle_HappyPath(t *testing.T) {
 // org-scoped route must return 403 org_role_forbidden (NOT 404)
 // so the IDOR-safe behaviour is identical to the LoadOrg probe.
 func TestE2E_OrgLifecycle_NonMemberIDOR(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -457,7 +457,7 @@ func TestE2E_OrgLifecycle_NonMemberIDOR(t *testing.T) {
 // the code returned. The Expired constructor is reserved for the
 // PR 8 accept flow where the caller is the legitimate invitee.
 func TestE2E_OrgLifecycle_PeekTerminalStates(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -569,7 +569,7 @@ func TestE2E_OrgLifecycle_PeekTerminalStates(t *testing.T) {
 // plan) must return 409 org_personal_immutable. The Store also
 // refuses, but the wire code is the contract.
 func TestE2E_OrgLifecycle_PersonalImmutable(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -624,7 +624,7 @@ func TestE2E_OrgLifecycle_PersonalImmutable(t *testing.T) {
 // "demote owner → not owner" path nor the "remove owner" path
 // is reachable.
 func TestE2E_OrgLifecycle_LastOwnerGuard(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -717,7 +717,7 @@ func strPtr(s string) *string { return &s }
 // refactor that drops one of these would silently break the
 // customer-visible rename / plan-change flow.
 func TestE2E_OrgLifecycle_PatchOrg(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -834,7 +834,7 @@ func TestE2E_OrgLifecycle_PatchOrg(t *testing.T) {
 // Inc." switcher would 404 the moment the user clicked the personal
 // row. This pins the wire-shape contract.
 func TestE2E_OrgLifecycle_ListOrgsForCaller_PersonalSlugPin(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -908,7 +908,7 @@ func TestE2E_OrgLifecycle_ListOrgsForCaller_PersonalSlugPin(t *testing.T) {
 // fixtures isolated — sharing one alice would trip the partial
 // unique index on (org_id, account_id).
 func TestE2E_OrgLifecycle_MemberCap(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

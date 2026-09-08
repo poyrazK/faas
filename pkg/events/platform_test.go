@@ -164,6 +164,79 @@ func TestPlatform_Emit_NilEvent(t *testing.T) {
 	}
 }
 
+type blockingAtStore struct {
+	state.Store
+	mem     *state.MemStore
+	started chan struct{}
+	release chan struct{}
+	wroteAt chan time.Time
+}
+
+func (s *blockingAtStore) AppendEventAt(ctx context.Context, actor, kind string, subject *string, data []byte, at time.Time) error {
+	close(s.started)
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := s.mem.AppendEventAt(ctx, actor, kind, subject, data, at); err != nil {
+		return err
+	}
+	s.wroteAt <- at
+	return nil
+}
+
+func TestPlatform_EmitAsync_DoesNotBlockAndPreservesBoundaryTime(t *testing.T) {
+	mem := state.NewMemStore()
+	store := &blockingAtStore{
+		Store:   mem,
+		mem:     mem,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		wroteAt: make(chan time.Time, 1),
+	}
+	p := NewPlatform("schedd", store, silentLog(), nil, nil)
+	emitAt := time.Date(2026, time.September, 8, 7, 9, 9, 359000000, time.UTC)
+
+	returned := make(chan struct{})
+	go func() {
+		p.EmitAsync(context.Background(), QueueAccepted{
+			EmitAt: emitAt,
+			WakeID: "w-async",
+			AppID:  "a-async",
+		})
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("EmitAsync blocked on the events store")
+	}
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("async events worker did not start the write")
+	}
+	close(store.release)
+	select {
+	case got := <-store.wroteAt:
+		if !got.Equal(emitAt) {
+			t.Fatalf("persisted at = %v, want event boundary %v", got, emitAt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("async events worker did not finish the write")
+	}
+
+	rows, err := mem.ListEventsByWakeID(context.Background(), "w-async", time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("ListEventsByWakeID: %v", err)
+	}
+	if len(rows) != 1 || !rows[0].At.Equal(emitAt) {
+		t.Fatalf("rows = %+v, want one row at %v", rows, emitAt)
+	}
+}
+
 // TestPlatform_Actor — the constructor enforces the actor name.
 func TestPlatform_Actor(t *testing.T) {
 	p := NewPlatform("vmmd", newStubStore(), silentLog(), nil, nil)

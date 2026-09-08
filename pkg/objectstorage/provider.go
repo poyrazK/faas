@@ -56,13 +56,13 @@ type ObjectPage struct {
 type SignRequest api.ObjectSignRequest
 
 func (r SignRequest) Validate(maxBytes int64) error {
-	if !ValidKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > 900 {
+	if !ValidKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > 900 {
 		return ErrInvalid
 	}
 	if r.Method == http.MethodPut && (r.SizeBytes == nil || *r.SizeBytes < 0 || *r.SizeBytes > maxBytes) {
 		return ErrInvalid
 	}
-	if r.Method == http.MethodGet && (r.SizeBytes != nil || r.ContentType != "") {
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && (r.SizeBytes != nil || r.ContentType != "") {
 		return ErrInvalid
 	}
 	return ValidateContentType(r.ContentType)

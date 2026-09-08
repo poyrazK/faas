@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -105,6 +106,9 @@ func TestCaptureNotificationCarriesExactKeys(t *testing.T) {
 		}
 		if payload["storage_key"] != vmm.memKey {
 			t.Fatalf("published %v, captured %s", payload["storage_key"], vmm.memKey)
+		}
+		if got := payload["base_image_version"]; got != fcvm.FAAS_BASE_IMAGE_VERSION {
+			t.Fatalf("base_image_version = %v, want %s", got, fcvm.FAAS_BASE_IMAGE_VERSION)
 		}
 		return
 	}

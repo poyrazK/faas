@@ -2384,8 +2384,8 @@ type CustomDomainResponse struct {
 	CertExpiresAt    string `json:"cert_expires_at,omitempty"`
 	CertLastError    string `json:"cert_last_error,omitempty"`
 	DNSLastCheckedAt string `json:"dns_last_checked_at,omitempty"`
-	// CertStatus is the durable TLS lifecycle (pending, issued, renewing, or
-	// failed). The per-domain show endpoint may temporarily override it with
+	// CertStatus is the durable TLS lifecycle (pending, issued, renewing,
+	// failed, or dns_drifted). The per-domain show endpoint may temporarily override it with
 	// a live "dial_failed:<reason>" probe result; list/status remain durable.
 	CertStatus string `json:"cert_status,omitempty"`
 }
@@ -2502,33 +2502,38 @@ type AddTenantHostnameRequest struct {
 	Hostname string `json:"hostname"`
 }
 
-// CronResponse mirrors the crons table. LastFiredAt is the most
-// recent fire stamp schedd wrote (MarkCronFired). Zero-valued
-// crons serialize as "" — the dashboard only shows the column
-// when populated.
+// CronResponse mirrors the crons table. Timezone and SkipIfRunning expose the
+// optional scheduling controls; LastFiredAt is the most recent fire stamp
+// schedd wrote (MarkCronFired).
 type CronResponse struct {
-	ID          string `json:"id"`
-	AppID       string `json:"app_id"`
-	Schedule    string `json:"schedule"`
-	Path        string `json:"path"`
-	Enabled     bool   `json:"enabled"`
-	CreatedAt   string `json:"created_at"`
-	LastFiredAt string `json:"last_fired_at,omitempty"`
+	ID            string `json:"id"`
+	AppID         string `json:"app_id"`
+	Schedule      string `json:"schedule"`
+	Path          string `json:"path"`
+	Enabled       bool   `json:"enabled"`
+	Timezone      string `json:"timezone"`
+	SkipIfRunning bool   `json:"skip_if_running"`
+	CreatedAt     string `json:"created_at"`
+	LastFiredAt   string `json:"last_fired_at,omitempty"`
 }
 
 // CreateCronRequest creates a scheduled synthetic POST.
 type CreateCronRequest struct {
-	AppID    string `json:"app_id"`
-	Schedule string `json:"schedule"`
-	Path     string `json:"path,omitempty"`
-	Enabled  *bool  `json:"enabled,omitempty"`
+	AppID         string `json:"app_id"`
+	Schedule      string `json:"schedule"`
+	Path          string `json:"path,omitempty"`
+	Enabled       *bool  `json:"enabled,omitempty"`
+	Timezone      string `json:"timezone,omitempty"`
+	SkipIfRunning *bool  `json:"skip_if_running,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
 type UpdateCronRequest struct {
-	Schedule *string `json:"schedule,omitempty"`
-	Path     *string `json:"path,omitempty"`
-	Enabled  *bool   `json:"enabled,omitempty"`
+	Schedule      *string `json:"schedule,omitempty"`
+	Path          *string `json:"path,omitempty"`
+	Enabled       *bool   `json:"enabled,omitempty"`
+	Timezone      *string `json:"timezone,omitempty"`
+	SkipIfRunning *bool   `json:"skip_if_running,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).

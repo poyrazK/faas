@@ -509,7 +509,7 @@ Resume path (post-restore, triggered by host signal via vsock): re-seed `/dev/ur
 
 `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine`: a 15-line HTTP host on `:8080` that loads the customer handler and adapts request/response.
 
-Contract (identical across languages): handler receives `{method, path, headers, query, body_b64}`; returns `{status, headers, body_b64}` or a plain body. Node: `export default async function handler(req)`. Python: `def handler(request) -> Response | dict | str`.
+Contract (identical across languages): handler receives `{method, path, headers, query, body_b64}`; returns `{status, headers, body_b64}` or a plain body. Node: `export default async function handler(event, ctx)` or a Fetch API object, `export default { fetch(request, env, ctx) }`; Fetch API requests and responses are translated to and from the envelope by the generated adapter. Python: `def handler(request) -> Response | dict | str`.
 Streaming, websockets: not in v1 for functions (fine for Apps — `gatewayd-internal` proxies them transparently).
 Adding a runtime is a 7-layer procedure (migrations, schema, apid handler whitelist, openapi enums, runner shim, imaged handler surfaces, base Dockerfile + auto-stage wiring) — see ADR-052 for the canonical touch-list. The worked example for `node24` and `python313` is Tier 1 PR 1 + PR 2.
 
@@ -845,6 +845,7 @@ The list below covers **all** customer-facing kinds as of PR #291. Prior kinds (
 | `app.rolled_back` | apid `handlers_ext.go::rollbackApp` | `{app_id, from: deployment_id, to: deployment_id}` |
 | `domain.added` | apid `handlers_ext.go::createDomain` | `{app_id, domain}` — `domain` is the canonical lowercased form stored on the row |
 | `domain.removed` | apid `handlers_ext.go::deleteDomain` | `{app_id, domain}` |
+| `domain.drifted` | apid `dns_poller.go::runDoctorForDomain` | `{app_id, domain, observed_target, checked_at, reason}` — emitted once when a verified domain's CNAME leaves Gregale and verification is revoked |
 | `cron.created` | apid `handlers_ext.go::createCron` | `{cron_id, app_id, schedule, path, enabled}` — only emitted on the success path; the PR #340 plan-tier gate (402) suppresses this row for Free accounts |
 | `cron.updated` | apid `handlers_ext.go::updateCron` | `{cron_id, app_id, old, new}` |
 | `cron.deleted` | apid `handlers_ext.go::deleteCron` | `{cron_id, app_id}` |
@@ -1631,6 +1632,17 @@ create instance transitions or `usage_minutes` rows.
 | Metric name | Labels | Producer | Semantics |
 |---|---|---|---|
 | `gateway_edge_answered_total` | `kind` | `pkg/gateway/metrics.go::ObserveEdgeAnswered` | Counter of gateway answers that bypass an app instance. `kind` is closed to `favicon`, `robots`, and `head`; edge answers are telemetry-only and never billed as resident compute. |
+
+### 12.7 CORS preflight edge answers (issue #1398 M4)
+
+When a matching `kind=cors` rule (including a resolved CORS preset) receives
+an `OPTIONS` request, the gateway returns `204` with the resolved
+`Access-Control-Allow-*` headers before auth, limiting, or wake work. The
+request therefore does not create an instance transition or resident usage.
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `gateway_cors_preflight_edge_total` | `app` | `pkg/gateway/metrics.go::ObserveCORSPreflightEdge` | Counter of matching CORS preflights answered by the gateway without waking the resolved app. |
 
 ---
 

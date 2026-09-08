@@ -91,7 +91,8 @@ def sync_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCronRequest): Cron creation payload: schedule expression and target URL.
+        body (CreateCronRequest): Cron creation payload: schedule expression, target URL, and
+            optional timezone/overlap policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -123,7 +124,8 @@ def sync(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCronRequest): Cron creation payload: schedule expression and target URL.
+        body (CreateCronRequest): Cron creation payload: schedule expression, target URL, and
+            optional timezone/overlap policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,7 +152,8 @@ async def asyncio_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCronRequest): Cron creation payload: schedule expression and target URL.
+        body (CreateCronRequest): Cron creation payload: schedule expression, target URL, and
+            optional timezone/overlap policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,7 +183,8 @@ async def asyncio(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCronRequest): Cron creation payload: schedule expression and target URL.
+        body (CreateCronRequest): Cron creation payload: schedule expression, target URL, and
+            optional timezone/overlap policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
