@@ -698,7 +698,10 @@ jobs:
             --artifact-dir "$ARTIFACT_DIR"
             --repo-root "$GITHUB_WORKSPACE"
             --timeout 40m
-            --lease-ttl 50m
+            # The CLI refreshes this lease every third of the TTL while it is
+            # alive. Keep the abandoned-worker recovery window short so a
+            # cancelled rollout can be retried without manual database repair.
+            --lease-ttl 5m
             # A failed preflight or convergence leaves a durable failed job.
             # This workflow is the retry-safe owner of the exact desired
             # node/release state, so resume that state instead of requiring
