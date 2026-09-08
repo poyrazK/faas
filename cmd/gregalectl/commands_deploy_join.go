@@ -750,6 +750,7 @@ func joinBootstrapContractHash(ansibleDir string) (string, error) {
 	roots := []string{
 		"bootstrap.yml",
 		"group_vars",
+		"node_join.yml",
 		"requirements.yml",
 		"roles",
 	}

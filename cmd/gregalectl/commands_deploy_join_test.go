@@ -42,6 +42,7 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 	}
 	for path, body := range map[string]string{
 		"bootstrap.yml":                "---\n",
+		"node_join.yml":                "---\n",
 		"requirements.yml":             "collections: []\n",
 		"group_vars/all.yml":           "faas_box_role: compute-only\n",
 		"roles/example/tasks/main.yml": "---\n",

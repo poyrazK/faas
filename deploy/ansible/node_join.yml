@@ -118,6 +118,14 @@
         state: present
         system: true
 
+    - name: Allow shared daemons to traverse the shared config directory
+      ansible.builtin.file:
+        path: /etc/faas
+        state: directory
+        owner: root
+        group: faas
+        mode: "0750"
+
     - name: Allow shared daemons to traverse the shared secret directory
       ansible.builtin.file:
         path: /etc/faas/secrets
@@ -186,6 +194,30 @@
         group: root
         mode: preserve
       no_log: true
+
+    # The operator-side PKI archive deliberately stores private keys as
+    # root-only. The full bootstrap roles grant access only to the leaves
+    # consumed by unprivileged compute daemons. Reapply that narrow contract
+    # after every trust-bundle refresh because the managed-host fast path
+    # skips those roles.
+    - name: Restore unprivileged compute daemon access to staged TLS leaves
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: file
+        owner: root
+        group: faas
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/faas/tls/gatewayd/schedd-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/gatewayd/schedd-client.crt, mode: "0440" }
+        - { path: /etc/faas/tls/gatewayd/vmmd-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/gatewayd/vmmd-client.crt, mode: "0440" }
+        - { path: /etc/faas/tls/gatewayd/apid-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/gatewayd/apid-client.crt, mode: "0444" }
+        - { path: /etc/faas/tls/builderd/vmmd-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/imaged/vmmd-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/egress/egress.key, mode: "0440" }
+        - { path: /etc/faas/tls/egress/egress.crt, mode: "0444" }
 
     - name: Stage the image-signing private key
       ansible.builtin.copy:
@@ -348,10 +380,66 @@
       changed_when: false
 
 - name: Converge the adopted node with the production bootstrap
-  import_playbook: bootstrap.yml
-  when: >-
-    not (hostvars[inventory_hostname].faas_join_bootstrap_contract_current |
-         default(false) | bool)
+  hosts: compute_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  tasks:
+    # import_playbook is static: applying a false condition to bootstrap.yml
+    # still made Ansible visit and report every task in the role graph. On an
+    # unchanged host that meant 393 remote skips and more than two minutes of
+    # controller/SSH overhead. Keep the conditional on one dynamic role
+    # include so the graph is not expanded at all on the managed-host path.
+    - name: Gather host facts for full bootstrap convergence
+      ansible.builtin.setup:
+      when: not (faas_join_bootstrap_contract_current | default(false) | bool)
+
+    - name: Require a usable private transport address for full convergence
+      ansible.builtin.assert:
+        that:
+          - (faas_private_address | default(ansible_facts.default_ipv4.address, true) | default('')) | length > 0
+        fail_msg: >-
+          No private transport address was discovered for {{ inventory_hostname }}.
+          Set faas_private_address in generated inventory or ensure the host
+          has a default IPv4 address.
+      when: not (faas_join_bootstrap_contract_current | default(false) | bool)
+
+    - name: Publish the private transport address for full convergence
+      ansible.builtin.set_fact:
+        faas_private_dns_address: "{{ faas_private_address | default(ansible_facts.default_ipv4.address, true) }}"
+      when: not (faas_join_bootstrap_contract_current | default(false) | bool)
+
+    # Keep this ordered list aligned with the compute-only play in
+    # bootstrap.yml. fleet_verify is intentionally omitted because node_join
+    # runs its strict form after installing the release and restarting daemons.
+    - name: Run the production compute bootstrap role graph
+      ansible.builtin.include_role:
+        name: "{{ faas_join_bootstrap_role }}"
+      loop:
+        - compute_admission
+        - cgroups_v2
+        - grub
+        - host_hardening
+        - storage
+        - lvm
+        - xfs
+        - firecracker
+        - supply_chain_scanners
+        - systemd_slices
+        - nftables
+        - overlay
+        - node_exporter
+        - vmmd_service
+        - geoip
+        - gatewayd_internal_service
+        - builderd_service
+        - compute_only_service
+        - log_archive
+        - role_convergence
+      loop_control:
+        loop_var: faas_join_bootstrap_role
+      when: not (faas_join_bootstrap_contract_current | default(false) | bool)
 
 - name: Record successful compute bootstrap convergence
   hosts: compute_nodes
