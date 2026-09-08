@@ -88,7 +88,7 @@ func (s *vmmdLogArchiveSink) run() {
 		s.mu.Lock()
 		s.queuedBytes -= int64(len(item.line.Line))
 		s.mu.Unlock()
-		if _, err := s.spool.Write(item.instance, item.line.Seq, item.line.Stream, item.line.WrittenAt, item.line.Line); err != nil {
+		if _, err := s.spool.WriteWithLevel(item.instance, item.line.Seq, item.line.Stream, item.line.WrittenAt, item.line.Line, item.line.Level); err != nil {
 			if errors.Is(err, logarchive.ErrSpoolFull) {
 				s.metrics.IncFailure(logarchive.FailureReasonSpoolFull)
 			} else {

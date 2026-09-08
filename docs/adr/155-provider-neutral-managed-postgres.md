@@ -233,6 +233,15 @@ lease and idempotency boundaries without writing a customer secret. The
 customer provisioning gate remains dark until an operator reviews both the
 provider and lifecycle reports.
 
+## Staging canary account follow-up
+
+The staging rollout can be narrowed without changing the provider-neutral
+contract. `FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS` is an optional comma-separated
+allowlist of exact account IDs. The service and binding sagas check it before
+provisioning, restore, or credential issuance; malformed entries fail closed.
+Deletion, revocation, reads, and recovery of known resources remain available
+so an operator can drain an account before removing it from the canary.
+
 ## Consequences
 
 Gregale can add Neon, Xata, Prisma Postgres, a traditional managed PostgreSQL

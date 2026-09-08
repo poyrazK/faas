@@ -24,7 +24,7 @@ import type { WakeTimelineJSONRow } from './WakeTimelineJSONRow.js';
 export type AppWakeTimelineResponse = {
   app: WakeTimelineApp;
   /**
-   * Number of instance rows in the trailing 24h window (after the descending-cutoff break).
+   * Number of instance rows in the trailing 24h window (after the descending-cutoff break; the endpoint examines up to 100 recent rows).
    */
   wake_count_24h: number;
   /**
@@ -44,7 +44,11 @@ export type AppWakeTimelineResponse = {
    */
   trigger_histogram: Record<string, number>;
   /**
-   * Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break).
+   * trigger_class → N count of known user/monitor/crawler/preview_bot/unknown classifications. Empty {} on a fresh app, never null.
+   */
+  trigger_class_histogram: Record<string, number>;
+  /**
+   * Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break) and capped at 100 recent rows.
    */
   rows: Array<WakeTimelineJSONRow>;
   /**

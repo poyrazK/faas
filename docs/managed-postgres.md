@@ -39,6 +39,14 @@ and the exact qualified backend ID and fingerprint must be supplied through
 required during this preview. Deletion intents are still reconciled, so
 disabling rollout cannot strand known paid resources.
 
+For a narrower first rollout, set `FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS` to a
+comma-separated list of exact account IDs. Database creation, restore, and
+binding provisioning then run only for those staging accounts; an empty value
+keeps all qualified staging accounts eligible. Empty entries, entries longer
+than 255 characters, or lists larger than 100 accounts fail closed. Reads and
+all deletion/revocation paths remain available outside the allowlist so an
+operator can drain a canary safely before expanding it.
+
 ## Provider qualification
 
 Qualification is a separate operator action and is never started by `apid`.

@@ -45,6 +45,10 @@ func TestManifestValidate(t *testing.T) {
 		ok   bool
 	}{
 		{"valid", AppManifest{Entrypoint: []string{"node", "index.js"}}, true},
+		{"crawler policy wake", AppManifest{Entrypoint: []string{"x"}, CrawlerPolicy: CrawlerPolicyWake}, true},
+		{"crawler policy cached", AppManifest{Entrypoint: []string{"x"}, CrawlerPolicy: CrawlerPolicyCached}, true},
+		{"crawler policy block", AppManifest{Entrypoint: []string{"x"}, CrawlerPolicy: CrawlerPolicyBlock}, true},
+		{"crawler policy invalid", AppManifest{Entrypoint: []string{"x"}, CrawlerPolicy: "ignore"}, false},
 		{"empty entrypoint", AppManifest{}, false},
 		{"empty argv0", AppManifest{Entrypoint: []string{""}}, false},
 		{"bad port", AppManifest{Entrypoint: []string{"x"}, Port: 70000}, false},

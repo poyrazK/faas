@@ -99,16 +99,14 @@ correcting capacity: that path can overwrite `vpcpus`, `mem_mb`,
 `max_concurrency` and `admission_ceiling_mb` with whatever the caller
 supplies, so a wrong value mis-sizes admission.
 
-`gregalectl` also exposes an activate path
-(`cmd/gregalectl/commands_compute_nodes.go`) backed by
-`SetComputeNodeActive(ctx, id, true)`.
+`gregalectl compute-nodes activate --node <name> --reason <incident_id>` uses
+the same authenticated durable-intent path as the Operations console.
 
-**Before reactivating, confirm the node was not drained on purpose.**
-Nothing in the row distinguishes an operator drain from a watchdog
-deactivation — that ambiguity is the root defect, and resolving it needs
-the `compute_node_lifecycle` states (`active` / `draining` /
-`unavailable` / `recovering`) from issue #1184 Workstream B / ADR-137.
-Check with whoever owns the box first.
+**Before reactivating, confirm the maintenance is finished.** An intentional
+drain now ends in `maintenance`, while heartbeat failure uses `unavailable` /
+`recovering`; the full lifecycle is (`active` / `draining` /
+`force_draining` / `maintenance` / `unavailable` / `recovering`). Check with
+whoever owns the box first.
 
 ## Detection gap
 

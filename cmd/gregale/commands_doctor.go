@@ -111,6 +111,36 @@ func (r doctorReport) HasWarnings() bool {
 	return false
 }
 
+// HasProfileWarnings reports advisory inference warnings separately from the
+// check rows. Profile warnings remain nested in the versioned profile JSON so
+// existing consumers keep the eight-check contract unchanged.
+func (r doctorReport) HasProfileWarnings() bool {
+	return r.Profile != nil && len(r.Profile.Warnings) > 0
+}
+
+func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
+	if jsonMode {
+		_ = json.NewEncoder(osStderr).Encode(struct {
+			Doctor doctorReport `json:"doctor"`
+			Exit   int          `json:"exit"`
+		}{Doctor: rep, Exit: 0})
+		return
+	}
+	if rep.HasErrors() || rep.HasWarnings() {
+		renderDoctorHuman(osStderr, rep)
+	}
+	if rep.HasProfileWarnings() {
+		_, _ = fmt.Fprintln(osStderr, "gregale deploy — profile warnings")
+		for _, warning := range rep.Profile.Warnings {
+			_, _ = fmt.Fprintf(osStderr, "  ! %s — %s\n", warning.Code, warning.Message)
+			if len(warning.Sources) > 0 {
+				_, _ = fmt.Fprintf(osStderr, "    sources: %s\n", strings.Join(warning.Sources, ", "))
+			}
+		}
+		_, _ = fmt.Fprintln(osStderr, "  Deploy continues; pass --doctor-strict to fail before upload.")
+	}
+}
+
 // cmdDoctor implements `gregale doctor [path]` — the customer
 // preflight. Flags:
 //
@@ -183,8 +213,13 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 // here would block the deploy on infrastructure noise.
 func runDoctorChecks(path string) doctorReport {
 	rep := doctorReport{Path: path}
-	if profile, err := frameworkprofile.AnalyzeDir(path); err == nil {
-		rep.Profile = &profile
+	// Framework profiles describe app-shaped deployments. A single
+	// handler.* tree is a valid zero-config function and should not be
+	// reported as an "unknown framework" during its automatic preflight.
+	if detectShape(path) != shapeFunction {
+		if profile, err := frameworkprofile.AnalyzeDir(path); err == nil {
+			rep.Profile = &profile
+		}
 	}
 	rep.Checks = append(rep.Checks, doctorCheckPortBind())
 	rep.Checks = append(rep.Checks, doctorCheckLoopbackBind(path))

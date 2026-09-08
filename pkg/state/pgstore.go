@@ -14020,8 +14020,8 @@ func (s *PgStore) NodeListDrainable(ctx context.Context) ([]ComputeNode, error) 
 	return out, nil
 }
 
-// NodeMarkDrainCompleted stamps drain_completed_at + flips lifecycle
-// to 'active' (CAS on 'draining').
+// NodeMarkDrainCompleted stamps drain_completed_at + holds lifecycle in
+// 'maintenance' (CAS on a draining state).
 func (s *PgStore) NodeMarkDrainCompleted(ctx context.Context, id string, completedAt time.Time) error {
 	uid, err := uuid.Parse(id)
 	if err != nil {
@@ -14363,6 +14363,7 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 		`SELECT DISTINCT ON (bs.wake_id)
 		        bs.wake_id                       AS wake_id,
 		        bs.trigger                       AS trigger,
+		        bs.trigger_class                 AS trigger_class,
 		        bs.method                        AS method,
 		        bs.tier                          AS tier,
 		        bs.queued_count                  AS queued_count,
@@ -14374,6 +14375,7 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 		   SELECT DISTINCT ON (data->>'wake_id')
 		           data->>'wake_id'             AS wake_id,
 		           data->>'trigger'             AS trigger,
+		           data->>'trigger_class'       AS trigger_class,
 		           data->>'method'              AS method,
 		           data->>'tier'                AS tier,
 		          (data->>'queued_count')::int        AS queued_count,
@@ -14404,14 +14406,18 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 		var wakeID string
 		var meta WakeBootMeta
 		var trigger *string
+		var triggerClass *string
 		var method *string
 		var tier *string
 		var atCapPresent *bool
-		if err := rows.Scan(&wakeID, &trigger, &method, &tier, &meta.QueuedCount, &meta.ConcurrencyAtAdmit, &meta.AtCapacity, &atCapPresent, &meta.ReadyInMS); err != nil {
+		if err := rows.Scan(&wakeID, &trigger, &triggerClass, &method, &tier, &meta.QueuedCount, &meta.ConcurrencyAtAdmit, &meta.AtCapacity, &atCapPresent, &meta.ReadyInMS); err != nil {
 			return nil, fmt.Errorf("LookupBootStartedForWakes: scan: %w", err)
 		}
 		if trigger != nil {
 			meta.Trigger = *trigger
+		}
+		if triggerClass != nil {
+			meta.TriggerClass = *triggerClass
 		}
 		if method != nil {
 			meta.Method = *method

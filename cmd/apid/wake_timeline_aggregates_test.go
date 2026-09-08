@@ -153,6 +153,27 @@ func TestAggregateWakeTimeline_TriggerHistogramExcludesEmpty(t *testing.T) {
 	}
 }
 
+func TestAggregateWakeTimeline_TriggerClassHistogram(t *testing.T) {
+	now := time.Now().UTC()
+	instances := []state.Instance{
+		{ID: "monitor", StartedAt: now.Add(-time.Hour), WakeID: "w-monitor"},
+		{ID: "crawler", StartedAt: now.Add(-2 * time.Hour), WakeID: "w-crawler"},
+		{ID: "unknown", StartedAt: now.Add(-3 * time.Hour), WakeID: "w-unknown"},
+	}
+	metas := map[string]state.WakeBootMeta{
+		"w-monitor": {Trigger: "gateway", TriggerClass: "monitor"},
+		"w-crawler": {Trigger: "gateway", TriggerClass: "crawler"},
+		"w-unknown": {Trigger: "gateway"},
+	}
+	agg := aggregateWakeTimeline(instances, metas, now.Add(-24*time.Hour))
+	if agg.TriggerClassHistogram["monitor"] != 1 || agg.TriggerClassHistogram["crawler"] != 1 {
+		t.Fatalf("TriggerClassHistogram = %+v, want monitor=1 crawler=1", agg.TriggerClassHistogram)
+	}
+	if _, ok := agg.TriggerClassHistogram[""]; ok {
+		t.Fatalf("TriggerClassHistogram contains empty class: %+v", agg.TriggerClassHistogram)
+	}
+}
+
 // TestAggregateWakeTimeline_NilSliceReturnsEmptyMap pins the
 // wire-shape contract: a nil input slice returns a non-nil empty
 // TriggerHistogram (not nil) so the JSON encoder emits `{}` on

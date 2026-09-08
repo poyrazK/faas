@@ -201,8 +201,8 @@ func TestMemStoreLifecycleRecoverySurface(t *testing.T) {
 		t.Fatalf("NodeSetLifecycle draining->active: %v", err)
 	}
 	got, err = store.NodeGet(ctx, active.ID)
-	if err != nil || !got.Active || got.DrainCompletedAt == nil {
-		t.Fatalf("draining->active = %+v, %v; want active and completion timestamp", got, err)
+	if err != nil || !got.Active || got.DrainCompletedAt != nil {
+		t.Fatalf("draining->active = %+v, %v; want active without a false drain-completion stamp", got, err)
 	}
 	if err := store.NodeSetLifecycle(ctx, unavailable.ID, state.NodeLifecycleUnavailable, state.NodeLifecycleRecovering); err != nil {
 		t.Fatalf("NodeSetLifecycle unavailable->recovering: %v", err)
@@ -226,7 +226,7 @@ func TestMemStoreLifecycleRecoverySurface(t *testing.T) {
 		t.Fatalf("NodeMarkDrainCompleted: %v", err)
 	}
 	got, err = store.NodeGet(ctx, active.ID)
-	if err != nil || got.Lifecycle != state.NodeLifecycleActive || got.DrainCompletedAt == nil || !got.DrainCompletedAt.Equal(completedAt) {
+	if err != nil || got.Lifecycle != state.NodeLifecycleMaintenance || got.Active || got.DrainCompletedAt == nil || !got.DrainCompletedAt.Equal(completedAt) {
 		t.Fatalf("completed drain = %+v, %v", got, err)
 	}
 

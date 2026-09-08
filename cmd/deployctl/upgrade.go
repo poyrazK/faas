@@ -2,17 +2,15 @@
 //
 // `make upgrade-node IMAGE_TAG=<tag>` flow:
 //   1. gregalectl compute-nodes drain --node <fqdn>
-//      → UPDATE compute_nodes SET active=false WHERE name=<fqdn>
-//   2. wait MigrateLiveLeaseSeconds (90s, per pkg/api/limits.go) + 5s
-//      grace for live instances to land on peers
+//      → authenticated apid operator intent → draining
+//   2. poll until the controller holds the empty node in maintenance
 //   3. signal the cloud-specific image-rollout mechanism (hcloud /
 //      amazon-ebs / bare-metal — each is its own .sh wrapper)
 //   4. wait for the new VM to come up
 //   5. poll every Lifecycle.ReadyzURL in pkg/daemonunitspec.Registry IN
 //      ORDER; fail-closed if any dependency-aware readiness check reports
 //      not-ready past readyTimeout. Transport probes remain the fallback.
-//   6. UPDATE compute_nodes SET active=true on the node ONLY after
-//      every probe passes
+//   6. submit the authenticated activation intent ONLY after every probe passes
 //
 // The orchestrator runs the probe on the target box over SSH so a loopback
 // readiness URL is evaluated on the box being upgraded, not the operator's
@@ -123,9 +121,7 @@ func runUpgradeNode(args []string) error {
 		"cloud", a.cloud,
 	)
 
-	// 1. Drain — UPDATE compute_nodes SET active=false WHERE name=<fqdn>.
-	// Delegates to gregalectl compute-nodes drain (PR #914), the operator-
-	// facing CLI on the same wire path as `make bootstrap`.
+	// 1. Drain through apid's authenticated, audited durable-intent path.
 	if err := runDrain(ctx, a); err != nil {
 		return fmt.Errorf("drain %s: %w", a.node, err)
 	}
@@ -161,35 +157,41 @@ func runUpgradeNode(args []string) error {
 	return nil
 }
 
-// runDrain invokes `gregalectl compute-nodes drain --node <fqdn>`.
-// PR #914's CLI emits the same UPDATE that pkg/state.PgStore.
-// MarkComputeNodeInactive does (pkg/state/pgstore.go:8720).
+// runDrain submits an authenticated durable node_drain intent.
 func runDrain(ctx context.Context, a *upgradeArgs) error {
 	cmd := exec.CommandContext(ctx, "/opt/faas/current/bin/gregalectl",
-		"compute-nodes", "drain", "--node", a.node)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
-}
-
-// waitForDrain sleeps for MigrateLiveLeaseSeconds + 5s grace, then
-// re-checks via gregalectl compute-nodes drain-status. The schedd's
-// rebalance is asynchronous (every 30s per the heartbeat tick); the
-// wait absorbs a full tick + a margin.
-func waitForDrain(ctx context.Context, a *upgradeArgs) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(a.drainTimeout):
-	}
-	cmd := exec.CommandContext(ctx, "/opt/faas/current/bin/gregalectl",
-		"compute-nodes", "drain-status", "--node", a.node)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		return errors.New("instances still on node — run 'gregalectl compute-nodes force-drain' to override")
+		"--json=false", "compute-nodes", "drain", "--node", a.node, "--reason", "image_upgrade")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gregalectl drain: %s", strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// waitForDrain polls until the controller has cleared live instances and
+// moved the node into the non-admitting maintenance hold.
+func waitForDrain(ctx context.Context, a *upgradeArgs) error {
+	deadline := time.NewTimer(a.drainTimeout)
+	defer deadline.Stop()
+	for {
+		cmd := exec.CommandContext(ctx, "/opt/faas/current/bin/gregalectl",
+			"--json=false", "compute-nodes", "drain-status", "--node", a.node)
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		message := strings.TrimSpace(string(output))
+		if !strings.Contains(message, "waiting for maintenance hold") && !strings.Contains(message, "instances still") {
+			return fmt.Errorf("gregalectl drain-status: %s", message)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return errors.New("node did not reach maintenance hold — run 'gregalectl compute-nodes force-drain --yes' to override")
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // runCloudRollout invokes the cloud-specific wrapper. The wrapper's
@@ -304,12 +306,13 @@ func sshProbeTarget(ctx context.Context, a *upgradeArgs, probeCmd string) error 
 	return cmd.Run()
 }
 
-// runActivate flips compute_nodes.active=true via gregalectl
-// compute-nodes activate — same wire path as drain.
+// runActivate submits the authenticated activation intent after readiness.
 func runActivate(ctx context.Context, a *upgradeArgs) error {
 	cmd := exec.CommandContext(ctx, "/opt/faas/current/bin/gregalectl",
-		"compute-nodes", "activate", "--node", a.node)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
+		"--json=false", "compute-nodes", "activate", "--node", a.node, "--reason", "image_upgrade")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gregalectl activate: %s", strings.TrimSpace(string(output)))
+	}
+	return nil
 }

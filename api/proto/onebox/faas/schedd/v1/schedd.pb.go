@@ -1782,7 +1782,11 @@ type StreamAppLogsResponse struct {
 	GapToWrittenAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=gap_to_written_at,json=gapToWrittenAt,proto3" json:"gap_to_written_at,omitempty"`
 	// gap_reason is the bound that triggered the gap; meaningful only
 	// on is_gap=true frames. Mirrors vmmd's LogsResponse.gap_reason.
-	GapReason     string `protobuf:"bytes,8,opt,name=gap_reason,json=gapReason,proto3" json:"gap_reason,omitempty"`
+	GapReason string `protobuf:"bytes,8,opt,name=gap_reason,json=gapReason,proto3" json:"gap_reason,omitempty"`
+	// level is the canonical severity parsed from a structured JSON log line
+	// ("info", "warn", or "error"). Empty means the line was plain text or
+	// did not contain a recognised level. Additive per ADR-016.
+	Level         string `protobuf:"bytes,9,opt,name=level,proto3" json:"level,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1869,6 +1873,13 @@ func (x *StreamAppLogsResponse) GetGapToWrittenAt() *timestamppb.Timestamp {
 func (x *StreamAppLogsResponse) GetGapReason() string {
 	if x != nil {
 		return x.GapReason
+	}
+	return ""
+}
+
+func (x *StreamAppLogsResponse) GetLevel() string {
+	if x != nil {
+		return x.Level
 	}
 	return ""
 }
@@ -2759,7 +2770,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\rdeployment_id\x18\x03 \x01(\tR\fdeploymentId\x12D\n" +
 	"\x10since_written_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0esinceWrittenAt\x12\x14\n" +
 	"\x05level\x18\x05 \x01(\tR\x05level\x12\x12\n" +
-	"\x04grep\x18\x06 \x01(\tR\x04grep\"\xae\x02\n" +
+	"\x04grep\x18\x06 \x01(\tR\x04grep\"\xc4\x02\n" +
 	"\x15StreamAppLogsResponse\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x10\n" +
@@ -2771,7 +2782,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x06is_gap\x18\x06 \x01(\bR\x05isGap\x12E\n" +
 	"\x11gap_to_written_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\x0egapToWrittenAt\x12\x1d\n" +
 	"\n" +
-	"gap_reason\x18\b \x01(\tR\tgapReason\"\x18\n" +
+	"gap_reason\x18\b \x01(\tR\tgapReason\x12\x14\n" +
+	"\x05level\x18\t \x01(\tR\x05level\"\x18\n" +
 	"\x16StreamWarmHintsRequest\"\x84\x01\n" +
 	"\x17StreamWarmHintsResponse\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x17\n" +

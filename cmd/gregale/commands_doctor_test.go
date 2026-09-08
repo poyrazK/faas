@@ -244,3 +244,9 @@ func TestDoctorReport_HasErrorsAndHasWarnings(t *testing.T) {
 		}
 	})
 }
+
+func TestDeployDoctorFlagsAreMutuallyExclusive(t *testing.T) {
+	if code := cmdDeployTarball([]string{"--doctor-strict", "--no-doctor"}); code != 1 {
+		t.Fatalf("--doctor-strict + --no-doctor exit = %d, want 1", code)
+	}
+}

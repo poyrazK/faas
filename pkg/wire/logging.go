@@ -87,6 +87,7 @@ type CorrelationFields struct {
 	// stamps these, so a missing value on the wire means the producer
 	// is pre-ADR-123.
 	Trigger            string
+	TriggerClass       string
 	QueuedCount        int
 	ConcurrencyAtAdmit int
 }

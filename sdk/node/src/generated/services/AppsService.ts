@@ -1151,15 +1151,15 @@ export class AppsService {
     });
   }
   /**
-   * Queue replay of a recorded request (ADR-127 / PR-B stub).
-   * PR-B returns 202 with `status: "queued"`. The mirror
-   * invocation pipeline lands in issue #72 PR-A2
-   * (feat-issue-72-traffic-mirror-pr-a2). The response shape
-   * is stable across PR-B and PR-A2 so customer tooling can
-   * wire once. Plan-gated by DebugTelemetryEnabled; requires
-   * ScopesDeployWriteSurface.
+   * Replay a retained request through its mirror rule (ADR-127).
+   * Reissues the retained request metadata through the enabled mirror
+   * rule for the deployment that served it. Raw request bodies and
+   * credentials are not retained, so the mirror receives an empty body
+   * and platform-owned replay metadata only. The returned invocation ID
+   * can be polled for the comparison result. Plan-gated by
+   * DebugTelemetryEnabled; requires ScopesDeployWriteSurface.
    *
-   * @returns DebugReplayResponse Replay queued (PR-A2 will route it).
+   * @returns DebugReplayResponse Replay invocation queued for mirror execution.
    * @throws ApiError
    */
   public static replayAppDebugRequest({
@@ -1187,6 +1187,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
+        409: `No enabled mirror rule targets the deployment that served the
+        retained request. Returns \`debug_replay_unsupported\`.
+        `,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
@@ -1411,6 +1414,11 @@ export class AppsService {
    * Hobby 7d / Pro 30d / Scale 90d) refuses `?date=` values
    * outside the window with 403 + `log_archive_retention_exceeded`.
    *
+   * Each `event: log` payload preserves the original `line`. When that
+   * line is a valid JSON object with a recognized `level` or `severity`
+   * field, the server adds a canonical `level` value (`info`, `warn`, or
+   * `error`); plain-text and unclassified lines omit the field.
+   *
    * @returns any A text/event-stream of structured log lines, terminated by an empty SSE frame when the connection closes.
    * @throws ApiError
    */
@@ -1441,7 +1449,7 @@ export class AppsService {
      */
     since?: string,
     /**
-     * Exact match on the structured `level` field (info, warn, or error). Empty = no level filter. The CLI and the apid handler both validate against the same enum (api.IsValidLogLevel in pkg/api/logs.go); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
+     * Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the apid handler both validate against the same enum (api.IsValidLogLevel in pkg/api/logs.go); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
      *
      */
     level?: 'info' | 'warn' | 'error',

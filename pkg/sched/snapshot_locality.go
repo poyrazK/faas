@@ -28,7 +28,7 @@ func (e *Engine) snapshotPlacementHints(ctx context.Context, snapshotID, warmHin
 		warmHint = ""
 	}
 	// Explicit burst spreading must not pin every sibling to the producer.
-	if warmHint == "" && !isBurstPlacementSpread(ctx) {
+	if warmHint == "" && !isPlacementSpread(ctx) {
 		warmHint = locality.OriginNodeID
 	}
 	return warmHint, locality.ReadyNodeIDs

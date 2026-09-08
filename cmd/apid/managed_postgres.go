@@ -30,8 +30,14 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
+	provisioningGate := managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now)
+	canaryAccountGate := managedpostgres.NewStagingCanaryAccountGate(getenv)
+	provisioningAllowed := func(ctx context.Context, accountID string) bool {
+		return canaryAccountGate(accountID)
+	}
 	service, err := managedpostgres.NewService(registry, store, managedpostgres.ServiceOptions{
-		ProvisioningEnabled: managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now),
+		ProvisioningEnabled: provisioningGate,
+		ProvisioningAllowed: provisioningAllowed,
 		MaxDatabasesPerAccount: func(ctx context.Context, accountID string) (int, error) {
 			account, err := accountStore.AccountByID(ctx, accountID)
 			if err != nil {
@@ -66,7 +72,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, err
 	}
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
-		IncludeProvisioning: managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now),
+		IncludeProvisioning: provisioningGate,
 		Logger:              log,
 	})
 	if err != nil {
@@ -91,13 +97,14 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, err
 	}
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
-		ProvisioningEnabled: managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now),
+		ProvisioningEnabled: provisioningGate,
+		ProvisioningAllowed: provisioningAllowed,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
-		IncludeProvisioning: managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now),
+		IncludeProvisioning: provisioningGate,
 		Logger:              log,
 	})
 	if err != nil {

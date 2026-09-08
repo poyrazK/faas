@@ -837,6 +837,10 @@ message StreamAppLogsResponse {
   // gap_reason is the bound that triggered the gap; meaningful only
   // on is_gap=true frames. Mirrors vmmd's LogsResponse.gap_reason.
   string gap_reason = 8;
+  // level is the canonical severity parsed from a structured JSON log line
+  // ("info", "warn", or "error"). Empty means the line was plain text or
+  // did not contain a recognised level. Additive per ADR-016.
+  string level = 9;
 }
 
 // StreamWarmHintsRequest kicks off the sticky-warm affinity stream.

@@ -985,6 +985,10 @@ const (
 	// "use `gregale invocation <id>` to inspect the state" hint
 	// without parsing prose.
 	CodeInvocationNotReplayable = "invocation_not_replayable"
+	// CodeDebugReplayUnsupported is returned when a retained request has no
+	// enabled mirror rule for the deployment that served it. Replaying without
+	// that target would silently exercise a different deployment.
+	CodeDebugReplayUnsupported = "debug_replay_unsupported"
 	// CodeBuildProvenanceNotFound is the ADR-038 / Tier 3 #197
 	// B3.10-read sentinel. Distinct from a generic "no such build"
 	// so the customer can branch: a build that exists with no
@@ -1620,7 +1624,7 @@ func StatusForCode(code string) int {
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
-		CodeDeploymentReorderNotPending:
+		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported:
 		return http.StatusConflict
 	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict:
 		// 409 — issue #556. Σ(traffic_percent WHERE status='live')

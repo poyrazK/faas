@@ -196,7 +196,7 @@ func TestBootStarted_Shape_IncludesNewFields(t *testing.T) {
 		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-1", AppID: "a-1",
 		InstanceID: "i-1", NodeID: "n-1", Method: "cold_boot",
 		Trigger: "gateway", QueuedCount: 8, ConcurrencyAtAdmit: 2,
-		AtCapacity: true,
+		AtCapacity: true, TriggerClass: "monitor",
 	}
 	p := ev.Payload()
 	if got := p["trigger"]; got != "gateway" {
@@ -210,6 +210,9 @@ func TestBootStarted_Shape_IncludesNewFields(t *testing.T) {
 	}
 	if got := p["method"]; got != "cold_boot" {
 		t.Errorf("payload.method = %v, want cold_boot (existing field regression)", got)
+	}
+	if got := p["trigger_class"]; got != "monitor" {
+		t.Errorf("payload.trigger_class = %v, want monitor", got)
 	}
 }
 

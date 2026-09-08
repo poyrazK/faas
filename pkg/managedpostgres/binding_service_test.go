@@ -87,6 +87,30 @@ func bindingTestMaterial() CredentialMaterial {
 	}
 }
 
+func TestBindingCanaryAccountGateBlocksCreate(t *testing.T) {
+	provider := &bindingProvider{}
+	provider.capabilities = testCapabilities()
+	registry := testRegistry(t, provider, func(config *Config) { config.ProvisioningEnabled = true })
+	service, err := NewBindingService(registry, NewMemoryStore(), NewMemoryStore(), newBindingCredentialSink(), BindingServiceOptions{
+		ProviderTimeout:     time.Second,
+		ProvisioningEnabled: func() bool { return true },
+		ProvisioningAllowed: func(context.Context, string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Create(context.Background(), CreateBindingRequest{
+		AccountID: "canary-excluded", DatabaseID: "database-a", AppID: "app-a",
+		Scope: "default", EnvironmentKey: "DATABASE_URL", Access: CredentialReadWrite,
+	})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("excluded binding create = %v, want ErrUnavailable", err)
+	}
+	if provider.issueCalls != 0 {
+		t.Fatalf("excluded binding called provider %d times", provider.issueCalls)
+	}
+}
+
 func readyBindingFixture(t *testing.T, provider *bindingProvider, bindingStore *failFinishBindingStore, now *time.Time, enabled *bool) (*BindingService, *MemoryStore, Database) {
 	t.Helper()
 	provider.capabilities = testCapabilities()

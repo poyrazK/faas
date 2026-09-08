@@ -49,6 +49,11 @@ func NodeFixture(t *testing.T) []byte {
 `
 	const indexJS = `const http = require('http');
 http.createServer((req, res) => {
+  if (req.url === '/healthz') {
+    res.writeHead(200, {'content-type': 'text/plain'});
+    res.end('ready\n');
+    return;
+  }
   res.writeHead(200, {'content-type': 'text/plain'});
   res.end('hello from faas (node fixture)\n');
 }).listen(3000, () => console.log('node fixture listening on :3000'));
@@ -297,6 +302,10 @@ app = Flask(__name__)
 def hello():
     return "hello from faas (python fixture)\n"
 
+@app.route("/healthz")
+def healthz():
+    return "ready\n"
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3000)
 `
@@ -326,6 +335,7 @@ func DockerfileFixture(t *testing.T) []byte {
 		"LABEL org.opencontainers.image.title=\"faas-fixture-dockerfile\"\n" +
 		"LABEL org.opencontainers.image.source=\"https://github.com/onebox-faas/faas test fixture\"\n" +
 		"LABEL faas.build.token=\"" + time.Now().UTC().Format(time.RFC3339Nano) + "\"\n" +
+		"RUN mkdir -p /public && printf 'hello from faas (dockerfile fixture)\\n' > /public/index.html && printf 'ready\\n' > /public/healthz\n" +
 		"RUN adduser -D -u 1000 app\n" +
 		"USER app\n" +
 		"EXPOSE 3000\n" +
@@ -363,6 +373,9 @@ import (
 func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "hello from faas (go fixture)\n")
+	})
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ready\n")
 	})
 	if err := http.ListenAndServe(":3000", nil); err != nil {
 		panic(err)
@@ -419,6 +432,9 @@ import (
 func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "hello from faas (go dockerfile fixture)\n")
+	})
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ready\n")
 	})
 	if err := http.ListenAndServe(":3000", nil); err != nil {
 		panic(err)

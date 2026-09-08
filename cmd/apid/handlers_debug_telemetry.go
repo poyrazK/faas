@@ -1,11 +1,9 @@
 package main
 
-// handlers_debug_telemetry.go — read-only slice of the production
-// debugger (ADR-127) for PR-A. The write-side (publisher → gRPC
-// IncrementRequestTelemetry → apid receiver → sqlc INSERT) lands in
-// PR-B; PR-A ships the GET endpoint so customers can already see
-// the existing app_errors_recorder-style rows once a row source is
-// configured.
+// handlers_debug_telemetry.go — customer-facing production debugger
+// surfaces (ADR-127). Request telemetry is written by the publisher → gRPC
+// receiver path; replay is the one write-side consumer operation and queues
+// a metadata-only invocation through the configured mirror rule.
 //
 // Handlers: list recent requests, retrieve one request by id, and return
 // bounded evidence for a request. Regression / compare / replay are the
@@ -693,19 +691,13 @@ func parseDebugSinceFromString(raw string, def time.Duration) time.Duration {
 	return def
 }
 
-// debugReplayHandler — POST /v1/apps/{slug}/debug/requests/{req_id}/replay
+// debugReplayHandler — POST /v1/apps/{slug}/debug/requests/{req_id}/replay.
 //
-// PR-B stub. The full replay path lands with issue #72 PR-A2
-// (traffic mirror PR-A2, in worktree feat-issue-72-traffic-mirror-pr-a2):
-// the mirror invocation handler accepts an upstream request id
-// and routes the recorded headers/body to the customer's
-// mirror deployment.
-//
-// PR-B returns the mirror_invocation_id that PR-A2 will create
-// (when implemented) — the response shape is stable across the
-// two PRs so the customer's automation can wire once.
-//
-// Plan-gated by DebugTelemetryEnabled.
+// A request_telemetry row intentionally contains no raw body or credentials.
+// Replay therefore queues a durable invocation carrying the safe request
+// metadata and the mirror rule selected for the deployment that served it.
+// schedd consumes that row through the gateway's mirror replay path; the
+// resulting invocation id is also the customer's polling handle.
 func (s *server) debugReplayHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -717,17 +709,78 @@ func (s *server) debugReplayHandler(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	reqID := r.PathValue("req_id")
-	if _, err := uuid.Parse(reqID); err != nil {
+	parsedID, err := uuid.Parse(reqID)
+	if err != nil {
 		api.WriteProblem(w, api.ErrValidation("req_id must be a UUID"))
 		return
 	}
-	// PR-B does not yet invoke the mirror pipeline (issue #72
-	// PR-A2 owns the scheduler-side mirror invocation). We return
-	// a stable shape so the customer's tooling can wire against
-	// it; the status field signals "queued" so the dashboard
-	// renders a "Replay queued — PR-A2 will route it" tile.
-	writeJSON(w, http.StatusAccepted, api.DebugReplayResponse{
-		Status: "queued",
+	now := time.Now().UTC()
+	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	row, err := s.store.GetRequestTelemetryByAppAndID(r.Context(), sqlc.GetRequestTelemetryByAppAndIDParams{
+		AppID:        stringToPgUUID(app.ID),
+		ID:           pgtype.UUID{Bytes: parsedID, Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
 	})
-	_ = app // app loaded for plan-gating; not used in the stub body
+	if errors.Is(err, pgx.ErrNoRows) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get debug replay request"))
+		return
+	}
+	depID := uuidFromPg(row.DeploymentID)
+	rules, err := s.store.ListMirrorRules(r.Context(), app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("find debug replay mirror rule"))
+		return
+	}
+	var rule state.MirrorRule
+	for _, candidate := range rules {
+		if candidate.Enabled && candidate.SourceDeploymentID == depID {
+			rule = candidate
+			break
+		}
+	}
+	if rule.ID == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict,
+			api.CodeDebugReplayUnsupported,
+			"Debug replay is unavailable",
+			"the request's serving deployment has no enabled mirror rule; enable a mirror rule for that deployment before replaying"))
+		return
+	}
+	metadata := map[string]string{
+		api.DebugReplayRequestIDHeader:     reqID,
+		api.DebugReplayDeploymentIDHeader:  depID,
+		api.DebugReplayMirrorRuleIDHeader:  rule.ID,
+		api.DebugReplaySourceStatusHeader:  strconv.Itoa(int(row.Status)),
+		api.DebugReplaySourceLatencyHeader: strconv.Itoa(int(row.LatencyMs)),
+	}
+	if row.TraceID.Valid && row.TraceID.String != "" {
+		metadata[api.DebugReplayTraceIDHeader] = row.TraceID.String
+	}
+	headerBytes, err := json.Marshal(metadata)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("build debug replay envelope"))
+		return
+	}
+	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+		AppID:     app.ID,
+		AccountID: acct.ID,
+		Source:    state.InvocationReplay,
+		Method:    row.Method,
+		Path:      row.Route,
+		Payload:   json.RawMessage("{}"),
+		Headers:   headerBytes,
+		DueAt:     now,
+	})
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("enqueue debug replay"))
+		return
+	}
+	writeJSON(w, http.StatusAccepted, api.DebugReplayResponse{
+		MirrorInvocationID: inv.ID,
+		Status:             "queued",
+	})
 }

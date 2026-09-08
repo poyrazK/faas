@@ -292,15 +292,18 @@ func applyNodeOperatorIntent(ctx context.Context, store state.Store, intent stat
 		}
 		return store.NodeSetLifecycle(ctx, node.ID, current, state.NodeLifecycleDraining)
 	case state.OperatorIntentKindNodeForceDrain:
-		if current == state.NodeLifecycleUnavailable {
+		if current == state.NodeLifecycleMaintenance {
 			return nil
 		}
-		return store.NodeSetLifecycle(ctx, node.ID, current, state.NodeLifecycleUnavailable)
+		if current == state.NodeLifecycleForceDraining {
+			return nil
+		}
+		return store.NodeSetLifecycle(ctx, node.ID, current, state.NodeLifecycleForceDraining)
 	case state.OperatorIntentKindNodeActivate:
 		if current == state.NodeLifecycleActive {
 			return nil
 		}
-		if current != state.NodeLifecycleUnavailable {
+		if current != state.NodeLifecycleUnavailable && current != state.NodeLifecycleMaintenance {
 			return fmt.Errorf("operator_intent: node_activate refuses controller-owned lifecycle %s", current)
 		}
 		return store.NodeSetLifecycle(ctx, node.ID, current, state.NodeLifecycleActive)

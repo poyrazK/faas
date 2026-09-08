@@ -7,6 +7,41 @@ import (
 	"time"
 )
 
+func TestRing_StructuredJSONLevel(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{name: "level info", line: `{"level":"info","msg":"started"}`, want: "info"},
+		{name: "severity warning", line: `{"severity":"WARNING","message":"slow"}`, want: "warn"},
+		{name: "severity critical", line: `{"severity":"CRITICAL","message":"down"}`, want: "error"},
+		{name: "numeric pino error", line: `{"level":50,"msg":"failed"}`, want: "error"},
+		{name: "highest of level and severity", line: `{"level":"debug","severity":"ERROR","msg":"failed"}`, want: "error"},
+		{name: "plain text", line: "started", want: ""},
+		{name: "malformed JSON", line: `{"level":"error"`, want: ""},
+		{name: "unknown level", line: `{"level":"verbose","msg":"trace"}`, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New(1 << 20)
+			if _, err := r.Write("stdout", []byte(tt.line+"\n")); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			got := r.Snapshot(1)
+			if len(got) != 1 {
+				t.Fatalf("Snapshot returned %d lines, want 1", len(got))
+			}
+			if got[0].Level != tt.want {
+				t.Errorf("Level = %q, want %q", got[0].Level, tt.want)
+			}
+			if got[0].Line != tt.line {
+				t.Errorf("Line = %q, want original %q", got[0].Line, tt.line)
+			}
+		})
+	}
+}
+
 // TestRing_LineOrdering pins the roundtrip property: bytes written in a
 // specific sequence come back in the same sequence from Snapshot, with
 // monotonically increasing Seq starting at 1 and consecutive lines.

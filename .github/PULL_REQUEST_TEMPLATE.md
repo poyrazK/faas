@@ -17,6 +17,10 @@
      `no-regression-test` label and include a non-empty line such as:
      `Why no test: generated output is covered by the source contract check.` -->
 
+<!-- PR-4b: changed Go tests under pkg/sched, pkg/gateway, pkg/meter,
+     pkg/billing, or pkg/fcvm must include a comment identifying the contract
+     they pin, for example `// spec: §6.2` or `// adr: 098`. -->
+
 ## What
 
 <!-- 1-3 sentences. What changed and why? -->

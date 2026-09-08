@@ -12,6 +12,7 @@ const (
 	QualificationBackendEnv         = "FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND"
 	QualificationFingerprintEnv     = "FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT"
 	QualificationUntilEnv           = "FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL"
+	CanaryAccountsEnv               = "FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS"
 	QualificationStagingEnvironment = "staging"
 )
 
@@ -49,5 +50,37 @@ func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, 
 			return false
 		}
 		return true
+	}
+}
+
+// NewStagingCanaryAccountGate returns the optional per-account rollout gate.
+// An empty value keeps the existing staging behavior (all staging accounts
+// are eligible). Once populated, the value is a comma-separated exact-match
+// allowlist of account IDs. Empty entries and oversized lists fail closed so
+// a malformed deployment cannot widen the canary accidentally.
+func NewStagingCanaryAccountGate(getenv func(string) string) func(string) bool {
+	return func(accountID string) bool {
+		if getenv == nil || strings.TrimSpace(accountID) == "" {
+			return false
+		}
+		raw := strings.TrimSpace(getenv(CanaryAccountsEnv))
+		if raw == "" {
+			return true
+		}
+		parts := strings.Split(raw, ",")
+		if len(parts) > 100 {
+			return false
+		}
+		allowed := false
+		for _, part := range parts {
+			candidate := strings.TrimSpace(part)
+			if candidate == "" || len(candidate) > 255 {
+				return false
+			}
+			if candidate == accountID {
+				allowed = true
+			}
+		}
+		return allowed
 	}
 }

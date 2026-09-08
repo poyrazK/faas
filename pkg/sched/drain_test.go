@@ -185,6 +185,53 @@ func TestDrain_DispatchesDueRow(t *testing.T) {
 	}
 }
 
+func TestDrain_DebugReplaySkipsSourceWake(t *testing.T) {
+	t.Parallel()
+	d, store, _, _, ds := newDrainHarness(t, api.PlanHobby, true)
+	ctx := context.Background()
+	apps, err := store.ListAllApps(ctx)
+	if err != nil || len(apps) == 0 {
+		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+	}
+	app := apps[0]
+	headerBytes, err := json.Marshal(map[string]string{
+		api.DebugReplayRequestIDHeader: uuid.NewString(),
+	})
+	if err != nil {
+		t.Fatalf("marshal replay marker: %v", err)
+	}
+	inv, err := store.EnqueueInvocation(ctx, state.Invocation{
+		AppID: app.ID, AccountID: app.AccountID, Source: state.InvocationReplay,
+		Method: "POST", Path: "/replayed", Headers: headerBytes,
+		DueAt: time.Now().Add(-time.Second),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
+	}
+
+	d.Tick(ctx)
+	if got := ds.calls.Load(); got != 1 {
+		t.Fatalf("synth calls = %d, want 1", got)
+	}
+	got, err := store.InvocationByID(ctx, inv.ID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	if got.State != state.InvocationCompleted {
+		t.Fatalf("row state = %q, want completed", got.State)
+	}
+	if got.InstanceID == "" {
+		t.Fatal("replay invocation instance_id is empty, want mirror target stamped")
+	}
+	instances, err := store.ListInstancesForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("ListInstancesForApp: %v", err)
+	}
+	if len(instances) != 1 || instances[0].State != string(state.StateParked) {
+		t.Fatalf("source instances = %+v, want the seeded source VM left parked", instances)
+	}
+}
+
 // TestDrain_TransientInvokeRetries pins the retryAfter=5s branch.
 // A transient Invoke error puts the row back to state=pending with
 // due_at in the future. A second Tick that happens BEFORE due_at must

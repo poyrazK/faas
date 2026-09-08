@@ -15,10 +15,12 @@ import (
 type ComputeNodeLifecycle string
 
 const (
-	ComputeNodeLifecycleActive      ComputeNodeLifecycle = "active"
-	ComputeNodeLifecycleDraining    ComputeNodeLifecycle = "draining"
-	ComputeNodeLifecycleUnavailable ComputeNodeLifecycle = "unavailable"
-	ComputeNodeLifecycleRecovering  ComputeNodeLifecycle = "recovering"
+	ComputeNodeLifecycleActive        ComputeNodeLifecycle = "active"
+	ComputeNodeLifecycleDraining      ComputeNodeLifecycle = "draining"
+	ComputeNodeLifecycleForceDraining ComputeNodeLifecycle = "force_draining"
+	ComputeNodeLifecycleMaintenance   ComputeNodeLifecycle = "maintenance"
+	ComputeNodeLifecycleUnavailable   ComputeNodeLifecycle = "unavailable"
+	ComputeNodeLifecycleRecovering    ComputeNodeLifecycle = "recovering"
 )
 
 func (e *ComputeNodeLifecycle) Scan(src interface{}) error {

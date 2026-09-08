@@ -3336,6 +3336,7 @@ func (s *server) renderAppWakeTimeline(w http.ResponseWriter, r *http.Request, l
 		}
 		if hasMeta {
 			row.Trigger = meta.Trigger
+			row.TriggerClass = meta.TriggerClass
 			row.QueuedCount = meta.QueuedCount
 			row.ConcurrencyAtAdmit = meta.ConcurrencyAtAdmit
 			row.AtCapacity = meta.AtCapacity

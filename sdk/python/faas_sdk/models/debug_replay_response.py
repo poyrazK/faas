@@ -15,11 +15,11 @@ T = TypeVar("T", bound="DebugReplayResponse")
 
 @_attrs_define
 class DebugReplayResponse:
-    """POST response from /v1/apps/{slug}/debug/requests/{req_id}/replay (ADR-127 / PR-B stub)."""
+    """POST response from /v1/apps/{slug}/debug/requests/{req_id}/replay (ADR-127)."""
 
     status: DebugReplayResponseStatus
     mirror_invocation_id: None | Unset | UUID = UNSET
-    """Set when the mirror invocation lands in PR-A2."""
+    """Durable invocation ID for polling replay status and comparison results."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
