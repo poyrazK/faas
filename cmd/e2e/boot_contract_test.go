@@ -26,6 +26,7 @@ import (
 	imagedpkg "github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/renderer"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestBootContract_APIDRenderedConfigAndProductionListeners is the first
@@ -207,6 +208,19 @@ func TestBootContract_ImagedRenderedConfigAndFunctionRunners(t *testing.T) {
 	unit, err := daemonunit.Decode(unitBody)
 	if err != nil {
 		t.Fatalf("decode rendered imaged unit: %v", err)
+	}
+	nodeName := requiredUnitEnvironmentValue(t, unit, "FAAS_NODE_NAME")
+	if _, err := state.NewPgStore(pool).CreateComputeNode(context.Background(), state.ComputeNode{
+		Name:               nodeName,
+		TargetURL:          "unix:///run/faas/vmmd.sock",
+		VPCPUs:             1,
+		MemMB:              1024,
+		MaxConcurrency:     1,
+		AdmissionCeilingMB: 512,
+		VCPUBudget:         1,
+		Active:             true,
+	}); err != nil {
+		t.Fatalf("seed rendered imaged owner node %q: %v", nodeName, err)
 	}
 	configPath := renderedConfigPath(t, unit, etcDir, "imaged")
 	controlAddr := freeTCPAddr(t)
@@ -435,6 +449,26 @@ func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hos
 		}
 	}
 	return env
+}
+
+func requiredUnitEnvironmentValue(t *testing.T, unit daemonunit.Unit, key string) string {
+	t.Helper()
+	var value string
+	found := false
+	for _, kv := range unit.Environment {
+		if kv.Key != key {
+			continue
+		}
+		if found {
+			t.Fatalf("rendered unit has duplicate %s entries", key)
+		}
+		found = true
+		value = strings.TrimSpace(kv.Value)
+	}
+	if !found || value == "" {
+		t.Fatalf("rendered unit is missing non-empty %s", key)
+	}
+	return value
 }
 
 func seedBootContractBuilderBase(t *testing.T, storageRoot string, guestInit []byte) {
