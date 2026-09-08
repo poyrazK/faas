@@ -1030,8 +1030,9 @@ explicitly open issues that the doc otherwise implies are closed.
   fleet can keep desired replicas on separate compute nodes. The scheduler
   coverage lives in `TestConvergeServiceReplicasSpreadsAcrossComputeNodes`.
 - **Workload networking** — the gateway now exposes a deterministic,
-  loopback-only cross-VM service endpoint registry (ADR-167), sourced from the
-  same live target cache used for request routing. Guest DNS/proxy transport,
+  loopback-only cross-VM service endpoint registry (ADR-167) and a trusted
+  node-local service proxy (ADR-168), both sourced from the same live target
+  cache used for request routing. Guest DNS/proxy binding to instance identity,
   host ports, and public multi-port routing remain the next networking slices;
   loopback discovery for workloads within one task remains the current guest
   contract (ADR-164 and ADR-165).
