@@ -182,6 +182,7 @@ func TestLimiterPeek_NonMutating(t *testing.T) {
 	}
 }
 
+// adr: 040
 func TestLimiterPeekAccount_BasicShape(t *testing.T) {
 	// Pro plan: RateLimitPerAccountRPM() = 6000. Test the math:
 	// PeekAccount on a fresh bucket returns ok=false; AllowAccount

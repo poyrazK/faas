@@ -98,6 +98,7 @@ func TestAppRateLimitHeaders_On429(t *testing.T) {
 	t.Fatal("did not observe 429 within 25 Free-burst requests")
 }
 
+// adr: 040
 // TestAccountRateLimitHeaders_OnAccount429 — when the per-account
 // 429 path runs the X-AccountRateLimit-* trio is written, distinct
 // from the per-app X-RateLimit-* family. The X-RateLimit-* headers

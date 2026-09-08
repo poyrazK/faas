@@ -92,7 +92,8 @@ func TestLimiterForgetAll(t *testing.T) {
 	}
 }
 
-// --- per-account rate limiter (ADR-040 / issue #292) ----------------------
+// adr: 040
+// --- per-account rate limiter (ADR-040 / issues #292 and #1680) -----------
 
 func TestLimiterAllowAccount_BurstThenRefill(t *testing.T) {
 	l := NewLimiter()
