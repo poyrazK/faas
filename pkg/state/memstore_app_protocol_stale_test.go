@@ -51,9 +51,10 @@ func TestMemStore_MarkAllSnapshotsStaleByAppProtocol(t *testing.T) {
 	appHTTP1 := insertApp("aprot-http1", "http1")
 	appHTTP2 := insertApp("aprot-http2", "http2")
 	appGRPC := insertApp("aprot-grpc", "grpc")
+	appHTTP2Current := insertApp("aprot-http2-current", "http2")
 
 	// Deployment + snapshot factory per app.
-	insertSnap := func(appID, label string) string {
+	insertSnap := func(appID, label, baseImageVersion string) string {
 		dep, err := m.CreateDeployment(ctx, state.Deployment{
 			AppID:       appID,
 			Kind:        state.DeploymentKindImage,
@@ -66,24 +67,26 @@ func TestMemStore_MarkAllSnapshotsStaleByAppProtocol(t *testing.T) {
 		// post-issue #470; defaulting to SnapshotTierInit is fine
 		// here since F3 sweeps all tiers.
 		snap, err := m.CreateSnapshot(ctx, state.Snapshot{
-			DeploymentID: dep.ID,
-			MemBytes:     100,
-			DiskBytes:    100,
-			FCVersion:    "1.13.0",
-			StorageKey:   state.SnapMemKey(dep.ID),
-			Tier:         state.SnapshotTierInit,
+			DeploymentID:     dep.ID,
+			MemBytes:         100,
+			DiskBytes:        100,
+			FCVersion:        "1.13.0",
+			BaseImageVersion: baseImageVersion,
+			StorageKey:       state.SnapMemKey(dep.ID),
+			Tier:             state.SnapshotTierInit,
 		})
 		if err != nil {
 			t.Fatalf("CreateSnapshot(%s): %v", label, err)
 		}
 		return snap.ID
 	}
-	http1ID := insertSnap(appHTTP1, "h1")
-	http2ID := insertSnap(appHTTP2, "h2")
-	grpcID := insertSnap(appGRPC, "g")
+	http1ID := insertSnap(appHTTP1, "h1", "v0")
+	http2ID := insertSnap(appHTTP2, "h2", "v0")
+	grpcID := insertSnap(appGRPC, "g", "v0")
+	http2CurrentID := insertSnap(appHTTP2Current, "h2-current", "v1")
 
 	// Bulk sweep — the F3 close-set is {http2, grpc}.
-	n, err := m.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http2", "grpc"})
+	n, err := m.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http2", "grpc"}, "v1")
 	if err != nil {
 		t.Fatalf("MarkAllSnapshotsStaleByAppProtocol: %v", err)
 	}
@@ -103,9 +106,10 @@ func TestMemStore_MarkAllSnapshotsStaleByAppProtocol(t *testing.T) {
 	verify(http1ID, false, "http1")
 	verify(http2ID, true, "http2")
 	verify(grpcID, true, "grpc")
+	verify(http2CurrentID, false, "http2 current base")
 
 	// Idempotency — second call finds zero non-stale rows.
-	n2, err := m.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http2", "grpc"})
+	n2, err := m.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http2", "grpc"}, "v1")
 	if err != nil {
 		t.Fatalf("MarkAllSnapshotsStaleByAppProtocol (2nd): %v", err)
 	}
@@ -114,9 +118,12 @@ func TestMemStore_MarkAllSnapshotsStaleByAppProtocol(t *testing.T) {
 	}
 
 	// Empty filter is a no-op (matches the SQL behaviour).
-	n3, _ := m.MarkAllSnapshotsStaleByAppProtocol(ctx, nil)
+	n3, _ := m.MarkAllSnapshotsStaleByAppProtocol(ctx, nil, "v1")
 	if n3 != 0 {
 		t.Errorf("empty filter flipped %d, want 0", n3)
+	}
+	if _, err := m.MarkAllSnapshotsStaleByAppProtocol(ctx, []string{"http2"}, ""); err == nil {
+		t.Error("empty current base image version must fail")
 	}
 }
 

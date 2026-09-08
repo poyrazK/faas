@@ -110,6 +110,13 @@ func TestApplyLayerWhiteout(t *testing.T) {
 	}
 }
 
+func TestApplyLayerRejectsEmptyWhiteout(t *testing.T) {
+	dst := t.TempDir()
+	if err := ApplyLayerGz(dst, gzLayer(t, []entry{{name: ".wh."}})); err == nil {
+		t.Fatal("empty whiteout should be rejected")
+	}
+}
+
 func TestApplyLayerOpaqueWhiteout(t *testing.T) {
 	dst := t.TempDir()
 	if err := ApplyLayerGz(dst, gzLayer(t, []entry{
@@ -364,8 +371,11 @@ func TestBuildRejectsOversizeApp(t *testing.T) {
 	if err := os.WriteFile(gi, []byte{0}, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A layer bigger than the Free 256 MB cap.
-	big := make([]byte, 300*mib)
+	// A layer bigger than the cap. Free's production cap is 256 MB; the
+	// check is size-agnostic, so shrink it to 1 MiB and overshoot with 2 MiB
+	// instead of gzipping and unpacking 300 MiB per run.
+	withAppLayerCapMB(t, api.PlanFree, 1)
+	big := make([]byte, 2*mib)
 	run := &fakeRunner{}
 	b := NewBuilder(run)
 	_, err := b.Build(context.Background(), BuildInput{

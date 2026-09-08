@@ -55,7 +55,7 @@ import (
 // carries the limit value (the plan's StreamingResponseAllowed
 // predicate), the observed value (true), and the docs URL.
 func TestE2E_Streaming_FreePlanRejected(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -107,7 +107,7 @@ func TestE2E_Streaming_FreePlanRejected(t *testing.T) {
 // (Plan)) and then PATCHes streaming_enabled=true (the plan-gate
 // passes for Hobby) — both states land on the persisted app.
 func TestE2E_Streaming_HobbyPlanDefaultsAndPersists(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -205,7 +205,7 @@ func TestE2E_Streaming_HobbyPlanDefaultsAndPersists(t *testing.T) {
 // The streaming metal test (cmd/e2e/streaming_metal_test.go)
 // covers the actual Flusher path under //go:build metal.
 func TestE2E_Streaming_AcceptJSONOptOut(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

@@ -226,7 +226,7 @@ func TestMeterdAlertEvaluator_FiresAndDedupes(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -463,7 +463,7 @@ func TestMeterdAlertEvaluator_SSRFBlocked(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 
 	if err := db.MigrateUp(ctx, pool); err != nil {

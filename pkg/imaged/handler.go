@@ -1253,16 +1253,13 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 		if err := h.handleDeployment(ctx, p); err != nil {
 			h.log.Warn("imaged: deploy failed", "app", p.AppID, "deployment", p.To, "err", err)
 		}
-		// F5 / F-02: when apid supersedes a deployment, drop the per-app
-		// layer ext4 so appsRoot doesn't accumulate orphans. The snapshot
-		// blob is KEPT (one-click rollback needs it) and GC'd by the
-		// nightly sweep. F-02: prior code passed keepSnap=false here,
-		// deleting the blob and forcing every rollback across a supersede
-		// to cold-boot — fixed to keepSnap=true.
+		// Retain the superseded deployment's app layer and snapshot material
+		// together. The bounded GC window decides when both can be discarded;
+		// deleting drive1 at supersede time would make the retained snapshot
+		// unusable and turn an otherwise-fast rollback into a cold boot.
 		if p.Status == string(state.DeploySuperseded) && p.To != "" {
-			if err := h.cleanupDeploymentFiles(ctx, p.To, true /* keepSnap */); err != nil {
-				h.log.Warn("imaged: cleanup superseded", "deployment", p.To, "err", err)
-			}
+			h.log.Debug("imaged: superseded deployment retained for rollback window",
+				"deployment", p.To)
 		}
 	// PR-B: NotifyBuildQueued arm removed (builderd owns the channel now).
 	case db.NotifySnapshotBoot:
@@ -1359,11 +1356,12 @@ type snapshotWrittenPayload struct {
 	// ADR-025 axis 2). schedd populates it on the snapshot_written
 	// payload; imaged copies it onto the snapshots row so Wake can
 	// read it back without recomputing the canonical form.
-	StorageKey   string `json:"storage_key"`
-	MemBytes     int64  `json:"mem_bytes"`
-	VMStateBytes int64  `json:"vmstate_bytes"`
-	StoredBytes  int64  `json:"stored_bytes"`
-	FCVersion    string `json:"fc_version"`
+	StorageKey       string `json:"storage_key"`
+	MemBytes         int64  `json:"mem_bytes"`
+	VMStateBytes     int64  `json:"vmstate_bytes"`
+	StoredBytes      int64  `json:"stored_bytes"`
+	FCVersion        string `json:"fc_version"`
+	BaseImageVersion string `json:"base_image_version,omitempty"`
 	// Tier (issue #470 / PR #470-FU-B) is the snapshot tier this
 	// row belongs to: "init" (taken right after guest-init binds
 	// :8080; restore pays framework warmup) or "warm" (taken
@@ -2518,12 +2516,13 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	}
 
 	snap := state.Snapshot{
-		DeploymentID: p.DeploymentID,
-		FCVersion:    p.FCVersion,  // pins restore compatibility (ADR-005)
-		StorageKey:   p.StorageKey, // see snapshotWrittenPayload.StorageKey
-		MemBytes:     p.MemBytes,
-		DiskBytes:    p.VMStateBytes,
-		StoredBytes:  p.StoredBytes,
+		DeploymentID:     p.DeploymentID,
+		FCVersion:        p.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
+		BaseImageVersion: p.BaseImageVersion, // pins H2C runner/base compatibility
+		StorageKey:       p.StorageKey,       // see snapshotWrittenPayload.StorageKey
+		MemBytes:         p.MemBytes,
+		DiskBytes:        p.VMStateBytes,
+		StoredBytes:      p.StoredBytes,
 		// Tier (issue #470 / PR #470-FU-B). Empty payload falls
 		// back to "init" (the DB column default and the legacy
 		// pre-#470 behaviour); warm-tier rows are only ever
@@ -2558,34 +2557,50 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 		}
 	}
 
-	// The public smoke is the last readiness gate. Persist its evidence before
-	// flipping the deployment live so a live row always has an auditable receipt.
-	if h.hostingSmoke != nil || func() bool { _, ok := h.store.(state.DeploymentHostingReceiptStore); return ok }() {
-		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(app, dep), ErrorCode: "smoke_not_configured"}
-		if smoke.Path == "" {
-			smoke.Path = defaultHealthzPath
-		}
-		if h.hostingSmoke != nil {
-			var smokeErr error
-			smoke, smokeErr = h.hostingSmoke(ctx, app, dep)
-			if smokeErr != nil {
-				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
-				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
-				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
-			}
-			if smokeErr = hostingSmokeFailure(smoke); smokeErr != nil {
-				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
-				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
-				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
-			}
-		}
-		if err := h.persistHostingReceipt(ctx, app, dep, smoke); err != nil {
-			return fmt.Errorf("imaged: hosting receipt: %w", err)
+	// The public smoke needs the deployment to be routable, so mark it live
+	// before invoking the verifier. A live row without evidence is still not a
+	// successful deployment: smoke or receipt failures immediately transition
+	// it to failed and retain the failed receipt when possible.
+	var hostingApp state.App
+	hostingReceiptEnabled := h.hostingSmoke != nil
+	if _, ok := h.store.(state.DeploymentHostingReceiptStore); ok {
+		hostingReceiptEnabled = true
+	}
+	if hostingReceiptEnabled {
+		var appErr error
+		hostingApp, appErr = h.store.AppByID(ctx, dep.AppID)
+		if appErr != nil {
+			return fmt.Errorf("imaged: load app for hosting receipt: %w", appErr)
 		}
 	}
 
 	if err := h.store.MarkDeploymentLive(ctx, dep.ID); err != nil {
 		return fmt.Errorf("imaged: mark live: %w", err)
+	}
+
+	if hostingReceiptEnabled {
+		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(hostingApp, dep), ErrorCode: "smoke_not_configured"}
+		if smoke.Path == "" {
+			smoke.Path = defaultHealthzPath
+		}
+		if h.hostingSmoke != nil {
+			var smokeErr error
+			smoke, smokeErr = h.hostingSmoke(ctx, hostingApp, dep)
+			if smokeErr == nil {
+				smokeErr = hostingSmokeFailure(smoke)
+			}
+			if smokeErr != nil {
+				_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
+				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
+				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
+				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
+			}
+		}
+		if err := h.persistHostingReceipt(ctx, hostingApp, dep, smoke); err != nil {
+			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "hosting receipt persistence failed: "+err.Error())
+			_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "hosting receipt persistence failed")
+			return fmt.Errorf("imaged: hosting receipt: %w", err)
+		}
 	}
 	// ADR-117: close the readiness stage. snapshot_prepare closed
 	// at handler.go:1355 / 2334; readiness opened when vmmd stamped
@@ -3236,16 +3251,15 @@ func pullBlobWithAuth(ctx context.Context, mp oci.ManifestPuller, repo, digest s
 // filesystem is the cache. Missing files log Warn, never fail (ADR-005:
 // cold boot must always work, even if a stale filesystem lingers).
 //
-// Cleanup fires on two events:
-//   - deployment superseded → drop the per-app ext4 (drive1). The snapshot
-//     blob is KEPT so one-click rollback stays instant; the GC evicts it
-//     when it falls out of the "current + previous" window.
-//   - app soft-deleted → drop the ext4 AND the snap blobs for every
-//     deployment of the app. Best-effort.
+// App soft-delete cleanup drops the ext4 AND the snap blobs for every
+// deployment of the app. Superseded deployments are intentionally left
+// intact here; the imaged GC owns the bounded rollback window and removes
+// both artifacts together once no restoreable snapshot remains.
 
 // cleanupDeploymentFiles removes the on-disk artifacts for a single deployment.
-// keepSnap=true leaves the snapshot blob (one-click rollback) and only removes
-// the per-app ext4.
+// It remains available for explicit destructive cleanup paths and tests;
+// normal supersede notifications are handled by the rollback-window GC so a
+// retained snapshot never loses its drive1 layer.
 func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID string, keepSnap bool) error {
 	dep, err := h.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
@@ -3497,8 +3511,9 @@ func (h *Handler) snapshotNonStaleByApp(ctx context.Context) (map[string]int64, 
 
 // MarkAppProtocolSnapshotsStale is the F3-app-protocol sweep
 // (ADR-127 §D1, Layer 6). Mirrors MarkFCSnapshotsStale but flips
-// every non-stale snapshot whose deployment's app.app_protocol ∈
-// {http2, grpc} stale. Called from runFCSweep AFTER F2 (the
+// non-stale {http2, grpc} snapshots made by an older runner base.
+// A current-generation row survives every imaged replica restart.
+// Called from runFCSweep AFTER F2 (the
 // Firecracker-version sweep). The two sweeps have different
 // triggers (F2 on FC upgrade per ADR-005; F3 on
 // FAAS_BASE_IMAGE_VERSION bump per ADR-127) and different audit
@@ -3521,7 +3536,7 @@ func (h *Handler) MarkAppProtocolSnapshotsStale(ctx context.Context) (int64, err
 	if err != nil {
 		return 0, fmt.Errorf("imaged: mark stale by app_protocol: pre-sweep list: %w", err)
 	}
-	n, err := h.store.MarkAllSnapshotsStaleByAppProtocol(ctx, h2cProtocols)
+	n, err := h.store.MarkAllSnapshotsStaleByAppProtocol(ctx, h2cProtocols, fcvm.FAAS_BASE_IMAGE_VERSION)
 	if err != nil {
 		return 0, fmt.Errorf("imaged: mark stale by app_protocol: %w", err)
 	}

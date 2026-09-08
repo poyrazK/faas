@@ -64,7 +64,7 @@ func TestRegistryAuth_E2E_PutGetDeleteRoundTrip_RealSeal(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

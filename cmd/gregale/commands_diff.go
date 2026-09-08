@@ -1,6 +1,6 @@
-// commands_diff.go — `gregale deploy --diff` CLI surface.
+// commands_diff.go — `gregale deploy --diff/--dry-run` CLI surface.
 //
-// Wires the deploy --diff flag into cmdDeployTarball via a
+// Wires the deploy --diff and --dry-run flags into cmdDeployTarball via a
 // short-circuit (commands2.go:1041+ after authedClient). The diff
 // engine lives in pkg/deploydiff; this file is the CLI adapter
 // that maps SDK reads into [pkg/deploydiff.Baseline] and CLI flags
@@ -19,7 +19,7 @@
 // --json emits the stable wire shape from pkg/deploydiff.RenderJSON.
 // CI usage:
 //
-//	gregale deploy --diff --json | jq '.blocking'
+//	gregale deploy --dry-run --json | jq '.blocking'
 //
 // See plan in docs/plans/cozy-wishing-church.md (or whatever lands)
 // for the server-side PR-1 extension (POST /v1/apps/{slug}/diff).
@@ -65,6 +65,18 @@ type diffCLIOptions struct {
 	// (PR-1). PR-0 leaves the flag wired but not yet implemented —
 	// the local SDK path is the default until PR-1 lands.
 	ServerDiff bool
+}
+
+// normalizeDeployPreviewFlags maps the user-facing preview spellings onto
+// the single read-only implementation. `--diff` remains supported for
+// compatibility with existing scripts; `--dry-run` is the clearer deploy
+// preflight spelling. Supplying both is rejected so scripts cannot silently
+// depend on which alias wins.
+func normalizeDeployPreviewFlags(dryRun, diff bool) (bool, error) {
+	if dryRun && diff {
+		return false, errors.New("--dry-run and --diff are aliases; use only one")
+	}
+	return dryRun || diff, nil
 }
 
 // buildDiffOptions projects the parsed cmdDeployTarball flag set

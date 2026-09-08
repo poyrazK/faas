@@ -172,9 +172,28 @@ When enabled, a new database reservation is admitted only if the account has a
 fresh usage observation and has not crossed its monthly cost, compute, storage,
 history (when configured), or egress ceiling. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
-reconciled. This is an operator safety control, not a customer invoice or
-plan-entitlement API. The durable ledger is ready for billing integration, but
-public plans, invoices, and usage endpoints remain separate launch work.
+reconciled. The plan's per-database storage entitlement is multiplied by the
+plan's database-count allowance, converted to the canonical byte-second meter,
+and intersected with the operator ceiling; compute, history,
+egress, and spend remain operator-configured COGS ceilings. This keeps the
+admission path provider-neutral and prevents a plan or provider adapter from
+raising the operator's safety budget.
+
+The billing seam emits stable internal line-item codes
+(`managed_postgres.compute`, `managed_postgres.storage`,
+`managed_postgres.restore_history`, and `managed_postgres.egress`) with
+normalized quantities and provider-cost millicents. They are COGS/invoice
+mapping inputs only: current plans are bundled and do not expose provider
+costs or surprise overage charges to customers. A future invoice adapter can
+attach the codes to the included managed-postgres product without changing
+the Neon adapter or the customer API.
+
+Account deletion is fail-closed until all managed databases reach their
+provider-confirmed `deleted` tombstone. The final GDPR deletion transaction
+then removes usage, binding, and database tombstones before deleting apps and
+the account, so a stale catalog row cannot block deletion or remain after the
+account is gone. Lifecycle actions emit audit events without credentials,
+connection strings, or provider IDs.
 
 The adapter contract is based on Neon's maintained
 [v2 OpenAPI specification](https://neon.com/api_spec/release/v2.json). A live

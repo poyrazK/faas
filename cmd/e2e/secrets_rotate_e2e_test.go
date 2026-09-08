@@ -82,7 +82,7 @@ func startHostedRecipient(t *testing.T) (recipientPath, identityPath string) {
 // also returns 200 (idempotency contract from
 // handlers_secrets_rotate_test.go pinned over the wire).
 func TestSecretsRotatePg(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -169,7 +169,7 @@ func TestSecretsRotatePg(t *testing.T) {
 // is observable in the wire shape rather than silently returning
 // a zero-progress 200.
 func TestRekeyProgressDisabledPg(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

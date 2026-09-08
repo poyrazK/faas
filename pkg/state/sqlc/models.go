@@ -545,14 +545,16 @@ type CreditLedger struct {
 }
 
 type Cron struct {
-	ID          pgtype.UUID
-	AppID       pgtype.UUID
-	Schedule    string
-	Path        string
-	Enabled     bool
-	LastFiredAt pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
-	OrgID       pgtype.UUID
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	Schedule      string
+	Path          string
+	Enabled       bool
+	LastFiredAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	OrgID         pgtype.UUID
+	Timezone      string
+	SkipIfRunning bool
 }
 
 type CronFireNowRequest struct {
@@ -1240,6 +1242,21 @@ type ObjectStorageMultipartUpload struct {
 	LastErrorCode    string
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+}
+
+type ObjectStorageS3Credential struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+	Label        string
+	Permission   string
+	Status       string
+	CreatedAt    pgtype.Timestamptz
+	LastUsedAt   pgtype.Timestamptz
+	RevokedAt    pgtype.Timestamptz
 }
 
 type ObjectStorageUsageHead struct {

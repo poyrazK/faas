@@ -26,7 +26,9 @@ ALTER TABLE compute_nodes
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'compute_nodes_last_recovery_outcome_chk'
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'compute_nodes_last_recovery_outcome_chk'
+           AND conrelid = 'compute_nodes'::regclass
     ) THEN
         ALTER TABLE compute_nodes
             ADD CONSTRAINT compute_nodes_last_recovery_outcome_chk

@@ -211,7 +211,7 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 			SBOMStorageKey:      in.SBOMStorageKey,
 		})
 	}
-	limits, ok := api.LimitsFor(in.Plan)
+	limits, ok := limitsFor(in.Plan)
 	if !ok {
 		return BuildResult{}, fmt.Errorf("rootfs: unknown plan %q", in.Plan)
 	}
@@ -229,7 +229,10 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	defer func() { _ = os.RemoveAll(staging) }()
 
 	for i, layer := range in.Layers {
-		if err := ApplyLayerGz(staging, layer); err != nil {
+		// The app artifact becomes overlayfs' upper directory after
+		// stageAppUpper. Preserve OCI whiteouts as overlayfs markers so a
+		// deletion can hide a path supplied by the shared base drive.
+		if err := ApplyLayerGzWithOverlayWhiteouts(staging, layer); err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 		}
 	}
@@ -810,11 +813,11 @@ func applyTarballWithCap(dst string, r io.Reader, capBytes int64, prefix string)
 
 // NormalizeFunctionHandler makes the source filename agree with the runtime
 // runner's manifest path. The public function contract asks customers for an
-// exported handler(event, ctx), while the low-level runner consumes the
-// §4.9 stdin/stdout envelope. For exported Node/Python handlers, generate a
-// small protocol adapter at the manifest path and keep the customer's source
-// filename intact. Protocol-style handlers remain supported for compatibility
-// and are still aliased exactly as before.
+// exported handler(event, ctx) or a Fetch API export ({ fetch }), while the
+// low-level runner consumes the §4.9 stdin/stdout envelope. For exported
+// Node/Python handlers, generate a small protocol adapter at the manifest path
+// and keep the customer's source filename intact. Protocol-style handlers
+// remain supported for compatibility and are still aliased exactly as before.
 func NormalizeFunctionHandler(staging, handlerPath string) error {
 	clean := filepath.ToSlash(filepath.Clean(handlerPath))
 	if !strings.HasPrefix(clean, "/app/") || clean == "/app/" {
@@ -973,16 +976,23 @@ func normalizeExistingFunctionHandler(target, handlerPath string) error {
 }
 
 func isNodeFunctionSource(source string) bool {
-	return strings.Contains(source, "export") && strings.Contains(source, "handler")
+	if !strings.Contains(source, "export") {
+		return false
+	}
+	// The legacy public shape exports handler(event, ctx). The Fetch API
+	// shape exports an object with fetch(request, env, ctx). Both are
+	// explicit function contracts, so either marker warrants the adapter.
+	return strings.Contains(source, "handler") || strings.Contains(source, "fetch")
 }
 
 func isPythonFunctionSource(source string) bool {
 	return strings.Contains(source, "def handler(") || strings.Contains(source, "async def handler(")
 }
 
-// nodeFunctionAdapter translates the public handler(event, ctx) contract to
-// the runner's protocol envelope. It lives in the app layer so the runner can
-// remain a deliberately tiny, protocol-only binary shared by all Node apps.
+// nodeFunctionAdapter translates the public handler(event, ctx) and Fetch API
+// ({ fetch }) contracts to the runner's protocol envelope. It lives in the app
+// layer so the runner can remain a deliberately tiny, protocol-only binary
+// shared by all Node apps.
 const nodeFunctionAdapter = `// FAAS_PERSISTENT_PROTOCOL_V1
 (async () => {
 const pathModule = await import("node:path");
@@ -996,8 +1006,14 @@ console.log = console.error;
 console.info = console.error;
 const handlerFile = path.join(path.dirname(process.argv[1]), "handler.js");
 const mod = await import(urlModule.pathToFileURL(handlerFile).href);
-const fn = mod.handler || mod.default;
-if (typeof fn !== "function") throw new Error("handler.js must export handler or default");
+const defaultExport = mod.default;
+const eventHandler = mod.handler || (typeof defaultExport === "function" ? defaultExport : null);
+const fetchHandler = mod.fetch || (defaultExport && typeof defaultExport.fetch === "function"
+  ? defaultExport.fetch.bind(defaultExport)
+  : null);
+if (typeof eventHandler !== "function" && typeof fetchHandler !== "function") {
+  throw new Error("handler.js must export handler/default or default { fetch }");
+}
 if (process.env.FAAS_PERSISTENT_WORKER === "1") {
   process.stdout.write(JSON.stringify({ __faas_ready: true }) + "\n");
 }
@@ -1019,19 +1035,48 @@ for await (const line of lines) {
   for (const level of ["debug", "info", "warn", "error"]) {
     log[level] = (...args) => console.error(...args);
   }
-  const ctx = { invocation_id: invocationID, log };
-  const event = {
-    method: env.method || "POST",
-    path: env.path || "/",
-    headers,
-    query: env.query || "",
-    body,
+  const ctx = {
+    invocation_id: invocationID,
+    log,
+    // Workers-style handlers commonly call ctx.waitUntil(). The runner's
+    // existing tail host is fed by its runtime shim; keep this adapter
+    // compatible when that shim is present and otherwise retain the
+    // promise's rejection on stderr instead of crashing the worker.
+    waitUntil(promise) {
+      if (promise && typeof promise.then === "function") {
+        Promise.resolve(promise).catch((err) => console.error(err));
+      }
+    },
   };
-  const value = await fn(event, ctx);
+  let value;
+  if (typeof fetchHandler === "function") {
+    const method = env.method || "POST";
+    const requestURL = new URL(env.path || "/", "http://faas.local");
+    if (env.query) requestURL.search = env.query.startsWith("?") ? env.query : "?" + env.query;
+    const requestInit = { method, headers };
+    const requestBody = Buffer.from(env.body_b64 || "", "base64");
+    if (method !== "GET" && method !== "HEAD" && requestBody.length > 0) requestInit.body = requestBody;
+    const request = new Request(requestURL, requestInit);
+    value = await fetchHandler(request, { ...process.env }, ctx);
+  } else {
+    const event = {
+      method: env.method || "POST",
+      path: env.path || "/",
+      headers,
+      query: env.query || "",
+      body,
+    };
+    value = await eventHandler(event, ctx);
+  }
   let status = 200;
   let responseHeaders = {};
   let responseBody = value;
-  if (value && typeof value === "object" && !Buffer.isBuffer(value)) {
+  if (value && typeof value === "object" && typeof value.arrayBuffer === "function" &&
+      typeof value.status === "number" && value.headers) {
+    status = value.status;
+    responseHeaders = Object.fromEntries(value.headers.entries());
+    responseBody = Buffer.from(await value.arrayBuffer());
+  } else if (value && typeof value === "object" && !Buffer.isBuffer(value)) {
     status = Number(value.statusCode ?? value.status ?? 200);
     responseHeaders = value.headers || {};
     if (Object.prototype.hasOwnProperty.call(value, "body")) responseBody = value.body;
@@ -1166,3 +1211,9 @@ func InjectFunctionRunner(staging, runnerPath string) error {
 	}
 	return nil
 }
+
+// limitsFor resolves the plan limits a build enforces (app-layer cap,
+// tarball cap). Package-level so tests can shrink the cap to a few MiB and
+// exercise the violation paths without writing hundreds of megabytes to
+// disk; production always resolves through api.LimitsFor.
+var limitsFor = api.LimitsFor

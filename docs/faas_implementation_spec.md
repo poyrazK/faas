@@ -409,7 +409,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - **Two-drive scheme (protects the 130 MB fleet target):** drive0 = shared, read-only, content-addressed **base rootfs** (`base-minimal`, `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine` — counted once, in the 60 GB reserve); drive1 = per-app **app layer** ext4 containing only the OCI layers above the base (deps + code + `/etc/faas/app.json`). guest-init assembles them with overlayfs at boot. A flattened single-drive rootfs would duplicate ~150+ MB of base per app and silently destroy the financial model's disk math — do not "simplify" to it.
 - App-layer build: diff OCI layers above the matched base → `mkfs.ext4 -d <dir> layer.ext4 <padded size>`, ≤ plan app-layer cap: Free 256 MB, Hobby 512 MB, Pro 1 GB, Scale 2 GB. Content over cap fails the deploy with a clear error naming the cap and observed size. `guest-init` is injected into the app layer.
 - Base images: `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine`, `builder-base` — built in CI from Dockerfiles in `images/`, content-addressed, and auto-staged to `/srv/fc/base/` by `imaged` (`pkg/imaged/base_stage.go::EnsureRuntimeBase` for the selected function runtime; the builder base is staged at startup). Runtime image contents are contract-smoke-tested in CI, including architecture, interpreter, shell, and staged `/sbin/init` checks. Operator-side digest pin per runtime via `FAAS_DEPLOY_BASE_REF_<RUNTIME>` env var; no manual ext4 placement is supported.
-- Snapshot GC: keep current + previous deployment's snapshots per app; delete orphans nightly; enforce the 452 GB budget with account-level fairness (biggest-over-quota first). Emits `snapshot_fleet_avg_mb` and `snapshot_fleet_p95_mb` — **the** business metrics.
+- Snapshot GC: keep the newest three deployment generations' restore material per app (live + two previous rollbacks); delete older snapshots and orphaned layers nightly; enforce the 452 GB budget with account-level fairness (biggest-over-quota first). Emits `snapshot_fleet_avg_mb` and `snapshot_fleet_p95_mb` — **the** business metrics.
 - **Post-build image-layer secret scan (ADR-101, PR-A of the secret-scan cluster):** between `SetDeploymentRootfs` and the `pending → snapshotting` transition, `imaged` re-stages the per-app ext4 via `stageScanExt4` (same helper the grype path uses) and walks the resulting filesystem with `pkg/secretscan.IsTextFile` + `pkg/secretscan.ScanFile`. Same engine the apid source-tree scanner (`cmd/apid/secretscan.go::scanExtractedTreeSecrets`, secret-scan v2 / PR #873) uses — same patterns, same providers, same Severity table. Differs in posture: **loud-fail**. A pattern-level finding calls `markDeployFailed` with the `errImageSecretDetected` sentinel, stamps the audit row via `state.Store.UpsertDeploymentSecretFindings` (reuses `deployments.secret_findings` + `secret_scanned_at` from migration 00264; status value `complete` on a clean walk, `complete_with_redactions` on a hit), and short-circuits the `pending → snapshotting` transition. `error_code = 'image_secret_detected'` on the free-text `deployments.error_code` column (no CHECK widening needed). Function deploys are out of scope (already scanned at apid source-tree time). Each sidecar ext4 gets the same walk with `layer = "sidecar-<slug>"` so a finding is attributable. Drill-down surface: `GET /v1/deployments/{id}/secret-scan` mirrors `/scan` (404 on IDOR + scan-pending); `DeploymentResponse.SecretScan` mirrors `DeploymentResponse.Scan`. CLI: `gregale deployment <id> --show-secret-scan` flag. Closes the build-step adversary pivot (`ENV SECRET=...` in a Dockerfile, `--build-arg SECRET=...` to BuildKit, `COPY .env /app/.env` in a build step) that v2 source-tree scanning couldn't reach — v2 PR #873 covered the source-tree upload path; PR-A covers the post-build image path.
 
 ### 4.7 `meterd` — metering and billing
@@ -509,7 +509,7 @@ Resume path (post-restore, triggered by host signal via vsock): re-seed `/dev/ur
 
 `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine`: a 15-line HTTP host on `:8080` that loads the customer handler and adapts request/response.
 
-Contract (identical across languages): handler receives `{method, path, headers, query, body_b64}`; returns `{status, headers, body_b64}` or a plain body. Node: `export default async function handler(req)`. Python: `def handler(request) -> Response | dict | str`.
+Contract (identical across languages): handler receives `{method, path, headers, query, body_b64}`; returns `{status, headers, body_b64}` or a plain body. Node: `export default async function handler(event, ctx)` or a Fetch API object, `export default { fetch(request, env, ctx) }`; Fetch API requests and responses are translated to and from the envelope by the generated adapter. Python: `def handler(request) -> Response | dict | str`.
 Streaming, websockets: not in v1 for functions (fine for Apps — `gatewayd-internal` proxies them transparently).
 Adding a runtime is a 7-layer procedure (migrations, schema, apid handler whitelist, openapi enums, runner shim, imaged handler surfaces, base Dockerfile + auto-stage wiring) — see ADR-052 for the canonical touch-list. The worked example for `node24` and `python313` is Tier 1 PR 1 + PR 2.
 
@@ -845,6 +845,7 @@ The list below covers **all** customer-facing kinds as of PR #291. Prior kinds (
 | `app.rolled_back` | apid `handlers_ext.go::rollbackApp` | `{app_id, from: deployment_id, to: deployment_id}` |
 | `domain.added` | apid `handlers_ext.go::createDomain` | `{app_id, domain}` — `domain` is the canonical lowercased form stored on the row |
 | `domain.removed` | apid `handlers_ext.go::deleteDomain` | `{app_id, domain}` |
+| `domain.drifted` | apid `dns_poller.go::runDoctorForDomain` | `{app_id, domain, observed_target, checked_at, reason}` — emitted once when a verified domain's CNAME leaves Gregale and verification is revoked |
 | `cron.created` | apid `handlers_ext.go::createCron` | `{cron_id, app_id, schedule, path, enabled}` — only emitted on the success path; the PR #340 plan-tier gate (402) suppresses this row for Free accounts |
 | `cron.updated` | apid `handlers_ext.go::updateCron` | `{cron_id, app_id, old, new}` |
 | `cron.deleted` | apid `handlers_ext.go::deleteCron` | `{cron_id, app_id}` |
@@ -1271,7 +1272,7 @@ Phases, all rows on `builds`/`deployments`:
 3. **Plan**: if `Dockerfile` present and plan ≥ Hobby → dockerfile kind; else Railpack detect (node/python first-class at launch; its other providers best-effort). Detection failure → actionable error ("no lockfile found — supported: …").
 4. **Build** (inside builder microVM): scratch disk gets source + per-app cache volume mounted; Railpack or `buildctl` runs with `--frontend dockerfile` for kind=dockerfile; output = OCI layout on cache volume. VM killed on 10-min timeout. Host copies OCI out after exit.
 5. **Image** (imaged): diff against base → app-layer ext4 within plan cap → inject guest-init (§4.6).
-6. **Prime snapshot**: cold-boot once (readiness gate) → pause → snapshot → destroy → `PARKED`, deployment `live`, previous deployment `superseded` (kept for one-click rollback; its snapshot GC'd on the next successful deploy).
+6. **Prime snapshot**: cold-boot once (readiness gate) → pause → snapshot → destroy → `PARKED`, deployment `live`, previous deployment `superseded` (the live deployment plus two previous generations remain restoreable for fast rollback; older snapshot material is reclaimed by GC).
 7. **Failure taxonomy** → `failure_class`: `user_error` (their code/config, full log shown), `oom` (VM hit 2 GB — message suggests smaller deps or Pro), `timeout`, `infra` (ours — auto-requeue once, alert).
 
 Concurrency and RAM interaction (the R1 discipline, mechanized): builder VMs are admitted through the same headroom guard as tenant wakes, from the *headroom side* of the ledger — 1 guaranteed slot budgeted permanently in §13; the opportunistic 2nd slot exists only when tenant residency < 60 %. Builds can therefore never push tenant admission into refusal: tenants evict builds, never vice versa.
@@ -1631,6 +1632,17 @@ create instance transitions or `usage_minutes` rows.
 | Metric name | Labels | Producer | Semantics |
 |---|---|---|---|
 | `gateway_edge_answered_total` | `kind` | `pkg/gateway/metrics.go::ObserveEdgeAnswered` | Counter of gateway answers that bypass an app instance. `kind` is closed to `favicon`, `robots`, and `head`; edge answers are telemetry-only and never billed as resident compute. |
+
+### 12.7 CORS preflight edge answers (issue #1398 M4)
+
+When a matching `kind=cors` rule (including a resolved CORS preset) receives
+an `OPTIONS` request, the gateway returns `204` with the resolved
+`Access-Control-Allow-*` headers before auth, limiting, or wake work. The
+request therefore does not create an instance transition or resident usage.
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `gateway_cors_preflight_edge_total` | `app` | `pkg/gateway/metrics.go::ObserveCORSPreflightEdge` | Counter of matching CORS preflights answered by the gateway without waking the resolved app. |
 
 ---
 

@@ -299,6 +299,40 @@ type UsagePolicy struct {
 	EgressGiBMillicents          int64
 }
 
+// UsageCeilings are customer-specific safety ceilings layered on top of the
+// operator policy. A zero field means "use the operator ceiling"; this lets
+// plan entitlements tighten a global policy without making the provider
+// adapter or billing code aware of plan names.
+type UsageCeilings struct {
+	MaxMonthlyCostMillicents     int64
+	MaxMonthlyComputeUnitSeconds int64
+	MaxMonthlyStorageByteSeconds int64
+	MaxMonthlyHistoryByteSeconds int64
+	MaxMonthlyEgressBytes        int64
+}
+
+// WithCeilings returns the fail-closed intersection of an operator policy and
+// customer-specific ceilings. It is deliberately pure so admission, usage
+// reporting, and a future invoice worker use the same effective policy.
+func (p UsagePolicy) WithCeilings(ceilings UsageCeilings) UsagePolicy {
+	p.MaxMonthlyCostMillicents = tighterPositive(p.MaxMonthlyCostMillicents, ceilings.MaxMonthlyCostMillicents)
+	p.MaxMonthlyComputeUnitSeconds = tighterPositive(p.MaxMonthlyComputeUnitSeconds, ceilings.MaxMonthlyComputeUnitSeconds)
+	p.MaxMonthlyStorageByteSeconds = tighterPositive(p.MaxMonthlyStorageByteSeconds, ceilings.MaxMonthlyStorageByteSeconds)
+	p.MaxMonthlyHistoryByteSeconds = tighterPositive(p.MaxMonthlyHistoryByteSeconds, ceilings.MaxMonthlyHistoryByteSeconds)
+	p.MaxMonthlyEgressBytes = tighterPositive(p.MaxMonthlyEgressBytes, ceilings.MaxMonthlyEgressBytes)
+	return p
+}
+
+func tighterPositive(global, customer int64) int64 {
+	if customer <= 0 {
+		return global
+	}
+	if global <= 0 || customer < global {
+		return customer
+	}
+	return global
+}
+
 func (p UsagePolicy) Validate() error {
 	if !p.Enabled {
 		return nil
@@ -349,6 +383,52 @@ type UsageSnapshot struct {
 	HistoryByteSeconds int64
 	EgressBytes        int64
 	CostMillicents     int64
+}
+
+// UsageLineItem is a normalized, provider-neutral meter line. It is an
+// internal COGS/invoice mapping primitive, not a customer charge: bundled
+// plans do not expose provider costs or overage prices to customers.
+type UsageLineItem struct {
+	Code           string
+	Meter          Meter
+	Unit           string
+	Quantity       int64
+	CostMillicents int64
+}
+
+// LineItems converts the canonical account snapshot into stable product
+// codes. Rates are applied independently per meter and rounded up by Cost,
+// matching the usage ledger's idempotent accounting semantics.
+func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) {
+	if snapshot.PeriodStart.IsZero() {
+		return nil, ErrInvalid
+	}
+	readings := []struct {
+		code     string
+		meter    Meter
+		unit     string
+		quantity int64
+	}{
+		{"managed_postgres.compute", MeterComputeUnitSeconds, "compute_unit_seconds", snapshot.ComputeUnitSeconds},
+		{"managed_postgres.storage", MeterStorageByteSeconds, "byte_seconds", snapshot.StorageByteSeconds},
+		{"managed_postgres.restore_history", MeterHistoryByteSeconds, "byte_seconds", snapshot.HistoryByteSeconds},
+		{"managed_postgres.egress", MeterEgressBytes, "bytes", snapshot.EgressBytes},
+	}
+	items := make([]UsageLineItem, 0, len(readings))
+	for _, reading := range readings {
+		if reading.quantity < 0 {
+			return nil, ErrInvalid
+		}
+		cost, err := p.Cost(MeterReading{Meter: reading.meter, Quantity: reading.quantity})
+		if err != nil {
+			return nil, err
+		}
+		if reading.quantity == 0 && cost == 0 {
+			continue
+		}
+		items = append(items, UsageLineItem{Code: reading.code, Meter: reading.meter, Unit: reading.unit, Quantity: reading.quantity, CostMillicents: cost})
+	}
+	return items, nil
 }
 
 func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {

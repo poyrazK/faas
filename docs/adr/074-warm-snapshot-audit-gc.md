@@ -95,6 +95,18 @@ Why not 2+4? Init tier rows are larger (full mem + vmstate) and fewer
 apps need 4 init rotations. 2+2 hits the 350 ms warm-wake budget
 (§6.3) without excess storage.
 
+### 3.1a Rollback retention amendment (2026-09-07)
+
+The rollback path now retains the newest three deployment generations per
+app (the live deployment plus two previous releases). For warm-enabled apps,
+both init and warm rows remain eligible for fast restore in each protected
+generation; when warm snapshots are disabled, only init rows are retained.
+Superseded-deployment notifications leave the shared app layer and snapshot
+tiers intact. Nightly GC evicts rows outside the generation window and removes
+an app layer only after that deployment has no non-stale snapshot rows left.
+This bounded generation window supersedes the numeric 2+2 floor above while
+preserving its tier-safety intent and the cold-boot fallback for older releases.
+
 ### 3.2 Audit subject shape: `&app.AccountID`
 
 All three audit kinds (`app.warm_snapshot_promoted`, `app.warm_snapshot_stale`,

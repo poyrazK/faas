@@ -24,7 +24,7 @@ import (
 )
 
 func TestEdgeRulesRewrite_E2E(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}

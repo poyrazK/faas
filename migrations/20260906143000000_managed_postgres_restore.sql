@@ -9,13 +9,17 @@ ALTER TABLE managed_postgres_databases
 
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'managed_postgres_restore_source_database_fk') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conname = 'managed_postgres_restore_source_database_fk'
+                      AND conrelid = 'managed_postgres_databases'::regclass) THEN
         ALTER TABLE managed_postgres_databases
             ADD CONSTRAINT managed_postgres_restore_source_database_fk
             FOREIGN KEY (restore_source_database_id)
             REFERENCES managed_postgres_databases(id);
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'managed_postgres_restore_fields_ck') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conname = 'managed_postgres_restore_fields_ck'
+                      AND conrelid = 'managed_postgres_databases'::regclass) THEN
         ALTER TABLE managed_postgres_databases
             ADD CONSTRAINT managed_postgres_restore_fields_ck
             CHECK ((restore_source_database_id IS NULL AND restore_source_resource_id IS NULL AND restore_point_in_time IS NULL)

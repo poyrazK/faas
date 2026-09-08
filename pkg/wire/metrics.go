@@ -753,6 +753,11 @@ type OpsMetrics struct {
 	// Operator can correlate a non-zero rate with a customer
 	// "why is my domain not being checked?" ticket.
 	domainDoctorSkippedFlagDisabled prometheus.Counter
+	// certIssuanceFailedTotal (issue #1397 F2) counts transitions of a
+	// legacy custom domain into cert_status=failed. The durable
+	// cert_issuance_failed alert metric is customer-scoped in state; this
+	// fleet counter gives operators a low-cardinality transition signal.
+	certIssuanceFailedTotal prometheus.Counter
 	// debugRegressionOldestPassSeconds (ADR-127 PR-B): gauge of
 	// (now − max(last_pass_at)) across every
 	// debug_regression_observations row that the most recent
@@ -2368,6 +2373,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	domainDoctorSkippedFlagDisabled := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prefix + "_domain_doctor_skipped_flag_disabled_total",
 		Help: "Doctor passes skipped because FAAS_DOMAIN_DOCTOR_ENABLED was unset/false at the dns_poller tick (cmd/apid/dns_poller.go, ADR-120 Tier A1). Unlabelled — single-registry pattern, only apid increments.",
+	})
+	certIssuanceFailedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_cert_issuance_failed_total",
+		Help: "Legacy custom-domain certificate issuance failures observed by the apid domain doctor (issue #1397 F2). Unlabelled; per-domain state and customer alerting remain in custom_domains.",
 	})
 	// auditEventsVolumeTotal{kind_prefix}: counts emit calls to the
 	// events table by kind prefix (auth.*, key.*, secret.*,
@@ -4465,6 +4474,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditEventsRetentionLagSeconds:             auditEventsRetentionLagSeconds,
 		domainDoctorOldestObservationSeconds:       domainDoctorOldestObservationSeconds,
 		domainDoctorSkippedFlagDisabled:            domainDoctorSkippedFlagDisabled,
+		certIssuanceFailedTotal:                    certIssuanceFailedTotal,
 		auditEventsVolumeTotal:                     auditEventsVolumeTotal,
 		deploymentAuditGCRowsDeletedTotal:          deploymentAuditGCRowsDeletedTotal,
 		alertEvalSkippedDegradedTotal:              alertEvalSkippedDegradedTotal,
@@ -5778,6 +5788,15 @@ func (m *OpsMetrics) DomainDoctorSkippedFlagDisabled() prometheus.Counter {
 		return nil
 	}
 	return m.domainDoctorSkippedFlagDisabled
+}
+
+// CertIssuanceFailedTotal returns the fleet-level F2 certificate failure
+// transition counter. It is nil-safe for daemon/test paths without metrics.
+func (m *OpsMetrics) CertIssuanceFailedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.certIssuanceFailedTotal
 }
 
 // DebugRegressionOldestPassSeconds (ADR-127 PR-B) returns the

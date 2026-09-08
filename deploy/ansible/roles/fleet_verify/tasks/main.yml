@@ -66,7 +66,7 @@
   loop: "{{ faas_verify_active_units }}"
   register: faas_verify_readyz
   until: (faas_verify_readyz.status | default(0) | int) == 200
-  retries: "{{ faas_verify_readyz_retries }}"
+  retries: "{{ faas_verify_readyz_retries_by_unit.get(item, faas_verify_readyz_retries) }}"
   delay: "{{ faas_verify_readyz_delay_s }}"
   failed_when: false
   when:

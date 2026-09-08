@@ -103,6 +103,30 @@ func TestNextFireAt_ExclusiveBoundary(t *testing.T) {
 	}
 }
 
+func TestParseScheduleWithTimezone_UsesIANAClock(t *testing.T) {
+	t.Parallel()
+	s, err := sched.ParseScheduleWithTimezone("0 9 * * *", "America/New_York")
+	if err != nil {
+		t.Fatalf("parse timezone schedule: %v", err)
+	}
+	from := time.Date(2026, 1, 15, 13, 30, 0, 0, time.UTC)
+	got := s.NextFireAt(from)
+	want := time.Date(2026, 1, 15, 14, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("NextFireAt = %s, want %s", got, want)
+	}
+}
+
+func TestNormalizeTimezone_DefaultAndRejectsUnknown(t *testing.T) {
+	t.Parallel()
+	if got, err := sched.NormalizeTimezone(""); err != nil || got != sched.DefaultCronTimezone {
+		t.Fatalf("empty timezone = %q, %v; want UTC", got, err)
+	}
+	if _, err := sched.NormalizeTimezone("Not/AZone"); err == nil {
+		t.Fatal("unknown timezone accepted")
+	}
+}
+
 // TestCronDispatch_FiresOnBoundary is the §14 M7 acceptance gate:
 // "fake clock advances 1 minute, expect one SynthesizeRequest". The
 // Loop-level dispatch loop runs through runCronTick + dispatchOneCron

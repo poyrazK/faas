@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/manifest"
 )
 
@@ -291,33 +292,22 @@ func tlsMaterialValue(material *manifest.TLSMaterial, key, prefix string) string
 	}
 }
 
-// defaultMetricsAddrForDaemon returns the Prometheus metrics endpoint
-// for daemon. Hardcoded for the 8 daemons in pkg/daemonunitspec —
-// the renderer's job is to emit the right value, not to compute it.
-//
-// The mapping mirrors pkg/daemonunitspec's per-daemon
-// CapabilityBoundingSet / metrics convention: most daemons expose
-// 127.0.0.1:9091; the three exceptions are:
-//   - vmmd: 9095 (low-port bind requires CAP_NET_BIND_SERVICE; vmmd is
-//     the only daemon that holds it)
-//   - gatewayd-internal: 9090 (split off from gatewayd-public in
-//     Tier A7; ADR-070)
-//   - gatewayd-public: 8080 (public listener; ADR-070)
-//
-// A future refactor would carry MetricsAddr on the
-// pkg/daemonunitspec.Entry struct; today the renderer table is the
-// source of truth and pkg/daemonunitspec is the audit target.
+// defaultMetricsAddrForDaemon returns the listener used by the daemon's
+// dependency-aware readiness endpoint. The daemon registry is the lifecycle
+// source of truth; deriving the address here prevents rendered TOML from
+// drifting onto an old metrics port while fleet_verify probes a newer one.
 func defaultMetricsAddrForDaemon(daemon string) string {
-	switch daemon {
-	case "vmmd":
-		return "127.0.0.1:9095"
-	case "gatewayd-internal":
-		return "127.0.0.1:9090"
-	case "gatewayd-public":
-		return "127.0.0.1:8080"
+	for _, entry := range daemonunitspec.Registry {
+		if entry.Name != daemon {
+			continue
+		}
+		addr := strings.TrimPrefix(entry.Lifecycle.ReadyzURL, "http://")
+		if slash := strings.IndexByte(addr, '/'); slash >= 0 {
+			addr = addr[:slash]
+		}
+		return addr
 	}
-	// Most daemons share the canonical Prometheus port.
-	return "127.0.0.1:9091"
+	return ""
 }
 
 // emitComputeNodeBlock populates the flatMap with the [compute_node]

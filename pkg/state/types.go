@@ -2045,6 +2045,11 @@ const (
 	CustomDomainCertIssued   CustomDomainCertStatus = "issued"
 	CustomDomainCertRenewing CustomDomainCertStatus = "renewing"
 	CustomDomainCertFailed   CustomDomainCertStatus = "failed"
+	// CustomDomainCertDNSDrifted means a previously verified domain no
+	// longer points at Gregale. The verification timestamp is cleared at
+	// the same time, so gateway routing stops until the TXT challenge is
+	// satisfied again.
+	CustomDomainCertDNSDrifted CustomDomainCertStatus = "dns_drifted"
 )
 
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
@@ -2058,6 +2063,15 @@ type CustomDomain struct {
 	CertExpiresAt    time.Time
 	CertLastError    string
 	DNSLastCheckedAt time.Time
+	// CertFailedAt is the start of the current failed-cert episode. It is
+	// intentionally separate from DNSLastCheckedAt: the doctor refreshes the
+	// latter every pass, while F2's notification threshold is measured from
+	// the first failed observation.
+	CertFailedAt time.Time
+	// CertFailureEmailAt is the in-memory mirror of the durable 24-hour
+	// notification cooldown. PgStore keeps this value in its column and does
+	// not need to expose it on customer-facing domain responses.
+	CertFailureEmailAt time.Time
 }
 
 // Verified reports whether the TXT challenge has been satisfied.
@@ -2082,7 +2096,7 @@ type DomainDoctorObservation struct {
 	ObservedTarget  string
 	ObservedAAAA    string
 	CAAObserved     string
-	CertState       string // none|pending|issued|failed|dial_failed
+	CertState       string // none|pending|issued|failed|dial_failed|dns_drifted
 	CertNotAfter    time.Time
 	LastError       string
 	DNSCheckedAt    time.Time
@@ -2091,13 +2105,24 @@ type DomainDoctorObservation struct {
 
 // Cron is a scheduled synthetic POST through gatewayd-internal (spec §4.3).
 type Cron struct {
-	ID          string
-	AppID       string
-	Schedule    string // cron expression
-	Path        string
-	Enabled     bool
-	CreatedAt   time.Time
-	LastFiredAt time.Time // zero until first fire; updated by MarkCronFired
+	ID            string
+	AppID         string
+	Schedule      string // cron expression
+	Path          string
+	Enabled       bool
+	Timezone      string // IANA timezone; empty is normalized to UTC
+	SkipIfRunning bool   // skip a scheduled fire while a prior cron run is active
+	CreatedAt     time.Time
+	LastFiredAt   time.Time // zero until first fire; updated by MarkCronFired
+}
+
+// CronOptions controls the optional scheduling behavior persisted with a cron.
+// Timezone is an IANA location name; an empty value means UTC. SkipIfRunning
+// advances the schedule without dispatching when a prior cron invocation is
+// still pending or dispatching.
+type CronOptions struct {
+	Timezone      string
+	SkipIfRunning bool
 }
 
 // FireNowStatus is the closed vocabulary for cron_fire_now_requests.status
@@ -2227,8 +2252,9 @@ type OperatorIntent struct {
 // slice and the alert_rules_metric_chk DB CHECK mirror these byte-for-byte
 // (migrations/00349_alert_rules_extend_metrics_chk.sql).
 // Issue #1395 B3 adds new_error_fingerprint, cold_wake_rate_pct, and
-// daily_cost_cents from the durable observability rollups. Issue #1398
-// O2 adds the ADR-082 multi-window SLO burn-rate signal.
+// daily_cost_cents from the durable observability rollups. F2 adds
+// cert_issuance_failed, backed by custom_domains.cert_failed_at. Issue
+// #1398 O2 adds the ADR-082 multi-window SLO burn-rate signal.
 type AlertMetric string
 
 const (
@@ -2243,6 +2269,7 @@ const (
 	AlertMetricAccountSpendEUR     AlertMetric = "account_spend_eur"
 	AlertMetricFailedDeployments   AlertMetric = "deployment_failed"
 	AlertMetricCertExpirySeconds   AlertMetric = "cert_expiry_seconds"
+	AlertMetricCertIssuanceFailed  AlertMetric = "cert_issuance_failed"
 	AlertMetricQueueDepth          AlertMetric = "queue_depth"
 	AlertMetricNewErrorFingerprint AlertMetric = "new_error_fingerprint"
 	AlertMetricColdWakeRatePct     AlertMetric = "cold_wake_rate_pct"
@@ -4423,8 +4450,12 @@ type Snapshot struct {
 	ID           string
 	DeploymentID string
 	FCVersion    string
-	MemBytes     int64
-	DiskBytes    int64
+	// BaseImageVersion pins the runner base generation used by HTTP/2 and
+	// gRPC snapshots. HTTP/1 restores do not depend on this field. Empty
+	// identifies a legacy row and forces one cold-boot re-prime for H2C.
+	BaseImageVersion string
+	MemBytes         int64
+	DiskBytes        int64
 	// StoredBytes is the physical filesystem allocation of the published
 	// mem + vmstate artifacts. Zero identifies legacy snapshot writers.
 	StoredBytes int64
@@ -4462,14 +4493,15 @@ const (
 )
 
 // SnapshotForGC is the join-projection used by the imaged nightly GC
-// (spec §4.6: keep current + previous deployment's snapshots per app;
-// fleet budget pressure evicts from biggest-over-quota accounts first).
+// (spec §4.6: keep the bounded rollback window of deployment snapshots per
+// app; fleet budget pressure evicts from biggest-over-quota accounts first).
 // It denormalises snapshot → deployment → app → account into one row so
 // the GC algorithm doesn't have to round-trip per row.
 //
 // AppStatus and DeploymentStatus let the GC discard snapshots that cannot
 // participate in a future wake. In particular, deleted apps and
-// failed/cancelled deployments must not consume the per-app retention floor.
+// failed/cancelled deployments must not consume the per-app rollback window;
+// superseded deployments remain eligible because they are rollback targets.
 type SnapshotForGC struct {
 	ID           string
 	DeploymentID string
@@ -4490,19 +4522,17 @@ type SnapshotForGC struct {
 	DiskBytes        int64
 	// Tier (issue #470 / ADR-055) is the snapshot tier — see
 	// Snapshot.Tier for the semantics. The GC projection carries
-	// it so the perAppKeepCurrentPrevious policy can keep
-	// (current warm + previous init) per app instead of the
-	// legacy (current + previous) regardless-of-tier rule.
+	// it so the rollback-window policy can keep both tiers for each protected
+	// deployment generation instead of an arbitrary row count per tier.
 	Tier       string
 	StorageKey string
 	Stale      bool
 	CreatedAt  time.Time
 	// AppWarmSnapshotEnabled (issue #470 / PR C / ADR-072) projects
 	// apps.warm_snapshot_enabled from the JOIN so the GC policy can
-	// apply the 2+2 floor only on apps that opted in to the warm
-	// tier. Apps with warm_snapshot_enabled=false keep only the
-	// 2-init floor. Denormalised to avoid an AppByID round-trip per
-	// eviction row.
+	// apply the two-tier rollback window only on apps that opted in to warm.
+	// Apps with warm_snapshot_enabled=false keep init rows only. Denormalised
+	// to avoid an AppByID round-trip per eviction row.
 	AppWarmSnapshotEnabled bool
 }
 

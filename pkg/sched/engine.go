@@ -2329,7 +2329,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// wake-tier-mix counter so the dashboard shows the ratio of warm
 	// restores vs init restores vs cold-boot fallbacks. nil-safe
 	// accessor (OpsMetrics = nil → no-op).
-	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan), app.RAMMB)
+	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
 	if !haveSnap {
 		// Only a deployment that has had a snapshot can be said to have
 		// missed one. This avoids starting the exponential backoff on a
@@ -2532,7 +2532,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 	}
 	if e.events != nil {
-		e.events.Emit(ctx, events.QueueAccepted{
+		e.events.EmitAsync(ctx, events.QueueAccepted{
 			EmitAt:    time.Now().UTC(),
 			WakeID:    wakeID,
 			AppID:     appID,
@@ -2549,7 +2549,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// GDPR export can isolate per-account wake timelines.
 	if e.events != nil {
 		now := time.Now().UTC()
-		e.events.Emit(ctx, events.Admitted{
+		e.events.EmitAsync(ctx, events.Admitted{
 			EmitAt:    now,
 			WakeID:    wakeID,
 			AppID:     appID,
@@ -2803,7 +2803,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		method = "restore"
 	}
 	if e.events != nil {
-		e.events.Emit(bootCtx, events.BootStarted{
+		e.events.EmitAsync(bootCtx, events.BootStarted{
 			EmitAt:             time.Now().UTC(),
 			WakeID:             bootInput.wakeID,
 			AppID:              bootInput.appID,
@@ -3126,7 +3126,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	if e.events != nil {
 		now := time.Now().UTC()
-		e.events.Emit(ctx, events.BootCompleted{
+		e.events.EmitAsync(ctx, events.BootCompleted{
 			EmitAt:             now,
 			WakeID:             bootInput.wakeID,
 			AppID:              bootInput.appID,
@@ -6366,10 +6366,10 @@ func (e *Engine) loadAPIEnv(ctx context.Context, accountID, appID, scope string)
 // ADR-074). Returning the tier from this function — instead of
 // calling the metric accessor directly — keeps the function
 // testable without a metric registry.
-func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan string, expectedRAMMB int) (state.Snapshot, bool, string) {
+func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan string, expectedRAMMB int, appProtocol string) (state.Snapshot, bool, string) {
 	if !planAllowsWarm(plan) {
 		snap, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
-		if err != nil || snap.Stale || snap.FCVersion != e.fcVer || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
+		if err != nil || !e.snapshotCompatible(ctx, snap, expectedRAMMB, appProtocol) {
 			return state.Snapshot{}, false, wakeTierColdBootFallback
 		}
 		return snap, true, wakeTierInit
@@ -6378,14 +6378,24 @@ func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan s
 	// already ranks warm > init, but checking tier explicitly lets us
 	// distinguish warm-wake from init-wake for the operator metric.
 	warm, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierWarm)
-	if err == nil && !warm.Stale && warm.FCVersion == e.fcVer && e.snapshotMatchesRAM(ctx, warm, expectedRAMMB) {
+	if err == nil && e.snapshotCompatible(ctx, warm, expectedRAMMB, appProtocol) {
 		return warm, true, wakeTierWarm
 	}
 	snap, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
-	if err != nil || snap.Stale || snap.FCVersion != e.fcVer || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
+	if err != nil || !e.snapshotCompatible(ctx, snap, expectedRAMMB, appProtocol) {
 		return state.Snapshot{}, false, wakeTierColdBootFallback
 	}
 	return snap, true, wakeTierInit
+}
+
+func (e *Engine) snapshotCompatible(ctx context.Context, snap state.Snapshot, expectedRAMMB int, appProtocol string) bool {
+	if snap.Stale || snap.FCVersion != e.fcVer || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
+		return false
+	}
+	if appProtocol == api.AppProtocolHTTP2 || appProtocol == api.AppProtocolGRPC {
+		return snap.BaseImageVersion == fcvm.FAAS_BASE_IMAGE_VERSION
+	}
+	return true
 }
 
 // snapshotMatchesRAM rejects machine-state artifacts created for a different
@@ -6561,27 +6571,30 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 		e.ops.WatchdogKills(string(reason), string(terminal)).Inc()
 	}
 
-	// Error-explanations cluster (spec §6.4 amendment 1): a
-	// StuckColdBootTimeout marks the deployment row as failed with
-	// the app_startup_timeout code + prose so post-mortem retrieval
-	// via `gregale inspect <slug> --errors` surfaces the right
-	// hint/why/fix. The watchdog killed the instance because the
-	// cold boot exhausted the budget — that's distinct from the
-	// ECONNREFUSED (app_not_listening) case handled in pkg/fcvm.
+	// Error-explanations cluster (spec §6.4 amendment 1): a timeout while
+	// preparing the deployment's first snapshot marks that deployment failed
+	// with actionable startup prose. A customer wake can also cold boot after
+	// a snapshot miss; that failure belongs to the instance and must not remove
+	// an already-live deployment from routing.
 	// Best-effort: SetDeploymentFailedEx failure doesn't block the
 	// instance transition (the transition is the source of truth
 	// for the customer-facing timeline).
 	if reason == StuckColdBootTimeout && fresh.DeploymentID != "" {
-		p := api.NewProblem(422, api.CodeAppStartupTimeout,
-			"app did not become ready in time",
-			fmt.Sprintf("watchdog forced the instance to failed after the cold-boot budget elapsed (instance=%s, app=%s)", instanceID, appID))
-		_ = whycopy.Decorate(p, api.CodeAppStartupTimeout, nil)
-		if _, err := e.store.SetDeploymentFailedEx(ctx, fresh.DeploymentID,
-			api.CodeAppStartupTimeout,
-			fmt.Sprintf("cold_boot_timeout: instance=%s", instanceID),
-			p.Hint, p.Why, p.Fix, nil,
-		); err != nil {
-			e.log.Warn("watchdog: stamp app_startup_timeout failed", "deployment", fresh.DeploymentID, "err", err)
+		dep, err := e.store.DeploymentByID(ctx, fresh.DeploymentID)
+		if err != nil {
+			e.log.Warn("watchdog: load deployment for cold-boot timeout", "deployment", fresh.DeploymentID, "err", err)
+		} else if dep.Status == state.DeploySnapshotting {
+			p := api.NewProblem(422, api.CodeAppStartupTimeout,
+				"app did not become ready in time",
+				fmt.Sprintf("watchdog forced the instance to failed after the cold-boot budget elapsed (instance=%s, app=%s)", instanceID, appID))
+			_ = whycopy.Decorate(p, api.CodeAppStartupTimeout, nil)
+			if _, err := e.store.SetDeploymentFailedEx(ctx, fresh.DeploymentID,
+				api.CodeAppStartupTimeout,
+				fmt.Sprintf("cold_boot_timeout: instance=%s", instanceID),
+				p.Hint, p.Why, p.Fix, nil,
+			); err != nil {
+				e.log.Warn("watchdog: stamp app_startup_timeout failed", "deployment", fresh.DeploymentID, "err", err)
+			}
 		}
 	}
 	return nil
@@ -7482,7 +7495,9 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 // (issue #470 / PR A / ADR-055) lets the same payload carry
 // tier="warm" when the engine captured a warm snapshot and tier="init"
 // for the legacy cold capture. imaged's subscriber reads the field
-// from the JSON and writes the matching snapshots.tier column.
+// from the JSON and writes the matching snapshots.tier column. The base-image
+// generation is part of the same publication contract: HTTP/2 and gRPC wakes
+// reject snapshots produced by a different guest runner generation.
 func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, vmstatePath, storageKey string, b SnapshotBytes, tier string) {
 	if e.notif == nil {
 		return
@@ -7491,15 +7506,16 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, 
 		tier = state.SnapshotTierInit
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"deployment_id": deploymentID,
-		"node_id":       nodeID,
-		"vmstate_path":  vmstatePath,
-		"storage_key":   storageKey,
-		"mem_bytes":     b.MemBytes,
-		"vmstate_bytes": b.VMStateBytes,
-		"stored_bytes":  b.StoredBytes,
-		"fc_version":    e.fcVer,
-		"tier":          tier,
+		"deployment_id":      deploymentID,
+		"node_id":            nodeID,
+		"vmstate_path":       vmstatePath,
+		"storage_key":        storageKey,
+		"mem_bytes":          b.MemBytes,
+		"vmstate_bytes":      b.VMStateBytes,
+		"stored_bytes":       b.StoredBytes,
+		"fc_version":         e.fcVer,
+		"base_image_version": fcvm.FAAS_BASE_IMAGE_VERSION,
+		"tier":               tier,
 	})
 	if err := e.notif.Notify(ctx, db.NotifySnapshotWritten, string(payload)); err != nil {
 		e.log.Warn("emit snapshot_written", "deployment", deploymentID, "tier", tier, "err", err)

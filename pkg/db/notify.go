@@ -135,7 +135,8 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         snapshot it (spec §5 step 6, ADR-018).
 //	NotifySnapshotWritten   {"deployment_id":uuid, "vmstate_path":"...",
 //	                         "storage_key":"...", "mem_bytes":int,
-//	                         "vmstate_bytes":int, "fc_version":"..."}
+//	                         "vmstate_bytes":int, "fc_version":"...",
+//	                         "base_image_version":"..."}
 //	                         schedd → imaged: a park wrote a snapshot blob;
 //	                         imaged records the row (it is the sole writer to the
 //	                         snapshots table, CLAUDE.md ownership).

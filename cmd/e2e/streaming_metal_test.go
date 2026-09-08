@@ -67,7 +67,7 @@ func TestE2E_Streaming_Metal_TTFBUnder1s(t *testing.T) {
 		return
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -156,7 +156,7 @@ func TestE2E_Streaming_Metal_TxBytesAccuracy(t *testing.T) {
 		return
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -246,7 +246,7 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 		return
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -344,7 +344,7 @@ func TestE2E_Streaming_Metal_QuotaNonCounting(t *testing.T) {
 		return
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -455,7 +455,7 @@ func TestE2E_Streaming_Metal_H2CInnerLeg(t *testing.T) {
 		return
 	}
 
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
 	}
@@ -493,7 +493,7 @@ func TestE2E_Streaming_Metal_H2CInnerLeg(t *testing.T) {
 	appID := mustGetAppID(t, h, key, slug)
 
 	src := NodeFixtureStreaming(t)
-	raw, status := postMultipartDeployment(t, h, key, slug, src, false)
+	raw, status := postMultipartDeployment(t, h, key, slug, src, false, "")
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, raw)
 	}

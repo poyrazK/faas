@@ -71,6 +71,13 @@ var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in
 // implementation.
 var ErrNoSlot = errors.New("builderd: no builder slot available")
 
+// ErrDraining is returned when a new build arrives after builderd has begun
+// shutting down. The durable queue remains the source of truth, so rejecting
+// new work here lets the next builderd instance claim it cleanly.
+var ErrDraining = errors.New("builderd: draining")
+
+const activeVMCancelTimeout = 15 * time.Second
+
 // Config is the on-disk shape of /etc/faas/builderd.toml. Every field has a
 // working default.
 type Config struct {
@@ -156,6 +163,12 @@ type Builderd struct {
 	// deployments. Local/single-box deployments leave it nil and continue to
 	// read the source spool directly.
 	sourceStorage storage.StorageBackend
+	// lifecycleMu closes the admission race between ProcessOne/ProcessNext and
+	// Drain. Once draining is true no new process call can increment processWG.
+	lifecycleMu sync.Mutex
+	draining    bool
+	processWG   sync.WaitGroup
+	activeVMs   map[string]BuildHandle
 }
 
 // New wires a Builderd. vm may be nil in unit tests (the orchestrator still
@@ -234,6 +247,89 @@ func (b *Builderd) withSlotDecider(f func(ResidencyProbe, int) SlotDecision) *Bu
 	return b
 }
 
+func (b *Builderd) beginProcess() error {
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	if b.draining {
+		return ErrDraining
+	}
+	b.processWG.Add(1)
+	return nil
+}
+
+func (b *Builderd) endProcess() {
+	b.processWG.Done()
+}
+
+func (b *Builderd) registerActiveVM(buildID string, handle BuildHandle) bool {
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	if b.draining {
+		return false
+	}
+	if b.activeVMs == nil {
+		b.activeVMs = make(map[string]BuildHandle)
+	}
+	b.activeVMs[buildID] = handle
+	return true
+}
+
+func (b *Builderd) unregisterActiveVM(buildID string) {
+	b.lifecycleMu.Lock()
+	delete(b.activeVMs, buildID)
+	b.lifecycleMu.Unlock()
+}
+
+// Drain stops new build admission, interrupts active builder VMs, and waits
+// for in-flight orchestration calls to release their durable claims. The
+// caller supplies the shutdown budget; a detached context is used by the
+// claim cleanup defer in processClaimedBuild because the worker context is
+// already cancelled by the time shutdown reaches this method.
+func (b *Builderd) Drain(ctx context.Context) error {
+	b.lifecycleMu.Lock()
+	b.draining = true
+	buildIDs := make([]string, 0, len(b.activeVMs))
+	for buildID := range b.activeVMs {
+		buildIDs = append(buildIDs, buildID)
+	}
+	b.lifecycleMu.Unlock()
+
+	if b.vm != nil && len(buildIDs) > 0 {
+		var cancelWG sync.WaitGroup
+		cancelWG.Add(len(buildIDs))
+		for _, buildID := range buildIDs {
+			go func(id string) {
+				defer cancelWG.Done()
+				if err := b.vm.Cancel(ctx, id); err != nil && !errors.Is(err, context.Canceled) {
+					b.log.Warn("builderd: drain active build", "build", id, "err", err)
+				}
+			}(buildID)
+		}
+		cancelDone := make(chan struct{})
+		go func() {
+			cancelWG.Wait()
+			close(cancelDone)
+		}()
+		select {
+		case <-cancelDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	processDone := make(chan struct{})
+	go func() {
+		b.processWG.Wait()
+		close(processDone)
+	}()
+	select {
+	case <-processDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // BuildResult is the outcome of one queued build.
 type BuildResult struct {
 	BuildID           string
@@ -262,6 +358,11 @@ type BuildResult struct {
 //
 // The caller (cmd/builderd's loop) is the only writer to the build row.
 func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult, error) {
+	if err := b.beginProcess(); err != nil {
+		return BuildResult{}, err
+	}
+	defer b.endProcess()
+
 	build, err := b.store.ClaimQueuedBuild(ctx, buildID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -292,6 +393,11 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 // processClaimedBuild after AppByID resolves the account — see
 // that comment for the +1 SQL trip rationale.
 func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
+	if err := b.beginProcess(); err != nil {
+		return BuildResult{}, err
+	}
+	defer b.endProcess()
+
 	var build state.Build
 	var err error
 	if b.cfg.FairnessWindow > 0 {
@@ -332,6 +438,12 @@ func (b *Builderd) stopIfBuildCancelled(ctx context.Context, buildID string) boo
 // pipeline (cache check, slot allocation, VM spawn, wait, classify,
 // terminal write) is shared 1:1.
 func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (BuildResult, error) {
+	defer func() {
+		if ctx.Err() != nil {
+			b.requeueClaimAfterCancellation(ctx, build)
+		}
+	}()
+
 	dep, err := b.store.DeploymentByID(ctx, build.DeploymentID)
 	if err != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load deployment", err)
@@ -568,6 +680,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// allowed to use its export headroom to collect build-done.json and the OCI
 	// tarball after the in-guest build reaches its own timeout.
 	cancel()
+	if !b.registerActiveVM(build.ID, handle) {
+		cancelCtx, cancelVM := context.WithTimeout(context.WithoutCancel(ctx), activeVMCancelTimeout)
+		if cancelErr := b.vm.Cancel(cancelCtx, build.ID); cancelErr != nil {
+			b.log.Warn("builderd: cancel build admitted during drain", "build", build.ID, "err", cancelErr)
+		}
+		cancelVM()
+	}
+	defer b.unregisterActiveVM(build.ID)
 	if handle.DependencyCacheKey != "" {
 		if handle.DependencyCacheRestored {
 			b.emitBuildLog(ctx, build.ID, "dependency cache restored — reusing matching install layers\n")
@@ -812,6 +932,9 @@ func (b *Builderd) emitBuildSucceeded(ctx context.Context, buildID string, durat
 // The empty-string fc guard in pkg/state means a non-empty fc must be passed.
 // Also observes build_duration_seconds with outcome="failed".
 func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.FailureClass, msg string, buildStart time.Time) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	depID, buildID := claim.DeploymentID, claim.ID
 	if err := retryStateMutation(ctx, func() error {
 		return b.store.FailBuild(ctx, claim, fc, msg)
@@ -1002,6 +1125,32 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 		}
 	}
 	return result, nil
+}
+
+// requeueClaimAfterCancellation is the shutdown recovery path. Worker
+// contexts are cancelled before their handlers return, so ordinary state
+// mutations using that context cannot repair a claim. Re-read the row with a
+// detached bounded context and only requeue when it still matches the claim
+// that this process started; a terminal write or a newer claim wins.
+func (b *Builderd) requeueClaimAfterCancellation(ctx context.Context, claim state.Build) {
+	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), activeVMCancelTimeout)
+	defer cancel()
+
+	current, err := b.store.BuildByID(recoveryCtx, claim.ID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			b.log.Warn("builderd: inspect cancelled claim", "build", claim.ID, "err", err)
+		}
+		return
+	}
+	if current.Status != state.BuildRunning || !current.StartedAt.Equal(claim.StartedAt) {
+		return
+	}
+	if err := b.store.RequeueBuild(recoveryCtx, claim.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+		b.log.Warn("builderd: requeue cancelled claim", "build", claim.ID, "err", err)
+		return
+	}
+	b.log.Info("builderd: requeued build after context cancellation", "build", claim.ID)
 }
 
 // recoverClaimAfterLookupFailure prevents a build claimed by builderd from

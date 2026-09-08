@@ -110,6 +110,12 @@ class UpdateAppRequest:
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
+    favicon: None | str | Unset = UNSET
+    """Replace the per-app base64-encoded favicon; an empty value clears it. Omit for no change."""
+    robots_txt: None | str | Unset = UNSET
+    """Replace the per-app robots.txt body; an empty value restores the allow-all default. Omit for no change."""
+    head_wakes: bool | None | Unset = UNSET
+    """Opt into waking a parked app for HEAD /. Omit for no change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -261,6 +267,24 @@ class UpdateAppRequest:
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
 
+        favicon: None | str | Unset
+        if isinstance(self.favicon, Unset):
+            favicon = UNSET
+        else:
+            favicon = self.favicon
+
+        robots_txt: None | str | Unset
+        if isinstance(self.robots_txt, Unset):
+            robots_txt = UNSET
+        else:
+            robots_txt = self.robots_txt
+
+        head_wakes: bool | None | Unset
+        if isinstance(self.head_wakes, Unset):
+            head_wakes = UNSET
+        else:
+            head_wakes = self.head_wakes
+
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
             min_instances = UNSET
@@ -408,6 +432,12 @@ class UpdateAppRequest:
             field_dict["max_retries"] = max_retries
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
+        if favicon is not UNSET:
+            field_dict["favicon"] = favicon
+        if robots_txt is not UNSET:
+            field_dict["robots_txt"] = robots_txt
+        if head_wakes is not UNSET:
+            field_dict["head_wakes"] = head_wakes
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -672,6 +702,33 @@ class UpdateAppRequest:
         else:
             service_replicas = ServiceReplicas.from_dict(_service_replicas)
 
+        def _parse_favicon(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        favicon = _parse_favicon(d.pop("favicon", UNSET))
+
+        def _parse_robots_txt(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        robots_txt = _parse_robots_txt(d.pop("robots_txt", UNSET))
+
+        def _parse_head_wakes(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        head_wakes = _parse_head_wakes(d.pop("head_wakes", UNSET))
+
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -902,6 +959,9 @@ class UpdateAppRequest:
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             service_replicas=service_replicas,
+            favicon=favicon,
+            robots_txt=robots_txt,
+            head_wakes=head_wakes,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             autoscale_target_rps=autoscale_target_rps,
