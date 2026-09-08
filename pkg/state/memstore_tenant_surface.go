@@ -387,6 +387,33 @@ func (m *MemStore) ListTenantHostnamesForSurface(_ context.Context, surfaceID st
 	return out, nil
 }
 
+// ListTenantSurfaceHostnames returns every hostname reserved by a non-deleted
+// tenant surface. It is the global overlap read used by F4 wildcard creation.
+func (m *MemStore) ListTenantSurfaceHostnames(_ context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	active := make(map[string]struct{})
+	for _, surface := range m.tenantSurfaces {
+		if surface.Status != SurfaceStatusDeleted {
+			active[surface.ID] = struct{}{}
+		}
+	}
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for _, hostname := range m.tenantHostnames {
+		if _, ok := active[hostname.SurfaceID]; ok {
+			key := strings.ToLower(hostname.Hostname)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, hostname.Hostname)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // ListVerifiedTenantHostnamesForSurface — SAN-assembly hot path.
 func (m *MemStore) ListVerifiedTenantHostnamesForSurface(_ context.Context, surfaceID string) ([]TenantHostname, error) {
 	m.mu.Lock()

@@ -259,3 +259,42 @@ func TestPg_CoverageDomainsAndCrons(t *testing.T) {
 	}
 	_ = account
 }
+
+func TestPg_CoverageWildcardDomainsAndTenantSurfaceHostnames(t *testing.T) {
+	s, ctx, account, app, _ := pgCoverageFixture(t)
+
+	if _, err := s.CreateCustomDomain(ctx, "*.wildcard.example.com", app.ID, "wildcard"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCustomDomain(ctx, "*.sub.wildcard.example.com", app.ID, "wildcard-sub"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.WildcardDomainForHost(ctx, "api.sub.wildcard.example.com")
+	if err != nil || got.Domain != "*.sub.wildcard.example.com" {
+		t.Fatalf("wildcard lookup = %+v, %v", got, err)
+	}
+	if _, err := s.WildcardDomainForHost(ctx, "wildcard.example.com"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("wildcard apex lookup = %v, want ErrNotFound", err)
+	}
+
+	limits := api.Limits{
+		TenantSurfacesAllowed:     true,
+		TenantSurfacesPerAccount:  2,
+		TenantHostnamesPerSurface: 2,
+	}
+	surface, err := s.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
+		AccountID: account.ID, AppID: app.ID, Name: "global-hostnames",
+	}, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{
+		SurfaceID: surface.ID, Hostname: "tenant.global.example.com", ChallengeToken: "tenant-token",
+	}, limits); err != nil {
+		t.Fatal(err)
+	}
+	hostnames, err := s.ListTenantSurfaceHostnames(ctx)
+	if err != nil || len(hostnames) != 1 || hostnames[0] != "tenant.global.example.com" {
+		t.Fatalf("global tenant hostnames = %#v, %v", hostnames, err)
+	}
+}

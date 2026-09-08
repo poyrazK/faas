@@ -107,7 +107,7 @@ As of Tier A7 (ADR-070), this section describes the two split daemons. Pre-Tier-
 **Owns:** TLS termination (gatewayd-public), routing + wake-blocking + request accounting + per-tenant rate limits (gatewayd-internal).
 
 - Listeners: `:443` (HTTPS, HTTP/1.1 + h2), `:80` (redirect + ACME HTTP-01). Bound by `gatewayd-public` only; `gatewayd-internal` is reached only via the unix socket on the node.
-- TLS: CertMagic (owned by `gatewayd-public`). Wildcard cert for `*.apps.gregale.dev` via DNS-01 (provider-pluggable; the reference deploy uses Hetzner DNS). Custom domains (Pro+): on-demand HTTP-01 with an allowlist check against `custom_domains` table before issuance (prevents cert-mint abuse).
+- TLS: CertMagic (owned by `gatewayd-public`). Wildcard cert for `*.apps.gregale.dev` via DNS-01 (provider-pluggable; the reference deploy uses Hetzner DNS). Exact custom domains (Pro+): on-demand HTTP-01 with an allowlist check against `custom_domains` before issuance. Customer-owned wildcard domains (`*.zone`) are Pro/Scale-only, prove ownership at `_faas-verify.zone`, and mint through the existing Hetzner/Cloud DNS-01 solver; see ADR-167.
 - Routing: hostname → `app_id` via in-memory cache (LRU, 10k entries) backed by Postgres `LISTEN app_routes_changed` (owned by `gatewayd-internal`). Cache miss = one indexed PG lookup.
 - Wake-blocking: if app has no `RUNNING` instance, `gatewayd-internal` enqueues the request (per-app queue, cap 512 requests / 30 s TTL, then `503 + Retry-After`), calls `schedd.EnsureInstance(app_id)`, streams queued requests once readiness passes.
 - **Fan-out across `max_concurrency` (issue #168):** the routing cache is a per-app set of `Target{NodeID, InstanceID, WakeID}` (size ≤ plan's effective `max_concurrency`), picked via atomic round-robin so the hot path is allocation-free. `Backend.Admit(ctx, app_id, max_concurrency)` is the scale-out admission primitive; it atomically checks `HealthyCount < max_concurrency` before the gRPC round-trip so concurrent callers cannot collectively over-admit past the cap. At-capacity refusals surface as a typed `atCapacity=true` result (no gRPC status); `gatewayd-internal` treats them as a benign no-op when it already has ≥1 cached target. On every proxied request the handler stamps `x-faas-instance` with the picked `InstanceID`, overwriting any inbound header (trust model). Per-instance `last_request_at` is keyed by `instance_id` directly — the addr→instance resolver hop is gone.
@@ -228,8 +228,9 @@ The `tenant_surfaces` shape is the multi-tenant hostname routing primitive intro
 
 1. `slugFor(host)` — production subdomain (`{slug}.apps.gregale.dev`).
 2. `SurfaceByHostname(host)` — new branch (verified row only); consults `tenant_hostnames` keyed by `hostname citext PK`, joins to `tenant_surfaces` to read the bound `app_id`. Unverified rows fall through.
-3. `DomainByName(host)` — legacy single-app custom domain (`migrations/00001_init.sql:106`).
-4. Preview parser — `pr-{N}.{slug}.apps.gregale.dev` (ADR-095 / PR-B #872).
+3. `DomainByName(host)` — legacy single-app custom domain (`migrations/00001_init.sql:106`), exact match first.
+4. `WildcardDomainForHost(host)` — most-specific verified `*.zone` suffix; the zone apex is excluded.
+5. Preview parser — `pr-{N}.{slug}.apps.gregale.dev` (ADR-095 / PR-B #872).
 
 The order guarantees **surface routing never shadows a production subdomain** and **a single-app-owner custom domain never collides with a verified surface hostname**. The reverse order would either risk `customer-a.com` claiming the slug=production path via a surface, or a surface silently shadowing a customer's existing `custom_domains` row. The D4 codification in ADR-100 is the load-bearing contract.
 

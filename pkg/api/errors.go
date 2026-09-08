@@ -1475,6 +1475,12 @@ const (
 	// contract for the customer surface is "the cert engine can't
 	// mint this kind yet". 400.
 	CodeTenantSurfaceCertKindInvalid = "tenant_surface_cert_kind_invalid"
+	// CodeWildcardDomainsNotAllowed marks a wildcard custom-domain create
+	// on a plan below Pro. Exact custom domains remain available.
+	CodeWildcardDomainsNotAllowed = "wildcard_domains_not_allowed"
+	// CodeWildcardDomainTenantSurfaceOverlap marks a wildcard custom-domain
+	// create that would subsume an existing tenant-surface hostname.
+	CodeWildcardDomainTenantSurfaceOverlap = "wildcard_domain_tenant_surface_overlap"
 
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement).
 	//
@@ -1624,7 +1630,8 @@ func StatusForCode(code string) int {
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
-		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported:
+		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
+		CodeWildcardDomainTenantSurfaceOverlap:
 		return http.StatusConflict
 	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict:
 		// 409 — issue #556. Σ(traffic_percent WHERE status='live')
@@ -1730,7 +1737,7 @@ func StatusForCode(code string) int {
 		// distinguishes this from CodeValidation by the `code`
 		// (gate lives on the gateway hot path, not the apid layer).
 		return http.StatusUnprocessableEntity
-	case CodePayment:
+	case CodePayment, CodeWildcardDomainsNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanLimitSecrets:
 		return http.StatusForbidden
@@ -3583,6 +3590,23 @@ func ErrTenantSurfaceCertKindInvalid(kind string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeTenantSurfaceCertKindInvalid,
 		"Unsupported cert kind",
 		fmt.Sprintf("cert kind %q is not supported in v1; use per_host_san.", kind))
+}
+
+// ErrWildcardDomainsNotAllowed is the Pro+ plan gate for customer-owned
+// wildcard custom domains.
+func ErrWildcardDomainsNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodeWildcardDomainsNotAllowed,
+		"Wildcard domains unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include wildcard custom domains; upgrade to Pro or Scale.", p)).
+		WithDocs(docsBase + "/domains#wildcard-domains")
+}
+
+// ErrWildcardDomainTenantSurfaceOverlap is a typed 409: a wildcard cannot
+// take ownership of a hostname already claimed by a tenant surface.
+func ErrWildcardDomainTenantSurfaceOverlap(domain, hostname string) *Problem {
+	return NewProblem(http.StatusConflict, CodeWildcardDomainTenantSurfaceOverlap,
+		"Wildcard domain overlaps a tenant surface",
+		fmt.Sprintf("wildcard domain %q overlaps tenant-surface hostname %q; remove or move that hostname before attaching the wildcard.", domain, hostname))
 }
 
 // ErrPlanDataUpstreamsNotAllowed (ADR-098 §D5) is the 402 returned

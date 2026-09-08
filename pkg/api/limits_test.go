@@ -141,7 +141,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// `custom_domains` path. Allowed=false means the create
 			// handler returns 402 CodeTenantSurfaceQuotaReached before
 			// the store is touched.
-			TenantSurfacesPerAccount: 0, TenantHostnamesPerSurface: 0, TenantSurfacesAllowed: false,
+			TenantSurfacesPerAccount: 0, TenantHostnamesPerSurface: 0, TenantSurfacesAllowed: false, WildcardDomainsAllowed: false,
 			DataPlacementHintsPerApp: 0,
 			// ADR-076 (#476): outbound webhooks — Free gated to 402
 			// (CodePlanWebhooksNotAllowed), same fail-closed shape.
@@ -293,7 +293,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// paid tier. 1 surface with up to 10 verified hostnames.
 			// The "single SaaS customer, handful of end-customer
 			// subdomains" use case is the Hobby use case.
-			TenantSurfacesPerAccount: 1, TenantHostnamesPerSurface: 10, TenantSurfacesAllowed: true,
+			TenantSurfacesPerAccount: 1, TenantHostnamesPerSurface: 10, TenantSurfacesAllowed: true, WildcardDomainsAllowed: false,
 			DataPlacementHintsPerApp: 3,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Hobby tracks KeysMax
 			// (10) one-to-one. Pending invitations = members/2
@@ -444,7 +444,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// with up to 50 verified hostnames each. Each surface
 			// still binds to one app (the multi-app variant is the
 			// deferred footgun).
-			TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 50, TenantSurfacesAllowed: true,
+			TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 50, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
 			DataPlacementHintsPerApp: 10,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Pro tracks KeysMax
 			// (50) one-to-one — every team member can hold a key
@@ -604,7 +604,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// bounded by LE's 100-SAN-per-cert limit (per_host_san
 			// falls back to per_host above ~100, surfaced via the
 			// cert engine, not quota).
-			TenantSurfacesPerAccount: 25, TenantHostnamesPerSurface: 250, TenantSurfacesAllowed: true,
+			TenantSurfacesPerAccount: 25, TenantHostnamesPerSurface: 250, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
 			DataPlacementHintsPerApp: 50,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Scale tracks KeysMax
 			// (200) one-to-one — SaaS-scale multi-team + rotating-CI.
@@ -715,6 +715,17 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 		got := MustLimitsFor(p)
 		if got != want[p] {
 			t.Errorf("limits for %s:\n got  %+v\n want %+v", p, got, want[p])
+		}
+	}
+}
+
+func TestWildcardDomainsAllowedIsProPlus(t *testing.T) {
+	for plan, want := range map[Plan]bool{
+		PlanFree: false, PlanHobby: false, PlanPro: true, PlanScale: true,
+	} {
+		limits, ok := LimitsFor(plan)
+		if !ok || limits.WildcardDomainsAllowed != want || plan.WildcardDomainsAllowed() != want {
+			t.Fatalf("%s wildcard gate = %v/%v, want %v", plan, limits.WildcardDomainsAllowed, plan.WildcardDomainsAllowed(), want)
 		}
 	}
 }

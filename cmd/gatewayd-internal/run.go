@@ -336,6 +336,20 @@ func (i runtimeGatedCertIssuer) RequestCertForSurface(ctx context.Context, surfa
 	return i.delegate.RequestCertForSurface(ctx, surfaceID)
 }
 
+// RequestCertForWildcardDomain is deliberately independent of the tenant-
+// surface runtime flag: F4 wildcard custom domains are their own plan-gated
+// feature and must continue minting when ADR-100 surfaces are dark-launched.
+func (i runtimeGatedCertIssuer) RequestCertForWildcardDomain(ctx context.Context, domain string) error {
+	if i.delegate == nil {
+		return nil
+	}
+	issuer, ok := i.delegate.(gateway.WildcardCertIssuer)
+	if !ok {
+		return nil
+	}
+	return issuer.RequestCertForWildcardDomain(ctx, domain)
+}
+
 func gateCertIssuer(enabled func() bool, delegate gateway.CertIssuer) gateway.CertIssuer {
 	return runtimeGatedCertIssuer{enabled: enabled, delegate: delegate}
 }

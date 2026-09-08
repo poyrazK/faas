@@ -99,6 +99,26 @@ func TestPgRouter_CustomDomainVerifiedOnly(t *testing.T) {
 	}
 }
 
+func TestPgRouter_WildcardCustomDomainRoutesSubdomains(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "wildcard", api.PlanPro)
+	ctx := context.Background()
+	if _, err := store.CreateCustomDomain(ctx, "*.example.com", app.ID, "tok"); err != nil {
+		t.Fatalf("CreateCustomDomain: %v", err)
+	}
+	if err := store.MarkDomainVerified(ctx, "*.example.com"); err != nil {
+		t.Fatalf("MarkDomainVerified: %v", err)
+	}
+	r := pgRouter{store: store, appsSuffix: ".apps.gregale.dev"}
+	got, ok, err := r.ResolveHost(ctx, "api.example.com")
+	if err != nil || !ok || got.ID != app.ID {
+		t.Fatalf("wildcard resolve = %+v, ok=%v, err=%v", got, ok, err)
+	}
+	if _, ok, err := r.ResolveHost(ctx, "example.com"); err != nil || ok {
+		t.Fatalf("wildcard apex resolve ok=%v err=%v, want false/nil", ok, err)
+	}
+}
+
 func TestPgRouter_DeletedAppNotRouted(t *testing.T) {
 	store := state.NewMemStore()
 	app := seedApp(t, store, "gone", api.PlanFree)
