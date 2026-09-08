@@ -71,6 +71,26 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 	}
 }
 
+func TestNodeJoinDynamicBootstrapPreservesRoleDefaults(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	loadDefaults := strings.Index(playbook, "Load the Firecracker defaults required by compute admission")
+	roleGraph := strings.Index(playbook, "Run the production compute bootstrap role graph")
+	if loadDefaults < 0 || roleGraph < 0 || loadDefaults >= roleGraph {
+		t.Fatalf("node_join.yml must load Firecracker defaults before the dynamic compute role graph")
+	}
+	if !strings.Contains(playbook[loadDefaults:roleGraph], "roles/firecracker/defaults/main.yml") {
+		t.Fatalf("node_join.yml does not load the Firecracker role defaults required by compute_admission")
+	}
+	roleGraphEnd := strings.Index(playbook[roleGraph:], "loop:")
+	if roleGraphEnd < 0 || !strings.Contains(playbook[roleGraph:roleGraph+roleGraphEnd], "public: true") {
+		t.Fatalf("dynamic compute roles must expose defaults and vars to later roles")
+	}
+}
+
 func splitboxJoinManifest(t *testing.T) string {
 	t.Helper()
 	body := strings.Replace(validManifestYAML,
