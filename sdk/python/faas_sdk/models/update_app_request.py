@@ -20,6 +20,18 @@ from ..models.update_app_request_cpu_millicores_type_3_type_1 import (
     UpdateAppRequestCpuMillicoresType3Type1,
     check_update_app_request_cpu_millicores_type_3_type_1,
 )
+from ..models.update_app_request_crawler_policy_type_1 import (
+    UpdateAppRequestCrawlerPolicyType1,
+    check_update_app_request_crawler_policy_type_1,
+)
+from ..models.update_app_request_crawler_policy_type_2_type_1 import (
+    UpdateAppRequestCrawlerPolicyType2Type1,
+    check_update_app_request_crawler_policy_type_2_type_1,
+)
+from ..models.update_app_request_crawler_policy_type_3_type_1 import (
+    UpdateAppRequestCrawlerPolicyType3Type1,
+    check_update_app_request_crawler_policy_type_3_type_1,
+)
 from ..models.update_app_request_eviction_priority_type_1 import (
     UpdateAppRequestEvictionPriorityType1,
     check_update_app_request_eviction_priority_type_1,
@@ -116,6 +128,14 @@ class UpdateAppRequest:
     """Replace the per-app robots.txt body; an empty value restores the allow-all default. Omit for no change."""
     head_wakes: bool | None | Unset = UNSET
     """Opt into waking a parked app for HEAD /. Omit for no change."""
+    crawler_policy: (
+        None
+        | Unset
+        | UpdateAppRequestCrawlerPolicyType1
+        | UpdateAppRequestCrawlerPolicyType2Type1
+        | UpdateAppRequestCrawlerPolicyType3Type1
+    ) = UNSET
+    """Policy for known monitor/crawler requests. Omit for no change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -285,6 +305,18 @@ class UpdateAppRequest:
         else:
             head_wakes = self.head_wakes
 
+        crawler_policy: None | str | Unset
+        if isinstance(self.crawler_policy, Unset):
+            crawler_policy = UNSET
+        elif isinstance(self.crawler_policy, str):
+            crawler_policy = self.crawler_policy
+        elif isinstance(self.crawler_policy, str):
+            crawler_policy = self.crawler_policy
+        elif isinstance(self.crawler_policy, str):
+            crawler_policy = self.crawler_policy
+        else:
+            crawler_policy = self.crawler_policy
+
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
             min_instances = UNSET
@@ -438,6 +470,8 @@ class UpdateAppRequest:
             field_dict["robots_txt"] = robots_txt
         if head_wakes is not UNSET:
             field_dict["head_wakes"] = head_wakes
+        if crawler_policy is not UNSET:
+            field_dict["crawler_policy"] = crawler_policy
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -729,6 +763,54 @@ class UpdateAppRequest:
 
         head_wakes = _parse_head_wakes(d.pop("head_wakes", UNSET))
 
+        def _parse_crawler_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestCrawlerPolicyType1
+            | UpdateAppRequestCrawlerPolicyType2Type1
+            | UpdateAppRequestCrawlerPolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                crawler_policy_type_1 = check_update_app_request_crawler_policy_type_1(data)
+
+                return crawler_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                crawler_policy_type_2_type_1 = check_update_app_request_crawler_policy_type_2_type_1(data)
+
+                return crawler_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                crawler_policy_type_3_type_1 = check_update_app_request_crawler_policy_type_3_type_1(data)
+
+                return crawler_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestCrawlerPolicyType1
+                | UpdateAppRequestCrawlerPolicyType2Type1
+                | UpdateAppRequestCrawlerPolicyType3Type1,
+                data,
+            )
+
+        crawler_policy = _parse_crawler_policy(d.pop("crawler_policy", UNSET))
+
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -962,6 +1044,7 @@ class UpdateAppRequest:
             favicon=favicon,
             robots_txt=robots_txt,
             head_wakes=head_wakes,
+            crawler_policy=crawler_policy,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             autoscale_target_rps=autoscale_target_rps,

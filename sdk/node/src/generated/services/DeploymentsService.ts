@@ -86,6 +86,40 @@ export class DeploymentsService {
     });
   }
   /**
+   * Fetch the latest deployment for an app.
+   * Returns the app's newest deployment by `created_at DESC`. The app slug
+   * and deployment are resolved within the authenticated account; an
+   * unknown or cross-account app and a never-deployed app all return the
+   * same IDOR-safe 404 surface.
+   *
+   * @returns DeploymentResponse The latest deployment.
+   * @throws ApiError
+   */
+  public static getLatestAppDeployment({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/latest',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Create a developer deployment from a complete source snapshot or delta.
    * Transport used only for ad-hoc developer environments created by
    * `gregale dev`. With an empty `dev_source_base`, `source` is a complete
