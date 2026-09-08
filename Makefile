@@ -82,6 +82,38 @@ guest-runners: ## Build function-runner shims into ./bin/runners/<runtime>/faas-
 	      ./guest/runners/$$source_rt || exit 1; \
 	done
 
+# Release CI needs the same bytes as `make build`, but invoking `go build`
+# separately for every command makes the Go tool repeatedly load the same
+# package graph. Build each compatible command group in one invocation so Go
+# can schedule and reuse the shared graph itself. Keep the regular build target
+# unchanged for readable local output and narrow single-command failures.
+.PHONY: build-release-batch
+build-release-batch: ## Build the complete static release binary set in batched Go invocations
+	@mkdir -p $(BINDIR) $(BINDIR)/runners
+	@echo "building release daemons (batched)"
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal \
+	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(DAEMONS))
+	@echo "building release CLIs (batched)"
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) \
+	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(CLIS))
+	@echo "building init (guest PID 1)"
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build \
+	  $(GO_BUILD_FLAGS) -o $(BINDIR)/init ./guest/init
+	@echo "building function runners (batched)"
+	@runner_out=$$(mktemp -d); \
+	  trap 'rm -rf "$$runner_out"' EXIT; \
+	  GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build \
+	    $(GO_BUILD_FLAGS) -o "$$runner_out/" \
+	    $(addprefix ./guest/runners/,$(filter-out go124-alpine,$(GUEST_RUNNERS))); \
+	  for rt in $(GUEST_RUNNERS); do \
+	    mkdir -p $(BINDIR)/runners/$$rt; \
+	    source_rt=$$rt; \
+	    if [ "$$rt" = go124-alpine ]; then source_rt=go124; fi; \
+	    install -m 0755 "$$runner_out/$$source_rt" \
+	      $(BINDIR)/runners/$$rt/faas-runner; \
+	  done
+	@install -m 0755 scripts/schedd-brokerq-apply $(BINDIR)/schedd-brokerq-apply
+
 # M1 gRPC codegen (ADR-013). Generated *.pb.go is COMMITTED — do not run
 # `make proto` to produce output; CI uses `proto-check` to verify drift only.
 PROTO_ROOT := api/proto
