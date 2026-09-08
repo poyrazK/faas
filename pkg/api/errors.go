@@ -2832,6 +2832,11 @@ const CodePlanTriggersNotAllowed = "plan_triggers_not_allowed"
 // selected broker family requires a higher plan.
 const CodeTriggerKindNotAllowed = "trigger_kind_not_allowed"
 
+// CodeSecretStoreUnavailable is returned when trigger credentials cannot be
+// sealed or opened because the host age key material is unavailable or
+// unusable. It is deliberately generic so no ciphertext details reach users.
+const CodeSecretStoreUnavailable = "secret_store_unavailable"
+
 // CodePlanTriggerQuota is the 403 the customer sees when the plan
 // DOES unlock triggers but the per-app or per-account cap was
 // reached. Distinct from CodePlanTriggersNotAllowed so the CLI
@@ -3475,6 +3480,12 @@ func ErrTriggerKindNotAllowed(plan Plan, kind TriggerKind) *Problem {
 		"Trigger kind not available",
 		fmt.Sprintf("%s triggers are not available on the %s plan", kind, plan)).
 		WithDocs(docsBase + "/plans#triggers")
+}
+
+func ErrSecretStoreUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeSecretStoreUnavailable,
+		"Secret storage unavailable",
+		"Trigger credentials cannot be stored safely; retry after the host key is restored")
 }
 
 // ErrPlanTriggerQuota is returned when CreateTriggerIfUnderQuota

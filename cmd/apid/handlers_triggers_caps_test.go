@@ -339,3 +339,38 @@ func TestBatchCreateTriggerRejectsKindOutsidePlan(t *testing.T) {
 		t.Fatalf("batch result = %+v, want one kafka plan error", out)
 	}
 }
+
+func TestUpdateTriggerRejectsExplicitOverCaps(t *testing.T) {
+	limits := api.MustLimitsFor(api.PlanPro)
+	for _, tc := range []struct {
+		name  string
+		patch api.UpdateTriggerRequest
+	}{
+		{"batch_size", api.UpdateTriggerRequest{BatchSizeMax: intPtr(limits.TriggerBatchSizeMax + 1)}},
+		{"batch_window", api.UpdateTriggerRequest{BatchWindowMs: intPtr(limits.TriggerBatchWindowMaxSec*1000 + 1)}},
+		{"attempts", api.UpdateTriggerRequest{MaxAttempts: intPtr(limits.TriggerMaxAttemptsMax + 1)}},
+		{"payload", api.UpdateTriggerRequest{PayloadMaxBytes: intPtr(limits.TriggerPayloadMaxBytes + 1)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "caps-app"})
+			if err != nil {
+				t.Fatalf("CreateApp: %v", err)
+			}
+			created := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+				AppID: app.ID, Kind: api.TriggerKindQueue, Slug: "jobs", Config: json.RawMessage(`{"mode":"queue"}`),
+			}, nil)
+			if created.Code != http.StatusCreated {
+				t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
+			}
+			var trigger api.Trigger
+			if err := json.Unmarshal(created.Body.Bytes(), &trigger); err != nil {
+				t.Fatalf("decode trigger: %v", err)
+			}
+			rec := e.do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, tc.patch, nil)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("update status = %d, want 403: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
