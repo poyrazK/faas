@@ -33,13 +33,131 @@ const (
 	// It is shorter than the bridge's process lifetime so parked instances do
 	// not retain guest-side sockets until the outer bridge reaper runs.
 	h1IdleConnTimeout = 30 * time.Second
+
+	// The bridge is started as soon as vmmd creates the instance network,
+	// before Firecracker has finished restoring the guest. Retry the H2C
+	// handshake during that overlap so the first customer request can reuse a
+	// live connection instead of paying for TCP + SETTINGS after the wake.
+	guestH2CPrewarmTimeout = 5 * time.Second
+	guestH2CPrewarmRetry   = 5 * time.Millisecond
 )
+
+// guestH2CRoundTripper owns the connection established by the bridge's
+// background prewarm. http2.Transport.NewClientConn writes the client preface
+// and SETTINGS immediately; Ping proves the guest has consumed them without
+// invoking a customer handler. Once published, ClientConn is safe for
+// concurrent RoundTrip calls.
+type guestH2CRoundTripper struct {
+	base    *http2.Transport
+	guestIP string
+	port    uint16
+
+	mu      sync.RWMutex
+	prewarm *http2.ClientConn
+}
+
+func newGuestH2CRoundTripper(guestIP string, port uint16) *guestH2CRoundTripper {
+	base := newGuestH2CTransportFn(guestIP, port)
+	// Initialize x/net/http2's transport adapter before NewClientConn. This is
+	// a no-op for connections, but Go 1.27's stdlib-backed implementation
+	// otherwise has no underlying net/http transport registered yet.
+	base.CloseIdleConnections()
+	return &guestH2CRoundTripper{
+		base:    base,
+		guestIP: guestIP,
+		port:    port,
+	}
+}
+
+func (t *guestH2CRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.mu.RLock()
+	conn := t.prewarm
+	t.mu.RUnlock()
+	if conn == nil || !conn.CanTakeNewRequest() {
+		return t.base.RoundTrip(req)
+	}
+	resp, err := conn.RoundTrip(req)
+	if err != nil && !conn.CanTakeNewRequest() {
+		t.mu.Lock()
+		if t.prewarm == conn {
+			t.prewarm = nil
+		}
+		t.mu.Unlock()
+	}
+	return resp, err
+}
+
+func (t *guestH2CRoundTripper) prewarmConnection(ctx context.Context) error {
+	if t == nil {
+		return nil
+	}
+	for {
+		t.mu.RLock()
+		ready := t.prewarm != nil && t.prewarm.CanTakeNewRequest()
+		t.mu.RUnlock()
+		if ready {
+			return nil
+		}
+
+		dialer := net.Dialer{Timeout: 50 * time.Millisecond}
+		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(t.guestIP, strconv.FormatUint(uint64(t.port), 10)))
+		if err == nil {
+			clientConn, connErr := t.base.NewClientConn(conn)
+			if connErr == nil {
+				connErr = clientConn.Ping(ctx)
+			}
+			if connErr == nil {
+				t.mu.Lock()
+				if t.prewarm == nil || !t.prewarm.CanTakeNewRequest() {
+					old := t.prewarm
+					t.prewarm = clientConn
+					t.mu.Unlock()
+					if old != nil {
+						_ = old.Close()
+					}
+					return nil
+				}
+				t.mu.Unlock()
+				_ = clientConn.Close()
+				err = connErr
+			} else {
+				_ = conn.Close()
+				err = connErr
+			}
+		}
+
+		timer := time.NewTimer(guestH2CPrewarmRetry)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			if err != nil {
+				return err
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (t *guestH2CRoundTripper) closeIdleConnections() {
+	if t == nil {
+		return
+	}
+	t.base.CloseIdleConnections()
+	t.mu.Lock()
+	conn := t.prewarm
+	t.prewarm = nil
+	t.mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
 
 type guestTransportEntry struct {
 	port     uint16
 	lastUsed time.Time
 	h1       *http.Transport
-	h2c      *http2.Transport
+	h2c      *guestH2CRoundTripper
 }
 
 type guestTransportPool struct {
@@ -89,7 +207,7 @@ func (p *guestTransportPool) entryLocked(port uint16) *guestTransportEntry {
 	return entry
 }
 
-func (p *guestTransportPool) h2c(port uint16) *http2.Transport {
+func (p *guestTransportPool) h2c(port uint16) http.RoundTripper {
 	if p == nil {
 		return newGuestH2CTransportFn("", port)
 	}
@@ -100,9 +218,27 @@ func (p *guestTransportPool) h2c(port uint16) *http2.Transport {
 		return newGuestH2CTransportFn(p.guestIP, port)
 	}
 	if entry.h2c == nil {
-		entry.h2c = newGuestH2CTransportFn(p.guestIP, port)
+		entry.h2c = newGuestH2CRoundTripper(p.guestIP, port)
 	}
 	return entry.h2c
+}
+
+func (p *guestTransportPool) prewarmH2C(ctx context.Context, port uint16) error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	entry := p.entryLocked(port)
+	if entry == nil {
+		p.mu.Unlock()
+		return nil
+	}
+	if entry.h2c == nil {
+		entry.h2c = newGuestH2CRoundTripper(p.guestIP, port)
+	}
+	transport := entry.h2c
+	p.mu.Unlock()
+	return transport.prewarmConnection(ctx)
 }
 
 func (p *guestTransportPool) h1(port uint16) *http.Transport {
@@ -150,7 +286,7 @@ func (e *guestTransportEntry) closeIdleConnections() {
 		e.h1.CloseIdleConnections()
 	}
 	if e.h2c != nil {
-		e.h2c.CloseIdleConnections()
+		e.h2c.closeIdleConnections()
 	}
 }
 
