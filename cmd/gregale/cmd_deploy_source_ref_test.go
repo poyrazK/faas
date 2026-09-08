@@ -349,6 +349,45 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 	}
 }
 
+// TestCmdDeployRepoSourceRef_NoWait verifies that the shared deploy
+// completion contract also applies to the GitHub source-ref path. Before this
+// regression test, `deploy --repo ... --no-wait` ignored the flag and opened
+// the SSE stream after the POST, so CI and scripts could block unexpectedly.
+func TestCmdDeployRepoSourceRef_NoWait(t *testing.T) {
+	sink := &sourceRefSink{
+		status: http.StatusAccepted,
+		body: api.DeploymentResponse{
+			ID: "dep_nowait", AppID: "app_hello", BuildID: "build_nowait", Status: "queued",
+		},
+	}
+	srv := httptest.NewServer(sink)
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	withResetJSONOutput(t, false)
+
+	stdout, restoreOut := captureStdout(t)
+	defer restoreOut()
+	_, restoreErr := captureStderr(t)
+	defer restoreErr()
+
+	code := cmdDeployTarball([]string{
+		"--name", "hello",
+		"--repo", "onebox-faas/hello",
+		"--ref", "main",
+		"--no-wait",
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "Deployment dep_nowait queued") {
+		t.Fatalf("stdout = %q, want queued receipt", stdout.String())
+	}
+	if sink.capturedCalls != 1 {
+		t.Fatalf("source-ref POST calls = %d, want 1 (no SSE follow-up)", sink.capturedCalls)
+	}
+}
+
 // Compile-time guard: sourceRefSink implements http.Handler.
 var _ http.Handler = (*sourceRefSink)(nil)
 

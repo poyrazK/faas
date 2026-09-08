@@ -52,6 +52,15 @@ before the codeload fetch starts, so a `main` ref that moves
 between CI runs still produces an immutable SHA-pinned build
 row.
 
+To queue the deployment without waiting for the build, pass
+`--no-wait`. This returns the deployment id and URL as soon as the
+control plane accepts the request; omit it (the default) when the
+command should stream build progress until the app is live.
+
+```bash
+gregale deploy --repo onebox-faas/hello --ref main --no-wait
+```
+
 ## Failure modes
 
 | Server response | What it means | What to do |
