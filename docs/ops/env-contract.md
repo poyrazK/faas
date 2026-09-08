@@ -31,17 +31,17 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_APP_ERRORS_TLS_CA_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_TLS_CERT_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_TLS_KEY_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
-| `FAAS_APID_AUTH_SOCKET` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_APID_AUTH_SOCKET` | apid, gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_APID_BASE_URL` | meterd | `default` |  |  | `` |  |
 | `FAAS_APID_GITHUBD_BRIDGE_SOCK` | apid, githubd | `default` |  |  | `` |  |
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_LOOPBACK` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_METRICS_ADDR` | apid | `default` |  |  | `` |  |
-| `FAAS_APID_OTEL_SPANS_WRITER_SOCKET` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_APID_OTEL_SPANS_WRITER_SOCKET` | apid, gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_APID_REQUEST_IDLE_TIMEOUT` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_REQUEST_MAX_HEADER_BYTES` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_REQUEST_READ_TIMEOUT` | apid | `default` |  |  | `` |  |
-| `FAAS_APID_REQUEST_TELEMETRY_SOCKET` | gatewayd-internal | `default` |  |  | `` |  |
+| `FAAS_APID_REQUEST_TELEMETRY_SOCKET` | apid, gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_REQUEST_TELEMETRY_TARGET` | gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_REQUEST_WRITE_TIMEOUT` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_ROLE` | apid, shared | `dropin` |  |  | `` |  |

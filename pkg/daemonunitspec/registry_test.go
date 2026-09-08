@@ -1,11 +1,41 @@
 package daemonunitspec
 
 import (
+	"net"
+	"net/url"
 	"reflect"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/manifest"
 )
+
+func TestRegistryEntriesHaveBootProbes(t *testing.T) {
+	for _, entry := range Registry {
+		t.Run(entry.Name, func(t *testing.T) {
+			switch entry.Lifecycle.Probe {
+			case ProbeSystemd:
+			case ProbeUnix, ProbeTCP:
+				if entry.Lifecycle.ProbeTarget == "" {
+					t.Fatal("transport probe has an empty target")
+				}
+			default:
+				t.Fatalf("missing or unknown lifecycle probe %q", entry.Lifecycle.Probe)
+			}
+
+			u, err := url.Parse(entry.Lifecycle.ReadyzURL)
+			if err != nil {
+				t.Fatalf("parse ReadyzURL: %v", err)
+			}
+			if u.Scheme != "http" || u.Path != "/readyz" {
+				t.Fatalf("ReadyzURL = %q, want loopback http /readyz", entry.Lifecycle.ReadyzURL)
+			}
+			ip := net.ParseIP(u.Hostname())
+			if ip == nil || !ip.IsLoopback() {
+				t.Fatalf("ReadyzURL host = %q, want loopback IP", u.Hostname())
+			}
+		})
+	}
+}
 
 func TestActivationOrder(t *testing.T) {
 	got := ActivationOrder()
