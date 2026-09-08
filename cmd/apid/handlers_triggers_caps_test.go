@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestKafkaSkipVerifyRequested is the MED-4 plan-gate unit test.
@@ -179,5 +180,89 @@ func TestPlanTLSSkipVerifyAllowed_FreeAndHobbyClosed(t *testing.T) {
 				t.Errorf("Plan(%s).TLSSkipVerifyAllowed = %v, want %v", tc.plan, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestErrTriggerKindNotAllowedWireShape(t *testing.T) {
+	p := api.ErrTriggerKindNotAllowed(api.PlanHobby, api.TriggerKindKafka)
+	if p.Status != http.StatusForbidden {
+		t.Errorf("Status = %d, want 403", p.Status)
+	}
+	if p.Code != api.CodeTriggerKindNotAllowed {
+		t.Errorf("Code = %q, want %q", p.Code, api.CodeTriggerKindNotAllowed)
+	}
+	if !strings.Contains(p.Detail, "hobby") || !strings.Contains(p.Detail, "kafka") {
+		t.Errorf("Detail = %q, want hobby and kafka", p.Detail)
+	}
+}
+
+func TestCreateTriggerRejectsKindOutsidePlan(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "hobby-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+		AppID:  app.ID,
+		Kind:   api.TriggerKindKafka,
+		Slug:   "orders",
+		Config: json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g"}`),
+	}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != api.CodeTriggerKindNotAllowed {
+		t.Fatalf("code = %q, want %q", problem.Code, api.CodeTriggerKindNotAllowed)
+	}
+}
+
+func TestCreateTriggerAcceptsAllowedKafkaConfig(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "pro-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+		AppID:  app.ID,
+		Kind:   api.TriggerKindKafka,
+		Slug:   "orders",
+		Config: json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g"}`),
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBatchCreateTriggerRejectsKindOutsidePlan(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "hobby-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{
+		AppID: app.ID,
+		ManifestYAML: `triggers:
+  - kind: kafka
+    app: hobby-app
+    slug: orders
+    config:
+      brokers: ["b:9092"]
+      topic: orders
+      group: g
+`,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out batchCreateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(out.Created) != 0 || len(out.Errors) != 1 || !strings.Contains(out.Errors[0].Message, "kafka") {
+		t.Fatalf("batch result = %+v, want one kafka plan error", out)
 	}
 }

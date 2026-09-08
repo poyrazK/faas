@@ -176,21 +176,25 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "app_id is required"))
 		return
 	}
-	// PR #993 / issue #757 review MED-5: the original 188-line
-	// createTrigger was a linear early-return chain that mixed
-	// HTTP decode, kind validation, plan-cap application, store
-	// call, and audit emission. CLAUDE.md caps handler bodies at
-	// 50 lines; the review flagged that the chain had grown past
-	// that. Extract two helpers (validateCreateTriggerRequest +
-	// enforceCreateTriggerCaps) so the handler reads as
-	// decode → validate → caps → store → audit.
-	if p := validateCreateTriggerRequest(&req); p != nil {
-		api.WriteProblem(w, p)
+	// Unknown and cron kinds retain their request-shape errors even
+	// on plans without external triggers. For a recognised external
+	// kind, however, the plan gate runs before config validation so a
+	// source the account cannot use always has one stable 403 shape.
+	if !validTriggerKind(req.Kind) || req.Kind == api.TriggerKindCron {
+		api.WriteProblem(w, validateCreateTriggerRequest(&req))
 		return
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || !limits.TriggersAllowed {
 		api.WriteProblem(w, api.ErrPlanTriggersNotAllowed(acct.Plan))
+		return
+	}
+	if !acct.Plan.AllowsTriggerKind(req.Kind) {
+		api.WriteProblem(w, api.ErrTriggerKindNotAllowed(acct.Plan, req.Kind))
+		return
+	}
+	if p := validateCreateTriggerRequest(&req); p != nil {
+		api.WriteProblem(w, p)
 		return
 	}
 	app, err := s.store.AppByID(r.Context(), req.AppID)
@@ -959,6 +963,11 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 			errs = append(errs, batchError{Slug: t.Slug, Message: "kind=cron triggers must be created via POST /v1/crons"})
 			continue
 		}
+		kind := api.TriggerKind(t.Kind)
+		if !acct.Plan.AllowsTriggerKind(kind) {
+			errs = append(errs, batchError{Slug: t.Slug, Message: api.ErrTriggerKindNotAllowed(acct.Plan, kind).Detail})
+			continue
+		}
 		if t.Slug == "" {
 			errs = append(errs, batchError{Slug: t.Slug, Message: "slug is required"})
 			continue
@@ -1161,7 +1170,8 @@ func intFrom(p *int) int {
 func validateTriggerConfig(kind api.TriggerKind, raw json.RawMessage) error {
 	probe := &gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{{
 		Kind: gregalemanifest.TriggerKind(kind),
-		Slug: "_",
+		App:  "probe-app",
+		Slug: "probe-trigger",
 	}}}
 	if raw != nil {
 		var anyMap map[string]any

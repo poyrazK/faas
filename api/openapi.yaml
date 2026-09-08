@@ -13159,9 +13159,9 @@ components:
         effective_at: { type: string, format: date-time }
 
     AccountLimits:
-      description: "Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and writable ephemeral app-disk capacity."
+      description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
       type: object
-      required: [plan, ram_mb, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb]
+      required: [plan, ram_mb, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
@@ -13171,6 +13171,18 @@ components:
         included_gb_hours: { type: integer, format: int64 }
         app_layer_max_mb: { type: integer }
         ephemeral_disk_max_mb: { type: integer, description: "Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb." }
+        triggers_allowed: { type: boolean, description: "Whether the plan permits external event triggers." }
+        trigger_kinds:
+          type: array
+          description: "External trigger kinds this plan may create. Cron schedules use the dedicated crons API and are not included."
+          items: { $ref: '#/components/schemas/TriggerKind' }
+        trigger_limit_per_app: { type: integer, minimum: 0 }
+        trigger_limit_per_account: { type: integer, minimum: 0 }
+        trigger_batch_size_max: { type: integer, minimum: 0 }
+        trigger_batch_window_max_ms: { type: integer, minimum: 0, description: "Maximum batching window in milliseconds." }
+        trigger_max_attempts_max: { type: integer, minimum: 0 }
+        trigger_payload_max_bytes: { type: integer, minimum: 0 }
+        trigger_tls_skip_verify_allowed: { type: boolean, description: "Whether Kafka tls.skip_verify=true is permitted." }
 
     ChangePlanRequest:
       description: "Target plan for the change."

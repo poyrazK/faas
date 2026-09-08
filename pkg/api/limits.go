@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"slices"
 	"testing"
 	"time"
 )
@@ -5711,6 +5712,33 @@ func (p Plan) TriggersAllowed() bool {
 		return false
 	}
 	return l.TriggersAllowed
+}
+
+var externalTriggerKinds = []TriggerKind{
+	TriggerKindKafka,
+	TriggerKindNATS,
+	TriggerKindRedisStreams,
+	TriggerKindSQSCompat,
+	TriggerKindQueue,
+}
+
+// AllowedTriggerKinds returns the non-cron event sources the plan may
+// create. Callers receive a copy so the canonical policy cannot be mutated.
+func (p Plan) AllowedTriggerKinds() []TriggerKind {
+	var kinds []TriggerKind
+	switch p {
+	case PlanHobby:
+		kinds = []TriggerKind{TriggerKindSQSCompat, TriggerKindQueue}
+	case PlanPro, PlanScale:
+		kinds = externalTriggerKinds
+	}
+	return append([]TriggerKind{}, kinds...)
+}
+
+// AllowsTriggerKind reports whether kind is available on p. Unknown plans,
+// cron, and unknown kinds fail closed.
+func (p Plan) AllowsTriggerKind(kind TriggerKind) bool {
+	return slices.Contains(p.AllowedTriggerKinds(), kind)
 }
 
 // TriggerLimitPerApp returns the per-app trigger cap for the plan
