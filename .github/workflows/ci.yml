@@ -1351,8 +1351,9 @@ jobs:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     name: migrations (IDs + apply)
     runs-on: ubuntu-latest
-    # 25 min: the full per-migration package (~240 Postgres tests) runs here.
-    timeout-minutes: 25
+    # 40 min: the full per-migration package (~240 Postgres tests) runs here
+    # and a slow runner can stretch it well past its 6.4-8.6 min norm.
+    timeout-minutes: 40
     steps:
       # 2026-07-31: pre-pull postgres with 3-attempt retry. This job
       # is the one that actually hit the Docker Hub pull timeout on
@@ -1477,7 +1478,19 @@ jobs:
       - name: migrations per-migration tests (full package)
         env:
           PGOPTIONS: "-c synchronous_commit=off"
-        run: go test -count=1 -p 4 -timeout=18m ./migrations/...
+        # No -p: this is a single package, so -p (PACKAGE parallelism) does
+        # nothing here — the 239 tests run sequentially either way. It read
+        # as a tuning knob and was not one.
+        #
+        # -timeout=35m against an observed 6.4-8.6 min band. That looks
+        # generous because the band is not the whole story: run 34259499960
+        # blew past an 18 min timeout on the same commit that then passed in
+        # 7.5 min on re-run. Each test replays ~650 migrations against a
+        # service-container Postgres, so a slow runner stretches the whole
+        # package at once. A timeout is a deadlock backstop, not a
+        # performance assertion; sizing it near the mean just converts
+        # runner variance into red builds.
+        run: go test -count=1 -timeout=35m ./migrations/...
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
