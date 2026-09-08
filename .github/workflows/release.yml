@@ -255,8 +255,20 @@ jobs:
           BUILDER_SOURCE_SHA="$(git log --first-parent --format='%H' -n 1 "$GIT_SHA" -- \
             images/builder-base.Dockerfile \
             images/buildkit-frontend-startup.patch \
+            images/buildkit-session-health.patch \
+            images/builder-resolv.conf \
             images/Dockerfile.lock \
             guest/init \
+            pkg/api \
+            pkg/reqbudget \
+            pkg/sourcecontext \
+            pkg/statefuldenylist \
+            go.mod \
+            go.sum \
+            pkg/fcvm/builder_acceptance_metal_test.go \
+            scripts/ci/install-grype.sh \
+            scripts/ci/update-grype-db.sh \
+            scripts/ci/scan-oci-image.sh \
             .github/workflows/images.yml)"
           [[ "$BUILDER_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
             echo "::error::could not find a builder-base source commit in release history" >&2
