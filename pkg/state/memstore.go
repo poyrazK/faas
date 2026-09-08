@@ -7972,7 +7972,7 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 // (#14) reads from ListEnabledTriggers + ClaimTriggerRecords; both
 // are stubbed here so tests can run without a live Postgres.
 
-func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slug string, enabled bool, _ []byte, _, _, _, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
+func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slug string, enabled bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	perApp := 0
@@ -8004,10 +8004,10 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 		Kind:                 kind,
 		Slug:                 slug,
 		Enabled:              enabled,
-		Config:               []byte("{}"),
-		BatchSizeMax:         64,
-		BatchWindowMs:        1000,
-		MaxAttempts:          5,
+		Config:               append([]byte(nil), config...),
+		BatchSizeMax:         batchSizeMax,
+		BatchWindowMs:        batchWindowMs,
+		MaxAttempts:          maxAttempts,
 		PayloadMaxBytes:      payloadMaxBytes,
 		BrokerPoisonStrategy: brokerPoisonStrategy,
 		CreatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
@@ -8030,7 +8030,7 @@ func (m *MemStore) TriggerByID(_ context.Context, id string) (sqlc.Trigger, erro
 	return t, nil
 }
 
-func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, _ []byte, _, _, _, payloadMaxBytes *int32, brokerPoisonStrategy *string, filterCriteria *[]byte) (sqlc.Trigger, error) {
+func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes *int32, brokerPoisonStrategy *string, filterCriteria *[]byte) (sqlc.Trigger, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.triggers[id]
@@ -8039,6 +8039,18 @@ func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, _ 
 	}
 	if enabled != nil {
 		t.Enabled = *enabled
+	}
+	if config != nil {
+		t.Config = append([]byte(nil), config...)
+	}
+	if batchSizeMax != nil {
+		t.BatchSizeMax = *batchSizeMax
+	}
+	if batchWindowMs != nil {
+		t.BatchWindowMs = *batchWindowMs
+	}
+	if maxAttempts != nil {
+		t.MaxAttempts = *maxAttempts
 	}
 	if payloadMaxBytes != nil {
 		t.PayloadMaxBytes = *payloadMaxBytes
@@ -8050,8 +8062,7 @@ func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, _ 
 		// REVIEW-FIX MED-1: nil = "leave unchanged" (mirrors
 		// pgstore coalesce()); non-nil = "replace the JSONB
 		// column". Memstore treats the byte slice as opaque.
-		fc := *filterCriteria
-		t.FilterCriteria = fc
+		t.FilterCriteria = append([]byte(nil), (*filterCriteria)...)
 	}
 	t.UpdatedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	m.triggers[id] = t

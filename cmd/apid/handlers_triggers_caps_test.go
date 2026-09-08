@@ -237,6 +237,79 @@ func TestCreateTriggerAcceptsAllowedKafkaConfig(t *testing.T) {
 	}
 }
 
+func TestEnforceCreateTriggerCapsUsesPlanSafeDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		plan api.Plan
+		want [4]int32
+	}{
+		{api.PlanHobby, [4]int32{50, 1000, 3, 1_048_576}},
+		{api.PlanPro, [4]int32{64, 1000, 5, 6_291_456}},
+		{api.PlanScale, [4]int32{64, 1000, 5, 6_291_456}},
+	} {
+		t.Run(string(tc.plan), func(t *testing.T) {
+			limits := api.MustLimitsFor(tc.plan)
+			bs, bw, ma, pb, _, problem := enforceCreateTriggerCaps(
+				&api.CreateTriggerRequest{Kind: api.TriggerKindQueue}, tc.plan, limits)
+			got := [4]int32{bs, bw, ma, pb}
+			if problem != nil || got != tc.want {
+				t.Fatalf("defaults = %v, problem=%v; want %v", got, problem, tc.want)
+			}
+		})
+	}
+}
+
+func TestEnforceCreateTriggerCapsRejectsExplicitOverCaps(t *testing.T) {
+	limits := api.MustLimitsFor(api.PlanHobby)
+	for _, tc := range []struct {
+		name string
+		req  api.CreateTriggerRequest
+	}{
+		{"batch_size", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, BatchSizeMax: intPtr(51)}},
+		{"batch_window", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, BatchWindowMs: intPtr(30_001)}},
+		{"attempts", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, MaxAttempts: intPtr(4)}},
+		{"payload", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, PayloadMaxBytes: intPtr(1_048_577)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, _, _, _, problem := enforceCreateTriggerCaps(&tc.req, api.PlanHobby, limits); problem == nil {
+				t.Fatal("problem = nil, want explicit over-cap rejection")
+			}
+		})
+	}
+}
+
+func TestBatchCreateTriggerUsesPlanSafeDefaults(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "hobby-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{
+		AppID: app.ID,
+		ManifestYAML: `triggers:
+  - kind: queue
+    app: hobby-app
+    slug: jobs
+    config:
+      mode: queue
+`,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out batchCreateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(out.Errors) != 0 || len(out.Created) != 1 {
+		t.Fatalf("batch result = %+v, want one created trigger", out)
+	}
+	got := out.Created[0]
+	if got.BatchSizeMax != 50 || got.BatchWindowMs != 1000 || got.MaxAttempts != 3 || got.PayloadMaxBytes != 1_048_576 {
+		t.Fatalf("delivery defaults = %d/%d/%d/%d, want 50/1000/3/1048576",
+			got.BatchSizeMax, got.BatchWindowMs, got.MaxAttempts, got.PayloadMaxBytes)
+	}
+}
+
 func TestBatchCreateTriggerRejectsKindOutsidePlan(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "hobby-app"})

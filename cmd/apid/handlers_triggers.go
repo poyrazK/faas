@@ -339,16 +339,15 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 // TLSSkipVerifyAllowed gates live here alongside the original
 // batch_size_max / max_attempts / payload_max_bytes gates.
 //
-// Field defaults (batch_size_max=64, batch_window_ms=1000,
-// max_attempts=5, payload_max_bytes=6 MiB, broker_poison_strategy
-// ="commit") match the pre-MED-5 handler exactly so behaviour
-// stays unchanged for callers that omit the optional fields.
+// Omitted delivery fields use the platform defaults capped to values
+// legal for the caller's plan. Explicit values are never clamped: an
+// over-cap request still returns the corresponding plan problem.
 func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limits api.Limits) (
 	batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32,
 	brokerPoisonStrategy string,
 	problem *api.Problem,
 ) {
-	batchSizeMax = int32(64)
+	batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes = triggerDeliveryDefaults(limits)
 	if v := intFrom(req.BatchSizeMax); v > 0 {
 		batchSizeMax = int32(v)
 	}
@@ -356,7 +355,6 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 		return batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy,
 			api.ErrPlanTriggerQuota(plan, "batch_size_max", limits.TriggerBatchSizeMax, int(batchSizeMax))
 	}
-	batchWindowMs = int32(1000)
 	if v := intFrom(req.BatchWindowMs); v > 0 {
 		batchWindowMs = int32(v)
 	}
@@ -367,7 +365,7 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 	// could legally request 600s and pin 10× the broker dwell
 	// window the per-app rate-limit is sized for.
 	if limits.TriggerBatchWindowMaxSec > 0 {
-		observedSec := int(batchWindowMs / 1000)
+		observedSec := int((batchWindowMs + 999) / 1000)
 		if observedSec > limits.TriggerBatchWindowMaxSec {
 			return batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy,
 				api.ErrTriggerBatchWindowTooLarge(plan, limits.TriggerBatchWindowMaxSec, observedSec)
@@ -390,7 +388,6 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 				api.ErrTriggerTLSSkipVerifyNotAllowed(plan)
 		}
 	}
-	maxAttempts = int32(5)
 	if v := intFrom(req.MaxAttempts); v > 0 {
 		maxAttempts = int32(v)
 	}
@@ -403,7 +400,6 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 	// the field. Surface a plan-level 403 (rather than letting
 	// the SQL CHECK 422 the request) so the response carries
 	// the plan cap + the observed value.
-	payloadMaxBytes = int32(6291456)
 	if req.PayloadMaxBytes != nil && *req.PayloadMaxBytes > 0 {
 		payloadMaxBytes = int32(*req.PayloadMaxBytes)
 	}
@@ -418,6 +414,34 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 		brokerPoisonStrategy = *req.BrokerPoisonStrategy
 	}
 	return batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, nil
+}
+
+func cappedTriggerDefault(platformDefault, planCap int) int32 {
+	if planCap > 0 && planCap < platformDefault {
+		return int32(planCap)
+	}
+	return int32(platformDefault)
+}
+
+func triggerDeliveryDefaults(limits api.Limits) (batchSize, batchWindow, attempts, payload int32) {
+	return cappedTriggerDefault(64, limits.TriggerBatchSizeMax),
+		cappedTriggerDefault(1000, limits.TriggerBatchWindowMaxSec*1000),
+		cappedTriggerDefault(5, limits.TriggerMaxAttemptsMax),
+		cappedTriggerDefault(6*1024*1024, limits.TriggerPayloadMaxBytes)
+}
+
+func positiveIntPointer(value int) *int {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+func nonEmptyStringPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // --- listTriggers ----------------------------------------------------------
@@ -972,47 +996,24 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 			errs = append(errs, batchError{Slug: t.Slug, Message: "slug is required"})
 			continue
 		}
-		bsm := int32(64)
-		if t.BatchSizeMax > 0 {
-			bsm = int32(t.BatchSizeMax)
+		config := marshalConfig(t.Config)
+		createReq := api.CreateTriggerRequest{
+			Kind:                 kind,
+			Config:               config,
+			BatchSizeMax:         positiveIntPointer(t.BatchSizeMax),
+			BatchWindowMs:        positiveIntPointer(t.BatchWindowMs),
+			MaxAttempts:          positiveIntPointer(t.MaxAttempts),
+			PayloadMaxBytes:      positiveIntPointer(t.PayloadMaxBytes),
+			BrokerPoisonStrategy: nonEmptyStringPointer(t.BrokerPoisonStrategy),
 		}
-		bwm := int32(1000)
-		if t.BatchWindowMs > 0 {
-			bwm = int32(t.BatchWindowMs)
-		}
-		ma := int32(5)
-		if t.MaxAttempts > 0 {
-			ma = int32(t.MaxAttempts)
-		}
-		pmb := int32(6291456)
-		if t.PayloadMaxBytes > 0 {
-			pmb = int32(t.PayloadMaxBytes)
-		}
-		// Audit #10 (migration 00279): kafka-only broker-poison
-		// handling strategy. The YAML validator at
-		// pkg/gregalemanifest/manifest.go:Validate rejects
-		// anything outside the closed vocab; an empty string
-		// falls through to "commit" (the previous hardcoded
-		// behaviour).
-		bps := api.BrokerPoisonStrategyCommit
-		if t.BrokerPoisonStrategy != "" {
-			bps = t.BrokerPoisonStrategy
-		}
-		if limits.TriggerBatchSizeMax > 0 && bsm > int32(limits.TriggerBatchSizeMax) {
-			errs = append(errs, batchError{Slug: t.Slug, Message: "batch_size_max exceeds plan cap"})
-			continue
-		}
-		if limits.TriggerMaxAttemptsMax > 0 && ma > int32(limits.TriggerMaxAttemptsMax) {
-			errs = append(errs, batchError{Slug: t.Slug, Message: "max_attempts exceeds plan cap"})
-			continue
-		}
-		if limits.TriggerPayloadMaxBytes > 0 && pmb > int32(limits.TriggerPayloadMaxBytes) {
-			errs = append(errs, batchError{Slug: t.Slug, Message: "payload_max_bytes exceeds plan cap"})
+		bsm, bwm, ma, pmb, bps, problem := enforceCreateTriggerCaps(&createReq, acct.Plan, limits)
+		if problem != nil {
+			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue
 		}
 		created, err := s.store.CreateTriggerIfUnderQuota(r.Context(),
 			req.AppID,
-			string(t.Kind), t.Slug, t.IsEnabled(), marshalConfig(t.Config),
+			string(t.Kind), t.Slug, t.IsEnabled(), config,
 			bsm, bwm, ma, pmb, bps, limits)
 		if err != nil {
 			var qe *state.TriggerQuotaError
