@@ -957,11 +957,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return targets, nil
 		}).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
-			full, err := pgStore.AppByID(ctx, app.ID)
-			if err != nil {
-				return nil, false, err
-			}
-			cli, err := deps.scheddRouter.ScheddForApp(ctx, full)
+			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
 			if err != nil {
 				return nil, false, err
 			}
