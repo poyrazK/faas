@@ -163,10 +163,6 @@ func githubDeploymentEnvironment(kind, scope, appSlug string) string {
 	return prefix + "/" + appSlug
 }
 
-func checkPhaseForDeploymentStatus(status string) (githubdgrpc.CheckPhase, bool) {
-	return checkPhaseForDeploymentStatusForRollout(status, "", 0)
-}
-
 func checkPhaseForDeploymentStatusForRollout(status, rolloutState string, canaryTotalSteps int) (githubdgrpc.CheckPhase, bool) {
 	switch state.DeploymentStatus(status) {
 	case state.DeployPending:
