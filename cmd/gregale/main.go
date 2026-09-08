@@ -20,12 +20,22 @@ import (
 // docsURL is the canonical link printed at the bottom of the usage string.
 var docsURL = docsSiteURL
 
-func topLevelUsage() string {
+func topLevelUsage(showAdvanced bool) string {
 	var b strings.Builder
 	b.WriteString("gregale — deploy apps and functions that scale to zero.\n\n")
-	b.WriteString("Usage:\n  gregale <command> [flags]\n\nCommands:\n")
-	for _, command := range cliCommands {
-		fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
+	b.WriteString("Usage:\n  gregale <command> [flags]\n\n")
+
+	commands := customerCliCommands()
+	b.WriteString("Customer commands:\n")
+	writeGroupedCommands(&b, commands)
+	if showAdvanced {
+		b.WriteString("\nAdvanced/operator compatibility:\n")
+		for _, command := range advancedCliCommands() {
+			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
+		}
+	} else {
+		b.WriteString("\nOperator commands live in gregalectl. Legacy aliases remain callable but are hidden from this list.\n")
+		b.WriteString("Run 'gregale help --all' to list advanced and compatibility commands.\n")
 	}
 	b.WriteString("  help                   Show this help message\n")
 	b.WriteString("\nRun 'gregale <command> --help' for command details.\n\n")
@@ -36,6 +46,28 @@ func topLevelUsage() string {
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
+}
+
+// writeGroupedCommands keeps the root help useful as the manifest grows. The
+// manifest remains ordered for completion/man output, while customer discovery
+// is grouped around the API-hosting workflow.
+func writeGroupedCommands(b *strings.Builder, commands []cliCommand) {
+	groups := []string{"Core", "API", "Data", "Delivery", "Observe", "Advanced"}
+	byGroup := make(map[string][]cliCommand, len(groups))
+	for _, command := range commands {
+		group := cliHelpGroup(command)
+		byGroup[group] = append(byGroup[group], command)
+	}
+	for _, group := range groups {
+		groupCommands := byGroup[group]
+		if len(groupCommands) == 0 {
+			continue
+		}
+		fmt.Fprintf(b, "\n%s:\n", group)
+		for _, command := range groupCommands {
+			fmt.Fprintf(b, "  %-22s %s\n", command.Name, command.Short)
+		}
+	}
 }
 
 func hasHelpFlag(args []string) bool {
@@ -75,7 +107,7 @@ func run(args []string) (status int) {
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
 	args = applyJSONFlag(args)
 	if len(args) == 0 {
-		fmt.Print(topLevelUsage())
+		fmt.Print(topLevelUsage(false))
 		return 0
 	}
 	switch args[0] {
@@ -90,7 +122,7 @@ func run(args []string) (status int) {
 		fmt.Printf("gregale %s\n", wire.Version)
 		return 0
 	case "help", "--help", "-h":
-		fmt.Print(topLevelUsage())
+		fmt.Print(topLevelUsage(len(args) > 1 && args[1] == "--all"))
 		return 0
 	case "completion":
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
