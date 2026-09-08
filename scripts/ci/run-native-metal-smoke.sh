@@ -141,6 +141,9 @@ install -m 0755 "${busybox_path}" "${base_skeleton}/bin/busybox"
 for name in bin/sh bin/ash bin/cat; do
   ln -s /bin/busybox "${base_skeleton}/${name}"
 done
+# Production app artifacts live beneath drive1's /upper directory. The M0 app
+# runs as UID 1000 and only needs to listen; platform-owned /etc/faas stays
+# read-only to it after guest-init assembles the overlay.
 printf '%s\n' \
   '{"entrypoint":["/bin/busybox","httpd","-f","-p","8080","-h","/"],"port":8080}' \
   > "${layer_skeleton}/upper/etc/faas/app.json"
