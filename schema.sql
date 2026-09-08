@@ -5607,7 +5607,7 @@ CREATE INDEX github_installations_org_id_idx ON public.github_installations USIN
 -- Name: instances_app_deployment_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX instances_app_deployment_idx ON public.instances USING btree (app_id, deployment_id) WHERE (state = ANY (ARRAY['RUNNING'::text, 'WAKING'::text, 'COLD_BOOTING'::text]));
+CREATE INDEX instances_app_deployment_idx ON public.instances USING btree (deployment_id, app_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text]));
 
 
 --

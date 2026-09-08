@@ -2946,7 +2946,7 @@ const (
 
 // ConcurrencyForDeployment mirrors PgStore.ConcurrencyForDeployment.
 // Reads the in-memory instances slice with the same predicate the
-// SQL uses (state IN {'RUNNING','WAKING','COLD_BOOTING'}).
+// SQL uses (state IN {'waking','cold_booting','running'}).
 func (m *MemStore) ConcurrencyForDeployment(_ context.Context, appID, deploymentID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

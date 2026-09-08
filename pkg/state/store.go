@@ -65,7 +65,7 @@ var ErrCertFingerprintDrift = errors.New("state: compute_node cert fingerprint d
 // unique index instances_wake_attempt_active_idx (migration 00350,
 // multi-host safety cluster PR-5 / audit F4) rejects an INSERT
 // because another schedd has already inserted a row with the same
-// wake_id AND state IN ('WAKING', 'COLD_BOOTING'). The caller
+// wake_id AND state IN ('waking', 'cold_booting'). The caller
 // (pkg/sched.Engine.EnsureWake) recovers by reading the existing
 // row via ReadActiveInstanceForWakeID and observing the winner's
 // progress.
@@ -84,7 +84,7 @@ var ErrConcurrentWake = errors.New("state: concurrent wake — wake_id conflict"
 // partial unique index instances_wake_attempt_active_idx (migration
 // 00350) rejects its CREATE INSTANCE call because another schedd has
 // already inserted an in-flight row with the same wake_id AND state
-// IN ('WAKING', 'COLD_BOOTING'). The engine surfaces this as a
+// IN ('waking', 'cold_booting'). The engine surfaces this as a
 // "another box is handling this wake" outcome — the caller must
 // propagate it; the gateway-side retry / cron-side reschedule /
 // redeploy handles the follow-up.
@@ -1625,8 +1625,8 @@ type Store interface {
 	// index added in migration 00007.
 	ListDeploymentsByNodeID(ctx context.Context, nodeID string) ([]Deployment, error)
 	// ConcurrencyForDeployment returns the live-instance count for a
-	// (app, deployment) pair — the sum of state IN ('RUNNING',
-	// 'WAKING', 'COLD_BOOTING'). Backed by the partial index added
+	// (app, deployment) pair — the sum of state IN ('waking',
+	// 'cold_booting', 'running'). Backed by the partial index added
 	// in migration 00132.
 	ConcurrencyForDeployment(ctx context.Context, appID, deploymentID string) (int, error)
 	// UpdateDeploymentMinInstances stamps the per-deployment cold-wake

@@ -7,14 +7,11 @@
 //  1. The migration set applies cleanly through 00132.
 //  2. The index exists and is a partial index restricted to the three
 //     live states (RUNNING, WAKING, COLD_BOOTING).
-//  3. The index keys on (app_id, deployment_id) — prefix matches the
-//     production per-deployment wake count predicate.
-//  4. The index is structurally usable: with seqscan disabled the
-//     planner reaches it for the predicate the migration wrote.
-//     See the KNOWN DRIFT note at step (4): 00132's predicate uses
-//     UPPERCASE state literals while instances.state is lowercase,
-//     so the index cannot serve the real production query until a
-//     follow-up migration recreates it.
+//  3. The index keys on (deployment_id, app_id) — the order both
+//     production readers need.
+//  4. The index serves the REAL production queries: with seqscan
+//     disabled the planner reaches it for both
+//     CountLiveInstancesByDeployment and ConcurrencyForDeployment.
 //  5. Replay-safety: a second MigrateUp is a no-op.
 //
 // Slot note: 00131 is the previous slot in this branch's embedded set;
@@ -72,16 +69,22 @@ func TestMigrations_00132_InstancesAppDeploymentIdx(t *testing.T) {
 	if !strings.Contains(indexDef, "WHERE") {
 		t.Errorf("indexdef missing WHERE predicate (not a partial index): %s", indexDef)
 	}
-	for _, want := range []string{"RUNNING", "WAKING", "COLD_BOOTING"} {
+	// Lowercase, matching instances_state_check. 00132 shipped these
+	// UPPERCASE, which made the index match zero rows; migration
+	// 20260908174300244 recreated it.
+	for _, want := range []string{"'running'", "'waking'", "'cold_booting'"} {
 		if !strings.Contains(indexDef, want) {
 			t.Errorf("indexdef missing live state %q: %s", want, indexDef)
 		}
 	}
 
-	// (3b) Index shape: keyed on (app_id, deployment_id) in that
-	// order. The prefix ordering is the load-bearing half — an index
-	// on (deployment_id, app_id) would still satisfy the substring
-	// probes above but could not serve an app_id-only prefix scan.
+	// (3b) Index shape: keyed on (deployment_id, app_id) in that
+	// order. The ordering is the load-bearing half.
+	// CountLiveInstancesByDeployment filters on deployment_id ALONE, so a
+	// btree leading on app_id cannot serve it — its leading column would
+	// be unconstrained. Leading on deployment_id serves that query
+	// directly and ConcurrencyForDeployment (app_id AND deployment_id)
+	// as a scan plus a cheap filter.
 	var keyCols []string
 	if err := pool.QueryRow(ctx, `
 		select (select array_agg(a.attname order by k.ord)
@@ -97,37 +100,16 @@ func TestMigrations_00132_InstancesAppDeploymentIdx(t *testing.T) {
 	`).Scan(&keyCols); err != nil {
 		t.Fatalf("read instances_app_deployment_idx key columns: %v", err)
 	}
-	if want := []string{"app_id", "deployment_id"}; !slices.Equal(keyCols, want) {
-		t.Errorf("instances_app_deployment_idx key columns = %v, want %v (the (app_id, deployment_id) prefix is what makes the per-deployment count an index lookup)", keyCols, want)
+	if want := []string{"deployment_id", "app_id"}; !slices.Equal(keyCols, want) {
+		t.Errorf("instances_app_deployment_idx key columns = %v, want %v (leading on deployment_id is what makes CountLiveInstancesByDeployment an index lookup)", keyCols, want)
 	}
 
-	// (4) The index is well-formed and the planner can reach it for
-	// the predicate the migration wrote.
-	//
-	// KNOWN DRIFT — READ BEFORE EXTENDING THIS TEST. 00132 spelled its
-	// partial predicate with UPPERCASE state literals
-	// ('RUNNING', 'WAKING', 'COLD_BOOTING'), but instances.state has
-	// been constrained to LOWERCASE values since 00001 (see
-	// instances_state_check, realigned in 00035, and every sibling
-	// partial index — instances_live_node_id_idx,
-	// instances_reaper_state_idx, instances_wake_attempt_active_idx —
-	// which all use lowercase). The production reader,
-	// state.PgStore.CountLiveInstancesByDeployment, also queries
-	// lowercase. So this index currently matches zero rows and cannot
-	// serve the query it was created for.
-	//
-	// That is a schema defect, not a test defect: migrations are
-	// append-only, so it has to be corrected by a follow-up migration
-	// that recreates the index with lowercase literals. Until then
-	// this test pins what 00132 actually established — the index
-	// exists, is partial, keys on (app_id, deployment_id), and is
-	// structurally usable — by EXPLAINing against the index's OWN
-	// predicate. Asserting against the lowercase production query
-	// here would fail for a reason the test cannot fix.
-	//
-	// When the follow-up migration lands, flip both the literals in
-	// step (3) and the query below to lowercase; the assertion then
-	// covers the real production path.
+	// (4) The index serves the real production queries. 00132's own
+	// predicate used UPPERCASE state literals while instances.state has
+	// been lowercase since 00001, so the index matched zero rows and this
+	// step could only EXPLAIN against the dead predicate. Migration
+	// 20260908174300244 recreated the index; the assertions below now
+	// EXPLAIN the two queries production actually issues.
 	var nodeID string
 	if err := pool.QueryRow(ctx,
 		`select id from compute_nodes where name = 'default-local'`,
@@ -160,16 +142,31 @@ func TestMigrations_00132_InstancesAppDeploymentIdx(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("seed deployments: %v", err)
 	}
-	// Seed enough live rows that a Seq Scan is a genuinely plausible
-	// plan, then ANALYZE so the planner works off real statistics.
-	// node_id is a uuid FK to compute_nodes; wake_id defaults to
-	// gen_random_uuid() so each row is distinct.
+	// 19 more deployments, superseded so deployments_app_scope_live_uniq
+	// stays satisfied. Selectivity is the point: the planner only prefers
+	// a deployment_id-leading index when deployment_id actually narrows
+	// the live set. Seeding every live row under ONE deployment made the
+	// predicate match 100% of live rows, and the planner reasonably chose
+	// the cheaper single-column instances_live_node_id_idx instead —
+	// which is the production shape only if the fleet runs one deployment.
+	if _, err := pool.Exec(ctx, `
+		insert into deployments (id, app_id, kind, source_path, source_bytes, status, image_digest)
+		select ('00000000-0000-0000-0000-0001320000'::text || lpad(g::text, 2, '0'))::uuid,
+		       '00000000-0000-0000-0000-000000000132',
+		       'tarball', '/tmp/test.tar', 0, 'superseded', 'sha256:0'
+		  from generate_series(1, 19) g
+	`); err != nil {
+		t.Fatalf("seed sibling deployments: %v", err)
+	}
+	// 50 live rows per deployment across all 20 => 1000 live rows, of
+	// which the query's deployment_id matches 5%. node_id is a uuid FK to
+	// compute_nodes; wake_id defaults to gen_random_uuid() so each row is
+	// distinct. ANALYZE afterwards so the planner works off real stats.
 	if _, err := pool.Exec(ctx, `
 		insert into instances (app_id, deployment_id, state, ram_mb, node_id, started_at)
-		select '00000000-0000-0000-0000-000000000132',
-		       '00000000-0000-0000-0000-000000000132',
-		       'running', 256, $1, now()
-		  from generate_series(1, 200)
+		select '00000000-0000-0000-0000-000000000132', d.id, 'running', 256, $1, now()
+		  from deployments d, generate_series(1, 50)
+		 where d.app_id = '00000000-0000-0000-0000-000000000132'
 	`, nodeID); err != nil {
 		t.Fatalf("seed instances rows: %v", err)
 	}
@@ -177,20 +174,39 @@ func TestMigrations_00132_InstancesAppDeploymentIdx(t *testing.T) {
 		t.Fatalf("analyze instances: %v", err)
 	}
 
+	// state.PgStore.CountLiveInstancesByDeployment — deployment_id only.
+	// This is the query 00132's index could never serve, on two counts:
+	// the dead uppercase predicate and the app_id-leading key.
 	planStr, err := explainNoSeqScan(ctx, t, pool, `
 		select count(*) from instances
+		where deployment_id = $1
+		  and state in ('waking', 'cold_booting', 'running')
+	`, "00000000-0000-0000-0000-000000000132")
+	if err != nil {
+		t.Fatalf("explain CountLiveInstancesByDeployment shape: %v", err)
+	}
+	if !strings.Contains(planStr, "instances_app_deployment_idx") {
+		t.Errorf("planner could not use instances_app_deployment_idx for CountLiveInstancesByDeployment:\n%s", planStr)
+	}
+	if strings.Contains(planStr, "Seq Scan on instances") {
+		t.Errorf("EXPLAIN chose Seq Scan on instances for CountLiveInstancesByDeployment:\n%s", planStr)
+	}
+
+	// state.PgStore.ConcurrencyForDeployment — app_id AND deployment_id.
+	concStr, err := explainNoSeqScan(ctx, t, pool, `
+		select count(*) from instances
 		where app_id = $1 and deployment_id = $2
-		  and state in ('RUNNING', 'WAKING', 'COLD_BOOTING')
+		  and state in ('waking', 'cold_booting', 'running')
 	`, "00000000-0000-0000-0000-000000000132",
 		"00000000-0000-0000-0000-000000000132")
 	if err != nil {
-		t.Fatalf("explain: %v", err)
+		t.Fatalf("explain ConcurrencyForDeployment shape: %v", err)
 	}
-	if !strings.Contains(planStr, "instances_app_deployment_idx") {
-		t.Errorf("planner could not use instances_app_deployment_idx for its own predicate even with seqscan disabled:\n%s", planStr)
+	if !strings.Contains(concStr, "instances_app_deployment_idx") {
+		t.Errorf("planner could not use instances_app_deployment_idx for ConcurrencyForDeployment:\n%s", concStr)
 	}
-	if strings.Contains(planStr, "Seq Scan on instances") {
-		t.Errorf("EXPLAIN chose Seq Scan on instances; index not usable:\n%s", planStr)
+	if strings.Contains(concStr, "Seq Scan on instances") {
+		t.Errorf("EXPLAIN chose Seq Scan on instances for ConcurrencyForDeployment:\n%s", concStr)
 	}
 
 	// (5) Replay-safety: a second MigrateUp is a no-op.
