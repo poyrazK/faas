@@ -109,6 +109,10 @@ var ansiblePlaybookRunner = defaultAnsiblePlaybookRunner
 // release_bundles row.
 var joinReleaseBundleRegistrar = registerJoinReleaseBundle
 
+// joinPrivateAddressLookup is a DNS seam for CLI tests. Production skip mode
+// resolves the manifest's stable private names without contacting fleet peers.
+var joinPrivateAddressLookup = net.DefaultResolver.LookupIP
+
 func defaultAnsiblePlaybookRunner(ctx context.Context, workingDir string, args []string) error {
 	cmd := exec.CommandContext(ctx, "ansible-playbook", args...)
 	cmd.Dir = workingDir
@@ -614,8 +618,16 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if err != nil {
 		return 1, fmt.Errorf("render temporary inventory: %w", err)
 	}
+	if opts.SkipFleetPreflight {
+		privateAddresses, resolveErr := resolveJoinPrivateAddresses(ctx, m, joinPrivateAddressLookup)
+		if resolveErr != nil {
+			return 3, fmt.Errorf("resolve private addresses for skipped fleet preflight: %w", resolveErr)
+		}
+		seedJoinPrivateAddressFacts(files, privateAddresses)
+	}
 	for i := range files {
-		if filepath.Base(files[i].Path) == opts.Node+".yml" {
+		base := filepath.Base(files[i].Path)
+		if base == opts.Node+".yml" {
 			files[i].Body = overrideJoinHostVars(files[i].Body, opts)
 		}
 		if err := writeGeneratedAnsibleFile(files[i].Path, files[i].Body, true); err != nil {
@@ -1117,6 +1129,66 @@ func overrideJoinHostVars(body []byte, opts *deployJoinOptions) []byte {
 		lines = append(lines, "ansible_ssh_common_args: "+yamlQuote("-o UserKnownHostsFile="+opts.SSHKnownHostsFile+" -o StrictHostKeyChecking=yes"))
 	}
 	return []byte(strings.Join(lines, "\n"))
+}
+
+// resolveJoinPrivateAddresses supplies the host facts that a complete-fleet
+// preflight would normally gather. Skip mode is used by a fresh workflow
+// process, so Ansible's ephemeral fact cache cannot be assumed to exist. The
+// stable private names in the signed manifest remain the source of truth: each
+// one must resolve to exactly one IPv4 address inside the declared overlay.
+// This performs DNS lookups only and never connects to an offline peer.
+func resolveJoinPrivateAddresses(
+	ctx context.Context,
+	m *manifest.Manifest,
+	lookup func(context.Context, string, string) ([]net.IP, error),
+) (map[string]string, error) {
+	_, overlay, err := net.ParseCIDR(strings.TrimSpace(m.Overlay.CIDR))
+	if err != nil {
+		return nil, fmt.Errorf("overlay CIDR %q: %w", m.Overlay.CIDR, err)
+	}
+
+	resolved := make(map[string]string, len(m.Fleet.Hosts))
+	for _, host := range m.Fleet.Hosts {
+		address, _, err := manifest.ParseHostPort(host.Address)
+		if err != nil {
+			return nil, fmt.Errorf("host %s: %w", host.Name, err)
+		}
+		if ip := net.ParseIP(address); ip != nil {
+			continue
+		}
+
+		ips, err := lookup(ctx, "ip4", address)
+		if err != nil {
+			return nil, fmt.Errorf("host %s private name %s: %w", host.Name, address, err)
+		}
+		unique := make(map[string]struct{}, len(ips))
+		for _, candidate := range ips {
+			ip := candidate.To4()
+			if ip == nil {
+				continue
+			}
+			if !overlay.Contains(ip) {
+				return nil, fmt.Errorf("host %s private name %s resolved outside overlay %s: %s", host.Name, address, m.Overlay.CIDR, ip)
+			}
+			unique[ip.String()] = struct{}{}
+		}
+		if len(unique) != 1 {
+			return nil, fmt.Errorf("host %s private name %s resolved to %d distinct IPv4 addresses inside overlay; want exactly 1", host.Name, address, len(unique))
+		}
+		for ip := range unique {
+			resolved[host.Name] = ip
+		}
+	}
+	return resolved, nil
+}
+
+func seedJoinPrivateAddressFacts(files []manifestAnsibleFile, addresses map[string]string) {
+	for i := range files {
+		host := strings.TrimSuffix(filepath.Base(files[i].Path), ".yml")
+		if address := addresses[host]; address != "" {
+			files[i].Body = append(files[i].Body, []byte(fmt.Sprintf("faas_private_address: %q\n", address))...)
+		}
+	}
 }
 
 func hasComputeDatabaseEnv(path string) bool {
