@@ -57,10 +57,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type buildResult struct {
+	deploymentID string
+	buildID      string
+	slug         string
+}
 
 // TestBuildMetal exercises the M6 §14 orchestrator path for one app per
 // framework. Each subtest is independent — fresh app + fresh account +
@@ -102,6 +109,7 @@ func TestBuildMetal(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
+	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
 	h := e2etest.Start(t, pool, e2etest.All)
 
 	// One account, three apps (one per framework). Each subtest mints its
@@ -110,21 +118,24 @@ func TestBuildMetal(t *testing.T) {
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 
 	t.Run("node-tarball", func(t *testing.T) {
-		buildID := runBuildSubtest(t, h, pool, key, "nodeapp", "node-app", NodeFixture(t), false)
-		assertOCIImage(t, h, buildID)
+		result := runBuildSubtest(t, h, pool, key, "nodeapp", "node-app", NodeFixture(t), false)
+		assertHostingRuntime(t, h, pool, result, "node", "hello from faas (node fixture)\n")
+		assertOCIImage(t, h, result.buildID)
 	})
 	t.Run("python-tarball", func(t *testing.T) {
-		runBuildSubtest(t, h, pool, key, "pyapp", "python-app", PythonFixture(t), false)
+		result := runBuildSubtest(t, h, pool, key, "pyapp", "python-app", PythonFixture(t), false)
+		assertHostingRuntime(t, h, pool, result, "python", "hello from faas (python fixture)\n")
 	})
 	t.Run("dockerfile-tarball", func(t *testing.T) {
-		buildID := runBuildSubtest(t, h, pool, key, "dfapp", "dockerfile-app", DockerfileFixture(t), true)
+		result := runBuildSubtest(t, h, pool, key, "dfapp", "dockerfile-app", DockerfileFixture(t), true)
+		assertHostingRuntime(t, h, pool, result, "docker", "hello from faas (dockerfile fixture)\n")
 		// ADR-004: the dockerfile path must dispatch to buildctl
 		// --frontend dockerfile (NOT railpack). guest-init tail-captures
 		// the last 64 KiB of build stdout into BuildDone.LogTail; the
 		// buildctl CLI prints "[+] Building …" lines on its way to
 		// loading the dockerfile frontend, so a substring match
 		// distinguishes it from a Railpack-only run.
-		assertBuildDoneSubstring(t, h, buildID, "buildctl")
+		assertBuildDoneSubstring(t, h, result.buildID, "buildctl")
 	})
 	t.Run("go124-tarball", func(t *testing.T) {
 		// Railpack `--plan go` path. The detector sees go.mod at the
@@ -132,9 +143,10 @@ func TestBuildMetal(t *testing.T) {
 		// guest-init runs `railpack build <out> --plan go`. The build
 		// log carries the railpack binary's stdout (which echoes the
 		// plan name), so a substring match pins the dispatch.
-		buildID := runBuildSubtest(t, h, pool, key, "goapp", "go-app", GoFixture(t), false)
-		assertBuildDoneSubstring(t, h, buildID, "railpack")
-		assertOCIImage(t, h, buildID)
+		result := runBuildSubtest(t, h, pool, key, "goapp", "go-app", GoFixture(t), false)
+		assertHostingRuntime(t, h, pool, result, "go", "hello from faas (go fixture)\n")
+		assertBuildDoneSubstring(t, h, result.buildID, "railpack")
+		assertOCIImage(t, h, result.buildID)
 	})
 	t.Run("go124-dockerfile-tarball", func(t *testing.T) {
 		// Multi-stage scratch build via buildctl — exercises the
@@ -142,8 +154,9 @@ func TestBuildMetal(t *testing.T) {
 		// Dockerfile carries the go build + scratch copy; buildctl
 		// produces the OCI image. Same substring check as the
 		// dockerfile-tarball subtest above.
-		buildID := runBuildSubtest(t, h, pool, key, "godfapp", "go-dockerfile-app", GoDockerfileFixture(t), true)
-		assertBuildDoneSubstring(t, h, buildID, "buildctl")
+		result := runBuildSubtest(t, h, pool, key, "godfapp", "go-dockerfile-app", GoDockerfileFixture(t), true)
+		assertHostingRuntime(t, h, pool, result, "docker", "hello from faas (go dockerfile fixture)\n")
+		assertBuildDoneSubstring(t, h, result.buildID, "buildctl")
 	})
 	t.Run("go124-alpine-tarball", func(t *testing.T) {
 		// Tier 2 PR: go124-alpine reuses the go124 dispatch path with
@@ -159,8 +172,9 @@ func TestBuildMetal(t *testing.T) {
 		// drops the alpine arm from baseRefFor / buildFunctionLayer
 		// surfaces as a deployment status of DeployFailed with
 		// `unsupported runtime: go124-alpine` in the error.
-		buildID := runBuildSubtest(t, h, pool, key, "goalpapp", "go-alpine-app", GoAlpineDockerfileFixture(t), true)
-		assertBuildDoneSubstring(t, h, buildID, "buildctl")
+		result := runBuildSubtest(t, h, pool, key, "goalpapp", "go-alpine-app", GoAlpineDockerfileFixture(t), true)
+		assertHostingRuntime(t, h, pool, result, "docker", "hello from faas (go dockerfile fixture)\n")
+		assertBuildDoneSubstring(t, h, result.buildID, "buildctl")
 	})
 }
 
@@ -187,17 +201,17 @@ func TestBuildMetal(t *testing.T) {
 // (pkg/builderd/dispatch.go) routes to api.FrameworkDockerfile and the
 // in-VM dispatcher invokes buildctl --frontend dockerfile (ADR-004).
 //
-// Returns the buildID so callers can post-inspect the produced OCI
-// tarball at <TmpDir>/out/<build_id>/build/out/image.tar (the
-// oci-image-is-tarball subtest) or read build-done.json (the
-// buildctl-substring assertion).
-func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug, _ string, sourceTar []byte, isDockerfile bool) string {
+// Returns deployment and build IDs so callers can inspect the durable
+// hosting receipt, the routed response, the produced OCI tarball at
+// <TmpDir>/out/<build_id>/build/out/image.tar, or build-done.json.
+func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug, _ string, sourceTar []byte, isDockerfile bool) buildResult {
 	t.Helper()
 	store := state.NewPgStore(pool)
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 
-	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app"}); got != http.StatusCreated {
+	public := false
+	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &public}); got != http.StatusCreated {
 		t.Fatalf("create app %s: status=%d", slug, got)
 	}
 	appID := mustGetAppID(t, h, key, slug)
@@ -268,7 +282,47 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, 
 	if dep.AppID != appID {
 		t.Errorf("deployment.AppID = %s, want %s", dep.AppID, appID)
 	}
-	return buildID
+	return buildResult{deploymentID: depID, buildID: buildID, slug: slug}
+}
+
+// assertHostingRuntime closes the runtime-matrix loop after the deployment
+// reaches Live: the durable receipt must prove post-readiness smoke, and a
+// routed anonymous request must return the fixture response. Keeping this
+// assertion next to the build test makes a green result mean build + boot +
+// readiness + public request, rather than only an OCI export.
+func assertHostingRuntime(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, result buildResult, wantFramework, wantBody string) {
+	t.Helper()
+	dep, err := state.NewPgStore(pool).DeploymentByID(context.Background(), result.deploymentID)
+	if err != nil {
+		t.Fatalf("deployment %s: %v", result.deploymentID, err)
+	}
+	receipt, err := apihostingreceipt.Decode(dep.APIHostingReceipt)
+	if err != nil {
+		t.Fatalf("deployment %s hosting receipt: %v", result.deploymentID, err)
+	}
+	if receipt.DeploymentID != dep.ID {
+		t.Fatalf("hosting receipt deployment_id=%q, want %q", receipt.DeploymentID, dep.ID)
+	}
+	if receipt.Profile.Framework != wantFramework {
+		t.Fatalf("hosting profile framework=%q, want %q (profile=%+v)", receipt.Profile.Framework, wantFramework, receipt.Profile)
+	}
+	if receipt.Smoke.Status != apihostingreceipt.SmokeVerified || receipt.Smoke.StatusCode < http.StatusOK || receipt.Smoke.StatusCode >= http.StatusMultipleChoices {
+		t.Fatalf("hosting smoke=%+v, want verified 2xx", receipt.Smoke)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	url := gatewayAppURL(h, result.slug)
+	if err := e2etest.WaitForHTTPReady(ctx, t, h.HTTPClient(), url, 5*time.Second); err != nil {
+		t.Fatalf("gateway route for %s: %v", result.slug, err)
+	}
+	body, status := doGetWithHost(t, h.HTTPClient(), url, result.slug+".apps.test.example", 30*time.Second)
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		t.Fatalf("public request for %s: status=%d body=%s", result.slug, status, body)
+	}
+	if wantBody != "" && string(body) != wantBody {
+		t.Fatalf("public response for %s=%q, want %q", result.slug, body, wantBody)
+	}
 }
 
 // assertOCIImage opens the OCI tarball at
