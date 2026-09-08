@@ -448,7 +448,26 @@ jobs:
           echo "RUNTIME_SOURCE_SHA=$RUNTIME_SOURCE_SHA" >> "$GITHUB_ENV"
           echo "materialized release runtime-base contract from source $RUNTIME_SOURCE_SHA"
 
+      - name: Reuse a prior signed Firecracker kernel
+        id: reuse_kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_SHA: ${{ github.sha }}
+          KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+        run: |
+          set -euo pipefail
+          if scripts/reuse-release-kernel.sh \
+            --git-sha "$GIT_SHA" \
+            --output "$KERNEL_FILE"; then
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            [[ "$status" == 3 ]] || exit "$status"
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build release-pinned Firecracker kernel
+        if: steps.reuse_kernel.outputs.reused != 'true'
         env:
           KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
         run: |
@@ -460,6 +479,12 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             bc bison build-essential cpio flex file kmod libelf-dev libssl-dev xz-utils
           scripts/build-firecracker-kernel.sh --output "$KERNEL_FILE"
+
+      - name: Record release kernel digest
+        env:
+          KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+        run: |
+          set -euo pipefail
           KERNEL_DIGEST="$(sha256sum "$KERNEL_FILE" | awk '{print $1}')"
           echo "KERNEL_DIGEST=$KERNEL_DIGEST" >> "$GITHUB_ENV"
           echo "release kernel digest=$KERNEL_DIGEST"
