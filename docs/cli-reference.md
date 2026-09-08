@@ -781,7 +781,7 @@ Show durable TLS status for all domains
 
 Sync the dirty working tree to a stable remote developer environment
 
-`gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--once] [--stop] [--no-logs]`
+`gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--once] [--stop] [--no-logs] [--open]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -791,6 +791,7 @@ Sync the dirty working tree to a stable remote developer environment
 | `--once` | deploy once and exit |  |
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
+| `--open` | open the developer environment URL after the first live sync |  |
 
 ### dev status
 
