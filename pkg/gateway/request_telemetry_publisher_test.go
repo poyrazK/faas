@@ -3,14 +3,14 @@
 //
 // The PR-A pass-through behavior is gone: every row drained from the
 // recorder is now collapsed by
-// (app_id, deployment_id, route, method, status, minute_bucket) into
-// one row with Count = the number of originals that folded into the
-// bucket. These tests pin the shape:
+// (app_id, deployment_id, route, method, status, dimensions,
+// minute_bucket, latency_bucket) into one row with Count = the number
+// of originals that folded into the bucket. These tests pin the shape:
 //
-//   - 1000 identical rows → 1 collapsed row with Count=1000
+//   - 1000 rows in one latency bucket → 1 collapsed row with Count=1000
 //   - 2 distinct routes → 2 collapsed rows with Count=100 each
 //   - rows straddling a minute boundary DO NOT fold together
-//   - LatencyMS in the aggregate is the MAX within the bucket
+//   - latency buckets preserve distinct portions of the distribution
 //   - ColdBoot OR: any cold row in the bucket → ColdBoot=true
 //   - TraceID: first non-empty wins
 //   - ReceivedAt is truncated to the minute bucket boundary
@@ -57,13 +57,12 @@ func TestCollapseRequestTelemetry_BulkFoldsIntoOneBucket(t *testing.T) {
 	appID := uuid.New()
 	deployID := uuid.New()
 	accountID := uuid.New()
-	// All 1000 rows land in the same minute bucket — same
-	// (app, deploy, route, method, status) tuple.
+	// All 1000 rows land in the same minute and latency bucket.
 	base := time.Date(2026, 8, 24, 18, 42, 7, 0, time.UTC)
 	rows := make([]RequestTelemetryRow, 1000)
 	for i := range rows {
 		rows[i] = makeCollapseRow(accountID, appID, deployID,
-			"GET /v1/checkout/{id}", "GET", 200, 12+i%50, false,
+			"GET /v1/checkout/{id}", "GET", 200, 12+i%5, false,
 			"trace"+uuid.NewString()[:8], base.Add(time.Duration(i)*time.Millisecond))
 	}
 
@@ -74,9 +73,8 @@ func TestCollapseRequestTelemetry_BulkFoldsIntoOneBucket(t *testing.T) {
 	if got, want := collapsed[0].Count, 1000; got != want {
 		t.Errorf("Count = %d, want %d", got, want)
 	}
-	// LatencyMS is the MAX within the bucket (worst-case).
-	if got, want := collapsed[0].LatencyMS, 12+49; got != want {
-		t.Errorf("LatencyMS = %d, want %d (max within bucket)", got, want)
+	if got, want := collapsed[0].LatencyMS, 20; got != want {
+		t.Errorf("LatencyMS = %d, want %d (latency bucket upper bound)", got, want)
 	}
 	if collapsed[0].ColdBoot {
 		t.Errorf("ColdBoot = true, want false (no cold row in bucket)")
@@ -84,6 +82,88 @@ func TestCollapseRequestTelemetry_BulkFoldsIntoOneBucket(t *testing.T) {
 	// ReceivedAt truncated to the minute boundary.
 	if got, want := collapsed[0].ReceivedAt, base.Truncate(time.Minute); got != want {
 		t.Errorf("ReceivedAt = %v, want %v", got, want)
+	}
+}
+
+func TestCollapseRequestTelemetry_PreservesLatencyDistribution(t *testing.T) {
+	t.Parallel()
+	appID := uuid.New()
+	deployID := uuid.New()
+	accountID := uuid.New()
+	base := time.Date(2026, 8, 24, 18, 42, 0, 0, time.UTC)
+	rows := make([]RequestTelemetryRow, 0, 100)
+	for i := 0; i < 95; i++ {
+		rows = append(rows, makeCollapseRow(accountID, appID, deployID,
+			"GET /v1/foo", "GET", 200, 20, false, "", base))
+	}
+	for i := 0; i < 5; i++ {
+		rows = append(rows, makeCollapseRow(accountID, appID, deployID,
+			"GET /v1/foo", "GET", 200, 800, false, "", base))
+	}
+
+	collapsed := collapseRequestTelemetry(rows)
+	if got, want := len(collapsed), 2; got != want {
+		t.Fatalf("len(collapsed) = %d, want %d latency buckets", got, want)
+	}
+	counts := make(map[int]int)
+	for _, row := range collapsed {
+		counts[row.LatencyMS] = row.Count
+	}
+	if got, want := counts[20], 95; got != want {
+		t.Errorf("20ms bucket count = %d, want %d", got, want)
+	}
+	if got, want := counts[800], 5; got != want {
+		t.Errorf("800ms bucket count = %d, want %d", got, want)
+	}
+}
+
+func TestRequestTelemetryLatencyBucketUpperBound(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		latency, want int
+	}{
+		{0, 0},
+		{1, 10},
+		{10, 10},
+		{11, 20},
+		{999, 1_000},
+		{1_001, 1_050},
+		{5_001, 5_250},
+		{10_001, 11_000},
+		{30_001, 35_000},
+	}
+	for _, tc := range cases {
+		if got := requestTelemetryLatencyBucketUpperBound(tc.latency); got != tc.want {
+			t.Errorf("requestTelemetryLatencyBucketUpperBound(%d) = %d, want %d", tc.latency, got, tc.want)
+		}
+	}
+}
+
+func TestCollapseRequestTelemetry_LatencyCardinalityIsBounded(t *testing.T) {
+	t.Parallel()
+	appID := uuid.New()
+	deployID := uuid.New()
+	accountID := uuid.New()
+	base := time.Date(2026, 8, 24, 18, 42, 0, 0, time.UTC)
+	rows := make([]RequestTelemetryRow, 60_000)
+	for i := range rows {
+		rows[i] = makeCollapseRow(accountID, appID, deployID,
+			"GET /v1/foo", "GET", 200, i, false, "", base)
+	}
+
+	collapsed := collapseRequestTelemetry(rows)
+	// A full minute of millisecond values must not become one row per
+	// request. The configured bucket schedule has fewer than 250 possible
+	// representatives over this range.
+	if len(collapsed) >= 250 {
+		t.Fatalf("len(collapsed) = %d, want fewer than 250 bounded latency buckets", len(collapsed))
+	}
+	var represented int
+	for _, row := range collapsed {
+		represented += row.Count
+	}
+	if represented != len(rows) {
+		t.Fatalf("represented request count = %d, want %d", represented, len(rows))
 	}
 }
 

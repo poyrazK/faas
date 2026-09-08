@@ -19,9 +19,10 @@
 // Cardinality discipline lands HERE, not in the recorder. Before
 // shipping, the publisher collapses burst traffic by
 // (app_id, deployment_id, route, status, analytics dimensions,
-// minute_bucket) to one
-// representative row + count — so a 1k-RPS endpoint at 100%
-// sampling lands as ~1 row/minute to Postgres instead of ~60k.
+// minute_bucket, latency_bucket) to one representative row + count.
+// The bounded latency bucket is part of the key so percentile queries
+// retain the request-latency distribution instead of seeing one
+// minute-level maximum.
 
 package gateway
 
@@ -306,27 +307,31 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 	}
 }
 
-// collapseRequestTelemetry collapses burst traffic into one row
-// per (app_id, deployment_id, route, method, status, minute_bucket)
-// with a Count field that aggregates the number of original rows
-// that folded into the bucket. Without this collapse, a 1k-RPS
-// endpoint at 100% sampling would land as ~60k rows/minute to
-// Postgres; with it, the same load lands as ~1 row/minute per
-// (route, method, status) tuple.
+// collapseRequestTelemetry collapses burst traffic into one row per
+// (app_id, deployment_id, route, method, status, dimensions,
+// minute_bucket, latency_bucket) with a Count field that aggregates
+// the number of original rows that folded into the bucket. The latency
+// bucket is deliberately part of the key: a single minute-level maximum
+// makes p95/p99 mathematically impossible after collapse. The bounded
+// buckets preserve the distribution with a small, documented quantization
+// error while still keeping storage cardinality bounded.
 //
 // Aggregation rules (PR-B):
 //
 //   - Key tuple: (AccountID, AppID, DeploymentID, Route, Method,
-//     Status, MinuteBucket(received_at)). Minute bucket =
-//     received_at truncated to the minute so all rows within a
-//     60-second window fold together.
-//   - LatencyMS in the aggregate: the MAX within the bucket.
-//     Worst-case-latency-is-the-shape-the-regression-detector-compares
-//     — picking max means a single 800ms outlier doesn't get washed
-//     into the median of 12ms. ADR-127 §Decision 5: the regression
-//     detector fires when p95 > p95_base * 1.20; the max-leaning
-//     bias inside the bucket does not skew the percentile_cont()
-//     output (which is computed across rows, not within a row).
+//     Status, normalized dimensions, MinuteBucket(received_at),
+//     LatencyBucket(LatencyMS)). Minute bucket = received_at
+//     truncated to the minute so all rows within a 60-second window
+//     fold together. LatencyBucket uses fine-grained 10ms buckets for
+//     normal request latencies and progressively wider buckets for very
+//     slow requests; the maximum quantization error is bounded by the
+//     selected bucket width.
+//   - LatencyMS in the aggregate: the inclusive upper bound of the
+//     latency bucket. Percentile queries expand Count over these bounded
+//     representatives, so p50/p95/p99 no longer collapse to a weighted
+//     per-minute maximum. Values are conservative by at most one bucket
+//     width, which is preferable to silently reporting a false exact
+//     percentile.
 //   - Count: starts at 1, increments per duplicate key. The
 //     CHECK constraint count >= 1 (migrations/00428) keeps a
 //     bug from persisting zero.
@@ -362,18 +367,20 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 	out := make([]RequestTelemetryRow, 0, len(rows)/4+1)
 	for _, row := range rows {
 		row.Count = normalizedRequestTelemetryCount(row.Count)
+		row.LatencyMS = requestTelemetryLatencyBucketUpperBound(row.LatencyMS)
 		bucket := row.ReceivedAt.Truncate(time.Minute)
 		key := bucketKey{
-			AccountID:    row.AccountID,
-			AppID:        row.AppID,
-			DeploymentID: row.DeploymentID,
-			Route:        row.Route,
-			Method:       row.Method,
-			Status:       row.Status,
-			UAFamily:     row.UAFamily,
-			ReferrerHost: row.ReferrerHost,
-			Country:      row.Country,
-			bucket:       bucket,
+			AccountID:     row.AccountID,
+			AppID:         row.AppID,
+			DeploymentID:  row.DeploymentID,
+			Route:         row.Route,
+			Method:        row.Method,
+			Status:        row.Status,
+			UAFamily:      row.UAFamily,
+			ReferrerHost:  row.ReferrerHost,
+			Country:       row.Country,
+			LatencyBucket: row.LatencyMS,
+			bucket:        bucket,
 		}.String()
 		idx, ok := bucketIdx[key]
 		if !ok {
@@ -384,10 +391,6 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 		}
 		agg := &out[idx]
 		agg.Count += row.Count
-		// Worst-case latency wins.
-		if row.LatencyMS > agg.LatencyMS {
-			agg.LatencyMS = row.LatencyMS
-		}
 		// Cold-boot OR.
 		if row.ColdBoot {
 			agg.ColdBoot = true
@@ -405,16 +408,17 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 // reader; the apid receiver never sees bucketKey, only the resulting
 // RequestTelemetryRow.
 type bucketKey struct {
-	AccountID    uuid.UUID
-	AppID        uuid.UUID
-	DeploymentID uuid.UUID
-	Route        string
-	Method       string
-	Status       int
-	UAFamily     string
-	ReferrerHost string
-	Country      string
-	bucket       time.Time
+	AccountID     uuid.UUID
+	AppID         uuid.UUID
+	DeploymentID  uuid.UUID
+	Route         string
+	Method        string
+	Status        int
+	UAFamily      string
+	ReferrerHost  string
+	Country       string
+	LatencyBucket int
+	bucket        time.Time
 }
 
 func (k bucketKey) String() string {
@@ -423,8 +427,49 @@ func (k bucketKey) String() string {
 	// encoding if the profiler flags it. (Profile showed < 1%
 	// of publisher CPU before the collapse; even at 2x with the
 	// canonical string we're well under 2%.)
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%d",
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%d|%d",
 		k.AccountID, k.AppID, k.DeploymentID,
 		k.Route, k.Method, k.Status, k.UAFamily, k.ReferrerHost,
-		k.Country, k.bucket.Unix())
+		k.Country, k.LatencyBucket, k.bucket.Unix())
+}
+
+// requestTelemetryLatencyBucketUpperBound quantizes a request latency to a
+// bounded histogram representative. The SQL percentile queries treat each
+// stored row as Count requests at this representative value. Narrow buckets
+// cover normal request latencies; wider buckets keep pathological outliers
+// from creating unbounded row cardinality.
+//
+// The function is monotonic and idempotent at bucket boundaries, which is
+// important during rolling upgrades when an already-collapsed row is received
+// by a newer gateway publisher.
+func requestTelemetryLatencyBucketUpperBound(latencyMS int) int {
+	if latencyMS <= 0 {
+		return 0
+	}
+	width := 10
+	switch {
+	case latencyMS <= 1_000:
+		width = 10
+	case latencyMS <= 5_000:
+		width = 50
+	case latencyMS <= 10_000:
+		width = 250
+	case latencyMS <= 30_000:
+		width = 1_000
+	default:
+		width = 5_000
+	}
+	rem := latencyMS % width
+	if rem == 0 {
+		return latencyMS
+	}
+	// Protect the addition for the theoretical int overflow case. The
+	// database/protobuf path already bounds values to int32; returning the
+	// original value is least surprising if an int-sized value reaches this
+	// helper in a unit test.
+	maxInt := int(^uint(0) >> 1)
+	if latencyMS > maxInt-(width-rem) {
+		return latencyMS
+	}
+	return latencyMS + (width - rem)
 }

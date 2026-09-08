@@ -73,12 +73,12 @@ type IncrementRequestTelemetryRequest struct {
 	// customer. Must be 100..599 (the migration CHECK rejects
 	// anything else).
 	HttpStatus int32 `protobuf:"varint,6,opt,name=http_status,json=httpStatus,proto3" json:"http_status,omitempty"`
-	// latency_ms — the bucket's representative latency (max within
-	// the minute, mirrors what the regression detector compares
-	// against baseline). Wall-clock from Handler.ServeHTTP entry
-	// to observe exit for the FIRST row that populated the bucket;
-	// subsequent rows fold in via the publisher's collapse
-	// aggregate.
+	// latency_ms — the inclusive upper bound of the bounded latency
+	// bucket represented by this row. The publisher includes the
+	// bucket in its collapse key so percentile queries retain the
+	// latency distribution rather than collapsing to one minute-level
+	// maximum. Wall-clock from Handler.ServeHTTP entry to observe exit
+	// for the original requests represented by count.
 	LatencyMs int32 `protobuf:"varint,7,opt,name=latency_ms,json=latencyMs,proto3" json:"latency_ms,omitempty"`
 	// cold_boot — true when ANY of the rows that folded into this
 	// bucket was a cold-boot wake. The publisher's collapse
