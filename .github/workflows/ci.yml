@@ -158,6 +158,14 @@ jobs:
           restore-keys: |
             go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-lint-${{ runner.os }}-
+      # S4 PR-4a advisory: a useful regression pin should fail on the
+      # merge-base. This report is intentionally non-blocking while the
+      # repository accumulates baseline coverage; the table identifies tests
+      # that are absent or already passing on the base.
+      - name: advisory regression pin report
+        run: make regression-pin-check
+      - name: regression-pin checker tests
+        run: make regression-pin-check-test
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
         with:

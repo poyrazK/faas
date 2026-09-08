@@ -238,6 +238,14 @@ fix-has-test-check: ## Require fix-shaped pull requests to change a Go regressio
 fix-has-test-check-test: ## Exercise the fix-has-test CI gate with synthetic pull request events
 	bash scripts/ci/check_fix_has_test_test.sh
 
+.PHONY: regression-pin-check
+regression-pin-check: ## Report whether changed tests fail on the pull request base (advisory, issue #1529 / PR-4a)
+	bash scripts/ci/check_regression_pin.sh
+
+.PHONY: regression-pin-check-test
+regression-pin-check-test: ## Exercise the advisory regression-pin report with synthetic pull request events
+	bash scripts/ci/check_regression_pin_test.sh
+
 .PHONY: spec-cited-tests-check
 spec-cited-tests-check: ## Require changed core-path tests to cite a spec section or ADR (issue #1529 / PR-4b)
 	bash scripts/ci/check_spec_cited_tests.sh
