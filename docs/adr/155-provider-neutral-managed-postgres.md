@@ -233,6 +233,14 @@ lease and idempotency boundaries without writing a customer secret. The
 customer provisioning gate remains dark until an operator reviews both the
 provider and lifecycle reports.
 
+The qualification command emits a versioned, non-secret approval artifact
+bound to the report SHA-256, backend placement fingerprint, expiry, and canary
+allowlist. `managed-postgres-qualify --verify` performs a read-only check of
+that artifact against the configured single default backend and returns stable
+readiness reasons; it never contacts the provider or enables provisioning.
+This removes manual backend/fingerprint copy errors while preserving the
+explicit staging-only gate.
+
 ## Staging canary account follow-up
 
 The staging rollout can be narrowed without changing the provider-neutral

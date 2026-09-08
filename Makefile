@@ -1005,6 +1005,10 @@ object-storage-qualify: ## Operator-only: run the opt-in live object-storage pro
 managed-postgres-qualify: ## Operator-only: run the explicit staging managed PostgreSQL provider qualification
 	@$(GO) run ./cmd/managed-postgres-qualify
 
+.PHONY: managed-postgres-qualify-verify
+managed-postgres-qualify-verify: ## Operator-only: verify a saved staging managed PostgreSQL qualification approval
+	@$(GO) run ./cmd/managed-postgres-qualify --verify
+
 .PHONY: sdk-gen-node
 sdk-gen-node: ## Regenerate sdk/node/src/generated from api/openapi.yaml
 	@cd sdk/node && npm run gen
