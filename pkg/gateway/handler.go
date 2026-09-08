@@ -263,6 +263,11 @@ type App struct {
 	// CrawlerPolicy controls known monitor/crawler requests. Empty is the
 	// backwards-compatible wake policy.
 	CrawlerPolicy string
+	// HealthPath is the monitor-facing health endpoint. Empty defaults to
+	// /healthz. HealthPathWakes is plan-gated by apid and lets the endpoint
+	// fall through to the normal wake path for real probes.
+	HealthPath      string
+	HealthPathWakes bool
 }
 
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
@@ -683,6 +688,10 @@ type Handler struct {
 	// headWakes is the process-wide opt-in for legacy HEAD wake behaviour;
 	// an App.HeadWakes value can enable it for one app.
 	headWakes bool
+	// healthState stores the last known wake outcome per app. It is deliberately
+	// process-local: a restarted gateway fails closed until it observes a live
+	// target or a successful wake.
+	healthState sync.Map
 	// mirrorRoundTripper (issue #72 / ADR-124 PR-A3) is the
 	// per-request HTTP forwarder the dispatch goroutine uses
 	// to reach the mirror VM. Defaults to
@@ -5427,6 +5436,7 @@ haveApp:
 			// body is recent enough that the customer experience
 			// stays smooth, and the alternative (503) loses both
 			// the request AND the wake budget for nothing.
+			h.markHealthFailure(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
 			}
@@ -5487,7 +5497,9 @@ haveApp:
 		// ensureCapacity returning and our Pick. Surface the observed
 		// (current) HealthyCount so the operator's metrics panel
 		// shows 0 vs the cap (was 1+ microseconds ago).
-		writeWakeError(w, api.ErrAppConcurrencyReached(limits, h.backend.HealthyCount(app.ID)))
+		wakeErr := api.ErrAppConcurrencyReached(limits, h.backend.HealthyCount(app.ID))
+		h.markHealthFailure(app.ID, wakeErr)
+		writeWakeError(w, wakeErr)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -5511,6 +5523,9 @@ haveApp:
 	}
 	defer vmRelease()
 	target := pick.Target
+	// A selected target proves the app is live, including a newly completed
+	// wake. Health probes can reuse this state while the app later parks.
+	h.markHealthReady(app.ID)
 	// A coalesced wake can return several VMs. Correlate this newly woken
 	// request with the selected VM, while keeping ordinary warm responses
 	// free of cached historical wake IDs.

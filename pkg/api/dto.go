@@ -53,6 +53,12 @@ type CreateAppRequest struct {
 	// to wake; cached serves an existing edge cache and never wakes; block
 	// returns 503 + Retry-After.
 	CrawlerPolicy string `json:"crawler_policy,omitempty"`
+	// HealthPath selects the monitor-facing health endpoint. Empty uses
+	// /healthz. The gateway answers this path from the last known wake state
+	// unless HealthPathWakes is enabled.
+	HealthPath string `json:"health_path,omitempty"`
+	// HealthPathWakes opts Pro/Scale apps into waking for health probes.
+	HealthPathWakes bool `json:"health_path_wakes,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -191,6 +197,12 @@ type UpdateAppRequest struct {
 	// CrawlerPolicy changes the known monitor/crawler wake policy. Nil is
 	// unchanged; an empty string restores the default wake policy.
 	CrawlerPolicy *string `json:"crawler_policy,omitempty"`
+	// HealthPath replaces the monitor-facing health endpoint. Nil is
+	// unchanged; an empty string restores /healthz.
+	HealthPath *string `json:"health_path,omitempty"`
+	// HealthPathWakes controls whether health probes may wake the app. Nil is
+	// unchanged; enabling it is restricted to Pro/Scale.
+	HealthPathWakes *bool `json:"health_path_wakes,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get

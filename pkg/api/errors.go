@@ -489,6 +489,10 @@ const (
 	// Retry-After BEFORE auth, BEFORE wake. Distinct from
 	// CodeEdgeRuleMaintenance (the per-route fine-grained kind).
 	CodeAppMaintenance = "app_maintenance_mode"
+	// CodeAppHealthUnavailable is the edge-only 503 returned when the last
+	// known wake did not leave a live instance. The health endpoint never
+	// wakes an app unless the per-app opt-in is enabled.
+	CodeAppHealthUnavailable = "app_health_unavailable"
 	// CodeAdmissionRefused marks a wake that schedd refused because
 	// the account's current-month overage cents met/exceeded
 	// accounts.overage_cap_cents (issue #561 / PR-XXX). Distinct
@@ -1149,6 +1153,10 @@ const (
 	// override path).
 	CodePlanRouteMetricsNotAllowed = "plan_route_metrics_not_allowed"
 
+	// M2 monitor-aware health path: real health probes may wake only Pro/Scale
+	// apps. The default edge answer is available on every plan.
+	CodePlanHealthPathWakesNotAllowed = "plan_health_path_wakes_not_allowed"
+
 	// Issue #470 / ADR-055: out-of-range warm-snapshot threshold
 	// values from a PATCH (warm_snapshot_min_requests outside [1,
 	// 100] or warm_snapshot_min_ms outside [100, 60000]). 422 with
@@ -1581,7 +1589,7 @@ const MaxOrgSlugLen = 32
 func StatusForCode(code string) int {
 	switch code {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
-		CodePlanPublicAuthIPAllowlistNotAllowed:
+		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited:
 		return http.StatusTooManyRequests
@@ -1598,7 +1606,7 @@ func StatusForCode(code string) int {
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
 	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
-		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeMirrorSlotAtCapacity:
+		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding

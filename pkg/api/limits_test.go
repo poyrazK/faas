@@ -2478,6 +2478,22 @@ func TestPlanWebSocketEnabled_UnknownFailsClosed(t *testing.T) {
 	}
 }
 
+func TestPlanHealthPathWakesAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		plan Plan
+		want bool
+	}{
+		{PlanFree, false}, {PlanHobby, false}, {PlanPro, true}, {PlanScale, true},
+	} {
+		if got := tc.plan.HealthPathWakesAllowed(); got != tc.want {
+			t.Errorf("%s.HealthPathWakesAllowed() = %v, want %v", tc.plan, got, tc.want)
+		}
+	}
+	if Plan("unknown").HealthPathWakesAllowed() {
+		t.Fatal("unknown plan must fail closed")
+	}
+}
+
 // TestPlanPerAppMetricsAllowed pins the per-plan gate that apid's
 // per-app observability handlers consult
 // (cmd/apid/handlers_metrics.go +

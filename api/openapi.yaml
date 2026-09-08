@@ -14483,6 +14483,14 @@ components:
           enum: [wake, cached, block]
           default: wake
           description: "Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the wake."
+        health_path:
+          type: string
+          default: /healthz
+          description: "Monitor-facing health path. Empty/omitted uses /healthz."
+        health_path_wakes:
+          type: boolean
+          default: false
+          description: "Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer."
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -14659,6 +14667,12 @@ components:
           type: [string, "null"]
           enum: [wake, cached, block, null]
           description: "Policy for known monitor/crawler requests. Omit for no change."
+        health_path:
+          type: [string, "null"]
+          description: "Monitor-facing health path. Omit for no change; empty resets to /healthz."
+        health_path_wakes:
+          type: [boolean, "null"]
+          description: "Allow health probes to wake the app. Omit for no change; Pro/Scale only when true."
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -15103,6 +15117,14 @@ components:
           enum: [wake, cached, block]
           default: wake
           description: "Effective policy for known monitor/crawler requests."
+        health_path:
+          type: string
+          default: /healthz
+          description: "Monitor-facing health path."
+        health_path_wakes:
+          type: boolean
+          default: false
+          description: "Whether health probes may wake this app."
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."

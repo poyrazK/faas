@@ -217,7 +217,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	favicon, robotsTxt, headWakes, crawlerPolicy := edgeAnswersFromManifest(app.Manifest)
+	favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
 	return gateway.App{
 		ID:                 app.ID,
 		AccountID:          acct.ID,
@@ -284,6 +284,8 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		RobotsTxt:          robotsTxt,
 		HeadWakes:          headWakes,
 		CrawlerPolicy:      crawlerPolicy,
+		HealthPath:         healthPath,
+		HealthPathWakes:    healthPathWakes,
 		PublicAuth: gateway.PublicAuthConfig{
 			Mode:        app.PublicAuthMode,
 			BasicSealed: app.PublicAuthBasicSealed,
@@ -299,8 +301,12 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	}, true, nil
 }
 
-func edgeAnswersFromManifest(manifest state.AppManifest) ([]byte, string, bool, string) {
-	return append([]byte(nil), manifest.Favicon...), manifest.RobotsTxt, manifest.HeadWakes, manifest.CrawlerPolicy
+func edgeAnswersFromManifest(manifest state.AppManifest) ([]byte, string, bool, string, string, bool) {
+	healthPath := manifest.HealthPath
+	if healthPath == "" {
+		healthPath = manifest.Healthz
+	}
+	return append([]byte(nil), manifest.Favicon...), manifest.RobotsTxt, manifest.HeadWakes, manifest.CrawlerPolicy, healthPath, manifest.HealthPathWakes
 }
 
 // appsSuffix normalizes a bare apps domain ("gregale.dev") into the

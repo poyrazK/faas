@@ -118,3 +118,66 @@ func TestHeadWakesOptInFallsThrough(t *testing.T) {
 		t.Fatalf("waking HEAD admits = %d, want 1", got)
 	}
 }
+
+func TestHealthAnswerUsesLastWakeStateWithoutWaking(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/healthz", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("parked health status = %d, want 503", rec.Code)
+	}
+	if rec.Header().Get("X-Faas-Health-Source") != "edge" {
+		t.Fatalf("health source = %q, want edge", rec.Header().Get("X-Faas-Health-Source"))
+	}
+	if got := atomic.LoadInt32(b.Admits()); got != 0 {
+		t.Fatalf("health admits = %d, want 0", got)
+	}
+	if got := testutil.ToFloat64(h.Metrics().healthEdgeAnswered.WithLabelValues("app-1", "unhealthy")); got != 1 {
+		t.Fatalf("health unhealthy metric = %v, want 1", got)
+	}
+}
+
+func TestHealthAnswerRemembersSuccessfulWakeAfterParking(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("wake request status = %d, want 200", rec.Code)
+	}
+	b.mu.Lock()
+	b.targets = nil
+	b.running = false
+	b.mu.Unlock()
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/healthz", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() == "" {
+		t.Fatalf("remembered health = %d %q, want edge 200 body", rec.Code, rec.Body.String())
+	}
+	if got := atomic.LoadInt32(b.Admits()); got != 1 {
+		t.Fatalf("remembered health admits = %d, want 1", got)
+	}
+	if got := testutil.ToFloat64(h.Metrics().healthEdgeAnswered.WithLabelValues("app-1", "healthy")); got != 1 {
+		t.Fatalf("health healthy metric = %v, want 1", got)
+	}
+}
+
+func TestHealthPathWakesFallsThroughToOrigin(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.app.HealthPathWakes = true
+	h.proxyFor = func(addr string, _ int64) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("waking health status = %d, want 200", rec.Code)
+	}
+	if got := atomic.LoadInt32(b.Admits()); got != 1 {
+		t.Fatalf("waking health admits = %d, want 1", got)
+	}
+	if got := testutil.ToFloat64(h.Metrics().healthEdgeAnswered.WithLabelValues("app-1", "healthy")); got != 0 {
+		t.Fatalf("waking health edge metric = %v, want 0", got)
+	}
+}

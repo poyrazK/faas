@@ -662,6 +662,8 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 			RobotsTxt:        a.Manifest.RobotsTxt,
 			HeadWakes:        a.Manifest.HeadWakes,
 			CrawlerPolicy:    a.Manifest.EffectiveCrawlerPolicy(),
+			HealthPath:       effectiveHealthPath(a.Manifest.HealthPath),
+			HealthPathWakes:  a.Manifest.HealthPathWakes,
 		},
 		EgressAllowlist: ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger

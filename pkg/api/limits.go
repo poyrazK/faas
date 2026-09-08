@@ -5054,6 +5054,13 @@ func (p Plan) RouteMetricsResponseAllowed() bool {
 	return l.RouteMetricsEnabled
 }
 
+// HealthPathWakesAllowed reports whether the plan may opt a health endpoint
+// into real probes. Health probes are edge-answered by default; only Pro and
+// Scale can pay for the opt-in wake behaviour.
+func (p Plan) HealthPathWakesAllowed() bool {
+	return p == PlanPro || p == PlanScale
+}
+
 // RouteMetricsPerAppCap is the per-app hard cap on the number of
 // distinct routes admitted into the routeLabelSet (ADR-093 D2). When
 // exceeded, all new routes collapse into the reserved __route_other__

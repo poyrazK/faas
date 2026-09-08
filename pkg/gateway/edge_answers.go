@@ -1,9 +1,13 @@
 package gateway
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // EdgeAnswerKind is the bounded label vocabulary for gateway answers that do
@@ -24,6 +28,60 @@ const (
 
 	defaultRobotsTxt = "User-agent: *\nAllow: /\n"
 )
+
+const defaultHealthPath = "/healthz"
+
+type healthSnapshot struct {
+	ready  bool
+	reason string
+}
+
+func normalizeHealthPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return defaultHealthPath
+	}
+	if path[0] != '/' {
+		return "/" + path
+	}
+	return path
+}
+
+func (h *Handler) markHealthReady(appID string) {
+	if h == nil || appID == "" {
+		return
+	}
+	h.healthState.Store(appID, healthSnapshot{ready: true, reason: "live"})
+}
+
+func (h *Handler) markHealthFailure(appID string, err error) {
+	if h == nil || appID == "" {
+		return
+	}
+	reason := "wake_failed"
+	if prob := api.AsProblem(err); prob != nil && prob.Code != "" {
+		reason = prob.Code
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		reason = "wake_timeout"
+	} else if errors.Is(err, context.Canceled) {
+		reason = "wake_canceled"
+	}
+	h.healthState.Store(appID, healthSnapshot{reason: reason})
+}
+
+func (h *Handler) healthSnapshotFor(app App) healthSnapshot {
+	if h != nil && h.backend != nil && h.backend.HealthyCount(app.ID) > 0 {
+		return healthSnapshot{ready: true, reason: "live"}
+	}
+	if h != nil {
+		if value, ok := h.healthState.Load(app.ID); ok {
+			if snapshot, ok := value.(healthSnapshot); ok {
+				return snapshot
+			}
+		}
+	}
+	return healthSnapshot{reason: "unknown"}
+}
 
 // edgeHeadHeaderCache is intentionally small and process-local. Header values
 // are copied before the origin writer is reused, and only response headers
@@ -104,6 +162,43 @@ func edgeHeadHeaderAllowed(key string) bool {
 func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app App) bool {
 	if h == nil || r == nil {
 		return false
+	}
+
+	if r.URL.Path == normalizeHealthPath(app.HealthPath) && !app.HealthPathWakes {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			return false
+		}
+		snapshot := h.healthSnapshotFor(app)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Faas-Health-Source", "edge")
+		if snapshot.ready {
+			w.Header().Set("Content-Type", "application/json")
+			body := `{"status":"ok","source":"edge"}`
+			w.Header().Set("Content-Length", itoa(uint64(len(body))))
+			w.WriteHeader(http.StatusOK)
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(body))
+			}
+			if h.metrics != nil {
+				h.metrics.ObserveHealthEdgeAnswered(app.ID, "healthy")
+			}
+			return true
+		}
+		reason := snapshot.reason
+		if reason == "" {
+			reason = "unknown"
+		}
+		w.Header().Set("X-Faas-Health-Reason", reason)
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		} else {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+				api.CodeAppHealthUnavailable, "App health is unavailable", "last wake status: "+reason))
+		}
+		if h.metrics != nil {
+			h.metrics.ObserveHealthEdgeAnswered(app.ID, "unhealthy")
+		}
+		return true
 	}
 
 	switch r.URL.Path {

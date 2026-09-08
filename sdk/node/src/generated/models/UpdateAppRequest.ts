@@ -57,6 +57,14 @@ export type UpdateAppRequest = {
    * Policy for known monitor/crawler requests. Omit for no change.
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
+  /**
+   * Monitor-facing health path. Omit for no change; empty resets to /healthz.
+   */
+  health_path?: string | null;
+  /**
+   * Allow health probes to wake the app. Omit for no change; Pro/Scale only when true.
+   */
+  health_path_wakes?: boolean | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.
