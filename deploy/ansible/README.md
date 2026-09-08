@@ -88,6 +88,16 @@ final play restarts and verifies every compute daemon after installation.
 Every unit, drop-in and config task notifies a `try-restart` handler (ADR-143):
 active daemons pick the change up, disabled ones are left alone.
 
+`node_join.yml` fingerprints the bootstrap play, role tree, group variables,
+and pinned collection requirements. After a successful full convergence it
+records that contract on the compute host. A later rollout skips the OS and
+role convergence only when the fingerprint still matches and the KVM device,
+fast-root mount, release link, runtime configuration, and enabled compute
+services are all present and active. Signed release verification, installation,
+manifest rendering, the node doctor, daemon restart, and readiness checks run
+on every rollout. A changed bootstrap source or failed host probe falls back to
+the full convergence path.
+
 ## Configuration contract (ADR-143)
 
 - Systemd units are generated from `pkg/daemonunitspec` into every role's

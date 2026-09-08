@@ -13,10 +13,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -376,8 +378,8 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 			"run complete-fleet preflight unless explicitly skipped",
 			"converge control-plane peer access from the complete manifest",
 			"stage trust material, signed release assets, and manifest",
-			"converge or verify the dedicated XFS fast-root filesystem",
-			"converge the production compute-only Ansible role",
+			"verify the managed-host bootstrap contract and required runtime anchors",
+			"converge the production compute-only Ansible role when that contract is absent or stale",
 			"install the signed release while the database row remains drained",
 			"render configuration, initialize host identity, and unseal supplied backup envelopes",
 			"wait for sockets, gateway, and systemd readiness",
@@ -564,6 +566,10 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		opts.RepoRoot = defaultRepoRoot()
 	}
 	ansibleDir := filepath.Join(opts.RepoRoot, "deploy/ansible")
+	bootstrapContractSHA256, err := joinBootstrapContractHash(ansibleDir)
+	if err != nil {
+		return 3, err
+	}
 	tempRoot, err := os.MkdirTemp("", "gregale-node-join-")
 	if err != nil {
 		return 3, fmt.Errorf("create temporary inventory: %w", err)
@@ -643,29 +649,30 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		return 3, err
 	}
 	vars := map[string]any{
-		"faas_join_inventory_name":           opts.Node,
-		"faas_join_database_node":            report.DatabaseNode,
-		"faas_join_release_git_sha":          report.ReleaseGitSHA,
-		"faas_join_manifest_source":          opts.ManifestFile,
-		"faas_join_bootstrap_binary_source":  opts.BootstrapBinary,
-		"faas_join_cosign_binary_source":     opts.CosignBinary,
-		"faas_join_pki_source":               trustRoot,
-		"faas_join_sign_key_source":          opts.SignKeySource,
-		"faas_join_verify_key_source":        opts.VerifyKeySource,
-		"faas_join_compute_db_env_source":    opts.ComputeDBEnvSource,
-		"faas_join_storage_env_source":       opts.StorageEnvSource,
-		"faas_join_runtime_bases_env_source": opts.RuntimeBasesEnvSource,
-		"faas_join_storage_device":           opts.StorageDevice,
-		"faas_join_format_storage":           opts.FormatStorage,
-		"faas_join_box_age_key_source":       opts.BoxAgeKeySource,
-		"faas_join_rclone_envelope_source":   opts.RcloneEnvelope,
-		"faas_join_archive_envelope_source":  opts.ArchiveEnvelope,
-		"faas_join_node_key_source":          nodeKeySource,
-		"faas_join_node_pub_source":          nodePubSource,
-		"faas_join_release_tarball_source":   opts.ReleaseTarball,
-		"faas_join_release_signature_source": signature,
-		"faas_join_release_sbom_source":      sbom,
-		"faas_join_builder_base_ref":         builderBaseRef,
+		"faas_join_inventory_name":            opts.Node,
+		"faas_join_database_node":             report.DatabaseNode,
+		"faas_join_release_git_sha":           report.ReleaseGitSHA,
+		"faas_join_manifest_source":           opts.ManifestFile,
+		"faas_join_bootstrap_binary_source":   opts.BootstrapBinary,
+		"faas_join_cosign_binary_source":      opts.CosignBinary,
+		"faas_join_pki_source":                trustRoot,
+		"faas_join_sign_key_source":           opts.SignKeySource,
+		"faas_join_verify_key_source":         opts.VerifyKeySource,
+		"faas_join_compute_db_env_source":     opts.ComputeDBEnvSource,
+		"faas_join_storage_env_source":        opts.StorageEnvSource,
+		"faas_join_runtime_bases_env_source":  opts.RuntimeBasesEnvSource,
+		"faas_join_storage_device":            opts.StorageDevice,
+		"faas_join_format_storage":            opts.FormatStorage,
+		"faas_join_box_age_key_source":        opts.BoxAgeKeySource,
+		"faas_join_rclone_envelope_source":    opts.RcloneEnvelope,
+		"faas_join_archive_envelope_source":   opts.ArchiveEnvelope,
+		"faas_join_node_key_source":           nodeKeySource,
+		"faas_join_node_pub_source":           nodePubSource,
+		"faas_join_release_tarball_source":    opts.ReleaseTarball,
+		"faas_join_release_signature_source":  signature,
+		"faas_join_release_sbom_source":       sbom,
+		"faas_join_builder_base_ref":          builderBaseRef,
+		"faas_join_bootstrap_contract_sha256": bootstrapContractSHA256,
 		// A clean provider-created host does not have the release binary or
 		// rendered daemon configuration yet. Defer bootstrap service handlers
 		// and readiness verification until node_join.yml has installed and
@@ -737,6 +744,56 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	}
 	report.Applied = true
 	return 0, nil
+}
+
+func joinBootstrapContractHash(ansibleDir string) (string, error) {
+	roots := []string{
+		"bootstrap.yml",
+		"group_vars",
+		"requirements.yml",
+		"roles",
+	}
+	var paths []string
+	for _, root := range roots {
+		path := filepath.Join(ansibleDir, root)
+		if err := filepath.WalkDir(path, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			paths = append(paths, path)
+			return nil
+		}); err != nil {
+			return "", fmt.Errorf("walk bootstrap contract %s: %w", root, err)
+		}
+	}
+	sort.Strings(paths)
+	hash := sha256.New()
+	for _, path := range paths {
+		rel, err := filepath.Rel(ansibleDir, path)
+		if err != nil {
+			return "", fmt.Errorf("relativize bootstrap contract path %s: %w", path, err)
+		}
+		if _, err := io.WriteString(hash, filepath.ToSlash(rel)); err != nil {
+			return "", fmt.Errorf("hash bootstrap contract path %s: %w", rel, err)
+		}
+		if _, err := hash.Write([]byte{0}); err != nil {
+			return "", fmt.Errorf("hash bootstrap contract separator: %w", err)
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read bootstrap contract path %s: %w", rel, err)
+		}
+		if _, err := hash.Write(body); err != nil {
+			return "", fmt.Errorf("hash bootstrap contract path %s: %w", rel, err)
+		}
+		if _, err := hash.Write([]byte{0}); err != nil {
+			return "", fmt.Errorf("hash bootstrap contract separator: %w", err)
+		}
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func registerJoinReleaseBundle(ctx context.Context, tarballPath, expectedGitSHA, expectedManifestHash string) error {
