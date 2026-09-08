@@ -182,6 +182,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MAIL_RESEND_API_KEY` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_RESEND_WEBHOOK_SECRET` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_TRANSPORT` | apid, meterd, shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS` | shared | `default` |  |  | `` | optional comma-separated exact account IDs eligible for managed PostgreSQL staging provisioning; malformed or oversized lists fail closed |
 | `FAAS_MANAGED_POSTGRES_CONFIG` | shared | `default` |  |  | `` | optional provider-registry JSON path; apid loads the dark-wired Neon adapter and reconciler, while the file's provisioning_enabled flag defaults false (ADR-155) |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED` | shared | `default` |  |  | `` | explicit staging-only provider qualification approval; provisioning stays disabled unless true and the remaining qualification gates match |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` | shared | `default` |  |  | `` | exact managed PostgreSQL backend ID approved by the isolated qualification run |

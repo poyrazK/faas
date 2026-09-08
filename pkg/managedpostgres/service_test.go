@@ -195,6 +195,29 @@ func TestProvisioningRequiresExplicitServiceOptIn(t *testing.T) {
 	}
 }
 
+func TestProvisioningCanaryAccountGateBlocksCreateAndRestore(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	registry := testRegistry(t, provider, nil)
+	allowed := func(context.Context, string) bool { return false }
+	service, err := NewService(registry, NewMemoryStore(), ServiceOptions{
+		PollInterval:        time.Second,
+		ProvisioningEnabled: func() bool { return true },
+		ProvisioningAllowed: allowed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(context.Background(), CreateRequest{AccountID: "canary-excluded", Name: "orders", Spec: testSpec()}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("excluded create = %v, want ErrUnavailable", err)
+	}
+	if provider.provisionCalls != 0 {
+		t.Fatalf("excluded create called provider %d times", provider.provisionCalls)
+	}
+	if _, err := service.Restore(context.Background(), RestoreDatabaseRequest{AccountID: "canary-excluded", SourceDatabaseID: "source", Name: "restore", PointInTime: time.Now().Add(-time.Minute)}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("excluded restore = %v, want ErrUnavailable", err)
+	}
+}
+
 func TestCreateIsIdempotentAndPersistsPlacement(t *testing.T) {
 	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
 	registry := testRegistry(t, provider, nil)
