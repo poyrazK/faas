@@ -111,17 +111,15 @@ func TestAccountRateLimitHeaders_OnAccount429(t *testing.T) {
 	b.app.Plan = api.PlanFree // per-app burst 20, but we bypass it
 	b.app.AccountID = "acct-header-test"
 	h.WithLimiter(NewLimiter().WithNoop()) // bypass per-app scope
-	// Force account 429 by priming the account bucket. Pro plan is
-	// 1000 RPM, which makes a 1000-request test slow. Use Hobby
-	// (RateLimitPerAccountRPM = 200) and a tight loop of ≤200.
-	b.app.Plan = api.PlanHobby
-	for i := 0; i < 250; i++ {
+	// Force account 429 by priming the smallest account bucket.
+	b.app.Plan = api.PlanFree
+	for i := 0; i < 350; i++ {
 		req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code == http.StatusTooManyRequests {
-			if got := rec.Header().Get("X-AccountRateLimit-Limit"); got != "200" {
-				t.Errorf("429 X-AccountRateLimit-Limit = %q; want 200 (Hobby RPM)", got)
+			if got := rec.Header().Get("X-AccountRateLimit-Limit"); got != "300" {
+				t.Errorf("429 X-AccountRateLimit-Limit = %q; want 300 (Free RPM)", got)
 			}
 			if got := rec.Header().Get("X-AccountRateLimit-Remaining"); got == "" {
 				t.Error("429 X-AccountRateLimit-Remaining absent; want set")
@@ -138,7 +136,7 @@ func TestAccountRateLimitHeaders_OnAccount429(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal("did not observe account 429 within 250 Hobby-RPM requests")
+	t.Fatal("did not observe account 429 within 350 Free-RPM requests")
 }
 
 // TestAppRateLimitHeaders_DecrementAcrossCalls — the Remaining

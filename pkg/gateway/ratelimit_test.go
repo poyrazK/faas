@@ -183,10 +183,10 @@ func TestLimiterPeek_NonMutating(t *testing.T) {
 }
 
 func TestLimiterPeekAccount_BasicShape(t *testing.T) {
-	// Pro plan: RateLimitPerAccountRPM() = 1000. Test the math:
+	// Pro plan: RateLimitPerAccountRPM() = 6000. Test the math:
 	// PeekAccount on a fresh bucket returns ok=false; AllowAccount
-	// then allows; PeekAccount returns ok=true with limit=1000 and
-	// remaining=999 (burst - 1).
+	// then allows; PeekAccount returns ok=true with limit=6000 and
+	// remaining=5999 (burst - 1).
 	l := NewLimiterWithClock(frozenClock(time.Unix(1_700_000_000, 0)))
 	_, _, _, ok := l.PeekAccount("acct-1", api.PlanPro)
 	if ok {
@@ -199,11 +199,11 @@ func TestLimiterPeekAccount_BasicShape(t *testing.T) {
 	if !ok {
 		t.Fatal("PeekAccount after Allow returned ok=false; want true")
 	}
-	if limit != 1000 {
-		t.Errorf("PeekAccount limit = %d; want 1000 (Pro RPM)", limit)
+	if limit != 6000 {
+		t.Errorf("PeekAccount limit = %d; want 6000 (Pro RPM)", limit)
 	}
-	if remaining != 999 {
-		t.Errorf("PeekAccount remaining = %d; want 999", remaining)
+	if remaining != 5999 {
+		t.Errorf("PeekAccount remaining = %d; want 5999", remaining)
 	}
 }
 

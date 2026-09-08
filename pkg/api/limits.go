@@ -1791,9 +1791,9 @@ var planLimits = map[Plan]Limits{
 		MaxESMRecordsPerSecond: 0,
 		BrokerEgressMbit:       0,
 		TLSSkipVerifyAllowed:   false,
-		// Per-account rate limit (ADR-040): Free gets 50/min — enough for
-		// the 1-concurrency plan's traffic envelope.
-		RateLimitPerAccountRPM: 50,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Free app at its advertised 5 rps.
+		RateLimitPerAccountRPM: 300,
 		// Wake-side admission throttle (ADR-099 PR-0). Free caps
 		// wake admissions at 1/min per app + 1/min per account — the
 		// abuse-floor tier should never burst-wake. The apid-side
@@ -2154,10 +2154,9 @@ var planLimits = map[Plan]Limits{
 		// The migration-00274 SQL ceiling is 64 MiB so there's
 		// headroom for Pro+ below the hard limit.
 		TriggerPayloadMaxBytes: 1048576,
-		// Per-account rate limit (ADR-040): Hobby gets 200/min — ~10× the
-		// Hobby per-app rps (20) so per-app trips first on a single hot
-		// app, and the account limit catches the cross-app botnet.
-		RateLimitPerAccountRPM: 200,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Hobby app at its advertised 20 rps.
+		RateLimitPerAccountRPM: 1200,
 		// Wake-side admission throttle (ADR-099 PR-0). Hobby
 		// permits a small wake burst — a cron tick on a Hobby
 		// customer's job can legitimately want 5 wakes/min across
@@ -2508,9 +2507,9 @@ var planLimits = map[Plan]Limits{
 		// hardcoded closeBatch byte cap so Pro customers behave
 		// identically pre/post migration 00274.
 		TriggerPayloadMaxBytes: 6291456,
-		// Per-account rate limit (ADR-040): Pro gets 1000/min — ~10× the
-		// Pro per-app rps (100), same rationale as Hobby.
-		RateLimitPerAccountRPM: 1000,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Pro app at its advertised 100 rps.
+		RateLimitPerAccountRPM: 6000,
 		// Wake-side admission throttle (ADR-099 PR-0). Pro is the
 		// production tier — the per-app burst ceiling of 20/min is
 		// calibrated against a customer running a cron fleet
@@ -2877,12 +2876,9 @@ var planLimits = map[Plan]Limits{
 		// column CHECK remains a safety net, not a binding
 		// constraint.
 		TriggerPayloadMaxBytes: 16777216,
-		// Per-account rate limit (ADR-040): Scale gets 5000/min — ~10× the
-		// Scale per-app rps (500). The fleet-summed alert at 100/min/5m
-		// (FaasPerAccountRateLimitSpike) triggers well before any single
-		// paid customer's bucket fills, which is the intended signal:
-		// coordinated abuse, not baseline load.
-		RateLimitPerAccountRPM: 5000,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Scale app at its advertised 500 rps.
+		RateLimitPerAccountRPM: 30000,
 		// Wake-side admission throttle (ADR-099 PR-0). Scale is
 		// the upper tier — 100 wakes/min per app is enough to drain
 		// a 1000-task parallel job run in 10 min wall-clock, which
