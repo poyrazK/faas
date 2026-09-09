@@ -1085,6 +1085,13 @@ type MeterdTenantSurfaceCertExpiryState struct {
 	LastRefreshedAt          pgtype.Timestamptz
 }
 
+type MfaDisableRequest struct {
+	TokenHash   []byte
+	AccountID   pgtype.UUID
+	RequestedAt pgtype.Timestamptz
+	ConsumedAt  pgtype.Timestamptz
+}
+
 type MirrorInvocationResult struct {
 	ID                 pgtype.UUID
 	MirrorRuleID       pgtype.UUID

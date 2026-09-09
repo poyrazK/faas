@@ -18863,6 +18863,58 @@ func (s *PgStore) DeleteOldLoginTokens(ctx context.Context, before time.Time) (i
 	return tag.RowsAffected(), nil
 }
 
+// IssueMFADisableRequest invalidates any older pending request for the
+// account, then stores the new token hash and request timestamp.
+func (s *PgStore) IssueMFADisableRequest(ctx context.Context, tokenHash []byte, accountID string, requestedAt time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+		with invalidated as (
+			update mfa_disable_requests
+			   set consumed_at = now()
+			 where account_id = $2 and consumed_at is null
+		)
+		insert into mfa_disable_requests (token_hash, account_id, requested_at)
+		values ($1, $2, $3)`, tokenHash, accountID, requestedAt)
+	return mapErr(err)
+}
+
+// GetMFADisableRequest reads a live request without consuming it. Consumed or
+// unknown tokens share ErrNotFound so replays do not reveal token history.
+func (s *PgStore) GetMFADisableRequest(ctx context.Context, tokenHash []byte) (MFADisableRequest, error) {
+	var req MFADisableRequest
+	var consumedAt *time.Time
+	err := s.pool.QueryRow(ctx, `
+		select token_hash, account_id, requested_at, consumed_at
+		  from mfa_disable_requests
+		 where token_hash = $1 and consumed_at is null`, tokenHash).
+		Scan(&req.TokenHash, &req.AccountID, &req.RequestedAt, &consumedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return MFADisableRequest{}, ErrNotFound
+		}
+		return MFADisableRequest{}, err
+	}
+	req.ConsumedAt = consumedAt
+	return req, nil
+}
+
+// ConsumeMFADisableRequest atomically consumes a live request and returns its
+// bound account. A replay or unknown token returns ErrNotFound.
+func (s *PgStore) ConsumeMFADisableRequest(ctx context.Context, tokenHash []byte) (string, error) {
+	var accountID string
+	err := s.pool.QueryRow(ctx, `
+		update mfa_disable_requests
+		   set consumed_at = now()
+		 where token_hash = $1 and consumed_at is null
+		 returning account_id`, tokenHash).Scan(&accountID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return accountID, nil
+}
+
 // IssueEmailVerificationToken persists only the SHA-256 token hash. The raw
 // token exists only in the email sent by apid.
 func (s *PgStore) IssueEmailVerificationToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {

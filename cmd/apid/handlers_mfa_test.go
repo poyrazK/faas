@@ -1,6 +1,6 @@
 // MFA handler tests (IAM-2, issue #186).
 //
-// Covers the five /v1/account/mfa/* endpoints + the opt-in
+// Covers the seven /v1/account/mfa/* endpoints + the opt-in
 // session policy. Tests use the MemStore + an in-process
 // age identity so the seal/unseal path runs end-to-end
 // without an external key file. The MFA recipient + identity
@@ -178,6 +178,10 @@ func csrfAction(path string) string {
 		return "mfa_recover"
 	case strings.HasSuffix(path, "/v1/account/mfa/disable"):
 		return "mfa_disable"
+	case strings.HasSuffix(path, "/v1/account/mfa/disable-email"):
+		return "mfa_disable_email"
+	case strings.HasSuffix(path, "/v1/account/mfa/disable-email/confirm"):
+		return "mfa_disable_email_confirm"
 	}
 	return ""
 }

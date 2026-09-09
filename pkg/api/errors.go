@@ -594,6 +594,10 @@ const (
 	// /recover validate a presented TOTP code / recovery code and
 	// the comparison fails. The audit Emit fires regardless.
 	CodeMFAInvalidCode = "mfa_invalid_code"
+	// CodeMFADisableCooldown is returned by the email-assisted MFA
+	// disable confirmation before its mandatory 24-hour waiting period
+	// has elapsed. The response is HTTP 425 and carries Retry-After.
+	CodeMFADisableCooldown = "mfa_disable_cooldown"
 	// CodeSessionExpired is returned by the IAM-3 (ADR-039) cookie-
 	// branch cross-check when the cookie's sid is empty (pre-
 	// rollout), the row is gone, or the row is revoked. Distinct

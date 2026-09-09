@@ -1,6 +1,6 @@
 // MFA wire shapes (IAM-2, issue #186).
 //
-// The MFA flow is five POST endpoints under /v1/account/mfa/*:
+// The MFA flow is seven POST endpoints under /v1/account/mfa/*:
 //
 //   - /enroll  — start enrollment. Returns the otpauth URL +
 //                secret + QR + recovery codes ONCE. The dashboard
@@ -35,7 +35,14 @@
 //                leaves mfa_required untouched so the
 //                chokepoints can re-arm on the next trigger.
 //
-// All five responses are 200 OK on success. Failure modes use
+//   - /disable-email — authenticated fallback when the password and
+//                recovery codes are unavailable. Sends a one-time link
+//                and starts a server-side 24-hour cooldown.
+//
+//   - /disable-email/confirm — body {token}. After the cooldown,
+//                consumes the one-time token and clears MFA.
+//
+// All seven responses are 200 OK on success. Failure modes use
 // the RFC 7807 problem shape: CodeMFAInvalidCode (401) for bad
 // codes, CodeNotFound (404) when the account row is gone
 // between verify and the database stamp, CodeConflict (409)
@@ -114,16 +121,31 @@ type MFARecoverRequest struct {
 	CSRFToken string `json:"csrf_token,omitempty"`
 }
 
-// MFAConfirmResponse / MFAVerifyResponse / MFADisableResponse
-// / MFARecoverResponse are the success bodies. They are
+// MFADisableEmailRequest starts the email-assisted MFA disable flow.
+// The request has no business fields; CSRFToken is included for the
+// browser mutation contract.
+type MFADisableEmailRequest struct {
+	CSRFToken string `json:"csrf_token,omitempty"`
+}
+
+// MFADisableEmailConfirmRequest carries the opaque one-time token from
+// the email link. The token is consumed only after the cooldown elapses.
+type MFADisableEmailConfirmRequest struct {
+	Token     string `json:"token"`
+	CSRFToken string `json:"csrf_token,omitempty"`
+}
+
+// All MFA success response types are deliberately empty bodies. They are
 // deliberately empty — the meaningful side effects (cookie
 // re-issue, audit Emit, store stamp) are not on the JSON wire.
 // The handler returns 200 OK + a zero-byte body so the
 // dashboard's "XHR succeeded → refresh the prompt" path
 // branches on status alone.
 type (
-	MFAConfirmResponse struct{}
-	MFAVerifyResponse  struct{}
-	MFADisableResponse struct{}
-	MFARecoverResponse struct{}
+	MFAConfirmResponse             struct{}
+	MFAVerifyResponse              struct{}
+	MFADisableResponse             struct{}
+	MFARecoverResponse             struct{}
+	MFADisableEmailResponse        struct{}
+	MFADisableEmailConfirmResponse struct{}
 )

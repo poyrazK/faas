@@ -2542,6 +2542,18 @@ CREATE TABLE public.login_tokens (
 
 
 --
+-- Name: mfa_disable_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mfa_disable_requests (
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    requested_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone
+);
+
+
+--
 -- Name: mail_suppressions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4312,6 +4324,14 @@ ALTER TABLE ONLY public.login_tokens
 
 
 --
+-- Name: mfa_disable_requests mfa_disable_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_disable_requests
+    ADD CONSTRAINT mfa_disable_requests_pkey PRIMARY KEY (token_hash);
+
+
+--
 -- Name: email_verification_tokens email_verification_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5935,6 +5955,13 @@ CREATE UNIQUE INDEX jobs_account_name_uniq ON public.jobs USING btree (account_i
 --
 
 CREATE INDEX login_tokens_account_idx ON public.login_tokens USING btree (account_id, expires_at);
+
+
+--
+-- Name: mfa_disable_requests_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mfa_disable_requests_account_idx ON public.mfa_disable_requests USING btree (account_id, requested_at DESC) WHERE (consumed_at IS NULL);
 
 
 --
@@ -7752,6 +7779,14 @@ ALTER TABLE ONLY public.jobs
 
 ALTER TABLE ONLY public.login_tokens
     ADD CONSTRAINT login_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mfa_disable_requests mfa_disable_requests_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_disable_requests
+    ADD CONSTRAINT mfa_disable_requests_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

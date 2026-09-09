@@ -2207,19 +2207,21 @@ func (s *server) handler() http.Handler {
 	// Account-scoped deployments list (M7.5 dashboard).
 	mux.HandleFunc("GET /v1/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeployments))))
 
-	// MFA (IAM-2, issue #186). Five POST endpoints; all on the
+	// MFA (IAM-2, issue #186). Seven POST endpoints; all on the
 	// admin-only scope set because the dashboard never exposes
 	// them to non-admin keys. /enroll is NOT wrapped in
 	// s.idempotent because the secret + QR + recovery codes
 	// must be returned exactly once; replaying a cached response
 	// would re-reveal plaintexts the customer already consumed.
-	// The /confirm, /verify, /recover, /disable routes ARE
+	// The /confirm, /verify, /recover, and /disable routes ARE
 	// idempotent (no body-shape side effect).
 	mux.HandleFunc("POST /v1/account/mfa/enroll", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaEnroll))))
 	mux.HandleFunc("POST /v1/account/mfa/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaConfirm)))))
 	mux.HandleFunc("POST /v1/account/mfa/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaVerify)))))
 	mux.HandleFunc("POST /v1/account/mfa/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaRecover)))))
 	mux.HandleFunc("POST /v1/account/mfa/disable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaDisable)))))
+	mux.HandleFunc("POST /v1/account/mfa/disable-email", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmail))))
+	mux.HandleFunc("POST /v1/account/mfa/disable-email/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmailConfirm))))
 
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept
 	// unsigned and trust the network boundary; ADR-007 hardening later).

@@ -89,6 +89,7 @@ ComputeNodeUsedMB
 ConsumeCliAuthCode
 ConsumeEmailVerificationToken
 ConsumeLoginToken
+ConsumeMFADisableRequest
 ConsumeOrgInvitation
 ConsumeRecoveryCode
 ConsumerKeyByAppAndPrefix
@@ -254,6 +255,7 @@ GetGithubWebhookSecret
 GetIdempotent
 GetInstanceTailCount
 GetInvoiceByID
+GetMFADisableRequest
 GetMirrorRuleByID
 GetOIDCExchangedTokenByHash
 GetOIDCTrustPolicy
@@ -303,6 +305,7 @@ IsMailSuppressed
 IssueCliAuthCode
 IssueEmailVerificationToken
 IssueLoginToken
+IssueMFADisableRequest
 JobConcurrentByAccount
 JobCountByAccount
 JobCreate

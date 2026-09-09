@@ -1480,7 +1480,7 @@ paths:
 
   # ─── MFA (IAM-2, issue #186) ──────────────────────────────────────────────
   #
-  # Five POST endpoints plus the browser CSRF-token issuer; all on the admin-only scope set. The
+  # Seven POST endpoints plus the browser CSRF-token issuer; all on the admin-only scope set. The
   # /enroll route returns the TOTP secret + QR + recovery codes
   # exactly once; the customer must complete /confirm before the
   # server stamps mfa_enrolled_at. /verify is the step-up route
@@ -1637,6 +1637,63 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '401':
           description: Invalid credentials or recovery code.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/mfa/disable-email:
+    post:
+      tags: [mfa]
+      operationId: mfaDisableEmail
+      summary: Request email-assisted MFA disable.
+      description: |
+        Sends a one-time confirmation link to the account email and
+        starts a mandatory 24-hour server-side cooldown. A newer
+        request invalidates any earlier link.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFADisableEmailRequest'
+      responses:
+        '200':
+          description: Confirmation email queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MFADisableEmailResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/account/mfa/disable-email/confirm:
+    post:
+      tags: [mfa]
+      operationId: mfaDisableEmailConfirm
+      summary: Confirm email-assisted MFA disable.
+      description: |
+        Consumes the emailed one-time token after the mandatory
+        24-hour cooldown and clears the account's MFA state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFADisableEmailConfirmRequest'
+      responses:
+        '200':
+          description: MFA disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MFADisableEmailConfirmResponse' }
+        '401':
+          description: Invalid or already-consumed email token.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '425':
+          description: The 24-hour cooldown has not elapsed.
+          headers:
+            Retry-After:
+              schema: { type: integer, format: int32 }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -2255,7 +2312,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [auth.logout, auth.session.revoke, auth.sessions.revoke_all, mfa_confirm, mfa_recover, mfa_disable, set_password]
+            enum: [auth.logout, auth.session.revoke, auth.sessions.revoke_all, mfa_confirm, mfa_recover, mfa_disable, mfa_disable_email, mfa_disable_email_confirm, set_password]
           description: Exact mutation action the token will authorize.
       responses:
         '200':
@@ -23487,6 +23544,36 @@ components:
         mfa_recovery_codes_hash, and mfa_enrolled_at are all NULL.
         mfa_required is left as-is so an explicit policy remains in
         force after disable.
+      type: object
+      additionalProperties: false
+
+    MFADisableEmailRequest:
+      description: Body for requesting email-assisted MFA disable.
+      type: object
+      additionalProperties: false
+      properties:
+        csrf_token:
+          type: string
+
+    MFADisableEmailResponse:
+      description: Empty success body; the confirmation link is sent by email.
+      type: object
+      additionalProperties: false
+
+    MFADisableEmailConfirmRequest:
+      description: Body for consuming the emailed token after the cooldown.
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          description: Opaque base64url token from the confirmation email.
+        csrf_token:
+          type: string
+
+    MFADisableEmailConfirmResponse:
+      description: Empty success body; MFA state is cleared.
       type: object
       additionalProperties: false
 

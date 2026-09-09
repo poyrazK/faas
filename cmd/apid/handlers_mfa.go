@@ -1,6 +1,6 @@
 // MFA handlers (IAM-2, issue #186).
 //
-// Five POST endpoints under /v1/account/mfa/*. MFA is opt-in: any
+// Seven POST endpoints under /v1/account/mfa/*. MFA is opt-in: any
 // authenticated dashboard user may start enrollment, and a
 // confirmed authenticator is required for subsequent dashboard
 // sessions. The wire shapes
@@ -23,8 +23,13 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"filippo.io/age"
@@ -56,6 +61,8 @@ var mfaRecipient func() *age.X25519Recipient
 // wiring bug surfaces instead of minting a sid-less envelope
 // that the next request would 401 out of (a UX cliff).
 var errSessionMissingFromContext = errors.New("reissueSessionCookie: no session in request context — wiring broken")
+
+const mfaDisableEmailCooldown = 24 * time.Hour
 
 // SetMFARecipient is the boot-time wire-up called by the apid
 // main() once the host age key has loaded. Tests call this
@@ -501,6 +508,151 @@ func (s *server) mfaDisable(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	s.audit.Emit(r.Context(), "account.mfa_disabled", &acct.ID, map[string]any{"method": method})
 	writeJSON(w, http.StatusOK, api.MFADisableResponse{})
+}
+
+// mfaDisableEmail starts the email-assisted MFA disable path. The token is
+// cryptographically random and only its hash is stored; the email link is
+// useless until the server-side 24-hour cooldown has elapsed.
+func (s *server) mfaDisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if err := middleware.VerifyAuthenticated(s.sessions, r, "mfa_disable_email", acct.ID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeValidation,
+			"Invalid CSRF token", "please reload the page and try again"))
+		return
+	}
+	var req api.MFADisableEmailRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid request", "malformed JSON body"))
+		return
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		s.log.Error("mfa.disable_email.rand", "err", err.Error())
+		api.WriteProblem(w, api.ErrCapacity("could not create MFA disable request"))
+		return
+	}
+	if mfaRecipient == nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"MFA unavailable", "host age key not loaded — refusing to issue disable token"))
+		return
+	}
+	rec := mfaRecipient()
+	if rec == nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"MFA unavailable", "host age key not loaded — refusing to issue disable token"))
+		return
+	}
+	sealed, err := secretbox.SealBytes(rec, "mfa-disable", raw, 64)
+	if err != nil {
+		s.log.Error("mfa.disable_email.seal", "err", err.Error())
+		api.WriteProblem(w, api.ErrCapacity("could not create MFA disable request"))
+		return
+	}
+	requestedAt := time.Now().UTC()
+	if err := s.store.IssueMFADisableRequest(r.Context(), api.HashToken(sealed), acct.ID, requestedAt); err != nil {
+		s.log.Error("mfa.disable_email.issue_request", "err", err.Error())
+		api.WriteProblem(w, api.ErrCapacity("could not create MFA disable request"))
+		return
+	}
+	link := s.mfaDisableEmailLink(r, sealed)
+	subject, body := mailpkg.MFADisableEmailRequestedBody(acct.Email, link, requestedAt)
+	if err := s.mailer.Send(r.Context(), Message{To: []string{acct.Email}, Subject: subject, TextBody: body}); err != nil {
+		s.log.Error("mfa.disable_email.mailer", "err", err.Error())
+	}
+	s.audit.Emit(r.Context(), "account.mfa_disable_email_requested", &acct.ID, nil)
+	writeJSON(w, http.StatusOK, api.MFADisableEmailResponse{})
+}
+
+// mfaDisableEmailConfirm consumes a live emailed token after the server-side
+// cooldown and clears the account's MFA state. The account binding is checked
+// before consume so a token cannot be used from another authenticated account.
+func (s *server) mfaDisableEmailConfirm(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if err := middleware.VerifyAuthenticated(s.sessions, r, "mfa_disable_email_confirm", acct.ID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeValidation,
+			"Invalid CSRF token", "please reload the page and try again"))
+		return
+	}
+	var req api.MFADisableEmailConfirmRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid request", "malformed JSON body"))
+		return
+	}
+	sealed, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(req.Token))
+	if err != nil || len(sealed) == 0 {
+		s.writeMFADisableEmailInvalid(w, r, acct, "token_malformed")
+		return
+	}
+	idents := s.mfaDisableTokenIdentities()
+	if len(idents) == 0 {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"MFA unavailable", "host age identity not loaded — refusing to verify disable token"))
+		return
+	}
+	namespace, plaintext, err := secretbox.OpenBytesMulti(idents, sealed)
+	if err != nil || namespace != "mfa-disable" || len(plaintext) != 32 {
+		s.writeMFADisableEmailInvalid(w, r, acct, "token_invalid")
+		return
+	}
+	reqRow, err := s.store.GetMFADisableRequest(r.Context(), api.HashToken(sealed))
+	if err != nil || reqRow.AccountID != acct.ID {
+		s.writeMFADisableEmailInvalid(w, r, acct, "token_invalid")
+		return
+	}
+	readyAt := reqRow.RequestedAt.Add(mfaDisableEmailCooldown)
+	if now := time.Now().UTC(); now.Before(readyAt) {
+		retryAfter := int(time.Until(readyAt).Seconds())
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusTooEarly, api.CodeMFADisableCooldown,
+			"MFA disable cooldown active", "confirm this request after the 24-hour waiting period").WithHeader("Retry-After", strconv.Itoa(retryAfter)))
+		return
+	}
+	if _, err := s.store.ConsumeMFADisableRequest(r.Context(), api.HashToken(sealed)); err != nil {
+		s.writeMFADisableEmailInvalid(w, r, acct, "token_replayed")
+		return
+	}
+	if err := s.store.ClearMFA(r.Context(), acct.ID); err != nil {
+		s.log.Error("mfa.disable_email.clear", "err", err.Error())
+		api.WriteProblem(w, api.ErrCapacity("could not clear MFA state"))
+		return
+	}
+	s.audit.Emit(r.Context(), "account.mfa_disabled", &acct.ID, map[string]any{"method": "email"})
+	writeJSON(w, http.StatusOK, api.MFADisableEmailConfirmResponse{})
+}
+
+func (s *server) writeMFADisableEmailInvalid(w http.ResponseWriter, r *http.Request, acct state.Account, reason string) {
+	s.audit.Emit(r.Context(), "account.mfa_disable_email_failed", &acct.ID, map[string]any{"reason": reason})
+	api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
+		"Invalid token", "the MFA disable link is invalid or has already been used"))
+}
+
+func (s *server) mfaDisableEmailLink(r *http.Request, raw []byte) string {
+	scheme := schemeHTTP
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
+		scheme = schemeHTTPS
+	}
+	host := r.Host
+	if s.domain != "" && s.domain != domainUnset {
+		host = s.domain
+		scheme = schemeHTTPS
+	}
+	return fmt.Sprintf("%s://%s/v1/account/mfa/disable-email/confirm?token=%s", scheme, host, base64.RawURLEncoding.EncodeToString(raw))
+}
+
+func (s *server) mfaDisableTokenIdentities() []*age.X25519Identity {
+	if mfaIdentities != nil {
+		if idents := mfaIdentities(); len(idents) > 0 {
+			return idents
+		}
+	}
+	if mfaIdentity != nil {
+		if id := mfaIdentity(); id != nil {
+			return []*age.X25519Identity{id}
+		}
+	}
+	return nil
 }
 
 // disableByPassword re-authenticates the customer via their

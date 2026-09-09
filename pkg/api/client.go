@@ -442,7 +442,8 @@ func (c *Client) RestoreAccount(ctx context.Context) (AccountResponse, error) {
 // stamps mfa_enrolled_at. VerifyMFA is the step-up route for an
 // already-enrolled customer whose session cookie is mfa_pending.
 // RecoverMFA burns a recovery code; DisableMFA clears MFA state
-// (re-auth via password or recovery_code). All five require the
+// (re-auth via password or recovery_code). The email fallback is a
+// two-step, 24-hour cooldown path. All seven require the
 // session cookie — API keys bypass MFA per the IAM-2 decision.
 
 // EnrollMFA starts enrollment. The plaintext TOTP secret + QR +
@@ -492,6 +493,21 @@ func (c *Client) PostAccountMfaRecover(ctx context.Context, req MFARecoverReques
 func (c *Client) PostAccountMfaDisable(ctx context.Context, req MFADisableRequest) (MFADisableResponse, error) {
 	var out MFADisableResponse
 	return out, c.do(ctx, "POST", "/v1/account/mfa/disable", req, &out)
+}
+
+// PostAccountMfaDisableEmail requests a one-time email link to disable MFA.
+// Confirmation is intentionally delayed by a server-enforced 24-hour
+// cooldown so possession of the authenticated session alone is insufficient.
+func (c *Client) PostAccountMfaDisableEmail(ctx context.Context, req MFADisableEmailRequest) (MFADisableEmailResponse, error) {
+	var out MFADisableEmailResponse
+	return out, c.do(ctx, "POST", "/v1/account/mfa/disable-email", req, &out)
+}
+
+// PostAccountMfaDisableEmailConfirm consumes the emailed token after the
+// mandatory cooldown and clears the account's MFA state.
+func (c *Client) PostAccountMfaDisableEmailConfirm(ctx context.Context, req MFADisableEmailConfirmRequest) (MFADisableEmailConfirmResponse, error) {
+	var out MFADisableEmailConfirmResponse
+	return out, c.do(ctx, "POST", "/v1/account/mfa/disable-email/confirm", req, &out)
 }
 
 // IAM-3 server-side session revocation (ADR-039, issue #187 + #244
