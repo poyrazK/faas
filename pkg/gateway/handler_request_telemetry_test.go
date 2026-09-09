@@ -1,3 +1,4 @@
+// adr: 127
 // handler_request_telemetry_test.go — proves the Handler.observe
 // → recorder wiring (ADR-127) emits a row end-to-end without going
 // through the gateway's ServeHTTP / fakeBackend scaffolding.
