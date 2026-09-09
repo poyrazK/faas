@@ -120,6 +120,92 @@ func TestRunnerTickPrepositionsCompleteRestoreClosure(t *testing.T) {
 	}
 }
 
+func TestRunnerFanoutPopulatesReplicaCacheAndAdvertisesLocality(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	region := state.DefaultLocalityLabel
+	second := state.ComputeNode{
+		ID: "node-2", Name: "compute-2", TargetURL: "unix:///run/faas/compute-2.sock",
+		AdmissionCeilingMB: 4096, VCPUBudget: 16, Active: true, Region: &region,
+	}
+	if _, err := store.CreateComputeNode(ctx, second); err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	account, err := store.CreateAccount(ctx, "fanout@example.com", "pro")
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, Slug: "fanout-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		ID: "fanout-deployment", AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:fanout", Status: state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus: %v", err)
+	}
+	snapshot, err := store.CreateSnapshot(ctx, state.Snapshot{
+		ID: "fanout-snapshot", DeploymentID: dep.ID, FCVersion: "fc-1", StorageKey: state.SnapMemKey(dep.ID),
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	origin, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName: %v", err)
+	}
+	if err := store.RecordSnapshotOrigin(ctx, snapshot.ID, origin.ID); err != nil {
+		t.Fatalf("RecordSnapshotOrigin: %v", err)
+	}
+
+	keys := []string{
+		state.SnapMemKey(dep.ID),
+		state.SnapVMStateKey(dep.ID),
+		"layers/" + dep.ID + ".ext4",
+	}
+	parent := &fakeBackend{objects: map[string][]byte{
+		keys[0]: []byte("memory"),
+		keys[1]: []byte("vmstate"),
+		keys[2]: []byte("rootfs"),
+	}}
+	cache, err := storage.NewLocalCacheBackend(parent, t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend: %v", err)
+	}
+	r := New(store, cache, second.ID, slog.Default()).WithMaxPerTick(1)
+	r.runTick(ctx)
+
+	ready, err := store.ReadySnapshotReplicaNodes(ctx, snapshot.ID)
+	if err != nil {
+		t.Fatalf("ReadySnapshotReplicaNodes: %v", err)
+	}
+	if len(ready) != 1 || ready[0] != second.ID {
+		t.Fatalf("ready nodes = %v, want [%s]", ready, second.ID)
+	}
+	locality, err := store.SnapshotLocalityFor(ctx, snapshot.ID)
+	if err != nil {
+		t.Fatalf("SnapshotLocalityFor: %v", err)
+	}
+	if locality.OriginNodeID != origin.ID || len(locality.ReadyNodeIDs) != 1 || locality.ReadyNodeIDs[0] != second.ID {
+		t.Fatalf("snapshot locality = %+v, want origin=%s ready=[%s]", locality, origin.ID, second.ID)
+	}
+	if got, want := len(parent.gets), len(keys); got != want {
+		t.Fatalf("parent Get calls = %d, want %d (%v)", got, want, parent.gets)
+	}
+	for _, key := range keys {
+		if _, local, err := cache.LocalPath(key); err != nil || !local {
+			t.Fatalf("cache LocalPath(%q) = local=%v err=%v, want local=true", key, local, err)
+		}
+	}
+}
+
 func TestRunnerTickFailureIsRetryable(t *testing.T) {
 	store := &fakeReplicaStore{job: state.SnapshotReplicaJob{
 		SnapshotID: "snap-1", DeploymentID: "dep-1", NodeID: "node-2", Region: "local",
