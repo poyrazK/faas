@@ -1056,6 +1056,10 @@ object-storage-gateway-smoke: ## Operator-only: exercise s3.gregale.dev and dele
 managed-postgres-qualify: ## Operator-only: run the explicit staging managed PostgreSQL provider qualification
 	@$(GO) run ./cmd/managed-postgres-qualify
 
+.PHONY: managed-postgres-qualify-verify
+managed-postgres-qualify-verify: ## Operator-only: verify a saved staging managed PostgreSQL qualification approval
+	@$(GO) run ./cmd/managed-postgres-qualify --verify
+
 .PHONY: sdk-gen-node
 sdk-gen-node: ## Regenerate sdk/node/src/generated from api/openapi.yaml
 	@cd sdk/node && npm run gen

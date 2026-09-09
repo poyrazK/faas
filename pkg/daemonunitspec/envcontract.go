@@ -265,6 +265,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "exact managed PostgreSQL backend ID approved by the isolated qualification run"},
 	{Name: "FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "exact non-secret backend fingerprint approved by the isolated qualification run"},
 	{Name: "FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "RFC3339 expiry for the staging qualification approval; expired approvals fail closed"},
+	{Name: "FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "operator-owned JSON qualification artifact path used by managed-postgres-qualify --verify; verification is read-only and staging-only"},
+	{Name: "FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional approval lifetime for a qualification artifact; must be positive and no longer than 90 days"},
 	{Name: "FAAS_MANIFEST_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_METERD_ROLE", Owners: []string{"meterd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_MFA_RECOVERY_HMAC_KEY", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`)"},
