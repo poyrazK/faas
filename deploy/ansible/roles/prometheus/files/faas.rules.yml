@@ -632,15 +632,15 @@ groups:
       # Prometheus retains 15 days.
       #
       # `sum(rate(...[5m])) > 0` guards the denominator so an idle box
-      # (no traffic yet) produces `false < 0.995` rather than `NaN < 0.995`
-      # (which is false too but masks a real breach window if the rate
-      # resets mid-window).
+      # does not alert. Do not clamp a rate denominator to 1: at less than
+      # one request per second that changes the ratio and makes successful
+      # low-volume traffic look unavailable.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasApiAvailabilityLow
         expr: |
           (sum(rate(gateway_requests_total{code=~"2.."}[5m]))
             /
-          clamp_min(sum(rate(gateway_requests_total[5m])), 1))
+          sum(rate(gateway_requests_total[5m])))
             < 0.995
           and sum(rate(gateway_requests_total[5m])) > 0
         for: 10m
@@ -658,7 +658,7 @@ groups:
           (
             (
               sum(rate(gateway_requests_total{code!~"2.."}[1h]))
-              / clamp_min(sum(rate(gateway_requests_total[1h])), 1)
+              / sum(rate(gateway_requests_total[1h]))
             ) > 0.072
             and sum(rate(gateway_requests_total[1h])) > 0
           )
@@ -666,7 +666,7 @@ groups:
           (
             (
               sum(rate(gateway_requests_total{code!~"2.."}[6h]))
-              / clamp_min(sum(rate(gateway_requests_total[6h])), 1)
+              / sum(rate(gateway_requests_total[6h]))
             ) > 0.03
             and sum(rate(gateway_requests_total[6h])) > 0
           )
@@ -684,7 +684,7 @@ groups:
         expr: |
           (sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m]))
             /
-          clamp_min(sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])), 1))
+          sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])))
             < 0.99
           and sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) > 0
         for: 15m
@@ -702,7 +702,7 @@ groups:
           (
             (
               sum(rate(builderd_ops_total{op="build",code!~"ok|cache_hit|user_error"}[1h]))
-              / clamp_min(sum(rate(builderd_ops_total{op="build",code!="user_error"}[1h])), 1)
+              / sum(rate(builderd_ops_total{op="build",code!="user_error"}[1h]))
             ) > 0.144
             and sum(rate(builderd_ops_total{op="build",code!="user_error"}[1h])) > 0
           )
@@ -710,7 +710,7 @@ groups:
           (
             (
               sum(rate(builderd_ops_total{op="build",code!~"ok|cache_hit|user_error"}[6h]))
-              / clamp_min(sum(rate(builderd_ops_total{op="build",code!="user_error"}[6h])), 1)
+              / sum(rate(builderd_ops_total{op="build",code!="user_error"}[6h]))
             ) > 0.06
             and sum(rate(builderd_ops_total{op="build",code!="user_error"}[6h])) > 0
           )
@@ -2278,14 +2278,14 @@ groups:
         expr: |
           sum by (app) (rate(gateway_requests_total{code!~"2.."}[1h]))
             /
-          clamp_min(sum by (app) (rate(gateway_requests_total[1h])), 1)
+          sum by (app) (rate(gateway_requests_total[1h]))
             / 0.005
 
       - record: faas_slo_burn_rate_6h:by_app
         expr: |
           sum by (app) (rate(gateway_requests_total{code!~"2.."}[6h]))
             /
-          clamp_min(sum by (app) (rate(gateway_requests_total[6h])), 1)
+          sum by (app) (rate(gateway_requests_total[6h]))
             / 0.005
 
       - alert: FaasSLOBurnRateHigh
