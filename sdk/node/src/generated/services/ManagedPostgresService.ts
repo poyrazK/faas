@@ -8,6 +8,7 @@ import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { Problem } from '../models/Problem.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -106,6 +107,22 @@ export class ManagedPostgresService {
       headers: {
         'Idempotency-Key': idempotencyKey,
       },
+    });
+  }
+  /**
+   * Read managed PostgreSQL usage and guardrail state
+   * Requires usage read scope. Returns normalized current-month meters,
+   * plan headroom, and freshness state. Provider IDs, rates, credentials,
+   * and internal cost line items are never returned.
+   *
+   * @returns ManagedPostgresUsageResponse Current managed PostgreSQL usage; Cache-Control no-store
+   * @returns Problem Authentication or managed PostgreSQL accounting error
+   * @throws ApiError
+   */
+  public static getManagedPostgresUsage(): CancelablePromise<ManagedPostgresUsageResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/managed-postgres-usage',
     });
   }
   /**

@@ -348,6 +348,9 @@
     # storage is remote-only. vmmd therefore resolves the kernel through the
     # shared OCI backend at wake time. Verify and prewarm that exact key before
     # bootstrap handlers or service restarts can make this node schedulable.
+    # --refresh also pins the verified digest in the node cache: a successful
+    # download alone is not a prewarm guarantee because later snapshot writes
+    # can otherwise evict the kernel before the first customer wake.
     - name: Verify the release-pinned kernel is present in shared storage
       ansible.builtin.command:
         argv:

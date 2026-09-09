@@ -87,6 +87,49 @@ func TestReaperLoop_SweepsStuckRow(t *testing.T) {
 	}
 }
 
+type reaperVM struct {
+	cancelled chan string
+}
+
+func (reaperVM) Spawn(context.Context, VMRequest) (BuildHandle, error) {
+	return BuildHandle{}, ErrNotMetal
+}
+
+func (reaperVM) WaitForCompletion(context.Context, BuildHandle) (BuildOutcome, error) {
+	return BuildOutcome{}, ErrNotMetal
+}
+
+func (v reaperVM) Cancel(_ context.Context, buildID string) error {
+	v.cancelled <- buildID
+	return nil
+}
+
+// TestSweepStuckBuilds_CancelsOnlyRowsItFailed pins the production recovery
+// contract: the reaper must pass the exact stale claim IDs to the VM driver,
+// while leaving a fresh running claim alone.
+func TestSweepStuckBuilds_CancelsOnlyRowsItFailed(t *testing.T) {
+	store, ms, stuckID := newReaperFixture(t)
+	ms.SetBuildStartedAtForTest(stuckID, time.Now().Add(-10*time.Minute))
+
+	cancelled := make(chan string, 1)
+	vm := reaperVM{cancelled: cancelled}
+	n, err := sweepStuckBuilds(context.Background(), store, vm, time.Now().Add(-5*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("sweepStuckBuilds: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("swept = %d, want 1", n)
+	}
+	select {
+	case got := <-cancelled:
+		if got != stuckID {
+			t.Fatalf("cancelled build = %q, want %q", got, stuckID)
+		}
+	default:
+		t.Fatal("stuck VM was not cancelled")
+	}
+}
+
 // TestReaperLoop_LeavesFreshRowsAlone asserts a 'running' row whose
 // started_at is within the threshold is NOT swept. The build is
 // still in flight — the reaper must wait for it to either finish or

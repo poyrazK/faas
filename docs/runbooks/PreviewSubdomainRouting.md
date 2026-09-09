@@ -15,23 +15,25 @@ Severity: warn.
 > cert-allowlist extension); PR-C ships the teardown janitor. This
 > runbook covers the PR-B surface; the **Teardown recovery** section
 > below covers PR-C's janitor surface. The prod URL
-> (`{slug}.apps.<zone>`) keeps working — only preview-shaped
-> hostnames (`pr-{N}.{slug}.apps.<zone>`) are affected.
+> (`{slug}.<zone>`) keeps working — only preview-shaped
+> hostnames (`pr-{N}-{slug}.<zone>`) are affected. The hosted product
+> uses `<slug>.gregale.dev`; the former `.apps.gregale.dev` shape is
+> legacy and must not be used for new probes.
 
 ## Symptom
 
 A customer reports one of:
 
-- `https://pr-42-myapp.apps.gregale.dev/` returns **404** (routing
+- `https://pr-42-myapp.gregale.dev/` returns **404** (routing
   layer can't resolve the hostname to an apps row).
-- `https://pr-42-myapp.apps.gregale.dev/` returns **503 / NoLiveDeployment**
+- `https://pr-42-myapp.gregale.dev/` returns **503 / NoLiveDeployment**
   (apps row found, but no deployment with `scope='pr-42'` has reached
   the WARM/RUNNING state yet).
 - The hostname hangs at the TLS handshake — `curl -v` shows
   "certificate verify failed" or "no alternative certificate subject
-  name matches" — even though `*.apps.<zone>` is healthy.
+  name matches" — even though `*.<zone>` is healthy.
 
-The prod URL for the same app (`myapp.apps.gregale.dev`) keeps
+The prod URL for the same app (`myapp.gregale.dev`) keeps
 working in all three cases — the preview path is isolated from
 prod by the per-row `preview_pr_state` gate.
 
@@ -44,13 +46,13 @@ rejects the hostname shape. Verify the locked contract:
 
 | host | result |
 |---|---|
-| `pr-42-myapp.apps.gregale.dev` | (42, "myapp", true) ✓ |
-| `PR-42-myapp.apps.gregale.dev` | (0, "", false) — case-sensitive |
-| `pr-0-myapp.apps.gregale.dev` | (0, "", false) — PR number 0 refused |
-| `pr-42.apps.gregale.dev` | (0, "", false) — missing slug |
-| `pr-abc-myapp.apps.gregale.dev` | (0, "", false) — non-numeric |
-| `pr-007-myapp.apps.gregale.dev` | (0, "", false) — leading zero refused |
-| `pr-42-foo.bar.apps.gregale.dev` | (0, "", false) — inner dot |
+| `pr-42-myapp.gregale.dev` | (42, "myapp", true) ✓ |
+| `PR-42-myapp.gregale.dev` | (0, "", false) — case-sensitive |
+| `pr-0-myapp.gregale.dev` | (0, "", false) — PR number 0 refused |
+| `pr-42.gregale.dev` | (0, "", false) — missing slug |
+| `pr-abc-myapp.gregale.dev` | (0, "", false) — non-numeric |
+| `pr-007-myapp.gregale.dev` | (0, "", false) — leading zero refused |
+| `pr-42-foo.bar.gregale.dev` | (0, "", false) — inner dot |
 
 If the parser returns ok=true but the router still 404s, the
 preview `apps` row is missing. Check:
@@ -96,9 +98,10 @@ The preview Check Run on GitHub carries the same error verbatim.
 
 ### Cert handshake fails
 
-The wildcard `*.apps.<zone>` is single-label RFC 2818 — it does
-**not** match `pr-{N}.{slug}.apps.<zone>` (two-deep). Per-host
-on-demand HTTP-01 mint fires through certmagic. The allowlist in
+The wildcard `*.<zone>` is single-label RFC 2818 and covers the
+single-label preview host `pr-{N}-{slug}.<zone>`, so no per-PR
+certificate is needed. A certificate failure points to wildcard DNS,
+certificate coverage, or edge configuration. The allowlist in
 `pkg/gateway/allowlist.go::NewPGAllowlist` has two branches:
 
 1. **Custom-domain** — `custom_domains.verified_at IS NOT NULL`.
@@ -118,7 +121,7 @@ journalctl -u faas-gatewayd-public \
   | grep -E 'allowlist preview|on-demand denied'
 ```
 
-`on-demand denied` for `pr-42-myapp.apps.gregale.dev` with no
+`on-demand denied` for `pr-42-myapp.gregale.dev` with no
 matching allowlist row means one of: (a) the apps row is missing
 or `preview_pr_state != 'open'`; (b) `appsSuffix` in the gatewayd
 config doesn't match the hostname's suffix (the prefix `appsSuffix`
@@ -165,7 +168,7 @@ For cert denial:
 # Trigger a fresh mint by hitting the host directly. Certmagic's
 # allowlist is what matters; the renew loop will retry until
 # NewPGAllowlist returns true.
-curl -v https://pr-42-myapp.apps.gregale.dev/healthz
+curl -v https://pr-42-myapp.gregale.dev/healthz
 
 # If the cert is stuck (allowlist now allows but certmagic
 # hasn't re-tried), restart the daemon to flush the in-process
@@ -212,7 +215,7 @@ The preview branch's `previewOpen()` assertion (`apps.preview_pr_state
 == 'open'`) is the only check; the row's `preview_of_slug` must
 equal the parent slug extracted by `PreviewScopeFromHost` (the
 parser enforces this via the apps-suffix gate — a hostname like
-`pr-42-foo.apps.gregale.dev` resolves to the row with slug
+`pr-42-foo.gregale.dev` resolves to the row with slug
 `pr-42-foo`, which the webhook provisions with `preview_of_slug='foo'`
 per ADR-094).
 

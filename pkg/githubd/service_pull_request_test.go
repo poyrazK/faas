@@ -755,6 +755,10 @@ func TestPreviewHostnameForSlug(t *testing.T) {
 			t.Errorf("previewHostnameForSlug(%q) = %q, want %q", c.slug, got, c.want)
 		}
 	}
+	t.Setenv("FAAS_APPS_DOMAIN", "apps.gregale.dev")
+	if got := previewHostnameForSlug("pr-42-demo-app"); got != "pr-42-demo-app.gregale.dev" {
+		t.Fatalf("previewHostnameForSlug with legacy domain = %q, want current gregale.dev hostname", got)
+	}
 }
 
 // quotaExceededStore embeds *state.MemStore so it satisfies

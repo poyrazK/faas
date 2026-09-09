@@ -52,6 +52,11 @@ var MintNonceForTest = mintNonce
 // the SRI check fails if the file is tampered with on the CDN.
 var cspScriptHosts = []string{"https://unpkg.com"}
 
+// cspStyleHosts permits the SRI-pinned Swagger UI stylesheet on /docs.
+// Dashboard styles remain nonce-protected; this is only an additional host
+// source for the external documentation stylesheet.
+var cspStyleHosts = []string{"https://unpkg.com"}
+
 // cspFormActionHosts is the form-action host list. Today no client-
 // side Stripe.js is loaded (verified by grep), but the policy
 // anticipates Stripe Checkout / Billing Portal onboarding.
@@ -91,7 +96,12 @@ func buildCSP(nonce string) string {
 	b.WriteString("; ")
 	b.WriteString("style-src 'self' 'nonce-")
 	b.WriteString(nonce)
-	b.WriteString("'; ")
+	b.WriteString("'")
+	for _, h := range cspStyleHosts {
+		b.WriteString(" ")
+		b.WriteString(h)
+	}
+	b.WriteString("; ")
 	b.WriteString("img-src 'self' data:; ")
 	b.WriteString("connect-src 'self'; ")
 	b.WriteString("frame-ancestors 'none'; ")

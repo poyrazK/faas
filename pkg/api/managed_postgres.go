@@ -1,5 +1,7 @@
 package api
 
+import "time"
+
 // ManagedPostgresPlanLimits is the customer-facing allowance for managed
 // PostgreSQL. Provider adapters may impose a lower ceiling, but never raise
 // these plan limits.
@@ -52,6 +54,66 @@ type ManagedPostgresDatabase struct {
 
 type ManagedPostgresDatabaseList struct {
 	Items []ManagedPostgresDatabase `json:"items"`
+}
+
+// ManagedPostgresUsageResponse is the customer-safe monthly usage view. The
+// meters are provider-neutral quantities used for guardrails; provider costs,
+// backend IDs, and credentials are deliberately not part of this response.
+// StorageByteSecondsLimit is the plan's aggregate storage entitlement across
+// its database slots, expressed in the same canonical unit as usage.
+type ManagedPostgresUsageResponse struct {
+	PeriodStart                 time.Time  `json:"period_start"`
+	ObservedAt                  *time.Time `json:"observed_at,omitempty"`
+	PolicyEnabled               bool       `json:"policy_enabled"`
+	Fresh                       bool       `json:"fresh"`
+	GuardrailState              string     `json:"guardrail_state"`
+	ReadyDatabases              int        `json:"ready_databases"`
+	DatabaseLimit               int        `json:"database_limit"`
+	StorageLimitBytes           int64      `json:"storage_limit_bytes"`
+	ComputeUnitSeconds          int64      `json:"compute_unit_seconds"`
+	StorageByteSeconds          int64      `json:"storage_byte_seconds"`
+	StorageByteSecondsLimit     int64      `json:"storage_byte_seconds_limit"`
+	StorageByteSecondsRemaining int64      `json:"storage_byte_seconds_remaining"`
+	HistoryByteSeconds          int64      `json:"history_byte_seconds"`
+	EgressBytes                 int64      `json:"egress_bytes"`
+}
+
+// ManagedPostgresUsageLineItem is an operator-only normalized ledger line.
+// Costs are internal COGS/invoice inputs, never customer charges.
+type ManagedPostgresUsageLineItem struct {
+	Code           string `json:"code"`
+	Meter          string `json:"meter"`
+	Unit           string `json:"unit"`
+	Quantity       int64  `json:"quantity"`
+	CostMillicents int64  `json:"cost_millicents"`
+}
+
+// ManagedPostgresUsageOperatorResponse is restricted to the operator
+// allowlist. It adds account identity, effective safety ceilings, and
+// internal cost line items to the customer-safe usage projection.
+type ManagedPostgresUsageOperatorResponse struct {
+	AccountID                    string                         `json:"account_id"`
+	PeriodStart                  time.Time                      `json:"period_start"`
+	ObservedAt                   *time.Time                     `json:"observed_at,omitempty"`
+	PolicyEnabled                bool                           `json:"policy_enabled"`
+	Fresh                        bool                           `json:"fresh"`
+	GuardrailState               string                         `json:"guardrail_state"`
+	ReadyDatabases               int                            `json:"ready_databases"`
+	DatabaseLimit                int                            `json:"database_limit"`
+	StorageLimitBytes            int64                          `json:"storage_limit_bytes"`
+	ComputeUnitSeconds           int64                          `json:"compute_unit_seconds"`
+	StorageByteSeconds           int64                          `json:"storage_byte_seconds"`
+	StorageByteSecondsLimit      int64                          `json:"storage_byte_seconds_limit"`
+	StorageByteSecondsRemaining  int64                          `json:"storage_byte_seconds_remaining"`
+	HistoryByteSeconds           int64                          `json:"history_byte_seconds"`
+	EgressBytes                  int64                          `json:"egress_bytes"`
+	CostMillicents               int64                          `json:"cost_millicents"`
+	MaxMonthlyCostMillicents     int64                          `json:"max_monthly_cost_millicents"`
+	MaxMonthlyComputeUnitSeconds int64                          `json:"max_monthly_compute_unit_seconds"`
+	MaxMonthlyStorageByteSeconds int64                          `json:"max_monthly_storage_byte_seconds"`
+	MaxMonthlyHistoryByteSeconds int64                          `json:"max_monthly_history_byte_seconds"`
+	MaxMonthlyEgressBytes        int64                          `json:"max_monthly_egress_bytes"`
+	LineItems                    []ManagedPostgresUsageLineItem `json:"line_items"`
 }
 
 type CreateManagedPostgresDatabaseRequest struct {

@@ -196,6 +196,10 @@ type ColdBootSpec struct {
 	// before a late host-side loopback write.
 	SecretsEnvJSON []byte
 	APIEnvJSON     []byte
+	// ServiceDiscoveryIP is the compute node's tenant-bridge address. When
+	// set, vmmd stages /etc/resolv.conf to point at the node-local DNS
+	// resolver for <slug>.svc.gregale names. Empty preserves legacy guests.
+	ServiceDiscoveryIP string
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the

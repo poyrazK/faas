@@ -343,7 +343,7 @@ type WakeRequest struct {
 	DeploymentId string `protobuf:"bytes,2,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
 	// scope (issue #272 / ADR-095, PR-B) is the preview scope
 	// (`pr-{N}`) the gateway derived from the inbound Host header
-	// (`pr-{N}.{slug}.apps.<zone>`). Empty = prod (legacy
+	// (`pr-{N}-{slug}.<zone>`). Empty = prod (legacy
 	// single-deployment behaviour). schedd reads the scope-keyed
 	// live deployment row via LiveDeploymentForScope so a preview
 	// wake lands on the preview's own deployment row, not the

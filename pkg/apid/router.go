@@ -20,7 +20,7 @@
 //     HasPrefix. Review finding #6 (PR #180 dashboard era): a bare
 //     HasPrefix("/v1") would silently shadow "/v1.zip" and steal
 //     customer-app traffic.
-//   - The 11 anchored roots are exported as `ApidRoot*` constants so
+//   - The 12 anchored roots are exported as `ApidRoot*` constants so
 //     external callers (writegate package, ops tooling) can reference
 //     them by name rather than hard-coding strings.
 package apid
@@ -53,6 +53,7 @@ const (
 	ApidRootStatus      = "/status"
 	ApidRootHealthz     = "/healthz"
 	ApidRootCliAuth     = "/cli-auth"
+	ApidRootDocs        = "/docs"
 )
 
 // IsApidPath returns true when the inbound request path matches one
@@ -88,6 +89,7 @@ func IsApidPath(p string) bool {
 		ApidRootStatus,
 		ApidRootHealthz,
 		ApidRootCliAuth,
+		ApidRootDocs,
 	} {
 		if hasApidPrefix(p, root) {
 			return true

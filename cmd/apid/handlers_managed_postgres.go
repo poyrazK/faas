@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -127,6 +128,139 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 		items = append(items, managedPostgresView(database))
 	}
 	writeJSON(w, http.StatusOK, api.ManagedPostgresDatabaseList{Items: items})
+}
+
+// managedPostgresUsageView projects the internal normalized usage summary to
+// the customer-safe API shape. In particular, it never serializes policy
+// rates, provider cost, backend IDs, or credential material.
+func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits) api.ManagedPostgresUsageResponse {
+	storageLimit := managedPostgresUsageCeilings(limits).MaxMonthlyStorageByteSeconds
+	remaining := int64(0)
+	if storageLimit > summary.Snapshot.StorageByteSeconds {
+		remaining = storageLimit - summary.Snapshot.StorageByteSeconds
+	}
+	state := "disabled"
+	if summary.PolicyEnabled {
+		switch {
+		case !summary.Fresh:
+			state = "stale"
+		case summary.Exceeded:
+			state = "reached"
+		default:
+			state = "healthy"
+		}
+	}
+	view := api.ManagedPostgresUsageResponse{
+		PeriodStart: summary.Snapshot.PeriodStart, PolicyEnabled: summary.PolicyEnabled,
+		Fresh: summary.Fresh, GuardrailState: state,
+		ReadyDatabases: summary.Snapshot.ReadyDatabases, DatabaseLimit: limits.DatabasesMax,
+		StorageLimitBytes:       limits.StorageLimitBytes,
+		ComputeUnitSeconds:      summary.Snapshot.ComputeUnitSeconds,
+		StorageByteSeconds:      summary.Snapshot.StorageByteSeconds,
+		StorageByteSecondsLimit: storageLimit, StorageByteSecondsRemaining: remaining,
+		HistoryByteSeconds: summary.Snapshot.HistoryByteSeconds, EgressBytes: summary.Snapshot.EgressBytes,
+	}
+	if !summary.Snapshot.LastObservedAt.IsZero() {
+		observed := summary.Snapshot.LastObservedAt.UTC()
+		view.ObservedAt = &observed
+	}
+	return view
+}
+
+func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	if s.managedPostgres == nil {
+		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		return
+	}
+	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
+	if !ok {
+		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL usage is not available for this plan")
+		return
+	}
+	summary, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, time.Now().UTC(), managedPostgresUsageCeilings(limits))
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, managedPostgresUsageView(summary, limits))
+}
+
+func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits) (api.ManagedPostgresUsageOperatorResponse, error) {
+	customer := managedPostgresUsageView(summary, limits)
+	lineItems, err := summary.EffectivePolicy.LineItems(summary.Snapshot)
+	if err != nil {
+		return api.ManagedPostgresUsageOperatorResponse{}, err
+	}
+	storageLimit := summary.EffectivePolicy.MaxMonthlyStorageByteSeconds
+	remaining := int64(0)
+	if storageLimit > summary.Snapshot.StorageByteSeconds {
+		remaining = storageLimit - summary.Snapshot.StorageByteSeconds
+	}
+	items := make([]api.ManagedPostgresUsageLineItem, 0, len(lineItems))
+	for _, item := range lineItems {
+		items = append(items, api.ManagedPostgresUsageLineItem{
+			Code: item.Code, Meter: string(item.Meter), Unit: item.Unit,
+			Quantity: item.Quantity, CostMillicents: item.CostMillicents,
+		})
+	}
+	return api.ManagedPostgresUsageOperatorResponse{
+		AccountID: accountID, PeriodStart: customer.PeriodStart, ObservedAt: customer.ObservedAt,
+		PolicyEnabled: customer.PolicyEnabled, Fresh: customer.Fresh, GuardrailState: customer.GuardrailState,
+		ReadyDatabases: customer.ReadyDatabases, DatabaseLimit: customer.DatabaseLimit,
+		StorageLimitBytes: customer.StorageLimitBytes, ComputeUnitSeconds: customer.ComputeUnitSeconds,
+		StorageByteSeconds: customer.StorageByteSeconds, StorageByteSecondsLimit: storageLimit,
+		StorageByteSecondsRemaining: remaining, HistoryByteSeconds: customer.HistoryByteSeconds,
+		EgressBytes: customer.EgressBytes, CostMillicents: summary.Snapshot.CostMillicents,
+		MaxMonthlyCostMillicents:     summary.EffectivePolicy.MaxMonthlyCostMillicents,
+		MaxMonthlyComputeUnitSeconds: summary.EffectivePolicy.MaxMonthlyComputeUnitSeconds,
+		MaxMonthlyStorageByteSeconds: summary.EffectivePolicy.MaxMonthlyStorageByteSeconds,
+		MaxMonthlyHistoryByteSeconds: summary.EffectivePolicy.MaxMonthlyHistoryByteSeconds,
+		MaxMonthlyEgressBytes:        summary.EffectivePolicy.MaxMonthlyEgressBytes,
+		LineItems:                    items,
+	}, nil
+}
+
+func (s *server) getManagedPostgresUsageOperator(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	if allowed, problem := s.adminAllows(acct); !allowed {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if s.managedPostgres == nil {
+		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		return
+	}
+	targetID := strings.TrimSpace(r.PathValue("account_id"))
+	if _, err := uuid.Parse(targetID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid account_id", "account_id must be a UUID"))
+		return
+	}
+	target, err := s.store.AccountByID(r.Context(), targetID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Account not found", "the target account does not exist"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not load target account"))
+		return
+	}
+	limits, ok := api.ManagedPostgresLimitsFor(target.Plan)
+	if !ok {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "managed_postgres_plan_unknown", "Managed PostgreSQL plan unknown", "the target account uses an unsupported plan"))
+		return
+	}
+	summary, err := s.managedPostgres.UsageSummary(r.Context(), target.ID, time.Now().UTC(), managedPostgresUsageCeilings(limits))
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	view, err := managedPostgresUsageOperatorView(target.ID, summary, limits)
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Request, acct state.Account) {

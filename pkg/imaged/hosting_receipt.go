@@ -86,7 +86,7 @@ func hostingAppURL(slug string) string {
 		return ""
 	}
 	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" {
+	if domain == "" || domain == "apps.gregale.dev" {
 		domain = "gregale.dev"
 	}
 	return "https://" + slug + "." + domain

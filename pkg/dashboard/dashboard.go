@@ -510,6 +510,85 @@ type AppWebhooksData struct {
 	ErrorMessage  string
 }
 
+// TenantSurfacesData is the customer-facing projection for the per-app
+// tenant-surface page (issue #1397 / G9). Hostname verification and durable
+// certificate state are kept as display fields so the template never needs
+// to know about pkg/state enums or timestamps.
+type TenantSurfacesData struct {
+	App            AppListItem
+	PlanAllowed    bool
+	FeatureEnabled bool
+	Surfaces       []TenantSurfacePageItem
+	ActionCSRF     string
+	Action         string
+	ErrorMessage   string
+}
+
+// TenantSurfacePageItem is one managed hostname surface and its bounded
+// hostname list.
+type TenantSurfacePageItem struct {
+	ID            string
+	Name          string
+	CertKind      string
+	Status        string
+	CertState     string
+	CertNotAfter  string
+	CertLastError string
+	CreatedAt     string
+	UpdatedAt     string
+	Hostnames     []TenantHostnamePageItem
+}
+
+// TenantHostnamePageItem is the safe dashboard projection of a hostname.
+// Challenge tokens are deliberately omitted from the page.
+type TenantHostnamePageItem struct {
+	Hostname   string
+	Verified   bool
+	VerifiedAt string
+	LastError  string
+	TXTRecord  string
+}
+
+// MirrorsData is the customer-facing projection for the per-app traffic
+// mirror page (issue #1397 / G9). Each rule carries the server-side aggregate
+// counters for the last-hour summary window.
+type MirrorsData struct {
+	App          AppListItem
+	PlanAllowed  bool
+	Rules        []MirrorPageItem
+	ActionCSRF   string
+	Action       string
+	ErrorMessage string
+}
+
+// MirrorPageItem is one mirror rule plus its comparison summary.
+type MirrorPageItem struct {
+	ID                    string
+	SourceDeploymentID    string
+	MirrorDeploymentID    string
+	Percent               int
+	Enabled               bool
+	IncludeBody           bool
+	RedactHeaders         []string
+	AlwaysStrippedHeaders []string
+	CreatedAt             string
+	UpdatedAt             string
+	Summary               MirrorSummaryPageItem
+}
+
+// MirrorSummaryPageItem mirrors api.MirrorSummaryResponse without exposing
+// API package types to dashboard templates.
+type MirrorSummaryPageItem struct {
+	TotalInvocations  int64
+	StatusDiffCount   int64
+	SchemaDiffCount   int64
+	BodyDiffCount     int64
+	MeanLatencyDiffMs int64
+	P99LatencyDiffMs  int64
+	CrashCount        int64
+	WindowLabel       string
+}
+
 // WebhookPageItem is one outbound webhook subscription plus a bounded slice
 // of recent deliveries. Payloads are deliberately omitted from the dashboard
 // projection because they may contain arbitrary customer data.
@@ -1452,10 +1531,10 @@ type RequestAnalyticsRouteView struct {
 	DebugURL string
 }
 
-// DebugPageData is the read-only, server-rendered production debugger
-// surface for one app. The API/CLI remain the automation interface; this
-// projection keeps the dashboard template free of state/sqlc types and
-// makes the retention and plan gates visible to customers.
+// DebugPageData is the server-rendered production debugger surface for one
+// app. The API/CLI remain the automation interface, while the dashboard adds
+// a CSRF-protected replay action and a bounded status projection for the
+// invocation it just queued.
 type DebugPageData struct {
 	AppSlug       string
 	Plan          string
@@ -1466,9 +1545,32 @@ type DebugPageData struct {
 	WindowClamped bool
 	Route         string
 	ErrorMessage  string
+	ActionMessage string
+	ActionError   bool
+	ReplayCSRF    string
 	Regressions   []DebugRegressionView
 	Requests      []DebugRequestView
 	Selected      *DebugRequestDetailView
+	Replay        *DebugReplayView
+}
+
+// DebugReplayView is the template-safe status projection for a debugger
+// replay invocation. Result fields are copied from the gateway's bounded
+// comparison envelope; raw request payloads and customer headers are never
+// rendered here.
+type DebugReplayView struct {
+	ID               string
+	State            string
+	LastError        string
+	CreatedAt        string
+	CompletedAt      string
+	HasResult        bool
+	SourceStatusCode int
+	MirrorStatusCode int
+	SourceLatencyMS  int
+	MirrorLatencyMS  int
+	StatusDiff       bool
+	Crashed          bool
 }
 
 // DebugRegressionView carries the bounded regression observation plus a

@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "gates": [
+    {
+      "id": "api-contract-preview",
+      "name": "Declared contract and effective policy preview",
+      "category": "security",
+      "description": "A deployment can compare declared routes with observed routes and matching edge policy without mutating production.",
+      "capabilities": ["custom-domains", "openapi-contract-preview", "streaming-and-grpc"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"},
+        {"kind": "test", "locator": "pkg/openapidiff/preview_test.go::TestBuildRoutePolicyPreview"},
+        {"kind": "test", "locator": "cmd/apid/handler_app_openapi_test.go::TestGetAppOpenAPIPolicyPreview_ReadOnly"},
+        {"kind": "test", "locator": "pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode"}
+      ]
+    },
+    {
+      "id": "first-healthy-api",
+      "name": "Time to first healthy API",
+      "category": "activation",
+      "description": "A clean-account deployment reaches a verified public response within the onboarding budget.",
+      "capabilities": ["framework-profiles", "source-deploy"],
+      "targets": [
+        {"metric": "p50", "operator": "lte", "value": 120, "unit": "seconds"},
+        {"metric": "p95", "operator": "lte", "value": 300, "unit": "seconds"}
+      ],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apihostingcontract/catalog_test.go::TestCatalogProfiles"},
+        {"kind": "test", "locator": "cmd/e2e/apply_project_e2e_test.go::TestApplyProject_DeploymentKindTarball"},
+        {"kind": "test", "locator": "cmd/e2e/deploy_healthcheck_metal_test.go::TestDeployHealthcheckMetal"}
+      ]
+    },
+    {
+      "id": "framework-compatibility",
+      "name": "Zero-config framework compatibility",
+      "category": "compatibility",
+      "description": "The maintained API fixture catalog continues to infer a runnable profile for supported frameworks and source shapes.",
+      "capabilities": ["framework-profiles", "source-deploy"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 95, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apihostingcontract/catalog_test.go::TestCatalogProfiles"},
+        {"kind": "make", "locator": "api-hosting-contract-check"}
+      ]
+    },
+    {
+      "id": "preview-readiness",
+      "name": "Pull-request preview readiness",
+      "category": "delivery",
+      "description": "A preview deployment gets an isolated, reviewable URL inside the GitHub event budget.",
+      "capabilities": ["github-deploys", "pr-previews"],
+      "targets": [{"metric": "p95", "operator": "lte", "value": 180, "unit": "seconds"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"},
+        {"kind": "test", "locator": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"},
+        {"kind": "test", "locator": "cmd/e2e/preview_e2e_test.go::TestPreview_E2E_HappyPath_PreviewAppsByParent"}
+      ]
+    },
+    {
+      "id": "request-diagnosis",
+      "name": "Request diagnosis",
+      "category": "observability",
+      "description": "A request timeline preserves route, latency, wake, and error evidence without requiring payload capture.",
+      "capabilities": ["scale-to-zero", "streaming-and-grpc"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/apid/handlers_debug_evidence_test.go::TestBuildDebugRequestTimelineJoinsWakeAndMarksError"},
+        {"kind": "test", "locator": "pkg/gateway/request_telemetry_publisher_test.go::TestCollapseRequestTelemetry_PreservesLatencyDistribution"},
+        {"kind": "test", "locator": "pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode"}
+      ]
+    },
+    {
+      "id": "resource-readiness",
+      "name": "Bound resource readiness",
+      "category": "resources",
+      "description": "A customer-facing resource binding has qualification evidence before it is promoted beyond internal use.",
+      "capabilities": ["object-storage"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [{"kind": "test", "locator": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification"}]
+    },
+    {
+      "id": "rollback-recovery",
+      "name": "Rollback recovery",
+      "category": "reliability",
+      "description": "A bad deployment can be rolled back without rebuilding and traffic returns healthy inside the recovery budget.",
+      "capabilities": ["github-deploys", "pr-previews", "source-deploy"],
+      "targets": [{"metric": "p95", "operator": "lte", "value": 60, "unit": "seconds"}],
+      "evidence": [{"kind": "test", "locator": "cmd/e2e/rollback_specific_test.go::TestRollbackSpecific_E2E"}]
+    },
+    {
+      "id": "snapshot-wake",
+      "name": "Snapshot wake recovery",
+      "category": "reliability",
+      "description": "A parked API wakes through the snapshot path and serves a public request within the platform restore budget.",
+      "capabilities": ["firecracker-isolation", "scale-to-zero"],
+      "targets": [{"metric": "p95", "operator": "lte", "value": 350, "unit": "milliseconds"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader"},
+        {"kind": "test", "locator": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal"},
+        {"kind": "test", "locator": "cmd/e2e/catalog_runtime_metal_test.go::TestCatalogRuntimeParityMetal"}
+      ]
+    },
+    {
+      "id": "workflow-reliability",
+      "name": "Asynchronous work reliability",
+      "category": "reliability",
+      "description": "Background workflows preserve plan policy and complete their lifecycle without leaking platform state.",
+      "capabilities": ["workflows-and-jobs"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [{"kind": "test", "locator": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"}]
+    }
+  ]
+}

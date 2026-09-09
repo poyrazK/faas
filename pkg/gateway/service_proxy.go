@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -25,6 +26,11 @@ const (
 	// used on the trusted node-local hop. The authorizer must validate it before
 	// a request is forwarded; the header is stripped before the guest hop.
 	ServiceProxyCallerAppHeader = "X-Faas-Caller-App"
+
+	// ServiceDiscoveryDomain is the private DNS suffix exposed to workloads.
+	// The node-local resolver answers <slug>.svc.gregale with the tenant
+	// bridge address; the HTTP proxy then authorizes the slug before forwarding.
+	ServiceDiscoveryDomain = "svc.gregale"
 
 	// ServiceProxyMaxAttempts bounds transport retries. Only idempotent,
 	// bodyless requests may use the second attempt.
@@ -130,12 +136,13 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 	}
 }
 
-// ServeHTTP accepts /v1/internal/services/{service}[/{path...}]. The service
-// segment is resolved to an app; the remaining path is forwarded unchanged.
+// ServeHTTP accepts /v1/internal/services/{service}[/{path...}] and the
+// guest-facing <service>.svc.gregale Host form. The service segment is
+// resolved to an app; the remaining path is forwarded unchanged.
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	service, targetPath, ok := parseServiceProxyPath(r.URL.Path)
+	service, targetPath, ok := parseServiceProxyRequest(r)
 	if !ok {
-		serviceProxyProblem(w, http.StatusNotFound, "service path must match /v1/internal/services/<name>[/<path>]")
+		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>] or <name>.svc.gregale")
 		return
 	}
 	caller := strings.TrimSpace(r.Header.Get(ServiceProxyCallerAppHeader))
@@ -198,6 +205,60 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.forwardOnce(w, r, targetPath, targetApp, endpoints, true)
+}
+
+// parseServiceProxyRequest accepts the original explicit path form and the
+// guest-facing DNS/Host form. The latter lets a workload use a normal URL,
+// for example http://orders.svc.gregale:10080/health, without exposing node
+// addresses or requiring a platform-owned caller header.
+func parseServiceProxyRequest(r *http.Request) (service, targetPath string, ok bool) {
+	if service, targetPath, ok = parseServiceProxyPath(r.URL.Path); ok {
+		return service, targetPath, true
+	}
+	service, ok = parseServiceProxyHost(r.Host)
+	if !ok {
+		return "", "", false
+	}
+	targetPath = r.URL.Path
+	if targetPath == "" {
+		targetPath = "/"
+	}
+	return service, targetPath, true
+}
+
+func parseServiceProxyHost(host string) (string, bool) {
+	host = strings.TrimSpace(host)
+	if parsed, _, err := net.SplitHostPort(host); err == nil {
+		host = parsed
+	} else if strings.HasPrefix(host, "[") || strings.Count(host, ":") > 1 {
+		return "", false
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	suffix := "." + ServiceDiscoveryDomain
+	if !strings.HasSuffix(host, suffix) {
+		return "", false
+	}
+	service := strings.TrimSuffix(host, suffix)
+	if !validServiceDNSLabel(service) {
+		return "", false
+	}
+	return service, true
+}
+
+func validServiceDNSLabel(service string) bool {
+	if service == "" || len(service) > 63 || strings.HasPrefix(service, "-") || strings.HasSuffix(service, "-") {
+		return false
+	}
+	for _, r := range service {
+		if r < 'a' || r > 'z' {
+			if r < '0' || r > '9' {
+				if r != '-' {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func (p *ServiceProxy) resolveTargetApp(ctx context.Context, service string) (string, error) {

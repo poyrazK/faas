@@ -10,17 +10,17 @@ triggered by the GitHub App the customer installed via
 ## URL shape
 
 ```
-https://pr-{N}.{slug}.apps.<zone>
+https://pr-{N}-{slug}.<zone>
 ```
 
 - `{N}` — GitHub PR number, stable across `synchronize` and
   `reopened` events on the same PR.
 - `{slug}` — the parent app's slug (the production app the PR
   targets).
-- `{zone}` — the platform zone; `apps.gregale.dev` on the
+- `{zone}` — the platform zone; `gregale.dev` on the
   hosted product.
 
-The wildcard cert at `*.apps.<zone>` covers previews for free —
+The wildcard cert at `*.<zone>` covers previews for free —
 no per-PR cert provisioning, no DNS work.
 
 ## Lifecycle

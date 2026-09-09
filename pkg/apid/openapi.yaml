@@ -44,6 +44,8 @@ tags:
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
     description: App lifecycle (create, update, delete, wake, park).
+  - name: debugger
+    description: Customer production debugger request evidence and safe replay.
   - name: uploads
     description: |
       Resumable upload sessions (issue #1182 §P1 / ADR-115). A session
@@ -363,6 +365,27 @@ paths:
               schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
         default:
           description: Authentication or database deletion error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/managed-postgres-usage:
+    get:
+      operationId: getManagedPostgresUsage
+      summary: Read managed PostgreSQL usage and guardrail state
+      description: |
+        Requires usage read scope. Returns normalized current-month meters,
+        plan headroom, and freshness state. Provider IDs, rates, credentials,
+        and internal cost line items are never returned.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Current managed PostgreSQL usage; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageResponse' }
+        default:
+          description: Authentication or managed PostgreSQL accounting error
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -940,6 +963,29 @@ paths:
               schema: { $ref: '#/components/schemas/ObjectStorageUsageResponse' }
         default:
           description: Access denied or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/usage/{account_id}:
+    get:
+      operationId: getManagedPostgresUsageOperator
+      summary: Read normalized managed PostgreSQL usage for an account
+      description: Operator-only view with effective guardrail ceilings and internal COGS line items. Provider IDs and credentials are never returned.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account whose normalized PostgreSQL usage is requested.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Account usage and internal normalized ledger lines; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageOperatorResponse' }
+        default:
+          description: Access denied, account not found, or accounting unavailable
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -2306,7 +2352,7 @@ paths:
         the `faas_csrf` cookie); a missing or mismatched token is 400
         `validation_failed`. The route is a same-site form POST, so
         `SameSite=Lax` alone does not protect it from a customer app
-        hosted under `*.apps.gregale.dev`.
+        hosted under `*.gregale.dev`.
 
         Proof of presence (ADR-140), decided by what the account has:
 
@@ -3623,6 +3669,31 @@ paths:
         '403': { $ref: '#/components/responses/DeploymentForbidden' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '422': { $ref: '#/components/responses/DeployFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deployments/{id}/summary:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getAppDeploymentSummary
+      summary: Fetch a deployment release summary and diff.
+      description: |
+        Returns the selected deployment, its immediately preceding release,
+        a stable field-level diff of non-secret release metadata, and the
+        deployment id the app rollback operation would currently target.
+        Unknown, cross-account, or slug/deployment-mismatch requests return
+        the same IDOR-safe 404 surface as the other app-scoped reads.
+      responses:
+        '200':
+          description: The release summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentSummaryResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/deployments/latest:
@@ -8800,6 +8871,57 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # Dashboard form-POST sibling of the debugger replay API. The page uses a
+  # named CSRF envelope and redirects back to the selected request so the
+  # browser can inspect the durable mirror invocation by id.
+  /dashboard/apps/{slug}/debug/requests/{req_id}/replay:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: req_id
+        in: path
+        required: true
+        description: Retained request telemetry id to replay.
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [debugger]
+      operationId: dashboardReplayAppDebugRequest
+      summary: Queue a debugger replay from the dashboard.
+      description: |
+        Accepts the server-rendered dashboard form payload and queues the
+        same metadata-only replay as POST /v1/apps/{slug}/debug/requests/{req_id}/replay.
+        The response redirects to the request detail with a replay_id query
+        parameter; request bodies, credentials, and customer headers are
+        never replayed.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                csrf_token: { type: string }
+                since: { type: string }
+                route: { type: string, maxLength: 256 }
+              required: [csrf_token]
+      responses:
+        '303':
+          description: Redirect to the request detail and replay status.
+        '400':
+          description: Invalid dashboard CSRF token or form payload.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: No enabled mirror rule targets the serving deployment.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert"
   # (test-fire the customer's instantiated preset against their
   # configured webhook URL). The body is empty (the rule already
@@ -12716,6 +12838,22 @@ paths:
             application/json:
               schema: { type: object }
 
+  /docs:
+    get:
+      tags: [meta]
+      operationId: getDocs
+      summary: Human-readable API reference.
+      description: |
+        Anonymous Swagger UI page backed by the exact JSON document served
+        at `/v1/openapi.json`. The page does not persist bearer tokens.
+      security: []
+      responses:
+        '200':
+          description: Swagger UI HTML.
+          content:
+            text/html:
+              schema: { type: string }
+
   /v1/traces/{trace_id}:
     get:
       tags: [observability]
@@ -12916,6 +13054,62 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresDatabase' } }
+    ManagedPostgresUsageResponse:
+      description: Customer-safe current UTC-month managed PostgreSQL usage and guardrail state.
+      type: object
+      required: [period_start, policy_enabled, fresh, guardrail_state, ready_databases, database_limit, storage_limit_bytes, compute_unit_seconds, storage_byte_seconds, storage_byte_seconds_limit, storage_byte_seconds_remaining, history_byte_seconds, egress_bytes]
+      properties:
+        period_start: { type: string, format: date-time }
+        observed_at: { type: [string, "null"], format: date-time }
+        policy_enabled: { type: boolean }
+        fresh: { type: boolean }
+        guardrail_state: { type: string, enum: [disabled, healthy, stale, reached] }
+        ready_databases: { type: integer, minimum: 0 }
+        database_limit: { type: integer, minimum: 0 }
+        storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
+        compute_unit_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_limit: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
+        history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        egress_bytes: { type: integer, format: int64, minimum: 0 }
+    ManagedPostgresUsageLineItem:
+      description: Normalized operator-only managed PostgreSQL ledger line.
+      type: object
+      required: [code, meter, unit, quantity, cost_millicents]
+      properties:
+        code: { type: string, enum: [managed_postgres.compute, managed_postgres.storage, managed_postgres.restore_history, managed_postgres.egress] }
+        meter: { type: string }
+        unit: { type: string }
+        quantity: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+    ManagedPostgresUsageOperatorResponse:
+      description: Operator-only managed PostgreSQL usage, effective ceilings, and internal COGS line items.
+      type: object
+      required: [account_id, period_start, policy_enabled, fresh, guardrail_state, ready_databases, database_limit, storage_limit_bytes, compute_unit_seconds, storage_byte_seconds, storage_byte_seconds_limit, storage_byte_seconds_remaining, history_byte_seconds, egress_bytes, cost_millicents, max_monthly_cost_millicents, max_monthly_compute_unit_seconds, max_monthly_storage_byte_seconds, max_monthly_history_byte_seconds, max_monthly_egress_bytes, line_items]
+      properties:
+        account_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        observed_at: { type: [string, "null"], format: date-time }
+        policy_enabled: { type: boolean }
+        fresh: { type: boolean }
+        guardrail_state: { type: string, enum: [disabled, healthy, stale, reached] }
+        ready_databases: { type: integer, minimum: 0 }
+        database_limit: { type: integer, minimum: 0 }
+        storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
+        compute_unit_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_limit: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
+        history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        egress_bytes: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        max_monthly_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        max_monthly_compute_unit_seconds: { type: integer, format: int64, minimum: 0 }
+        max_monthly_storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        max_monthly_history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        max_monthly_egress_bytes: { type: integer, format: int64, minimum: 0 }
+        line_items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresUsageLineItem' } }
     CreateManagedPostgresDatabaseRequest:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object
@@ -14147,7 +14341,7 @@ components:
     AppEffectiveLimits:
       description: "The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the app configuration and current plan; they describe enforcement rather than guest hardware alone."
       type: object
-      required: [memory_limit_mb, plan_memory_max_mb, ephemeral_disk_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
+      required: [memory_limit_mb, plan_memory_max_mb, ephemeral_disk_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s, request_body_max_bytes]
       properties:
         memory_limit_mb: { type: integer, description: "Memory limit configured for this app instance, in MB." }
         plan_memory_max_mb: { type: integer, description: "Largest memory limit the current plan permits for an app instance, in MB." }
@@ -14164,6 +14358,7 @@ components:
         request_budget_ms: { type: integer, format: int64, description: "Default end-to-end request budget before a route override, in milliseconds." }
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
         response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
+        request_body_max_bytes: { type: integer, format: int64, description: "Maximum inbound request body accepted for this app's plan, in bytes." }
 
     AppConfiguredResources:
       description: "The memory and sustained CPU shape selected for each instance of this app."
@@ -15362,6 +15557,12 @@ components:
           description: "Per-line log excerpts explaining the failure (error-explanations cluster). Capped at 20 entries × 512 bytes by the CLI tripwire."
           items: { $ref: '#/components/schemas/LogExcerpt' }
         created_at: { type: string, format: date-time }
+        source_url:
+          type: [string, "null"]
+          description: "Upstream repository or registry reference that produced this deployment, when known."
+        commit_sha:
+          type: [string, "null"]
+          description: "Upstream commit SHA that produced this deployment, when known."
         source_root:
           type: string
           description: "Repository-relative build root used by a workspace context upload; omitted when the archive root is built."
@@ -15786,6 +15987,40 @@ components:
           type: array
           items: { $ref: '#/components/schemas/DeploymentResponse' }
         next_before: { type: [string, "null"], format: date-time }
+
+    DeploymentSummaryResponse:
+      description: "App-scoped release cockpit: selected deployment, immediate predecessor, non-secret field-level diff, and eligible rollback target."
+      type: object
+      required: [deployment, changes]
+      properties:
+        deployment:
+          $ref: '#/components/schemas/DeploymentResponse'
+        previous:
+          oneOf:
+            - $ref: '#/components/schemas/DeploymentResponse'
+            - type: 'null'
+          description: "The immediately older deployment by created_at, or null for an initial release."
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeploymentChange'
+        rollback_target_id:
+          type: [string, "null"]
+          format: uuid
+          description: "The latest superseded deployment eligible for POST /v1/apps/{slug}/rollback; omitted when none exists."
+
+    DeploymentChange:
+      description: "One non-secret release field that changed from the previous deployment."
+      type: object
+      required: [field, before, after]
+      properties:
+        field:
+          type: string
+          enum: [status, kind, build_id, image_digest, source_url, commit_sha, source_root, scope, build_plan, min_instances, traffic_percent, has_overrides, canary_preset, rollback_on_5xx, rollout_state]
+        before:
+          type: [string, number, boolean, object, "null"]
+        after:
+          type: [string, number, boolean, object, "null"]
 
 # ─── Billing history (issue #259) ──────────────────────────────────────
 
@@ -22698,6 +22933,8 @@ components:
         detail: { type: string }
         limit: { type: [integer, "null"] }
         observed: { type: [integer, "null"] }
+        limit_bytes: { type: [integer, "null"], description: "Explicit byte limit for request-body and other byte-oriented errors." }
+        observed_bytes: { type: [integer, "null"], description: "Observed byte count for request-body and other byte-oriented errors." }
         docs_url: { type: string, format: uri }
         checkout_url:
           type: string

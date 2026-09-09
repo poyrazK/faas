@@ -594,6 +594,7 @@ type AppEffectiveLimits struct {
 	RequestBudgetMS        int64 `json:"request_budget_ms"`
 	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
+	RequestBodyMaxBytes    int64 `json:"request_body_max_bytes"`
 }
 
 // AppConfiguredResources is the resource shape selected for an app. It is
@@ -1682,6 +1683,12 @@ type DeploymentResponse struct {
 	// tripwire; see pkg/whycopy.Render for the catalogue row).
 	ErrorRelevantLogs []LogExcerpt `json:"error_relevant_logs,omitempty"`
 	CreatedAt         string       `json:"created_at"`
+	// SourceURL and CommitSHA identify the upstream revision that produced
+	// this deployment when the deploy was triggered from a repository. They
+	// are non-secret provenance metadata and are omitted for image/tarball
+	// deploys without an upstream reference.
+	SourceURL string `json:"source_url,omitempty"`
+	CommitSHA string `json:"commit_sha,omitempty"`
 	// SourceRoot is the repository-relative build root used by a workspace
 	// context upload. Empty means the archive root and is omitted for legacy
 	// self-contained source deploys.
@@ -2699,6 +2706,30 @@ func (u UsageResponse) TotalEgressGB() float64 {
 type DeploymentListResponse struct {
 	Items      []DeploymentResponse `json:"items"`
 	NextBefore string               `json:"next_before,omitempty"`
+}
+
+// DeploymentSummaryResponse is the app-scoped release cockpit returned by
+// GET /v1/apps/{slug}/deployments/{id}/summary. It composes the existing
+// deployment detail shape with the immediately preceding release, a stable
+// field-level diff, and the currently eligible rollback target. The full
+// deployment objects keep this response additive: consumers can reuse the
+// same decoder they already use for GET /v1/deployments/{id}.
+type DeploymentSummaryResponse struct {
+	Deployment       DeploymentResponse  `json:"deployment"`
+	Previous         *DeploymentResponse `json:"previous,omitempty"`
+	Changes          []DeploymentChange  `json:"changes"`
+	RollbackTargetID string              `json:"rollback_target_id,omitempty"`
+}
+
+// DeploymentChange describes one release field that changed relative to the
+// preceding deployment. Before and After intentionally use JSON-native
+// values so strings, numbers, booleans, and the build_plan object retain
+// their natural wire types. The field names are a closed, documented subset
+// of DeploymentResponse's non-secret release metadata.
+type DeploymentChange struct {
+	Field  string `json:"field"`
+	Before any    `json:"before"`
+	After  any    `json:"after"`
 }
 
 // --- Invoice history (issue #259) -----------------------------------------

@@ -19,6 +19,9 @@
   legacy daemon's migration window; PR-C sweeps it together with
   `pkg/gateway/{tls_wire,tls,dns01_hetzner,allowlist,certsync,
   cert_expiry}`.
+- **Hostname note (issue #1727):** any `*.apps.gregale.dev` values
+  preserved in this legacy-daemon ADR are historical examples. New
+  customer URLs use `*.gregale.dev`.
 - **Decision:** Ship gatewayd's TLS termination via the already-merged
   CertMagic plumbing (`pkg/gateway/tls*.go`, `dns01_hetzner.go`,
   `allowlist.go`, `acme.go`, `cmd/gatewayd/{main,config,secrets}.go`, the

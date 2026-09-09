@@ -46,6 +46,7 @@ import (
 	"filippo.io/age"
 	"github.com/caddyserver/certmagic"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
@@ -668,9 +669,10 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
-	listen  func(network, addr string) (net.Listener, error)
-	newSrv  func(addr string, handler http.Handler) *http.Server
-	backend gateway.Backend
+	listen       func(network, addr string) (net.Listener, error)
+	listenPacket func(network, addr string) (net.PacketConn, error)
+	newSrv       func(addr string, handler http.Handler) *http.Server
+	backend      gateway.Backend
 	// drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker the graceful-shutdown path waits on. ONE
 	// tracker per daemon, shared by Handler + InternalReverseProxy +
@@ -942,10 +944,11 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		listen:      net.Listen,
-		newSrv:      defaultServer,
-		backend:     unwiredBackend{},
-		controlAddr: controlAddr,
+		listen:       net.Listen,
+		listenPacket: net.ListenPacket,
+		newSrv:       defaultServer,
+		backend:      unwiredBackend{},
+		controlAddr:  controlAddr,
 	}
 }
 
@@ -2783,6 +2786,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
 	errc := make(chan error, 5)
 	var servers []*http.Server
+	var serviceDiscoveryServers []*dns.Server
 	addSrv := func(s *http.Server) { servers = append(servers, s) }
 
 	// Issue #675: build the unified mux that the unix-socket server
@@ -2965,6 +2969,43 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					errc <- err
 				}
 			}()
+			bridgeIP, bridgeErr := serviceProxyBridgeIP(serviceProxyAddr)
+			if bridgeErr != nil {
+				return fmt.Errorf("gatewayd: service discovery DNS bridge address: %w", bridgeErr)
+			}
+			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log)
+			if dnsErr != nil {
+				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
+			}
+			dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(gateway.ServiceDiscoveryDNSPort))
+			listenPacket := deps.listenPacket
+			if listenPacket == nil {
+				listenPacket = net.ListenPacket
+			}
+			packetConn, packetErr := listenPacket("udp", dnsAddr)
+			if packetErr != nil {
+				return fmt.Errorf("gatewayd: service discovery DNS UDP listen %s: %w", dnsAddr, packetErr)
+			}
+			dnsTCP, tcpErr := deps.listen("tcp", dnsAddr)
+			if tcpErr != nil {
+				_ = packetConn.Close()
+				return fmt.Errorf("gatewayd: service discovery DNS TCP listen %s: %w", dnsAddr, tcpErr)
+			}
+			udpServer := &dns.Server{PacketConn: packetConn, Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
+			tcpServer := &dns.Server{Listener: dnsTCP, Net: "tcp", Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
+			serviceDiscoveryServers = append(serviceDiscoveryServers, udpServer, tcpServer)
+			go func() {
+				log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "udp")
+				if err := udpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
+					errc <- err
+				}
+			}()
+			go func() {
+				log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "tcp")
+				if err := tcpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
+					errc <- err
+				}
+			}()
 		}
 	}
 	go func() {
@@ -2989,6 +3030,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
 		defer cancel()
+		for _, s := range serviceDiscoveryServers {
+			//nolint:contextcheck // shutdownCtx intentionally outlives the cancelled run context.
+			_ = s.ShutdownContext(shutdownCtx)
+		}
 		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
 		// Best-effort shutdown of every listener we may have started.
 		// Servers track themselves in `servers`; certmagic owns its renew loop
@@ -3177,6 +3222,32 @@ func validateServiceProxyListen(addr string) error {
 		return fmt.Errorf("gatewayd: service_proxy_listen must bind a private host-bridge address")
 	}
 	return nil
+}
+
+func serviceProxyBridgeIP(addr string) (netip.Addr, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	return netip.ParseAddr(host)
+}
+
+func serviceDiscoveryUpstreams() []string {
+	data, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return nil
+	}
+	var upstreams []string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "nameserver" {
+			continue
+		}
+		if ip := net.ParseIP(fields[1]); ip != nil {
+			upstreams = append(upstreams, net.JoinHostPort(fields[1], "53"))
+		}
+	}
+	return upstreams
 }
 
 // installComputeMetricsRoute exposes only /metrics on a compute node's

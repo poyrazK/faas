@@ -9,6 +9,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+const reaperVMCancelTimeout = 30 * time.Second
+
 // ReaperLoop sweeps build rows stuck in 'running' past a configurable
 // threshold (issue #195 B1.4). Runs as a free-function goroutine next
 // to workerLoop; cadence is configurable so a CI smoke test can use
@@ -37,6 +39,14 @@ import (
 //
 // Idempotent: a second sweep with the same threshold matches 0 rows.
 func ReaperLoop(ctx context.Context, store state.Store, interval, threshold time.Duration, log *slog.Logger) {
+	ReaperLoopWithVM(ctx, store, nil, interval, threshold, log)
+}
+
+// ReaperLoopWithVM is the production reaper entrypoint. It keeps the durable
+// row sweep and the VM cleanup coupled: a stale build is first failed in the
+// store transaction, then its exact build ID is sent to vmmd. A nil VM keeps
+// the old row-only behavior for callers that do not own builder processes.
+func ReaperLoopWithVM(ctx context.Context, store state.Store, vm VM, interval, threshold time.Duration, log *slog.Logger) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -46,7 +56,7 @@ func ReaperLoop(ctx context.Context, store state.Store, interval, threshold time
 		case <-t.C:
 		}
 		cutoff := time.Now().Add(-threshold)
-		n, err := store.SweepStuckRunningBuilds(ctx, cutoff)
+		n, err := sweepStuckBuilds(ctx, store, vm, cutoff, log)
 		if err != nil {
 			// Sweep failures are operator-visible but not fatal —
 			// the next tick retries. A persistent failure (e.g.,
@@ -65,4 +75,31 @@ func ReaperLoop(ctx context.Context, store state.Store, interval, threshold time
 				"count", n, "threshold", threshold, "cutoff", cutoff.Format(time.RFC3339))
 		}
 	}
+}
+
+// sweepStuckBuilds performs one reaper pass. The optional ID-returning store
+// seam prevents a broad follow-up cancellation from racing with a build that
+// completed after the stale-row scan. The legacy store method remains a safe
+// fallback for custom stores that predate the VM-aware capability.
+func sweepStuckBuilds(ctx context.Context, store state.Store, vm VM, cutoff time.Time, log *slog.Logger) (int, error) {
+	if vm == nil {
+		return store.SweepStuckRunningBuilds(ctx, cutoff)
+	}
+	sweeper, ok := store.(state.StuckBuildSweepStore)
+	if !ok {
+		return store.SweepStuckRunningBuilds(ctx, cutoff)
+	}
+	ids, err := sweeper.SweepStuckRunningBuildsWithIDs(ctx, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	for _, buildID := range ids {
+		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reaperVMCancelTimeout)
+		cancelErr := vm.Cancel(cancelCtx, buildID)
+		cancel()
+		if cancelErr != nil && !errors.Is(cancelErr, context.Canceled) {
+			log.Warn("builderd: stuck-running VM cleanup", "build", buildID, "err", cancelErr)
+		}
+	}
+	return len(ids), nil
 }

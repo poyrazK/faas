@@ -9,10 +9,15 @@ Run this from a machine that can reach the public DNS name:
 
 ```sh
 cd /opt/faas
-PUBLIC_ENDPOINT_URL=https://apps.example.com \
-PUBLIC_HTTP_URL=http://apps.example.com \
+PUBLIC_ENDPOINT_URL=https://my-api.gregale.dev \
+PUBLIC_HTTP_URL=http://my-api.gregale.dev \
 make public-endpoint-check
 ```
+
+Use a real deployed app slug in the current `<slug>.gregale.dev`
+shape. The HTTPS curl probe performs normal certificate and hostname
+verification, so a missing wildcard SAN or an otherwise uncovered
+hostname fails the release check before any HTTP assertions run.
 
 The check verifies all of the following:
 
@@ -25,7 +30,7 @@ For a site whose authenticated status page is not public, choose another
 unauthenticated 2xx path:
 
 ```sh
-PUBLIC_ENDPOINT_URL=https://apps.example.com \
+PUBLIC_ENDPOINT_URL=https://my-api.gregale.dev \
 PUBLIC_ENDPOINT_PATH=/ \
 make public-endpoint-check
 ```

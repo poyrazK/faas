@@ -218,6 +218,21 @@ costs or surprise overage charges to customers. A future invoice adapter can
 attach the codes to the included managed-postgres product without changing
 the Neon adapter or the customer API.
 
+Customers can inspect the current account snapshot with
+`GET /v1/account/managed-postgres-usage` (the `usage:read` scope) or
+`gregale postgres usage`. The response reports normalized compute,
+storage/history, and egress meters, ready-database count, the bundled storage
+headroom, and a `guardrail_state` of `disabled`, `healthy`, `stale`, or
+`reached`. `fresh=false` is informational for this read surface; admission
+continues to fail closed when observations are stale. Provider IDs, provider
+rates, internal cost line items, credentials, and connection URLs never appear
+in the customer response.
+
+Operators with the admin scope and MFA can inspect the same account through
+`GET /v1/admin/managed-postgres/usage/{account_id}`. This bounded view adds the
+effective normalized safety ceilings and internal millicent COGS line items;
+it still omits provider resource IDs, credentials, and connection URLs.
+
 Account deletion is fail-closed until all managed databases reach their
 provider-confirmed `deleted` tombstone. The final GDPR deletion transaction
 then removes usage, binding, and database tombstones before deleting apps and
@@ -261,6 +276,7 @@ provider-neutral API:
 
 ```sh
 gregale postgres list
+gregale postgres usage
 gregale postgres create orders --region eu --class development
 gregale postgres get DATABASE_ID
 gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z

@@ -398,7 +398,7 @@ Expect a 6-row ticker that updates as stages complete:
    …  Security scan               …       ← current
    ·  Snapshot prepared           ·
    ·  Readiness passed            ·
-   ✓ Deployed. https://app.apps.gregale.dev
+   ✓ Deployed. https://app.gregale.dev
 ```
 
 Then `NO_COLOR=1 gregale deploy --repo …` to confirm static

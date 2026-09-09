@@ -10,7 +10,7 @@
 -- faas-deploy-action). Every PR opened against a bound repo
 -- provisions a separate apps row at slug `pr-{N}-{parent_slug}`,
 -- deploys the PR head SHA into it, routes
--- `pr-{N}.{slug}.apps.gregale.dev` to that row, and tears it down
+-- `pr-{N}-{slug}.gregale.dev` to that row, and tears it down
 -- when the PR closes (24h grace, then janitor reaps).
 --
 -- Columns:

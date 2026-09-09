@@ -65,6 +65,13 @@ their stream (`runtime stdout` or `runtime stderr`), and reconnects after a
 transient API or scheduler interruption. `--once` remains finite and does not
 attach the stream.
 
+Each sync also ends with a compact phase summary, for example
+`sync=1.2s · cache=0.3s · build=2.4s · boot=1.1s · ready=0.4s · route=0ms`.
+The source transfer is measured by the CLI; the cache, build, boot, and
+readiness values come from the deployment stage timings. Build output is
+prefixed with `build |` so it stays distinguishable from the app-level
+`runtime |` stream in the same terminal.
+
 The URL is stable for an account, local developer installation, and source
 directory. Teammates and separate clones or worktrees therefore get independent
 environments, while repeated runs from the same source directory resume the

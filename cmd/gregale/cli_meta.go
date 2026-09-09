@@ -505,8 +505,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployment,
 		DocSlug: "deployment",
-		Short:   "Get or wait for one deployment (<id> | wait <id> | set-min-instances <id>)",
+		Short:   "Get, summarize, or wait for one deployment (<id> | summary <id> | wait <id> | set-min-instances <id>)",
 		Subcommands: []cliSub{
+			{Name: "summary", Short: "Show the release diff and rollback target", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
+			}},
 			{Name: "wait", Short: "Wait until a deployment is live", Flags: []cliFlag{
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
 			}},
@@ -931,9 +934,10 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "postgres",
 		DocSlug: "postgres",
-		Short:   "Manage managed PostgreSQL (postgres list|create|get|delete|restore|bindings ...)",
+		Short:   "Manage managed PostgreSQL (postgres list|usage|create|get|delete|restore|bindings ...)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
+			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
 			{Name: "create", Short: "Create a managed PostgreSQL database", Flags: []cliFlag{
 				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},

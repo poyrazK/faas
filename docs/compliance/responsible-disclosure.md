@@ -62,8 +62,7 @@ will notify the reporter and explain. The SLAs are NOT a contract.
   `gatewayd-internal`, `schedd`, `vmmd`, `builderd`, `imaged`,
   `meterd`, `gregale` daemons, plus the `pkg/{api,state,fcvm,netns,
   oci,rootfs,meter,stripex,wire}` shared libraries.
-- Customer-facing dashboard at `*.gregale.dev` and
-  `*.apps.gregale.dev`.
+- Customer-facing dashboard and app endpoints at `*.gregale.dev`.
 - The Stripe / Paddle / Resend / Postmark / GitHub / Google OAuth
   integrations listed in
   [`subprocessors.md`](subprocessors.md), to the extent that Gregale
