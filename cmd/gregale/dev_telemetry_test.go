@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDevPhaseTrackerRendersMappedTimings(t *testing.T) {
@@ -56,5 +57,31 @@ func TestFormatDevPhaseDurationRoundsToReadableUnits(t *testing.T) {
 		if got := formatDevPhaseDuration(durationMS); got != want {
 			t.Errorf("formatDevPhaseDuration(%d) = %q, want %q", durationMS, got, want)
 		}
+	}
+}
+
+func TestDevPhaseTrackerReceiptIncludesEditToLiveSLO(t *testing.T) {
+	tracker := newDevPhaseTracker()
+	tracker.mu.Lock()
+	tracker.startedAt = time.Now().Add(-2 * time.Second)
+	tracker.mu.Unlock()
+	tracker.setDeploymentID("dep-slo")
+	tracker.sourceSync(100*time.Millisecond, nil)
+
+	receipt := tracker.receipt("live")
+	if receipt.SchemaVersion != 1 || receipt.Type != "developer_sync" {
+		t.Fatalf("receipt identity = %#v", receipt)
+	}
+	if receipt.DeploymentID != "dep-slo" || receipt.Status != "live" {
+		t.Fatalf("receipt deployment/status = %q/%q", receipt.DeploymentID, receipt.Status)
+	}
+	if receipt.SLOTargetMS != devEditToLiveTarget.Milliseconds() {
+		t.Fatalf("slo target = %d, want %d", receipt.SLOTargetMS, devEditToLiveTarget.Milliseconds())
+	}
+	if !receipt.WithinSLO {
+		t.Fatal("two-second sync should be within the fifteen-second SLO")
+	}
+	if len(receipt.Phases) != 1 || receipt.Phases[0].Phase != devPhaseSync {
+		t.Fatalf("receipt phases = %#v, want sync phase", receipt.Phases)
 	}
 }

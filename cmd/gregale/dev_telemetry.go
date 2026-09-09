@@ -14,13 +14,14 @@ import (
 // scrolling ticker. The names are intentionally product-facing; the server's
 // closed stage vocabulary stays an implementation detail.
 const (
-	devPhaseSync   = "sync"
-	devPhaseCache  = "cache"
-	devPhaseBuild  = "build"
-	devPhaseBoot   = "boot"
-	devPhaseReady  = "ready"
-	devPhaseRoute  = "route"
-	devPhaseFailed = "failed"
+	devPhaseSync        = "sync"
+	devPhaseCache       = "cache"
+	devPhaseBuild       = "build"
+	devPhaseBoot        = "boot"
+	devPhaseReady       = "ready"
+	devPhaseRoute       = "route"
+	devPhaseFailed      = "failed"
+	devEditToLiveTarget = 15 * time.Second
 )
 
 var devPhaseOrder = []string{
@@ -39,9 +40,24 @@ type devPhaseTiming struct {
 	Reason     string `json:"reason,omitempty"`
 }
 
+// devSyncReceipt is the machine-readable contract emitted by `gregale dev
+// --json`. It intentionally contains only timings and a deployment id; source
+// paths, environment values, and application logs never enter the receipt.
+type devSyncReceipt struct {
+	SchemaVersion int              `json:"schema_version"`
+	Type          string           `json:"type"`
+	DeploymentID  string           `json:"deployment_id,omitempty"`
+	Status        string           `json:"status"`
+	EditToLiveMS  int64            `json:"edit_to_live_ms"`
+	SLOTargetMS   int64            `json:"slo_target_ms"`
+	WithinSLO     bool             `json:"within_slo"`
+	Phases        []devPhaseTiming `json:"phases"`
+}
+
 type devPhaseTracker struct {
 	mu             sync.Mutex
 	deploymentID   string
+	startedAt      time.Time
 	started        map[string]time.Time
 	timings        map[string]devPhaseTiming
 	routeStartedAt time.Time
@@ -49,8 +65,33 @@ type devPhaseTracker struct {
 
 func newDevPhaseTracker() *devPhaseTracker {
 	return &devPhaseTracker{
-		started: make(map[string]time.Time),
-		timings: make(map[string]devPhaseTiming),
+		startedAt: time.Now(),
+		started:   make(map[string]time.Time),
+		timings:   make(map[string]devPhaseTiming),
+	}
+}
+
+func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
+	if t == nil {
+		return devSyncReceipt{}
+	}
+	deploymentID, timings := t.snapshot()
+	t.mu.Lock()
+	startedAt := t.startedAt
+	t.mu.Unlock()
+	editToLive := time.Since(startedAt)
+	if editToLive < 0 {
+		editToLive = 0
+	}
+	return devSyncReceipt{
+		SchemaVersion: 1,
+		Type:          "developer_sync",
+		DeploymentID:  deploymentID,
+		Status:        status,
+		EditToLiveMS:  editToLive.Milliseconds(),
+		SLOTargetMS:   devEditToLiveTarget.Milliseconds(),
+		WithinSLO:     editToLive <= devEditToLiveTarget,
+		Phases:        timings,
 	}
 }
 
@@ -170,7 +211,8 @@ func (t *devPhaseTracker) snapshot() (string, []devPhaseTiming) {
 }
 
 func (t *devPhaseTracker) render(w io.Writer) {
-	deploymentID, timings := t.snapshot()
+	receipt := t.receipt("live")
+	deploymentID, timings := receipt.DeploymentID, receipt.Phases
 	if len(timings) == 0 {
 		return
 	}
@@ -197,6 +239,12 @@ func (t *devPhaseTracker) render(w io.Writer) {
 	if len(parts) == 0 {
 		return
 	}
+	slo := "met"
+	if !receipt.WithinSLO {
+		slo = "breached"
+	}
+	parts = append(parts, fmt.Sprintf("edit-to-live=%s", formatDevPhaseDuration(receipt.EditToLiveMS)))
+	parts = append(parts, fmt.Sprintf("slo<=%s (%s)", formatDevPhaseDuration(receipt.SLOTargetMS), slo))
 	if deploymentID == "" {
 		_, _ = fmt.Fprintf(w, "dev phases: %s\n", strings.Join(parts, " · "))
 		return
