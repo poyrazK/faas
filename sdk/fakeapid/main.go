@@ -281,6 +281,7 @@ func (f *fixture) handler() http.Handler {
 					"effective_limits":         appEffectiveLimits(),
 					"min_instances":            0,
 					"status":                   "active",
+					"build_cache_hit_rate_pct": 0,
 					"url":                      "https://hello-world.example.com",
 					"manifest":                 appManifest(),
 					"egress_allowlist":         []string{},
