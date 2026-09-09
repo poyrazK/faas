@@ -128,6 +128,10 @@ grep -q 'chmod 0700 "$PG_DATA"' "$SCRIPT" \
   || { echo "FAIL: extracted PGDATA permissions are not enforced before startup"; exit 1; }
 grep -q 'Keep the temporary recovery stanza in place until archived WAL has' "$SCRIPT" \
   || { echo "FAIL: cleanup may restore the normal config before archived-WAL replay"; exit 1; }
+grep -q 'LATEST_BB_TS=$(stat -c %Y "$LATEST_BB/base.tar.gz")' "$SCRIPT" \
+  || { echo "FAIL: basebackup RPO can be changed by mutable directory metadata"; exit 1; }
+grep -Fq -- "-regex '.*/[0-9A-F]{24}'" "$SCRIPT" \
+  || { echo "FAIL: WAL RPO does not exclude timeline history and backup marker files"; exit 1; }
 grep -q "SHOW data_directory" "$SCRIPT" \
   || { echo "FAIL: destructive target is not derived from live PostgreSQL"; exit 1; }
 grep -q 'FAAS_PG_DATA=.*does not match PostgreSQL data_directory' "$SCRIPT" \

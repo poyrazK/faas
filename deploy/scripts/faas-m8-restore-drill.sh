@@ -352,18 +352,24 @@ systemctl cat "$PG_SERVICE" >/dev/null 2>&1 \
 [[ -z "$DRILL_COMMIT" || "$DRILL_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
   || fail "FAAS_DRILL_COMMIT must be the 40-character commit that supplied this script"
 
-LATEST_BB="$(ls -1dt "$PG_BASEBACKUP_DIR"/basebackup-* 2>/dev/null | head -1 || true)"
-[[ -n "$LATEST_BB" && -d "$LATEST_BB" ]] || fail "no basebackup-*/ under ${PG_BASEBACKUP_DIR}"
+LATEST_BB_NAME="$(find "$PG_BASEBACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'basebackup-*' \
+  -printf '%f\n' 2>/dev/null | sort | tail -1 || true)"
+LATEST_BB="${PG_BASEBACKUP_DIR}/${LATEST_BB_NAME}"
+[[ -n "$LATEST_BB_NAME" && -d "$LATEST_BB" ]] || fail "no basebackup-*/ under ${PG_BASEBACKUP_DIR}"
 [[ -f "$LATEST_BB/base.tar.gz" ]] || fail "${LATEST_BB}/base.tar.gz missing — backup is not a tar-format pg_basebackup"
 tar -tzf "$LATEST_BB/base.tar.gz" PG_VERSION >/dev/null 2>&1 \
   || fail "${LATEST_BB}/base.tar.gz is unreadable or does not contain PG_VERSION"
-LATEST_BB_TS=$(stat -c %Y "$LATEST_BB")
+# The drill may stamp host identity files alongside the archive, changing the
+# directory mtime. The immutable base archive carries the real backup time.
+LATEST_BB_TS=$(stat -c %Y "$LATEST_BB/base.tar.gz")
 RPO_BASE=$(( DRILL_START - LATEST_BB_TS ))
 (( RPO_BASE >= 0 )) || RPO_BASE=0
 ok "picked basebackup: $LATEST_BB"
 ok "RPO at basebackup = $(( RPO_BASE / 60 )) min $(( RPO_BASE % 60 )) s"
 
-LATEST_WAL="$(ls -1t "$PG_ARCHIVE"/* 2>/dev/null | head -1 || true)"
+LATEST_WAL="$(find "$PG_ARCHIVE" -maxdepth 1 -type f -regextype posix-extended \
+  -regex '.*/[0-9A-F]{24}' -printf '%T@ %p\n' 2>/dev/null \
+  | sort -nr | head -1 | cut -d' ' -f2- || true)"
 if [[ -n "$LATEST_WAL" ]]; then
   LATEST_WAL_TS=$(stat -c %Y "$LATEST_WAL")
   RPO_WAL=$(( DRILL_START - LATEST_WAL_TS ))
