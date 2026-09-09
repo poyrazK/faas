@@ -7,7 +7,7 @@ StartLimitIntervalSec=60s
 StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
 ExecStartPre=/usr/bin/install -d -o root -g faas -m 0775 /run/faas
 ExecStartPre=/usr/bin/chmod 0775 /run/faas
 ExecStartPre=/usr/bin/install -d -o root -g faas -m 0750 /var/log/faas/vmmd-archive

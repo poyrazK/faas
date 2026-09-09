@@ -7,7 +7,7 @@ StartLimitIntervalSec=60s
 StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
 User=faas-schedd
 Group=faas
 ExecStartPre=/usr/bin/install -d -o faas-schedd -g faas -m 0770 /var/lib/faas/oci-tmp

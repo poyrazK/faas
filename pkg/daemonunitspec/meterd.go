@@ -31,7 +31,7 @@ func UnitMeterd() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "simple",
+		Type:               "notify",
 		User:               "faas-meterd",
 		Group:              "faas",
 		ExecStart:          `/opt/faas/current/bin/meterd --config /etc/faas/meterd.toml`,

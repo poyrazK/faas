@@ -59,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
@@ -554,6 +555,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := startHAComponents(ctx, log, pool, pgStore, inflight, envOr("FAAS_NODE_NAME", ""), envOr("FAAS_NODE_PUBLIC_IP", listenAddr), opsMetrics); err != nil {
 		return err
 	}
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, probe.ReadyFunc())
+	defer notifyStop()
 
 	// Drain orchestration.
 	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics); err != nil {

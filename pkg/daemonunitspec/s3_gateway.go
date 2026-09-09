@@ -23,7 +23,7 @@ func UnitS3Gateway() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "simple",
+		Type:               "notify",
 		User:               "faas",
 		Group:              "faas",
 		ExecStart:          `/opt/faas/current/bin/s3-gatewayd`,

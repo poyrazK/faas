@@ -60,7 +60,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "simple",
+		Type:               "notify",
 		User:               "faas",
 		Group:              "faas",
 		ExecStart:          `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,

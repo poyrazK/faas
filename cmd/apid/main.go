@@ -43,6 +43,7 @@ import (
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -2080,6 +2081,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 
+	// systemd Type=notify must not promote apid until all startup work
+	// (including migrations, listeners, and provider wiring) completed.
+	// The customer-facing /readyz remains the richer dependency probe;
+	// reaching this point means the HTTP listener and its dependencies are
+	// fully constructed.
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, func() bool { return true })
+	defer notifyStop()
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenBind)

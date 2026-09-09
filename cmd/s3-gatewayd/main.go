@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -164,6 +165,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	errorsCh := make(chan error, 2)
 	go func() { errorsCh <- dataServer.Serve(dataListener) }()
 	go func() { errorsCh <- controlServer.Serve(controlListener) }()
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, func() bool { return true })
+	defer notifyStop()
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
