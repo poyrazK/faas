@@ -6078,7 +6078,7 @@ haveApp:
 				"app", app.ID, "node", target.NodeID, "instance", target.InstanceID)
 			firstByteAt = time.Now()
 		}
-		h.metrics.ObserveColdBoot(app.ID, firstByteAt.Sub(wakeStart), target.NodeID)
+		h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceIDFromContext(r.Context()))
 		// Wake-locality classifier (PR scale-out readiness). Increment
 		// AFTER the existing first-byte observation so the 350 ms
 		// measurement path is unchanged. Only fires on a real admit
@@ -6151,7 +6151,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		// ObserveRequestDuration call; that helper is retained for
 		// test paths that don't carry a deployment id.
 		deploymentLabel := h.metrics.deploymentLabels.admit(appID, api.Plan(plan), target.DeploymentID)
-		h.metrics.ObserveRequestDurationByDeployment(appID, statusClassBucket(status), deploymentLabel, elapsed)
+		h.metrics.ObserveRequestDurationByDeploymentWithTrace(appID, statusClassBucket(status), deploymentLabel, elapsed, traceIDFromContext(r.Context()))
 		// ADR-093: per-route emission. Gated on a non-empty
 		// routeLabel (the routeLabelSet always returns a non-empty
 		// label for an opted-in app — the empty string is the
@@ -6241,6 +6241,18 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			})
 		}
 	}
+}
+
+// traceIDFromContext returns only sampled trace IDs. Unsampled spans are not
+// exported by the SDK, so linking their IDs from a metric would create a
+// misleading dead-end in Grafana. Empty/invalid contexts preserve the normal
+// metrics-only behavior when tracing is disabled.
+func traceIDFromContext(ctx context.Context) string {
+	sc := pkgtrace.SpanFromContext(ctx).SpanContext()
+	if !sc.IsValid() || !sc.IsSampled() {
+		return ""
+	}
+	return sc.TraceID().String()
 }
 
 // statusClass turns an HTTP status into a 3-digit label ("200", "404", "503").

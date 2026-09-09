@@ -60,3 +60,11 @@ gv_loki_url: ""
 gv_loki_tenant_id: gregale
 gv_loki_server_name: ""
 gv_loki_credentials_file: /etc/grafana/secrets/loki.env
+
+# Optional Prometheus exemplar destination. Set gv_trace_datasource_uid when
+# Grafana already has a Tempo/Jaeger/Datadog-compatible trace datasource, or
+# set gv_trace_exemplar_url to a trace viewer URL containing Grafana's escaped
+# `$${__value.raw}` trace-id macro. Empty values keep trace_id exemplars
+# visible without creating a broken link.
+gv_trace_datasource_uid: ""
+gv_trace_exemplar_url: ""
