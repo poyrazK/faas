@@ -356,6 +356,7 @@ type RestoreBreakdown struct {
 	WakeID               string
 	AppID                string
 	InstanceID           string
+	RestoreGateWaitMs    int64
 	ChrootMs             int64
 	MaterializeMemMs     int64
 	MaterializeVMStateMs int64
@@ -480,6 +481,7 @@ func (e RestoreBreakdown) Payload() map[string]any {
 		"wake_id":                e.WakeID,
 		"app_id":                 e.AppID,
 		"instance_id":            e.InstanceID,
+		"restore_gate_wait_ms":   e.RestoreGateWaitMs,
 		"chroot_ms":              e.ChrootMs,
 		"materialize_mem_ms":     e.MaterializeMemMs,
 		"materialize_vmstate_ms": e.MaterializeVMStateMs,

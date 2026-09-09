@@ -49,6 +49,11 @@ type JailerVMM struct {
 	readyTimeout   time.Duration // WAKING/cold-boot readiness budget (spec §6)
 	destroyWait    time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
 	exportMaxBytes int64         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
+	// restoreSlots bounds the expensive Firecracker snapshot-load window. A
+	// small gate prevents admitted wake bursts from making every restore miss
+	// its latency SLO through CPU and mount contention. nil preserves the
+	// unbounded legacy behavior for direct test constructors.
+	restoreSlots chan struct{}
 	// storage is the artifact backend where snapshot blobs live per
 	// #96 / ADR-025 axis 2. Restore resolves StorageKey → local tmp;
 	// Snapshot Streams the produced mem blob back through Storage.Put.
@@ -130,6 +135,7 @@ type bindSourceMode struct {
 // only when the wake-timeline event is emitted; keeping the struct in
 // durations avoids making the restore path depend on the event wire shape.
 type restoreTimingBreakdown struct {
+	RestoreGateWaitMs    int64
 	ChrootMs             int64
 	MaterializeMemMs     int64
 	MaterializeVMStateMs int64
@@ -373,6 +379,32 @@ func (v *JailerVMM) PrepareJailHelper() error {
 func (v *JailerVMM) WithStorage(s storage.StorageBackend) *JailerVMM {
 	v.storage = s
 	return v
+}
+
+// WithRestoreConcurrency bounds concurrent snapshot restores in this vmmd.
+// Waiting for a slot remains inside Restore's measured interval, so the gate
+// cannot hide queueing from the platform wake SLI. Values below one disable
+// the gate for backwards-compatible test seams; production config rejects
+// them before constructing the VMM.
+func (v *JailerVMM) WithRestoreConcurrency(limit int) *JailerVMM {
+	if limit < 1 {
+		v.restoreSlots = nil
+		return v
+	}
+	v.restoreSlots = make(chan struct{}, limit)
+	return v
+}
+
+func (v *JailerVMM) acquireRestoreSlot(ctx context.Context) (func(), error) {
+	if v == nil || v.restoreSlots == nil {
+		return func() {}, nil
+	}
+	select {
+	case v.restoreSlots <- struct{}{}:
+		return func() { <-v.restoreSlots }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("vmm: wait for snapshot restore slot: %w", ctx.Err())
+	}
 }
 
 // WithEvents stamps the wake-timeline fan-out (issue #517 / PR-C /
@@ -837,6 +869,12 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// the same boundary makes its total_ms comparable to that field and keeps
 	// remote memory/vmstate materialisation visible in the breakdown.
 	t0 := time.Now()
+	releaseRestoreSlot, err := v.acquireRestoreSlot(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseRestoreSlot()
+	restoreAdmitted := time.Now()
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
 		return err
@@ -1055,7 +1093,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	tReady := time.Now()
 	breakdown := restoreTimingBreakdown{
-		ChrootMs:             chrootReady.Sub(t0).Milliseconds(),
+		RestoreGateWaitMs:    restoreAdmitted.Sub(t0).Milliseconds(),
+		ChrootMs:             chrootReady.Sub(restoreAdmitted).Milliseconds(),
 		MaterializeMemMs:     memReady.Sub(chrootReady).Milliseconds(),
 		MaterializeVMStateMs: vmstateReady.Sub(vmstateStart).Milliseconds(),
 		ResolveImagesMs:      tResolve.Sub(vmstateReady).Milliseconds(),
@@ -1077,6 +1116,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// transition.
 	slog.Default().Debug("restore timing breakdown",
 		"instance", l.Instance,
+		"restore_gate_wait_ms", breakdown.RestoreGateWaitMs,
 		"chroot_ms", breakdown.ChrootMs,
 		"materialize_mem_ms", breakdown.MaterializeMemMs,
 		"materialize_vmstate_ms", breakdown.MaterializeVMStateMs,
@@ -3668,6 +3708,7 @@ func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.T
 		WakeID:               fields.WakeID,
 		AppID:                fields.AppID,
 		InstanceID:           l.Instance,
+		RestoreGateWaitMs:    b.RestoreGateWaitMs,
 		ChrootMs:             b.ChrootMs,
 		MaterializeMemMs:     b.MaterializeMemMs,
 		MaterializeVMStateMs: b.MaterializeVMStateMs,

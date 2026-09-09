@@ -332,6 +332,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REQUEST_TELEMETRY_ENABLED", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REQUIRE_SHARED_ARTIFACTS", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_RESIDENCY_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_RESTORE_CONCURRENCY", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional snapshot-restore concurrency override (1–64); production default is 3"},
 	{Name: "FAAS_RETENTION_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ROLLUP_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_RUNTIME_KIND", Owners: []string{"guest"}, Source: EnvSourceGuest},

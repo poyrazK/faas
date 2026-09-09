@@ -68,7 +68,7 @@ func TestQueueAccepted_Shape(t *testing.T) {
 func TestRestoreBreakdown_Shape(t *testing.T) {
 	ev := RestoreBreakdown{
 		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-restore", AppID: "a-restore",
-		InstanceID: "i-restore", ChrootMs: 2, MaterializeMemMs: 3,
+		InstanceID: "i-restore", RestoreGateWaitMs: 12, ChrootMs: 2, MaterializeMemMs: 3,
 		MaterializeVMStateMs: 4, ResolveImagesMs: 5, StageDrivesMs: 6,
 		StageSnapshotMs: 7, HelperMs: 8, StartJailerMs: 9, BindTunMs: 10,
 		LoadSnapshotMs: 400, ResumeHookMs: 11, WaitReadyMs: 131, TotalMs: 596,
@@ -79,10 +79,11 @@ func TestRestoreBreakdown_Shape(t *testing.T) {
 	}
 	p := ev.Payload()
 	for key, want := range map[string]any{
-		"wake_id":            "w-restore",
-		"materialize_mem_ms": int64(3),
-		"load_snapshot_ms":   int64(400),
-		"total_ms":           int64(596),
+		"wake_id":              "w-restore",
+		"restore_gate_wait_ms": int64(12),
+		"materialize_mem_ms":   int64(3),
+		"load_snapshot_ms":     int64(400),
+		"total_ms":             int64(596),
 	} {
 		if got := p[key]; got != want {
 			t.Errorf("payload[%q] = %v, want %v", key, got, want)

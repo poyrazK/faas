@@ -138,6 +138,7 @@ func TestEmitRestoreBreakdown_EmitsTimelineRow(t *testing.T) {
 	})
 	at := time.Date(2026, time.August, 31, 12, 13, 58, 302741000, time.UTC)
 	v.emitRestoreBreakdown(ctx, Lease{Instance: "inst-restore-001"}, at, restoreTimingBreakdown{
+		RestoreGateWaitMs:    12,
 		ChrootMs:             2,
 		MaterializeMemMs:     3,
 		MaterializeVMStateMs: 4,
@@ -184,6 +185,9 @@ func TestEmitRestoreBreakdown_EmitsTimelineRow(t *testing.T) {
 	}
 	if got, ok := payload["load_snapshot_ms"].(float64); !ok || got != 400 {
 		t.Errorf("payload.load_snapshot_ms = %v, want 400", payload["load_snapshot_ms"])
+	}
+	if got, ok := payload["restore_gate_wait_ms"].(float64); !ok || got != 12 {
+		t.Errorf("payload.restore_gate_wait_ms = %v, want 12", payload["restore_gate_wait_ms"])
 	}
 	if got, ok := payload["total_ms"].(float64); !ok || got != 596 {
 		t.Errorf("payload.total_ms = %v, want 596", payload["total_ms"])
