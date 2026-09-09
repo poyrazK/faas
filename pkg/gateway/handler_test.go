@@ -2484,6 +2484,18 @@ func TestApplyEdgeRuleLimit_ContentLengthFastPath_DenyBeforeBackendPick(t *testi
 	if code, _ := prob["code"].(string); code != "request_too_large" {
 		t.Errorf("code = %q; want request_too_large", code)
 	}
+	if got, _ := prob["limit_bytes"].(float64); int64(got) != 5*1024*1024 {
+		t.Errorf("limit_bytes = %v; want %d", prob["limit_bytes"], 5*1024*1024)
+	}
+	if got, _ := prob["observed_bytes"].(float64); int64(got) != 30*1024*1024 {
+		t.Errorf("observed_bytes = %v; want %d", prob["observed_bytes"], 30*1024*1024)
+	}
+	if docs, _ := prob["docs_url"].(string); !strings.Contains(docs, "signed-uploads") {
+		t.Errorf("docs_url = %q; want signed-upload guidance", docs)
+	}
+	if hint, _ := prob["hint"].(string); !strings.Contains(hint, "signed URL") {
+		t.Errorf("hint = %q; want signed URL guidance", hint)
+	}
 	// (c) Backend was never woken — the load-bearing property.
 	if b.pickCalls.Load() != 0 {
 		t.Errorf("fakeBackend.Pick was called %d times; want 0 (Content-Length fast path must deny before wake)", b.pickCalls.Load())
@@ -2644,7 +2656,7 @@ func TestApplyEdgeRuleLimit_NilMatcher_PassThrough(t *testing.T) {
 // feature for that rule.
 func TestApplyEdgeRuleLimit_CapClamp_DefenceInDepth(t *testing.T) {
 	b := &fakeBackend{
-		app:      App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		app:      App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanFree},
 		host:     "l.example.com",
 		upstream: "127.0.0.1:0",
 		running:  true,
@@ -2657,7 +2669,7 @@ func TestApplyEdgeRuleLimit_CapClamp_DefenceInDepth(t *testing.T) {
 		limit: &EdgeRuleLimitResolved{
 			ID: "rule-l-bypass", AccountID: "acct-1", AppID: "app-1",
 			Priority: 0, PathGlob: "", Methods: nil,
-			// Direct-DB row that bypassed apid-Validate: cap > 25 MiB
+			// Direct-DB row that bypassed apid-Validate: cap > plan cap
 			// platform ceiling. cmd-side compileLimitRules would
 			// have clamped this; the handler's mirror clamp at
 			// handler.go:1981 is the second gate.
@@ -2667,8 +2679,8 @@ func TestApplyEdgeRuleLimit_CapClamp_DefenceInDepth(t *testing.T) {
 	h.WithEdgeRules(matcher, nil, nil)
 
 	// 30 MiB CL — would be "in-limit" if the clamp were absent;
-	// the clamp pins cap to MaxRequestBodyBytes (25 MiB), so 30
-	// MiB is still over-cap and must 413.
+	// the Free plan clamp pins the cap to 10 MiB, so 30 MiB is
+	// still over-cap and must 413.
 	req := httptest.NewRequest("POST", "http://l.example.com/upload", nil)
 	req.ContentLength = 30 * 1024 * 1024
 	req.Header.Set("X-Forwarded-For", "203.0.113.1")
@@ -2680,6 +2692,41 @@ func TestApplyEdgeRuleLimit_CapClamp_DefenceInDepth(t *testing.T) {
 	}
 	if b.pickCalls.Load() != 0 {
 		t.Errorf("fakeBackend.Pick = %d; want 0 (clamp must deny before wake)", b.pickCalls.Load())
+	}
+}
+
+func TestPlanRequestBodyLimit_ContentLengthFastPath(t *testing.T) {
+	b := &fakeBackend{
+		app:      App{ID: "app-free", AccountID: "acct-1", Plan: api.PlanFree},
+		host:     "free.example.com",
+		upstream: "127.0.0.1:0",
+		running:  true,
+	}
+	b.targets = append(b.targets, Target{NodeID: b.upstream, InstanceID: "i-free"})
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.SetWakeGateHook()
+
+	req := httptest.NewRequest("POST", "http://free.example.com/upload", nil)
+	req.ContentLength = 11 * 1024 * 1024 // Free cap is 10 MiB.
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("rec.Code = %d; want 413", rec.Code)
+	}
+	var prob map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("unmarshal problem: %v; body=%s", err, rec.Body.String())
+	}
+	if got, _ := prob["limit_bytes"].(float64); int64(got) != 10*1024*1024 {
+		t.Errorf("limit_bytes = %v; want %d", prob["limit_bytes"], 10*1024*1024)
+	}
+	if got, _ := prob["observed_bytes"].(float64); int64(got) != 11*1024*1024 {
+		t.Errorf("observed_bytes = %v; want %d", prob["observed_bytes"], 11*1024*1024)
+	}
+	if b.pickCalls.Load() != 0 {
+		t.Errorf("fakeBackend.Pick = %d; want 0", b.pickCalls.Load())
 	}
 }
 

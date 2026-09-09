@@ -791,7 +791,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 	limits, ok := api.LimitsFor(plan)
 	if !ok {
-		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, CPULimitMillicores: effectiveAppCPUMillicores(a, plan), MaxInstances: a.MaxConcurrency}
+		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, CPULimitMillicores: effectiveAppCPUMillicores(a, plan), MaxInstances: a.MaxConcurrency, RequestBodyMaxBytes: plan.MaxRequestBodyBytes()}
 	}
 	maxInstances := a.MaxConcurrency
 	if a.ScalingPolicy != nil && a.ScalingPolicy.MaxInstances > 0 {
@@ -809,6 +809,7 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		RequestBudgetMS:       limits.RequestBudgetForType(string(a.Type)).Milliseconds(),
 		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
 		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
+		RequestBodyMaxBytes:   plan.MaxRequestBodyBytes(),
 	}
 }
 

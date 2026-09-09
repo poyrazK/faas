@@ -2853,8 +2853,9 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	// MaxBytesReader so a rule with MaxBodyBytes=2KiB
 	// short-circuits before the global cap fires.
 	cap := rule.MaxBodyBytes
-	if cap <= 0 || cap > api.MaxRequestBodyBytes {
-		cap = api.MaxRequestBodyBytes
+	planCap := app.Plan.MaxRequestBodyBytes()
+	if cap <= 0 || int64(cap) > planCap {
+		cap = int(planCap)
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, int64(cap))
 	body, err := io.ReadAll(r.Body)
@@ -2862,9 +2863,13 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge,
-				api.CodeRequestTooLarge, "Request body too large",
-				fmt.Sprintf("rule %s caps body at %d bytes", rule.ID, cap)))
+			observed := int64(cap) + 1
+			if r.ContentLength > observed {
+				observed = r.ContentLength
+			}
+			prob := api.ErrRequestBodyTooLarge(int64(cap), observed)
+			prob.Detail = fmt.Sprintf("rule %s caps body at %d bytes", rule.ID, cap)
+			api.WriteProblem(w, prob)
 		} else {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest,
 				api.CodeBadRequest, "Could not read request body", err.Error()))
@@ -3391,13 +3396,18 @@ func (h *Handler) applyEdgeRuleLimit(w http.ResponseWriter, r *http.Request, str
 		cap = rule.MaxBodyBytesStreaming
 		capKind = "streaming"
 	}
+	planCap := app.Plan.MaxRequestBodyBytes()
 	if capKind == "buffered" {
-		if cap <= 0 || cap > api.MaxRequestBodyBytes {
-			cap = api.MaxRequestBodyBytes
+		if cap <= 0 || int64(cap) > planCap {
+			cap = int(planCap)
 		}
 	} else {
-		if cap <= 0 || int64(cap) > api.RawStreamMaxRequestBytes {
-			cap = int(api.RawStreamMaxRequestBytes)
+		streamCap := planCap
+		if streamCap > api.RawStreamMaxRequestBytes {
+			streamCap = api.RawStreamMaxRequestBytes
+		}
+		if cap <= 0 || int64(cap) > streamCap {
+			cap = int(streamCap)
 		}
 	}
 	// Content-Length fast path: deny before reading a single
@@ -3414,9 +3424,13 @@ func (h *Handler) applyEdgeRuleLimit(w http.ResponseWriter, r *http.Request, str
 	// fired so a customer can see whether they tripped the
 	// streaming opt-in or the buffered default.
 	if r.ContentLength > 0 && r.ContentLength > int64(cap) {
-		api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge,
-			api.CodeRequestTooLarge, "Request body too large",
-			fmt.Sprintf("rule %s caps body at %d bytes (%s cap)", rule.ID, cap, capKind)))
+		observed := int64(cap) + 1
+		if r.ContentLength > observed {
+			observed = r.ContentLength
+		}
+		prob := api.ErrRequestBodyTooLarge(int64(cap), observed)
+		prob.Detail = fmt.Sprintf("rule %s caps body at %d bytes (%s cap)", rule.ID, cap, capKind)
+		api.WriteProblem(w, prob)
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.limit_rejected", nil, map[string]any{
 				"rule_id":        rule.ID,
@@ -3463,6 +3477,21 @@ func (h *Handler) applyEdgeRuleLimit(w http.ResponseWriter, r *http.Request, str
 		// Mirrors applyEdgeRuleIP / applyEdgeRuleValidate.
 		h.metrics.ObserveEdgeRuleApply("limit", "success")
 	}
+	return false
+}
+
+// applyPlanRequestBodyLimit installs the plan-wide inbound body cap after
+// route-specific gates have had a chance to apply a lower limit. The
+// Content-Length fast path rejects oversized requests before a reader can
+// consume or buffer any body bytes; chunked bodies remain bounded by the
+// MaxBytesReader wrapper.
+func applyPlanRequestBodyLimit(w http.ResponseWriter, r *http.Request, app App) bool {
+	cap := app.Plan.MaxRequestBodyBytes()
+	if r.ContentLength > 0 && r.ContentLength > cap {
+		api.WriteProblem(w, api.ErrRequestBodyTooLarge(cap, r.ContentLength))
+		return true
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, cap)
 	return false
 }
 
@@ -5108,6 +5137,14 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// The plan-wide cap follows the route-specific cap so edge rules can
+	// tighten it, but it runs before throttling and validation. Oversized
+	// requests therefore cannot consume route tokens or schema-buffering
+	// work, and the Content-Length fast path remains allocation-free.
+	if applyPlanRequestBodyLimit(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 
 	// ADR-091 D20.5 amendment / kind=throttle (issue #881). Runs
 	// AFTER applyEdgeRuleLimit (which short-circuits with `return
@@ -5133,12 +5170,6 @@ haveApp:
 	// applier buffers r.Body, restores it for the proxy leg, and
 	// returns 422 + RFC 7807 problem+json on schema mismatch.
 	//
-	// Body-cap placement: the global MaxBytesReader cap (spec
-	// §4.1) is installed HERE rather than further down so the
-	// validate read is bounded. Moved from the post-rate-limit
-	// block — same cap, same value, just earlier so this
-	// applier sees the bounded body.
-	r.Body = http.MaxBytesReader(w, r.Body, api.MaxRequestBodyBytes)
 	if h.applyEdgeRuleValidate(w, r, app, rec) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return

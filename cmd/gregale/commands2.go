@@ -587,6 +587,9 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %d rpm across apps\n", "account request rate:", l.AccountRequestRateRPM)
 			fmt.Printf("%-30s %dms default, %dms max\n", "request budget:", l.RequestBudgetMS, l.RequestBudgetMaxMS)
 			fmt.Printf("%-30s %ds\n", "response write timeout:", l.ResponseWriteTimeoutS)
+			if l.RequestBodyMaxBytes > 0 {
+				fmt.Printf("%-30s %d bytes (%d MiB)\n", "request body cap:", l.RequestBodyMaxBytes, l.RequestBodyMaxBytes/(1024*1024))
+			}
 		}
 		// ADR-031 + ADR-032: surface the per-app outbound CIDR
 		// allowlist in the text-mode `gregale app <slug>` output so a

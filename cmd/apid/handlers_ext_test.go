@@ -1201,6 +1201,9 @@ func TestGetApp_SurfacesEffectiveLimits(t *testing.T) {
 			if got.RequestBudgetMS != limits.RequestBudgetForType(out.Type).Milliseconds() || got.RequestBudgetMaxMS != limits.RequestBudgetMaxDuration().Milliseconds() {
 				t.Errorf("request budgets = %d/%d, want %d/%d", got.RequestBudgetMS, got.RequestBudgetMaxMS, limits.RequestBudgetForType(out.Type).Milliseconds(), limits.RequestBudgetMaxDuration().Milliseconds())
 			}
+			if got.RequestBodyMaxBytes != plan.MaxRequestBodyBytes() {
+				t.Errorf("request body cap = %d, want %d", got.RequestBodyMaxBytes, plan.MaxRequestBodyBytes())
+			}
 			if !bytes.Contains(rec.Body.Bytes(), []byte(`"effective_limits":`)) {
 				t.Errorf("raw JSON missing effective_limits key:\n%s", rec.Body.String())
 			}

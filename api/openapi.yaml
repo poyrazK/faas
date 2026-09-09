@@ -14147,7 +14147,7 @@ components:
     AppEffectiveLimits:
       description: "The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the app configuration and current plan; they describe enforcement rather than guest hardware alone."
       type: object
-      required: [memory_limit_mb, plan_memory_max_mb, ephemeral_disk_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
+      required: [memory_limit_mb, plan_memory_max_mb, ephemeral_disk_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s, request_body_max_bytes]
       properties:
         memory_limit_mb: { type: integer, description: "Memory limit configured for this app instance, in MB." }
         plan_memory_max_mb: { type: integer, description: "Largest memory limit the current plan permits for an app instance, in MB." }
@@ -14164,6 +14164,7 @@ components:
         request_budget_ms: { type: integer, format: int64, description: "Default end-to-end request budget before a route override, in milliseconds." }
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
         response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
+        request_body_max_bytes: { type: integer, format: int64, description: "Maximum inbound request body accepted for this app's plan, in bytes." }
 
     AppConfiguredResources:
       description: "The memory and sustained CPU shape selected for each instance of this app."
@@ -22698,6 +22699,8 @@ components:
         detail: { type: string }
         limit: { type: [integer, "null"] }
         observed: { type: [integer, "null"] }
+        limit_bytes: { type: [integer, "null"], description: "Explicit byte limit for request-body and other byte-oriented errors." }
+        observed_bytes: { type: [integer, "null"], description: "Observed byte count for request-body and other byte-oriented errors." }
         docs_url: { type: string, format: uri }
         checkout_url:
           type: string

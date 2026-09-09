@@ -594,6 +594,7 @@ type AppEffectiveLimits struct {
 	RequestBudgetMS        int64 `json:"request_budget_ms"`
 	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
+	RequestBodyMaxBytes    int64 `json:"request_body_max_bytes"`
 }
 
 // AppConfiguredResources is the resource shape selected for an app. It is

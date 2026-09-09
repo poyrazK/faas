@@ -110,6 +110,7 @@ func appEffectiveLimits() map[string]any {
 		"request_budget_ms":        3000,
 		"request_budget_max_ms":    30000,
 		"response_write_timeout_s": 900,
+		"request_body_max_bytes":   25 * 1024 * 1024,
 	}
 }
 
