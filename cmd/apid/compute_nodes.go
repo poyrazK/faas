@@ -37,6 +37,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -254,18 +255,43 @@ func (s *server) createOrUpdateComputeNode(w http.ResponseWriter, r *http.Reques
 }
 
 func validateGatewayTargetURL(raw string) error {
+	_, _, err := parseGatewayTargetURL(raw)
+	return err
+}
+
+// parseGatewayTargetURL is the shared validation seam for the operator
+// registration path and the Prometheus HTTP-SD producer. Keeping both callers
+// on the same parser prevents a node from being accepted by the CRUD API and
+// then silently disappearing from the metrics target set.
+func parseGatewayTargetURL(raw string) (host, port string, err error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return fmt.Errorf("gateway_target_url must be tcp://host:port: %w", err)
+		return "", "", fmt.Errorf("gateway_target_url must be tcp://host:port: %w", err)
 	}
 	if u.Scheme != "tcp" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("gateway_target_url must be tcp://host:port")
+		return "", "", fmt.Errorf("gateway_target_url must be tcp://host:port")
 	}
-	host, port, err := net.SplitHostPort(u.Host)
+	host, port, err = net.SplitHostPort(u.Host)
 	if err != nil || host == "" || port == "" {
-		return fmt.Errorf("gateway_target_url must be tcp://host:port")
+		return "", "", fmt.Errorf("gateway_target_url must be tcp://host:port")
 	}
-	return nil
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return "", "", fmt.Errorf("gateway_target_url must use a port between 1 and 65535")
+	}
+	// A loopback or wildcard endpoint cannot be reached by the control-plane
+	// Prometheus and would otherwise be accepted by the CRUD API before the
+	// HTTP-SD producer drops it. Hostnames are checked as well as IP literals:
+	// localhost is commonly used as a loopback alias in hand-written operator
+	// payloads and can make Prometheus scrape the control plane itself.
+	normalizedHost := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if normalizedHost == "localhost" || strings.HasSuffix(normalizedHost, ".localhost") {
+		return "", "", fmt.Errorf("gateway_target_url must not use a loopback hostname")
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsUnspecified() || ip.IsLoopback()) {
+		return "", "", fmt.Errorf("gateway_target_url must not use a loopback or wildcard address")
+	}
+	return host, port, nil
 }
 
 // deleteComputeNode handles DELETE /v1/compute-nodes/{name}. Soft

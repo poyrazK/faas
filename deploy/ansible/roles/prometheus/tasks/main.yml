@@ -65,6 +65,16 @@
       must remain the loopback apid HTTP-SD endpoint. Promtail target
       metadata must not be fetched over a public or provider-specific URL.
 
+- name: prometheus — assert compute target limit is bounded
+  ansible.builtin.assert:
+    that:
+      - prom_compute_metrics_target_limit | int > 0
+      - prom_compute_metrics_target_limit | int <= 1000
+    fail_msg: >-
+      prom_compute_metrics_target_limit must be between 1 and 1000 so a
+      control-plane Prometheus cannot accept an unbounded compute HTTP-SD
+      target set.
+
 - name: prometheus — require Loki meta-monitoring transport (when configured)
   ansible.builtin.assert:
     that:

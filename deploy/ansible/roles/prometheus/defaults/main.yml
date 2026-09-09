@@ -30,6 +30,11 @@ prom_data_dir: /var/lib/prometheus
 # on the next refresh without editing Ansible or restarting Prometheus.
 prom_compute_metrics_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/targets"
 prom_compute_metrics_discovery_refresh_interval: "15s"
+# The supported fleet shape is one control plane with up to 1,000 compute
+# nodes. Keep the bound in the rendered scrape job as a second line of
+# defence if an operator registers more nodes than the topology validator
+# permits; Prometheus must not accept an unbounded HTTP-SD response.
+prom_compute_metrics_target_limit: 1000
 prom_compute_promtail_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/promtail-targets"
 
 # Optional dedicated Loki meta-monitoring target. The provider supplies the

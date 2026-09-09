@@ -151,6 +151,35 @@ func TestComputeMetricsDiscoveryScalesTo1000Nodes(t *testing.T) {
 	}
 }
 
+func TestComputeMetricsDiscoveryRejectsMoreThan1000ConfiguredNodes(t *testing.T) {
+	store := state.NewMemStore()
+	for i := 0; i < maxMetricsDiscoveryTargets+1; i++ {
+		name := fmt.Sprintf("compute-%04d.faas", i)
+		vmmdTarget := fmt.Sprintf("tcp://vmmd-%04d.faas:50051", i)
+		target := fmt.Sprintf("tcp://%s:8080", name)
+		if _, err := store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+			Name:               name,
+			TargetURL:          vmmdTarget,
+			GatewayTargetURL:   &target,
+			VPCPUs:             4,
+			MemMB:              8192,
+			MaxConcurrency:     16,
+			AdmissionCeilingMB: 4096,
+		}); err != nil {
+			t.Fatalf("upsert node %d: %v", i, err)
+		}
+	}
+
+	srv := newServer(store, nil, "gregale.dev", nil)
+	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	req.RemoteAddr = "127.0.0.1:9099"
+	rec := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s, want 503", rec.Code, rec.Body.String())
+	}
+}
+
 func TestComputeMetricsTargetValidation(t *testing.T) {
 	tests := []struct {
 		name string
@@ -161,8 +190,13 @@ func TestComputeMetricsTargetValidation(t *testing.T) {
 		{name: "ipv6", raw: "tcp://[fd00::2]:8080", want: true},
 		{name: "wildcard", raw: "tcp://0.0.0.0:8080", want: false},
 		{name: "loopback", raw: "tcp://127.0.0.1:8080", want: false},
+		{name: "ipv6-wildcard", raw: "tcp://[::]:8080", want: false},
+		{name: "localhost", raw: "tcp://localhost:8080", want: false},
+		{name: "localhost-subdomain", raw: "tcp://metrics.localhost:8080", want: false},
+		{name: "localhost-trailing-dot", raw: "tcp://LOCALHOST.:8080", want: false},
 		{name: "path", raw: "tcp://fsn-2.gregale.dev:8080/metrics", want: false},
 		{name: "bad-port", raw: "tcp://fsn-2.gregale.dev:0", want: false},
+		{name: "port-too-large", raw: "tcp://fsn-2.gregale.dev:65536", want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
