@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestParseDebugEvidenceSpansSortsSanitizesAndCaps(t *testing.T) {
@@ -63,5 +66,54 @@ func TestBuildDebugEvidenceExplanation(t *testing.T) {
 	unobserved := buildDebugEvidenceExplanation(request, nil, nil)
 	if unobserved.Status != "unobserved" || unobserved.PrimarySpan != nil {
 		t.Fatalf("unobserved explanation = %+v", unobserved)
+	}
+}
+
+func TestBuildDebugRequestTimelineJoinsWakeAndMarksError(t *testing.T) {
+	store := state.NewMemStore()
+	appID := "app-timeline"
+	wakeID := "wake-timeline"
+	base := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	for i, kind := range []string{"wake.queue_accepted", "wake.boot_started", "wake.boot_completed"} {
+		at := base.Add(1300 * time.Millisecond).Add(time.Duration(i) * 100 * time.Millisecond)
+		payload := `{"wake_id":"` + wakeID + `","app_id":"` + appID + `"}`
+		if err := store.AppendEventAt(context.Background(), "schedd", kind, nil, []byte(payload), at); err != nil {
+			t.Fatalf("AppendEventAt(%s): %v", kind, err)
+		}
+	}
+	request := api.DebugTelemetryRequestItem{
+		ReceivedAt: base.Add(2 * time.Second).Format(time.RFC3339Nano),
+		LatencyMS:  800,
+		Status:     502,
+		Route:      "GET /checkout",
+		WakeID:     wakeID,
+	}
+	got, err := (&server{store: store}).buildDebugRequestTimeline(context.Background(), appID, request, nil)
+	if err != nil {
+		t.Fatalf("buildDebugRequestTimeline: %v", err)
+	}
+	if len(got) != 6 { // received + 3 wake events + completed + error
+		t.Fatalf("timeline length = %d, want 6: %+v", len(got), got)
+	}
+	if got[0].Kind != "request.received" || got[1].Kind != "wake.queue_accepted" || got[3].Kind != "wake.boot_completed" {
+		t.Fatalf("timeline ordering = %+v", got)
+	}
+	if got[len(got)-1].Kind != "request.error" || got[len(got)-1].Status != 502 {
+		t.Fatalf("error marker = %+v", got[len(got)-1])
+	}
+}
+
+func TestBuildDebugRequestTimelineWithoutWake(t *testing.T) {
+	request := api.DebugTelemetryRequestItem{
+		ReceivedAt: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		LatencyMS:  12,
+		Status:     200,
+	}
+	got, err := (&server{}).buildDebugRequestTimeline(context.Background(), "app", request, nil)
+	if err != nil {
+		t.Fatalf("buildDebugRequestTimeline: %v", err)
+	}
+	if len(got) != 2 || got[0].Kind != "request.received" || got[1].Kind != "request.completed" {
+		t.Fatalf("warm timeline = %+v", got)
 	}
 }

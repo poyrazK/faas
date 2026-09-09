@@ -1445,6 +1445,8 @@ type RequestTelemetry struct {
 	UaFamily     string
 	ReferrerHost string
 	Country      string
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 type RequestTelemetry202608 struct {

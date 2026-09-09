@@ -2902,6 +2902,8 @@ CREATE TABLE public.request_telemetry (
     ua_family text DEFAULT '__unknown__'::text NOT NULL,
     referrer_host text DEFAULT '__none__'::text NOT NULL,
     country text DEFAULT '__unknown__'::text NOT NULL,
+    wake_id text,
+    instance_id text,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),

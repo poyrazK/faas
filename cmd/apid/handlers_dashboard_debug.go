@@ -157,6 +157,8 @@ func dashboardDebugRequestView(item api.DebugTelemetryRequestItem, slug, since, 
 		Count:        item.Count,
 		ColdBoot:     item.ColdBoot,
 		TraceID:      valueOrEmpty(item.TraceID),
+		WakeID:       item.WakeID,
+		InstanceID:   item.InstanceID,
 		ReceivedAt:   item.ReceivedAt,
 		DetailURL:    "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode(),
 	}
@@ -233,9 +235,28 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		apiRegression = &api.DebugRegressionItem{DeploymentID: matching.DeploymentID, Route: matching.Route, P95MS: matching.P95MS, P95BaseMS: matching.P95BaseMS, AffectedCount: matching.AffectedCount, Factor: matching.Factor, FirstDetectedAt: matching.FirstDetectedAt, LastDetectedAt: matching.LastDetectedAt}
 	}
 	explanation := buildDebugEvidenceExplanation(item, apiRegression, spans)
+	timeline, timelineErr := s.buildDebugRequestTimeline(ctx, app.ID, item, apiRegression)
+	if timelineErr != nil {
+		log.Warn("dashboard renderAppDebug: get timeline", "account_id", acct.ID, "app_id", app.ID, "request_id", rawID, "err", timelineErr)
+		return fmt.Errorf("request timeline is temporarily unavailable")
+	}
+	timelineViews := make([]dashboard.DebugTimelineEventView, 0, len(timeline))
+	for _, event := range timeline {
+		timelineViews = append(timelineViews, dashboard.DebugTimelineEventView{
+			At:          event.At,
+			Phase:       event.Phase,
+			Kind:        event.Kind,
+			Actor:       event.Actor,
+			Summary:     event.Summary,
+			DurationMS:  event.DurationMS,
+			Status:      event.Status,
+			Approximate: event.Approximate,
+		})
+	}
 	data.Selected = &dashboard.DebugRequestDetailView{
 		Request:        request,
 		Regression:     matching,
+		Timeline:       timelineViews,
 		Spans:          spanViews,
 		SpansTruncated: truncated,
 		Explanation:    explanation.Headline,
