@@ -49,6 +49,8 @@ type CreateAppRequest struct {
 	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int              `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	HealthPath       string           `json:"health_path,omitempty"`
+	HealthPathWakes  bool             `json:"health_path_wakes,omitempty"`
 	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name (the operator-supplied human-readable
@@ -77,6 +79,8 @@ type UpdateAppRequest struct {
 	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int             `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	HealthPath       *string          `json:"health_path,omitempty"`
+	HealthPathWakes  *bool            `json:"health_path_wakes,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get

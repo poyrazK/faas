@@ -136,6 +136,10 @@ class UpdateAppRequest:
         | UpdateAppRequestCrawlerPolicyType3Type1
     ) = UNSET
     """Policy for known monitor/crawler requests. Omit for no change."""
+    health_path: None | str | Unset = UNSET
+    """Monitor-facing health path. Omit for no change; empty resets to /healthz."""
+    health_path_wakes: bool | None | Unset = UNSET
+    """Allow health probes to wake the app. Omit for no change; Pro/Scale only when true."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -317,6 +321,18 @@ class UpdateAppRequest:
         else:
             crawler_policy = self.crawler_policy
 
+        health_path: None | str | Unset
+        if isinstance(self.health_path, Unset):
+            health_path = UNSET
+        else:
+            health_path = self.health_path
+
+        health_path_wakes: bool | None | Unset
+        if isinstance(self.health_path_wakes, Unset):
+            health_path_wakes = UNSET
+        else:
+            health_path_wakes = self.health_path_wakes
+
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
             min_instances = UNSET
@@ -472,6 +488,10 @@ class UpdateAppRequest:
             field_dict["head_wakes"] = head_wakes
         if crawler_policy is not UNSET:
             field_dict["crawler_policy"] = crawler_policy
+        if health_path is not UNSET:
+            field_dict["health_path"] = health_path
+        if health_path_wakes is not UNSET:
+            field_dict["health_path_wakes"] = health_path_wakes
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -811,6 +831,24 @@ class UpdateAppRequest:
 
         crawler_policy = _parse_crawler_policy(d.pop("crawler_policy", UNSET))
 
+        def _parse_health_path(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        health_path = _parse_health_path(d.pop("health_path", UNSET))
+
+        def _parse_health_path_wakes(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        health_path_wakes = _parse_health_path_wakes(d.pop("health_path_wakes", UNSET))
+
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -1045,6 +1083,8 @@ class UpdateAppRequest:
             robots_txt=robots_txt,
             head_wakes=head_wakes,
             crawler_policy=crawler_policy,
+            health_path=health_path,
+            health_path_wakes=health_path_wakes,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             autoscale_target_rps=autoscale_target_rps,

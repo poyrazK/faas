@@ -8,7 +8,23 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func effectiveHealthPath(path string) string {
+	if path == "" {
+		return "/healthz"
+	}
+	if path[0] != '/' {
+		return "/" + path
+	}
+	return path
+}
+
 func lifecycleProblem(plan api.Plan, manifest api.AppManifest, maxConcurrency int) *api.Problem {
+	if manifest.HealthPathWakes && !plan.HealthPathWakesAllowed() {
+		return api.NewProblem(http.StatusForbidden,
+			api.CodePlanHealthPathWakesNotAllowed,
+			"Health-path wakes are not allowed on this plan",
+			"health_path_wakes requires Pro or Scale; upgrade to use real health probes")
+	}
 	if err := manifest.ValidateCrawlerPolicy(); err != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid crawler policy", err.Error())
@@ -37,6 +53,10 @@ func lifecycleProblem(plan api.Plan, manifest api.AppManifest, maxConcurrency in
 }
 
 func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
+	healthPath := req.HealthPath
+	if healthPath == "" {
+		healthPath = "/healthz"
+	}
 	return api.AppManifest{
 		ExecutionMode:    req.ExecutionMode,
 		RestartPolicy:    req.RestartPolicy,
@@ -47,6 +67,8 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		RobotsTxt:        req.RobotsTxt,
 		HeadWakes:        req.HeadWakes,
 		CrawlerPolicy:    req.CrawlerPolicy,
+		HealthPath:       healthPath,
+		HealthPathWakes:  req.HealthPathWakes,
 	}
 }
 
@@ -68,6 +90,8 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		RobotsTxt:        manifest.RobotsTxt,
 		HeadWakes:        manifest.HeadWakes,
 		CrawlerPolicy:    manifest.CrawlerPolicy,
+		HealthPath:       manifest.HealthPath,
+		HealthPathWakes:  manifest.HealthPathWakes,
 	}
 }
 
@@ -89,13 +113,16 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		RobotsTxt:        manifest.RobotsTxt,
 		HeadWakes:        manifest.HeadWakes,
 		CrawlerPolicy:    manifest.CrawlerPolicy,
+		HealthPath:       manifest.HealthPath,
+		HealthPathWakes:  manifest.HealthPathWakes,
 	}
 }
 
 func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppManifest, bool) {
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.ServiceReplicas != nil ||
-		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil
+		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil ||
+		req.HealthPath != nil || req.HealthPathWakes != nil
 	if !changed {
 		return api.AppManifest{}, false
 	}
@@ -129,6 +156,15 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	if req.CrawlerPolicy != nil {
 		manifest.CrawlerPolicy = *req.CrawlerPolicy
 	}
+	if req.HealthPath != nil {
+		manifest.HealthPath = *req.HealthPath
+		if manifest.HealthPath == "" {
+			manifest.HealthPath = "/healthz"
+		}
+	}
+	if req.HealthPathWakes != nil {
+		manifest.HealthPathWakes = *req.HealthPathWakes
+	}
 	return manifest, true
 }
 
@@ -147,5 +183,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.RobotsTxt = manifest.RobotsTxt
 	updated.HeadWakes = manifest.HeadWakes
 	updated.CrawlerPolicy = manifest.CrawlerPolicy
+	updated.HealthPath = manifest.HealthPath
+	updated.HealthPathWakes = manifest.HealthPathWakes
 	return &updated, true
 }

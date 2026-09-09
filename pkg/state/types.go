@@ -1189,6 +1189,8 @@ type AppManifest struct {
 	RobotsTxt        string            `json:"robots_txt,omitempty"`
 	HeadWakes        bool              `json:"head_wakes,omitempty"`
 	CrawlerPolicy    string            `json:"crawler_policy,omitempty"`
+	HealthPath       string            `json:"health_path,omitempty"`
+	HealthPathWakes  bool              `json:"health_path_wakes,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1211,7 +1213,8 @@ func (m AppManifest) IsZero() bool {
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
-		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == ""
+		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
+		m.HealthPath == "" && !m.HealthPathWakes
 }
 
 // ScalingPolicy is the per-app autoscaling configuration (issue #462 /
