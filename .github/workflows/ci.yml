@@ -846,6 +846,11 @@ jobs:
       # ---- former job `api-hosting-contract-check`: framework fixture matrix ----
       - name: framework fixture matrix
         run: make api-hosting-contract-check
+      # The scorecard is the release evidence contract. It checks that every
+      # public capability has measurable targets and live evidence locators;
+      # runtime measurements are produced by the referenced acceptance jobs.
+      - name: API-hosting scorecard evidence
+        run: make api-hosting-scorecard-check
       # ---- former job `daemonunit-check`: daemonunit generated drift ----
       - name: generate-check
         run: make generate-check
