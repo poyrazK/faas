@@ -66,3 +66,27 @@ and an acknowledgement before the catalog is expanded.
 All writes require admin scope, MFA, a reason, and an optional expected
 version. Sensitive values are redacted in list, operation, and revision
 responses.
+
+## Operator CLI
+
+`gregalectl config` provides the same authenticated surface without SSH or a
+direct database session:
+
+```
+gregalectl config list
+gregalectl config show --key hsts_enabled
+gregalectl config history --key hsts_enabled
+
+gregalectl auth step-up
+gregalectl config set --key hsts_enabled --value false \
+    --reason incident_123_mitigation --yes
+gregalectl config rollback --key hsts_enabled --version 1 \
+    --reason incident_123_resolved --yes
+```
+
+The CLI fetches the current version and supplies it as an optimistic
+concurrency precondition. It intentionally refuses `graceful`, `rolling`, and
+`break_glass` apply modes before sending a mutation; only `hot` settings can be
+changed, so this path cannot start or wait for a deployment. Every mutation
+requires a recent MFA step-up and returns a trace ID that is also stored with
+the operator audit event.

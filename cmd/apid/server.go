@@ -2038,10 +2038,10 @@ func (s *server) handler() http.Handler {
 	// entries.
 	mux.HandleFunc("GET /v1/admin/config",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigList))))
-	mux.HandleFunc("PATCH /v1/admin/config/{key}",
-		s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigPatch)))
-	mux.HandleFunc("POST /v1/admin/config/{key}/rollback",
-		s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigRollback)))
+	mux.Handle("PATCH /v1/admin/config/{key}",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigPatch))))
+	mux.Handle("POST /v1/admin/config/{key}/rollback",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigRollback))))
 	mux.HandleFunc("GET /v1/admin/config-operations/{id}",
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigOperationGet)))
 	mux.HandleFunc("GET /v1/admin/config/{key}/revisions",

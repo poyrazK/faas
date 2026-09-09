@@ -40,6 +40,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchDeploy":       "deploy",        // PR-B (multi-host scale-out gap #2)
 		"dispatchInstances":    "instances",     // P2 of operator-obs mega-PR (Commit 5b)
 		"dispatchAccounts":     "accounts",      // authenticated tenant support + lifecycle controls
+		"dispatchConfig":       "config",        // zero-downtime runtime configuration controls
 		"dispatchBuilds":       "builds",        // P2c of operator-obs mega-PR (Commit 5c)
 		"dispatchObs":          "obs",           // Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side meta-obs health snapshot
 		"dispatchDebug":        "debug",         // ADR-127 PR-D — operator-side OTel spans writer smoke harness
