@@ -266,6 +266,16 @@ type DeploymentHostingReceiptStore interface {
 	UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error)
 }
 
+// OpenAPISnapshotStore is the optional persistence seam for the API contract
+// gate (ADR-121). It is intentionally separate from Store so narrow test
+// doubles and daemon-specific stores remain source-compatible. Production
+// PgStore and MemStore implement all three methods.
+type OpenAPISnapshotStore interface {
+	UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap OpenAPISnapshot) error
+	LatestOpenAPISnapshotForScope(ctx context.Context, appID, scope string) (OpenAPISnapshot, error)
+	OpenAPISnapshotByDeployment(ctx context.Context, deploymentID string) (OpenAPISnapshot, error)
+}
+
 // RecoverRolloutStuckAfter (issue #976 / ADR-122 / SAFE-RELEASES-R +
 // production-leveling Stream C) is the canned stuck-detection
 // window the RecoverRollout method uses to gate action="advance".

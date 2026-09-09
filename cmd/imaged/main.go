@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -223,6 +224,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	store := state.NewPgStore(pool)
+	// Register the same canonical OpenAPI projector as apid. imaged owns the
+	// snapshot_written → live transition, so the capture and the contract gate
+	// must be wired in this process too.
+	openapidiff.RegisterStateCapture()
 	builder := rootfs.NewBuilder(wire.ExecRunner{})
 
 	// ADR-038 / Tier 3 phase 3: validate the build-attestation

@@ -1365,6 +1365,12 @@ const (
 	// failures so operators can tell serving-path regressions from image
 	// startup regressions.
 	CodeDeploymentSmokeFailed = "deployment_smoke_failed"
+	// CodeAPIContractDiffDisabled is returned by the read-only contract
+	// endpoint while the operator keeps the dark-launch flag off.
+	CodeAPIContractDiffDisabled = "api_contract_diff_disabled"
+	// CodeAPIContractBreakingChange is stamped on deployments rejected by
+	// the production OpenAPI contract gate.
+	CodeAPIContractBreakingChange = "api_contract_breaking_change"
 
 	// CLI auth (spec §2.2 device-code flow). Pending is the "user has
 	// not yet approved" signal the CLI's poll loop keys off; the CLI
@@ -1622,6 +1628,8 @@ func StatusForCode(code string) int {
 	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity:
 		return http.StatusServiceUnavailable
+	case CodeAPIContractDiffDisabled:
+		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
 		// (issue #299). SLO-exempt: a CRITICAL CVE is a known
@@ -1664,7 +1672,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
+	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -2608,6 +2616,23 @@ func ErrDoctorUnavailable(domain, reason string) *Problem {
 		"Domain doctor unavailable",
 		fmt.Sprintf("doctor probes for %s failed: %s", domain, reason)).
 		WithDocs(docsBase + "/domains/doctor")
+}
+
+// ErrAPIContractDiffDisabled is the deterministic dark-launch response for
+// the OpenAPI contract preview endpoint.
+func ErrAPIContractDiffDisabled() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeAPIContractDiffDisabled,
+		"API contract diff is disabled",
+		"the FAAS_API_CONTRACT_DIFF_ENABLED flag is not enabled on this cluster; ask the operator to enable it").
+		WithDocs(docsBase + "/api-hosting/contract-diff")
+}
+
+// ErrAPIContractBreakingChange is used by a promotion API caller when the
+// proposed OpenAPI surface removes or tightens a previously-live contract.
+func ErrAPIContractBreakingChange(detail string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractBreakingChange,
+		"API contract breaking change", detail).
+		WithDocs(docsBase + "/api-hosting/contract-diff")
 }
 
 // ErrCronInvalid is returned for malformed cron expressions.

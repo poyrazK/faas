@@ -1360,6 +1360,9 @@ func (s *server) handler() http.Handler {
 	// gatewayd-observed routes and matching edge rules. It deliberately stays
 	// on the read-scope chain with no MFA because it performs no writes.
 	mux.HandleFunc("GET /v1/apps/{slug}/openapi/preview", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPIPolicyPreview)))
+	// ADR-121: read-only declared contract diff. The endpoint is registered
+	// even while dark-launched so clients receive the stable 503 feature code.
+	mux.HandleFunc("GET /v1/apps/{slug}/openapi/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPIContractDiff)))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.postAppOpenAPIImport))))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi/dry-run", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postAppOpenAPIImportDryRun)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppOpenAPIImport))))

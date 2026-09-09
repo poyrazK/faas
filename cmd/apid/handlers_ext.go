@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
@@ -1744,6 +1745,16 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
 			return state.Deployment{}, api.ErrNoRollbackTarget()
+		}
+	}
+	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
+		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
+		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
+			return state.Deployment{}, api.ErrCapacity("could not evaluate API contract")
+		}
+		if len(check.Diff.Breaks) > 0 {
+			problem := api.ErrAPIContractBreakingChange((&openapidiff.GateError{Diff: check.Diff}).Error())
+			return state.Deployment{}, problem
 		}
 	}
 	if err := s.store.MarkDeploymentSuperseded(ctx, current.ID); err != nil {

@@ -274,11 +274,11 @@ jobs:
       - name: install nftables
         run: |
           set -euo pipefail
-          # The hosted image can carry a stale Google Chrome index. It is not
-          # needed by this job, and a hash mismatch there would abort apt
-          # before nftables can be installed.
+          # Hosted images can carry stale third-party apt indexes. They are
+          # not needed by this job and can abort apt before nftables installs.
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
-            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update -qq
           sudo apt-get install -y -qq nftables
       - name: egress check (Go renderer ↔ Jinja2 + nft syntax + bridge-name guard)
@@ -1644,7 +1644,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
-            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -1728,7 +1729,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
-            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -1802,7 +1804,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
-            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -1876,7 +1879,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
-            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)

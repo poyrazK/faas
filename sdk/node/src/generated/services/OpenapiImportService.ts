@@ -5,6 +5,7 @@
 import type { AppOpenAPIImportDryRunResponse } from '../models/AppOpenAPIImportDryRunResponse.js';
 import type { AppOpenAPIImportResponse } from '../models/AppOpenAPIImportResponse.js';
 import type { AppOpenAPIPolicyPreviewResponse } from '../models/AppOpenAPIPolicyPreviewResponse.js';
+import type { OpenAPIContractDiffResponse } from '../models/OpenAPIContractDiffResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -226,6 +227,47 @@ export class OpenapiImportService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Preview the production OpenAPI contract gate.
+   * Read-only ADR-121 contract diff. Compares the current projected
+   * OpenAPI surface against the latest captured live snapshot in the
+   * requested scope (default `prod`). `blocking=true` means a production
+   * promotion would be rejected while `FAAS_API_CONTRACT_DIFF_ENABLED`
+   * is enabled. The route remains registered while the flag is off and
+   * returns 503 `api_contract_diff_disabled`.
+   *
+   * @returns OpenAPIContractDiffResponse Contract diff result.
+   * @throws ApiError
+   */
+  public static diffAppOpenApiContract({
+    slug,
+    scope,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment scope to compare; defaults to `prod`.
+     */
+    scope?: string,
+  }): CancelablePromise<OpenAPIContractDiffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/openapi/diff',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `code: api_contract_diff_disabled.`,
       },
     });
   }
