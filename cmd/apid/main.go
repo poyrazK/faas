@@ -1270,7 +1270,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
 	srv.WithObjectStorage(objectRegistry)
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log)
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}

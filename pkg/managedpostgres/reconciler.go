@@ -22,6 +22,7 @@ type ReconcileObservation struct {
 	DatabaseID string
 	Operation  State
 	Outcome    ReconcileOutcome
+	Duration   time.Duration
 }
 
 type ReconcileSummary struct {
@@ -100,6 +101,7 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 			return summary, err
 		}
 		operation := StateProvisioning
+		started := r.now()
 		var result Database
 		if database.State == StateDeleting {
 			operation = StateDeleting
@@ -120,7 +122,7 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 			sweepErrors = append(sweepErrors, err)
 		}
 		if r.observe != nil {
-			r.observe(ReconcileObservation{DatabaseID: database.ID, Operation: operation, Outcome: outcome})
+			r.observe(ReconcileObservation{DatabaseID: database.ID, Operation: operation, Outcome: outcome, Duration: r.now().Sub(started)})
 		}
 	}
 	return summary, errors.Join(sweepErrors...)

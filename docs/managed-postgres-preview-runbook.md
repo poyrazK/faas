@@ -76,3 +76,13 @@ Monthly COGS evidence is the usage ledger plus the stable line-item mapping:
 
 The line-item helper is deterministic and idempotent for a complete monthly
 snapshot. Provider adapters may change without changing these codes.
+
+## Observability
+
+The apid metrics listener exposes low-cardinality lifecycle, binding, usage,
+canary, and admission signals. Alerting for the preview is defined in the
+Prometheus `managed_postgres` rule group. Use the
+[`FaasManagedPostgresDegraded`](runbooks/FaasManagedPostgresDegraded.md)
+runbook for reconciliation failures, deferred work, stale usage, and recovery
+validation. The provisioning gate metric is informational: it is expected to
+be zero outside an approved staging canary.

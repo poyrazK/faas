@@ -1,0 +1,60 @@
+# Synthetic coverage for the managed PostgreSQL preview health alerts.
+# Metrics are intentionally low-cardinality and carry no account, app, or
+# provider-resource labels.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "failed reconciliation and deferred usage page the operator"
+    input_series:
+      - series: 'apid_managed_postgres_reconcile_total{resource="database",operation="provisioning",outcome="failed"}'
+        values: '0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40'
+      - series: 'apid_managed_postgres_usage_collection_sweeps_total{outcome="degraded"}'
+        values: '0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasManagedPostgresReconcileFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: managed_postgres
+            exp_annotations:
+              summary: "Managed PostgreSQL reconciliation is failing"
+              description: "The managed PostgreSQL lifecycle or binding reconciler has recorded a failed attempt during the last 10m. Inspect the apid managed-postgres logs and the resource state; provider errors are normalized and never include credentials or connection URLs."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+      - eval_time: 20m
+        alertname: FaasManagedPostgresUsageCollectionDeferred
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: managed_postgres
+            exp_annotations:
+              summary: "Managed PostgreSQL usage collection is partially deferred"
+              description: "At least one managed PostgreSQL usage sweep was degraded or failed during the last 15m. The collector preserves complete-window accounting and leaves incomplete resources for retry; inspect deferred counts before changing COGS ceilings."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+  - interval: 30s
+    name: "enabled usage policy with no complete sweep pages"
+    input_series:
+      - series: 'apid_managed_postgres_usage_policy_enabled'
+        values: '1x41'
+      - series: 'apid_managed_postgres_usage_last_success_timestamp_seconds'
+        values: '0x41'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasManagedPostgresUsageCollectionStale
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: apid
+              family: managed_postgres
+            exp_annotations:
+              summary: "Managed PostgreSQL usage collection is stale"
+              description: "The usage ledger is enabled but apid has not completed a full provider usage sweep for more than 15m. New database reservations fail closed while observations are stale; check the usage collector, provider API, and apid database connectivity."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"

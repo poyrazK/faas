@@ -22,17 +22,20 @@ type UsageCollectionObservation struct {
 }
 
 type UsageCollectionSummary struct {
-	Discovered int
-	Recorded   int
-	Deferred   int
+	Discovered  int
+	Recorded    int
+	Deferred    int
+	Enabled     bool
+	CompletedAt time.Time
 }
 
 type UsageCollectorOptions struct {
-	Interval  time.Duration
-	BatchSize int
-	Now       func() time.Time
-	Logger    *slog.Logger
-	Observe   func(UsageCollectionObservation)
+	Interval     time.Duration
+	BatchSize    int
+	Now          func() time.Time
+	Logger       *slog.Logger
+	Observe      func(UsageCollectionObservation)
+	ObserveSweep func(UsageCollectionSummary, error)
 }
 
 // UsageCollector imports complete provider windows into the durable ledger.
@@ -40,14 +43,15 @@ type UsageCollectorOptions struct {
 // outage can defer accounting without mutating database state, and a lifecycle
 // retry cannot double-count an already-recorded window.
 type UsageCollector struct {
-	registry  *Registry
-	store     UsageStore
-	policy    UsagePolicy
-	interval  time.Duration
-	batchSize int
-	now       func() time.Time
-	logger    *slog.Logger
-	observe   func(UsageCollectionObservation)
+	registry     *Registry
+	store        UsageStore
+	policy       UsagePolicy
+	interval     time.Duration
+	batchSize    int
+	now          func() time.Time
+	logger       *slog.Logger
+	observe      func(UsageCollectionObservation)
+	observeSweep func(UsageCollectionSummary, error)
 }
 
 func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollectorOptions) (*UsageCollector, error) {
@@ -77,19 +81,26 @@ func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollec
 		options.Logger = slog.Default()
 	}
 	return &UsageCollector{
-		registry:  registry,
-		store:     store,
-		policy:    policy,
-		interval:  options.Interval,
-		batchSize: options.BatchSize,
-		now:       options.Now,
-		logger:    options.Logger,
-		observe:   options.Observe,
+		registry:     registry,
+		store:        store,
+		policy:       policy,
+		interval:     options.Interval,
+		batchSize:    options.BatchSize,
+		now:          options.Now,
+		logger:       options.Logger,
+		observe:      options.Observe,
+		observeSweep: options.ObserveSweep,
 	}, nil
 }
 
-func (c *UsageCollector) Collect(ctx context.Context) (UsageCollectionSummary, error) {
-	var summary UsageCollectionSummary
+func (c *UsageCollector) Collect(ctx context.Context) (summary UsageCollectionSummary, sweepErr error) {
+	summary.Enabled = c.policy.Enabled
+	defer func() {
+		summary.CompletedAt = c.now().UTC()
+		if c.observeSweep != nil {
+			c.observeSweep(summary, sweepErr)
+		}
+	}()
 	if !c.policy.Enabled {
 		return summary, nil
 	}
@@ -104,7 +115,6 @@ func (c *UsageCollector) Collect(ctx context.Context) (UsageCollectionSummary, e
 		return summary, err
 	}
 	summary.Discovered = len(databases)
-	var sweepErr error
 	for _, database := range databases {
 		if err := ctx.Err(); err != nil {
 			return summary, err
