@@ -13,7 +13,7 @@
 # What it does:
 #   1. Downloads and verifies the signed canonical release for the selected tag
 #   2. Assembles the checked-in systemd/controller files around those binaries
-#   3. SCPs the immutable bundle + migrations to the Control Plane host
+#   3. Reuses a verified immutable bundle or uploads it when absent
 #   4. Runs pending DB migrations
 #   5. Restarts all FaaS services
 #
@@ -274,14 +274,31 @@ jobs:
       - name: Upload and activate immutable release
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            root@${{ env.CP_HOST }} "mkdir -p /opt/faas/releases/${RELEASE_ID}"
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -r \
-            "${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:/opt/faas/releases/${RELEASE_ID}/"
+          release_dir="/opt/faas/releases/${RELEASE_ID}"
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} \
+            "test -x '${release_dir}/bin/deployctl' && '${release_dir}/bin/deployctl' bundle-check '${release_dir}'"; then
+            echo "reusing verified immutable release ${RELEASE_ID}"
+          else
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+              root@${{ env.CP_HOST }} "bash -s -- '${release_dir}'" <<'REMOTE'
+          set -euo pipefail
+          release_dir="$1"
+          current_release="$(readlink -f /opt/faas/current 2>/dev/null || true)"
+          if [[ "$current_release" == "$release_dir" ]]; then
+            echo "active immutable release failed bundle verification: ${release_dir}" >&2
+            exit 1
+          fi
+          rm -rf -- "$release_dir"
+          mkdir -p -- "$release_dir"
+          REMOTE
+            scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -r \
+              "${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:${release_dir}/"
+          fi
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
-            "/opt/faas/releases/${RELEASE_ID}/bin/deployctl bundle-check /opt/faas/releases/${RELEASE_ID} &&
-             /opt/faas/releases/${RELEASE_ID}/bin/deployctl deploy ${RELEASE_ID} &&
+            "${release_dir}/bin/deployctl bundle-check ${release_dir} &&
+             ${release_dir}/bin/deployctl deploy ${RELEASE_ID} &&
              ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
              mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
 
