@@ -6580,19 +6580,41 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	}
 
 	// Cascade-cancel every non-terminal build row attached to
-	// this deployment. The cascade flag tells the build-cancel
-	// audit column which side this row flip came from. We
-	// RETURNING id so the handler can fire a build_changed
-	// pg_notify per row (the LISTEN goroutine in cmd/builderd
-	// calls VM.Cancel for each).
+	// this deployment. Running rows also get a durable VM cleanup
+	// obligation in this transaction. The handler still receives every
+	// flipped ID so it can attempt immediate cancellation, while the
+	// builderd reaper retries failures after notification loss or restart.
 	rows, err := tx.Query(ctx, `
-		UPDATE builds
-		   SET status = $2,
-		       cancelled_at = $3,
-		       cancelled_by_deployment_cascade = true
-		 WHERE deployment_id = $1
-		   AND status IN ('queued', 'running')
-		RETURNING id`,
+		WITH candidates AS (
+			SELECT id, status
+			  FROM builds
+			 WHERE deployment_id = $1
+			   AND status IN ('queued', 'running')
+			 FOR UPDATE
+		),
+		cancelled AS (
+			UPDATE builds b
+			   SET status = $2,
+			       cancelled_at = $3,
+			       cancelled_by_deployment_cascade = true
+			  FROM candidates c
+			 WHERE b.id = c.id
+			RETURNING b.id
+		),
+		cleanup AS (
+			INSERT INTO builder_vm_cleanup (build_id)
+			SELECT c.id
+			  FROM cancelled c
+			  JOIN candidates candidate ON candidate.id = c.id
+			 WHERE candidate.status = 'running'
+			ON CONFLICT (build_id) DO NOTHING
+			RETURNING build_id
+		)
+		SELECT c.id
+		  FROM cancelled c
+		  LEFT JOIN cleanup q ON q.build_id = c.id
+		 CROSS JOIN (SELECT count(*) FROM cleanup) _cleanup_count
+		 ORDER BY c.id`,
 		id, string(BuildCancelled), now,
 	)
 	if err != nil {
@@ -6764,27 +6786,42 @@ func (s *PgStore) ClearObsoleteDeployments(ctx context.Context, appID string, ol
 // from CancelDeploymentTx (true) or a future direct build-cancel
 // path (false).
 func (s *PgStore) MarkBuildCancelled(ctx context.Context, buildID, _ string, cascade bool, when time.Time) error {
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("MarkBuildCancelled: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM builds WHERE id = $1 FOR UPDATE`, buildID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("MarkBuildCancelled: select: %w", err)
+	}
+	if status != string(BuildQueued) && status != string(BuildRunning) {
+		return ErrInvalidStateTransition
+	}
+	if _, err := tx.Exec(ctx, `
 		UPDATE builds
 		   SET status = $2,
 		       cancelled_at = $3,
 		       cancelled_by_deployment_cascade = $4
-		 WHERE id = $1
-		   AND status IN ('queued', 'running')`,
+		 WHERE id = $1 AND status IN ('queued', 'running')`,
 		buildID, string(BuildCancelled), when.UTC(), cascade,
-	)
-	if err != nil {
-		return fmt.Errorf("MarkBuildCancelled: %w", err)
+	); err != nil {
+		return fmt.Errorf("MarkBuildCancelled: update: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		var exists bool
-		if e := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM builds WHERE id = $1)`, buildID).Scan(&exists); e != nil {
-			return fmt.Errorf("MarkBuildCancelled: post-check: %w", e)
+	if status == string(BuildRunning) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO builder_vm_cleanup (build_id)
+			VALUES ($1)
+			ON CONFLICT (build_id) DO NOTHING`, buildID); err != nil {
+			return fmt.Errorf("MarkBuildCancelled: enqueue VM cleanup: %w", err)
 		}
-		if !exists {
-			return ErrNotFound
-		}
-		return ErrInvalidStateTransition
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("MarkBuildCancelled: commit: %w", err)
 	}
 	return nil
 }
@@ -7985,11 +8022,19 @@ func (s *PgStore) SweepStuckRunningBuildsWithIDs(ctx context.Context, threshold 
 			  from flipped f
 			 where d.id = f.deployment_id
 			   and d.status in ('pending', 'building', 'imaging', 'snapshotting')
-			returning d.id
-		)
-		select f.id
-		  from flipped f
-	 cross join (select count(*) from failed_deployments) _deployment_failure_count
+				returning d.id
+			)
+			,cleanup AS (
+				insert into builder_vm_cleanup (build_id)
+				select f.id
+				  from flipped f
+				on conflict (build_id) do nothing
+				returning build_id
+			)
+			select f.id
+			  from flipped f
+			  left join cleanup c on c.build_id = f.id
+		 cross join (select count(*) from failed_deployments) _deployment_failure_count
 		 order by f.id
 	`, threshold, api.CodeBuildTimeout)
 	if err != nil {

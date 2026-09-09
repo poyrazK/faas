@@ -160,6 +160,10 @@ type MemStore struct {
 	// by the ListOpenStatusIncidents loop filter.
 	statusIncidents []StatusIncident
 	builds          map[string]Build
+	// builderVMCleanup mirrors builder_vm_cleanup. Rows are durable in
+	// production and intentionally private here; tests exercise the same
+	// claim/complete capability through the state interface.
+	builderVMCleanup map[string]builderVMCleanupRow
 	// buildProvenance is the ADR-038 "what ran?" record keyed by
 	// build_id (mirrors build_provenance.build_id UNIQUE). MemStore
 	// holds the same idempotent-replace semantics as PgStore's
@@ -718,6 +722,14 @@ type builderUsageRow struct {
 	Seconds    int64
 }
 
+type builderVMCleanupRow struct {
+	nextAttemptAt time.Time
+	claimedAt     *time.Time
+	claimToken    string
+	attempts      int
+	lastError     string
+}
+
 // NewMemStore returns an empty in-memory store with the synthetic
 // 'default-local' compute_node row seeded (issue #97 / ADR-025 axis 3).
 // The seed mirrors migrations/00024_compute_nodes.sql so unit tests
@@ -744,6 +756,7 @@ func NewMemStore() *MemStore {
 		deployFailedEmailAt: map[string]time.Time{},
 		deployments:         map[string]Deployment{},
 		builds:              map[string]Build{},
+		builderVMCleanup:    map[string]builderVMCleanupRow{},
 		// buildProvenance is the ADR-038 "what ran?" map keyed by
 		// build_id (mirrors the build_provenance.build_id UNIQUE).
 		// Starts empty; CreateBuildProvenance fills it.
@@ -5710,10 +5723,14 @@ func (m *MemStore) CancelDeploymentTx(ctx context.Context, id, principal string,
 	var cancelled []string
 	for buildID, b := range m.builds {
 		if b.DeploymentID == d.ID && (b.Status == BuildQueued || b.Status == BuildRunning) {
+			wasRunning := b.Status == BuildRunning
 			b.Status = BuildCancelled
 			b.CancelledAt = &now
 			b.CancelledByDeploymentCascade = true
 			m.builds[buildID] = b
+			if wasRunning {
+				m.enqueueBuildVMCleanupLocked(buildID, now)
+			}
 			cancelled = append(cancelled, buildID)
 		}
 	}
@@ -5843,10 +5860,14 @@ func (m *MemStore) MarkBuildCancelled(_ context.Context, buildID, _ string, casc
 	if b.Status != BuildQueued && b.Status != BuildRunning {
 		return ErrInvalidStateTransition
 	}
+	wasRunning := b.Status == BuildRunning
 	b.Status = BuildCancelled
 	b.CancelledAt = &when
 	b.CancelledByDeploymentCascade = cascade
 	m.builds[buildID] = b
+	if wasRunning {
+		m.enqueueBuildVMCleanupLocked(buildID, when.UTC())
+	}
 	return nil
 }
 
@@ -7047,6 +7068,7 @@ func (m *MemStore) SweepStuckRunningBuildsWithIDs(_ context.Context, threshold t
 		b.FailureClass = FailureTimeout
 		b.FinishedAt = now
 		m.builds[id] = b
+		m.enqueueBuildVMCleanupLocked(id, now)
 		if d, ok := m.deployments[b.DeploymentID]; ok {
 			switch d.Status {
 			case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting:
@@ -7060,6 +7082,86 @@ func (m *MemStore) SweepStuckRunningBuildsWithIDs(_ context.Context, threshold t
 	}
 	sort.Strings(ids)
 	return ids, nil
+}
+
+func (m *MemStore) enqueueBuildVMCleanupLocked(buildID string, now time.Time) {
+	if m.builderVMCleanup == nil {
+		m.builderVMCleanup = map[string]builderVMCleanupRow{}
+	}
+	if _, exists := m.builderVMCleanup[buildID]; exists {
+		return
+	}
+	m.builderVMCleanup[buildID] = builderVMCleanupRow{nextAttemptAt: now}
+}
+
+// ClaimBuildVMCleanup claims due or abandoned builder-VM teardown rows. The
+// token prevents a late result from an expired claim from completing a newer
+// worker's attempt.
+func (m *MemStore) ClaimBuildVMCleanup(_ context.Context, limit int) ([]BuildVMCleanupClaim, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now().UTC()
+	const claimLease = 5 * time.Minute
+	ids := make([]string, 0, len(m.builderVMCleanup))
+	for buildID, row := range m.builderVMCleanup {
+		if row.claimedAt != nil {
+			if now.Sub(*row.claimedAt) < claimLease {
+				continue
+			}
+		} else if row.nextAttemptAt.After(now) {
+			continue
+		}
+		ids = append(ids, buildID)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		left, right := m.builderVMCleanup[ids[i]], m.builderVMCleanup[ids[j]]
+		if left.nextAttemptAt.Equal(right.nextAttemptAt) {
+			return ids[i] < ids[j]
+		}
+		return left.nextAttemptAt.Before(right.nextAttemptAt)
+	})
+	if len(ids) > limit {
+		ids = ids[:limit]
+	}
+	claims := make([]BuildVMCleanupClaim, 0, len(ids))
+	for _, buildID := range ids {
+		row := m.builderVMCleanup[buildID]
+		claimedAt := now
+		row.claimedAt = &claimedAt
+		row.claimToken = uuid.NewString()
+		row.attempts++
+		m.builderVMCleanup[buildID] = row
+		claims = append(claims, BuildVMCleanupClaim{BuildID: buildID, ClaimToken: row.claimToken})
+	}
+	return claims, nil
+}
+
+// CompleteBuildVMCleanup removes a successfully stopped VM obligation. A
+// failed stop clears the claim and makes the row eligible for the next reaper
+// pass. A stale worker result is harmless because the token guard ignores it.
+func (m *MemStore) CompleteBuildVMCleanup(_ context.Context, buildID, claimToken string, cleanupErr error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.builderVMCleanup[buildID]
+	if !ok || row.claimToken != claimToken {
+		return nil
+	}
+	if cleanupErr == nil {
+		delete(m.builderVMCleanup, buildID)
+		return nil
+	}
+	row.claimedAt = nil
+	row.claimToken = ""
+	row.nextAttemptAt = time.Now().UTC()
+	row.lastError = cleanupErr.Error()
+	if len(row.lastError) > 4096 {
+		row.lastError = row.lastError[:4096]
+	}
+	m.builderVMCleanup[buildID] = row
+	return nil
 }
 
 // QueuedBuildsCount (operator-side observability mega-PR / Commit 7
