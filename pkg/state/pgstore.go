@@ -13811,6 +13811,14 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 // an operator-side COALESCE for region/zone that vmmd shouldn't
 // touch) has exactly one place to land.
 func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node ComputeNode) (ComputeNode, error) {
+	// The operator API does not expose vcpu_budget yet. Passing the Go zero
+	// value explicitly would bypass PostgreSQL's column default and violate
+	// compute_nodes_vcpu_budget_check, so preserve the documented synthetic
+	// node default at this boundary until the operator surface grows a knob.
+	vcpuBudget := node.VCPUBudget
+	if vcpuBudget <= 0 {
+		vcpuBudget = api.VCPUSlots
+	}
 	// Operator owns the release-bundle metadata too: PR-X secrets init
 	// stamps host_certificate / cert_fingerprint at first contact, the
 	// renderer (PR-2) stamps manifest_hash + role, release install
@@ -13853,7 +13861,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
-		node.AdmissionCeilingMB, node.VCPUBudget,
+		node.AdmissionCeilingMB, vcpuBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,

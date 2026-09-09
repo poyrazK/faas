@@ -208,14 +208,14 @@ func TestPGHandler_AppUsageReadsPgStore(t *testing.T) {
 func TestPGHandler_DeploymentHistoryPaginates(t *testing.T) {
 	e := setupPGHandler(t, api.PlanPro)
 	app := seedPGApp(t, e, "pg-history")
-	base := time.Now().UTC().Add(-time.Minute)
+	base := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Minute)
 	for i := 0; i < 3; i++ {
 		if _, err := e.store.CreateDeployment(context.Background(), state.Deployment{
 			AppID:       app.ID,
 			ImageDigest: fmt.Sprintf("sha256:%064d", i+1),
 			Kind:        state.DeploymentKindImage,
 			Status:      state.DeployBuilding,
-			CreatedAt:   base.Add(time.Duration(i) * time.Second),
+			CreatedAt:   base.Add(time.Duration(i) * time.Minute),
 		}); err != nil {
 			t.Fatalf("CreateDeployment(%d): %v", i, err)
 		}
