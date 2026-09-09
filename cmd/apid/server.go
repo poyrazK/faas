@@ -2624,6 +2624,8 @@ func (s *server) handler() http.Handler {
 	// keeps the code aligned to.
 	mux.HandleFunc("GET /v1/openapi.yaml", apid.ServeOpenAPISpec)
 	mux.HandleFunc("GET /v1/openapi.json", apid.ServeOpenAPISpecJSON)
+	mux.HandleFunc("GET /docs", apid.ServeDocs)
+	mux.HandleFunc("GET /docs/", apid.ServeDocs)
 
 	// observeWrap (the outermost layer) feeds apid_ops_total +
 	// apid_op_duration_seconds. It's last so it sees the final

@@ -10,6 +10,9 @@ package apid
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/httpsec"
 )
 
 // TestServeOpenAPISpec_ContentType asserts the YAML endpoint emits the
@@ -159,6 +164,49 @@ func TestServeOpenAPISpecJSON_Shape(t *testing.T) {
 	}
 	if doc.Info.Title == "" {
 		t.Errorf("info.title is empty — embedded spec is missing info block")
+	}
+}
+
+// TestServeDocs_UsesExactSpecAndPinnedAssets keeps the browser page tied to
+// the exact JSON bytes and rejects an accidental unpinned CDN dependency.
+func TestServeDocs_UsesExactSpecAndPinnedAssets(t *testing.T) {
+	const nonce = "test-docs-nonce"
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/docs", nil)
+	r = r.WithContext(httpsec.WithNonce(context.Background(), nonce))
+	ServeDocs(w, r)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	if got, want := resp.StatusCode, http.StatusOK; got != want {
+		t.Fatalf("status: got %d, want %d", got, want)
+	}
+	if got, want := resp.Header.Get("Content-Type"), "text/html; charset=utf-8"; got != want {
+		t.Errorf("Content-Type: got %q, want %q", got, want)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	wantChecksum := sha256.Sum256(recordJSON(t))
+	wantHex := hex.EncodeToString(wantChecksum[:])
+	for _, want := range []string{
+		`<div id="swagger-ui"></div>`,
+		`url: "/v1/openapi.json"`,
+		`persistAuthorization: false`,
+		`swagger-ui-dist@5.17.14/`,
+		`integrity="sha384-wmyclcVGX/WhUkdkATwhaK1X1JtiNrr2EoYJ+diV3vj4v6OC5yCeSu+yW13SYJep"`,
+		`integrity="sha384-wxLW6kwyHktdDGr6Pv1zgm/VGJh99lfUbzSn6HNHBENZlCN7W602k9VkGdxuFvPn"`,
+		`nonce="` + nonce + `"`,
+		`content="` + wantHex + `"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("docs HTML missing %q", want)
+		}
+	}
+	if strings.Contains(html, "localStorage") || strings.Contains(html, "sessionStorage") {
+		t.Error("docs HTML must not persist authorization tokens")
 	}
 }
 

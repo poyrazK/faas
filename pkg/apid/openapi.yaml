@@ -12689,6 +12689,36 @@ paths:
             application/json:
               schema: { type: object }
 
+  /docs:
+    get:
+      tags: [meta]
+      operationId: getDocs
+      summary: Human-readable API reference.
+      description: |
+        Anonymous Swagger UI page backed by the exact JSON document served
+        at `/v1/openapi.json`. The page does not persist bearer tokens.
+      security: []
+      responses:
+        '200':
+          description: Swagger UI HTML.
+          content:
+            text/html:
+              schema: { type: string }
+
+  /docs/:
+    get:
+      tags: [meta]
+      operationId: getDocsSlash
+      summary: Human-readable API reference (slash form).
+      description: The slash form serves the same anonymous Swagger UI page.
+      security: []
+      responses:
+        '200':
+          description: Swagger UI HTML.
+          content:
+            text/html:
+              schema: { type: string }
+
   /v1/traces/{trace_id}:
     get:
       tags: [observability]
