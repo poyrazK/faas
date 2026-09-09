@@ -441,6 +441,17 @@ type BuilderUsage struct {
 	OrgID   pgtype.UUID
 }
 
+type BuilderVmCleanup struct {
+	BuildID       pgtype.UUID
+	NextAttemptAt pgtype.Timestamptz
+	ClaimedAt     pgtype.Timestamptz
+	ClaimToken    pgtype.UUID
+	Attempts      int32
+	LastError     pgtype.Text
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type CliAuthCode struct {
 	TokenHash  []byte
 	AccountID  pgtype.UUID

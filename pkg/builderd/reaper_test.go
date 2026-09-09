@@ -7,6 +7,7 @@ package builderd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -102,6 +103,72 @@ func (reaperVM) WaitForCompletion(context.Context, BuildHandle) (BuildOutcome, e
 func (v reaperVM) Cancel(_ context.Context, buildID string) error {
 	v.cancelled <- buildID
 	return nil
+}
+
+type retryReaperVM struct {
+	calls     int
+	failFirst bool
+}
+
+func (retryReaperVM) Spawn(context.Context, VMRequest) (BuildHandle, error) {
+	return BuildHandle{}, ErrNotMetal
+}
+
+func (retryReaperVM) WaitForCompletion(context.Context, BuildHandle) (BuildOutcome, error) {
+	return BuildOutcome{}, ErrNotMetal
+}
+
+func (v *retryReaperVM) Cancel(context.Context, string) error {
+	v.calls++
+	if v.failFirst && v.calls == 1 {
+		return errors.New("vmmd unavailable")
+	}
+	return nil
+}
+
+func TestSweepStuckBuilds_RetriesFailedVMCleanup(t *testing.T) {
+	store, ms, stuckID := newReaperFixture(t)
+	ms.SetBuildStartedAtForTest(stuckID, time.Now().Add(-10*time.Minute))
+	vm := &retryReaperVM{failFirst: true}
+
+	if n, err := sweepStuckBuilds(context.Background(), store, vm, time.Now().Add(-5*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil || n != 1 {
+		t.Fatalf("first sweep = (%d, %v), want (1, nil)", n, err)
+	}
+	if vm.calls != 1 {
+		t.Fatalf("first cleanup calls = %d, want 1", vm.calls)
+	}
+
+	if n, err := sweepStuckBuilds(context.Background(), store, vm, time.Now().Add(-5*time.Minute), slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil || n != 0 {
+		t.Fatalf("retry sweep = (%d, %v), want (0, nil)", n, err)
+	}
+	if vm.calls != 2 {
+		t.Fatalf("retry cleanup calls = %d, want 2", vm.calls)
+	}
+}
+
+func TestSweepStuckBuilds_DrainsCancellationCleanup(t *testing.T) {
+	store, _, buildID := newReaperFixture(t)
+	build, err := store.BuildByID(context.Background(), buildID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ids, err := store.CancelDeploymentTx(context.Background(), build.DeploymentID, "operator:test", state.CancelReasonUser); err != nil {
+		t.Fatalf("CancelDeploymentTx: %v", err)
+	} else if len(ids) != 1 || ids[0] != buildID {
+		t.Fatalf("cancelled build IDs = %v, want [%s]", ids, buildID)
+	}
+
+	vm := &retryReaperVM{}
+	n, err := sweepStuckBuilds(context.Background(), store, vm, time.Now(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("sweep cancellation cleanup: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("swept = %d, want 0", n)
+	}
+	if vm.calls != 1 {
+		t.Fatalf("cancellation cleanup calls = %d, want 1", vm.calls)
+	}
 }
 
 // TestSweepStuckBuilds_CancelsOnlyRowsItFailed pins the production recovery

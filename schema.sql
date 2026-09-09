@@ -1426,6 +1426,23 @@ COMMENT ON COLUMN public.builder_usage.kind IS 'build kind (railpack|dockerfile|
 
 
 --
+-- Name: builder_vm_cleanup; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.builder_vm_cleanup (
+    build_id uuid NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_at timestamp with time zone,
+    claim_token uuid,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT builder_vm_cleanup_attempts_check CHECK ((attempts >= 0))
+);
+
+
+--
 -- Name: builds; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3926,6 +3943,14 @@ ALTER TABLE ONLY public.builder_usage
 
 
 --
+-- Name: builder_vm_cleanup builder_vm_cleanup_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.builder_vm_cleanup
+    ADD CONSTRAINT builder_vm_cleanup_pkey PRIMARY KEY (build_id);
+
+
+--
 -- Name: builds builds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5183,6 +5208,20 @@ CREATE INDEX builder_usage_account_finished_idx ON public.builder_usage USING bt
 --
 
 CREATE INDEX builder_usage_org_id_idx ON public.builder_usage USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: builder_vm_cleanup_claimed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX builder_vm_cleanup_claimed_idx ON public.builder_vm_cleanup USING btree (claimed_at) WHERE (claimed_at IS NOT NULL);
+
+
+--
+-- Name: builder_vm_cleanup_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX builder_vm_cleanup_due_idx ON public.builder_vm_cleanup USING btree (next_attempt_at, build_id) WHERE (claimed_at IS NULL);
 
 
 --
@@ -7240,6 +7279,14 @@ ALTER TABLE ONLY public.build_provenance
 
 ALTER TABLE ONLY public.builder_usage
     ADD CONSTRAINT builder_usage_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: builder_vm_cleanup builder_vm_cleanup_build_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.builder_vm_cleanup
+    ADD CONSTRAINT builder_vm_cleanup_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.builds(id) ON DELETE CASCADE;
 
 
 --
