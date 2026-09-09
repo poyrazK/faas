@@ -32,6 +32,7 @@ BASEBACKUP_TIMER="$REPO_ROOT/deploy/systemd/faas-pg-basebackup.timer"
 BASEBACKUP_PUSH_TIMER="$REPO_ROOT/deploy/systemd/faas-pg-basebackup-push.timer"
 POSTGRES_ROLE="$REPO_ROOT/deploy/ansible/roles/postgres/tasks/main.yml"
 PEER_ACCESS_ROLE="$REPO_ROOT/deploy/ansible/roles/control_plane_peer_access/tasks/main.yml"
+CONTROL_PLANE_ROLE="$REPO_ROOT/deploy/ansible/roles/control_plane_service/tasks/main.yml"
 
 # 1. Syntax check on the drill script. Does NOT execute.
 bash -n "$SCRIPT" || { echo "FAIL: bash -n $SCRIPT"; exit 1; }
@@ -128,6 +129,13 @@ grep -q 'chmod 0700 "$PG_DATA"' "$SCRIPT" \
   || { echo "FAIL: extracted PGDATA permissions are not enforced before startup"; exit 1; }
 grep -q 'Keep the temporary recovery stanza in place until archived WAL has' "$SCRIPT" \
   || { echo "FAIL: cleanup may restore the normal config before archived-WAL replay"; exit 1; }
+! grep -q 'install -d.* /etc/faas/secrets' "$SCRIPT" \
+  || { echo "FAIL: host identity restore changes the shared secrets directory permissions"; exit 1; }
+grep -q 'PG_DATA_WIPED == 1 && RESTORE_EXTRACTED == 0' "$SCRIPT" \
+  || { echo "FAIL: cleanup reports a completed extraction as incomplete"; exit 1; }
+grep -A8 'allow daemons to traverse the shared secret directory' "$CONTROL_PLANE_ROLE" \
+  | grep -q 'mode: "0750"' \
+  || { echo "FAIL: control-plane convergence does not preserve schedd access to sign-pub.pem"; exit 1; }
 grep -q 'LATEST_BB_TS=$(stat -c %Y "$LATEST_BB/base.tar.gz")' "$SCRIPT" \
   || { echo "FAIL: basebackup RPO can be changed by mutable directory metadata"; exit 1; }
 grep -Fq -- "-regex '.*/[0-9A-F]{24}'" "$SCRIPT" \

@@ -300,7 +300,7 @@ cleanup() {
       else
         warn "${PG_SERVICE} left stopped: recovery configuration is incomplete"
       fi
-    elif (( POSTGRES_WAS_ACTIVE == 1 && PG_DATA_WIPED == 1 )); then
+    elif (( POSTGRES_WAS_ACTIVE == 1 && PG_DATA_WIPED == 1 && RESTORE_EXTRACTED == 0 )); then
       warn "${PG_SERVICE} left stopped: restored PGDATA extraction is incomplete"
     fi
   fi
@@ -542,7 +542,9 @@ if [[ "$HOST_IDENTITY_STATUS" == "present-and-preserved" ]]; then
   SHA_STORED="$(cat "$LATEST_BB/host.age.sha256")"
   SHA_LIVE="$(sha256sum "$LATEST_BB/host.age" | awk '{print $1}')"
   [[ "$SHA_STORED" == "$SHA_LIVE" ]] || fail "host.age SHA changed between backup and restore — refusing to overwrite"
-  install -d -m 0700 -o root -g root /etc/faas/secrets
+  # HOST_KEY and HOST_PUB already passed preflight, so their parent exists.
+  # Preserve that directory's deployed root:faas 0750 ownership and mode;
+  # schedd must traverse it to read the world-readable signing public key.
   install -m 0400 "$LATEST_BB/host.age" "$HOST_KEY"
   install -m 0444 "$LATEST_BB/host.age.pub" "$HOST_PUB"
   if daemon_was_active vmmd; then
