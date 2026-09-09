@@ -10,6 +10,8 @@ const Content = "Contact: mailto:security@gregale.dev\n" +
 	"Expires: 2027-12-31T23:59:59z\n" +
 	"Preferred-Languages: en\n" +
 	"Canonical: https://docs.gregale.dev/.well-known/security.txt\n" +
+	"Encryption: https://docs.gregale.dev/security/pgp.asc\n" +
+	"Acknowledgments: https://docs.gregale.dev/security/acknowledgments\n" +
 	"Policy: https://docs.gregale.dev/security\n"
 
 // Handler returns the anonymous GET/HEAD handler for /.well-known/security.txt.
