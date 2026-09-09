@@ -4066,14 +4066,6 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 	return api.BuildResponse{}, false
 }
 
-func terminalExitForDeploymentContext(ctx context.Context, c *Client, d api.DeploymentResponse, appSlug string) int {
-	return terminalExitForDeploymentWithFailureContext(ctx, c, d, appSlug, nil)
-}
-
-func terminalExitForDeploymentWithFailure(d api.DeploymentResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
-	return terminalExitForDeploymentWithFailureContext(context.Background(), nil, d, appSlug, onFailure)
-}
-
 func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client, d api.DeploymentResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
 	if d.Status == statusLive {
 		return renderSuccessfulDeployment(ctx, c, d, appSlug)
@@ -4097,10 +4089,6 @@ func terminalExitForBuild(b api.BuildResponse, appSlug string) int {
 
 func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string) int {
 	return terminalExitForBuildWithFailureContext(ctx, c, b, appSlug, nil)
-}
-
-func terminalExitForBuildWithFailure(b api.BuildResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
-	return terminalExitForBuildWithFailureContext(context.Background(), nil, b, appSlug, onFailure)
 }
 
 func terminalExitForBuildWithFailureContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
