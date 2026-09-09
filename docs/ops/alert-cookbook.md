@@ -72,6 +72,7 @@ When you receive a page:
 | `bridge` | page/warn | [`h2c-rollback.md`](h2c-rollback.md) | A deliberate H1 surgical rollback can produce mismatch alerts; confirm the rollback owner and expiry before reverting it. |
 | `prometheus_health` | page | [`FaasPrometheusAlertingPathDegraded.md`](../runbooks/FaasPrometheusAlertingPathDegraded.md) | A short Prometheus restart can leave self-scrape series absent; verify service readiness and the active rule groups. |
 | `alertmanager_health` | page/warn | [`FaasAlertmanagerDeliveryDegraded.md`](../runbooks/FaasAlertmanagerDeliveryDegraded.md) | Receiver provider outages or a deliberate notification disablement can fail delivery while alert evaluation remains healthy. |
+| `managed_postgres` | page/warn | [`FaasManagedPostgresDegraded.md`](../runbooks/FaasManagedPostgresDegraded.md) | A planned staging canary drain can defer provisioning; confirm the rollout gate and deletion recovery before escalating. |
 
 ## Cross-cutting triage commands
 

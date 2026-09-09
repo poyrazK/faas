@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestLoadManagedPostgresIsDarkWhenUnconfigured(t *testing.T) {
@@ -65,10 +66,25 @@ func TestLoadManagedPostgresRegistersNeonDriver(t *testing.T) {
 			return ""
 		}
 	}
-	service, reconciler, bindingService, bindingReconciler, usageCollector, err := loadManagedPostgres(pool, getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	registry := prometheus.NewRegistry()
+	service, reconciler, bindingService, bindingReconciler, usageCollector, err := loadManagedPostgres(pool, getenv, slog.New(slog.NewTextHandler(io.Discard, nil)), registry)
 	_ = usageCollector
 	if err != nil || service == nil || reconciler == nil || bindingService == nil || bindingReconciler == nil {
 		t.Fatalf("configured load = %v, %v, %v, %v, %v", service, reconciler, bindingService, bindingReconciler, err)
+	}
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("managed postgres metrics gather: %v", err)
+	}
+	found := false
+	for _, family := range families {
+		if family.GetName() == "apid_managed_postgres_provisioning_enabled" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("managed postgres metrics were not registered")
 	}
 }
 
