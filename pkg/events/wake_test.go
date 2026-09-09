@@ -23,6 +23,7 @@ func TestWakeEvent_AllKindsImplementInterface(t *testing.T) {
 	var _ WakeEvent = Admitted{EmitAt: now, WakeID: "w", AppID: "a", RequestID: "r", AccountID: "acct-1", Plan: "hobby"}
 	var _ WakeEvent = BootStarted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Trigger: "gateway", QueuedCount: 2, ConcurrencyAtAdmit: 3, AtCapacity: true}
 	var _ WakeEvent = RestoreBreakdown{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", TotalMs: 596}
+	var _ WakeEvent = ColdBootBreakdown{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", TotalMs: 23474}
 	var _ WakeEvent = ColdBootCPU{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", StartupCPUMillicores: 1000, ConfiguredCPUMillicores: 250}
 	var _ WakeEvent = BootCompleted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Trigger: "gateway", QueuedCount: 2, ConcurrencyAtAdmit: 3}
 	var _ WakeEvent = BootFailed{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Reason: "stub"}
@@ -114,6 +115,34 @@ func TestColdBootCPU_Shape(t *testing.T) {
 		if got := p[key]; got != want {
 			t.Errorf("payload[%q] = %v, want %v", key, got, want)
 		}
+	}
+}
+
+func TestColdBootBreakdown_Shape(t *testing.T) {
+	ev := ColdBootBreakdown{
+		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-cold", AppID: "a-cold", InstanceID: "i-cold",
+		ResolveImagesMs: 20600, ChrootMs: 2, ProvisionMs: 30, WaitReadyMs: 2809, TotalMs: 23474,
+		ResolveArtifacts: []ColdBootArtifactResolution{{
+			Artifact: "main", Source: "cache_hit", DurationMs: 20590, Bytes: 1048576,
+		}},
+	}
+	if got := ev.Kind(); got != WakeColdBootBreakdown {
+		t.Errorf("Kind = %q, want %q", got, WakeColdBootBreakdown)
+	}
+	p := ev.Payload()
+	for key, want := range map[string]any{
+		"wake_id":           "w-cold",
+		"resolve_images_ms": int64(20600),
+		"wait_ready_ms":     int64(2809),
+		"total_ms":          int64(23474),
+	} {
+		if got := p[key]; got != want {
+			t.Errorf("payload[%q] = %v, want %v", key, got, want)
+		}
+	}
+	artifacts, ok := p["resolve_artifacts"].([]ColdBootArtifactResolution)
+	if !ok || len(artifacts) != 1 || artifacts[0].Bytes != 1048576 {
+		t.Errorf("payload.resolve_artifacts = %#v", p["resolve_artifacts"])
 	}
 }
 

@@ -56,6 +56,14 @@ const (
 	// total_ms}. Emitted after a successful restore so operators can
 	// identify which part of the vmmd restore window exceeded budget.
 	WakeRestoreBreakdown = "wake.restore_breakdown"
+	// WakeColdBootBreakdown — vmmd's complete cold-boot phases, including
+	// storage resolution that occurs before Firecracker starts. Payload:
+	// {wake_id, app_id, instance_id, resolve_images_ms,
+	// resolve_artifacts[{artifact, source, duration_ms, bytes}], chroot_ms,
+	// provision_ms, stage_runtime_ms, prepare_config_ms, helper_ms,
+	// start_jailer_ms, bind_tun_ms, cgroup_ms, write_config_ms,
+	// wait_ready_ms, quota_restore_ms, total_ms}.
+	WakeColdBootBreakdown = "wake.cold_boot_breakdown"
 	// WakeColdBootCPU — vmmd temporarily raised the host-side CPU allowance
 	// for an app cold boot, observed readiness, and restored the configured
 	// quota before returning success. Payload: {wake_id, app_id, instance_id,
@@ -370,6 +378,65 @@ type RestoreArtifactResolution struct {
 	Artifact   string `json:"artifact"`
 	Source     string `json:"source"`
 	DurationMs int64  `json:"duration_ms"`
+}
+
+// ColdBootBreakdown attributes the complete JailerVMM.BootColdBoot window.
+// It deliberately starts before artifact resolution, which is outside boot()
+// and was previously invisible in wake.cold_boot_cpu.
+type ColdBootBreakdown struct {
+	EmitAt           time.Time
+	WakeID           string
+	AppID            string
+	InstanceID       string
+	ResolveImagesMs  int64
+	ChrootMs         int64
+	ProvisionMs      int64
+	StageRuntimeMs   int64
+	PrepareConfigMs  int64
+	HelperMs         int64
+	StartJailerMs    int64
+	BindTunMs        int64
+	CgroupMs         int64
+	WriteConfigMs    int64
+	WaitReadyMs      int64
+	QuotaRestoreMs   int64
+	TotalMs          int64
+	ResolveArtifacts []ColdBootArtifactResolution
+}
+
+// ColdBootArtifactResolution uses a closed source vocabulary:
+// backend_local, cache_hit, materialized, or direct. Bytes is the resolved
+// file size and never becomes a metric label.
+type ColdBootArtifactResolution struct {
+	Artifact   string `json:"artifact"`
+	Source     string `json:"source"`
+	DurationMs int64  `json:"duration_ms"`
+	Bytes      int64  `json:"bytes"`
+}
+
+func (e ColdBootBreakdown) Kind() string     { return WakeColdBootBreakdown }
+func (e ColdBootBreakdown) At() time.Time    { return e.EmitAt }
+func (e ColdBootBreakdown) Subject() *string { return nil }
+func (e ColdBootBreakdown) Payload() map[string]any {
+	return map[string]any{
+		"wake_id":           e.WakeID,
+		"app_id":            e.AppID,
+		"instance_id":       e.InstanceID,
+		"resolve_images_ms": e.ResolveImagesMs,
+		"resolve_artifacts": e.ResolveArtifacts,
+		"chroot_ms":         e.ChrootMs,
+		"provision_ms":      e.ProvisionMs,
+		"stage_runtime_ms":  e.StageRuntimeMs,
+		"prepare_config_ms": e.PrepareConfigMs,
+		"helper_ms":         e.HelperMs,
+		"start_jailer_ms":   e.StartJailerMs,
+		"bind_tun_ms":       e.BindTunMs,
+		"cgroup_ms":         e.CgroupMs,
+		"write_config_ms":   e.WriteConfigMs,
+		"wait_ready_ms":     e.WaitReadyMs,
+		"quota_restore_ms":  e.QuotaRestoreMs,
+		"total_ms":          e.TotalMs,
+	}
 }
 
 // ColdBootCPU is emitted after a successful app cold boot and after cpu.max

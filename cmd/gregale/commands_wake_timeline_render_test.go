@@ -134,6 +134,31 @@ func TestRenderRestoreBreakdown_ExactTotalAndPhases(t *testing.T) {
 	}
 }
 
+func TestRenderColdBootBreakdown_AttributesPreGuestDelay(t *testing.T) {
+	ev := api.WakeTimelineEvent{
+		Kind: "wake.cold_boot_breakdown",
+		Data: map[string]any{
+			"total_ms":          float64(23474),
+			"resolve_images_ms": float64(20600),
+			"wait_ready_ms":     float64(2809),
+			"resolve_artifacts": []any{
+				map[string]any{"artifact": "main", "source": "cache_hit", "duration_ms": float64(20590), "bytes": float64(1048576)},
+			},
+		},
+	}
+	got := renderColdBootBreakdown(ev)
+	for _, want := range []string{
+		"cold_boot total=23474ms",
+		"resolve_images=20600ms",
+		"wait_ready=2809ms",
+		"artifacts=main/cache_hit=20590ms/1048576B",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("renderColdBootBreakdown missing %q in %q", want, got)
+		}
+	}
+}
+
 func TestRenderWakeTimelinePage_DefaultSummaryHidesInternalPhases(t *testing.T) {
 	resp := api.WakeTimelineResponse{
 		WakeID: "wake-restore", AppID: "app-restore", Limit: 50,

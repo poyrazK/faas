@@ -94,4 +94,27 @@ func TestResolveRestoreArtifactsKeepsRemoteMaterializationSequential(t *testing.
 	}
 }
 
+func TestResolveColdBootArtifactAttributesMaterializedBytes(t *testing.T) {
+	backend := &restoreResolutionBackend{getDelay: 10 * time.Millisecond}
+	v := NewJailerVMM(t.TempDir(), 0).WithStorage(backend)
+
+	path, timing, err := v.resolveColdBootArtifact(context.Background(), "instance", "main", "apps/layer")
+	if err != nil {
+		t.Fatalf("resolveColdBootArtifact: %v", err)
+	}
+	defer v.sweepMaterialised("instance")
+	if path == "" {
+		t.Fatal("resolved path is empty")
+	}
+	if timing.Artifact != "main" || timing.Source != "materialized" {
+		t.Errorf("timing identity = %#v", timing)
+	}
+	if timing.Bytes != int64(len("remote")) {
+		t.Errorf("timing.Bytes = %d, want %d", timing.Bytes, len("remote"))
+	}
+	if timing.DurationMs < 8 {
+		t.Errorf("timing.DurationMs = %d, want injected delay", timing.DurationMs)
+	}
+}
+
 // adr: 064
