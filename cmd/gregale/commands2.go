@@ -3946,10 +3946,6 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 	return api.BuildResponse{}, false
 }
 
-func terminalExitForDeploymentAs(d api.DeploymentResponse, appSlug string) int {
-	return terminalExitForDeploymentContext(context.Background(), nil, d, appSlug)
-}
-
 func terminalExitForDeploymentContext(ctx context.Context, c *Client, d api.DeploymentResponse, appSlug string) int {
 	if d.Status == statusLive {
 		return renderSuccessfulDeployment(ctx, c, d, appSlug)
