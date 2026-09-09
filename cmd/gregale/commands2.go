@@ -1003,6 +1003,9 @@ func cmdDeployTarball(args []string) int {
 // behavior below.
 type deployExecution struct {
 	onQueued            func(api.DeploymentResponse)
+	onSourceSync        func(time.Duration, error)
+	onStage             func(string, string, int64, string)
+	prefixBuildLogs     bool
 	developerSource     *devSourceSyncState
 	extraSourceExcludes []string
 }
@@ -2024,7 +2027,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		)
 		if developerSync != nil {
 			var deployErr error
+			sourceSyncStarted := time.Now()
 			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann, developerSync)
+			if execution.onSourceSync != nil {
+				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
+			}
 			if deployErr != nil {
 				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
 					return 130
@@ -2088,7 +2095,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 			return 0
 		}
-		return streamDeployLogsContext(ctx, client, dep, slug)
+		return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
+			onStage:         execution.onStage,
+			prefixBuildLogs: execution.prefixBuildLogs,
+		})
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
 	// (CreateDeploymentRequest), so the annotation fields ride on the
@@ -2134,7 +2144,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 		return 0
 	}
-	return streamDeployLogsContext(ctx, client, dep, slug)
+	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
+		onStage:         execution.onStage,
+		prefixBuildLogs: execution.prefixBuildLogs,
+	})
 }
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
@@ -3655,7 +3668,16 @@ func topPatterns(patterns map[string]int, n int) []string {
 // short-circuits the constructor when the customer piped the
 // output (`gregale deploy … | tee /tmp/log`) — the static fallback
 // in renderStageSummary is the path that fires instead.
+type streamDeployOptions struct {
+	onStage         func(string, string, int64, string)
+	prefixBuildLogs bool
+}
+
 func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string) int {
+	return streamDeployLogsContextWithOptions(ctx, c, dep, appSlug, streamDeployOptions{})
+}
+
+func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) int {
 	PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
 	body, err := c.StreamDeploymentLogs(ctx, dep.ID, nil, 0, true)
 	if err != nil {
@@ -3705,7 +3727,11 @@ streamLoop:
 					Line string `json:"line"`
 				}
 				if json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
-					fmt.Println(entry.Line)
+					if opts.prefixBuildLogs {
+						fmt.Printf("build | %s\n", entry.Line)
+					} else {
+						fmt.Println(entry.Line)
+					}
 				}
 			case "stage":
 				// ADR-117 §3: server-side stage diff — drive the
@@ -3726,6 +3752,9 @@ streamLoop:
 				}
 				if json.Unmarshal([]byte(e.Data), &stage) == nil && stage.Name != "" {
 					ticker.HandleStageFrame(stage.Name, stage.Status, stage.DurationMs, stage.Reason)
+					if opts.onStage != nil {
+						opts.onStage(stage.Name, stage.Status, stage.DurationMs, stage.Reason)
+					}
 				}
 			case statusLiteral:
 				var status struct {
@@ -3754,7 +3783,11 @@ streamLoop:
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
 				if e.Data != "" {
-					fmt.Println(e.Data)
+					if opts.prefixBuildLogs {
+						fmt.Printf("build | %s\n", e.Data)
+					} else {
+						fmt.Println(e.Data)
+					}
 				}
 			}
 		case err := <-dec.Errors():

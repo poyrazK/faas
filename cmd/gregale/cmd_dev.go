@@ -407,7 +407,9 @@ func cmdDev(args []string) int {
 				}
 			}
 			started := time.Now()
+			devTelemetry := newDevPhaseTracker()
 			execution := deployExecution{
+				prefixBuildLogs: true,
 				developerSource: syncState,
 				extraSourceExcludes: func() []string {
 					if envFilePath == "" {
@@ -416,14 +418,23 @@ func cmdDev(args []string) int {
 					return []string{envFilePath}
 				}(),
 				onQueued: func(dep api.DeploymentResponse) {
+					devTelemetry.setDeploymentID(dep.ID)
 					if queued != nil {
 						queued(dep.ID)
 					}
 				},
+				onSourceSync: func(duration time.Duration, syncErr error) {
+					devTelemetry.sourceSync(duration, syncErr)
+				},
+				onStage: devTelemetry.observeStage,
 			}
 			code := cmdDeployTarballToExisting(deployCtx, config.deployArgs(session.App.Slug, sourceDir), true, execution)
+			if code == 0 {
+				devTelemetry.finishRouteSwitch()
+			}
 			if code == 0 && !jsonOutput {
 				PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
+				devTelemetry.render(osStdout)
 			}
 			if code == 0 {
 				openDevBrowser()
