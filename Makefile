@@ -1064,6 +1064,10 @@ object-storage-qualify: ## Operator-only: run the opt-in live object-storage pro
 object-storage-gateway-smoke: ## Operator-only: exercise s3.gregale.dev and delete all temporary data
 	@deploy/scripts/s3-gateway-smoke.sh
 
+.PHONY: object-storage-release-preflight
+object-storage-release-preflight: ## Read-only gate for object-storage config and compute-binding routes
+	@deploy/scripts/object-storage-release-preflight.sh
+
 .PHONY: managed-postgres-qualify
 managed-postgres-qualify: ## Operator-only: run the explicit staging managed PostgreSQL provider qualification
 	@$(GO) run ./cmd/managed-postgres-qualify
