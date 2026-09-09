@@ -221,7 +221,6 @@ func TestNewStagingCanaryAccountGate(t *testing.T) {
 }
 
 func TestBuildAndEvaluateQualificationApproval(t *testing.T) {
-	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
 	provider := &qualificationProvider{capabilities: testCapabilities()}
 	report, err := QualifyProvider(context.Background(), provider, QualificationOptions{
 		ProviderName: "fake",
@@ -232,6 +231,7 @@ func TestBuildAndEvaluateQualificationApproval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QualifyProvider: %v", err)
 	}
+	now := report.CompletedAt.Add(time.Minute)
 	lifecycle := passingLifecycleQualificationReport()
 	approval, err := BuildQualificationApproval(report, &lifecycle, "backend-default", "fingerprint-default", []string{"account-b", "account-a"}, now, time.Hour)
 	if err != nil {
@@ -263,7 +263,6 @@ func TestBuildAndEvaluateQualificationApproval(t *testing.T) {
 }
 
 func TestEvaluateQualificationArtifactFailsClosed(t *testing.T) {
-	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
 	provider := &qualificationProvider{capabilities: testCapabilities()}
 	report, err := QualifyProvider(context.Background(), provider, QualificationOptions{
 		ProviderName: "fake",
@@ -274,6 +273,7 @@ func TestEvaluateQualificationArtifactFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QualifyProvider: %v", err)
 	}
+	now := report.CompletedAt.Add(time.Minute)
 	approval, err := BuildQualificationApproval(report, nil, "backend-default", "fingerprint-default", nil, now, time.Hour)
 	if err != nil {
 		t.Fatalf("BuildQualificationApproval: %v", err)
@@ -311,7 +311,6 @@ func TestParseStagingCanaryAccountsRejectsDuplicates(t *testing.T) {
 }
 
 func TestRegistryVerifyQualificationArtifactChecksConfiguredBackend(t *testing.T) {
-	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
 	provider := &qualificationProvider{capabilities: testCapabilities()}
 	registry := testRegistry(t, provider, nil)
 	backend, err := registry.Default(registry.DefaultRegion)
@@ -327,6 +326,7 @@ func TestRegistryVerifyQualificationArtifactChecksConfiguredBackend(t *testing.T
 	if err != nil {
 		t.Fatalf("QualifyProvider: %v", err)
 	}
+	now := report.CompletedAt.Add(time.Minute)
 	lifecycle := passingLifecycleQualificationReport()
 	approval, err := BuildQualificationApproval(report, &lifecycle, backend.ID, backend.Fingerprint, nil, now, time.Hour)
 	if err != nil {

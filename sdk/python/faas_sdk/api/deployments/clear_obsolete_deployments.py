@@ -85,7 +85,8 @@ def sync_detailed(
 
      ADR-124 deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
+    (default 168h). Plan-gated (Free returns 402
+    `plan_reorder_disabled`). Retention
     cap enforced inside the store so INV 3 stays satisfied.
 
     Args:
@@ -122,7 +123,8 @@ def sync(
 
      ADR-124 deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
+    (default 168h). Plan-gated (Free returns 402
+    `plan_reorder_disabled`). Retention
     cap enforced inside the store so INV 3 stays satisfied.
 
     Args:
@@ -154,7 +156,8 @@ async def asyncio_detailed(
 
      ADR-124 deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
+    (default 168h). Plan-gated (Free returns 402
+    `plan_reorder_disabled`). Retention
     cap enforced inside the store so INV 3 stays satisfied.
 
     Args:
@@ -189,7 +192,8 @@ async def asyncio(
 
      ADR-124 deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
+    (default 168h). Plan-gated (Free returns 402
+    `plan_reorder_disabled`). Retention
     cap enforced inside the store so INV 3 stays satisfied.
 
     Args:
