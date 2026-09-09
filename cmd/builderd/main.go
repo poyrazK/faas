@@ -237,6 +237,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	)
 	b := builderdpkg.New(store, notif, driver, cache, nil, resid, builderdpkg.Config{
 		CacheDir:            cfg.CacheDir,
+		SourceSpoolDir:      cfg.SourceSpoolDir,
+		BuildLogMaxBytes:    cfg.BuildLogMaxBytes,
 		MetricsAddr:         cfg.MetricsAddr,
 		BuildTimeoutSeconds: cfg.BuildTimeoutSeconds,
 		FairnessWindow:      cfg.FairnessWindow,

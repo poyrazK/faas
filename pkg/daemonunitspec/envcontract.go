@@ -355,7 +355,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SKIP_PG_TESTS", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_SKIP_SOCKET_GROUP", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_SNAPSHOT_FANOUT_INTERVAL", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
-	{Name: "FAAS_SPOOL_ROOT", Owners: []string{"apid"}, Source: EnvSourceDefault},
+	{Name: "FAAS_SPOOL_ROOT", Owners: []string{"apid", "builderd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STANDBY_WARMUP_ENABLED", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STANDBY_WARMUP_INTERVAL_MS", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STANDBY_WARMUP_SLUGS_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
