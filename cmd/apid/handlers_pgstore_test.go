@@ -95,10 +95,6 @@ func (e pgHandlerEnv) addAdminSession(t *testing.T, req *http.Request) {
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
 }
 
-func (e pgHandlerEnv) doAdmin(t *testing.T, method, path string, body any) *httptest.ResponseRecorder {
-	return e.doAdminWithKey(t, method, path, body, "pg-handler-"+uuid.NewString())
-}
-
 func (e pgHandlerEnv) doAdminWithKey(t *testing.T, method, path string, body any, idempotencyKey string) *httptest.ResponseRecorder {
 	t.Helper()
 	var r io.Reader
