@@ -856,6 +856,11 @@ type Store interface {
 	// the GDPR export bundle's audit slice so the customer sees their
 	// own actions reflected in the same JSON.
 	ListGdprRequestsForAccount(ctx context.Context, accountID string, limit int) ([]GdprRequest, error)
+	// ListGdprRequestsForAccountPage is the stable keyset-paginated form used
+	// by account export. Rows are ordered by (requested_at, id) descending;
+	// beforeAt/beforeID identify the last row from the previous page. A zero
+	// beforeAt starts from the newest row.
+	ListGdprRequestsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]GdprRequest, error)
 	// CompleteGdprRequest stamps completed_at on the most recent
 	// un-completed row of (account_id, action). Called by pkg/grace
 	// after DeleteAccount succeeds so the delete row in the ledger
@@ -2423,6 +2428,10 @@ type Store interface {
 	// bound). MemStore sorts in memory; PgStore uses a LIMIT/OFFSET or
 	// keyset pagination (deferred — LIMIT/OFFSET is fine at one-box scale).
 	ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error)
+	// ListDeploymentsForAccountPage is the stable keyset-paginated form used
+	// by account export. The ID tie-breaker prevents rows with identical
+	// created_at values from being skipped at a page boundary.
+	ListDeploymentsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error)
 
 	// Deployment logs (M7.5 slice 5).
 	//
@@ -4385,6 +4394,10 @@ type Store interface {
 	// without an inbound trace_id keep that shape.
 	AppendEventWithTrace(ctx context.Context, actor, kind string, subject *string, data []byte, traceID *string) error
 	ListEvents(ctx context.Context, subject string, limit int) ([]Event, error)
+	// ListEventsPage returns subject events ordered by (at, id) descending.
+	// beforeAt/beforeID identify the last row from the previous page; a zero
+	// beforeAt starts from the newest row.
+	ListEventsPage(ctx context.Context, subject string, beforeAt time.Time, beforeID int64, limit int) ([]Event, error)
 	// ListEventsByWakeID (issue #517 / PR-C, ADR-064) is the
 	// wake-timeline read-side query. Filters on the jsonb
 	// expression index events_wake_id_idx

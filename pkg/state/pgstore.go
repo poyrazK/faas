@@ -5922,6 +5922,37 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 	return scanDeployments(rows)
 }
 
+func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if beforeAt.IsZero() {
+		rows, err = s.pool.Query(ctx,
+			`select `+deploymentSelectColumnsQualified+`
+			 from deployments d join apps a on a.id = d.app_id
+			 where a.account_id = $1 and a.status <> 'deleted'
+			 order by d.created_at desc, d.id desc limit $2`,
+			accountID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select `+deploymentSelectColumnsQualified+`
+			 from deployments d join apps a on a.id = d.app_id
+			 where a.account_id = $1 and a.status <> 'deleted'
+			   and (d.created_at, d.id) < ($2, $3::uuid)
+			 order by d.created_at desc, d.id desc limit $4`,
+			accountID, beforeAt, beforeID, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDeployments(rows)
+}
+
 func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
 	tag, err := s.pool.Exec(ctx, `update deployments set status = $2, error = $3 where id = $1`, id, string(status), nullString(errMsg))
 	if err != nil {
@@ -14294,6 +14325,43 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 	return out, rows.Err()
 }
 
+func (s *PgStore) ListEventsPage(ctx context.Context, subject string, beforeAt time.Time, beforeID int64, limit int) ([]Event, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	subj, err := uuid.Parse(subject)
+	if err != nil {
+		return nil, nil
+	}
+	var rows pgx.Rows
+	if beforeAt.IsZero() {
+		rows, err = s.pool.Query(ctx,
+			`select id, at, actor, kind, subject, data
+			   from events where subject = $1
+			  order by at desc, id desc limit $2`, subj, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select id, at, actor, kind, subject, data
+			   from events where subject = $1 and (at, id) < ($2, $3)
+			  order by at desc, id desc limit $4`, subj, beforeAt, beforeID, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Event, 0, limit)
+	for rows.Next() {
+		var e Event
+		var rawData []byte
+		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.Kind, &e.Subject, &rawData); err != nil {
+			return nil, err
+		}
+		e.Data = json.RawMessage(rawData)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ListEventsByWakeID (issue #517 / PR-C, ADR-064) — the
 // production read-side query for the customer-facing
 // GET /v1/apps/{slug}/wakes/{wake_id}/timeline endpoint. Filters
@@ -19546,6 +19614,52 @@ func (s *PgStore) ListGdprRequestsForAccount(ctx context.Context, accountID stri
 			g           GdprRequest
 			completedAt pgtype.Timestamptz
 			requestID   pgtype.Text // NULL = no inbound X-Request-Id (PR-5.2)
+		)
+		if err := rows.Scan(&g.ID, &g.AccountID, &g.AccountEmail,
+			&g.Action, &g.RequestedAt, &completedAt, &requestID); err != nil {
+			return nil, err
+		}
+		if completedAt.Valid {
+			g.CompletedAt = completedAt.Time
+		}
+		if requestID.Valid {
+			g.RequestID = requestID.String
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (s *PgStore) ListGdprRequestsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]GdprRequest, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if beforeAt.IsZero() {
+		rows, err = s.pool.Query(ctx,
+			`select id, account_id, account_email, action, requested_at, completed_at, request_id
+			   from gdpr_requests where account_id = $1
+			  order by requested_at desc, id desc limit $2`, accountID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select id, account_id, account_email, action, requested_at, completed_at, request_id
+			   from gdpr_requests
+			  where account_id = $1 and (requested_at, id) < ($2, $3::uuid)
+			  order by requested_at desc, id desc limit $4`, accountID, beforeAt, beforeID, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]GdprRequest, 0, limit)
+	for rows.Next() {
+		var (
+			g           GdprRequest
+			completedAt pgtype.Timestamptz
+			requestID   pgtype.Text
 		)
 		if err := rows.Scan(&g.ID, &g.AccountID, &g.AccountEmail,
 			&g.Action, &g.RequestedAt, &completedAt, &requestID); err != nil {

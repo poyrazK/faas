@@ -24,7 +24,7 @@ package main
 // rejects before any state change.
 
 import (
-	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -110,11 +110,12 @@ func (s *server) dashboardExport(w http.ResponseWriter, r *http.Request) {
 	}
 	// Mirror the REST endpoint's ?include_secrets=false flag.
 	include := r.URL.Query().Get("include_secrets") != includeSecretsFalse
-	bundle, err := gatherExport(r.Context(), s, acct, include)
+	spool, _, err := prepareAccountExport(r.Context(), s, acct, include)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not assemble export"))
 		return
 	}
+	defer cleanupAccountExportSpool(s, spool)
 	if !s.recordGdprRequest(r.Context(), acct, state.GdprActionExport, middleware.RequestIDFrom(r)) {
 		w.Header().Set("X-Audit-Logged", "false")
 	}
@@ -123,7 +124,9 @@ func (s *server) dashboardExport(w http.ResponseWriter, r *http.Request) {
 		`attachment; filename="faas-account-`+acct.ID+`-`+
 			time.Now().UTC().Format("20060102")+`.json"`)
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(bundle)
+	if _, err := io.Copy(w, spool); err != nil {
+		s.log.Warn("apid: stream dashboard account export failed", "account", acct.ID, "err", err)
+	}
 }
 
 // dashboardDPA handles GET /dashboard/account/dpa. Renders the DPA

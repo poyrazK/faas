@@ -5483,6 +5483,41 @@ func (m *MemStore) ListDeploymentsForAccount(_ context.Context, accountID string
 	return all, nil
 }
 
+func (m *MemStore) ListDeploymentsForAccountPage(_ context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]struct{})
+	for _, a := range m.apps {
+		if a.AccountID == accountID && a.Status != AppDeleted {
+			owned[a.ID] = struct{}{}
+		}
+	}
+	all := make([]Deployment, 0, limit)
+	for _, d := range m.deployments {
+		if _, ok := owned[d.AppID]; !ok {
+			continue
+		}
+		if !beforeAt.IsZero() && (d.CreatedAt.After(beforeAt) ||
+			(d.CreatedAt.Equal(beforeAt) && d.ID >= beforeID)) {
+			continue
+		}
+		all = append(all, d)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].ID > all[j].ID
+		}
+		return all[i].CreatedAt.After(all[j].CreatedAt)
+	})
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status DeploymentStatus, errMsg string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -11350,6 +11385,42 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 	return out, nil
 }
 
+func (m *MemStore) ListEventsPage(_ context.Context, subject string, beforeAt time.Time, beforeID int64, limit int) ([]Event, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var subj *uuid.UUID
+	if subject != "" {
+		subj = parseSubjectID(subject)
+		if subj == nil {
+			return nil, nil
+		}
+	}
+	out := make([]Event, 0, limit)
+	for _, e := range m.events {
+		if subj != nil && (e.Subject == nil || *e.Subject != *subj) {
+			continue
+		}
+		if !beforeAt.IsZero() && (e.At.After(beforeAt) ||
+			(e.At.Equal(beforeAt) && e.ID >= beforeID)) {
+			continue
+		}
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].At.Equal(out[j].At) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].At.After(out[j].At)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // InsertAuditLog (issue #755 / PR-6) appends one row to the in-memory
 // audit_log mirror. The Data json.RawMessage is copied so a caller
 // can reuse the input slice without aliasing the stored row. The
@@ -16283,6 +16354,35 @@ func (m *MemStore) ListGdprRequestsForAccount(_ context.Context, accountID strin
 		if m.gdprRequests[i].AccountID == accountID {
 			out = append(out, m.gdprRequests[i])
 		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) ListGdprRequestsForAccountPage(_ context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]GdprRequest, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]GdprRequest, 0, limit)
+	for _, r := range m.gdprRequests {
+		if r.AccountID != accountID {
+			continue
+		}
+		if !beforeAt.IsZero() && (r.RequestedAt.After(beforeAt) ||
+			(r.RequestedAt.Equal(beforeAt) && r.ID >= beforeID)) {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].RequestedAt.Equal(out[j].RequestedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].RequestedAt.After(out[j].RequestedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
