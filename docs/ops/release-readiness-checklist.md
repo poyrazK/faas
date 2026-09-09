@@ -39,30 +39,48 @@ Track the release workflow in GitHub Actions (`.github/workflows/release.yml`):
 - Keyless signing with GitHub OIDC via Cosign/Rekor (`release.cosign.bundle`).
 - Release publication with SHA256 checksums.
 
-The control-plane CD workflow consumes these published assets; it does not
-rebuild daemon binaries. After the release workflow is green, select the
-exact tag when dispatching `cd-controlplane`:
-
-```bash
-gh workflow run cd-controlplane.yml --ref main -f release_tag=v0.1.18-rc.1
-```
-
-The workflow verifies the release checksum, Cosign identity, embedded release
-manifest, and production-manifest hash before staging anything on the host.
+The deployment workflows consume these published assets; they do not rebuild
+daemon binaries. After the release workflow is green, deploy the exact tag in
+Step 4. The workflows verify the release checksum, Cosign identity, embedded
+release manifest, and production-manifest hash before staging anything on a
+host.
 
 ---
 
 ## Fleet Deployment & Installation
 
-### Step 4: Install Release Bundle on Production Nodes
-On both `fsn-1` (control-plane) and `fsn-2` (compute-only), install the signed release:
+### Step 4: Deploy the Signed Release to the Fleet
+
+Use the CD workflows for production installation. The control-plane workflow
+downloads and verifies the signed assets, checks the embedded release identity,
+installs the immutable bundle, runs migrations, and activates the release:
+
 ```bash
-gregalectl release install \
-  --manifest=/etc/faas/manifest.yaml \
-  --bundle=/opt/faas/releases/v0.1.3-rc.1/release.tar.gz \
-  --cosign-bundle=/opt/faas/releases/v0.1.3-rc.1/release.cosign.bundle \
-  --apply-symlink
+RELEASE_TAG=v0.1.18-rc.1
+gh workflow run cd-controlplane.yml --ref main --field release_tag="$RELEASE_TAG"
 ```
+
+After the control plane is healthy, dispatch `cd-compute.yml` once for each
+compute node that should be active. Prefer a signed fleet enrollment bundle or
+a checked-in `ComputeNodeClaim`. For a legacy rollout of an already-enrolled
+node, provide the current provider address and its pinned SSH host-key
+fingerprint:
+
+```bash
+gh workflow run cd-compute.yml --ref main \
+  --field release_tag="$RELEASE_TAG" \
+  --field node=fsn-2 \
+  --field ssh_host="$FSN_2_SSH_HOST" \
+  --field ssh_user=root \
+  --field ssh_host_key_sha256="$FSN_2_SSH_HOST_KEY_SHA256"
+```
+
+The old `gregalectl release install --manifest --bundle --cosign-bundle
+--apply-symlink` command is not a supported CLI shape. For an air-gapped local
+install, use `gregalectl release install --git-sha=<40-hex-sha>
+--tarball-path=<path>` after staging `release.cosign.bundle` and
+`release.sbom.json` beside the tarball, as documented by
+`gregalectl release --help`.
 
 ### Step 5: Execute Deep Diagnostic Checks
 Verify that the on-disk tree, `release_bundles` table, and `compute_nodes` table are synchronized and healthy:
@@ -77,7 +95,9 @@ gregalectl doctor --deep --database-dsn="$DATABASE_URL"
 - `symlink`: `/opt/faas/current` points to the new release.
 - `bundle`: Manifest and daemon binary hashes match.
 - `lockstep`: Daemon counts match catalog expectations.
-- `nodes`: Both `fsn-1` and `fsn-2` report active status with matching `release_id` and `manifest_hash`.
+- `nodes`: Every node intended to serve traffic reports active status with a
+  matching `release_id` and `manifest_hash`. Intentionally stopped capacity
+  remains drained or inactive.
 - `secrets`: On-disk credentials and certificates match fingerprints.
 - `node-hashes`: Remote hashes match canonical bundle.
 
@@ -94,26 +114,72 @@ ORDER BY name;
 ```
 
 ### 2. Dependency-Aware Readiness Verification
-Verify both shallow liveness and deep readiness across the control-plane:
-```bash
-# Shallow liveness (no DB call):
-curl -fsS https://api.gregale.dev/healthz
 
-# Deep readiness (verifies PostgreSQL pool & connection acquisition):
-curl -fsS https://api.gregale.dev/readyz
+Verify the public liveness endpoint through Cloudflare:
+
+```bash
+curl -fsS https://api.gregale.dev/healthz
 ```
 
-### 3. Backup & Restore Validation (Rclone)
+The public router does not expose a platform `/readyz`; a request to
+`https://api.gregale.dev/readyz` is interpreted as an app route. Run deep
+dependency checks on each host's loopback control listeners instead:
+
+```bash
+# Control plane: apid, schedd, gatewayd-public, githubd, meterd.
+for port in 9101 9103 9092 8083 9106; do
+  curl -fsS "http://127.0.0.1:${port}/readyz"
+done
+
+# Each compute node: builderd, imaged, vmmd, gatewayd-internal.
+for port in 9105 9102 9104 9090; do
+  curl -fsS "http://127.0.0.1:${port}/readyz"
+done
+```
+
+All probes must return HTTP 200. The compute data listener also exposes a
+shallow `http://127.0.0.1:8080/healthz` check.
+
+### 3. SSD Snapshot-Restore Performance Gate
+
+Run at least 100 controlled park-to-restore cycles on the reference SSD compute
+node under normal traffic and bursts within host capacity. The release target
+is p95 **below 350 ms** for the platform interval from
+`wake.boot_started.at` through the matching `wake.boot_completed.at`.
+Corroborate it with `wake.restore_breakdown.total_ms` and require every sample
+to report a snapshot restore with no cold-boot fallback.
+
+Public request, first-byte, application execution, Cloudflare, client network,
+and physical-distance timings are diagnostics. They do not pass or fail the
+350 ms platform restore gate. Do not combine HDD-node samples with the SSD
+acceptance cohort. Preserve the raw event rows, percentile calculation, node
+identity, disk rotational flag, release ID, and load shape with the release
+evidence. See [SSD snapshot restore performance](snapshot-restore-performance.md)
+for the measurement boundary and evidence format.
+
+### 4. Backup & Restore Validation (Rclone)
 Verify automated PostgreSQL basebackup and WAL archiving:
 ```bash
-# Verify WAL destination is accessible:
-rclone lsd faas-backups:gregale-pg-wal/
+# Verify both timers and the newest local backup:
+systemctl is-active faas-pg-basebackup.timer faas-pg-basebackup-push.timer
+ls -1dt /var/lib/pgsql/basebackup/basebackup-* | head -1
 
-# Verify nightly snapshot restore dry-run:
-rclone check /var/backups/faas faas-backups:gregale-pg-backups/
+# Verify both provider-neutral off-host destinations:
+rclone lsd offhostbox:faas-pg-wal \
+  --config /etc/faas/secrets/storage-box/rclone.conf
+rclone lsd offhostbox:faas-pg-basebackup \
+  --config /etc/faas/secrets/storage-box/rclone.conf
+
+# Pull the newest off-host basebackup into a throwaway PostgreSQL cluster,
+# replay WAL, and compare critical row counts:
+sudo bash deploy/scripts/pg-restore-verify.sh
 ```
 
-### 4. Cloudflare DNS & TLS Verification
+The destructive M8 live restore drill is a separate, explicitly scheduled
+operation. Record its measured RPO/RTO in `docs/drills/`; do not describe an
+`rclone check` as a restore test.
+
+### 5. Cloudflare DNS & TLS Verification
 Ensure the public wildcard `*.apps.gregale.dev` and `api.gregale.dev` resolve to the public edge IP, while private hostnames (`fsn-1.gregale.dev`, `fsn-2.gregale.dev`) are restricted to internal/managed `/etc/hosts` resolution.
 
 ---
