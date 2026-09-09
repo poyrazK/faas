@@ -1,3 +1,5 @@
+// spec: §11
+
 package gateway
 
 import (
@@ -256,6 +258,46 @@ func TestNewPGPingSignal_StopIsIdempotent(t *testing.T) {
 	_, stop := NewPGPingSignal(ctx, &stubPinger{}, 50*time.Millisecond)
 	stop()
 	stop()
+}
+
+func TestNewDependencySignalTracksChecksAndStops(t *testing.T) {
+	var calls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sig, stop := NewDependencySignal(ctx, "internal gateway", 40*time.Millisecond, func(context.Context) error {
+		calls.Add(1)
+		return nil
+	})
+	defer stop()
+	time.Sleep(25 * time.Millisecond)
+	if ready, reason := sig.Report(); !ready || reason != "" {
+		t.Fatalf("dependency signal = (%v, %q), want ready", ready, reason)
+	}
+	if calls.Load() == 0 {
+		t.Fatal("dependency check was not called immediately")
+	}
+	stop()
+	stop()
+	if ready, reason := sig.Report(); ready || reason != "internal gateway check stopped" {
+		t.Fatalf("stopped dependency signal = (%v, %q), want stopped", ready, reason)
+	}
+}
+
+func TestNewDependencySignalSurfacesFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sig, stop := NewDependencySignal(ctx, "internal gateway", 40*time.Millisecond, func(context.Context) error {
+		return errors.New("connection refused")
+	})
+	defer stop()
+	time.Sleep(20 * time.Millisecond)
+	ready, reason := sig.Report()
+	if ready {
+		t.Fatal("dependency signal reports ready after failed check")
+	}
+	if !strings.Contains(reason, "internal gateway check failed: connection refused") {
+		t.Fatalf("dependency failure reason = %q", reason)
+	}
 }
 
 // TestNewStalenessSignal_FreshTouchReady verifies the touch path
