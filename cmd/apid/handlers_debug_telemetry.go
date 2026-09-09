@@ -853,33 +853,44 @@ func (s *server) debugReplayHandler(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
 		return
 	}
-	reqID := r.PathValue("req_id")
-	parsedID, err := uuid.Parse(reqID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrValidation("req_id must be a UUID"))
+	inv, problem := s.enqueueDebugReplay(r.Context(), app, acct, r.PathValue("req_id"))
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
+	writeJSON(w, http.StatusAccepted, api.DebugReplayResponse{
+		MirrorInvocationID: inv.ID,
+		Status:             "queued",
+	})
+}
+
+// enqueueDebugReplay is the shared replay core for the JSON API and the
+// session-authenticated dashboard form. Keeping the ownership, retention,
+// mirror-rule, and metadata checks in one function prevents the browser
+// surface from drifting into a less restrictive replay path.
+func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct state.Account, reqID string) (state.Invocation, *api.Problem) {
+	parsedID, err := uuid.Parse(reqID)
+	if err != nil {
+		return state.Invocation{}, api.ErrValidation("req_id must be a UUID")
+	}
 	now := time.Now().UTC()
-	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.store.GetRequestTelemetryByAppAndID(r.Context(), sqlc.GetRequestTelemetryByAppAndIDParams{
+	retention := time.Duration(api.MustLimitsFor(acct.Plan).DebugTelemetryRetentionDays) * 24 * time.Hour
+	row, err := s.store.GetRequestTelemetryByAppAndID(ctx, sqlc.GetRequestTelemetryByAppAndIDParams{
 		AppID:        stringToPgUUID(app.ID),
 		ID:           pgtype.UUID{Bytes: parsedID, Valid: true},
 		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
-		return
+		return state.Invocation{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found")
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("get debug replay request"))
-		return
+		return state.Invocation{}, api.ErrCapacity("get debug replay request")
 	}
 	depID := uuidFromPg(row.DeploymentID)
-	rules, err := s.store.ListMirrorRules(r.Context(), app.ID)
+	rules, err := s.store.ListMirrorRules(ctx, app.ID)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("find debug replay mirror rule"))
-		return
+		return state.Invocation{}, api.ErrCapacity("find debug replay mirror rule")
 	}
 	var rule state.MirrorRule
 	for _, candidate := range rules {
@@ -889,11 +900,10 @@ func (s *server) debugReplayHandler(w http.ResponseWriter, r *http.Request, acct
 		}
 	}
 	if rule.ID == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict,
+		return state.Invocation{}, api.NewProblem(http.StatusConflict,
 			api.CodeDebugReplayUnsupported,
 			"Debug replay is unavailable",
-			"the request's serving deployment has no enabled mirror rule; enable a mirror rule for that deployment before replaying"))
-		return
+			"the request's serving deployment has no enabled mirror rule; enable a mirror rule for that deployment before replaying")
 	}
 	metadata := map[string]string{
 		api.DebugReplayRequestIDHeader:     reqID,
@@ -907,10 +917,9 @@ func (s *server) debugReplayHandler(w http.ResponseWriter, r *http.Request, acct
 	}
 	headerBytes, err := json.Marshal(metadata)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("build debug replay envelope"))
-		return
+		return state.Invocation{}, api.ErrCapacity("build debug replay envelope")
 	}
-	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+	inv, err := s.store.EnqueueInvocation(ctx, state.Invocation{
 		AppID:     app.ID,
 		AccountID: acct.ID,
 		Source:    state.InvocationReplay,
@@ -921,11 +930,7 @@ func (s *server) debugReplayHandler(w http.ResponseWriter, r *http.Request, acct
 		DueAt:     now,
 	})
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("enqueue debug replay"))
-		return
+		return state.Invocation{}, api.ErrCapacity("enqueue debug replay")
 	}
-	writeJSON(w, http.StatusAccepted, api.DebugReplayResponse{
-		MirrorInvocationID: inv.ID,
-		Status:             "queued",
-	})
+	return inv, nil
 }

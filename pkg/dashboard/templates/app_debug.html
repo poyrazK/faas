@@ -62,6 +62,7 @@
         {{if .Data.WindowClamped}}<span class="notice">Window reduced to your plan's telemetry retention.</span>{{end}}
       </form>
       {{if .Data.ErrorMessage}}<p class="error">{{.Data.ErrorMessage}}</p>{{end}}
+      {{if .Data.ActionMessage}}<p class="{{if .Data.ActionError}}error{{else}}notice{{end}}">{{.Data.ActionMessage}}</p>{{end}}
 
       <h2 id="regressions">Detected regressions</h2>
       {{if .Data.Regressions}}
@@ -107,6 +108,30 @@
           <p><code>{{.Data.Selected.Request.Method}} {{.Data.Selected.Request.Route}}</code> · HTTP {{.Data.Selected.Request.Status}} · <strong>{{.Data.Selected.Request.LatencyMS}} ms</strong> · {{.Data.Selected.Request.ReceivedAt}}</p>
           <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.InstanceID}} · instance <code>{{.Data.Selected.Request.InstanceID}}</code>{{end}}{{if .Data.Selected.Request.WakeID}} · wake <code>{{.Data.Selected.Request.WakeID}}</code>{{end}}{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
           <div class="explanation"><strong>{{.Data.Selected.EvidenceStatus}}</strong>: {{.Data.Selected.Explanation}}</div>
+          {{if $.Data.ReplayCSRF}}
+            <form method="post" action="/dashboard/apps/{{.Data.AppSlug}}/debug/requests/{{.Data.Selected.Request.ID}}/replay">
+              <input type="hidden" name="csrf_token" value="{{$.Data.ReplayCSRF}}">
+              <input type="hidden" name="since" value="{{.Data.Since}}">
+              <input type="hidden" name="route" value="{{.Data.Route}}">
+              <button type="submit">Replay against mirror</button>
+              <span class="muted">Metadata only; no request body or credentials are replayed.</span>
+            </form>
+          {{end}}
+          {{if .Data.Replay}}
+            <div class="replay-result">
+              <h3>Replay status</h3>
+              <p><strong>{{.Data.Replay.State}}</strong> · invocation <code>{{.Data.Replay.ID}}</code> · queued {{.Data.Replay.CreatedAt}}{{if .Data.Replay.CompletedAt}} · completed {{.Data.Replay.CompletedAt}}{{end}}</p>
+              {{if .Data.Replay.LastError}}<p class="error">{{.Data.Replay.LastError}}</p>{{end}}
+              {{if .Data.Replay.HasResult}}
+                <p>Source: <strong>HTTP {{.Data.Replay.SourceStatusCode}}</strong>, {{.Data.Replay.SourceLatencyMS}} ms · Mirror: <strong>HTTP {{.Data.Replay.MirrorStatusCode}}</strong>, {{.Data.Replay.MirrorLatencyMS}} ms</p>
+                {{if .Data.Replay.StatusDiff}}<p class="error">The mirror returned a different HTTP status.</p>{{else if .Data.Replay.Crashed}}<p class="error">The mirror failed before producing an HTTP response.</p>{{else}}<p class="notice">The mirror returned the same HTTP status.</p>{{end}}
+              {{else if eq .Data.Replay.State "queued"}}
+                <p class="muted">Waiting for the scheduler. Refresh to check again.</p>
+              {{else if eq .Data.Replay.State "running"}}
+                <p class="muted">The mirror invocation is running. Refresh to check again.</p>
+              {{end}}
+            </div>
+          {{end}}
           {{if .Data.Selected.Regression}}
             <p class="muted">This request matches the active regression on <code>{{.Data.Selected.Regression.Route}}</code> ({{.Data.Selected.Regression.Factor}}× baseline).</p>
           {{end}}
@@ -142,6 +167,6 @@
       {{end}}
     {{end}}
   </main>
-  <footer>onebox faas · production debugger · server-rendered, read-only</footer>
+  <footer>onebox faas · production debugger · server-rendered with safe replay</footer>
 </body>
 </html>

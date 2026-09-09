@@ -2,12 +2,12 @@ package main
 
 // Dashboard surface for the production debugger (ADR-127). The API and CLI
 // expose the complete machine-readable contract; this page is the customer
-// investigation loop: regressions → request metadata → bounded span evidence.
-// It deliberately remains read-only in the first dashboard slice so a stale
-// browser cannot accidentally enqueue a replay.
+// investigation loop: regressions → request metadata → bounded span evidence
+// → an explicit, CSRF-protected metadata-only replay.
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,8 +23,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+const (
+	dashboardDebugReplayAction     = "debug_replay"
+	dashboardDebugReplayCSRFCookie = "faas_csrf_debug_replay"
 )
 
 // parseAppDebugPath recognizes /dashboard/apps/{slug}/debug (with an
@@ -43,7 +49,7 @@ func parseAppDebugPath(rest string) (string, bool) {
 	return slug, true
 }
 
-// renderAppDebug renders the read-only debugger page. Query parameters are
+// renderAppDebug renders the debugger page. Query parameters are
 // intentionally small and stable so an incident link can be pasted into a
 // ticket: ?since=24h&route=/api&request_id=<uuid>.
 func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
@@ -61,10 +67,22 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 
 	limits := api.MustLimitsFor(acct.Plan)
 	data := dashboard.DebugPageData{
-		AppSlug:     app.Slug,
-		Plan:        string(acct.Plan),
-		PlanAllowed: limits.DebugTelemetryEnabled,
-		Route:       strings.TrimSpace(r.URL.Query().Get("route")),
+		AppSlug:       app.Slug,
+		Plan:          string(acct.Plan),
+		PlanAllowed:   limits.DebugTelemetryEnabled,
+		Route:         strings.TrimSpace(r.URL.Query().Get("route")),
+		ActionMessage: dashboardDebugReplayActionFlash(r),
+	}
+	data.ActionError = r.URL.Query().Get("action") == "replay_error"
+	if s.sessions != nil {
+		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardDebugReplayAction, acct.ID, dashboardDebugReplayCSRFCookie)
+		if tokenErr != nil {
+			log.Warn("dashboard debug: issue replay csrf", "account_id", acct.ID, "app_id", app.ID, "err", tokenErr)
+		} else {
+			data.ReplayCSRF = token
+			http.SetCookie(w, &http.Cookie{Name: dashboardDebugReplayCSRFCookie, Value: token, Path: "/", HttpOnly: true,
+				Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
+		}
 	}
 	if !data.PlanAllowed {
 		data.ErrorMessage = "Production debugging is available on Hobby and higher plans."
@@ -126,8 +144,126 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 			data.ErrorMessage = err.Error()
 		}
 	}
+	if replayID := strings.TrimSpace(r.URL.Query().Get("replay_id")); replayID != "" && data.Selected != nil {
+		if err := s.populateDashboardDebugReplay(ctx, app, acct, replayID, data.Selected.Request.ID, &data); err != nil {
+			data.ActionMessage = err.Error()
+			data.ActionError = true
+		}
+	}
 	if err := renderAppDebugPage(w, r, log, acct, appCount, data); err != nil {
 		renderProblem(w, log, err)
+	}
+}
+
+func dashboardDebugReplayActionFlash(r *http.Request) string {
+	switch r.URL.Query().Get("action") {
+	case "replay_queued":
+		return "Replay queued. Refresh this page to watch the mirror result."
+	case "replay_error":
+		switch r.URL.Query().Get("error") {
+		case api.CodeDebugReplayUnsupported:
+			return "Replay unavailable: enable a mirror rule for the deployment that served this request."
+		case api.CodeNotFound:
+			return "Replay unavailable: the request telemetry was not found or has aged out of retention."
+		default:
+			return "Replay could not be queued. Please try again shortly."
+		}
+	default:
+		return ""
+	}
+}
+
+func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	slug, reqID := r.PathValue("slug"), r.PathValue("req_id")
+	if !validSlug(slug) || reqID == "" || strings.Contains(reqID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardDebugReplayAction, acct.ID, dashboardDebugReplayCSRFCookie); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid CSRF token", "please reload the page and try again"))
+		return
+	}
+	app, err := s.store.AppBySlug(r.Context(), slug)
+	if err != nil || app.AccountID != acct.ID {
+		http.NotFound(w, r)
+		return
+	}
+	if !api.MustLimitsFor(acct.Plan).DebugTelemetryEnabled {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
+		return
+	}
+	inv, problem := s.enqueueDebugReplay(r.Context(), app, acct, reqID)
+	values := url.Values{
+		"request_id": []string{reqID},
+		"since":      []string{strings.TrimSpace(r.FormValue("since"))},
+		"route":      []string{strings.TrimSpace(r.FormValue("route"))},
+	}
+	if problem != nil {
+		values.Set("action", "replay_error")
+		values.Set("error", problem.Code)
+	} else {
+		values.Set("action", "replay_queued")
+		values.Set("replay_id", inv.ID)
+	}
+	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"/debug?"+values.Encode(), http.StatusSeeOther)
+}
+
+func (s *server) populateDashboardDebugReplay(ctx context.Context, app state.App, acct state.Account, replayID, requestID string, data *dashboard.DebugPageData) error {
+	inv, err := s.store.InvocationByID(ctx, replayID)
+	if err != nil || inv.AccountID != acct.ID || inv.AppID != app.ID || inv.Source != state.InvocationReplay {
+		return fmt.Errorf("replay invocation was not found")
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(inv.Headers, &metadata); err != nil || metadata[api.DebugReplayRequestIDHeader] != requestID {
+		return fmt.Errorf("replay invocation was not found")
+	}
+	view := &dashboard.DebugReplayView{
+		ID:        inv.ID,
+		State:     dashboardDebugReplayState(inv.State),
+		CreatedAt: inv.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if inv.LastError != "" {
+		view.LastError = inv.LastError
+	}
+	if inv.CompletedAt != nil {
+		view.CompletedAt = inv.CompletedAt.UTC().Format(time.RFC3339)
+	}
+	if len(inv.Result) > 0 {
+		var result struct {
+			SourceStatusCode int  `json:"source_status_code"`
+			MirrorStatusCode int  `json:"mirror_status_code"`
+			SourceLatencyMS  int  `json:"source_latency_ms"`
+			MirrorLatencyMS  int  `json:"mirror_latency_ms"`
+			StatusDiff       bool `json:"status_diff"`
+			Crashed          bool `json:"crashed"`
+		}
+		if err := json.Unmarshal(inv.Result, &result); err == nil {
+			view.HasResult = true
+			view.SourceStatusCode = result.SourceStatusCode
+			view.MirrorStatusCode = result.MirrorStatusCode
+			view.SourceLatencyMS = result.SourceLatencyMS
+			view.MirrorLatencyMS = result.MirrorLatencyMS
+			view.StatusDiff = result.StatusDiff
+			view.Crashed = result.Crashed
+		}
+	}
+	data.Replay = view
+	return nil
+}
+
+func dashboardDebugReplayState(invState state.InvocationState) string {
+	switch invState {
+	case state.InvocationPending:
+		return "queued"
+	case state.InvocationDispatching:
+		return "running"
+	default:
+		return string(invState)
 	}
 }
 

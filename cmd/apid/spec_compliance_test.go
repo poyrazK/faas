@@ -162,6 +162,11 @@ var routeExclude = map[string]bool{
 	// route — both lists must move together (session-cookie auth
 	// surface, no SDK wrapper, no programmatic bearer-key entrypoint).
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/test": true,
+	// Dashboard debugger replay is a session-cookie form post protected by
+	// CSRF. The public SDK exposes the JSON sibling at
+	// POST /v1/apps/{slug}/debug/requests/{req_id}/replay instead.
+	// Mirror cmd/sdk-coverage/main.go::routeExclude.
+	"POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay": true,
 	// ADR-124 affected-workloads preview. Dashboard HTML form endpoints
 	// parallel to the cron fire-now + retry entries. The /preview POST
 	// re-renders the preview; /preview/apply commits. Both share the

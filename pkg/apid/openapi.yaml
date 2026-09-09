@@ -44,6 +44,8 @@ tags:
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
     description: App lifecycle (create, update, delete, wake, park).
+  - name: debugger
+    description: Customer production debugger request evidence and safe replay.
   - name: uploads
     description: |
       Resumable upload sessions (issue #1182 §P1 / ADR-115). A session
@@ -8842,6 +8844,57 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/AlertRuleInvalid' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # Dashboard form-POST sibling of the debugger replay API. The page uses a
+  # named CSRF envelope and redirects back to the selected request so the
+  # browser can inspect the durable mirror invocation by id.
+  /dashboard/apps/{slug}/debug/requests/{req_id}/replay:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: req_id
+        in: path
+        required: true
+        description: Retained request telemetry id to replay.
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [debugger]
+      operationId: dashboardReplayAppDebugRequest
+      summary: Queue a debugger replay from the dashboard.
+      description: |
+        Accepts the server-rendered dashboard form payload and queues the
+        same metadata-only replay as POST /v1/apps/{slug}/debug/requests/{req_id}/replay.
+        The response redirects to the request detail with a replay_id query
+        parameter; request bodies, credentials, and customer headers are
+        never replayed.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                csrf_token: { type: string }
+                since: { type: string }
+                route: { type: string, maxLength: 256 }
+              required: [csrf_token]
+      responses:
+        '303':
+          description: Redirect to the request detail and replay status.
+        '400':
+          description: Invalid dashboard CSRF token or form payload.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: No enabled mirror rule targets the serving deployment.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert"

@@ -1531,10 +1531,10 @@ type RequestAnalyticsRouteView struct {
 	DebugURL string
 }
 
-// DebugPageData is the read-only, server-rendered production debugger
-// surface for one app. The API/CLI remain the automation interface; this
-// projection keeps the dashboard template free of state/sqlc types and
-// makes the retention and plan gates visible to customers.
+// DebugPageData is the server-rendered production debugger surface for one
+// app. The API/CLI remain the automation interface, while the dashboard adds
+// a CSRF-protected replay action and a bounded status projection for the
+// invocation it just queued.
 type DebugPageData struct {
 	AppSlug       string
 	Plan          string
@@ -1545,9 +1545,32 @@ type DebugPageData struct {
 	WindowClamped bool
 	Route         string
 	ErrorMessage  string
+	ActionMessage string
+	ActionError   bool
+	ReplayCSRF    string
 	Regressions   []DebugRegressionView
 	Requests      []DebugRequestView
 	Selected      *DebugRequestDetailView
+	Replay        *DebugReplayView
+}
+
+// DebugReplayView is the template-safe status projection for a debugger
+// replay invocation. Result fields are copied from the gateway's bounded
+// comparison envelope; raw request payloads and customer headers are never
+// rendered here.
+type DebugReplayView struct {
+	ID               string
+	State            string
+	LastError        string
+	CreatedAt        string
+	CompletedAt      string
+	HasResult        bool
+	SourceStatusCode int
+	MirrorStatusCode int
+	SourceLatencyMS  int
+	MirrorLatencyMS  int
+	StatusDiff       bool
+	Crashed          bool
 }
 
 // DebugRegressionView carries the bounded regression observation plus a

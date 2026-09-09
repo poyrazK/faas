@@ -455,6 +455,7 @@ export { AuthService } from './services/AuthService.js';
 export { BillingService } from './services/BillingService.js';
 export { CorsPresetsService } from './services/CorsPresetsService.js';
 export { CronsService } from './services/CronsService.js';
+export { DebuggerService } from './services/DebuggerService.js';
 export { DefaultService } from './services/DefaultService.js';
 export { DelayedTasksService } from './services/DelayedTasksService.js';
 export { DeploydiffService } from './services/DeploydiffService.js';
