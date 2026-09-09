@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -68,6 +69,24 @@ func TestBuildServers_PinsMaxHeaderBytes(t *testing.T) {
 	}
 	if ctrl.MaxHeaderBytes != api.DefaultMaxHeaderBytes {
 		t.Errorf("control MaxHeaderBytes = %d, want %d", ctrl.MaxHeaderBytes, api.DefaultMaxHeaderBytes)
+	}
+}
+
+func TestInstallPublicStaticRoutes_SecurityTxt(t *testing.T) {
+	mux := http.NewServeMux()
+	installPublicStaticRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/security.txt", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want text/plain; charset=utf-8", got)
+	}
+	if got := rec.Body.String(); !strings.Contains(got, "Contact: mailto:security@gregale.dev") {
+		t.Fatalf("security.txt missing security contact: %q", got)
 	}
 }
 

@@ -144,6 +144,11 @@ const (
 	// `gregale deployments` to list; pagination flags live on the handler.
 	dispatchDeployments = "deployments"
 
+	// Managed PostgreSQL is a customer-facing resource backed by the
+	// provider-neutral API. Keep the noun in one place so the dispatcher,
+	// completion metadata, and tests cannot drift.
+	dispatchPostgres = "postgres"
+
 	// Singular deployment-get. Lifted so the dispatch literal stays
 	// constant-named (goconst); the constant does NOT route through
 	// appSlugFallback — the dispatch table places it before the

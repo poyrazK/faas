@@ -116,7 +116,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "crons", "delayed-task", "invocations", "jobs", "triggers", "webhooks", "workflows", "cache":
+	case "crons", "delayed-task", "invocations", "jobs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
 		return "Delivery"
@@ -926,6 +926,30 @@ var cliCommands = []cliCommand{
 		DocSlug:   "plan",
 		Short:     "Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout",
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
+	},
+	{
+		Name:    "postgres",
+		DocSlug: "postgres",
+		Short:   "Manage managed PostgreSQL (postgres list|create|get|delete|restore|bindings ...)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List managed PostgreSQL databases"},
+			{Name: "create", Short: "Create a managed PostgreSQL database", Flags: []cliFlag{
+				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
+				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
+				{Name: "class", Short: "service class", Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},
+				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
+				{Name: "scale-to-zero", Short: "suspend compute when idle"},
+				{Name: "storage-bytes", Short: "storage limit in bytes", Value: "N"},
+				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
+			}},
+			{Name: "get", Short: "Show one managed PostgreSQL database"},
+			{Name: "delete", Short: "Delete a managed PostgreSQL database"},
+			{Name: "restore", Short: "Restore a database to a new database", Flags: []cliFlag{
+				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
+				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
+			}},
+			{Name: "bindings", Short: "Manage app database bindings"},
+		},
 	},
 	{
 		Name:    "ps",

@@ -73,6 +73,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/usage             → usage meter
 //	GET /dashboard/billing           → plan + usage + last invoice + portal link (issue #253)
 //	GET /dashboard/account           → account + keys + GitHub connect
+//	GET /dashboard/postgres          → managed PostgreSQL database/binding status
 //
 // The sessionAuth middleware (server.go) runs first; the account is
 // already on context when these fire.
@@ -210,6 +211,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPricing(w, r, log, acct)
 		case path == "/dashboard/invoices":
 			s.renderInvoices(w, r, log, acct)
+		case path == "/dashboard/postgres":
+			s.renderManagedPostgres(w, r, log, acct)
 		case path == "/dashboard/audit-events":
 			// Wave 0 PR-C / ADR-047: the operator/customer surface
 			// for stateless-advisory audit rows. Mirrors

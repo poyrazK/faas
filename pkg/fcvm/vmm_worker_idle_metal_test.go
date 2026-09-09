@@ -1,5 +1,7 @@
 //go:build metal
 
+// adr: 137
+
 // Worker-idle-exemption metal test (M-2 commit 11, ADR-137 §Decision 1).
 //
 // The reaper exemption for execution_mode='worker' lives at the sched
@@ -43,7 +45,7 @@ import (
 // Engine's reaper is the only path that issues Destroy for a worker;
 // if the Manager grows a private reap, this test catches it.
 func TestMetalWorker_NotReapedAfterIdleWindow(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
@@ -63,16 +65,15 @@ func TestMetalWorker_NotReapedAfterIdleWindow(t *testing.T) {
 	// succeeds) but NEVER issue a request. The VM stays RUNNING
 	// inside the Manager indefinitely; only an explicit Destroy (or
 	// an Engine reaper) takes it down.
-	busybox := ensureBusyboxExt4(t, t.TempDir())
-
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	const instance = "worker-idle"
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
-		BaseKey:    busybox,
-		LayerKey:   busybox,
+		Plan:       "hobby",
+		BaseKey:    base,
+		LayerKey:   layer,
 		VcpuCount:  1,
 		MemSizeMiB: 128,
 	})

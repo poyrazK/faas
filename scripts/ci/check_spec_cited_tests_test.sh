@@ -76,6 +76,23 @@ git -C "$adr_case" commit -q -m 'test(sched): pin wake admission'
 make_event "$adr_case"
 expect_pass 'ADR citation' "$adr_case"
 
+# A citation near the start of a file larger than the pipe buffer must pass.
+# The checker used to pipe `git show` into `grep -q` under pipefail; grep's
+# early exit sent SIGPIPE to git and turned this valid citation into a failure.
+large_case="$test_root/large-cited"
+git_init "$large_case"
+{
+	printf 'package sched\n\n// adr: 098\n'
+	for i in $(seq 1 20000); do
+		printf '// padding line %s\n' "$i"
+	done
+	printf 'func TestWake(t *testing.T) {}\n'
+} > "$large_case/pkg/sched/wake_test.go"
+git -C "$large_case" add pkg/sched/wake_test.go
+git -C "$large_case" commit -q -m 'test(sched): pin large cited test'
+make_event "$large_case"
+expect_pass 'large file with early citation' "$large_case"
+
 # A changed core-path test without a citation is rejected.
 missing_case="$test_root/missing"
 git_init "$missing_case"

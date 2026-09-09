@@ -53,6 +53,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
+| [`postgres`](#postgres) | Manage managed PostgreSQL (postgres list\|create\|get\|delete\|restore\|bindings ...) |
 | [`ps`](#ps) | Show live instances + state for an app |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
@@ -1236,6 +1237,52 @@ Park an app cold (kill all live instances)
 Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 
 `gregale plan`
+
+
+## postgres
+
+Manage managed PostgreSQL (postgres list|create|get|delete|restore|bindings ...)
+
+`gregale postgres [<subcommand>]`
+
+### postgres list
+
+List managed PostgreSQL databases
+
+### postgres create
+
+Create a managed PostgreSQL database
+
+| Flag | Meaning | |
+|---|---|---|
+| `--region <REGION>` | provider-neutral region | required |
+| `--postgres-major <N>` | PostgreSQL major version |  |
+| `--class <CLASS>` | service class | one of `development` · `burstable` · `production` |
+| `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
+| `--scale-to-zero` | suspend compute when idle |  |
+| `--storage-bytes <N>` | storage limit in bytes |  |
+| `--restore-window-seconds <N>` | point-in-time restore window |  |
+
+### postgres get
+
+Show one managed PostgreSQL database
+
+### postgres delete
+
+Delete a managed PostgreSQL database
+
+### postgres restore
+
+Restore a database to a new database
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | name for the restored database | required |
+| `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
+
+### postgres bindings
+
+Manage app database bindings
 
 
 ## ps
