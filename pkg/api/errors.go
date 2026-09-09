@@ -3865,6 +3865,15 @@ func ErrManagedSecretConflict() *Problem {
 		WithDocs(docsBase + "/postgres#bindings")
 }
 
+// ErrManagedObjectStorageSecretConflict protects an environment key owned by
+// an active object-storage compute binding.
+func ErrManagedObjectStorageSecretConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict,
+		"Secret is managed",
+		"This environment key is controlled by an active object-storage compute binding. Delete the binding before changing the secret.").
+		WithDocs(docsBase + "/object-storage")
+}
+
 // ErrPlanLimitEnvVars is returned when an env PUT would exceed the plan's
 // per-app env-var count (issue #395 / ADR-045). Observed is the post-write
 // count. The 403 mirrors ErrPlanLimitSecrets so the SDK's error decoder can

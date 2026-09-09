@@ -297,6 +297,19 @@ func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state
 	if !ok {
 		return
 	}
+	var bindingIDs []string
+	if bindings, ok := s.store.(state.ObjectS3CredentialBindingStore); ok {
+		credentials, err := bindings.ListObjectS3Credentials(r.Context(), acct.ID, b.ID)
+		if err != nil {
+			bucketProblem(w, err)
+			return
+		}
+		for _, credential := range credentials {
+			if credential.ManagedAppID == b.AppID {
+				bindingIDs = append(bindingIDs, credential.ID)
+			}
+		}
+	}
 	token := uuid.NewString()
 	b, err := st.ClaimObjectBucket(r.Context(), b.AccountID, b.AppID, b.ID, token, "deleting")
 	if err != nil {
@@ -307,6 +320,12 @@ func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state
 	if err != nil {
 		bucketProblem(w, err)
 		return
+	}
+	for _, bindingID := range bindingIDs {
+		if err := s.store.DeleteManagedObjectStorageSecrets(r.Context(), bindingID); err != nil {
+			bucketProblem(w, err)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -335,16 +335,17 @@ type AppRegistryCredential struct {
 }
 
 type AppSecret struct {
-	AccountID  pgtype.UUID
-	AppID      pgtype.UUID
-	Key        string
-	Ciphertext []byte
-	CreatedAt  pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
-	OrgID      pgtype.UUID
-	Kid        pgtype.Text
-	Scope      string
-	ValueHash  pgtype.Text
+	AccountID                        pgtype.UUID
+	AppID                            pgtype.UUID
+	Key                              string
+	Ciphertext                       []byte
+	CreatedAt                        pgtype.Timestamptz
+	UpdatedAt                        pgtype.Timestamptz
+	OrgID                            pgtype.UUID
+	Kid                              pgtype.Text
+	Scope                            string
+	ValueHash                        pgtype.Text
+	ManagedObjectStorageCredentialID pgtype.UUID
 }
 
 type AppTrustedSigner struct {
@@ -1265,18 +1266,21 @@ type ObjectStorageRequestMetric struct {
 }
 
 type ObjectStorageS3Credential struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	BucketID     pgtype.UUID
-	AccessKeyID  string
-	SecretSealed []byte
-	Kid          string
-	Label        string
-	Permission   string
-	Status       string
-	CreatedAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	RevokedAt    pgtype.Timestamptz
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	BucketID      pgtype.UUID
+	AccessKeyID   string
+	SecretSealed  []byte
+	Kid           string
+	Label         string
+	Permission    string
+	Status        string
+	CreatedAt     pgtype.Timestamptz
+	LastUsedAt    pgtype.Timestamptz
+	RevokedAt     pgtype.Timestamptz
+	ManagedAppID  pgtype.UUID
+	ManagedScope  pgtype.Text
+	ManagedPrefix pgtype.Text
 }
 
 type ObjectStorageUsageHead struct {

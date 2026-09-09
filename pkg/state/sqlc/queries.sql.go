@@ -6650,10 +6650,44 @@ func (q *Queries) ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID
 	return count, err
 }
 
+const objectS3CredentialGet = `-- name: ObjectS3CredentialGet :one
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+`
+
+type ObjectS3CredentialGetParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialGet(ctx context.Context, db DBTX, arg ObjectS3CredentialGetParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectS3CredentialGet, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+	)
+	return i, err
+}
+
 const objectS3CredentialInsert = `-- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
-(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active') RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix
 `
 
 type ObjectS3CredentialInsertParams struct {
@@ -6665,6 +6699,9 @@ type ObjectS3CredentialInsertParams struct {
 	Kid          string
 	Label        string
 	Permission   string
+	Column9      string
+	Column10     interface{}
+	Column11     interface{}
 }
 
 func (q *Queries) ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg ObjectS3CredentialInsertParams) (ObjectStorageS3Credential, error) {
@@ -6677,6 +6714,9 @@ func (q *Queries) ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg Obj
 		arg.Kid,
 		arg.Label,
 		arg.Permission,
+		arg.Column9,
+		arg.Column10,
+		arg.Column11,
 	)
 	var i ObjectStorageS3Credential
 	err := row.Scan(
@@ -6692,12 +6732,15 @@ func (q *Queries) ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg Obj
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
 	)
 	return i, err
 }
 
 const objectS3CredentialList = `-- name: ObjectS3CredentialList :many
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at FROM object_storage_s3_credentials
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix FROM object_storage_s3_credentials
 WHERE account_id=$1 AND bucket_id=$2 AND status='active'
 ORDER BY created_at,id
 `
@@ -6729,6 +6772,9 @@ func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg Objec
 			&i.CreatedAt,
 			&i.LastUsedAt,
 			&i.RevokedAt,
+			&i.ManagedAppID,
+			&i.ManagedScope,
+			&i.ManagedPrefix,
 		); err != nil {
 			return nil, err
 		}
@@ -6741,7 +6787,7 @@ func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg Objec
 }
 
 const objectS3CredentialListForRekey = `-- name: ObjectS3CredentialListForRekey :many
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at FROM object_storage_s3_credentials
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix FROM object_storage_s3_credentials
 WHERE status='active' AND id > $1
 ORDER BY id LIMIT $2::int
 `
@@ -6773,6 +6819,9 @@ func (q *Queries) ObjectS3CredentialListForRekey(ctx context.Context, db DBTX, a
 			&i.CreatedAt,
 			&i.LastUsedAt,
 			&i.RevokedAt,
+			&i.ManagedAppID,
+			&i.ManagedScope,
+			&i.ManagedPrefix,
 		); err != nil {
 			return nil, err
 		}
@@ -6827,7 +6876,7 @@ func (q *Queries) ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg Obj
 }
 
 const objectS3CredentialResolve = `-- name: ObjectS3CredentialResolve :one
-SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
+SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
        b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
        b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
        b.updated_at AS bucket_updated_at
@@ -6849,6 +6898,9 @@ type ObjectS3CredentialResolveRow struct {
 	CreatedAt          pgtype.Timestamptz
 	LastUsedAt         pgtype.Timestamptz
 	RevokedAt          pgtype.Timestamptz
+	ManagedAppID       pgtype.UUID
+	ManagedScope       pgtype.Text
+	ManagedPrefix      pgtype.Text
 	AppID              pgtype.UUID
 	BucketName         string
 	BucketScope        string
@@ -6877,6 +6929,9 @@ func (q *Queries) ObjectS3CredentialResolve(ctx context.Context, db DBTX, access
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
 		&i.AppID,
 		&i.BucketName,
 		&i.BucketScope,
@@ -6908,6 +6963,52 @@ func (q *Queries) ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg Obj
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const objectS3CredentialRotate = `-- name: ObjectS3CredentialRotate :one
+UPDATE object_storage_s3_credentials
+SET access_key_id=$4, secret_sealed=$5, kid=$6, last_used_at=NULL
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix
+`
+
+type ObjectS3CredentialRotateParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+}
+
+func (q *Queries) ObjectS3CredentialRotate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotateParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectS3CredentialRotate,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.AccessKeyID,
+		arg.SecretSealed,
+		arg.Kid,
+	)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+	)
+	return i, err
 }
 
 const objectS3CredentialTouch = `-- name: ObjectS3CredentialTouch :execrows

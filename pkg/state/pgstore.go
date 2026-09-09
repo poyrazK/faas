@@ -16417,7 +16417,8 @@ func (s *PgStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, 
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       updated_at = now()
-		 where app_secrets.managed_postgres_binding_id is null`,
+		 where app_secrets.managed_postgres_binding_id is null
+		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -16436,7 +16437,8 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
 		       updated_at = now()
-		 where app_secrets.managed_postgres_binding_id is null`,
+		 where app_secrets.managed_postgres_binding_id is null
+		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext, kid)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -16469,7 +16471,8 @@ func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context,
 		       kid = excluded.kid,
 		       value_hash = excluded.value_hash,
 		       updated_at = now()
-		 where app_secrets.managed_postgres_binding_id is null`,
+		 where app_secrets.managed_postgres_binding_id is null
+		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext, kid, valueHash)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -16589,6 +16592,59 @@ func (s *PgStore) DeleteManagedPostgresSecret(ctx context.Context, credentialRef
 	return mapErr(tx.Commit(ctx))
 }
 
+// PutManagedObjectStorageSecret stores a sealed compute-binding value under
+// the credential that owns its app-secret row. Repeated calls for the same
+// credential update the ciphertext, which makes rotation retry-safe.
+func (s *PgStore) PutManagedObjectStorageSecret(ctx context.Context, secret AppSecret) error {
+	if secret.AccountID == "" || secret.AppID == "" || secret.Scope == "" || secret.Key == "" ||
+		len(secret.Ciphertext) == 0 || secret.ManagedObjectStorageCredentialID == "" {
+		return ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockAppSecretTarget(ctx, tx, secret.AppID, secret.Scope, secret.Key); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
+		`insert into app_secrets (
+			account_id, app_id, scope, key, ciphertext, kid, value_hash,
+			managed_object_storage_credential_id
+		) values ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8)
+		 on conflict (app_id, scope, key) do update set
+			ciphertext = excluded.ciphertext,
+			kid = excluded.kid,
+			value_hash = excluded.value_hash,
+			managed_object_storage_credential_id = excluded.managed_object_storage_credential_id,
+			updated_at = now()
+		 where app_secrets.managed_object_storage_credential_id = excluded.managed_object_storage_credential_id
+		   and app_secrets.managed_postgres_binding_id is null`,
+		secret.AccountID, secret.AppID, secret.Scope, secret.Key,
+		secret.Ciphertext, secret.Kid, secret.ValueHash,
+		secret.ManagedObjectStorageCredentialID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return mapErr(tx.Commit(ctx))
+}
+
+// DeleteManagedObjectStorageSecrets is idempotent so a revoked binding can
+// be cleaned up after a process crash without retaining stale credentials in
+// the workload environment.
+func (s *PgStore) DeleteManagedObjectStorageSecrets(ctx context.Context, credentialID string) error {
+	if credentialID == "" {
+		return ErrInvalidArgument
+	}
+	_, err := s.pool.Exec(ctx,
+		`delete from app_secrets where managed_object_storage_credential_id = $1`, credentialID)
+	return mapErr(err)
+}
+
 // GetAppSecretInScope is the scope-aware sibling of GetAppSecret
 // (ADR-092 PR-A). Returns the (account_id, app_id, scope, key) row
 // including ciphertext, kid, and timestamps. Returns ErrNotFound
@@ -16598,12 +16654,12 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 	err := s.pool.QueryRow(ctx,
 		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
 		        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
-		        COALESCE(managed_credential_generation, 0), created_at, updated_at
+		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key).Scan(
 		&out.AccountID, &out.AppID, &out.Scope, &out.Key, &out.Ciphertext, &out.Kid, &out.ValueHash,
-		&out.ManagedPostgresBindingID, &out.ManagedCredentialRef, &out.ManagedCredentialGeneration,
+		&out.ManagedPostgresBindingID, &out.ManagedCredentialRef, &out.ManagedCredentialGeneration, &out.ManagedObjectStorageCredentialID,
 		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -16665,7 +16721,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 		rows, err := s.pool.Query(ctx,
 			`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
 			        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
-			        COALESCE(managed_credential_generation, 0), created_at, updated_at
+			        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''), created_at, updated_at
 			 from app_secrets
 			 order by account_id asc, app_id asc, scope asc, key asc
 			 limit $1`,
@@ -16679,7 +16735,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 			var r AppSecret
 			if err := rows.Scan(
 				&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
-				&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+				&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
 				&r.CreatedAt, &r.UpdatedAt,
 			); err != nil {
 				return nil, err
@@ -16703,7 +16759,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
 		        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
-		        COALESCE(managed_credential_generation, 0), created_at, updated_at
+		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''), created_at, updated_at
 		 from app_secrets
 		 where (account_id, app_id, scope, key) >= ($1::uuid, $2::uuid, $3, $4)
 		 order by account_id asc, app_id asc, scope asc, key asc
@@ -16718,7 +16774,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 		var r AppSecret
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
-			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -16745,7 +16801,8 @@ func (s *PgStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID, 
 	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
 		`delete from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
-		   and managed_postgres_binding_id is null`,
+		   and managed_postgres_binding_id is null
+		   and managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key)
 	if err != nil {
 		return err
@@ -16808,7 +16865,7 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), created_at, updated_at
+		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3
 		 order by scope asc, key asc`,
@@ -16822,7 +16879,7 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 		var r AppSecret
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
-			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -16850,7 +16907,7 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), created_at, updated_at
+		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2
 		 order by scope asc, key asc`,
@@ -16864,7 +16921,7 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 		var r AppSecret
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
-			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err

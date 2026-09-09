@@ -5013,6 +5013,13 @@ type Store interface {
 	// a deletion reconciler can safely resume after a crash.
 	PutManagedPostgresSecret(ctx context.Context, secret AppSecret) error
 	DeleteManagedPostgresSecret(ctx context.Context, credentialRef string) error
+	// PutManagedObjectStorageSecret writes a sealed compute-binding secret and
+	// marks the row as owned by the bucket-scoped credential. Customer writes
+	// and deletes cannot replace an owned row.
+	PutManagedObjectStorageSecret(ctx context.Context, secret AppSecret) error
+	// DeleteManagedObjectStorageSecrets is idempotent so a revoke reconciler
+	// can safely retry after a crash.
+	DeleteManagedObjectStorageSecrets(ctx context.Context, credentialID string) error
 	// GetAppSecretInScope is the scope-aware sibling of
 	// GetAppSecret (ADR-092 PR-A). Returns ErrNotFound when no
 	// row exists at (account_id, app_id, scope, key).

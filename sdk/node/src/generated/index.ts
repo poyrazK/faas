@@ -112,6 +112,7 @@ export type { CreateManagedPostgresDatabaseRequest } from './models/CreateManage
 export type { CreateMirrorRuleRequest } from './models/CreateMirrorRuleRequest.js';
 export type { CreateObjectMultipartUploadRequest } from './models/CreateObjectMultipartUploadRequest.js';
 export type { CreateObjectS3CredentialRequest } from './models/CreateObjectS3CredentialRequest.js';
+export type { CreateObjectStorageComputeBindingRequest } from './models/CreateObjectStorageComputeBindingRequest.js';
 export type { CreateOrgAPIKeyRequest } from './models/CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './models/CreateOrgRequest.js';
 export type { CreateTenantSurfaceRequest } from './models/CreateTenantSurfaceRequest.js';
@@ -274,6 +275,9 @@ export type { ObjectS3CredentialSecret } from './models/ObjectS3CredentialSecret
 export type { ObjectSignedRequest } from './models/ObjectSignedRequest.js';
 export type { ObjectSignRequest } from './models/ObjectSignRequest.js';
 export type { ObjectStorageCharge } from './models/ObjectStorageCharge.js';
+export type { ObjectStorageComputeBinding } from './models/ObjectStorageComputeBinding.js';
+export type { ObjectStorageComputeBindingList } from './models/ObjectStorageComputeBindingList.js';
+export type { ObjectStorageComputeBindingSecretKeys } from './models/ObjectStorageComputeBindingSecretKeys.js';
 export type { ObjectStoragePolicy } from './models/ObjectStoragePolicy.js';
 export type { ObjectStoragePricing } from './models/ObjectStoragePricing.js';
 export type { ObjectStorageUsage } from './models/ObjectStorageUsage.js';

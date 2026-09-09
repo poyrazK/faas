@@ -201,6 +201,70 @@ func TestObjectS3CredentialLifecycle(t *testing.T) {
 	}
 }
 
+func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
+	e := setupSecrets(t, api.PlanHobby)
+	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+	app := createApp(t, e, "compute-binding-app")
+	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
+	bucketPath := "/v1/apps/compute-binding-app/buckets"
+	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
+	bindingPath := bucketPath + "/" + bucket.ID + "/compute-bindings"
+
+	createdResponse := e.do(t, "POST", bindingPath, api.CreateObjectStorageComputeBindingRequest{Permission: api.ObjectBucketPermissionReadWrite}, nil)
+	if createdResponse.Code != 201 || createdResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("create compute binding = %d headers=%v body=%s", createdResponse.Code, createdResponse.Header(), createdResponse.Body.String())
+	}
+	var created api.ObjectStorageComputeBinding
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Prefix != "GREGALE_S3_ASSETS" || created.Scope != state.DefaultEnvScope || created.Credential.Permission != api.ObjectBucketPermissionReadWrite {
+		t.Fatalf("unexpected binding: %+v", created)
+	}
+	rows, err := e.store.ListAppSecretsInScope(context.Background(), e.acct.ID, app.ID, state.DefaultEnvScope)
+	if err != nil || len(rows) != 6 {
+		t.Fatalf("managed secret rows = %d, err=%v", len(rows), err)
+	}
+	for _, row := range rows {
+		if row.ManagedObjectStorageCredentialID != created.ID {
+			t.Fatalf("secret %s owner = %q, want %q", row.Key, row.ManagedObjectStorageCredentialID, created.ID)
+		}
+	}
+	if response := e.do(t, "PUT", "/v1/apps/compute-binding-app/secrets/GREGALE_S3_ASSETS_BUCKET", api.PutAppSecretRequest{Value: "tamper"}, nil); response.Code != 409 {
+		t.Fatalf("managed secret overwrite = %d %s", response.Code, response.Body.String())
+	}
+
+	rotatedResponse := e.do(t, "POST", bindingPath+"/"+created.ID+"/rotate", struct{}{}, nil)
+	if rotatedResponse.Code != 200 {
+		t.Fatalf("rotate compute binding = %d %s", rotatedResponse.Code, rotatedResponse.Body.String())
+	}
+	var rotated api.ObjectStorageComputeBinding
+	if err := json.Unmarshal(rotatedResponse.Body.Bytes(), &rotated); err != nil {
+		t.Fatal(err)
+	}
+	if rotated.ID != created.ID || rotated.Credential.AccessKeyID == created.Credential.AccessKeyID {
+		t.Fatalf("rotation did not replace access key: before=%q after=%q", created.Credential.AccessKeyID, rotated.Credential.AccessKeyID)
+	}
+	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("old access key still resolves: %v", err)
+	}
+
+	if response := e.do(t, "DELETE", bindingPath+"/"+created.ID, nil, nil); response.Code != 204 {
+		t.Fatalf("delete compute binding = %d %s", response.Code, response.Body.String())
+	}
+	rows, err = e.store.ListAppSecretsInScope(context.Background(), e.acct.ID, app.ID, state.DefaultEnvScope)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("managed secrets after delete = %d, err=%v", len(rows), err)
+	}
+	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), rotated.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("rotated access key still resolves after delete: %v", err)
+	}
+}
+
 func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {

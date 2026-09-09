@@ -220,6 +220,8 @@ from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
 from .create_object_s3_credential_request import CreateObjectS3CredentialRequest
 from .create_object_s3_credential_request_permission import CreateObjectS3CredentialRequestPermission
+from .create_object_storage_compute_binding_request import CreateObjectStorageComputeBindingRequest
+from .create_object_storage_compute_binding_request_permission import CreateObjectStorageComputeBindingRequestPermission
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
@@ -541,6 +543,9 @@ from .object_signed_request import ObjectSignedRequest
 from .object_signed_request_headers import ObjectSignedRequestHeaders
 from .object_signed_request_method import ObjectSignedRequestMethod
 from .object_storage_charge import ObjectStorageCharge
+from .object_storage_compute_binding import ObjectStorageComputeBinding
+from .object_storage_compute_binding_list import ObjectStorageComputeBindingList
+from .object_storage_compute_binding_secret_keys import ObjectStorageComputeBindingSecretKeys
 from .object_storage_policy import ObjectStoragePolicy
 from .object_storage_pricing import ObjectStoragePricing
 from .object_storage_usage import ObjectStorageUsage
@@ -1068,6 +1073,8 @@ __all__ = (
     "CreateObjectMultipartUploadRequest",
     "CreateObjectS3CredentialRequest",
     "CreateObjectS3CredentialRequestPermission",
+    "CreateObjectStorageComputeBindingRequest",
+    "CreateObjectStorageComputeBindingRequestPermission",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
@@ -1381,6 +1388,9 @@ __all__ = (
     "ObjectSignRequest",
     "ObjectSignRequestMethod",
     "ObjectStorageCharge",
+    "ObjectStorageComputeBinding",
+    "ObjectStorageComputeBindingList",
+    "ObjectStorageComputeBindingSecretKeys",
     "ObjectStoragePolicy",
     "ObjectStoragePricing",
     "ObjectStorageUsage",

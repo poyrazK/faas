@@ -663,6 +663,88 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/compute-bindings:
+    parameters:
+      - { name: slug, description: App receiving the sealed storage connection settings., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket exposed to the compute workload., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectStorageComputeBindings
+      summary: List compute bindings for a bucket
+      description: Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
+      tags: [storage]
+      responses:
+        '200':
+          description: Active compute bindings; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectStorageComputeBindingList' }
+        default:
+          description: Binding listing denied or its bucket is unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: createObjectStorageComputeBinding
+      summary: Bind a bucket to an app's compute environment
+      description: Creates a bucket-scoped Gregale S3 credential and injects endpoint, region, bucket, access-key, secret-key, and addressing settings as sealed app secrets. The secret values are never returned.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateObjectStorageComputeBindingRequest' }
+      responses:
+        '201':
+          description: Compute binding created; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectStorageComputeBinding' }
+        default:
+          description: Invalid request, secret quota/conflict, unavailable sealing key, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}:
+    parameters:
+      - { name: slug, description: App owning the compute binding., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket attached to the compute binding., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: binding, description: Opaque compute binding identifier., in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      operationId: deleteObjectStorageComputeBinding
+      summary: Revoke a compute binding
+      description: Revokes the bucket-scoped S3 credential before removing its sealed app secrets. The operation is idempotent after revocation.
+      tags: [storage]
+      responses:
+        '204': { description: Binding revoked and its managed secrets removed }
+        default:
+          description: Binding or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate:
+    parameters:
+      - { name: slug, description: App whose workload receives the rotated credential., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Logical bucket whose access key is being rotated., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: binding, description: Binding identifier retained across credential rotations., in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: rotateObjectStorageComputeBinding
+      summary: Rotate a compute binding credential
+      description: Replaces the bucket-scoped access key and sealed secret while keeping the binding and environment variable names stable. Secret values are never returned.
+      tags: [storage]
+      responses:
+        '200':
+          description: Binding rotated; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectStorageComputeBinding' }
+        default:
+          description: Binding unavailable, sealing key unavailable, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/objects:
     parameters:
       - { name: slug, description: App containing the objects being managed., in: path, required: true, schema: { type: string } }
@@ -13029,6 +13111,43 @@ components:
             endpoint: { type: string, format: uri, example: 'https://s3.gregale.dev' }
             region: { type: string, example: 'us-east-1' }
             addressing_style: { type: string, enum: [path] }
+    CreateObjectStorageComputeBindingRequest:
+      description: Least-privilege S3 access and the environment-variable prefix for an app-to-bucket binding.
+      type: object
+      additionalProperties: false
+      required: [permission]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 64, default: compute }
+        permission: { type: string, enum: [read, write, read_write] }
+        prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$', maxLength: 48 }
+    ObjectStorageComputeBindingSecretKeys:
+      description: Names of sealed app secrets written for a compute binding; values are never returned.
+      type: object
+      required: [endpoint, region, bucket, access_key_id, secret_access_key, addressing_style]
+      properties:
+        endpoint: { type: string }
+        region: { type: string }
+        bucket: { type: string }
+        access_key_id: { type: string }
+        secret_access_key: { type: string }
+        addressing_style: { type: string }
+    ObjectStorageComputeBinding:
+      description: Provider-neutral app-to-bucket compute binding.
+      type: object
+      required: [id, bucket_id, scope, prefix, credential, secret_keys]
+      properties:
+        id: { type: string, format: uuid }
+        bucket_id: { type: string, format: uuid }
+        scope: { type: string }
+        prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$' }
+        credential: { $ref: '#/components/schemas/ObjectS3Credential' }
+        secret_keys: { $ref: '#/components/schemas/ObjectStorageComputeBindingSecretKeys' }
+    ObjectStorageComputeBindingList:
+      description: Active compute bindings for one logical bucket.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ObjectStorageComputeBinding' } }
     ObjectStoragePolicy:
       description: Operator safety limits; zero values mean unconfigured and block signing.
       type: object

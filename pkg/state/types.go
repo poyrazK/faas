@@ -4744,8 +4744,12 @@ type AppSecret struct {
 	ManagedPostgresBindingID    string
 	ManagedCredentialRef        string
 	ManagedCredentialGeneration int64
-	CreatedAt                   time.Time
-	UpdatedAt                   time.Time
+	// ManagedObjectStorageCredentialID is populated only by a compute
+	// object-storage binding. Customer secret mutations reject rows carrying
+	// this ownership marker until the binding is revoked and cleaned up.
+	ManagedObjectStorageCredentialID string
+	CreatedAt                        time.Time
+	UpdatedAt                        time.Time
 }
 
 // AccountAppSecret is the per-row shape returned by
