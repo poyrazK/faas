@@ -220,6 +220,10 @@ func (s *server) dashboardDeleteStorageBucket(w http.ResponseWriter, r *http.Req
 	if !s.verifyDashboardStorageCSRF(w, r, acct.ID) {
 		return
 	}
+	if s.objectStorage == nil {
+		bucketProblem(w, objectstorage.ErrUnavailable)
+		return
+	}
 	slug, bucketID := r.PathValue("slug"), r.PathValue("bucket")
 	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucketID), bucketID, url.Values{}, nil, s.deleteBucket)
 	if !dashboardMutationSucceeded(w, resp) {
@@ -235,6 +239,10 @@ func (s *server) dashboardDeleteStorageObject(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !s.verifyDashboardStorageCSRF(w, r, acct.ID) {
+		return
+	}
+	if s.objectStorage == nil {
+		bucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
