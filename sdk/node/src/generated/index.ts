@@ -43,6 +43,9 @@ export type { AppManifestHealthcheck } from './models/AppManifestHealthcheck.js'
 export type { AppMetricsResponse } from './models/AppMetricsResponse.js';
 export type { AppOpenAPIImportDryRunResponse } from './models/AppOpenAPIImportDryRunResponse.js';
 export type { AppOpenAPIImportResponse } from './models/AppOpenAPIImportResponse.js';
+export type { AppOpenAPIPolicyPreviewResponse } from './models/AppOpenAPIPolicyPreviewResponse.js';
+export type { AppOpenAPIPolicyPreviewRoute } from './models/AppOpenAPIPolicyPreviewRoute.js';
+export type { AppOpenAPIPolicyPreviewRule } from './models/AppOpenAPIPolicyPreviewRule.js';
 export type { AppRegistryCredentialListResponse } from './models/AppRegistryCredentialListResponse.js';
 export type { AppRegistryCredentialResponse } from './models/AppRegistryCredentialResponse.js';
 export type { AppResponse } from './models/AppResponse.js';

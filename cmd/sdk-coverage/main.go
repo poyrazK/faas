@@ -305,6 +305,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/openapi":                            "ImportAppOpenAPI",               // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc
 	"DELETE /v1/apps/{slug}/openapi":                          "DeleteAppOpenAPI",               // idempotent wipe of the imported doc (item #2 D5 emits pg_notify)
 	"POST /v1/apps/{slug}/openapi/dry-run":                    "DryRunAppOpenAPI",               // read-only edge-rule suggestions (item #2 D3)
+	"GET /v1/apps/{slug}/openapi/preview":                     "PreviewAppOpenAPIPolicy",        // read-only declared-vs-observed route-policy preview (roadmap item 11)
 	"GET /v1/deployments/{id}":                                "GetDeployment",
 	"PATCH /v1/deployments/{id}":                              "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override
 	"DELETE /v1/deployments/{id}":                             "ClearDeployment", // ADR-124 PR-A; soft-delete (status untouched)
@@ -312,16 +313,16 @@ var methodRouteMap = map[string]string{
 	"POST /v1/deployments/{id}/reorder":                       "ReorderDeployment",        // ADR-124 PR-A; priority bump on pending deploy
 	"POST /v1/apps/{slug}/deployments/{id}/cancel":            "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
 	"POST /v1/apps/{slug}/deployments/clear-obsolete":         "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows
-	"GET /v1/apps":                                            "ListApps",
-	"POST /v1/apps":                                           "CreateApp",
-	"GET /status/slo.json":                                    "GetStatusSLO",
-	"PATCH /v1/crons/{id}":                                    "UpdateCron",
-	"POST /v1/crons":                                          "CreateCron",
-	"GET /v1/crons":                                           "ListCrons",
-	"GET /v1/crons/{id}/runs":                                 "ListCronRuns",       // issue #791 — per-cron execution history
-	"POST /v1/crons/{id}/run":                                 "FireCron",           // issue #791 — manual fire-now (PR-C)
-	"GET /v1/cron-fire-now-requests/{request_id}":             "GetFireCronRequest", // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
-	"GET /v1/crons/{id}":                                      "GetCron",            // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
+	"GET /v1/apps":                                "ListApps",
+	"POST /v1/apps":                               "CreateApp",
+	"GET /status/slo.json":                        "GetStatusSLO",
+	"PATCH /v1/crons/{id}":                        "UpdateCron",
+	"POST /v1/crons":                              "CreateCron",
+	"GET /v1/crons":                               "ListCrons",
+	"GET /v1/crons/{id}/runs":                     "ListCronRuns",       // issue #791 — per-cron execution history
+	"POST /v1/crons/{id}/run":                     "FireCron",           // issue #791 — manual fire-now (PR-C)
+	"GET /v1/cron-fire-now-requests/{request_id}": "GetFireCronRequest", // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
+	"GET /v1/crons/{id}":                          "GetCron",            // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
 	// Issue #1184 Workstream A — run-to-completion jobs. Same
 	// resource-noun convention as crons + alerts + edge-rules:
 	// auto-derivation produces verb+placeholder concatenation
