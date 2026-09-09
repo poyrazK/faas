@@ -712,6 +712,15 @@ func TestRender_DeploymentDetail_StatelessViolation(t *testing.T) {
 					{Level: "error", Source: "build", Message: "VOLUME /data detected"},
 				},
 			},
+			BuildPlan: &dashboard.BuildPlanView{
+				Framework:  "node",
+				Runtime:    "node22",
+				Version:    "22.11.0",
+				Entrypoint: "npm run start",
+				Port:       3000,
+				HealthPath: "/healthz",
+				Class:      "app",
+			},
 		},
 	}
 	if err := dashboard.Render(rec, log, "", page); err != nil {
@@ -731,6 +740,12 @@ func TestRender_DeploymentDetail_StatelessViolation(t *testing.T) {
 		"relevant logs (1)",
 		// The error message is rendered too (the legacy raw Error).
 		"tarball contains top-level data/ directory",
+		// The inferred profile is shown alongside the diagnosis so a
+		// wrong start command or listener port is immediately visible.
+		"detected:</strong> node 22.11.0 (runtime node22) [app]",
+		"<strong>start:</strong> npm run start",
+		"<strong>port:</strong> 3000",
+		"<strong>health:</strong> /healthz",
 		// The docs link uses the typed code (NOT a hardcoded URL).
 		`href="https://docs.gregale.dev/errors/stateless_only_violation"`,
 	} {

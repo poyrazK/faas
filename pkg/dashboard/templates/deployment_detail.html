@@ -85,6 +85,7 @@
     .error-explanation .hint  { color: #b45309; margin: 0.25rem 0; }
     .error-explanation .why   { color: #6b7280; font-style: italic; margin: 0.25rem 0; white-space: pre-wrap; }
     .error-explanation .fix   { color: #047857; font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; margin: 0.25rem 0; }
+    .error-explanation .profile { color: #374151; font-family: ui-monospace, Menlo, monospace; margin: 0.5rem 0 0.25rem; }
     .error-explanation .logs  { margin-top: 0.5rem; }
     .error-explanation .docs  { display: inline-block; margin-top: 0.5rem; }
 /* Issue #606 / SAFE-RELEASES-E.1: deployer attribution chips.
@@ -193,6 +194,12 @@
         <h3 class="title">✗ {{ .Data.Deployment.ErrorCode }}</h3>
         {{ if .Data.Deployment.Error }}
           <p class="detail">{{ .Data.Deployment.Error }}</p>
+        {{ end }}
+        {{ with .Data.BuildPlan }}
+          <p class="profile"><strong>detected:</strong> {{ .Framework }}{{ if .Version }} {{ .Version }}{{ end }}{{ if .Runtime }} (runtime {{ .Runtime }}){{ end }}{{ if .Class }} [{{ .Class }}]{{ end }}<br>
+          {{ if .Entrypoint }}<strong>start:</strong> {{ .Entrypoint }}<br>{{ end }}
+          {{ if .Port }}<strong>port:</strong> {{ .Port }}<br>{{ end }}
+          {{ if .HealthPath }}<strong>health:</strong> {{ .HealthPath }}{{ end }}</p>
         {{ end }}
         {{ if .Data.Deployment.ErrorHint }}
           <p class="hint">💡 {{ .Data.Deployment.ErrorHint }}</p>
