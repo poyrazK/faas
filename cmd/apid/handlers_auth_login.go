@@ -452,7 +452,7 @@ func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrValidation("could not parse form body"))
 		return
 	}
-	// Same-site form POST: a function at *.apps.gregale.dev is same-site
+	// Same-site form POST: a function at *.gregale.dev is same-site
 	// with api.gregale.dev, so SameSite=Lax still sends faas_sid with a
 	// form that page auto-submits. The purpose-bound token (minted by
 	// GET /v1/auth/csrf?action=set_password) is what proves the form

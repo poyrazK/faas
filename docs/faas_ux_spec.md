@@ -95,7 +95,7 @@ Build logs stream to the terminal in real time (implementation spec §4.5, build
 On success the CLI prints the live URL and sets expectations honestly:
 
 ```
-✓ Deployed. https://jane-api.apps.gregale.dev
+✓ Deployed. https://jane-api.gregale.dev
   Your app scales to zero when idle. Gregale restores it from a snapshot;
   requests after that are instant. Public request time also depends on your
   app, Cloudflare, and the network distance to the serving region.

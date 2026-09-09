@@ -63,7 +63,7 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return nil
 	}
 	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" {
+	if domain == "" || domain == "apps.gregale.dev" {
 		domain = "gregale.dev"
 	}
 	// Annotation fields are customer-controlled text. Keep the Check Run

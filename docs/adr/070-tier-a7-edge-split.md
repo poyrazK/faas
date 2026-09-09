@@ -367,7 +367,7 @@ never inline a limit per CLAUDE.md).
      listeners are bound (revised: plain HTTP, not TLS).
   4. Confirm Caddy is upstream and reverse-proxying to
      `127.0.0.1:8080`; the actual customer-app smoke
-     (`https://app.apps.gregale.dev/`) is Caddy's job, not
+     (`https://app.gregale.dev/`) is Caddy's job, not
      `gatewayd-public`'s.
   5. Kill `gatewayd-internal`; the customer's HTTPS request gets
      502 Bad Gateway (`internal dial failed`); restart internal,

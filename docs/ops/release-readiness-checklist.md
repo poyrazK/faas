@@ -180,7 +180,7 @@ operation. Record its measured RPO/RTO in `docs/drills/`; do not describe an
 `rclone check` as a restore test.
 
 ### 5. Cloudflare DNS & TLS Verification
-Ensure the public wildcard `*.apps.gregale.dev` and `api.gregale.dev` resolve to the public edge IP, while private hostnames (`fsn-1.gregale.dev`, `fsn-2.gregale.dev`) are restricted to internal/managed `/etc/hosts` resolution.
+Ensure the public wildcard `*.gregale.dev` and `api.gregale.dev` resolve to the public edge IP, while private hostnames (`fsn-1.gregale.dev`, `fsn-2.gregale.dev`) are restricted to internal/managed `/etc/hosts` resolution.
 
 ---
 

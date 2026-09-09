@@ -8,13 +8,13 @@
 
 ## Context
 
-Issue #560 shipped `apps.require_authn bool NOT NULL DEFAULT false` as a per-app opt-in (CLOSED 2026-08-05). Issue #477 / ADR-079 later shipped `apps.public_auth_mode text NOT NULL DEFAULT 'open'` with the closed enum `{open, bearer, basic}`. Together, every `{slug}.apps.gregale.dev` route is **public-by-default** today — a customer has to PATCH both fields to gate ingress.
+Issue #560 shipped `apps.require_authn bool NOT NULL DEFAULT false` as a per-app opt-in (CLOSED 2026-08-05). Issue #477 / ADR-079 later shipped `apps.public_auth_mode text NOT NULL DEFAULT 'open'` with the closed enum `{open, bearer, basic}`. Together, every `{slug}.gregale.dev` route is **public-by-default** today — a customer has to PATCH both fields to gate ingress.
 
 Cloud Run's analogue is the inverse: services are IAM-authenticated by default; `--allow-unauthenticated` opens them publicly. Issue #695 closes **spec §17 G15** ("the global default is unchanged to avoid breaking existing customers") by flipping the global default to authenticated. A one-time grandfather migration preserves every existing customer's behaviour in place — no anonymous request breaks for any customer.
 
 ### Why now
 
-- **Security posture:** every `{slug}.apps.gregale.dev` is publicly reachable. A customer who deploys an internal API, B2B service, or anything with PII has to remember to PATCH the flag — and most won't, until something bad happens.
+- **Security posture:** every `{slug}.gregale.dev` is publicly reachable. A customer who deploys an internal API, B2B service, or anything with PII has to remember to PATCH the flag — and most won't, until something bad happens.
 - **Sales-conversion friction:** "is this secure by default?" is on every enterprise evaluation. "Yes, opt-out" closes deals; "opt-in" doesn't.
 - **G15 is explicit** in spec §17. The rationale for deferring in #560 was correct at the time; the follow-up is the global flip.
 
@@ -118,10 +118,10 @@ The banner is **one-time per affected customer** — once every pre-flip app has
 
 ```
 SLUG                      STATUS      URL                                            AUTH
-hello                     running     https://hello.apps.gregale.dev                  AUTH: required · since 2026-08-06
-internal-api              running     https://internal-api.apps.gregale.dev           AUTH: required + basic · since 2026-08-06
-public-blog               running     https://public-blog.apps.gregale.dev            AUTH: open
-new-deploy                running     https://new-deploy.apps.gregale.dev             AUTH: bearer
+hello                     running     https://hello.gregale.dev                  AUTH: required · since 2026-08-06
+internal-api              running     https://internal-api.gregale.dev           AUTH: required + basic · since 2026-08-06
+public-blog               running     https://public-blog.gregale.dev            AUTH: open
+new-deploy                running     https://new-deploy.gregale.dev             AUTH: bearer
 ```
 
 The `since YYYY-MM-DD` suffix renders only when `auth_default_flipped_at != nil` (pre-flip apps that have been grandfathered).

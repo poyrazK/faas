@@ -92,7 +92,7 @@ def sync_detailed(
     the `faas_csrf` cookie); a missing or mismatched token is 400
     `validation_failed`. The route is a same-site form POST, so
     `SameSite=Lax` alone does not protect it from a customer app
-    hosted under `*.apps.gregale.dev`.
+    hosted under `*.gregale.dev`.
 
     Proof of presence (ADR-140), decided by what the account has:
 
@@ -154,7 +154,7 @@ def sync(
     the `faas_csrf` cookie); a missing or mismatched token is 400
     `validation_failed`. The route is a same-site form POST, so
     `SameSite=Lax` alone does not protect it from a customer app
-    hosted under `*.apps.gregale.dev`.
+    hosted under `*.gregale.dev`.
 
     Proof of presence (ADR-140), decided by what the account has:
 
@@ -211,7 +211,7 @@ async def asyncio_detailed(
     the `faas_csrf` cookie); a missing or mismatched token is 400
     `validation_failed`. The route is a same-site form POST, so
     `SameSite=Lax` alone does not protect it from a customer app
-    hosted under `*.apps.gregale.dev`.
+    hosted under `*.gregale.dev`.
 
     Proof of presence (ADR-140), decided by what the account has:
 
@@ -271,7 +271,7 @@ async def asyncio(
     the `faas_csrf` cookie); a missing or mismatched token is 400
     `validation_failed`. The route is a same-site form POST, so
     `SameSite=Lax` alone does not protect it from a customer app
-    hosted under `*.apps.gregale.dev`.
+    hosted under `*.gregale.dev`.
 
     Proof of presence (ADR-140), decided by what the account has:
 

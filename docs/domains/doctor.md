@@ -14,7 +14,7 @@ The doctor runs five probes against the domain in parallel:
 | Check | What it verifies | Failure means |
 |---|---|---|
 | `dns_record_found` | Apex has A or AAAA records | The apex is unconfigured — DNS isn't pointing anywhere |
-| `points_to_gregale` | Apex or CNAME matches `apps.gregale.dev` | The customer is pointing at the wrong host |
+| `points_to_gregale` | Apex or CNAME matches `gregale.dev` | The customer is pointing at the wrong host |
 | `tls_certificate` | Cert state is `issued` (or `pending` for new bindings) | Cert engine hasn't minted, or port-443 returns a CDN cert |
 | `caa_permits` | No `0 issue ";"` blocking CA issuance (RFC 8659) | CAA policy forbids the issuing CA |
 | `ipv6_conflict` | Apex AAAA doesn't mismatch the CNAME target | A stray AAAA at the apex is splitting traffic to the wrong host |
@@ -38,7 +38,7 @@ Status:      1 of 5 checks failing
 Observed at: 2026-08-18T14:23:11Z
 
 ✓ dns_record_found       A and AAAA records present
-✓ points_to_gregale      CNAME → apps.gregale.dev
+✓ points_to_gregale      CNAME → gregale.dev
 ✗ tls_certificate        pending (cert engine has not yet issued)
 ✓ caa_permits            no CAA published (allowed by default)
 ✓ ipv6_conflict          no stray AAAA at apex

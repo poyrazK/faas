@@ -7,6 +7,10 @@
 > terminates upstream at Caddy + Cloudflare per ADR-070 revision
 > 2026-08-04). Retained for diff archaeology and pre-PR-A operator
 > audit. Do not follow this runbook on a current deployment.
+>
+> Hostnames using `*.apps.gregale.dev` below are part of that
+> historical procedure. The current customer hostname contract is
+> `*.gregale.dev`.
 
 Step-by-step operator procedure for flipping a reference node from plain `:8080`
 (`[tls].disabled = true`) to TLS on `:443` + ACME on `:80` (`disabled =

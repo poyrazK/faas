@@ -65,7 +65,7 @@ Start: uvicorn app:app --host 0.0.0.0 --port $PORT
 Health: GET /healthz
 Build: cached dependencies restored
 
-✓ Live:     https://my-api.apps.gregale.dev
+✓ Live:     https://my-api.gregale.dev
 ✓ Verified: GET /healthz → 200 in 42 ms
   Logs:     gregale logs my-api --follow
   Inspect:  gregale open my-api

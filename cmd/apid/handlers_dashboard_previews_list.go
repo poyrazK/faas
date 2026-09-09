@@ -50,7 +50,7 @@ func (s *server) renderPreviewsList(w http.ResponseWriter, r *http.Request, log 
 			PRState:       p.PreviewPrState,
 			ExpiresAt:     p.PreviewExpiresAt,
 			CreatedAt:     p.CreatedAt,
-			Hostname:      previewHostnameFor(p.Slug),
+			Hostname:      previewHostnameFor(p.Slug, s.domain),
 			DestroyAction: "/dashboard/apps/" + p.PreviewOfSlug + "/preview/" + p.Slug + "/destroy",
 		})
 	}
@@ -69,12 +69,12 @@ func (s *server) renderPreviewsList(w http.ResponseWriter, r *http.Request, log 
 // previewHostnameFor mirrors pkg/githubd.previewHostnameForSlug
 // without importing the githubd package (dashboard is apid-side,
 // githubd is daemon-side). The canonical preview hostname is
-// <slug>.apps.gregale.dev; this returns just the slug's hostname
-// for the dashboard's "Open preview" link. Empty string for
-// empty slug so the template can guard.
-func previewHostnameFor(slug string) string {
+// <slug>.gregale.dev; this returns just the slug's hostname for
+// the dashboard's "Open preview" link. Empty string for empty
+// slug so the template can guard.
+func previewHostnameFor(slug, domain string) string {
 	if slug == "" {
 		return ""
 	}
-	return slug + ".apps.gregale.dev"
+	return appHostForDomain(slug, domain)
 }

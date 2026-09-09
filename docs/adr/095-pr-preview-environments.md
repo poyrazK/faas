@@ -13,6 +13,12 @@
   (edge rules / preview placement), spec §14 M8 (preview
   environments).
 
+> **Historical hostname note (issue #1727):** this ADR records the
+> original preview design, including the retired `.apps.gregale.dev`
+> examples. That hostname shape is legacy and is retained only for
+> decision archaeology. The current customer contract is
+> `pr-{N}-{slug}.gregale.dev` under the `*.gregale.dev` wildcard.
+
 ## Context
 
 PR-D (`10eda408`, issue #739) shipped push-to-deploy end-to-end.

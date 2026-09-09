@@ -191,13 +191,16 @@ func TestPreviewHostnameFor_PureUnit(t *testing.T) {
 	cases := []struct {
 		slug, want string
 	}{
-		{"pr-42-acme", "pr-42-acme.apps.gregale.dev"},
+		{"pr-42-acme", "pr-42-acme.gregale.dev"},
 		{"", ""},
 	}
 	for _, c := range cases {
-		if got := previewHostnameFor(c.slug); got != c.want {
+		if got := previewHostnameFor(c.slug, "gregale.dev"); got != c.want {
 			t.Errorf("previewHostnameFor(%q) = %q, want %q", c.slug, got, c.want)
 		}
+	}
+	if got := previewHostnameFor("pr-42-acme", "apps.gregale.dev"); got != "pr-42-acme.gregale.dev" {
+		t.Fatalf("previewHostnameFor legacy domain = %q, want current gregale.dev hostname", got)
 	}
 }
 
