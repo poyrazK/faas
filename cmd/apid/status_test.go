@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,73 @@ import (
 	"testing"
 	"time"
 )
+
+// TestStatusJSONHandlerNonFinitePrometheusSamples is the production
+// regression: Prometheus returns NaN for ratios and histogram quantiles
+// when the five-minute window has no samples. Those values must become
+// finite zeroes before the snapshot reaches encoding/json; otherwise the
+// handler commits HTTP 200 and then writes an empty body.
+func TestStatusJSONHandlerNonFinitePrometheusSamples(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		value := "NaN"
+		if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
+			value = "1"
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"` + value + `"]}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	s := newServer(nil, slog.Default(), "unset", nil)
+	s.WithStatusCache(srv.URL, "")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/status/slo.json", nil)
+	s.statusJSONHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("body is empty; want a degraded JSON snapshot")
+	}
+	var snap StatusPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
+		t.Fatalf("decode: %v; body = %q", err, rec.Body.String())
+	}
+	if snap.APIAvailabilityPct != 0 || snap.WakeP95MS != 0 || snap.BuildSuccessPct != 0 {
+		t.Errorf("non-finite samples were not sanitized: %+v", snap)
+	}
+	if !snap.Degraded || snap.Source != "degraded: firing alerts" {
+		t.Errorf("degraded status = (%v, %q), want (true, %q)", snap.Degraded, snap.Source, "degraded: firing alerts")
+	}
+}
+
+// TestStatusJSONHandlerUnencodableCachedSnapshot pins the final output
+// boundary. A bad cached value must be replaced by a finite degraded
+// payload before response headers are committed.
+func TestStatusJSONHandlerUnencodableCachedSnapshot(t *testing.T) {
+	s := newServer(nil, slog.Default(), "unset", nil)
+	s.statusCache = &statusCache{
+		log:       slog.Default(),
+		lastEval:  time.Now(),
+		cached:    StatusPage{APIAvailabilityPct: math.NaN(), AsOf: time.Now()},
+		hasCached: true,
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/status/slo.json", nil)
+	s.statusJSONHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var snap StatusPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
+		t.Fatalf("decode: %v; body = %q", err, rec.Body.String())
+	}
+	if !strings.HasPrefix(snap.Source, "degraded: encode status snapshot:") {
+		t.Errorf("source = %q, want encoding failure in degraded source", snap.Source)
+	}
+}
 
 // TestStatusJSONHandlerNoPrometheusURL is the degraded path. With
 // an empty prometheus URL the handler must return 200 + a payload
