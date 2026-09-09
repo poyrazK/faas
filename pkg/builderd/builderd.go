@@ -776,6 +776,18 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	stopWatch()
 	<-watchDone
 	if err != nil {
+		if ctx.Err() != nil {
+			// Cancelling the wait context does not necessarily terminate the
+			// builder VM. Ask vmmd to stop it explicitly before the active-VM
+			// registration is removed, so a worker cancellation cannot strand
+			// a build that Drain no longer has a chance to observe.
+			cancelCtx, cancelVM := context.WithTimeout(context.WithoutCancel(ctx), activeVMCancelTimeout)
+			cancelErr := b.vm.Cancel(cancelCtx, build.ID)
+			cancelVM()
+			if cancelErr != nil && !errors.Is(cancelErr, context.Canceled) {
+				b.log.Warn("builderd: cancel build after wait context", "build", build.ID, "err", cancelErr)
+			}
+		}
 		// Translate a context-deadline to timeout-class; everything else is infra.
 		fc := state.FailureInfra
 		if errors.Is(err, context.DeadlineExceeded) {
