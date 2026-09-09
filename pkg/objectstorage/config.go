@@ -15,6 +15,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+const minimumOVHAccessLogReportAgeSeconds int64 = 2 * 60 * 60
+
 // Config contains only non-secret settings and environment variable names.
 // Backend IDs are permanent: retain an old entry while buckets reference it.
 type Config struct {
@@ -30,10 +32,11 @@ type Config struct {
 }
 
 type BackendConfig struct {
-	UsageReportsPath string `json:"usage_reports_path,omitempty"`
-	ID               string `json:"id"`
-	Driver           string `json:"driver"`
-	Region           string `json:"region"`
+	UsageReportsPath string      `json:"usage_reports_path,omitempty"`
+	Usage            UsageConfig `json:"usage,omitempty"`
+	ID               string      `json:"id"`
+	Driver           string      `json:"driver"`
+	Region           string      `json:"region"`
 	// Namespace identifies the upstream account/cluster. Changing it, the
 	// endpoint or S3 region fences existing buckets instead of misrouting data.
 	Namespace         string   `json:"namespace"`
@@ -48,6 +51,19 @@ type BackendConfig struct {
 	GCSServiceAccount string   `json:"gcs_service_account,omitempty"`
 	AllowedOrigins    []string `json:"allowed_origins,omitempty"`
 	AllowHTTP         bool     `json:"allow_http,omitempty"`
+}
+
+// UsageConfig selects the provider-specific authoritative usage adapter. It
+// contains only environment-variable names and safe identity fields; secret
+// values never belong in the object-storage registry.
+type UsageConfig struct {
+	Driver               string `json:"driver,omitempty"`
+	ServiceNameEnv       string `json:"service_name_env,omitempty"`
+	ApplicationKeyEnv    string `json:"application_key_env,omitempty"`
+	ApplicationSecretEnv string `json:"application_secret_env,omitempty"`
+	ConsumerKeyEnv       string `json:"consumer_key_env,omitempty"`
+	RequestLogBucket     string `json:"request_log_bucket,omitempty"`
+	RequestLogPrefix     string `json:"request_log_prefix,omitempty"`
 }
 
 type Registry struct {
@@ -122,6 +138,17 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if _, ok := r.backends[b.ID]; ok {
 			return nil, errors.New("object storage: duplicate backend ID")
 		}
+		if b.Usage.Driver != "" && b.Usage.Driver != "ovh" {
+			return nil, fmt.Errorf("object storage: backend %s has an unknown usage driver", b.ID)
+		}
+		if b.Usage.Driver == "ovh" {
+			if b.Driver != "s3" || b.UsageReportsPath == "" || b.Usage.ApplicationKeyEnv == "" || b.Usage.ApplicationSecretEnv == "" || b.Usage.ConsumerKeyEnv == "" || b.Usage.RequestLogBucket == "" {
+				return nil, fmt.Errorf("object storage: backend %s has incomplete ovh usage configuration", b.ID)
+			}
+			if c.Accounting != nil && c.Accounting.MaxReportAgeSeconds < minimumOVHAccessLogReportAgeSeconds {
+				return nil, fmt.Errorf("object storage: backend %s requires max_report_age_seconds >= %d for delayed OVH access logs", b.ID, minimumOVHAccessLogReportAgeSeconds)
+			}
+		}
 		switch b.Driver {
 		case "s3":
 			if b.S3Region == "" {
@@ -165,7 +192,7 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if err != nil {
 			return nil, fmt.Errorf("object storage: backend %s configuration failed: %w", b.ID, err)
 		}
-		r.backends[b.ID] = Backend{ID: b.ID, Region: b.Region, Fingerprint: fingerprint(b), Provider: p}
+		r.backends[b.ID] = Backend{ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage}
 	}
 	for region, id := range c.Defaults {
 		b, ok := r.backends[id]
@@ -178,6 +205,20 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		return nil, errors.New("object storage: default_region is not configured")
 	}
 	return r, nil
+}
+
+// Backends returns a stable snapshot of configured placements. The returned
+// values contain provider interfaces but never provider credentials.
+func (r *Registry) Backends() []Backend {
+	if r == nil {
+		return nil
+	}
+	out := make([]Backend, 0, len(r.backends))
+	for _, backend := range r.backends {
+		out = append(out, backend)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 // ChargeForUsage returns a customer-facing estimate when the operator has

@@ -2808,6 +2808,26 @@ SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_s
 INSERT INTO object_storage_authorizations (account_id, period_start, count) VALUES ($1,$2,1)
 ON CONFLICT (account_id,period_start) DO UPDATE SET count = object_storage_authorizations.count + 1;
 
+-- name: ObjectStorageProviderRequestIncrement :exec
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, request_count)
+VALUES ($1, $2, 1)
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET request_count = object_storage_request_metrics.request_count + 1;
+
+-- name: ObjectStorageProviderRequestMetrics :many
+SELECT b.id, b.account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
+       sqlc.arg(period_start)::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count
+FROM object_buckets b
+LEFT JOIN object_storage_request_metrics m
+  ON m.bucket_id = b.id AND m.period_start = sqlc.arg(period_start)
+WHERE b.backend_id = $1 AND b.backend_fingerprint = $2
+ORDER BY b.physical_name, b.id;
+
+-- name: ObjectStorageProviderBuckets :many
+SELECT * FROM object_buckets
+WHERE backend_id = $1 AND backend_fingerprint = $2
+ORDER BY physical_name, id;
+
 -- name: ObjectUsageReports :many
 SELECT r.* FROM object_storage_usage_heads h JOIN object_storage_usage_reports r
 USING (account_id,backend_id,period_start,observed_at)

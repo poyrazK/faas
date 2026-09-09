@@ -126,6 +126,16 @@ func (p *S3) DeleteObject(ctx context.Context, bucket, key string) error {
 	return normalize(err)
 }
 
+// ReadObject is intentionally not part of the customer-facing Provider
+// interface. It is used only by the operator-owned OVH access-log collector.
+func (p *S3) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+	out, err := p.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		return nil, normalize(err)
+	}
+	return out.Body, nil
+}
+
 func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
 	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil {
 		return SignedRequest{}, err
