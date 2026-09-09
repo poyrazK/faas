@@ -72,6 +72,7 @@
       {{if .Data.Webhooks}}
         {{range .Data.Webhooks}}
           <section class="card" aria-labelledby="webhook-{{.ID}}">
+            {{$webhookID := .ID}}
             <h3 id="webhook-{{.ID}}"><code>{{.TargetURL}}</code></h3>
             <p>
               {{if .Enabled}}<span class="badge enabled">enabled</span>{{else}}<span class="badge disabled">disabled</span>{{end}}
@@ -99,7 +100,7 @@
                         <td>{{if .LastError}}<code>{{.LastError}}</code>{{else}}—{{end}}</td>
                         <td class="nowrap">{{if .NextAttemptAt}}{{.NextAttemptAt}}{{else}}—{{end}}</td>
                         <td class="nowrap">{{.CreatedAt}}</td>
-                        <td>{{if .Retryable}}<form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{$.ID}}/deliveries/{{.ID}}/retry"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Retry</button></form>{{else}}—{{end}}</td>
+                        <td>{{if .Retryable}}<form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{$webhookID}}/deliveries/{{.ID}}/retry"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Retry</button></form>{{else}}—{{end}}</td>
                       </tr>
                     {{end}}
                   </tbody>

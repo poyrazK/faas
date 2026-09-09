@@ -103,7 +103,7 @@ func TestDashboardAppWebhookCreateRequiresNamedCSRF(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("missing csrf status = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), middleware.FormFieldName) && !strings.Contains(rec.Body.String(), "csrf") {
+	if !strings.Contains(rec.Body.String(), middleware.FormFieldName) && !strings.Contains(strings.ToLower(rec.Body.String()), "csrf") {
 		t.Fatalf("missing csrf problem: %s", rec.Body.String())
 	}
 }
