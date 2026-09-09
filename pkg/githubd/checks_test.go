@@ -176,6 +176,23 @@ func TestGitHubDeploymentStateMapping(t *testing.T) {
 	}
 }
 
+func TestGitHubDeploymentStateMappingRolloutAware(t *testing.T) {
+	cases := []struct {
+		status, rollout, want string
+	}{
+		{status: "live", rollout: "pending", want: "in_progress"},
+		{status: "live", rollout: "rolling_out", want: "in_progress"},
+		{status: "live", rollout: "complete", want: "success"},
+		{status: "live", rollout: "aborted", want: "failure"},
+	}
+	for _, tc := range cases {
+		got, ok := githubDeploymentStateForRollout(tc.status, tc.rollout, 4)
+		if !ok || got != tc.want {
+			t.Errorf("githubDeploymentStateForRollout(%q, %q) = %q, %v; want %q, true", tc.status, tc.rollout, got, ok, tc.want)
+		}
+	}
+}
+
 // TestChecksAPI_PreviewPhaseTitle pins the preview-specific
 // title copy (issue #272 / ADR-094). The PR UI uses the
 // Check Run title to render the row — keeping "Preview X"

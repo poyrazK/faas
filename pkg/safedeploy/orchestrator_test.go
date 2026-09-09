@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -130,6 +131,61 @@ type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
+type rolloutTargetStub struct{ app state.App }
+
+func (s rolloutTargetStub) AppByID(_ context.Context, id string) (state.App, error) {
+	if s.app.ID != id {
+		return state.App{}, state.ErrNotFound
+	}
+	return s.app, nil
+}
+
+func (rolloutTargetStub) ListCanaryInFlight(context.Context) ([]state.Deployment, error) {
+	return nil, nil
+}
+
+type rolloutRecoveryStub struct {
+	calls  int
+	slug   string
+	action string
+	reason string
+}
+
+func (s *rolloutRecoveryStub) RecoverRollout(_ context.Context, slug, action, reason string) (api.RolloutTransitionResponse, error) {
+	s.calls++
+	s.slug, s.action, s.reason = slug, action, reason
+	return api.RolloutTransitionResponse{}, nil
+}
+
+func TestOrchestrator_StuckRollout_AutoAbortsThroughRecovery(t *testing.T) {
+	store := newStubStore()
+	stuckAt := time.Now().Add(-2 * StuckAfterDuration)
+	dep := seedDeployment(store, t, func(d *state.Deployment) {
+		d.RolloutState = "rolling_out"
+		d.CanaryStep = 2
+		d.CanaryStepStartedAt = &stuckAt
+		d.RolloutStartedAt = &stuckAt
+	})
+	recovery := &rolloutRecoveryStub{}
+	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
+	o.Targets = rolloutTargetStub{app: state.App{ID: dep.AppID, Slug: "demo-app"}}
+	o.Recovery = recovery
+
+	stats, _, err := o.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.StuckDetected != 1 || stats.AutoAborted != 1 || stats.AutoAbortFailed != 0 {
+		t.Fatalf("stats = %+v; want one detected + one auto-aborted", stats)
+	}
+	if recovery.calls != 1 || recovery.slug != "demo-app" || recovery.action != "abort" {
+		t.Fatalf("recovery = calls:%d slug:%q action:%q; want one demo-app abort", recovery.calls, recovery.slug, recovery.action)
+	}
+	if recovery.reason == "" {
+		t.Fatal("automatic abort reason is empty")
+	}
+}
+
 // TestOrchestrator_PendingWithLadder_FlipsToRollingOut — a row in
 // pending with canary_total_steps>0 must flip to rolling_out
 // and stamp rollout_started_at. One audit row emitted.
@@ -236,9 +292,9 @@ func TestOrchestrator_RollingOutAtTerminal_FlipsToComplete(t *testing.T) {
 }
 
 // TestOrchestrator_StuckRollout_LogsWarnNoRecover — a rolling_out
-// row stuck for > StuckAfterDuration must NOT auto-recover; the
-// orchestrator only logs + bumps Stats.StuckDetected. The
-// manual CLI (Commit 6) is the escape hatch.
+// row stuck for > StuckAfterDuration logs + bumps
+// Stats.StuckDetected. With recovery dependencies omitted (the
+// legacy/manual configuration), the manual CLI remains the escape hatch.
 func TestOrchestrator_StuckRollout_LogsWarnNoRecover(t *testing.T) {
 	store := newStubStore()
 	stuckAt := time.Now().Add(-2 * StuckAfterDuration) // way past stuck
