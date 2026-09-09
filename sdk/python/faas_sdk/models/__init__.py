@@ -272,6 +272,10 @@ from .debug_regression_item import DebugRegressionItem
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_response import DebugReplayResponse
 from .debug_replay_response_status import DebugReplayResponseStatus
+from .debug_request_correlation import DebugRequestCorrelation
+from .debug_request_correlation_stage import DebugRequestCorrelationStage
+from .debug_request_correlation_stage_phase import DebugRequestCorrelationStagePhase
+from .debug_request_correlation_stage_status import DebugRequestCorrelationStageStatus
 from .debug_request_evidence_response import DebugRequestEvidenceResponse
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
@@ -578,6 +582,11 @@ from .obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTr
 from .obs_node_operation_preflight import ObsNodeOperationPreflight
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_response import OIDCExchangeResponse
+from .open_api_contract_addition import OpenAPIContractAddition
+from .open_api_contract_break import OpenAPIContractBreak
+from .open_api_contract_break_kind import OpenAPIContractBreakKind
+from .open_api_contract_break_method import OpenAPIContractBreakMethod
+from .open_api_contract_diff_response import OpenAPIContractDiffResponse
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -1140,6 +1149,10 @@ __all__ = (
     "DebugRegressionsResponse",
     "DebugReplayResponse",
     "DebugReplayResponseStatus",
+    "DebugRequestCorrelation",
+    "DebugRequestCorrelationStage",
+    "DebugRequestCorrelationStagePhase",
+    "DebugRequestCorrelationStageStatus",
     "DebugRequestEvidenceResponse",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",
@@ -1440,6 +1453,11 @@ __all__ = (
     "ObsNodeOperationPreflight",
     "OIDCExchangeRequest",
     "OIDCExchangeResponse",
+    "OpenAPIContractAddition",
+    "OpenAPIContractBreak",
+    "OpenAPIContractBreakKind",
+    "OpenAPIContractBreakMethod",
+    "OpenAPIContractDiffResponse",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",

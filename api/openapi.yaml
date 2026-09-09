@@ -24313,10 +24313,36 @@ components:
         status: { type: integer, minimum: 100, maximum: 599 }
         approximate: { type: boolean, description: "True when the marker is derived from a collapsed minute bucket rather than an exact request timestamp." }
 
+    DebugRequestCorrelationStage:
+      type: object
+      description: "One bounded edge-to-billing request stage. Missing and partial signals are explicit and are never rendered as zero latency."
+      required: [phase, status]
+      properties:
+        phase: { type: string, enum: [edge, queue, wake, guest, downstream, billing] }
+        status: { type: string, enum: [observed, partial, missing, not_applicable] }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        evidence_count: { type: integer, minimum: 0 }
+        reason: { type: string, maxLength: 256 }
+        approximate: { type: boolean, description: "True when the stage is derived from a collapsed request bucket rather than an exact request timestamp." }
+
+    DebugRequestCorrelation:
+      type: object
+      description: "Fixed-shape edge-to-billing correlation for a retained request. Every stage is present so unavailable telemetry is visible."
+      required: [stages, complete]
+      properties:
+        stages:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items: { $ref: '#/components/schemas/DebugRequestCorrelationStage' }
+        complete: { type: boolean, description: "True only when every applicable stage has complete retained evidence." }
+
     DebugRequestEvidenceResponse:
       type: object
       description: "Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."
-      required: [request, timeline, spans, spans_truncated, explanation, generated_at]
+      required: [request, timeline, correlation, spans, spans_truncated, explanation, generated_at]
       properties:
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
         regression:
@@ -24327,6 +24353,7 @@ components:
           type: array
           maxItems: 200
           items: { $ref: '#/components/schemas/DebugTimelineEvent' }
+        correlation: { $ref: '#/components/schemas/DebugRequestCorrelation' }
         spans:
           type: array
           maxItems: 100

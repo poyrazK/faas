@@ -7007,6 +7007,31 @@ type DebugTimelineEvent struct {
 	Approximate bool   `json:"approximate,omitempty"`
 }
 
+// DebugRequestCorrelation is the stable stage view for one request. It keeps
+// the customer-facing investigation narrative separate from the raw event
+// timeline: every stage is present, even when its signal is unavailable, so a
+// missing phase is explicit rather than silently inferred.
+type DebugRequestCorrelation struct {
+	Stages   []DebugRequestCorrelationStage `json:"stages"`
+	Complete bool                           `json:"complete"`
+}
+
+// DebugRequestCorrelationStage is one bounded edge-to-billing stage. Status
+// is one of observed, partial, missing, or not_applicable. StartedAt,
+// CompletedAt, and DurationMS are populated only when the retained signals
+// support that measurement; no payload, credentials, or raw span attributes
+// are included.
+type DebugRequestCorrelationStage struct {
+	Phase         string `json:"phase"`
+	Status        string `json:"status"`
+	StartedAt     string `json:"started_at,omitempty"`
+	CompletedAt   string `json:"completed_at,omitempty"`
+	DurationMS    int64  `json:"duration_ms,omitempty"`
+	EvidenceCount int    `json:"evidence_count,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Approximate   bool   `json:"approximate,omitempty"`
+}
+
 // DebugRequestEvidenceResponse combines request metadata, bounded span
 // evidence, a matching active regression observation, and a deterministic
 // explanation for GET /v1/apps/{slug}/debug/requests/{req_id}/evidence.
@@ -7014,6 +7039,7 @@ type DebugRequestEvidenceResponse struct {
 	Request        DebugTelemetryRequestItem `json:"request"`
 	Regression     *DebugRegressionItem      `json:"regression,omitempty"`
 	Timeline       []DebugTimelineEvent      `json:"timeline"`
+	Correlation    DebugRequestCorrelation   `json:"correlation"`
 	Spans          []DebugTelemetrySpan      `json:"spans"`
 	SpansTruncated bool                      `json:"spans_truncated"`
 	Explanation    DebugEvidenceExplanation  `json:"explanation"`

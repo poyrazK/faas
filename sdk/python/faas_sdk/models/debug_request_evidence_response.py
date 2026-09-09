@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.debug_evidence_explanation import DebugEvidenceExplanation
     from ..models.debug_regression_item import DebugRegressionItem
+    from ..models.debug_request_correlation import DebugRequestCorrelation
     from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
     from ..models.debug_telemetry_span import DebugTelemetrySpan
     from ..models.debug_timeline_event import DebugTimelineEvent
@@ -27,6 +28,9 @@ class DebugRequestEvidenceResponse:
     request: DebugTelemetryRequestItem
     """One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."""
     timeline: list[DebugTimelineEvent]
+    correlation: DebugRequestCorrelation
+    """Fixed-shape edge-to-billing correlation for a retained request. Every stage is present so unavailable
+    telemetry is visible."""
     spans: list[DebugTelemetrySpan]
     spans_truncated: bool
     explanation: DebugEvidenceExplanation
@@ -44,6 +48,8 @@ class DebugRequestEvidenceResponse:
         for timeline_item_data in self.timeline:
             timeline_item = timeline_item_data.to_dict()
             timeline.append(timeline_item)
+
+        correlation = self.correlation.to_dict()
 
         spans = []
         for spans_item_data in self.spans:
@@ -70,6 +76,7 @@ class DebugRequestEvidenceResponse:
             {
                 "request": request,
                 "timeline": timeline,
+                "correlation": correlation,
                 "spans": spans,
                 "spans_truncated": spans_truncated,
                 "explanation": explanation,
@@ -85,6 +92,7 @@ class DebugRequestEvidenceResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.debug_evidence_explanation import DebugEvidenceExplanation
         from ..models.debug_regression_item import DebugRegressionItem
+        from ..models.debug_request_correlation import DebugRequestCorrelation
         from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
         from ..models.debug_telemetry_span import DebugTelemetrySpan
         from ..models.debug_timeline_event import DebugTimelineEvent
@@ -98,6 +106,8 @@ class DebugRequestEvidenceResponse:
             timeline_item = DebugTimelineEvent.from_dict(timeline_item_data)
 
             timeline.append(timeline_item)
+
+        correlation = DebugRequestCorrelation.from_dict(d.pop("correlation"))
 
         spans = []
         _spans = d.pop("spans")
@@ -132,6 +142,7 @@ class DebugRequestEvidenceResponse:
         debug_request_evidence_response = cls(
             request=request,
             timeline=timeline,
+            correlation=correlation,
             spans=spans,
             spans_truncated=spans_truncated,
             explanation=explanation,

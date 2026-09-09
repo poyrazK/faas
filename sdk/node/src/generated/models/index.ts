@@ -136,6 +136,8 @@ export type { DebugEvidenceExplanation } from './DebugEvidenceExplanation.js';
 export type { DebugRegressionItem } from './DebugRegressionItem.js';
 export type { DebugRegressionsResponse } from './DebugRegressionsResponse.js';
 export type { DebugReplayResponse } from './DebugReplayResponse.js';
+export type { DebugRequestCorrelation } from './DebugRequestCorrelation.js';
+export type { DebugRequestCorrelationStage } from './DebugRequestCorrelationStage.js';
 export type { DebugRequestEvidenceResponse } from './DebugRequestEvidenceResponse.js';
 export type { DebugTelemetryListResponse } from './DebugTelemetryListResponse.js';
 export type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
