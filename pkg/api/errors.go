@@ -78,6 +78,11 @@ type Problem struct {
 	// Limit and Observed are set on quota/limit errors (spec §Conventions).
 	Limit    *int64 `json:"limit,omitempty"`
 	Observed *int64 `json:"observed,omitempty"`
+	// LimitBytes and ObservedBytes are explicit byte-oriented aliases used by
+	// request-body cap errors. The generic fields remain populated for older
+	// clients that only understand limit/observed.
+	LimitBytes    *int64 `json:"limit_bytes,omitempty"`
+	ObservedBytes *int64 `json:"observed_bytes,omitempty"`
 	// DocsURL points the user at the single next action.
 	DocsURL string `json:"docs_url,omitempty"`
 	// CheckoutURL is the provider-neutral hosted checkout URL for a paid
@@ -264,6 +269,15 @@ func NewProblem(status int, code, title, detail string) *Problem {
 func (p *Problem) WithLimit(limit, observed int64) *Problem {
 	p.Limit = &limit
 	p.Observed = &observed
+	return p
+}
+
+// WithByteLimit annotates a byte-oriented limit error with both the explicit
+// byte keys and the legacy generic limit/observed keys.
+func (p *Problem) WithByteLimit(limit, observed int64) *Problem {
+	p.WithLimit(limit, observed)
+	p.LimitBytes = &limit
+	p.ObservedBytes = &observed
 	return p
 }
 
@@ -555,7 +569,7 @@ const (
 	CodeUnsupportedMediaType = "unsupported_media_type"
 	// CodeRequestTooLarge is returned when the inbound body
 	// exceeds the per-rule cap (kind=validate MaxBodyBytes) or
-	// the plan's outer cap (api.MaxRequestBodyBytes). Distinct
+	// the plan's outer cap (Plan.MaxRequestBodyBytes()). Distinct
 	// from CodeBadRequest so the dashboard pivots the message
 	// to "send a smaller body" — the customer's app's UI can
 	// chunk on receipt.
@@ -2261,6 +2275,19 @@ func ErrSourceTooLarge(l Limits, observedBytes int64) *Problem {
 		fmt.Sprintf("%s plan caps source at %d MB.", l.Plan, l.SourceTarballMaxMB)).
 		WithLimit(capBytes, observedBytes).
 		WithDocs(docsBase + "/build/limits")
+}
+
+// ErrRequestBodyTooLarge is the stable 413 envelope for an inbound request
+// body that exceeds the plan or route cap. The docs and hint point customers
+// at bucket signed-URL uploads, which avoid sending large objects through the
+// request path entirely.
+func ErrRequestBodyTooLarge(limit, observed int64) *Problem {
+	return NewProblem(http.StatusRequestEntityTooLarge, CodeRequestTooLarge,
+		"Request body too large",
+		fmt.Sprintf("request body is %d bytes, above the %d-byte cap", observed, limit)).
+		WithByteLimit(limit, observed).
+		WithDocs(docsBase + "/storage#signed-uploads").
+		WithHint("For larger uploads, use a bucket signed URL (gregale storage ... signed-url).")
 }
 
 // ErrSourceInvalid is returned when a tarball fails shape validation

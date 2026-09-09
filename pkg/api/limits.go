@@ -1283,6 +1283,10 @@ type Limits struct {
 	// this number; PR-A leaves the writer unused on the buffered
 	// path and PR-B activates it on the streaming path.
 	MaxResponseBodyBytes int64
+	// RequestBodyMaxBytes is the per-plan inbound request body cap. Edge
+	// rules may lower this value for a route, but never raise it. A zero
+	// value fails closed to MaxRequestBodyBytes for unknown/legacy rows.
+	RequestBodyMaxBytes int64
 	// ResponseWriteTimeoutSeconds is the total-response-write window
 	// for streaming responses (spec §4.1: 300 s; issue #471 raises
 	// it to 900 s for Hobby+ so 30 s LLM streams + slow client reads
@@ -1827,6 +1831,7 @@ var planLimits = map[Plan]Limits{
 		// cap lift (spec §4.1 baseline 25 MB / 300 s).
 		StreamingEnabled:            false,
 		MaxResponseBodyBytes:        MaxResponseBodyBytesDefault,
+		RequestBodyMaxBytes:         10 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: ResponseWriteTimeoutDefault,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Free
 		// is the abuse-floor tier — a long-lived WS would pin a
@@ -2191,6 +2196,7 @@ var planLimits = map[Plan]Limits{
 		// to cover a 30–120 s chat completion plus headroom.
 		StreamingEnabled:            true,
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
+		RequestBodyMaxBytes:         25 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Hobby
 		// is the first paid tier — opt-in by default (the LLM/agent
@@ -2549,6 +2555,7 @@ var planLimits = map[Plan]Limits{
 		// constraint long before 100 MB matters.
 		StreamingEnabled:            true,
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
+		RequestBodyMaxBytes:         100 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Pro is
 		// the first tier where production workloads sit — opt-in by
@@ -2923,6 +2930,7 @@ var planLimits = map[Plan]Limits{
 		// tripping the cap.
 		StreamingEnabled:            true,
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
+		RequestBodyMaxBytes:         250 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Scale
 		// stays on by default — production workloads at this tier
@@ -5272,6 +5280,17 @@ func (p Plan) MaxResponseBodyBytes() int64 {
 		return MaxResponseBodyBytesDefault
 	}
 	return l.MaxResponseBodyBytes
+}
+
+// MaxRequestBodyBytes returns the per-plan inbound request body cap in bytes.
+// Unknown plans and legacy rows fail closed to the historical 25 MiB platform
+// cap. Edge-rule caps are applied as a further lower bound at the gateway.
+func (p Plan) MaxRequestBodyBytes() int64 {
+	l, ok := LimitsFor(p)
+	if !ok || l.RequestBodyMaxBytes <= 0 {
+		return MaxRequestBodyBytes
+	}
+	return l.RequestBodyMaxBytes
 }
 
 // ResponseWriteTimeout returns the per-response write timeout for this

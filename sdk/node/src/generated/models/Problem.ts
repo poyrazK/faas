@@ -36,6 +36,14 @@ export type Problem = {
   detail?: string;
   limit?: number | null;
   observed?: number | null;
+  /**
+   * Explicit byte limit for request-body and other byte-oriented errors.
+   */
+  limit_bytes?: number | null;
+  /**
+   * Observed byte count for request-body and other byte-oriented errors.
+   */
+  observed_bytes?: number | null;
   docs_url?: string;
   /**
    * Provider-neutral hosted checkout URL on a `payment_required`
