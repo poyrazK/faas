@@ -999,7 +999,7 @@ Production debugger (ADR-127)
 
 ### debug requests
 
-Per-request telemetry (list|get|evidence|replay)
+Per-request telemetry (list|get|show|evidence|replay)
 
 ### debug regressions
 
