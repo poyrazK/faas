@@ -245,6 +245,9 @@ export type { ManagedPostgresBindingList } from './models/ManagedPostgresBinding
 export type { ManagedPostgresDatabase } from './models/ManagedPostgresDatabase.js';
 export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDatabaseList.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
+export type { ManagedPostgresUsageLineItem } from './models/ManagedPostgresUsageLineItem.js';
+export type { ManagedPostgresUsageOperatorResponse } from './models/ManagedPostgresUsageOperatorResponse.js';
+export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsageResponse.js';
 export type { MemberListResponse } from './models/MemberListResponse.js';
 export type { MFAConfirmRequest } from './models/MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './models/MFAConfirmResponse.js';

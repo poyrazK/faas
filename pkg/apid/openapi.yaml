@@ -367,6 +367,27 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/account/managed-postgres-usage:
+    get:
+      operationId: getManagedPostgresUsage
+      summary: Read managed PostgreSQL usage and guardrail state
+      description: |
+        Requires usage read scope. Returns normalized current-month meters,
+        plan headroom, and freshness state. Provider IDs, rates, credentials,
+        and internal cost line items are never returned.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Current managed PostgreSQL usage; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageResponse' }
+        default:
+          description: Authentication or managed PostgreSQL accounting error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases/{id}/restore:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -940,6 +961,29 @@ paths:
               schema: { $ref: '#/components/schemas/ObjectStorageUsageResponse' }
         default:
           description: Access denied or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/usage/{account_id}:
+    get:
+      operationId: getManagedPostgresUsageOperator
+      summary: Read normalized managed PostgreSQL usage for an account
+      description: Operator-only view with effective guardrail ceilings and internal COGS line items. Provider IDs and credentials are never returned.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account whose normalized PostgreSQL usage is requested.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Account usage and internal normalized ledger lines; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageOperatorResponse' }
+        default:
+          description: Access denied, account not found, or accounting unavailable
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -12916,6 +12960,62 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresDatabase' } }
+    ManagedPostgresUsageResponse:
+      description: Customer-safe current UTC-month managed PostgreSQL usage and guardrail state.
+      type: object
+      required: [period_start, policy_enabled, fresh, guardrail_state, ready_databases, database_limit, storage_limit_bytes, compute_unit_seconds, storage_byte_seconds, storage_byte_seconds_limit, storage_byte_seconds_remaining, history_byte_seconds, egress_bytes]
+      properties:
+        period_start: { type: string, format: date-time }
+        observed_at: { type: [string, "null"], format: date-time }
+        policy_enabled: { type: boolean }
+        fresh: { type: boolean }
+        guardrail_state: { type: string, enum: [disabled, healthy, stale, reached] }
+        ready_databases: { type: integer, minimum: 0 }
+        database_limit: { type: integer, minimum: 0 }
+        storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
+        compute_unit_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_limit: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
+        history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        egress_bytes: { type: integer, format: int64, minimum: 0 }
+    ManagedPostgresUsageLineItem:
+      description: Normalized operator-only managed PostgreSQL ledger line.
+      type: object
+      required: [code, meter, unit, quantity, cost_millicents]
+      properties:
+        code: { type: string, enum: [managed_postgres.compute, managed_postgres.storage, managed_postgres.restore_history, managed_postgres.egress] }
+        meter: { type: string }
+        unit: { type: string }
+        quantity: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+    ManagedPostgresUsageOperatorResponse:
+      description: Operator-only managed PostgreSQL usage, effective ceilings, and internal COGS line items.
+      type: object
+      required: [account_id, period_start, policy_enabled, fresh, guardrail_state, ready_databases, database_limit, storage_limit_bytes, compute_unit_seconds, storage_byte_seconds, storage_byte_seconds_limit, storage_byte_seconds_remaining, history_byte_seconds, egress_bytes, cost_millicents, max_monthly_cost_millicents, max_monthly_compute_unit_seconds, max_monthly_storage_byte_seconds, max_monthly_history_byte_seconds, max_monthly_egress_bytes, line_items]
+      properties:
+        account_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        observed_at: { type: [string, "null"], format: date-time }
+        policy_enabled: { type: boolean }
+        fresh: { type: boolean }
+        guardrail_state: { type: string, enum: [disabled, healthy, stale, reached] }
+        ready_databases: { type: integer, minimum: 0 }
+        database_limit: { type: integer, minimum: 0 }
+        storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
+        compute_unit_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_limit: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
+        history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        egress_bytes: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        max_monthly_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        max_monthly_compute_unit_seconds: { type: integer, format: int64, minimum: 0 }
+        max_monthly_storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        max_monthly_history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        max_monthly_egress_bytes: { type: integer, format: int64, minimum: 0 }
+        line_items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresUsageLineItem' } }
     CreateManagedPostgresDatabaseRequest:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object

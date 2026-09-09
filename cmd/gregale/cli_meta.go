@@ -931,9 +931,10 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "postgres",
 		DocSlug: "postgres",
-		Short:   "Manage managed PostgreSQL (postgres list|create|get|delete|restore|bindings ...)",
+		Short:   "Manage managed PostgreSQL (postgres list|usage|create|get|delete|restore|bindings ...)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
+			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
 			{Name: "create", Short: "Create a managed PostgreSQL database", Flags: []cliFlag{
 				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
