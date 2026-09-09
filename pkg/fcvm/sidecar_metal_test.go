@@ -52,6 +52,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
+	faasnetns "github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 )
 
@@ -157,28 +158,33 @@ func buildSidecarExt4(dst, name string, port int) error {
 	return nil
 }
 
-func waitForSidecarHTTP(ctx context.Context, url string) (*http.Response, error) {
-	client := &http.Client{Timeout: 500 * time.Millisecond}
+func sidecarHTTPInNetNS(ctx context.Context, namespace string, port int, requestPath, output string) ([]byte, error) {
+	busybox, err := exec.LookPath("busybox")
+	if err != nil {
+		return nil, fmt.Errorf("busybox not on PATH: %w", err)
+	}
+	url := fmt.Sprintf("http://%s:%d%s", faasnetns.GuestIP, port, requestPath)
+	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", namespace, busybox, "wget", "-q", "-O", output, url)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("GET %s in %s: %w: %s", url, namespace, err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
+
+func waitForSidecarHTTP(ctx context.Context, namespace string, port int, requestPath string) ([]byte, error) {
 	var lastErr error
 	for {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := client.Do(req)
-		if err == nil && resp.StatusCode/100 == 2 {
-			return resp, nil
-		}
+		attemptCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		body, err := sidecarHTTPInNetNS(attemptCtx, namespace, port, requestPath, "-")
+		cancel()
 		if err == nil {
-			lastErr = fmt.Errorf("status %d", resp.StatusCode)
-			_, _ = io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-		} else {
-			lastErr = err
+			return body, nil
 		}
+		lastErr = err
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("wait for %s: %w (last result: %v)", url, ctx.Err(), lastErr)
+			return nil, fmt.Errorf("wait for sidecar :%d%s in %s: %w (last result: %v)", port, requestPath, namespace, ctx.Err(), lastErr)
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
@@ -259,13 +265,11 @@ func TestMetalSidecarBoot(t *testing.T) {
 		t.Fatalf("main :8080 returned server error %d: %s", resp.StatusCode, body)
 	}
 	readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
-	sidecarResp, err := waitForSidecarHTTP(readyCtx, fmt.Sprintf("http://%s:9090/", inst.Lease.HostIP.String()))
+	_, err = waitForSidecarHTTP(readyCtx, inst.Lease.Netns, 9090, "/")
 	readyCancel()
 	if err != nil {
 		t.Fatalf("sidecar readiness: %v", err)
 	}
-	_, _ = io.Copy(io.Discard, sidecarResp.Body)
-	sidecarResp.Body.Close()
 
 	// Tear down and verify the per-instance host resources are gone.
 	if err := m.Destroy(ctx, instance); err != nil {
@@ -276,16 +280,12 @@ func TestMetalSidecarBoot(t *testing.T) {
 
 // TestMetalSidecarPortReachable covers AC #2: a sidecar runs
 // alongside the main workload, reachable on a customer-pinned
-// port inside the netns. We use http.Get against the host IP
-// on the sidecar port — the same address waitReady dials on
-// the main port. The DNAT publishes :9090 inside the guest as
-// :9090 on the host identity, so the probe lands on the
-// sidecar's busybox httpd.
+// port inside the netns. The test enters the instance network namespace and
+// dials the guest address directly, matching how the main workload reaches an
+// internal sidecar.
 //
-// Caveat: the gateway's per-instance portnorm ladder only DNATs
-// the customer-pinned main port today (PR-C adds per-sidecar
-// ports). The metal test bypasses the gateway and dials the
-// host IP directly — same path vmmd's waitReady uses. This
+// The gateway's per-instance portnorm ladder publishes only the main port;
+// sidecar ports remain internal to the deployment. This
 // proves the underlying guest-init + isolated-root + cgroup wiring
 // without depending on the gateway-side portnorm that PR-C
 // lands separately.
@@ -318,20 +318,14 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
 
-	url := fmt.Sprintf("http://%s:9091/", inst.Lease.HostIP.String())
 	readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
-	resp, err := waitForSidecarHTTP(readyCtx, url)
+	body, err := waitForSidecarHTTP(readyCtx, inst.Lease.Netns, 9091, "/")
 	readyCancel()
 	if err != nil {
-		t.Fatalf("GET %s: %v", url, err)
+		t.Fatalf("sidecar :9091 readiness: %v", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		t.Fatalf("sidecar :9091 returned %d: %s", resp.StatusCode, body)
-	}
-	if !strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
-		t.Errorf("sidecar Content-Type = %q, want text/html (busybox httpd)", resp.Header.Get("Content-Type"))
+	if !strings.Contains(string(body), "sidecar-ready") {
+		t.Fatalf("sidecar :9091 body = %q, want readiness fixture", body)
 	}
 
 	if err := m.Destroy(ctx, instance); err != nil {
@@ -383,13 +377,14 @@ func TestMetalTwoSidecarsColdBoot(t *testing.T) {
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
 	for _, port := range []int{9100, 9101} {
 		readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
-		resp, readyErr := waitForSidecarHTTP(readyCtx, fmt.Sprintf("http://%s:%d/", inst.Lease.HostIP.String(), port))
+		body, readyErr := waitForSidecarHTTP(readyCtx, inst.Lease.Netns, port, "/")
 		readyCancel()
 		if readyErr != nil {
 			t.Fatalf("sidecar :%d readiness: %v", port, readyErr)
 		}
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		if !strings.Contains(string(body), "sidecar-ready") {
+			t.Fatalf("sidecar :%d body = %q, want readiness fixture", port, body)
+		}
 	}
 	// UUID readback lives in cmd/e2e/v6_distinct_uuid_e2e_test.go.
 
@@ -499,13 +494,14 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 		t.Fatalf("main :8080 (pre) = %d, want a live HTTP response", resp.StatusCode)
 	}
 	readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
-	readyResp, err := waitForSidecarHTTP(readyCtx, fmt.Sprintf("http://%s:%d/", inst.Lease.HostIP.String(), sidecarPort))
+	readyBody, err := waitForSidecarHTTP(readyCtx, inst.Lease.Netns, sidecarPort, "/")
 	readyCancel()
 	if err != nil {
 		t.Fatalf("sidecar pre-OOM readiness: %v", err)
 	}
-	_, _ = io.Copy(io.Discard, readyResp.Body)
-	readyResp.Body.Close()
+	if !strings.Contains(string(readyBody), "oom-test") {
+		t.Fatalf("sidecar :%d body = %q, want OOM fixture", sidecarPort, readyBody)
+	}
 
 	// Step 2: trigger the OOM. The sidecar's httpd serves
 	// /var/log/lastlog (a 32 MB file) on GET /lastlog. The
@@ -515,13 +511,11 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	// errors / EOF mid-flight are EXPECTED here — that's
 	// the OOM. We don't fail the test on the sidecar error;
 	// the AC #4 acceptance is the main workload's survival.
-	sidecarURL := fmt.Sprintf("http://%s:%d/lastlog", inst.Lease.HostIP.String(), sidecarPort)
-	sresp, err := http.Get(sidecarURL)
+	oomCtx, oomCancel := context.WithTimeout(ctx, 5*time.Second)
+	_, err = sidecarHTTPInNetNS(oomCtx, inst.Lease.Netns, sidecarPort, "/lastlog", "/dev/null")
+	oomCancel()
 	if err == nil {
-		// Drain so the kernel actually delivers the bytes.
-		_, _ = io.Copy(io.Discard, sresp.Body)
-		sresp.Body.Close()
-		t.Logf("sidecar response = %d (no OOM triggered; check fixture size > cgroup)", sresp.StatusCode)
+		t.Log("sidecar response completed (no OOM triggered; check fixture size > cgroup)")
 	} else {
 		t.Logf("sidecar GET errored (%v) — expected on OOM", err)
 	}
