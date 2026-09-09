@@ -6,6 +6,18 @@
 > proxy-first-byte, application response, client network, and physical-distance
 > timings below are diagnostic and do not pass or fail that restore gate.
 
+The deployed `v0.1.18-rc.94` release completed **100/100 distinct snapshot
+restores** on the authoritative SSD node. The canonical schedd platform
+interval measured **p50 94.795 ms / p95 137.756 ms / p99 148.229 ms / max
+149.067 ms**, with zero samples at or above 350 ms. Kernel, base and main
+artifacts were cache hits in every sample.
+
+The normal ten-second idle reaper parked the only live instance between
+samples; no operator cold eviction was used. This is an idle sequential cohort
+and does not replace normal-traffic or concurrent burst gates. See the [raw
+events, correlations, analyzer and asserted
+summary](evidence/20260909-rc94-ssd-restore/README.md).
+
 The basic Node 22 function met the idle internal-gateway target in this cohort:
 20/20 HTTP 200 responses, full-response p95 **281.22 ms**, maximum **324.60 ms**.
 Every request began with zero live instances; all 20 created distinct instances
