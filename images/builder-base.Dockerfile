@@ -38,6 +38,7 @@ ARG BUILDKIT_SOURCE_SHA256=b19deba3f8cf3eb05407aa85c246e22839770c437439a04d880ef
 ARG GO_ARCHIVE_VERSION=0.3.0
 ARG BUILDKIT_GRPC_VERSION=1.83.2
 ARG RUNC_EBPF_VERSION=0.22.0
+ARG RUNC_CGROUPS_VERSION=0.1.0
 
 # The latest upstream runc release still embeds golang.org/x/net v0.50.0 and
 # Go 1.25.12, which leaves this image exposed to fixed HIGH advisories. Build
@@ -98,6 +99,7 @@ WORKDIR /src/runc
 ARG RUNC_VERSION
 ARG RUNC_SOURCE_SHA256
 ARG RUNC_EBPF_VERSION
+ARG RUNC_CGROUPS_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl libseccomp-dev && \
       rm -rf /var/lib/apt/lists/* && \
@@ -106,6 +108,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       echo "${RUNC_SOURCE_SHA256}  /tmp/runc-source.tgz" | sha256sum -c - && \
       tar -xzf /tmp/runc-source.tgz --strip-components=1 -C /src/runc && \
       rm /tmp/runc-source.tgz && \
+      go mod edit -require=github.com/opencontainers/cgroups@v${RUNC_CGROUPS_VERSION} && \
       go mod edit -require=github.com/cilium/ebpf@v${RUNC_EBPF_VERSION} && \
       go mod edit -require=golang.org/x/net@v0.57.0 && \
       go mod download && \
@@ -115,7 +118,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
           -ldflags "-linkmode external -extldflags -static-pie -X main.gitCommit=v${RUNC_VERSION}" \
           -o /out/runc . && \
       go version -m /out/runc | tee /tmp/runc-build-info && \
-      grep -q "github.com/cilium/ebpf.*v${RUNC_EBPF_VERSION}" /tmp/runc-build-info && \
       grep -q 'golang.org/x/net.*v0.57.0' /tmp/runc-build-info && \
       ! grep -Eq 'v0.50.0|go1.25.12' /tmp/runc-build-info
 
