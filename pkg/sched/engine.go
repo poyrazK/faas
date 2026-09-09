@@ -4461,7 +4461,11 @@ func (e *Engine) ReconcileExpiredMigrations(ctx context.Context) (int, error) {
 	if e.migratingWatchdogTickLimit > 0 {
 		maxPerTick = e.migratingWatchdogTickLimit
 	}
-	rows, err := e.store.ListExpiredMigrations(ctx, maxPerTick)
+	leaseSeconds := api.MigrateLiveLeaseSeconds
+	if e.migrateLiveLeaseSeconds > 0 {
+		leaseSeconds = e.migrateLiveLeaseSeconds
+	}
+	rows, err := e.store.ListExpiredMigrations(ctx, maxPerTick, time.Duration(leaseSeconds)*time.Second)
 	if err != nil {
 		return 0, fmt.Errorf("sched: reconcile expired migrations: list: %w", err)
 	}

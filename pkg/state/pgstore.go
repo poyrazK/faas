@@ -2771,9 +2771,9 @@ func (s *PgStore) ListLiveInstancesOnNode(ctx context.Context, nodeID string, ma
 	sel := `select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''),
 	               coalesce(i.guest_uid,0), coalesce(host(i.host_ip),''), i.ram_mb,
 	               i.started_at, i.last_request_at, i.parked_at,
-	               coalesce(i.node_id::text, ''), i.wake_id, i.framework_ready_at,
-	               i.migrated_from_node_id::text, i.migrated_at, coalesce(i.lease_token, ''),
-	               i.tail_count, i.mode, i.request_count
+		               coalesce(i.node_id::text, ''), i.wake_id, i.framework_ready_at,
+		               i.migrated_from_node_id::text, i.migrated_at, coalesce(i.lease_token, ''),
+		               i.migration_started_at, i.tail_count, i.mode, i.request_count
 	          from instances i
 	         where i.state = 'running'` +
 		nodeClause + `
@@ -2823,7 +2823,8 @@ func (s *PgStore) MarkInstanceMigrating(ctx context.Context, instanceID, current
 	tag, err := s.pool.Exec(ctx,
 		`update instances
 		    set state = 'migrating',
-		        lease_token = $3
+		        lease_token = $3,
+		        migration_started_at = now()
 		  where id = $1
 		    and node_id = $2
 		    and state = 'running'`,
@@ -2887,6 +2888,7 @@ func (s *PgStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNode
 		        migrated_from_node_id = $2,
 		        migrated_at = now(),
 		        lease_token = $4,
+		        migration_started_at = NULL,
 		        state = 'running'
 		where id = $1
 		    and state = 'migrating'
@@ -2935,7 +2937,8 @@ func (s *PgStore) CancelInstanceMigration(ctx context.Context, instanceID, origi
 	tag, err := s.pool.Exec(ctx,
 		`update instances
 		    set state = 'parked',
-		        lease_token = NULL
+		        lease_token = NULL,
+		        migration_started_at = NULL
 		  where id = $1
 		    and state = 'migrating'
 		    and node_id = $2
@@ -2950,16 +2953,14 @@ func (s *PgStore) CancelInstanceMigration(ctx context.Context, instanceID, origi
 	return nil
 }
 
-// ListExpiredMigrations returns every instance row in
-// state='migrating' (Tier A6 / ADR-067 migrating-instance
-// watchdog). The watchdog is the only writer that can move a
-// row out of 'migrating' without a peer commit, so the
-// unresolved row is the input set. The SQL also enforces
-// lease_token IS NOT NULL — every wedged migration must
-// carry the lease the watchdog needs to drive the gRPC
-// re-invite; a row in 'migrating' without a lease is a
-// corrupted state and the watchdog drops it silently (the
-// next watch-dog tick is no-op idempotent).
+// ListExpiredMigrations returns leased instance rows in
+// state='migrating' whose migration_started_at is older than the
+// requested lease age (Tier A6 / ADR-067 migrating-instance watchdog).
+// The watchdog is the only writer that can move a row out of
+// 'migrating' without a peer commit, so the unresolved row is the input
+// set. A row in 'migrating' without a lease or start timestamp is ignored
+// by the aged production query and remains visible through the legacy
+// unfiltered form for repair tooling.
 //
 // Sorted by instance id ASC for determinism so two peers
 // observing the same bad-owner event read the same input
@@ -2969,22 +2970,31 @@ func (s *PgStore) CancelInstanceMigration(ctx context.Context, instanceID, origi
 // Returns an empty slice (not ErrNotFound) when no rows
 // match; callers treat that as "nothing to reconcile this
 // tick". Symmetric with ListLiveInstancesOnNode (Tier A5).
-func (s *PgStore) ListExpiredMigrations(ctx context.Context, maxPerTick int) ([]Instance, error) {
+func (s *PgStore) ListExpiredMigrations(ctx context.Context, maxPerTick int, olderThan ...time.Duration) ([]Instance, error) {
 	if maxPerTick < 1 {
 		return nil, nil
+	}
+	var cutoff any
+	if len(olderThan) > 0 && olderThan[0] > 0 {
+		cutoff = time.Now().UTC().Add(-olderThan[0])
 	}
 	sel := `select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''),
 	               coalesce(i.guest_uid,0), coalesce(host(i.host_ip),''), i.ram_mb,
 	               i.started_at, i.last_request_at, i.parked_at,
 	               coalesce(i.node_id::text, ''), i.wake_id, i.framework_ready_at,
 	               i.migrated_from_node_id::text, i.migrated_at, coalesce(i.lease_token, ''),
+	               i.migration_started_at,
 	               i.tail_count, i.mode, i.request_count
 	          from instances i
 	         where i.state = 'migrating'
 	           and i.lease_token is not null
-	         order by i.id asc
-	         limit $1`
-	rows, err := s.pool.Query(ctx, sel, maxPerTick)
+		           and ($2::timestamptz IS NULL OR i.migration_started_at <= $2)`
+	orderBy := "i.id asc"
+	if cutoff != nil {
+		orderBy = "i.migration_started_at asc nulls first, i.id asc"
+	}
+	sel += " order by " + orderBy + " limit $1"
+	rows, err := s.pool.Query(ctx, sel, maxPerTick, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("state: list expired migrations: %w", err)
 	}
@@ -3026,7 +3036,8 @@ func (s *PgStore) ReinviteMigratingInstance(ctx context.Context, instanceID, lea
 		`update instances
 		    set state = 'running',
 		        migrated_at = now(),
-		        lease_token = NULL
+		        lease_token = NULL,
+		        migration_started_at = NULL
 		  where id = $1
 		    and state = 'migrating'
 		    and lease_token = $2`,
@@ -3069,7 +3080,8 @@ func (s *PgStore) AbortMigratingInstance(ctx context.Context, instanceID, leaseT
 	tag, err := s.pool.Exec(ctx,
 		`update instances
 		    set state = 'parked',
-		        lease_token = NULL
+		        lease_token = NULL,
+		        migration_started_at = NULL
 		  where id = $1
 		    and state = 'migrating'
 		    and lease_token = $2`,
@@ -11831,7 +11843,8 @@ func (s *PgStore) MigrationInstanceByID(ctx context.Context, id string) (Instanc
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at,
 		        coalesce(node_id::text, ''), wake_id, framework_ready_at,
-		        migrated_from_node_id::text, migrated_at, coalesce(lease_token, ''), tail_count, mode, request_count
+		        migrated_from_node_id::text, migrated_at, coalesce(lease_token, ''), migration_started_at,
+		        tail_count, mode, request_count
 		 from instances where id = $1`, id)
 	inst, err := scanInstanceColsWithMigration(row.Scan)
 	if err != nil {
@@ -18432,10 +18445,11 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 	return ins, nil
 }
 
-// scanInstanceColsWithMigration is the 20-column variant of
+// scanInstanceColsWithMigration is the 21-column variant of
 // scanInstanceCols that also lifts framework_ready_at (PR #543 /
 // migration 00120), migrated_from_node_id, migrated_at, and
-// lease_token (Tier A5 / migration 00097, ADR-066), and
+// lease_token (Tier A5 / migration 00097, ADR-066), migration_started_at,
+// and
 // tail_count (issue #667 / ADR-078, migration 00151). Used by
 // ListLiveInstancesOnNode and ListExpiredMigrations — the rest
 // of the codebase reads 15-column instances rows and doesn't
@@ -18452,7 +18466,7 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 // scan it for shape parity. tail_count is NOT NULL DEFAULT 0
 // and scans into a plain int.
 //
-// Single-call scan: pgx rejects a 17-column SELECT with a 13-dest
+// Single-call scan: pgx rejects a multi-column SELECT with a 13-dest
 // scan followed by a 4-dest scan — the row surface is one
 // contiguous column stream and each scan call must consume all
 // columns in one go. The base 13 fields are duplicated here
@@ -18464,9 +18478,11 @@ func scanInstanceColsWithMigration(scan func(...any) error) (Instance, error) {
 	var migFromStr *string
 	var migAtTime *time.Time
 	var leaseStr *string
+	var migStartedAt *time.Time
 	if err := scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
 		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID,
-		&frameworkReady, &migFromStr, &migAtTime, &leaseStr, &ins.TailCount, &ins.Mode, &ins.RequestCount); err != nil {
+		&frameworkReady, &migFromStr, &migAtTime, &leaseStr, &migStartedAt,
+		&ins.TailCount, &ins.Mode, &ins.RequestCount); err != nil {
 		return Instance{}, err
 	}
 	if started != nil {
@@ -18484,6 +18500,7 @@ func scanInstanceColsWithMigration(scan func(...any) error) (Instance, error) {
 	}
 	ins.MigratedFromNodeID = migFromStr
 	ins.MigratedAt = migAtTime
+	ins.MigrationStartedAt = migStartedAt
 	if leaseStr != nil {
 		ins.LeaseToken = *leaseStr
 	}

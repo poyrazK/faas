@@ -1809,17 +1809,21 @@ type Store interface {
 	// so a future re-attempt at migration mints a fresh one.
 	CancelInstanceMigration(ctx context.Context, instanceID, originalNodeID, leaseToken string) error
 
-	// ListExpiredMigrations returns every instance row in
-	// state='migrating' (Tier A6 / ADR-067). The watchdog is
-	// the only writer that can move a row out of 'migrating'
-	// without a peer commit, so the unresolved row is the
-	// input set. Sorted by instance id ASC for determinism.
+	// ListExpiredMigrations returns instance rows in state='migrating'
+	// whose durable migration lease has expired (Tier A6 / ADR-067). The
+	// watchdog is the only writer that can move a row out of 'migrating'
+	// without a peer commit, so the unresolved row is the input set. Sorted
+	// by migration start time and instance id for deterministic draining.
+	// The optional olderThan argument is the lease age. Omitting it keeps the
+	// legacy all-migrating view used by compatibility tooling; production
+	// callers must pass the lease duration so an in-flight handoff is never
+	// reconciled early.
 	// maxPerTick caps the result set (the caller passes
 	// api.MigratingWatchdogTickLimit via pkg/api/limits.go).
 	// Returns an empty slice (not ErrNotFound) when no rows
 	// match; callers treat that as "nothing to reconcile this
 	// tick".
-	ListExpiredMigrations(ctx context.Context, maxPerTick int) ([]Instance, error)
+	ListExpiredMigrations(ctx context.Context, maxPerTick int, olderThan ...time.Duration) ([]Instance, error)
 	// ReinviteMigratingInstance is the active-owner ack gate of
 	// the Tier A6 / ADR-067 watchdog. Conditional UPDATE that
 	// flips state='migrating' → 'running', stamps
