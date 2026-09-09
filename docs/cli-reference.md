@@ -23,7 +23,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
 | [`deployments`](#deployments) | List deployments (--limit N \| --before C \| --all) |
-| [`deployment`](#deployment) | Get or wait for one deployment (&lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
+| [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete) |
 | [`deploy`](#deploy) | Deploy (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
@@ -650,7 +650,7 @@ List deployments (--limit N | --before C | --all)
 
 ## deployment
 
-Get or wait for one deployment (&lt;id&gt; | wait &lt;id&gt; | set-min-instances &lt;id&gt;)
+Get, summarize, or wait for one deployment (&lt;id&gt; | summary &lt;id&gt; | wait &lt;id&gt; | set-min-instances &lt;id&gt;)
 
 `gregale deployment [<subcommand>] <id> [--show-scan] [--min <N>]`
 
@@ -658,6 +658,14 @@ Get or wait for one deployment (&lt;id&gt; | wait &lt;id&gt; | set-min-instances
 |---|---|---|
 | `--show-scan` | include the per-deploy grype scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
+
+### deployment summary
+
+Show the release diff and rollback target
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
 
 ### deployment wait
 

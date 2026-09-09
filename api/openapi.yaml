@@ -3671,6 +3671,31 @@ paths:
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/deployments/{id}/summary:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getAppDeploymentSummary
+      summary: Fetch a deployment release summary and diff.
+      description: |
+        Returns the selected deployment, its immediately preceding release,
+        a stable field-level diff of non-secret release metadata, and the
+        deployment id the app rollback operation would currently target.
+        Unknown, cross-account, or slug/deployment-mismatch requests return
+        the same IDOR-safe 404 surface as the other app-scoped reads.
+      responses:
+        '200':
+          description: The release summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentSummaryResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/deployments/latest:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -15516,6 +15541,12 @@ components:
           description: "Per-line log excerpts explaining the failure (error-explanations cluster). Capped at 20 entries × 512 bytes by the CLI tripwire."
           items: { $ref: '#/components/schemas/LogExcerpt' }
         created_at: { type: string, format: date-time }
+        source_url:
+          type: [string, "null"]
+          description: "Upstream repository or registry reference that produced this deployment, when known."
+        commit_sha:
+          type: [string, "null"]
+          description: "Upstream commit SHA that produced this deployment, when known."
         source_root:
           type: string
           description: "Repository-relative build root used by a workspace context upload; omitted when the archive root is built."
@@ -15940,6 +15971,40 @@ components:
           type: array
           items: { $ref: '#/components/schemas/DeploymentResponse' }
         next_before: { type: [string, "null"], format: date-time }
+
+    DeploymentSummaryResponse:
+      description: "App-scoped release cockpit: selected deployment, immediate predecessor, non-secret field-level diff, and eligible rollback target."
+      type: object
+      required: [deployment, changes]
+      properties:
+        deployment:
+          $ref: '#/components/schemas/DeploymentResponse'
+        previous:
+          oneOf:
+            - $ref: '#/components/schemas/DeploymentResponse'
+            - type: 'null'
+          description: "The immediately older deployment by created_at, or null for an initial release."
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeploymentChange'
+        rollback_target_id:
+          type: [string, "null"]
+          format: uuid
+          description: "The latest superseded deployment eligible for POST /v1/apps/{slug}/rollback; omitted when none exists."
+
+    DeploymentChange:
+      description: "One non-secret release field that changed from the previous deployment."
+      type: object
+      required: [field, before, after]
+      properties:
+        field:
+          type: string
+          enum: [status, kind, build_id, image_digest, source_url, commit_sha, source_root, scope, build_plan, min_instances, traffic_percent, has_overrides, canary_preset, rollback_on_5xx, rollout_state]
+        before:
+          type: [string, number, boolean, object, "null"]
+        after:
+          type: [string, number, boolean, object, "null"]
 
 # ─── Billing history (issue #259) ──────────────────────────────────────
 

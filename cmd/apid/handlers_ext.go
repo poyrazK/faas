@@ -4100,6 +4100,8 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		ErrorFix:          d.ErrorFix,
 		ErrorRelevantLogs: d.ErrorRelevantLogs,
 		CreatedAt:         d.CreatedAt.UTC().Format(time.RFC3339),
+		SourceURL:         d.SourceURL,
+		CommitSHA:         d.CommitSHA,
 		SourceRoot:        d.SourceRoot,
 		HasOverrides:      hasOverrides,
 		MinInstances:      d.MinInstances,
