@@ -52,6 +52,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/webhooks/resend":                  true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
 	"GET /v1/openapi.yaml":                      true, // metadata
 	"GET /v1/openapi.json":                      true, // metadata
+	"GET /docs":                                 true, // anonymous Swagger UI metadata page
 	"GET /v1/internal/metrics/targets":          true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
 	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	"POST /v1/cli-auth/code":                    true, // anonymous device-code (CLI uses wrapper)
