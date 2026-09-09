@@ -1090,11 +1090,19 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 Tail app or deployment logs (--follow)
 
-`gregale logs [--follow]`
+`gregale logs [<subcommand>] [--follow]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--follow` | stream logs until interrupted |  |
+
+### logs tail
+
+Follow app logs until interrupted
+
+### logs drain
+
+Manage external runtime log destinations (list|add|info|update|rm)
 
 
 ## metrics
