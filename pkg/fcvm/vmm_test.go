@@ -1,5 +1,7 @@
 package fcvm
 
+// spec: §6.3
+
 import (
 	"bytes"
 	"context"
