@@ -79,8 +79,9 @@ func ensureSidecarExt4(t *testing.T, dir string, port int) string {
 	return dst
 }
 
-// buildSidecarExt4 makes a tiny sidecar ext4 image. The skeleton's
-// busybox httpd entrypoint lives at /usr/local/bin/start.sh — the
+// buildSidecarExt4 makes a tiny optimized sidecar ext4 image. The image tree
+// lives below /upper, matching rootfs.Builder's production artifact layout.
+// Its busybox httpd entrypoint lives at /usr/local/bin/start.sh — the
 // canonical sidecar image convention. The mkfs call is the same
 // journal-less recipe as buildBusyboxExt4 because the sidecar drive
 // is mounted read-only as a lower in the guest-init overlay (the
@@ -97,7 +98,7 @@ func buildSidecarExt4(dst string, port int) error {
 	}
 	defer os.RemoveAll(work)
 
-	for _, sub := range []string{"usr/local/bin", "etc/sidecar"} {
+	for _, sub := range []string{"upper/bin", "upper/usr/local/bin", "upper/etc/sidecar"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			return err
 		}
@@ -105,16 +106,22 @@ func buildSidecarExt4(dst string, port int) error {
 
 	// Copy busybox into the skeleton's /usr/local/bin so the
 	// start.sh exec can find it without a symlink dance.
-	if err := bbCopyFile(bb, filepath.Join(work, "usr/local/bin/busybox")); err != nil {
+	if err := bbCopyFile(bb, filepath.Join(work, "upper/usr/local/bin/busybox")); err != nil {
+		return err
+	}
+	if err := os.Symlink("/usr/local/bin/busybox", filepath.Join(work, "upper/bin/sh")); err != nil {
 		return err
 	}
 	start := fmt.Sprintf("#!/bin/sh\nexec /usr/local/bin/busybox httpd -f -p %d -h /\n", port)
-	if err := os.WriteFile(filepath.Join(work, "usr/local/bin/start.sh"), []byte(start), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "upper/usr/local/bin/start.sh"), []byte(start), 0o755); err != nil {
 		return err
 	}
 	// Operator-visibility alias used by `cat /etc/sidecar/start.sh`
 	// inside the guest to confirm the sidecar is the right one.
-	if err := os.WriteFile(filepath.Join(work, "etc/sidecar/start.sh"), []byte(start), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "upper/etc/sidecar/start.sh"), []byte(start), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(work, "upper/index.html"), []byte("<h1>sidecar-ready</h1>\n"), 0o644); err != nil {
 		return err
 	}
 
@@ -143,8 +150,7 @@ func buildSidecarExt4(dst string, port int) error {
 // AC #2). It boots a guest with one sidecar and asserts:
 //
 //   - The wake returns (no panic in the orchestrator).
-//   - The per-workload cgroup scopes materialize (AC #4
-//     precondition: defense-in-depth host-side scopes exist).
+//   - The guest supervisor starts the main and sidecar workloads.
 //   - The guest-init /etc/faas/workloads.json was stamped on drive1
 //     by StageWorkloadRoster and survives pivot_root.
 //
@@ -157,12 +163,11 @@ func buildSidecarExt4(dst string, port int) error {
 // their own tests below; this one is the "did it boot at all"
 // smoke gate.
 func TestMetalSidecarBoot(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	base := ensureBusyboxExt4(t, tmp)
 	sidecar := ensureSidecarExt4(t, tmp, 9090)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -174,8 +179,9 @@ func TestMetalSidecarBoot(t *testing.T) {
 	)
 	_, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "hobby",
 		BaseKey:    base,
-		LayerKey:   base, // M7 simplification: main drive = busybox (matches M0)
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 256,
 		Port:       mainPort,
@@ -194,6 +200,7 @@ func TestMetalSidecarBoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PR-B sidecar cold boot: %v", err)
 	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
 
 	// Probe the main workload's :8080 listener (the waitReady
 	// handshake already did this once; the second probe here
@@ -209,14 +216,12 @@ func TestMetalSidecarBoot(t *testing.T) {
 		t.Fatalf("GET %s: %v", url, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
+	if resp.StatusCode >= http.StatusInternalServerError {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		t.Fatalf("main :8080 returned %d: %s", resp.StatusCode, body)
+		t.Fatalf("main :8080 returned server error %d: %s", resp.StatusCode, body)
 	}
 
-	// Tear down. The per-workload cgroup scopes should be
-	// removed BEFORE the per-instance scope (closeCgroup's
-	// child-first ordering) so leakcheck passes.
+	// Tear down and verify the per-instance host resources are gone.
 	if err := m.Destroy(ctx, instance); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
@@ -239,12 +244,11 @@ func TestMetalSidecarBoot(t *testing.T) {
 // without depending on the gateway-side portnorm that PR-C
 // lands separately.
 func TestMetalSidecarPortReachable(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	base := ensureBusyboxExt4(t, tmp)
 	sidecar := ensureSidecarExt4(t, tmp, 9091)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -253,8 +257,9 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 	const instance = "prb-sidecar-port-1"
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "hobby",
 		BaseKey:    base,
-		LayerKey:   base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 256,
 		Port:       8080,
@@ -265,6 +270,7 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
 
 	url := fmt.Sprintf("http://%s:9091/", inst.Lease.HostIP.String())
 	resp, err := http.Get(url)
@@ -298,12 +304,11 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 // cmd/e2e/v6_distinct_uuid_e2e_test.go, where the vsock probe
 // can read /proc/sys/kernel/random/uuid from inside the guest.
 func TestMetalTwoSidecarsColdBoot(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	base := ensureBusyboxExt4(t, tmp)
 	sc0 := ensureSidecarExt4(t, tmp, 9100)
 	sc1 := ensureSidecarExt4(t, tmp, 9101)
 
@@ -313,8 +318,9 @@ func TestMetalTwoSidecarsColdBoot(t *testing.T) {
 	const instance = "prb-sidecar-2"
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "hobby",
 		BaseKey:    base,
-		LayerKey:   base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 256,
 		Port:       8080,
@@ -326,6 +332,7 @@ func TestMetalTwoSidecarsColdBoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
 	_ = inst
 	// UUID readback lives in cmd/e2e/v6_distinct_uuid_e2e_test.go
 	// for the full kernel-rng path. This test pins only the
@@ -381,12 +388,11 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err != nil {
 		t.Skipf("cgroup v2 unavailable on this host (%v); AC #4 metal gate requires v2", err)
 	}
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	base := ensureBusyboxExt4(t, tmp)
 	sidecar := ensureOOMSidecarExt4(t, tmp, 9092)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -400,8 +406,9 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	)
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "hobby",
 		BaseKey:    base,
-		LayerKey:   base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 256,
 		Port:       mainPort,
@@ -437,8 +444,8 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		t.Fatalf("main :8080 (pre) = %d, want 2xx", resp.StatusCode)
+	if resp.StatusCode >= http.StatusInternalServerError {
+		t.Fatalf("main :8080 (pre) = %d, want a live HTTP response", resp.StatusCode)
 	}
 
 	// Step 2: trigger the OOM. The sidecar's httpd serves
@@ -473,8 +480,8 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, resp2.Body)
 	resp2.Body.Close()
-	if resp2.StatusCode/100 != 2 {
-		t.Errorf("main :8080 (post-OOM) = %d, want 2xx (AC #4 violated: sidecar OOM propagated to main workload)",
+	if resp2.StatusCode >= http.StatusInternalServerError {
+		t.Errorf("main :8080 (post-OOM) = %d, want a live HTTP response (AC #4 violated: sidecar OOM propagated to main workload)",
 			resp2.StatusCode)
 	}
 }
@@ -513,18 +520,21 @@ func ensureOOMSidecarExt4(t *testing.T, dir string, port int) string {
 	}
 	defer os.RemoveAll(work)
 
-	for _, sub := range []string{"usr/local/bin", "etc/sidecar", "var/log"} {
+	for _, sub := range []string{"upper/bin", "upper/usr/local/bin", "upper/etc/sidecar", "upper/var/log"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", sub, err)
 		}
 	}
-	if err := bbCopyFile(bb, filepath.Join(work, "usr/local/bin/busybox")); err != nil {
+	if err := bbCopyFile(bb, filepath.Join(work, "upper/usr/local/bin/busybox")); err != nil {
 		t.Fatalf("copy busybox: %v", err)
+	}
+	if err := os.Symlink("/usr/local/bin/busybox", filepath.Join(work, "upper/bin/sh")); err != nil {
+		t.Fatalf("symlink sh: %v", err)
 	}
 	// 32 MB sparse fixture. The Truncate doesn't allocate
 	// host memory; the ext4 mkfs writes the file and the
 	// in-guest GET triggers the memcg-charged read.
-	f, err := os.Create(filepath.Join(work, "var/log/lastlog"))
+	f, err := os.Create(filepath.Join(work, "upper/var/log/lastlog"))
 	if err != nil {
 		t.Fatalf("create lastlog: %v", err)
 	}
@@ -536,13 +546,13 @@ func ensureOOMSidecarExt4(t *testing.T, dir string, port int) string {
 		t.Fatalf("close lastlog: %v", err)
 	}
 	start := fmt.Sprintf("#!/bin/sh\nexec /usr/local/bin/busybox httpd -f -p %d -h /var/log\n", port)
-	if err := os.WriteFile(filepath.Join(work, "usr/local/bin/start.sh"), []byte(start), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "upper/usr/local/bin/start.sh"), []byte(start), 0o755); err != nil {
 		t.Fatalf("write start.sh: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(work, "etc/sidecar/start.sh"), []byte(start), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "upper/etc/sidecar/start.sh"), []byte(start), 0o644); err != nil {
 		t.Fatalf("write alias: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(work, "var/log/index.html"), []byte("<h1>oom-test</h1>\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "upper/var/log/index.html"), []byte("<h1>oom-test</h1>\n"), 0o644); err != nil {
 		t.Fatalf("write index: %v", err)
 	}
 

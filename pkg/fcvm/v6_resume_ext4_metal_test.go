@@ -177,7 +177,7 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
-	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/faas", "tmp"} {
+	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/faas", "usr/local/bin", "tmp", "overlay"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			return err
 		}

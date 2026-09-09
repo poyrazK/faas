@@ -42,10 +42,9 @@ import (
 // Manager.Destroy's "destroy all leases" semantics — a real
 // production hazard.
 func TestMetalServiceReplicas_ConvergeAfterKill(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
-	busybox := ensureBusyboxExt4(t, t.TempDir())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -56,15 +55,19 @@ func TestMetalServiceReplicas_ConvergeAfterKill(t *testing.T) {
 		replicaA = "svc-replica-a"
 		replicaB = "svc-replica-b"
 	)
+	t.Cleanup(func() {
+		_ = m.Destroy(context.Background(), replicaA)
+		_ = m.Destroy(context.Background(), replicaB)
+	})
 	instA, errA := m.ColdBoot(ctx, ColdBootRequest{
-		Instance: replicaA, BaseKey: busybox, LayerKey: busybox,
+		Instance: replicaA, Plan: "hobby", BaseKey: base, LayerKey: layer,
 		VcpuCount: 1, MemSizeMiB: 128,
 	})
 	if errA != nil {
 		t.Fatalf("boot %s: %v", replicaA, errA)
 	}
 	instB, errB := m.ColdBoot(ctx, ColdBootRequest{
-		Instance: replicaB, BaseKey: busybox, LayerKey: busybox,
+		Instance: replicaB, Plan: "hobby", BaseKey: base, LayerKey: layer,
 		VcpuCount: 1, MemSizeMiB: 128,
 	})
 	if errB != nil {

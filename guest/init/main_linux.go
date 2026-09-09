@@ -1817,14 +1817,7 @@ func assembleOverlay() (string, error) {
 			return "", fmt.Errorf("mount sidecar %s at %s: %w", dev.device, mp, err)
 		}
 	}
-	// Build lowerdir in stack order (lowest precedence first): base
-	// = the kernel root (= `/`); sidecar-0, sidecar-1, ... appended
-	// in stability order so sidecar-N has the highest precedence
-	// among the read-only layers.
-	lowerdir := "/"
-	for _, dev := range sidecarDevices {
-		lowerdir += ":" + layerMount + "/lower-" + dev.name
-	}
+	lowerdir := sidecarOverlayLowerdir(layerMount, sidecarDevices)
 	opts := "lowerdir=" + lowerdir +
 		",upperdir=" + layerMount + "/upper" +
 		",workdir=" + layerMount + "/work"
@@ -1832,6 +1825,18 @@ func assembleOverlay() (string, error) {
 		return "", fmt.Errorf("mount overlay: %w", err)
 	}
 	return newRoot, nil
+}
+
+// sidecarOverlayLowerdir points overlayfs at each optimized artifact's image
+// tree. rootfs.Builder stores that tree below /upper so the ext4 can also carry
+// filesystem metadata beside it. Mounting the ext4 root would make sidecar
+// binaries and immutable workload manifests invisible after pivot.
+func sidecarOverlayLowerdir(mountRoot string, devices []sidecarDevice) string {
+	lowerdir := "/"
+	for _, dev := range devices {
+		lowerdir += ":" + filepath.Join(mountRoot, "lower-"+dev.name, "upper")
+	}
+	return lowerdir
 }
 
 // sidecarDevice (issue #463 / ADR-069 / PR-B) is one entry on the

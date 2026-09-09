@@ -36,6 +36,15 @@ func TestDecideMode_BuildBeatsApp(t *testing.T) {
 	}
 }
 
+func TestSidecarOverlayLowerdirUsesArtifactImageTrees(t *testing.T) {
+	devices := []sidecarDevice{{name: "sidecar-0"}, {name: "sidecar-1"}}
+	got := sidecarOverlayLowerdir("/overlay", devices)
+	want := "/:/overlay/lower-sidecar-0/upper:/overlay/lower-sidecar-1/upper"
+	if got != want {
+		t.Fatalf("sidecar overlay lowerdir = %q, want %q", got, want)
+	}
+}
+
 func TestToolVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tool")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' 'tool 1.2.3'\n"), 0o700); err != nil {

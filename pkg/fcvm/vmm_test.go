@@ -580,7 +580,8 @@ func shortBase(t *testing.T) string {
 func TestAPICall_Success(t *testing.T) {
 	base := shortBase(t)
 	inst := "is"
-	sock := filepath.Join(base, "firecracker", inst, "root", APISockName)
+	v := NewJailerVMM(base, time.Second)
+	sock := v.socketPath(inst)
 
 	var gotPath, gotMethod, gotCT string
 	var gotBody map[string]any
@@ -592,7 +593,6 @@ func TestAPICall_Success(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	v := NewJailerVMM(base, time.Second)
 	if err := v.apiPut(context.Background(), inst, "/vm/instance-action", map[string]any{"action_type": "SendCtrlAltDel"}); err != nil {
 		t.Fatalf("apiPut: %v", err)
 	}
@@ -632,13 +632,13 @@ func TestAPICall_Success(t *testing.T) {
 func TestAPICall_Non2xxReturnsFormattedError(t *testing.T) {
 	base := shortBase(t)
 	inst := "ie"
-	sock := filepath.Join(base, "firecracker", inst, "root", APISockName)
+	v := NewJailerVMM(base, time.Second)
+	sock := v.socketPath(inst)
 	bindTestSocket(t, sock, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"error":"instance-action invalid in current state"}`)
 	}))
 
-	v := NewJailerVMM(base, time.Second)
 	err := v.apiPatch(context.Background(), inst, "/vm", nil)
 	if err == nil {
 		t.Fatal("expected error from non-2xx response")
@@ -683,7 +683,8 @@ func TestAPICall_ConnectionFailure(t *testing.T) {
 func TestAPICall_ContextCancellation(t *testing.T) {
 	base := shortBase(t)
 	inst := "ic"
-	sock := filepath.Join(base, "firecracker", inst, "root", APISockName)
+	v := NewJailerVMM(base, time.Second)
+	sock := v.socketPath(inst)
 	bindTestSocket(t, sock, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Block until the client cancels, then return 200 — we just want to
 		// verify apiCall honors context.
@@ -691,7 +692,6 @@ func TestAPICall_ContextCancellation(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	v := NewJailerVMM(base, time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := v.apiPut(ctx, inst, "/x", nil)
@@ -736,7 +736,8 @@ func TestCloseClient_DropsCached(t *testing.T) {
 func TestAPICall_ResponseBodyCloseIsBestEffort(t *testing.T) {
 	base := shortBase(t)
 	inst := "ib"
-	sock := filepath.Join(base, "firecracker", inst, "root", APISockName)
+	v := NewJailerVMM(base, time.Second)
+	sock := v.socketPath(inst)
 	var hits atomic.Int64
 	bindTestSocket(t, sock, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
@@ -744,7 +745,6 @@ func TestAPICall_ResponseBodyCloseIsBestEffort(t *testing.T) {
 		_, _ = io.WriteString(w, `{"some":"payload"}`)
 	}))
 
-	v := NewJailerVMM(base, time.Second)
 	for i := 0; i < 25; i++ {
 		if err := v.apiPatch(context.Background(), inst, "/x", nil); err != nil {
 			t.Fatalf("call %d: %v", i, err)
@@ -761,14 +761,14 @@ func TestAPICall_ResponseBodyCloseIsBestEffort(t *testing.T) {
 func TestAPICall_ErrorBodyTruncatedAt4KiB(t *testing.T) {
 	base := shortBase(t)
 	inst := "it"
-	sock := filepath.Join(base, "firecracker", inst, "root", APISockName)
+	v := NewJailerVMM(base, time.Second)
+	sock := v.socketPath(inst)
 	huge := strings.Repeat("X", 8192)
 	bindTestSocket(t, sock, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, huge)
 	}))
 
-	v := NewJailerVMM(base, time.Second)
 	err := v.apiPut(context.Background(), inst, "/x", nil)
 	if err == nil {
 		t.Fatal("expected 500 error")
@@ -787,8 +787,9 @@ func TestAPICall_ErrorBodyTruncatedAt4KiB(t *testing.T) {
 func TestKill_IdempotentWithoutProcess(t *testing.T) {
 	base := t.TempDir()
 	inst := "kill-idemp"
+	v := NewJailerVMM(base, time.Second)
 	// Plant the chroot so we can verify RemoveAll took effect.
-	root := filepath.Join(base, FirecrackerBin, inst)
+	root := filepath.Dir(v.chrootRoot(inst))
 	if err := os.MkdirAll(root, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -796,7 +797,6 @@ func TestKill_IdempotentWithoutProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v := NewJailerVMM(base, time.Second)
 	if err := v.Kill(context.Background(), Lease{Instance: inst, UID: 20000, GID: 20000}); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}
@@ -858,12 +858,12 @@ func TestMkChroot_CreatesDirectory(t *testing.T) {
 // unrelated chroot-step before RemoveAll.
 func TestMkChroot_BadBaseReturnsError(t *testing.T) {
 	base := t.TempDir()
+	v := NewJailerVMM(base, time.Second)
 	// Plant a file at the path MkdirAll would need to be a directory.
-	conflict := filepath.Join(base, FirecrackerBin)
+	conflict := v.JailRoot()
 	if err := os.WriteFile(conflict, []byte("not-a-dir"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	v := NewJailerVMM(base, time.Second)
 	_, err := v.mkChroot("anything")
 	if err == nil {
 		t.Fatal("expected mkChroot error")
@@ -1275,11 +1275,11 @@ func pollHealthcheck(ctx context.Context, serverURL, path string, budget time.Du
 // (because the cmd was never started).
 func TestBoot_MkChrootFailure(t *testing.T) {
 	base := t.TempDir()
-	conflict := filepath.Join(base, FirecrackerBin)
+	v := NewJailerVMM(base, time.Second)
+	conflict := v.JailRoot()
 	if err := os.WriteFile(conflict, []byte("file"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	v := NewJailerVMM(base, time.Second)
 	err := v.Boot(context.Background(), Lease{Instance: "boot-fail", UID: 20000, GID: 20000}, VMConfig{}, "")
 	if err == nil {
 		t.Fatal("expected mkChroot failure")
@@ -1297,11 +1297,11 @@ func TestBoot_MkChrootFailure(t *testing.T) {
 // TestRestore_MkChrootFailure mirrors Boot — same seam, different code path.
 func TestRestore_MkChrootFailure(t *testing.T) {
 	base := t.TempDir()
-	conflict := filepath.Join(base, FirecrackerBin)
+	v := NewJailerVMM(base, time.Second)
+	conflict := v.JailRoot()
 	if err := os.WriteFile(conflict, []byte("file"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	v := NewJailerVMM(base, time.Second)
 	err := v.Restore(context.Background(), Lease{Instance: "restore-fail"}, RestoreSpec{
 		VMStatePath: "/nonexistent/vmstate",
 		KernelKey:   "/nonexistent/kernel", BaseKey: "/nonexistent/base", LayerKey: "/nonexistent/layer",
@@ -2126,8 +2126,7 @@ func TestWaitReady_AllConnRefusedReturnsAppNotListening(t *testing.T) {
 	}
 
 	v := &JailerVMM{
-		readyTimeout:       250 * time.Millisecond,
-		readinessStartedAt: time.Now(),
+		readyTimeout: 250 * time.Millisecond,
 		// events is nil — emitReadiness200 must tolerate it (the
 		// "not ready" path doesn't emit).
 	}
