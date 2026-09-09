@@ -5590,16 +5590,28 @@ func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) erro
 	return m.UpdateDeploymentStatus(ctx, id, DeploySuperseded, "")
 }
 
-func (m *MemStore) MarkDeploymentLive(_ context.Context, id string) error {
+func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
 	}
+
+	// Build the post-transition rows locally first. The callback can fail
+	// (for example, if the canonical spec cannot be loaded); keeping all
+	// mutations local until it succeeds gives MemStore the same atomic
+	// failure semantics as the Postgres transaction.
 	if d.Status == DeployLive || d.CanaryTotalSteps <= 0 {
 		d.Status = DeployLive
 		d.Error = ""
+		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
+		if err != nil {
+			return err
+		}
+		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+			return err
+		}
 		m.deployments[id] = d
 		return nil
 	}
@@ -5626,6 +5638,13 @@ func (m *MemStore) MarkDeploymentLive(_ context.Context, id string) error {
 		d.RolloutState = "complete"
 		d.CanaryStepStartedAt = &now
 		d.RolloutCompletedAt = &now
+		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
+		if err != nil {
+			return err
+		}
+		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+			return err
+		}
 		m.deployments[id] = d
 		return nil
 	}
@@ -5637,10 +5656,21 @@ func (m *MemStore) MarkDeploymentLive(_ context.Context, id string) error {
 	d.RolloutStartedAt = &now
 	d.CanaryStepStartedAt = &now
 	newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100-d.TrafficPercent)
+	updatedSiblings := make(map[string]Deployment, len(siblings))
 	for i, sibling := range siblings {
 		other := m.deployments[sibling.ID]
 		other.TrafficPercent = newWeights[i]
-		m.deployments[sibling.ID] = other
+		updatedSiblings[sibling.ID] = other
+	}
+	snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
+	if err != nil {
+		return err
+	}
+	if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+		return err
+	}
+	for siblingID, other := range updatedSiblings {
+		m.deployments[siblingID] = other
 	}
 	m.deployments[id] = d
 	return nil

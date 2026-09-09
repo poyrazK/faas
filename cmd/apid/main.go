@@ -577,6 +577,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(os.Getenv))
 
 	deps.store = func() state.Store { return state.NewPgStore(pool) }
+	// Wire the canonical OpenAPI projector before any deployment can be
+	// promoted. state.MarkDeploymentLive invokes it inside the same Postgres
+	// transaction as the status flip and snapshot UPSERT.
+	openapidiff.RegisterStateCapture()
 	deps.config = cfg
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): boot log carrying the
 	// multi-box identity so an operator reading the systemd journal
