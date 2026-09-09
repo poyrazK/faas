@@ -399,7 +399,7 @@ const debugTimelineMaxEvents = 200
 func (s *server) buildDebugRequestTimeline(ctx context.Context, appID string, request api.DebugTelemetryRequestItem, regression *api.DebugRegressionItem) ([]api.DebugTimelineEvent, error) {
 	receivedAt, err := time.Parse(time.RFC3339Nano, request.ReceivedAt)
 	if err != nil {
-		return []api.DebugTimelineEvent{}, nil
+		return nil, err
 	}
 	timeline := make([]api.DebugTimelineEvent, 0, 16)
 	startAt := receivedAt.Add(-time.Duration(request.LatencyMS) * time.Millisecond)
