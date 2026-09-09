@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1180px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: .85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: .9rem; margin: 1rem 0; }
+    .muted { color: #6b7280; }
+    .flash { padding: .55rem .75rem; border-radius: 4px; margin: .75rem 0; }
+    .flash.ok { background: #d1fae5; color: #065f46; }
+    .flash.error { background: #fee2e2; color: #991b1b; }
+    .badge { display: inline-block; padding: .1rem .45rem; border-radius: 4px; font-size: .8rem; }
+    .badge.ready { background: #d1fae5; color: #065f46; }
+    .badge.provisioning { background: #fef3c7; color: #92400e; }
+    .badge.deleting { background: #fee2e2; color: #991b1b; }
+    table { width: 100%; border-collapse: collapse; margin: .7rem 0 1rem; }
+    th, td { text-align: left; padding: .4rem .55rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code, input, select { font-family: ui-monospace, Menlo, monospace; }
+    input, select { box-sizing: border-box; max-width: 100%; padding: .35rem; }
+    label { display: block; margin: .5rem 0; }
+    button { padding: .3rem .65rem; border: 1px solid #9ca3af; border-radius: 4px; background: #fff; cursor: pointer; }
+    form.inline { display: inline; margin-right: .35rem; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .45rem; margin: .7rem 0; }
+    .summary div { background: #f8fafc; border-radius: 4px; padding: .45rem; }
+    .summary strong { display: block; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <header><strong>onebox faas</strong><nav><a href="/dashboard/">Overview</a><a href="/dashboard/apps">Apps</a><a href="/dashboard/jobs">Jobs &amp; queues</a><a href="/dashboard/account">Account</a></nav></header>
+  <main>
+    {{template "email-verification-banner" .}}
+    {{$slug := .Data.App.Slug}}
+    <p><a href="/dashboard/apps/{{$slug}}">← Back to {{$slug}}</a> · <a href="/dashboard/apps/{{$slug}}/mirrors">Traffic mirrors →</a></p>
+    <h1>Storage for <code>{{$slug}}</code></h1>
+    <p class="muted">Manage logical buckets, inspect objects, generate short-lived signed URLs, and review the app's daily snapshot and layer footprint.</p>
+    {{if eq .Data.Action "created"}}<div class="flash ok" role="status">Bucket created.</div>{{end}}
+    {{if eq .Data.Action "deleted"}}<div class="flash ok" role="status">Bucket deleted.</div>{{end}}
+    {{if eq .Data.Action "object-deleted"}}<div class="flash ok" role="status">Object deleted.</div>{{end}}
+    {{if eq .Data.Action "signed"}}<div class="flash ok" role="status">Signed URL generated below. It is a live capability; do not share it.</div>{{end}}
+    {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The storage action could not be completed. Refresh and try again.</div>{{end}}
+    {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
+
+    {{if not .Data.Configured}}
+      <section class="card" role="status"><h2>Object storage is not configured</h2><p class="muted">An operator must configure a provider before buckets and signed URLs can be used. Existing metadata remains visible.</p></section>
+    {{else if not .Data.Enabled}}
+      <section class="card" role="status"><h2>Object storage is disabled</h2><p class="muted">An operator has disabled new bucket provisioning and signed URLs. Existing bucket metadata remains visible.</p></section>
+    {{end}}
+
+    <section class="card"><h2>Storage usage</h2>
+      {{if .Data.Usage}}
+        <p class="muted">Daily rollup for {{.Data.Usage.Day}} (informational, not billed).</p>
+        <div class="summary"><div><span class="muted">Snapshot bytes</span><strong>{{.Data.Usage.SnapshotBytes}}</strong></div><div><span class="muted">Layer bytes</span><strong>{{.Data.Usage.LayerBytes}}</strong></div><div><span class="muted">Total bytes</span><strong>{{.Data.Usage.TotalBytes}}</strong></div></div>
+      {{else}}<p class="muted">No storage rollup is available for this app today.</p>{{end}}
+    </section>
+
+    <section class="card"><h2>Buckets ({{len .Data.Buckets}})</h2>
+      {{if .Data.Buckets}}
+        <table><thead><tr><th>Name</th><th>Scope</th><th>Region</th><th>State</th><th>Created</th><th>Action</th></tr></thead><tbody>
+          {{range .Data.Buckets}}<tr><td><a href="/dashboard/apps/{{$slug}}/storage?bucket={{.ID}}"><code>{{.Name}}</code></a>{{if eq .ID $.Data.SelectedBucketID}} <span class="muted">(selected)</span>{{end}}</td><td><code>{{.Scope}}</code></td><td>{{.Region}}</td><td><span class="badge {{.State}}">{{.State}}</span></td><td>{{.CreatedAt}}</td><td><form class="inline" method="POST" action="/dashboard/apps/{{$slug}}/storage/buckets/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Delete</button></form></td></tr>{{end}}
+        </tbody></table>
+      {{else}}<p class="muted">No buckets configured for this app.</p>{{end}}
+      <h3>Create a bucket</h3>
+      <form method="POST" action="/dashboard/apps/{{$slug}}/storage/buckets"><input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}"><label>Name <input name="name" required maxlength="63" pattern="[a-z][a-z0-9-]{0,62}" placeholder="assets"></label><label>Scope <input name="scope" value="default" maxlength="64"></label><label>Region <select name="region"><option value="">Default{{if .Data.DefaultRegion}} ({{.Data.DefaultRegion}}){{end}}</option>{{range .Data.Regions}}<option value="{{.}}">{{.}}</option>{{end}}</select></label><button type="submit">Create bucket</button></form>
+    </section>
+
+    {{if .Data.SelectedBucketID}}
+      <section class="card"><h2>Objects</h2>
+        <form method="GET" action="/dashboard/apps/{{$slug}}/storage"><input type="hidden" name="bucket" value="{{.Data.SelectedBucketID}}"><label>Prefix <input name="prefix" value="{{.Data.Prefix}}" placeholder="folder/"></label><button type="submit">List objects</button></form>
+        {{if .Data.Objects}}
+          <table><thead><tr><th>Key</th><th>Size</th><th>Last modified</th><th>Action</th></tr></thead><tbody>{{range .Data.Objects}}<tr><td><code>{{.Key}}</code></td><td>{{.SizeBytes}} bytes</td><td>{{.LastModified}}</td><td><form class="inline" method="POST" action="/dashboard/apps/{{$slug}}/storage/objects/delete"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><input type="hidden" name="bucket_id" value="{{$.Data.SelectedBucketID}}"><input type="hidden" name="key" value="{{.Key}}"><button type="submit">Delete</button></form></td></tr>{{end}}</tbody></table>
+        {{else}}<p class="muted">No objects found for this prefix, or the provider is unavailable.</p>{{end}}
+        {{if .Data.NextCursor}}<p class="muted">More objects are available. Use the API cursor to continue listing.</p>{{end}}
+      </section>
+
+      <section class="card"><h2>Generate a signed URL</h2>
+        <p class="muted">Signed URLs expire within 15 minutes. The URL is never persisted by the dashboard.</p>
+        {{if .Data.SignedURL}}<p><strong>{{.Data.SignedURL.Method}} URL:</strong> <code>{{.Data.SignedURL.URL}}</code><br><small class="muted">expires {{.Data.SignedURL.ExpiresAt}}</small></p>{{end}}
+        <form method="POST" action="/dashboard/apps/{{$slug}}/storage/signed-url"><input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}"><input type="hidden" name="bucket_id" value="{{.Data.SelectedBucketID}}"><label>Object key <input name="key" required maxlength="1024" placeholder="folder/file.txt"></label><label>Method <select name="method"><option value="GET">GET</option><option value="HEAD">HEAD</option><option value="PUT">PUT</option></select></label><label>Expires in seconds <input name="expires_in" type="number" min="0" max="900" value="900"></label><label>Content type (PUT only) <input name="content_type" maxlength="255" placeholder="application/octet-stream"></label><label>Size bytes (PUT only) <input name="size_bytes" type="number" min="0" placeholder="1048576"></label><button type="submit">Generate URL</button></form>
+      </section>
+    {{end}}
+  </main>
+  <footer>onebox faas · object storage</footer>
+</body>
+</html>

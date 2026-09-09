@@ -2505,6 +2505,14 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/mirrors", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateMirrorRule))))
 	mux.Handle("POST /dashboard/apps/{slug}/mirrors/{id}/toggle", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardToggleMirrorRule))))
 	mux.Handle("POST /dashboard/apps/{slug}/mirrors/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteMirrorRule))))
+	// G10 / issue #1397 — object-storage forms. These adapters use the
+	// existing bucket/object/signed-URL handlers and a named CSRF envelope;
+	// the signed URL is rendered only in the immediate response, never in a
+	// redirect query or persisted dashboard state.
+	mux.Handle("POST /dashboard/apps/{slug}/storage/buckets", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateStorageBucket))))
+	mux.Handle("POST /dashboard/apps/{slug}/storage/buckets/{bucket}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteStorageBucket))))
+	mux.Handle("POST /dashboard/apps/{slug}/storage/objects/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteStorageObject))))
+	mux.Handle("POST /dashboard/apps/{slug}/storage/signed-url", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSignStorageObject))))
 	// G6 / issue #1397 — app instance lifecycle controls. The GET page
 	// mints a named CSRF envelope; this form adapter verifies it before
 	// applying the same app-scoped park/wake/restart transitions as the
