@@ -618,6 +618,12 @@ func renderDeploymentHostingReceipt(w io.Writer, raw json.RawMessage) {
 		}
 		_, _ = fmt.Fprintf(w, "%-14s %s (port %d)\n", "profile:", profile, receipt.Profile.Port)
 	}
+	if receipt.Profile.PackageManager != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "package_manager:", receipt.Profile.PackageManager)
+	}
+	if receipt.Profile.StartCommand != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "start_command:", receipt.Profile.StartCommand)
+	}
 	if receipt.Source.CommitSHA != "" {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "source_sha:", receipt.Source.CommitSHA)
 	}
