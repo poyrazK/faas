@@ -6267,6 +6267,43 @@ func (s *PgStore) MarkDeploymentSuperseded(ctx context.Context, id string) error
 	return s.UpdateDeploymentStatus(ctx, id, DeploySuperseded, "")
 }
 
+// captureDeploymentOpenAPISnapshotTx reads the edge-rule set while the
+// mark-live transaction is still open and delegates projection to the
+// registered openapidiff callback. Keeping the read, status update, and
+// eventual UPSERT on one tx makes a live deployment and its contract snapshot
+// an atomic unit.
+func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx.Tx, dep Deployment) (OpenAPISnapshot, error) {
+	rows, err := tx.Query(ctx,
+		`select `+edgeRuleSelectCols+` from edge_rules
+		 where app_id = $1::uuid
+		 order by priority asc, created_at desc`, dep.AppID)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: read edge rules for snapshot: %w", err)
+	}
+	defer rows.Close()
+	rules, err := scanEdgeRules(rows)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: scan edge rules for snapshot: %w", err)
+	}
+	pending := make([]api.CreateEdgeRuleRequest, 0, len(rules))
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+		request, err := edgeRuleToCreateEdgeRuleRequest(rule)
+		if err != nil {
+			return OpenAPISnapshot{}, fmt.Errorf("state: encode edge rule %s for snapshot: %w", rule.ID, err)
+		}
+		pending = append(pending, request)
+	}
+	scope := normalizedDeploymentScope(dep.Scope)
+	snap, err := getOpenAPICapture()(ctx, tx, dep.ID, dep.AppID, scope, pending)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: capture snapshot for %s: %w", dep.ID, err)
+	}
+	return snap, nil
+}
+
 func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -6287,6 +6324,15 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		if _, err := tx.Exec(ctx,
 			`update deployments set status = $2, error = '' where id = $1`, id, string(DeployLive)); err != nil {
 			return fmt.Errorf("state: mark deployment live update: %w", err)
+		}
+		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+		if err != nil {
+			return err
+		}
+		if snap.DeploymentID != "" {
+			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
+				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+			}
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("state: mark deployment live commit: %w", err)
@@ -6358,40 +6404,29 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 			}
 		}
 	}
+	snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+	if err != nil {
+		return err
+	}
+	if snap.DeploymentID != "" {
+		if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
+			return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: mark deployment live commit: %w", err)
 	}
 	return nil
 }
 
-// UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)
-// upserts the deployment_openapi_snapshots row for the given
-// deployment. PR-B refactors MarkDeploymentLive to call this
-// method inside the same transaction as the status='live'
-// UPDATE.
-func (s *PgStore) UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap OpenAPISnapshot) error {
-	if snap.DeploymentID == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty deployment_id")
-	}
-	if snap.AppID == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty app_id")
-	}
-	if snap.Scope == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty scope")
-	}
-	if len(snap.Snapshot) == 0 {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty snapshot bytes")
-	}
-	if snap.SHA256 == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty sha256")
-	}
-	if snap.SchemaVersion < 1 {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: schema_version must be >= 1")
+func upsertDeploymentOpenAPISnapshotDBTX(ctx context.Context, db sqlc.DBTX, snap OpenAPISnapshot) error {
+	if err := validateOpenAPISnapshot(snap); err != nil {
+		return fmt.Errorf("pgstore: upsert snapshot: %w", err)
 	}
 	if snap.CapturedAt.IsZero() {
 		snap.CapturedAt = time.Now().UTC()
 	}
-	_, err := s.pool.Exec(ctx, `
+	_, err := db.Exec(ctx, `
 		insert into deployment_openapi_snapshots
 			(deployment_id, app_id, scope, snapshot, sha256, schema_version, captured_at)
 		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
@@ -6404,9 +6439,21 @@ func (s *PgStore) UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap Open
 		       captured_at = excluded.captured_at
 	`, snap.DeploymentID, snap.AppID, snap.Scope, []byte(snap.Snapshot), snap.SHA256, snap.SchemaVersion, snap.CapturedAt)
 	if err != nil {
-		return fmt.Errorf("pgstore: UpdateDeploymentOpenAPISnapshot: %w", err)
+		return fmt.Errorf("pgstore: upsert snapshot: %w", err)
 	}
 	return nil
+}
+
+// UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)
+// upserts the deployment_openapi_snapshots row for the given
+// deployment. PR-B refactors MarkDeploymentLive to call this
+// method inside the same transaction as the status='live'
+// UPDATE.
+func (s *PgStore) UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap OpenAPISnapshot) error {
+	if err := validateOpenAPISnapshot(snap); err != nil {
+		return fmt.Errorf("pgstore: UpdateDeploymentOpenAPISnapshot: %w", err)
+	}
+	return upsertDeploymentOpenAPISnapshotDBTX(ctx, s.pool, snap)
 }
 
 // LatestOpenAPISnapshotForScope returns the most recently
