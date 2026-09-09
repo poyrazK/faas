@@ -1774,6 +1774,48 @@ type AccountData struct {
 	SLODuration views.SLOStamp
 }
 
+// ManagedPostgresData is the customer-facing database overview payload.
+// It contains lifecycle and binding metadata only; provider credentials and
+// connection URLs are intentionally not part of the dashboard projection.
+type ManagedPostgresData struct {
+	Available bool
+	Error     string
+	Databases []ManagedPostgresDatabaseItem
+}
+
+// ManagedPostgresDatabaseItem is one database row on /dashboard/postgres.
+type ManagedPostgresDatabaseItem struct {
+	ID                   string
+	Name                 string
+	Region               string
+	PostgresMajor        int
+	ServiceClass         string
+	Availability         string
+	ScaleToZero          bool
+	StorageLimitBytes    int64
+	StorageLimitLabel    string
+	RestoreWindowSeconds int64
+	State                string
+	LastErrorCode        string
+	CreatedAt            string
+	UpdatedAt            string
+	Bindings             []ManagedPostgresBindingItem
+	BindingsError        string
+}
+
+// ManagedPostgresBindingItem is the safe metadata shown for an app binding.
+// The secret value remains in the app-secret subsystem and is never rendered.
+type ManagedPostgresBindingItem struct {
+	ID                   string
+	AppID                string
+	Scope                string
+	EnvironmentKey       string
+	Access               string
+	CredentialGeneration int64
+	State                string
+	LastErrorCode        string
+}
+
 // AuthCapabilitiesView is the dashboard-facing slice of
 // auth.SignInConfig (issue #419 / ADR-046). The handler populates
 // these bools from the boot-resolved s.oauthConfig so the login

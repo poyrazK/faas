@@ -253,3 +253,33 @@ branch without a second POST. Deleting a source is rejected while an active
 restore descendant exists, and deleting a restore target removes only its
 branch. Cutover remains an explicit binding operation; restore never silently
 rewires an app.
+
+## Customer usability
+
+The `gregale postgres` command is the supported customer entry point for the
+provider-neutral API:
+
+```sh
+gregale postgres list
+gregale postgres create orders --region eu --class development
+gregale postgres get DATABASE_ID
+gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z
+gregale postgres bindings create DATABASE_ID --app APP_ID --scope production --environment-key DATABASE_URL
+gregale postgres bindings list DATABASE_ID
+gregale postgres delete DATABASE_ID
+```
+
+Pass `--json` to any read or write command for automation. JSON responses use
+the same DTOs as the public API and deliberately contain no password, endpoint,
+connection URL, or secret ciphertext. Human output shows lifecycle state,
+placement, storage/restore allowances, and binding generation/state so a
+customer can tell whether a workload is ready without opening provider
+consoles.
+
+The signed-in dashboard exposes the same read-only view at
+`/dashboard/postgres`. It is safe to bookmark during a rollout: when the
+managed-Postgres service is disabled or temporarily unavailable, the page
+shows an explicit status message rather than implying that an empty catalog is
+healthy. Database creation, restore, deletion, and binding changes stay on the
+CLI/API surface, where the existing authentication, plan, idempotency, and
+provider-neutral validation rules apply.
