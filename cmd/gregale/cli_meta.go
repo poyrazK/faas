@@ -505,8 +505,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployment,
 		DocSlug: "deployment",
-		Short:   "Get or wait for one deployment (<id> | wait <id> | set-min-instances <id>)",
+		Short:   "Get, summarize, or wait for one deployment (<id> | summary <id> | wait <id> | set-min-instances <id>)",
 		Subcommands: []cliSub{
+			{Name: "summary", Short: "Show the release diff and rollback target", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
+			}},
 			{Name: "wait", Short: "Wait until a deployment is live", Flags: []cliFlag{
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
 			}},

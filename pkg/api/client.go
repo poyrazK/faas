@@ -606,6 +606,14 @@ func (c *Client) GetLatestAppDeployment(ctx context.Context, slug string) (Deplo
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/latest", nil, &out)
 }
 
+// GetAppDeploymentSummary returns the release cockpit for one deployment:
+// the deployment detail, its immediate predecessor, stable field-level
+// changes, and the currently eligible rollback target.
+func (c *Client) GetAppDeploymentSummary(ctx context.Context, slug, id string) (DeploymentSummaryResponse, error) {
+	var out DeploymentSummaryResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/"+id+"/summary", nil, &out)
+}
+
 // GetDeploymentScan returns the per-deploy grype CVE scan
 // payload for one deployment (issue #464 / ADR-055). Returns
 // the typed api.ScanResult envelope (status, severity counts,
