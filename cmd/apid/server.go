@@ -1500,6 +1500,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/rollouts/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recoverRollout)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/park", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.parkApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/wake", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.wakeApp))))
+	// Scheduled/predicted demand-window capacity restore. The intent is
+	// durable, so schedd can claim it after a restart and the API never has to
+	// hold a long-lived timer or VM handle.
+	mux.HandleFunc("POST /v1/apps/{slug}/prewarm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPrewarm)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/prewarms", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrewarms))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/prewarms/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelPrewarm))))
 	mux.HandleFunc("POST /v1/apps/{slug}/restart", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.restartApp)))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/cache", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.purgeAppCache))))
 	mux.HandleFunc("POST /v1/apps/{slug}/rename", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.renameApp)))))

@@ -179,8 +179,12 @@ type MemStore struct {
 	// enumerates both custom_domains and tenant_hostnames.
 	doctorObs map[string]DomainDoctorObservation
 	crons     map[string]Cron
-	triggers  map[string]sqlc.Trigger
-	records   map[string]sqlc.TriggerRecord
+	// prewarmIntents mirrors the durable scheduled-capacity queue. The
+	// process-wide mutex provides the same claim serialization as
+	// SELECT ... FOR UPDATE SKIP LOCKED in PgStore.
+	prewarmIntents map[string]PrewarmIntent
+	triggers       map[string]sqlc.Trigger
+	records        map[string]sqlc.TriggerRecord
 	// triggerDeadLetters mirrors trigger_dead_letter rows. The production
 	// table is append-only; MemStore keeps insertion order for deterministic
 	// dashboard and handler tests.
@@ -776,6 +780,7 @@ func NewMemStore() *MemStore {
 		domains:            map[string]CustomDomain{},
 		doctorObs:          map[string]DomainDoctorObservation{},
 		crons:              map[string]Cron{},
+		prewarmIntents:     map[string]PrewarmIntent{},
 		triggerDeadLetters: []sqlc.TriggerDeadLetter{},
 		// ADR-099 / issue #1184 Workstream A — job store maps.
 		// Empty until the first JobCreate / JobRunCreate; the

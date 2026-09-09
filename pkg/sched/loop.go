@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
+	"github.com/onebox-faas/faas/pkg/sched/prewarm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
 	"github.com/onebox-faas/faas/pkg/sched/targets"
@@ -104,6 +105,7 @@ type Loop struct {
 	scaleupRunning       bool                   // true while one scale-up tick is in flight
 	targets              *targets.Trigger       // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
 	floor                *floor.Trigger         // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
+	prewarm              *prewarm.Trigger       // scheduled/predicted demand-window capacity restore; nil opts out
 	recentLoad           *recentload.RecentLoad // issue #171 aggressive-reaper signal mirror; nil opts out
 	livenessWindow       *LivenessWindow        // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
 	appDelete            *AppDeleteSubscriber   // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
@@ -459,6 +461,13 @@ func (l *Loop) WithFloor(t *floor.Trigger) *Loop {
 	return l
 }
 
+// WithPrewarm attaches the durable scheduled/predicted demand-window
+// reconciler. Nil opts out; the trigger's own interval controls the ticker.
+func (l *Loop) WithPrewarm(t *prewarm.Trigger) *Loop {
+	l.prewarm = t
+	return l
+}
+
 // WithRecentLoad attaches the per-app rolling-window RPS mirror
 // (issue #171, pkg/sched/recentload). Nil opts out — the
 // recentLoadTick arm of Run's select never fires AND the
@@ -790,6 +799,18 @@ func (l *Loop) Run(ctx context.Context) error {
 		floorT = time.NewTicker(interval)
 		defer floorT.Stop()
 	}
+	// Scheduled/predicted prewarm ticker. The durable intent table is the
+	// source of truth, so a one-second safety cadence is safe across missed
+	// notifications and schedd restarts. Nil opts out.
+	var prewarmT *time.Ticker
+	if l.prewarm != nil {
+		interval := l.prewarm.Interval()
+		if interval <= 0 {
+			interval = time.Second
+		}
+		prewarmT = time.NewTicker(interval)
+		defer prewarmT.Stop()
+	}
 	// Recent-load mirror ticker (issue #171). 1 s cadence keeps the
 	// per-app RPS window current between reaper ticks (the reaper
 	// itself runs at 10 s). nil mirror opts out — no ticker, no
@@ -902,6 +923,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runTargets(ctx)
 		case <-floorTick(floorT):
 			l.runFloor(ctx)
+		case <-prewarmTick(prewarmT):
+			l.runPrewarm(ctx)
 		case <-recentLoadTick(recentLoadT):
 			l.runRecentLoad(ctx)
 		case <-migratingWatchdogTick(migratingWatchdogT):
@@ -1074,6 +1097,13 @@ func targetsTick(t *time.Ticker) <-chan time.Time {
 // floorTick (issue #557 / ADR-071) is the proactive min-instances
 // floor reconciler ticker. Same nil-safe shape as scaleupTick.
 func floorTick(t *time.Ticker) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
+
+func prewarmTick(t *time.Ticker) <-chan time.Time {
 	if t == nil {
 		return nil
 	}
@@ -1403,6 +1433,15 @@ func (l *Loop) runFloor(ctx context.Context) {
 	}
 	if err := l.floor.Tick(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		l.log.Warn("floor tick error", "err", err)
+	}
+}
+
+func (l *Loop) runPrewarm(ctx context.Context) {
+	if l.prewarm == nil {
+		return
+	}
+	if err := l.prewarm.Tick(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		l.log.Warn("prewarm tick error", "err", err)
 	}
 }
 
@@ -1762,8 +1801,23 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// same and the customer sees a transient bill drop, never
 	// a false floor that keeps garbage resident.
 	appDeploymentFloor := map[string]int{}
+	// A fired prewarm is a temporary residency floor. Without this overlay,
+	// an early restore could be immediately parked by the idle reaper before
+	// the advertised demand window begins. The store query is optional during
+	// rolling upgrades; permanent app/deployment floors remain unchanged.
+	var prewarmStore state.PrewarmStore
+	if candidate, ok := store.(state.PrewarmStore); ok {
+		prewarmStore = candidate
+	}
 	for _, a := range apps {
 		floor := a.EffectiveMinInstances()
+		if prewarmStore != nil {
+			if temporary, floorErr := prewarmStore.ActivePrewarmFloor(ctx, a.ID, now); floorErr != nil {
+				l.log.Warn("reaper: prewarm floor lookup", "app", a.ID, "err", floorErr)
+			} else if temporary > floor {
+				floor = temporary
+			}
+		}
 		// Floor pushed by per-deployment overrides. We don't have
 		// the instance list yet — stash a placeholder (app floor)
 		// and re-walk after the snapshot is built so we can read

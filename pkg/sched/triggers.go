@@ -59,6 +59,11 @@ const (
 	// whose live count fell below its desired replica count.
 	TriggerServiceReplica = "service.replica"
 
+	// TriggerPrewarm — a durable scheduled/predicted demand-window restore.
+	// This distinguishes intentional ahead-of-demand wakes from reactive
+	// traffic and permanent min_instances floors in the wake timeline.
+	TriggerPrewarm = "prewarm"
+
 	// TriggerAppRestart — explicit customer-requested app restart. The
 	// restart parks the current instance(s), captures a fresh snapshot, and
 	// wakes one replacement instance.

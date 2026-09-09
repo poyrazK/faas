@@ -318,6 +318,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PRESSURE_THRESHOLD_PER_MIN", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PREVIEW_JANITOR_INTERVAL_SECONDS", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PREVIEW_JANITOR_STARTUP_DELAY_SECONDS", Owners: []string{"apid"}, Source: EnvSourceDefault},
+	{Name: "FAAS_PREWARM_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "exact opt-in (`1`) for scheduled prewarm; disabled by default; ADR-160"},
 	{Name: "FAAS_PROMETHEUS_URL", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PUBLIC_CONTROL_ADDR", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_PUBLIC_LISTEN_ADDR", Owners: []string{"gatewayd-public"}, Source: EnvSourceEnvFile},

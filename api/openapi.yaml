@@ -4723,6 +4723,77 @@ paths:
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
         '402': { $ref: '#/components/responses/AdmissionRefused' }
 
+  /v1/apps/{slug}/prewarm:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: createPrewarm
+      summary: Schedule capacity restoration ahead of a demand window.
+      description: |
+        Persists a temporary prewarm intent. schedd claims it during the
+        platform's lead time (currently 60 seconds before wake_at), restores
+        up to count instances through the normal admission gates, and never
+        changes the app's permanent min_instances floor.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PrewarmRequest' }
+      responses:
+        '202':
+          description: Prewarm intent accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrewarmIntentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/prewarms:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listPrewarms
+      summary: List scheduled and completed prewarm intents.
+      responses:
+        '200':
+          description: Prewarm intents ordered by demand-window start.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PrewarmIntentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/prewarms/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Prewarm intent UUID.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [apps]
+      operationId: cancelPrewarm
+      summary: Cancel a pending prewarm intent.
+      responses:
+        '204': { description: Prewarm intent cancelled. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/apps/{slug}/cache:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -17677,6 +17748,34 @@ components:
         timezone: { type: [string, "null"], description: "IANA timezone; an empty value resets to UTC." }
         skip_if_running: { type: [boolean, "null"], description: "Enable or disable overlap skipping for scheduled fires." }
 
+    PrewarmRequest:
+      description: "Schedule temporary capacity restoration ahead of a demand window."
+      type: object
+      required: [count, wake_at, expires_at]
+      properties:
+        count: { type: integer, minimum: 1, description: "Desired number of live instances during the window; normal plan and ledger caps still apply." }
+        wake_at: { type: string, format: date-time, description: "Start of the expected demand window." }
+        expires_at: { type: string, format: date-time, description: "End of the temporary intent; must be after wake_at." }
+
+    PrewarmIntentResponse:
+      description: "Durable scheduled/predicted prewarm intent and scheduler outcome."
+      type: object
+      required: [id, app_id, count, wake_at, expires_at, trigger, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        count: { type: integer }
+        wake_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        trigger: { type: string, enum: [calendar, cron, pattern, webhook] }
+        status: { type: string, enum: [pending, running, succeeded, failed, cancelled] }
+        created_at: { type: string, format: date-time }
+        claimed_at: { type: [string, "null"], format: date-time }
+        fired_at: { type: [string, "null"], format: date-time }
+        admitted_count: { type: integer, description: "Instances actually admitted; may be lower than count when capacity gates apply." }
+        outcome: { type: string }
+        last_error: { type: string }
+
     # ─── Jobs (issue #1184 Workstream A / ADR-099) ─────────────
     # Run-to-completion jobs. Each job is a stored template
     # (image + command + env + caps); POST /v1/jobs/{name}/runs
@@ -24377,6 +24476,12 @@ components:
 
     NotFound:
       description: 'code: not_found'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    NotImplemented:
+      description: 'code: not_implemented — this optional capability is not enabled on the serving daemon.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
