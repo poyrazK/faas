@@ -225,15 +225,16 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 		}
 	}
 
-	// 4. Degraded flag: at least one warn- or page-severity alert is
-	// firing on the local Prometheus. Counted across all alert groups
-	// and components. A PromQL error here is logged but treated as
+	// 4. Degraded flag: at least one platform warn- or page-severity alert is
+	// firing on the local Prometheus. Tenant alert-preset signals remain in
+	// Prometheus and the customer alert UI, but do not describe fleet health.
+	// A PromQL error here is logged but treated as
 	// "no firing alerts" — the flag is intentionally conservative so
 	// a transient ALERTS{} hiccup doesn't poison the public snapshot.
 	// The full-pipeline failure (Prometheus unreachable) still
 	// surfaces via Source = "degraded: <error>" because the primary
 	// three queries would have failed first.
-	alertQ := `count(ALERTS{alertstate="firing",severity=~"page|warn"}) > 0`
+	alertQ := `count(ALERTS{alertstate="firing",severity=~"page|warn",family!~"alert_preset_signals|alert_preset_correlation"}) > 0`
 	if v, err := c.client.QueryScalar(ctx, alertQ); err == nil {
 		if v > 0 {
 			snap.Degraded = true

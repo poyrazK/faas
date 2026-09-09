@@ -1,10 +1,40 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestValidateDeploymentCheckTarget(t *testing.T) {
+	tests := []struct {
+		name           string
+		kind           string
+		commit         string
+		repo           string
+		installationID int64
+		wantProject    bool
+		wantErr        bool
+	}{
+		{name: "generic deployment ignores absent GitHub metadata", kind: "manual"},
+		{name: "GitHub deployment requires metadata", kind: string(state.DeploymentKindGitHub), wantErr: true},
+		{name: "preview deployment requires metadata", kind: string(state.DeploymentKindPreview), wantErr: true},
+		{name: "GitHub deployment projects", kind: string(state.DeploymentKindGitHub), commit: "abc", repo: "owner/repo", installationID: 42, wantProject: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			project, err := validateDeploymentCheckTarget("dep-1", tc.kind, tc.commit, tc.repo, tc.installationID)
+			if project != tc.wantProject || (err != nil) != tc.wantErr {
+				t.Fatalf("validate = (%v, %v), want project=%v err=%v", project, err, tc.wantProject, tc.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "dep-1") {
+				t.Fatalf("error %q does not identify the deployment", err)
+			}
+		})
+	}
+}
 
 func TestCheckPhaseForDeploymentStatusForRollout(t *testing.T) {
 	cases := []struct {

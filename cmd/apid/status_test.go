@@ -357,6 +357,26 @@ func TestStatus_DegradedFlag(t *testing.T) {
 	})
 }
 
+func TestStatusDegradedQueryExcludesTenantAlertPresets(t *testing.T) {
+	var alertQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if q := r.URL.Query().Get("query"); strings.Contains(q, "ALERTS") {
+			alertQuery = q
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"scalar","result":[{"value":[0,"0"]}]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+	}))
+	defer srv.Close()
+
+	if _, err := newStatusCache(srv.URL, slog.Default()).Get(context.Background()); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !strings.Contains(alertQuery, `family!~"alert_preset_signals|alert_preset_correlation"`) {
+		t.Fatalf("alert query does not exclude tenant preset families: %s", alertQuery)
+	}
+}
+
 // TestStatus_AllQueriesFail pins the full-pipeline failure path:
 // when ALL four PromQL queries fail (e.g. Prometheus down), fetch
 // must return a non-nil error so the JSON handler can fall back to
