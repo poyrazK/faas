@@ -46,6 +46,33 @@ grep -Fq 'passed, ${skipped} skipped, ${failed} failed' "${runner}" || {
   exit 1
 }
 
+# The namespace batch is a second pass, not an argument tweak, so it needs
+# its own pins: the six tests that manipulate /run/netns skipped entirely
+# until it existed.
+grep -Fq 'unshare --mount --net --propagation private' "${runner}" || {
+  echo "native metal wrapper no longer runs the namespace batch under unshare" >&2
+  exit 1
+}
+grep -Fq 'mount -t tmpfs tmpfs /run/netns' "${runner}" || {
+  echo "native metal wrapper does not give the namespace batch a private /run/netns" >&2
+  exit 1
+}
+grep -Fq 'FAAS_TEST_NETWORK_BATCH' "${runner}" || {
+  echo "native metal wrapper does not enable FAAS_TEST_NETWORK_BATCH for the batch" >&2
+  exit 1
+}
+grep -Fq 'namespace batch executed no test' "${runner}" || {
+  echo "native metal wrapper does not fail when the namespace batch runs nothing" >&2
+  exit 1
+}
+for batch_test in TestMetalImageBindMount TestMetalIPSetupBatch TestMetalFreshNetworkPolicy \
+  TestMetalReusedLeaseNeighbor TestMetalPreparedBridgeMAC TestMetalPreparedNetworkOwnership; do
+  grep -Fq "${batch_test}" "${runner}" || {
+    echo "native metal wrapper dropped ${batch_test} from the namespace batch" >&2
+    exit 1
+  }
+done
+
 base_mountpoints="$(sed -n 's/^base_mountpoints=(\(.*\))$/\1/p' "${runner}")"
 [[ -n "${base_mountpoints}" ]] || {
   echo "could not extract the native metal base mountpoint contract" >&2
