@@ -1,9 +1,9 @@
 # `postgres_backup` ansible role
 
 Drops and enables the `faas-pg-basebackup.{service,timer}` pair (local
-basebackup) + the `faas-pg-basebackup-push.{service,timer}` pair
-(off-host push through a provider-neutral rclone remote, issue #250). Both timers run
-on the 03:00 / 03:30 UTC cadence.
+basebackup), the `faas-pg-basebackup-push.{service,timer}` pair
+(off-host push through a provider-neutral rclone remote, issue #250), and the
+hourly verified WAL-prune pair (issue #1695).
 
 ## What this role does
 
@@ -18,9 +18,10 @@ on the 03:00 / 03:30 UTC cadence.
 5. Creates `/etc/faas/secrets/storage-box/` (0700 root:root).
 6. Copies `faas-pg-basebackup-push.{service,timer}` into
    `/etc/systemd/system/`.
-7. Runs `systemctl daemon-reload`, then enables + starts both timers.
-8. Asserts `/var/lib/pgsql/basebackup` mode is `≤ 0750` (spec §11).
-9. Asserts `/etc/faas/secrets/storage-box/{rclone.conf,box-age-key}`
+7. Installs the verified basebackup-push and WAL-prune helpers.
+8. Runs `systemctl daemon-reload`, then enables + starts the timers.
+9. Asserts `/var/lib/pgsql/basebackup` mode is `≤ 0750` (spec §11).
+10. Asserts any provisioned `/etc/faas/secrets/storage-box/{rclone.conf,box-age-key}`
    are 0400 root:root (issue #250 fail-closed, spec §11).
 
 ## Why no PG config changes
@@ -48,8 +49,10 @@ produces zero `changed`.
   under the hood.
 - The role does NOT manage the timer schedule — `OnCalendar` lives in
   the unit file; editing it is a one-line `copy` change.
-- The role does NOT prune old basebackups. The drill picks the newest by
-  mtime; an explicit prune is M9 (`docs/drills/TEMPLATE-restore-drill.md`).
+- The basebackup push keeps the newest two local backups after remote byte
+  verification. The object-store lifecycle owns longer remote retention.
+- WAL pruning uses the oldest retained basebackup as its boundary and refuses
+  deletion unless every candidate passes an off-host byte check.
 
 ## Refs
 

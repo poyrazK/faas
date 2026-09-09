@@ -990,15 +990,14 @@ type OpsMetrics struct {
 	// via ActivePassiveFailovers in production. Pre-instantiated in
 	// NewOpsMetrics so the row surfaces in /metrics from boot.
 	activePassiveFailoversTotal *prometheus.CounterVec
-	// pgBackupLastPushed — operator-facing gauge stamped by the
-	// apid's pgBackupPushedSampler (cmd/apid/main.go). Holds the
-	// age of the newest tarball in /var/lib/pgsql/basebackup/ (in
-	// seconds; 0 when the dir is empty). The PgBackupStale alert
-	// (deploy/ansible/roles/prometheus/files/pg_backup.rules.yml,
-	// issue #250) queries this gauge; the alert fires when the
-	// value exceeds 86400 (24h). Unlabelled — single-box fleet, no
-	// per-node fan-out needed today.
-	pgBackupLastPushed prometheus.Gauge
+	// Provider-neutral PostgreSQL recovery signals, stamped by apid's
+	// pgBackupPushedSampler from root-written, non-sensitive state files.
+	// The API user deliberately has no access to /var/lib/pgsql itself.
+	pgBackupLastPushed       prometheus.Gauge
+	pgWalArchiveBytes        prometheus.Gauge
+	pgWalArchiveOldestAge    prometheus.Gauge
+	pgWalArchiveNewestAge    prometheus.Gauge
+	pgWalPruneLastSuccessful prometheus.Gauge
 	// alertEvaluatorMu + alertEvaluatorEnabledValue shadow the gauge
 	// so AlertEvaluatorEnabled() can return a bool without scraping
 	// /metrics or relying on a non-existent prometheus.Gauge.Value()
@@ -3293,19 +3292,30 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	if cpuStatsCollectDurLocal != nil {
 		commonCollectors = append(commonCollectors, cpuStatsCollectDurLocal)
 	}
-	// Issue #250 — off-host Postgres backup observability. Same
-	// pre-instantiate-to-0 precedent as alertEvaluatorEnabled above:
-	// without a tick, the gauge must still surface from boot so the
-	// alert rule's `time() - pg_backup_last_pushed_seconds` query
-	// has a series to compare against. Without this, a freshly-booted
-	// box would look identical to one with no basebackup root —
-	// both return NaN, and the alert is silently skipped.
+	// Issues #250/#1695 — off-host Postgres backup and bounded local WAL
+	// observability. Zero means no successful observation has been recorded.
 	pgBackupLastPushed := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prefix + "_pg_backup_last_pushed_seconds",
-		Help: "Age of the newest Postgres basebackup tarball in /var/lib/pgsql/basebackup/, in seconds (issue #250). 0 when the directory is empty. The PgBackupStale alert (deploy/ansible/roles/prometheus/files/pg_backup.rules.yml) queries `time() - pg_backup_last_pushed_seconds > 86400` to surface a stuck push timer; the value is stamped once per minute by cmd/apid's pgBackupPushedSampler goroutine (60s tick).",
+		Help: "Unix timestamp of the last basebackup that was copied and byte-verified in the off-host store. Zero means no verified push has been recorded (issues #250/#1695).",
 	})
-	pgBackupLastPushed.Set(0)
-	commonCollectors = append(commonCollectors, pgBackupLastPushed)
+	pgWalArchiveBytes := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_pg_wal_archive_bytes",
+		Help: "Bytes retained in the local PostgreSQL WAL archive after the most recent verified prune (issue #1695).",
+	})
+	pgWalArchiveOldestAge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_pg_wal_archive_oldest_age_seconds",
+		Help: "Age in seconds of the oldest file retained in the local PostgreSQL WAL archive. Zero means the archive is empty or unobserved (issue #1695).",
+	})
+	pgWalArchiveNewestAge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_pg_wal_archive_newest_age_seconds",
+		Help: "Age in seconds of the newest file retained in the local PostgreSQL WAL archive. Zero means the archive is empty or unobserved (issue #1695).",
+	})
+	pgWalPruneLastSuccessful := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_pg_wal_prune_last_success_timestamp_seconds",
+		Help: "Unix timestamp of the last local WAL prune completed after off-host copy verification. Zero means no verified prune has completed (issue #1695).",
+	})
+	commonCollectors = append(commonCollectors, pgBackupLastPushed, pgWalArchiveBytes,
+		pgWalArchiveOldestAge, pgWalArchiveNewestAge, pgWalPruneLastSuccessful)
 	// ADR-038 / Tier 3 / issue #197 B3.1: build_provenance
 	// populator counter. Single CounterVec with a closed `code`
 	// label set ({ok, error}); pre-instantiated below so both rows
@@ -4538,6 +4548,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apidTenantSurfaceCertExpirySeconds:                    apidTenantSurfaceCertExpirySeconds,
 		apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal: apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal,
 		pgBackupLastPushed:                                    pgBackupLastPushed,
+		pgWalArchiveBytes:                                     pgWalArchiveBytes,
+		pgWalArchiveOldestAge:                                 pgWalArchiveOldestAge,
+		pgWalArchiveNewestAge:                                 pgWalArchiveNewestAge,
+		pgWalPruneLastSuccessful:                              pgWalPruneLastSuccessful,
 		ipLabels:                                              newIPLabelSet(maxIPLabelValues),
 		topTenantRPS:                                          topTenantRPS,
 		topAccounts:                                           newTopAccountSet(topAccountSetCap),
@@ -7361,18 +7375,46 @@ func (m *OpsMetrics) ApidTenantSurfaceCertExpiryRefresherWalkCompleteTotal(resul
 	return func() {}
 }
 
-// PgBackupLastPushed returns the unlabelled gauge stamped by the
-// apid's pgBackupPushedSampler goroutine (issue #250). Operators
-// scrape it via the cluster-wide /metrics endpoint; the alert rule
-// `PgBackupStale` (deploy/ansible/roles/prometheus/files/pg_backup.rules.yml)
-// fires when `time() - pg_backup_last_pushed_seconds > 86400`.
-// Safe on a nil receiver (returns nil — same shape as the other
-// accessor shortcuts).
+// PgBackupLastPushed returns the Unix timestamp gauge for the most recent
+// basebackup that was copied and byte-verified off-host.
 func (m *OpsMetrics) PgBackupLastPushed() prometheus.Gauge {
 	if m == nil {
 		return nil
 	}
 	return m.pgBackupLastPushed
+}
+
+// PgWalArchiveBytes returns the local archived-WAL byte gauge.
+func (m *OpsMetrics) PgWalArchiveBytes() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.pgWalArchiveBytes
+}
+
+// PgWalArchiveOldestAge returns the age of the oldest retained WAL file.
+func (m *OpsMetrics) PgWalArchiveOldestAge() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.pgWalArchiveOldestAge
+}
+
+// PgWalArchiveNewestAge returns the age of the newest retained WAL file.
+func (m *OpsMetrics) PgWalArchiveNewestAge() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.pgWalArchiveNewestAge
+}
+
+// PgWalPruneLastSuccessful returns the Unix timestamp gauge for the latest
+// WAL prune that completed after off-host verification.
+func (m *OpsMetrics) PgWalPruneLastSuccessful() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.pgWalPruneLastSuccessful
 }
 
 // SetAlertEvaluatorEnabled stamps the alert-evaluator-enabled gauge.

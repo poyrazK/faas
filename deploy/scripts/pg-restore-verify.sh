@@ -59,6 +59,7 @@ LIVE_PG_BIN="${LIVE_PG_BIN:-$(pg_config --bindir 2>/dev/null || echo /usr/lib/po
 # it).
 RCLONE_REMOTE="${RCLONE_REMOTE:-offhostbox}"
 RCLONE_CONF="${RCLONE_CONF:-/etc/faas/secrets/storage-box/rclone.conf}"
+RCLONE_RUNTIME_CONF="${RCLONE_RUNTIME_CONF:-/var/lib/pgsql/backup-rclone.conf}"
 BASEBACKUP_PATH="${OFF_HOST_BACKUP_BASEBACKUP_PATH:-faas-pg-basebackup}"
 WAL_PATH="${OFF_HOST_BACKUP_WAL_PATH:-faas-pg-wal}"
 
@@ -74,9 +75,12 @@ heading "0/5 Pre-flight"
 [[ "$(uname -s)" == "Linux" ]] || fail "verify must run on the EX44 (Linux)"
 [[ $EUID -eq 0 ]] || fail "must run as root (writes /var/lib/pgsql, opens privileged ports)"
 command -v rclone >/dev/null 2>&1 || fail "rclone not on PATH — apt install rclone first"
+command -v runuser >/dev/null 2>&1 || fail "runuser not on PATH"
 [[ -f "$RCLONE_CONF" ]] || fail "$RCLONE_CONF missing — run 'gregale backup unseal-rclone' (PR-X 'gregale secrets init' supersedes bootstrap.sh; PR-1 retired bootstrap.sh 2026-08-15)"
 [[ "$(stat -c '%a %U %G' "$RCLONE_CONF")" == "400 root root" ]] \
   || fail "$RCLONE_CONF must be 0400 root:root (spec §11)"
+runuser -u postgres -- test -r "$RCLONE_RUNTIME_CONF" \
+  || fail "$RCLONE_RUNTIME_CONF must be readable by postgres for WAL replay"
 
 # Pre-flight: list remote + confirm the T-th subdir exists. We pin
 # the T-th subdir by mtime (newest under $BASEBACKUP_PATH) so the
@@ -96,12 +100,14 @@ ok "picked newest remote basebackup: $TGT_REMOTE_DIR"
 
 RESTORE_STAGE="${RESTORE_TEST_ROOT}/stage-${VERIFY_START}"
 RESTORE_PGDATA="${RESTORE_TEST_ROOT}/data"
-mkdir -p "$RESTORE_STAGE" "$RESTORE_PGDATA"
+rm -rf "$RESTORE_STAGE" "$RESTORE_PGDATA"
+install -d -o postgres -g postgres -m 0700 "$RESTORE_STAGE" "$RESTORE_PGDATA"
 
 heading "2/5 rclone copy ${RCLONE_REMOTE}:${BASEBACKUP_PATH}/${TGT_REMOTE_DIR} → $RESTORE_STAGE"
 rclone copy "${RCLONE_REMOTE}:${BASEBACKUP_PATH}/${TGT_REMOTE_DIR}" "$RESTORE_STAGE" \
   --config "$RCLONE_CONF" --stats=0
 [[ -f "$RESTORE_STAGE/base.tar.gz" ]] || fail "no base.tar.gz in $RESTORE_STAGE — pick a different remote subdir"
+chown -R postgres:postgres "$RESTORE_STAGE"
 
 # --- 3. Restore into the throwaway PG data dir ------------------------
 
@@ -109,7 +115,8 @@ heading "3/5 initdb + restore into $RESTORE_PGDATA"
 # Clean any prior run; we're host-only under /var/lib/pgsql so this
 # never touches the live cluster's data dir.
 rm -rf "$RESTORE_PGDATA"
-${LIVE_PG_BIN}/initdb -D "$RESTORE_PGDATA" --auth=peer --username=postgres >/dev/null
+install -d -o postgres -g postgres -m 0700 "$RESTORE_PGDATA"
+runuser -u postgres -- "${LIVE_PG_BIN}/initdb" -D "$RESTORE_PGDATA" --auth=peer --username=postgres >/dev/null
 ok "initdb complete"
 
 tar -xzf "$RESTORE_STAGE/base.tar.gz" -C "$RESTORE_PGDATA"
@@ -117,6 +124,7 @@ tar -xzf "$RESTORE_STAGE/base.tar.gz" -C "$RESTORE_PGDATA"
 # pg_wal.tar.gz is accepted for compatibility with older/operator-made backups.
 [[ -f "$RESTORE_STAGE/pg_wal.tar.gz" ]] \
   && tar -xzf "$RESTORE_STAGE/pg_wal.tar.gz" -C "$RESTORE_PGDATA"
+chown -R postgres:postgres "$RESTORE_PGDATA"
 ok "basebackup unpacked"
 
 # Recovery stanza: signal file + restore_command that streams WAL
@@ -126,7 +134,7 @@ cat >> "$RESTORE_PGDATA/postgresql.conf" <<EOF
 
 # --- faas-pg-restore-verify: recovery stanza (issue #250, removed after verify) ---
 port = ${RESTORE_PG_PORT}
-restore_command = 'rclone cat ${RCLONE_REMOTE}:${WAL_PATH}/%f --config ${RCLONE_CONF} > %p'
+restore_command = 'rclone copyto ${RCLONE_REMOTE}:${WAL_PATH}/%f %p --config ${RCLONE_RUNTIME_CONF} --stats=0 --quiet'
 recovery_target_action = 'promote'
 unix_socket_directories = '/tmp'
 EOF
@@ -134,14 +142,16 @@ EOF
 # --- 4. Replay WAL on the throwaway instance --------------------------
 
 heading "4/5 start PG on :${RESTORE_PG_PORT}, replay WAL"
-${LIVE_PG_BIN}/pg_ctl -D "$RESTORE_PGDATA" -l "$RESTORE_TEST_ROOT/pg.log" -o "-p ${RESTORE_PG_PORT}" start
-trap '${LIVE_PG_BIN}/pg_ctl -D "$RESTORE_PGDATA" -m fast stop || true' EXIT
+chown postgres:postgres "$RESTORE_PGDATA/postgresql.conf"
+RESTORE_PG_LOG="$RESTORE_PGDATA/restore-verify.log"
+runuser -u postgres -- "${LIVE_PG_BIN}/pg_ctl" -D "$RESTORE_PGDATA" -l "$RESTORE_PG_LOG" -o "-p ${RESTORE_PG_PORT}" -W start
+trap 'runuser -u postgres -- ${LIVE_PG_BIN}/pg_ctl -D "$RESTORE_PGDATA" -m fast stop || true' EXIT
 
 # Wait for promotion (pg_is_in_recovery() returns 'f').
 PROMOTED=0
-for _ in $(seq 1 60); do
-  if ${LIVE_PG_BIN}/pg_isready -h /tmp -p "$RESTORE_PG_PORT" >/dev/null 2>&1; then
-    IN_RECOVERY=$(PGUSER=postgres ${LIVE_PG_BIN}/psql -h /tmp -p "$RESTORE_PG_PORT" -tAc "SELECT pg_is_in_recovery()" 2>/dev/null || echo "t")
+for _ in $(seq 1 300); do
+  if "${LIVE_PG_BIN}/pg_isready" -h /tmp -p "$RESTORE_PG_PORT" >/dev/null 2>&1; then
+    IN_RECOVERY=$(runuser -u postgres -- "${LIVE_PG_BIN}/psql" -h /tmp -p "$RESTORE_PG_PORT" -d postgres -tAc "SELECT pg_is_in_recovery()" 2>/dev/null || echo "t")
     if [[ "$IN_RECOVERY" == "f" ]]; then
       PROMOTED=1
       break
@@ -149,7 +159,7 @@ for _ in $(seq 1 60); do
   fi
   sleep 2
 done
-[[ $PROMOTED -eq 1 ]] || fail "throwaway PG never promoted — see $RESTORE_TEST_ROOT/pg.log"
+[[ $PROMOTED -eq 1 ]] || fail "throwaway PG never promoted — see $RESTORE_PG_LOG"
 ok "throwaway PG promoted"
 
 # --- 5. Row-count assertions ------------------------------------------
@@ -159,12 +169,12 @@ declare -a TABLES=(accounts apps instances)
 ALL_PASS=1
 for tbl in "${TABLES[@]}"; do
   # Live cluster is on $LIVE_PG_PORT over the unix socket.
-  LIVE=$(PGUSER=postgres ${LIVE_PG_BIN}/psql -h /var/run/postgresql -p "$LIVE_PG_PORT" -tAc "SELECT count(*) FROM ${tbl}" 2>/dev/null || echo "0")
-  REST=$(PGUSER=postgres ${LIVE_PG_BIN}/psql -h /tmp -p "$RESTORE_PG_PORT" -tAc "SELECT count(*) FROM ${tbl}" 2>/dev/null || echo "0")
+  LIVE=$(runuser -u postgres -- "${LIVE_PG_BIN}/psql" -h /var/run/postgresql -p "$LIVE_PG_PORT" -d faas -tAc "SELECT count(*) FROM ${tbl}" 2>/dev/null || echo "0")
+  REST=$(runuser -u postgres -- "${LIVE_PG_BIN}/psql" -h /tmp -p "$RESTORE_PG_PORT" -d faas -tAc "SELECT count(*) FROM ${tbl}" 2>/dev/null || echo "0")
   if [[ "$LIVE" -gt 0 ]]; then
     RATIO=$(awk -v a="$REST" -v b="$LIVE" 'BEGIN { if (b > 0) printf "%.4f", a / b; else print "0" }')
   else
-    RATIO="0.0000"
+    RATIO=$(awk -v a="$REST" 'BEGIN { print (a == 0) ? "1.0000" : "0.0000" }')
   fi
   PASS=$(awk -v r="$RATIO" -v t="$ROW_COUNT_THRESHOLD" 'BEGIN { print (r >= t) ? "1" : "0" }')
   if [[ "$PASS" -eq 1 ]]; then
@@ -176,8 +186,9 @@ for tbl in "${TABLES[@]}"; do
 done
 
 # Stop the throwaway instance so subsequent runs can re-initdb.
-${LIVE_PG_BIN}/pg_ctl -D "$RESTORE_PGDATA" -m fast stop || true
+runuser -u postgres -- "${LIVE_PG_BIN}/pg_ctl" -D "$RESTORE_PGDATA" -m fast stop || true
 trap - EXIT
+rm -rf "$RESTORE_STAGE" "$RESTORE_PGDATA"
 
 VERIFY_END=$(date +%s)
 TOTAL=$(( VERIFY_END - VERIFY_START ))

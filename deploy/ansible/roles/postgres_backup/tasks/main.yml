@@ -18,9 +18,10 @@
 #     pattern; we don't vendor binaries).
 #   * /etc/faas/secrets/storage-box/{rclone.conf,box-age-key} are
 #     sealed-at-rest via host.age (PR #371 cosign precedent) and
-#     decrypted into a tmpfs staging dir at ansible-run time. systemd
-#     `LoadCredential=` surfaces the plaintext file inside the push
-#     unit's $CREDENTIALS_DIRECTORY; rclone reads `%d/faas_off_host_backup_rclone`.
+#     decrypted to a root-only runtime file. The root-owned basebackup push
+#     reads it directly. A 0440 root:postgres copy under /var/lib/pgsql is
+#     used by PostgreSQL's archive_command because pg_ctlcluster sanitizes
+#     launcher environment variables.
 #   * Fail-closed asserts on mode + owner + group for every secret
 #     file (mirrors the canonical `stat` + `failed_when` block in
 #     control_plane_service/tasks/main.yml:108-209).
@@ -53,6 +54,15 @@
     state: directory
     owner: postgres
     group: postgres
+    mode: "0750"
+  failed_when: false  # chroot/CI may not have the postgres user
+
+- name: postgres_backup — create API-readable backup state root
+  ansible.builtin.file:
+    path: /var/lib/faas/backup-state
+    state: directory
+    owner: faas
+    group: faas
     mode: "0750"
   failed_when: false  # chroot/CI may not have the postgres user
 
@@ -105,6 +115,88 @@
     mode: "0644"
   notify: daemon-reload postgres_backup
 
+- name: postgres_backup — create basebackup push override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-pg-basebackup-push.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: postgres_backup — render basebackup off-host destination
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-pg-basebackup-push.service.d/10-offhost.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      Environment=OFF_HOST_BACKUP_REMOTE={{ off_host_backup_remote }}
+      Environment=OFF_HOST_BACKUP_BASEBACKUP_PATH={{ off_host_backup_basebackup_path }}
+  notify: daemon-reload postgres_backup
+
+- name: postgres_backup — create local helper directory
+  ansible.builtin.file:
+    path: /usr/local/lib/faas
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: postgres_backup — install verified WAL pruner
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../scripts/faas-pg-wal-prune.sh"
+    dest: /usr/local/lib/faas/faas-pg-wal-prune.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: postgres_backup — install verified basebackup push helper
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../scripts/faas-pg-basebackup-push.sh"
+    dest: /usr/local/lib/faas/faas-pg-basebackup-push.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: postgres_backup — drop WAL prune service
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../systemd/faas-pg-wal-prune.service"
+    dest: /etc/systemd/system/faas-pg-wal-prune.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload postgres_backup
+
+- name: postgres_backup — drop WAL prune timer
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../systemd/faas-pg-wal-prune.timer"
+    dest: /etc/systemd/system/faas-pg-wal-prune.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload postgres_backup
+
+- name: postgres_backup — create WAL prune override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-pg-wal-prune.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: postgres_backup — render WAL prune off-host destination
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-pg-wal-prune.service.d/10-offhost.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      Environment=OFF_HOST_BACKUP_REMOTE={{ off_host_backup_remote }}
+      Environment=OFF_HOST_BACKUP_WAL_PATH={{ off_host_backup_wal_path }}
+  notify: daemon-reload postgres_backup
+
 # Issue #250 (review F3): rclone copyto / rclone sync do NOT
 # auto-create parent directories on the remote Storage Box — the
 # first push fails loud with "directory not found" and silently
@@ -128,11 +220,24 @@
 
 - name: postgres_backup — check configured offhostbox remote
   ansible.builtin.command:
-    cmd: grep -q '^\[offhostbox\]$' /etc/faas/secrets/storage-box/rclone.conf
+    cmd: "grep -Fqx '[{{ off_host_backup_remote }}]' /etc/faas/secrets/storage-box/rclone.conf"
   register: pg_rclone_remote
   changed_when: false
   failed_when: false
   when: pg_rclone_conf.stat.exists | default(false)
+
+- name: postgres_backup — install postgres-readable rclone runtime config
+  ansible.builtin.copy:
+    src: /etc/faas/secrets/storage-box/rclone.conf
+    remote_src: true
+    dest: /var/lib/pgsql/backup-rclone.conf
+    owner: root
+    group: postgres
+    mode: "0440"
+  when:
+    - pg_rclone_conf.stat.exists | default(false)
+    - (pg_rclone_remote.rc | default(1)) == 0
+  failed_when: false  # chroot/CI may not have the postgres user
 
 - name: postgres_backup — create off-host backup dirs (issue # 250 / F3)
   ansible.builtin.command:
@@ -169,6 +274,16 @@
     state: started
   failed_when: false  # chroot/CI lacks systemd
 
+- name: postgres_backup — enable verified WAL prune timer
+  ansible.builtin.systemd:
+    name: faas-pg-wal-prune.timer
+    enabled: true
+    state: started
+  when:
+    - pg_rclone_conf.stat.exists | default(false)
+    - (pg_rclone_remote.rc | default(1)) == 0
+  failed_when: false  # chroot/CI lacks systemd
+
 # Spec §11 sanity check — refuse to claim success if the basebackup root
 # is world-readable. Catches a wrong umask in a future edit of the
 # service unit.
@@ -192,9 +307,8 @@
 # Two distinct perms profiles:
 #
 #   rclone.conf  → 0400 root:root
-#     PID 1 reads this source and LoadCredential= surfaces a
-#     service-scoped copy under $CREDENTIALS_DIRECTORY at unit
-#     activation. The PostgreSQL user never reads /etc/faas directly.
+#     The root-owned basebackup push reads this source directly. The role
+#     installs a separate 0440 root:postgres runtime copy for archive_command.
 #
 #   box-age-key  → 0400 root:root
 #     Used only by the bootstrap-time `gregalectl backup unseal-rclone`
@@ -229,8 +343,7 @@
       (issue #250, spec §11). Re-run `gregalectl backup unseal-rclone`
       (PR-X `gregalectl secrets init` supersedes the v1 bootstrap.sh —
       RETIRED 2026-08-15 by issue #911 / PR-1) to repopulate from
-      the host.age-sealed form. systemd reads rclone.conf as root
-      and stages it for the PostgreSQL cluster via LoadCredential.
+      the host.age-sealed form.
   loop: "{{ pg_sb_stat.results }}"
   loop_control:
     label: "{{ item.item.name }}"

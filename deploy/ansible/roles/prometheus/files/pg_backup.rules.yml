@@ -16,22 +16,44 @@ groups:
   - name: faas.pg_backup
     rules:
       - alert: PgBackupStale
-        # `pg_backup_last_pushed_seconds` is set by cmd/apid's
-        # pgBackupPushedSampler (issue #250); 0 when the basebackup
-        # root is empty, otherwise the age of the newest tarball in
-        # /var/lib/pgsql/basebackup/. The alert fires when the push
-        # is missing for >24 h (spec §14 M8 + issue #250 acceptance
-        # bar — single-day retention is the policy).
-        expr: time() - pg_backup_last_pushed_seconds > 86400
+        # The gauge is a Unix timestamp written only after rclone copy and
+        # byte verification succeed. Zero means no verified push exists.
+        expr: apid_pg_backup_last_pushed_seconds == 0 or time() - apid_pg_backup_last_pushed_seconds > 93600
         for: 5m
         labels:
           severity: page
           family: pg_backup
         annotations:
-          summary: "Postgres basebackup not pushed to Hetzner Storage Box for >24h"
+          summary: "Postgres basebackup has no recent verified off-host copy"
           description: |
-            Last successful push: {{ $value | humanizeDuration }} ago.
+            The last verified push timestamp is missing or older than 26 hours.
             Check `systemctl status faas-pg-basebackup-push.timer` and
             `journalctl -u faas-pg-basebackup-push.service` on the CP host.
             Runbook: docs/runbooks/PostgresBackup.md
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
+
+      - alert: PgWalPruneStale
+        expr: apid_pg_wal_prune_last_success_timestamp_seconds == 0 or time() - apid_pg_wal_prune_last_success_timestamp_seconds > 7200
+        for: 15m
+        labels:
+          severity: warn
+          family: pg_backup
+        annotations:
+          summary: "Verified local PostgreSQL WAL pruning has not completed for two hours"
+          description: |
+            Check `systemctl status faas-pg-wal-prune.timer` and
+            `journalctl -u faas-pg-wal-prune.service` on the control-plane host.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
+
+      - alert: PgWalArchiveLarge
+        expr: apid_pg_wal_archive_bytes > 21474836480
+        for: 30m
+        labels:
+          severity: warn
+          family: pg_backup
+        annotations:
+          summary: "Local PostgreSQL WAL archive exceeds 20 GiB"
+          description: |
+            Verified pruning is not keeping the local archive bounded. Check the
+            prune journal and off-host object-store reachability before deleting files.
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"

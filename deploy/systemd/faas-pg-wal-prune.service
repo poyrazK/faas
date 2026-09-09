@@ -1,0 +1,29 @@
+[Unit]
+Description=onebox-faas verified local PostgreSQL WAL prune
+Documentation=https://github.com/poyrazK/faas/issues/1695
+After=network-online.target postgresql.service faas-pg-basebackup-push.service
+Wants=network-online.target
+Requires=postgresql.service
+ConditionPathExists=/var/lib/pgsql/backup-rclone.conf
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=FAAS_PG_WAL_ARCHIVE_ROOT=/var/lib/pgsql/archive
+Environment=FAAS_PG_BASEBACKUP_ROOT=/var/lib/pgsql/basebackup
+Environment=FAAS_PG_BACKUP_STATE_ROOT=/var/lib/faas/backup-state
+Environment=FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG=/var/lib/pgsql/backup-rclone.conf
+Environment=OFF_HOST_BACKUP_REMOTE=offhostbox
+Environment=OFF_HOST_BACKUP_WAL_PATH=faas-pg-wal
+ExecStart=/usr/local/lib/faas/faas-pg-wal-prune.sh --apply
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
