@@ -806,6 +806,8 @@ jobs:
         run: make spec-cited-tests-check
       - name: spec-cited-tests checker tests
         run: make spec-cited-tests-check-test
+      - name: migration-version gate checker tests
+        run: make migration-version-hygiene-check-test
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -1412,6 +1414,16 @@ jobs:
           grep -q "FAAS_POLAR_ACCESS_TOKEN" deploy/scripts/verify-secrets.sh
           grep -q "FAAS_BILLING_PROVIDER=polar" deploy/scripts/verify-secrets.sh
           grep -q "FAAS_POLAR_METER_ID" deploy/scripts/verify-secrets.sh
+
+      # Collision prevention, not collision reporting. The slot gate compares
+      # against main as it is right now, so two pull requests can each pass
+      # and still break main when the second merges — five times this week.
+      # GitHub's merge queue would fix the class but needs an org-owned repo;
+      # this one is user-owned.
+      - name: migration version hygiene
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make migration-version-hygiene-check
 
       - name: migrations check (static)
         run: make migrations-check
