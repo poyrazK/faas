@@ -1,5 +1,7 @@
 package gateway
 
+// spec: §12.6
+
 import (
 	"io"
 	"net/http"

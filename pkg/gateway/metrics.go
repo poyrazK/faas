@@ -292,6 +292,9 @@ type Metrics struct {
 	// The app label matches the existing per-app gateway counters and makes
 	// the no-wake benefit attributable to the customer app.
 	corsPreflightEdge *prometheus.CounterVec
+	// healthEdgeAnswered is deliberately separate from request metrics: health
+	// probes answered from the edge must not enter the app SLO denominator.
+	healthEdgeAnswered *prometheus.CounterVec
 	// edgeRuleCompileError (ADR-091 hardening PR-A): counter of
 	// compile-time failures inside the cmd-side loader
 	// (cmd/gatewayd-internal/edge_rules.go::warnPathGlobErrs). A
@@ -791,6 +794,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_cors_preflight_edge_total",
 			Help: "CORS preflight responses completed at the gateway without waking an app, labelled by app. Issue #1398 M4.",
 		}, []string{"app"}),
+		healthEdgeAnswered: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_health_edge_answered_total",
+			Help: "Health probes answered from the gateway without waking an app, labelled by app and outcome (healthy|unhealthy). Issue #1398 M2.",
+		}, []string{"app", "outcome"}),
 		// ADR-124 / issue #72 / PR-A3 — mirror dispatch surface.
 		// rule_id cardinality is bounded by Limits.MirrorTargetsPerApp
 		// (≤ 3 per app) so the (app_id, rule_id) pair is closed;
@@ -1833,6 +1840,18 @@ func (m *Metrics) ObserveCORSPreflightEdge(appID string) {
 		return
 	}
 	m.corsPreflightEdge.WithLabelValues(appID).Inc()
+}
+
+// ObserveHealthEdgeAnswered records a health probe completed without waking
+// the app. It is intentionally not part of ObserveRequest.
+func (m *Metrics) ObserveHealthEdgeAnswered(appID, outcome string) {
+	if m == nil || m.healthEdgeAnswered == nil || appID == "" {
+		return
+	}
+	if outcome != "healthy" && outcome != "unhealthy" {
+		return
+	}
+	m.healthEdgeAnswered.WithLabelValues(appID, outcome).Inc()
 }
 
 // ObserveAccountRateLimit records a 429 outcome from the per-account
