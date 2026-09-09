@@ -7023,10 +7023,18 @@ func (m *MemStore) UpdateBuildProvenanceSBOM(_ context.Context, buildID, sbomKey
 
 // SweepStuckRunningBuilds mirrors PgStore.SweepStuckRunningBuilds
 // (issue #195 B1.4). Returns the number of rows flipped.
-func (m *MemStore) SweepStuckRunningBuilds(_ context.Context, threshold time.Time) (int, error) {
+func (m *MemStore) SweepStuckRunningBuilds(ctx context.Context, threshold time.Time) (int, error) {
+	ids, err := m.SweepStuckRunningBuildsWithIDs(ctx, threshold)
+	return len(ids), err
+}
+
+// SweepStuckRunningBuildsWithIDs is the VM-aware reaper seam. It returns the
+// exact rows this atomic in-memory sweep failed, matching the PostgreSQL
+// implementation's RETURNING contract.
+func (m *MemStore) SweepStuckRunningBuildsWithIDs(_ context.Context, threshold time.Time) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
+	ids := make([]string, 0)
 	now := time.Now()
 	for id, b := range m.builds {
 		if b.Status != BuildRunning {
@@ -7048,9 +7056,10 @@ func (m *MemStore) SweepStuckRunningBuilds(_ context.Context, threshold time.Tim
 				m.deployments[b.DeploymentID] = d
 			}
 		}
-		n++
+		ids = append(ids, id)
 	}
-	return n, nil
+	sort.Strings(ids)
+	return ids, nil
 }
 
 // QueuedBuildsCount (operator-side observability mega-PR / Commit 7
