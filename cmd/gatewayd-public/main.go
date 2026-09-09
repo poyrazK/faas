@@ -68,6 +68,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/securitytxt"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -415,6 +416,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: control-plane API proxy: %w", err)
 	}
 	traceMux := http.NewServeMux()
+	installPublicStaticRoutes(traceMux)
 	traceMux.Handle("/v1/traces/", traceSetup.Handler)
 	// ADR-127 PR-D: OTLP spans writer handler. Mounted on the
 	// same traceMux so it shares the same drain tracker as
@@ -558,6 +560,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// installPublicStaticRoutes mounts anonymous edge metadata before the
+// catch-all control-plane proxy. These paths are platform-owned and must not
+// be interpreted as customer application routes.
+func installPublicStaticRoutes(mux *http.ServeMux) {
+	mux.Handle("/.well-known/security.txt", securitytxt.Handler())
 }
 
 // setupReadiness builds the probe + the PG-ping signal whose bit is
