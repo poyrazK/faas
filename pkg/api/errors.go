@@ -275,7 +275,7 @@ func (p *Problem) WithLimit(limit, observed int64) *Problem {
 // WithByteLimit annotates a byte-oriented limit error with both the explicit
 // byte keys and the legacy generic limit/observed keys.
 func (p *Problem) WithByteLimit(limit, observed int64) *Problem {
-	p.WithLimit(limit, observed)
+	p = p.WithLimit(limit, observed)
 	p.LimitBytes = &limit
 	p.ObservedBytes = &observed
 	return p
