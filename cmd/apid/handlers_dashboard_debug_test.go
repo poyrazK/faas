@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -90,4 +94,85 @@ func TestDashboardHandler_DebugPageDegradesWhenTelemetryUnavailable(t *testing.T
 	if !strings.Contains(body, "Debugger telemetry is temporarily unavailable") {
 		t.Fatalf("degraded telemetry copy missing from response: %s", body)
 	}
+}
+
+func TestDashboardDebugReplayRequiresCSRF(t *testing.T) {
+	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	if _, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "debug-replay", Status: state.AppActive}); err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/apps/debug-replay/debug/requests/00000000-0000-0000-0000-000000000001/replay", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing csrf status = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Invalid CSRF token") {
+		t.Fatalf("missing csrf response = %s", rec.Body.String())
+	}
+}
+
+func TestDashboardDebugReplayStatusProjectionIsScoped(t *testing.T) {
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(t.Context(), "debug@example.com", "hobby")
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "debug-status", Status: state.AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	requestID := "00000000-0000-0000-0000-000000000002"
+	metadata, _ := json.Marshal(map[string]string{api.DebugReplayRequestIDHeader: requestID})
+	inv, err := store.EnqueueInvocation(context.Background(), state.Invocation{
+		AccountID: acct.ID, AppID: app.ID, Source: state.InvocationReplay,
+		Headers: metadata, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
+	}
+	if _, err := store.ClaimInvocation(context.Background(), inv.ID, "instance-1", 60); err != nil {
+		t.Fatalf("ClaimInvocation: %v", err)
+	}
+	result := json.RawMessage(`{"source_status_code":500,"mirror_status_code":200,"source_latency_ms":90,"mirror_latency_ms":12,"status_diff":true,"crashed":false}`)
+	if err := store.CompleteInvocation(context.Background(), inv.ID, result); err != nil {
+		t.Fatalf("CompleteInvocation: %v", err)
+	}
+
+	s := &server{store: store}
+	data := &dashboard.DebugPageData{}
+	if err := s.populateDashboardDebugReplay(context.Background(), app, acct, inv.ID, requestID, data); err != nil {
+		t.Fatalf("populateDashboardDebugReplay: %v", err)
+	}
+	if data.Replay == nil || !data.Replay.HasResult || data.Replay.MirrorStatusCode != 200 || !data.Replay.StatusDiff {
+		t.Fatalf("replay projection = %#v, want completed comparison", data.Replay)
+	}
+	if err := s.populateDashboardDebugReplay(context.Background(), app, acct, inv.ID, "different-request", data); err == nil {
+		t.Fatal("foreign request id unexpectedly exposed replay")
+	}
+}
+
+func TestDashboardDebugReplayActionFlash(t *testing.T) {
+	for _, tt := range []struct {
+		action string
+		err    string
+		want   string
+	}{
+		{action: "replay_queued", want: "Replay queued"},
+		{action: "replay_error", err: api.CodeDebugReplayUnsupported, want: "enable a mirror rule"},
+		{action: "replay_error", err: api.CodeNotFound, want: "aged out"},
+	} {
+		t.Run(tt.action+tt.err, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/debug-status/debug?action="+tt.action+"&error="+tt.err, nil)
+			if got := dashboardDebugReplayActionFlash(r); !strings.Contains(got, tt.want) {
+				t.Fatalf("flash = %q, want substring %q", got, tt.want)
+			}
+		})
+	}
+
 }

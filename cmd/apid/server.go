@@ -1800,11 +1800,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/delayed-tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.delayedTaskGet))))
 	mux.HandleFunc("DELETE /v1/delayed-tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.delayedTaskCancel))))
 
-	// ADR-127 production debugger — read-only slice in PR-A. The
-	// write-side (publisher → gRPC IncrementRequestTelemetry → apid
-	// receiver → sqlc INSERT) lands in PR-B; this GET exists so
-	// customers can already hit the endpoint and see rows once a
-	// row source is configured. Plan-gated by DebugTelemetryEnabled.
+	// ADR-127 production debugger — request telemetry, evidence, compare,
+	// and replay. The browser dashboard has a separate CSRF-protected form;
+	// API writes remain Bearer-key + MFA + deploy-scope gated below.
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
@@ -2499,6 +2497,10 @@ func (s *server) handler() http.Handler {
 	// the dashboard's named CSRF envelope before delegating to the same
 	// account-scoped store transition as the JSON API endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardQueueDeadLetterReplay))))
+	// ADR-127 — debugger replay. The form uses a dedicated named CSRF
+	// envelope and redirects back to the selected request so the customer can
+	// inspect the durable mirror invocation status without leaving the page.
+	mux.Handle("POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDebugReplay))))
 	// Issue #248 slice C: app-detail rollback form. It uses a dedicated
 	// named CSRF cookie and the same rollback core as the REST endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/rollback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRollback))))
