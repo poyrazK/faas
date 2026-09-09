@@ -497,6 +497,12 @@ from .managed_postgres_database_availability import ManagedPostgresDatabaseAvail
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_usage_line_item import ManagedPostgresUsageLineItem
+from .managed_postgres_usage_line_item_code import ManagedPostgresUsageLineItemCode
+from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperatorResponse
+from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
+from .managed_postgres_usage_response import ManagedPostgresUsageResponse
+from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -1335,6 +1341,12 @@ __all__ = (
     "ManagedPostgresDatabaseList",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
+    "ManagedPostgresUsageLineItem",
+    "ManagedPostgresUsageLineItemCode",
+    "ManagedPostgresUsageOperatorResponse",
+    "ManagedPostgresUsageOperatorResponseGuardrailState",
+    "ManagedPostgresUsageResponse",
+    "ManagedPostgresUsageResponseGuardrailState",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",

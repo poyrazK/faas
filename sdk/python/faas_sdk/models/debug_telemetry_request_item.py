@@ -19,7 +19,7 @@ T = TypeVar("T", bound="DebugTelemetryRequestItem")
 
 @_attrs_define
 class DebugTelemetryRequestItem:
-    """One row per gateway-served request, persisted by the recorder (PR-A)."""
+    """One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."""
 
     id: UUID
     deployment_id: UUID
@@ -28,6 +28,7 @@ class DebugTelemetryRequestItem:
     method: DebugTelemetryRequestItemMethod
     status: int
     latency_ms: int
+    """Inclusive upper bound of the bounded latency bucket represented by this row."""
     count: int
     """Number of original requests represented by this collapsed telemetry row."""
     cold_boot: bool

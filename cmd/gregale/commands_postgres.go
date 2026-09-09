@@ -12,18 +12,21 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|create|get|delete|restore|bindings>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|usage|create|get|delete|restore|bindings>", "postgres")
 		return 1
 	}
 	switch args[0] {
 	case subList:
 		return cmdPostgresList(args[1:])
+	case "usage":
+		return cmdPostgresUsage(args[1:])
 	case subCreate:
 		return cmdPostgresCreate(args[1:])
 	case subGet:
@@ -38,6 +41,44 @@ func cmdPostgres(args []string) int {
 		fmt.Fprintf(os.Stderr, "unknown postgres subcommand %q\n", args[0])
 		return 1
 	}
+}
+
+func cmdPostgresUsage(args []string) int {
+	fs := flag.NewFlagSet("postgres usage", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		PrintUsage(os.Stderr, "usage: gregale postgres usage", "postgres")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	result, err := client.GetManagedPostgresUsage(context.Background())
+	if err != nil {
+		return printErr("Could not load managed PostgreSQL usage", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(result))
+	}
+	_, _ = fmt.Fprintln(osStdout, "managed postgres usage")
+	_, _ = fmt.Fprintf(osStdout, "  period_start:                 %s\n", result.PeriodStart.UTC().Format("2006-01-02"))
+	_, _ = fmt.Fprintf(osStdout, "  observed_at:                  %s\n", formatPostgresObservedAt(result.ObservedAt))
+	_, _ = fmt.Fprintf(osStdout, "  policy_enabled:               %t\n", result.PolicyEnabled)
+	_, _ = fmt.Fprintf(osStdout, "  fresh:                        %t\n", result.Fresh)
+	_, _ = fmt.Fprintf(osStdout, "  guardrail_state:              %s\n", result.GuardrailState)
+	_, _ = fmt.Fprintf(osStdout, "  ready_databases:              %d / %d\n", result.ReadyDatabases, result.DatabaseLimit)
+	_, _ = fmt.Fprintf(osStdout, "  compute_unit_seconds:         %d\n", result.ComputeUnitSeconds)
+	_, _ = fmt.Fprintf(osStdout, "  storage_byte_seconds:         %d / %d (remaining %d)\n", result.StorageByteSeconds, result.StorageByteSecondsLimit, result.StorageByteSecondsRemaining)
+	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d\n", result.HistoryByteSeconds)
+	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d\n", result.EgressBytes)
+	return 0
+}
+
+func formatPostgresObservedAt(observedAt *time.Time) string {
+	if observedAt == nil || observedAt.IsZero() {
+		return "never"
+	}
+	return observedAt.UTC().Format(time.RFC3339)
 }
 
 func cmdPostgresList(args []string) int {

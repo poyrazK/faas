@@ -24,7 +24,7 @@ class DebugRequestEvidenceResponse:
     """Request metadata, bounded span evidence, matching regression, and explanation."""
 
     request: DebugTelemetryRequestItem
-    """One row per gateway-served request, persisted by the recorder (PR-A)."""
+    """One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."""
     spans: list[DebugTelemetrySpan]
     spans_truncated: bool
     explanation: DebugEvidenceExplanation

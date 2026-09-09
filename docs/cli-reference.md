@@ -53,7 +53,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
-| [`postgres`](#postgres) | Manage managed PostgreSQL (postgres list\|create\|get\|delete\|restore\|bindings ...) |
+| [`postgres`](#postgres) | Manage managed PostgreSQL (postgres list\|usage\|create\|get\|delete\|restore\|bindings ...) |
 | [`ps`](#ps) | Show live instances + state for an app |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
@@ -1241,13 +1241,17 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 
 ## postgres
 
-Manage managed PostgreSQL (postgres list|create|get|delete|restore|bindings ...)
+Manage managed PostgreSQL (postgres list|usage|create|get|delete|restore|bindings ...)
 
 `gregale postgres [<subcommand>]`
 
 ### postgres list
 
 List managed PostgreSQL databases
+
+### postgres usage
+
+Show monthly managed PostgreSQL usage and guardrail state
 
 ### postgres create
 

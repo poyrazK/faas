@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ManagedPostgresUsageOperatorResponse } from '../models/ManagedPostgresUsageOperatorResponse.js';
 import type { ObjectStorageUsageReport } from '../models/ObjectStorageUsageReport.js';
 import type { OperatorRuntimeConfig } from '../models/OperatorRuntimeConfig.js';
 import type { OperatorRuntimeConfigOperation } from '../models/OperatorRuntimeConfigOperation.js';
@@ -12,6 +13,29 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class OperatorService {
+  /**
+   * Read normalized managed PostgreSQL usage for an account
+   * Operator-only view with effective guardrail ceilings and internal COGS line items. Provider IDs and credentials are never returned.
+   * @returns ManagedPostgresUsageOperatorResponse Account usage and internal normalized ledger lines; Cache-Control no-store
+   * @returns Problem Access denied, account not found, or accounting unavailable
+   * @throws ApiError
+   */
+  public static getManagedPostgresUsageOperator({
+    accountId,
+  }: {
+    /**
+     * Account whose normalized PostgreSQL usage is requested.
+     */
+    accountId: string,
+  }): CancelablePromise<ManagedPostgresUsageOperatorResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/managed-postgres/usage/{account_id}',
+      path: {
+        'account_id': accountId,
+      },
+    });
+  }
   /**
    * Import a cumulative provider object storage usage report
    * Operator session with recent step-up and Idempotency-Key required. Identical reports are idempotent; conflicting or regressing reports are rejected. Automated exporters use the operator-owned usage_reports_path backend setting.
