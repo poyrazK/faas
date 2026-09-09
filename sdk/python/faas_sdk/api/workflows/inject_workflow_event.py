@@ -1,33 +1,33 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
-from ...models.clear_obsolete_report import ClearObsoleteReport
+from ...models.inject_workflow_event_request import InjectWorkflowEventRequest
+from ...models.inject_workflow_event_response import InjectWorkflowEventResponse
 from ...models.problem import Problem
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
-    slug: str,
+    id: UUID,
     *,
-    body: ClearObsoleteDeploymentsBody | Unset = UNSET,
+    body: InjectWorkflowEventRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/apps/{slug}/deployments/clear-obsolete".format(
-            slug=quote(str(slug), safe=""),
+        "url": "/v1/workflows/runs/{id}/events".format(
+            id=quote(str(id), safe=""),
         ),
     }
 
-    if not isinstance(body, Unset):
-        _kwargs["json"] = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
     headers["Content-Type"] = "application/json"
 
@@ -37,26 +37,41 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ClearObsoleteReport | Problem | None:
+) -> InjectWorkflowEventResponse | Problem | None:
     if response.status_code == 200:
-        response_200 = ClearObsoleteReport.from_dict(response.json())
+        response_200 = InjectWorkflowEventResponse.from_dict(response.json())
 
         return response_200
 
-    if response.status_code == 402:
-        response_402 = Problem.from_dict(response.json())
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
 
-        return response_402
+        return response_400
+
+    if response.status_code == 401:
+        response_401 = Problem.from_dict(response.json())
+
+        return response_401
 
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
         return response_429
+
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -66,7 +81,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ClearObsoleteReport | Problem]:
+) -> Response[InjectWorkflowEventResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -76,32 +91,28 @@ def _build_response(
 
 
 def sync_detailed(
-    slug: str,
+    id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> Response[ClearObsoleteReport | Problem]:
-    """Bulk soft-delete terminal-but-not-current deployments.
-
-     ADR-124 deployment queue controls — bulk soft-delete rows
-    in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
-    cap enforced inside the store so INV 3 stays satisfied.
+    body: InjectWorkflowEventRequest,
+) -> Response[InjectWorkflowEventResponse | Problem]:
+    """Deliver an external event to a waiting workflow run.
 
     Args:
-        slug (str):
-        body (ClearObsoleteDeploymentsBody | Unset):
+        id (UUID):
+        body (InjectWorkflowEventRequest): An external event supplied to resume an awaiting
+            workflow step.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ClearObsoleteReport | Problem]
+        Response[InjectWorkflowEventResponse | Problem]
     """
 
     kwargs = _get_kwargs(
-        slug=slug,
+        id=id,
         body=body,
     )
 
@@ -113,64 +124,56 @@ def sync_detailed(
 
 
 def sync(
-    slug: str,
+    id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> ClearObsoleteReport | Problem | None:
-    """Bulk soft-delete terminal-but-not-current deployments.
-
-     ADR-124 deployment queue controls — bulk soft-delete rows
-    in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
-    cap enforced inside the store so INV 3 stays satisfied.
+    body: InjectWorkflowEventRequest,
+) -> InjectWorkflowEventResponse | Problem | None:
+    """Deliver an external event to a waiting workflow run.
 
     Args:
-        slug (str):
-        body (ClearObsoleteDeploymentsBody | Unset):
+        id (UUID):
+        body (InjectWorkflowEventRequest): An external event supplied to resume an awaiting
+            workflow step.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ClearObsoleteReport | Problem
+        InjectWorkflowEventResponse | Problem
     """
 
     return sync_detailed(
-        slug=slug,
+        id=id,
         client=client,
         body=body,
     ).parsed
 
 
 async def asyncio_detailed(
-    slug: str,
+    id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> Response[ClearObsoleteReport | Problem]:
-    """Bulk soft-delete terminal-but-not-current deployments.
-
-     ADR-124 deployment queue controls — bulk soft-delete rows
-    in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
-    cap enforced inside the store so INV 3 stays satisfied.
+    body: InjectWorkflowEventRequest,
+) -> Response[InjectWorkflowEventResponse | Problem]:
+    """Deliver an external event to a waiting workflow run.
 
     Args:
-        slug (str):
-        body (ClearObsoleteDeploymentsBody | Unset):
+        id (UUID):
+        body (InjectWorkflowEventRequest): An external event supplied to resume an awaiting
+            workflow step.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ClearObsoleteReport | Problem]
+        Response[InjectWorkflowEventResponse | Problem]
     """
 
     kwargs = _get_kwargs(
-        slug=slug,
+        id=id,
         body=body,
     )
 
@@ -180,33 +183,29 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    slug: str,
+    id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> ClearObsoleteReport | Problem | None:
-    """Bulk soft-delete terminal-but-not-current deployments.
-
-     ADR-124 deployment queue controls — bulk soft-delete rows
-    in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
-    cap enforced inside the store so INV 3 stays satisfied.
+    body: InjectWorkflowEventRequest,
+) -> InjectWorkflowEventResponse | Problem | None:
+    """Deliver an external event to a waiting workflow run.
 
     Args:
-        slug (str):
-        body (ClearObsoleteDeploymentsBody | Unset):
+        id (UUID):
+        body (InjectWorkflowEventRequest): An external event supplied to resume an awaiting
+            workflow step.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ClearObsoleteReport | Problem
+        InjectWorkflowEventResponse | Problem
     """
 
     return (
         await asyncio_detailed(
-            slug=slug,
+            id=id,
             client=client,
             body=body,
         )

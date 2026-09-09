@@ -1412,9 +1412,9 @@ func (s *server) handler() http.Handler {
 	// derives the next stage from persisted state and the store commits
 	// traffic, canary state, rollout completion, and audit atomically.
 	mux.HandleFunc("POST /v1/deployments/{id}/canary/advance", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.advanceCanary)))))
-	// ADR-124 deployment queue controls. Four routes; cancel +
-	// clear-obsolete (Free-allowed); reorder + clear-obsolete's
-	// plan-gated path use ScopeDeployWrite + Plan.QueueControlsAllowed.
+	// ADR-124 deployment queue controls. Four routes; cancel is
+	// Free-allowed. Reorder and clear-obsolete use ScopeDeployWrite
+	// plus Plan.QueueControlsAllowed.
 	// The {slug} form on cancel lets us honour the same loadApp
 	// IDOR gate that POST /v1/apps/{slug}/deployments uses; the
 	// id-only form on the other three mirrors the existing PATCH

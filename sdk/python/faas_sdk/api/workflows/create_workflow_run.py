@@ -6,28 +6,29 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
-from ...models.clear_obsolete_report import ClearObsoleteReport
 from ...models.problem import Problem
+from ...models.workflow_run_response import WorkflowRunResponse
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    name: str,
     *,
-    body: ClearObsoleteDeploymentsBody | Unset = UNSET,
+    body: Any | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/apps/{slug}/deployments/clear-obsolete".format(
+        "url": "/v1/apps/{slug}/workflows/{name}/runs".format(
             slug=quote(str(slug), safe=""),
+            name=quote(str(name), safe=""),
         ),
     }
 
     if not isinstance(body, Unset):
-        _kwargs["json"] = body.to_dict()
+        _kwargs["json"] = body
 
     headers["Content-Type"] = "application/json"
 
@@ -37,16 +38,31 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ClearObsoleteReport | Problem | None:
-    if response.status_code == 200:
-        response_200 = ClearObsoleteReport.from_dict(response.json())
+) -> Problem | WorkflowRunResponse | None:
+    if response.status_code == 201:
+        response_201 = WorkflowRunResponse.from_dict(response.json())
 
-        return response_200
+        return response_201
+
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
+
+    if response.status_code == 401:
+        response_401 = Problem.from_dict(response.json())
+
+        return response_401
 
     if response.status_code == 402:
         response_402 = Problem.from_dict(response.json())
 
         return response_402
+
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
 
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
@@ -58,6 +74,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -66,7 +87,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ClearObsoleteReport | Problem]:
+) -> Response[Problem | WorkflowRunResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -77,31 +98,33 @@ def _build_response(
 
 def sync_detailed(
     slug: str,
+    name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> Response[ClearObsoleteReport | Problem]:
-    """Bulk soft-delete terminal-but-not-current deployments.
+    body: Any | Unset = UNSET,
+) -> Response[Problem | WorkflowRunResponse]:
+    """Start a durable workflow run.
 
-     ADR-124 deployment queue controls — bulk soft-delete rows
-    in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
-    cap enforced inside the store so INV 3 stays satisfied.
+     Snapshots the named workflow definition from the app's current live
+    deployment and creates a pending run. The optional request body is
+    retained as the workflow input and may be any valid JSON value.
 
     Args:
         slug (str):
-        body (ClearObsoleteDeploymentsBody | Unset):
+        name (str):
+        body (Any | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ClearObsoleteReport | Problem]
+        Response[Problem | WorkflowRunResponse]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
+        name=name,
         body=body,
     )
 
@@ -114,31 +137,33 @@ def sync_detailed(
 
 def sync(
     slug: str,
+    name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> ClearObsoleteReport | Problem | None:
-    """Bulk soft-delete terminal-but-not-current deployments.
+    body: Any | Unset = UNSET,
+) -> Problem | WorkflowRunResponse | None:
+    """Start a durable workflow run.
 
-     ADR-124 deployment queue controls — bulk soft-delete rows
-    in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
-    cap enforced inside the store so INV 3 stays satisfied.
+     Snapshots the named workflow definition from the app's current live
+    deployment and creates a pending run. The optional request body is
+    retained as the workflow input and may be any valid JSON value.
 
     Args:
         slug (str):
-        body (ClearObsoleteDeploymentsBody | Unset):
+        name (str):
+        body (Any | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ClearObsoleteReport | Problem
+        Problem | WorkflowRunResponse
     """
 
     return sync_detailed(
         slug=slug,
+        name=name,
         client=client,
         body=body,
     ).parsed
@@ -146,31 +171,33 @@ def sync(
 
 async def asyncio_detailed(
     slug: str,
+    name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> Response[ClearObsoleteReport | Problem]:
-    """Bulk soft-delete terminal-but-not-current deployments.
+    body: Any | Unset = UNSET,
+) -> Response[Problem | WorkflowRunResponse]:
+    """Start a durable workflow run.
 
-     ADR-124 deployment queue controls — bulk soft-delete rows
-    in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
-    cap enforced inside the store so INV 3 stays satisfied.
+     Snapshots the named workflow definition from the app's current live
+    deployment and creates a pending run. The optional request body is
+    retained as the workflow input and may be any valid JSON value.
 
     Args:
         slug (str):
-        body (ClearObsoleteDeploymentsBody | Unset):
+        name (str):
+        body (Any | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ClearObsoleteReport | Problem]
+        Response[Problem | WorkflowRunResponse]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
+        name=name,
         body=body,
     )
 
@@ -181,32 +208,34 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
+    name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> ClearObsoleteReport | Problem | None:
-    """Bulk soft-delete terminal-but-not-current deployments.
+    body: Any | Unset = UNSET,
+) -> Problem | WorkflowRunResponse | None:
+    """Start a durable workflow run.
 
-     ADR-124 deployment queue controls — bulk soft-delete rows
-    in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
-    cap enforced inside the store so INV 3 stays satisfied.
+     Snapshots the named workflow definition from the app's current live
+    deployment and creates a pending run. The optional request body is
+    retained as the workflow input and may be any valid JSON value.
 
     Args:
         slug (str):
-        body (ClearObsoleteDeploymentsBody | Unset):
+        name (str):
+        body (Any | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ClearObsoleteReport | Problem
+        Problem | WorkflowRunResponse
     """
 
     return (
         await asyncio_detailed(
             slug=slug,
+            name=name,
             client=client,
             body=body,
         )
