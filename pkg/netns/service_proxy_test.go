@@ -25,6 +25,12 @@ func TestNftCommandsAdmitGuestServiceProxyOnlyOnHostBridge(t *testing.T) {
 	if !found {
 		t.Fatalf("service proxy admission rule not found in nft commands")
 	}
+	for _, protocol := range []string{"udp", "tcp"} {
+		wantDNS := []string{"iifname", "tap0", "ip", "daddr", "10.100.0.1", protocol, "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept"}
+		if !containsSequenceInCommands(commands, wantDNS) {
+			t.Fatalf("service discovery DNS %s admission rule not found", protocol)
+		}
+	}
 
 	joined := make([]string, len(commands))
 	for i, command := range commands {
@@ -43,6 +49,15 @@ func TestNftCommandsAdmitGuestServiceProxyOnlyOnHostBridge(t *testing.T) {
 	if serviceIndex == -1 || lateralIndex == -1 || serviceIndex >= lateralIndex {
 		t.Fatalf("service proxy rule index=%d lateral deny index=%d; want service rule first", serviceIndex, lateralIndex)
 	}
+}
+
+func containsSequenceInCommands(commands [][]string, want []string) bool {
+	for _, command := range commands {
+		if containsSequence(command, want) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsSequence(haystack, needle []string) bool {
