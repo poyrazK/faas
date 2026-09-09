@@ -19,6 +19,7 @@ func newPhaseLogManager(t *testing.T, run Runner, vmm VMM, buf *bytes.Buffer) *M
 	return NewManager(run, vmm, Paths{Kernel: "/srv/fc/base/vmlinux-6.1"}, testFCVersion, log, nil)
 }
 
+// adr: 064
 // TestWakeFailure_LogsPhaseBreakdown is the regression guard for the
 // diagnosis gap behind the 2026-09-03 cold-boot investigation.
 //
