@@ -212,6 +212,8 @@ jobs:
         run: make lint-drill
       - name: forbid mutating SQL in normal runbooks
         run: make runbook-sql-check
+      - name: post-mortem artifact check
+        run: make test-postmortems
       - name: restore-drill evidence freshness (M8 claim)
         if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'm8-done') }}
         run: make m8-evidence-check
