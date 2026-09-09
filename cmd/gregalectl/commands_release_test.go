@@ -35,6 +35,24 @@ func TestCmdReleaseDispatch_Help(t *testing.T) {
 	}
 }
 
+func TestCmdReleaseHistory_Validation(t *testing.T) {
+	if code := cmdReleaseHistory([]string{"--limit=0"}); code != 1 {
+		t.Errorf("history invalid limit = %d, want 1", code)
+	}
+	if code := cmdReleaseHistory([]string{"unexpected"}); code != 1 {
+		t.Errorf("history positional argument = %d, want 1", code)
+	}
+}
+
+func TestCmdReleaseInspect_Validation(t *testing.T) {
+	if code := cmdReleaseInspect(nil); code != 1 {
+		t.Errorf("inspect missing SHA = %d, want 1", code)
+	}
+	if code := cmdReleaseInspect([]string{"not-a-sha"}); code != 1 {
+		t.Errorf("inspect malformed SHA = %d, want 1", code)
+	}
+}
+
 func TestCmdReleaseBundle_Help(t *testing.T) {
 	for _, h := range []string{"-h", "--help"} {
 		if code := cmdReleaseBundle([]string{h}); code != 0 {

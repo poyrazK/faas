@@ -28,16 +28,21 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/deploycontroller"
 	"github.com/onebox-faas/faas/pkg/releasebundle"
+	"github.com/onebox-faas/faas/pkg/releaseinstall"
 )
 
 func main() {
@@ -302,6 +307,12 @@ func runDeploy(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: deployctl deploy <release-id>")
 	}
+	releaseID := args[0]
+	releaseRoot := filepath.Join("/opt/faas/releases", releaseID)
+	manifest, manifestErr := releasebundle.Read(releaseRoot)
+	if manifestErr != nil {
+		return manifestErr
+	}
 	runtime := defaultHostRuntime()
 	controller, err := deploycontroller.New(deploycontroller.Config{
 		ReleasesRoot: "/opt/faas/releases",
@@ -311,7 +322,124 @@ func runDeploy(args []string) error {
 	if err != nil {
 		return err
 	}
-	return controller.Deploy(context.Background(), args[0])
+	auditPool, auditStore, auditIDs := beginDeploymentAudit(context.Background(), releaseRoot, manifest)
+	if auditPool != nil {
+		defer auditPool.Close()
+	}
+	deployErr := controller.Deploy(context.Background(), releaseID)
+	finishDeploymentAudit(context.Background(), auditStore, auditIDs, deployErr)
+	return deployErr
+}
+
+// beginDeploymentAudit records the attempt before the controller mutates
+// systemd state. Ledger failures are intentionally best-effort: the release
+// controller remains the source of truth for activation and its existing
+// readiness/rollback guarantees must not be weakened by an unavailable
+// audit database. Any rows already inserted are marked failed before the
+// deploy proceeds.
+func beginDeploymentAudit(ctx context.Context, releaseRoot string, manifest releasebundle.Manifest) (*pgxpool.Pool, releaseinstall.DeploymentStore, []string) {
+	records, err := deploymentRecords(releaseRoot, manifest)
+	if err != nil || len(records) == 0 {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "deployctl: deployment audit skipped: %v\n", err)
+		}
+		return nil, nil, nil
+	}
+	pool, err := openDeploymentPool(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "deployctl: deployment audit skipped: %v\n", err)
+		return nil, nil, nil
+	}
+	store := releaseinstall.NewDeploymentStore(pool)
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		id, beginErr := store.Begin(ctx, record)
+		if beginErr != nil {
+			fmt.Fprintf(os.Stderr, "deployctl: deployment audit begin failed: %v\n", beginErr)
+			for _, begunID := range ids {
+				_ = store.Complete(ctx, begunID, releaseinstall.DeploymentFailed, map[string]any{"error": beginErr.Error(), "source": "deployctl"})
+			}
+			pool.Close()
+			return nil, nil, nil
+		}
+		ids = append(ids, id)
+	}
+	return pool, store, ids
+}
+
+func finishDeploymentAudit(ctx context.Context, store releaseinstall.DeploymentStore, ids []string, deployErr error) {
+	if store == nil || len(ids) == 0 {
+		return
+	}
+	status := releaseinstall.DeploymentSucceeded
+	notes := map[string]any{"source": "deployctl"}
+	if deployErr != nil {
+		status = releaseinstall.DeploymentFailed
+		notes["error"] = deployErr.Error()
+	}
+	for _, id := range ids {
+		if err := store.Complete(ctx, id, status, notes); err != nil {
+			fmt.Fprintf(os.Stderr, "deployctl: deployment audit completion failed: %v\n", err)
+		}
+	}
+}
+
+func deploymentRecords(releaseRoot string, manifest releasebundle.Manifest) ([]releaseinstall.DeploymentRecord, error) {
+	if !releaseinstall.ValidGitSHA(manifest.CommitSHA) {
+		return nil, fmt.Errorf("manifest commit_sha %q is not a 40-character lowercase git SHA", manifest.CommitSHA)
+	}
+	byPath := make(map[string]releasebundle.File, len(manifest.Files))
+	for _, file := range manifest.Files {
+		byPath[file.Path] = file
+	}
+	actor := deploymentActor()
+	sbomHash := ""
+	if body, err := os.ReadFile(filepath.Join(releaseRoot, "release.sbom.json")); err == nil && len(body) > 0 {
+		digest := sha256.Sum256(body)
+		sbomHash = "sha256:" + hex.EncodeToString(digest[:])
+	}
+	records := make([]releaseinstall.DeploymentRecord, 0, len(daemonunitspec.Registry))
+	for _, entry := range daemonunitspec.Registry {
+		file, ok := byPath["bin/"+entry.Name]
+		if !ok {
+			continue
+		}
+		records = append(records, releaseinstall.DeploymentRecord{
+			Daemon: entry.Name, Version: "sha256:" + file.SHA256,
+			CommitSHA: manifest.CommitSHA, SBOMSHA256: sbomHash,
+			DeployedBy: actor, DeployKind: releaseinstall.DeploymentDeploy,
+			Notes: map[string]any{"source": "deployctl deploy", "release_id": manifest.ReleaseID},
+		})
+	}
+	return records, nil
+}
+
+func openDeploymentPool(ctx context.Context) (*pgxpool.Pool, error) {
+	dsn := strings.TrimSpace(os.Getenv("FAAS_PG_DSN"))
+	if dsn == "" {
+		dsn = strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	}
+	if dsn == "" {
+		dsn = "postgres:///faas?host=/run/postgresql&user=faas"
+	}
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse database DSN: %w", err)
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open database pool: %w", err)
+	}
+	return pool, nil
+}
+
+func deploymentActor() string {
+	for _, key := range []string{"FAAS_OPERATOR", "GITHUB_ACTOR", "SUDO_USER", "USER", "LOGNAME"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return "deployctl"
 }
 
 // generateTo is the core: write unit files + slice + JSON to named

@@ -120,7 +120,10 @@ INSERTs the `release_bundles` row. Run by CI on every tag (the
 
 Installs a release on the local box. Flips `/opt/faas/current` to the
 new SHA, lands the daemons under `/opt/faas/releases/<sha>/bin/`,
-writes the `release_bundles` row, and UPSERTs `compute_nodes.release_id`.
+writes the `release_bundles` row, records each daemon in the
+`daemon_deployments` ledger, and UPSERTs `compute_nodes.release_id`.
+Use `--reason "..."` to leave incident or change-ticket context in that
+ledger.
 
 `--role` is dual-purpose:
 
@@ -145,6 +148,21 @@ CRITICAL/HIGH) without parsing the on-disk SBoM.
 Alias for `release kgv rotate --from-zero`. Prints a deprecation line
 on stdout. Will be removed once operators stop muscle-memorying the
 old name; the dispatcher refuses new code paths to call it.
+
+### `release history [--daemon <name>] [--limit <n>]`
+
+Reads the durable `daemon_deployments` ledger and shows who attempted each
+daemon release, when it started and finished, and whether it succeeded or
+failed. The output also includes the local `/opt/faas/current` pointer so a
+host-side activation can be reconciled with its database history. Add
+`--json` for automation.
+
+### `release inspect <sha>`
+
+Read-only inspection of one `release_bundles` row. Reports whether the
+release directory exists, whether its manifest can be read, and whether the
+release is the current symlink target. This is safe to run during an
+incident and does not activate or remove anything.
 
 ## 5. Day-2 fleet ops
 
