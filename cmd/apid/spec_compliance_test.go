@@ -198,6 +198,19 @@ var routeExclude = map[string]bool{
 }
 
 func init() {
+	// Issue #1397 G9: dashboard form routes are session-cookie surfaces,
+	// intentionally absent from the public OpenAPI document.
+	for _, route := range []string{
+		"POST /dashboard/apps/{slug}/tenant-surfaces",
+		"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/delete",
+		"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames",
+		"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames/{hostname}/delete",
+		"POST /dashboard/apps/{slug}/mirrors",
+		"POST /dashboard/apps/{slug}/mirrors/{id}/toggle",
+		"POST /dashboard/apps/{slug}/mirrors/{id}/delete",
+	} {
+		routeExclude[route] = true
+	}
 	// Issue #1397 G8: dashboard form routes are session-cookie surfaces,
 	// intentionally absent from the public OpenAPI document.
 	for _, route := range []string{

@@ -2486,6 +2486,17 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteAppWebhook))))
 	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/rotate-secret", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRotateAppWebhookSecret))))
 	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRetryAppWebhookDelivery))))
+	// G9 / issue #1397 — tenant-surface and hostname form adapters. The
+	// page uses the same JSON handlers as the CLI/API and a named CSRF
+	// envelope for every state-changing form.
+	mux.Handle("POST /dashboard/apps/{slug}/tenant-surfaces", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateTenantSurface))))
+	mux.Handle("POST /dashboard/apps/{slug}/tenant-surfaces/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteTenantSurface))))
+	mux.Handle("POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardAddTenantHostname))))
+	mux.Handle("POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames/{hostname}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRemoveTenantHostname))))
+	// G9 / issue #1397 — traffic mirror form adapters.
+	mux.Handle("POST /dashboard/apps/{slug}/mirrors", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateMirrorRule))))
+	mux.Handle("POST /dashboard/apps/{slug}/mirrors/{id}/toggle", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardToggleMirrorRule))))
+	mux.Handle("POST /dashboard/apps/{slug}/mirrors/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteMirrorRule))))
 	// G6 / issue #1397 — app instance lifecycle controls. The GET page
 	// mints a named CSRF envelope; this form adapter verifies it before
 	// applying the same app-scoped park/wake/restart transitions as the

@@ -113,6 +113,18 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G9 / issue #1397 — tenant surfaces with hostname
+			// verification and durable certificate state.
+			if tslug, ok := parseAppTenantSurfacesPath(slug); ok {
+				s.renderAppTenantSurfaces(w, r, log, acct, tslug)
+				return
+			}
+			// G9 / issue #1397 — traffic mirrors with server-side
+			// comparison summary counters.
+			if mslug, ok := parseAppMirrorsPath(slug); ok {
+				s.renderAppMirrors(w, r, log, acct, mslug)
+				return
+			}
 			// G8 / issue #1397 — outbound webhook subscriptions,
 			// recent deliveries, secret rotation, and dead-letter retry.
 			if wslug, ok := parseAppWebhooksPath(slug); ok {
