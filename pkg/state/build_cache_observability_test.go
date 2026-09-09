@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -26,7 +27,7 @@ func TestMemStoreBuildCacheOutcomeAndStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetBuildCacheOutcome(ctx, build.ID, "hit", ""); err != ErrNotFound {
+	if err := store.SetBuildCacheOutcome(ctx, build.ID, "hit", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("SetBuildCacheOutcome before claim = %v, want ErrNotFound", err)
 	}
 	if _, err := store.ClaimQueuedBuild(ctx, build.ID); err != nil {
