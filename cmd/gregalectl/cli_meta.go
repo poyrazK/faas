@@ -447,6 +447,64 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchAccounts,
+		DocSlug: "accounts",
+		Short:   "Authenticated tenant support and lifecycle controls",
+		Subcommands: []cliSub{
+			{
+				Name:  "list",
+				Short: "List bounded, PII-redacted tenant summaries",
+				Flags: []cliFlag{
+					{Name: "limit", Short: "maximum accounts to return (1..500)"},
+					{Name: "cursor", Short: "pagination cursor"},
+					{Name: "plan", Short: "filter by plan"},
+					{Name: "status", Short: "filter by account status"},
+					{Name: "include-pii", Short: "include account email (audited)"},
+				},
+			},
+			{
+				Name:  "show",
+				Short: "Show one account's apps, orgs, API keys, and sessions",
+				Flags: []cliFlag{
+					{Name: "account-id", Short: "account id (uuid)", Req: true},
+					{Name: "include-pii", Short: "include account email (audited)"},
+				},
+			},
+			{
+				Name:  "360",
+				Short: "Show one account's usage and billing support view",
+				Flags: []cliFlag{
+					{Name: "account-id", Short: "account id (uuid)", Req: true},
+					{Name: "month", Short: "usage month (YYYY-MM)"},
+					{Name: "include-pii", Short: "include account email (audited)"},
+				},
+			},
+			{
+				Name:  "activity",
+				Short: "Show bounded invocation and audit metadata for an account",
+				Flags: []cliFlag{
+					{Name: "account-id", Short: "account id (uuid)", Req: true},
+					{Name: "limit", Short: "maximum invocations and audit events (1..200)"},
+				},
+			},
+			{
+				Name:  "suspend",
+				Short: "Suspend an account and revoke its active sessions",
+				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "restore",
+				Short: "Restore an account to active status",
+				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "revoke-sessions",
+				Short: "Revoke every active session for an account",
+				Flags: accountMutationCLIFlags(),
+			},
+		},
+	},
+	{
 		// P2c of the operator-side observability mega-PR
 		// (Commit 5c). Operator-side build-recovery primitive —
 		// `sweep-stuck` opens a state.Store via FAAS_PG_DSN
@@ -703,4 +761,13 @@ var cliCommands = []cliCommand{
 		Short:       "Print the gregalectl(1) man page (or gregalectl-<command>(1) with one arg)",
 		Positionals: []string{"<command>"},
 	},
+}
+
+func accountMutationCLIFlags() []cliFlag {
+	return []cliFlag{
+		{Name: "account-id", Short: "account id (uuid)", Req: true},
+		{Name: "reason", Short: "audit reason slug [a-z0-9_]{1,64}", Req: true},
+		{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+		{Name: "yes", Short: "acknowledge the account mutation", Req: true},
+	}
 }

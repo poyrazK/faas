@@ -56,6 +56,7 @@ Commands:
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
   compute-nodes  Compute-node state machine (add|drain|drain-status|activate|force-drain; PR-A / multi-host scale-out)
   instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart)
+  accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
   obs           Operator-side meta-obs health snapshot (obs health; Obs-Meta + Trace-IDs Mega-PR / C8)
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
@@ -185,6 +186,11 @@ func run(args []string) int {
 		// operator intents. Direct database/schedd access is available
 		// only through the explicit break-glass flag.
 		return cmdInstancesDispatch(args[1:])
+	case dispatchAccounts:
+		// Account support reads use bounded observability projections;
+		// mutations require a recent MFA step-up, confirmation, reason,
+		// idempotency key, and trace ID through apid.
+		return cmdAccountsDispatch(args[1:])
 	case dispatchBuilds:
 		// P2c — operator-side build-recovery primitive.
 		// sweep-stuck opens a state.Store via FAAS_PG_DSN and
