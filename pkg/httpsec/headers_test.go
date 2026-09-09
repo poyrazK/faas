@@ -252,7 +252,7 @@ func TestCSP_HeaderMatchesDashboardSpec(t *testing.T) {
 	got := httpsec.BuildCSPForTest(nonce)
 	want := "default-src 'self'; " +
 		"script-src 'self' 'nonce-" + nonce + "' https://unpkg.com; " +
-		"style-src 'self' 'nonce-" + nonce + "'; " +
+		"style-src 'self' 'nonce-" + nonce + "' https://unpkg.com; " +
 		"img-src 'self' data:; " +
 		"connect-src 'self'; " +
 		"frame-ancestors 'none'; " +

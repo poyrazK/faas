@@ -226,6 +226,12 @@ func TestIsApidPath_TableDriven(t *testing.T) {
 		// URL would 404 from the wake path on the public listener.
 		{"/cli-auth", true},
 		{"/cli-auth.zip", false}, // anchor regression (review finding #6)
+		// /docs is the anonymous Swagger UI page; its subtree remains
+		// reserved for future local documentation assets.
+		{"/docs", true},
+		{"/docs/", true},
+		{"/docs/swagger-ui.css", true},
+		{"/docsfoo", false},
 		// Negative cases — review finding #6 regression tests.
 		{"/dashboard.zip", false},
 		{"/dashboards", false},
@@ -828,6 +834,7 @@ func TestApidPathReservations_Documented(t *testing.T) {
 		"/status",
 		"/healthz",
 		"/cli-auth",
+		"/docs",
 	}
 	for _, want := range wantConsts {
 		if !strings.Contains(section, want) {

@@ -177,6 +177,8 @@ var routeExclude = map[string]bool{
 	"POST /v1/cli-auth/exchange":                    true, // CLI device-code exchange
 	"GET /cli-auth":                                 true, // dashboard claim form
 	"POST /cli-auth":                                true, // dashboard claim form submit
+	"GET /docs":                                     true, // anonymous Swagger UI metadata page; no SDK method
+	"GET /docs/":                                    true, // slash alias of the documented /docs route
 	"GET /status":                                   true, // public HTML status page
 	"GET /status/slo.json":                          true, // public status JSON
 	"GET /healthz":                                  true, // loopback infra probe
