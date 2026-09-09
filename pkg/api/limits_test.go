@@ -145,7 +145,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			DataPlacementHintsPerApp: 0,
 			// ADR-076 (#476): outbound webhooks — Free gated to 402
 			// (CodePlanWebhooksNotAllowed), same fail-closed shape.
-			WebhookPerApp: 0, WebhookPerAccount: 0,
+			WebhookPerApp: 0, WebhookPerAccount: 0, LogDrainPerApp: 0, LogDrainPerAccount: 0,
 			// ADR-0NN (#757): Free is gated off the Trigger primitive
 			// entirely. Handler returns 402 CodePlanTriggersNotAllowed
 			// before the store is touched; the 0/0/0/0/0/0/0 tuple
@@ -302,7 +302,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			OrgMembersMax: 10, OrgPendingInvitationsMax: 5,
 			// ADR-076 (#476): Hobby gets 3 per-app and 10 per-account
 			// — mirrors the alert-rule ratio.
-			WebhookPerApp: 3, WebhookPerAccount: 10,
+			WebhookPerApp: 3, WebhookPerAccount: 10, LogDrainPerApp: 3, LogDrainPerAccount: 10,
 			// ADR-0NN (#757): Hobby unlocks the in-platform queue +
 			// sqs_compat kinds. Tight caps (50/30s/3) so a Hobby
 			// customer's fan-out can't saturate schedd's per-app
@@ -450,7 +450,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			OrgMembersMax: 50, OrgPendingInvitationsMax: 25,
 			// ADR-076 (#476): Pro gets 10 per-app and 30 per-account
 			// — mirrors the alert-rule ratio.
-			WebhookPerApp: 10, WebhookPerAccount: 30,
+			WebhookPerApp: 10, WebhookPerAccount: 30, LogDrainPerApp: 10, LogDrainPerAccount: 30,
 			// ADR-0NN (#757): Pro is the first tier where external
 			// broker kinds unlock (Kafka/NATS/Redis-streams). Caps jump
 			// to 10/50 + 500/5min/10 attempts so a Pro customer's
@@ -610,7 +610,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			OrgMembersMax: 200, OrgPendingInvitationsMax: 100,
 			// ADR-076 (#476): Scale gets 25 per-app and 100 per-account
 			// — mirrors the alert-rule ratio.
-			WebhookPerApp: 25, WebhookPerAccount: 100,
+			WebhookPerApp: 25, WebhookPerAccount: 100, LogDrainPerApp: 25, LogDrainPerAccount: 100,
 			// ADR-0NN (#757): Scale is the upper tier — caps align with
 			// the SQL CHECK ceilings (5000 records / 5 min window /
 			// 25 attempts) so a Scale customer's SQS-compatible or

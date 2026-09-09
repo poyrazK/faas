@@ -5428,6 +5428,16 @@ type Store interface {
 	// and the operator's "all webhooks for an account" view.
 	ListAppWebhooksForAccount(ctx context.Context, accountID string) ([]AppWebhook, error)
 
+	// Customer log drains (issue #1398 O4). Drains tail the existing runtime
+	// log stream and forward records to an HTTP JSON or OTLP endpoint.
+	CreateAppLogDrain(ctx context.Context, d AppLogDrain) (AppLogDrain, error)
+	CreateAppLogDrainIfUnderQuota(ctx context.Context, d AppLogDrain, limits api.Limits) (AppLogDrain, error)
+	AppLogDrainByID(ctx context.Context, id string) (AppLogDrain, error)
+	UpdateAppLogDrain(ctx context.Context, id string, params UpdateAppLogDrainParams) (AppLogDrain, error)
+	DeleteAppLogDrain(ctx context.Context, id string) error
+	ListAppLogDrainsForApp(ctx context.Context, appID string) ([]AppLogDrain, error)
+	ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, error)
+
 	// RecordAppWebhookDelivery is the apid-side enqueue. Called by
 	// the event emitters (cron dispatcher, app lifecycle handlers)
 	// once per (event, target webhook) emission. The dispatcher's
