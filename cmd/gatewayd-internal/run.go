@@ -2400,6 +2400,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		logsHandler = logsMux
 	}
 
+	// Issue #1398 O4: customer runtime log drains consume the same
+	// per-app schedd stream as the live logs endpoint, independently of
+	// whether a customer currently has an SSE viewer open. The manager
+	// reconciles enabled rows so create/update/delete changes take effect
+	// without a gateway restart; delivery remains bounded and non-blocking.
+	if deps.pgStore != nil && deps.scheddRouter != nil {
+		unseal, unsealErr := newAppLogDrainUnsealer(deps.hostKeyDir)
+		if unsealErr != nil {
+			log.Warn("gatewayd-internal: customer log drains disabled until gateway restart", "err", unsealErr)
+		}
+		manager := newAppLogDrainManager(
+			deps.pgStore,
+			appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
+			unseal,
+			deps.metrics,
+			log,
+		)
+		go manager.Run(ctx)
+	}
+
 	// Tier A9 / ADR-084: standby write-redirect gate. The gate
 	// sits in front of every apid-bound mutating request; on a
 	// two-node fleet, standby writes are either relayed to the
