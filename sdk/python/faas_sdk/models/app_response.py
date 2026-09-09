@@ -51,7 +51,8 @@ class AppResponse:
     min_instances: int
     status: str
     build_cache_hit_rate_pct: float
-    """30-day builder cache hit rate for completed eligible builds, in percent."""
+    """Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache
+    decision was recorded in the window."""
     url: str
     manifest: AppManifest
     """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-

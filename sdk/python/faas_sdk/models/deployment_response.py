@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.deployment_response_build_cache_status import (
+    DeploymentResponseBuildCacheStatus,
+    check_deployment_response_build_cache_status,
+)
 from ..models.deployment_response_canary_preset import (
     DeploymentResponseCanaryPreset,
     check_deployment_response_canary_preset,
@@ -90,10 +94,11 @@ class DeploymentResponse:
     """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
     rebuilt."""
     build_id: None | str | Unset = UNSET
-    build_cache_status: str | Unset = UNSET
-    """Builder cache outcome for the deployment's build: hit, miss, or invalidated."""
+    build_cache_status: DeploymentResponseBuildCacheStatus | Unset = UNSET
+    """Builderd cache decision for the associated build. Omitted until the build reaches its cache lookup."""
     cache_key_sha256: str | Unset = UNSET
-    """SHA-256 digest of the content-addressed builder cache recipe."""
+    """SHA-256 digest of the versioned BuildCacheRecipe. Plan, runtime base, builder identity, platform, framework,
+    and source root remain part of the digest input."""
     error: None | str | Unset = UNSET
     error_code: None | str | Unset = UNSET
     error_hint: None | str | Unset = UNSET
@@ -298,7 +303,9 @@ class DeploymentResponse:
         else:
             build_id = self.build_id
 
-        build_cache_status = self.build_cache_status
+        build_cache_status: str | Unset = UNSET
+        if not isinstance(self.build_cache_status, Unset):
+            build_cache_status = self.build_cache_status
 
         cache_key_sha256 = self.cache_key_sha256
 
@@ -747,7 +754,12 @@ class DeploymentResponse:
 
         build_id = _parse_build_id(d.pop("build_id", UNSET))
 
-        build_cache_status = d.pop("build_cache_status", UNSET)
+        _build_cache_status = d.pop("build_cache_status", UNSET)
+        build_cache_status: DeploymentResponseBuildCacheStatus | Unset
+        if isinstance(_build_cache_status, Unset):
+            build_cache_status = UNSET
+        else:
+            build_cache_status = check_deployment_response_build_cache_status(_build_cache_status)
 
         cache_key_sha256 = d.pop("cache_key_sha256", UNSET)
 

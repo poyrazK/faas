@@ -89,6 +89,7 @@ func appResponse(slug string) []byte {
 		"effective_limits":         appEffectiveLimits(),
 		"min_instances":            0,
 		"status":                   "active",
+		"build_cache_hit_rate_pct": 0,
 		"url":                      "https://" + slug + ".example.com",
 		"manifest":                 appManifest(),
 		"egress_allowlist":         []string{},

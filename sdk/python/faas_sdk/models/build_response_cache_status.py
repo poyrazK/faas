@@ -1,11 +1,11 @@
 from typing import Literal
 
-BuildResponseCacheStatus = Literal["hit", "miss", "invalidated"]
+BuildResponseCacheStatus = Literal["hit", "invalidated", "miss"]
 
 BUILD_RESPONSE_CACHE_STATUS_VALUES: set[BuildResponseCacheStatus] = {
     "hit",
-    "miss",
     "invalidated",
+    "miss",
 }
 
 

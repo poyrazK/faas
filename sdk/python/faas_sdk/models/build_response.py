@@ -57,9 +57,9 @@ class BuildResponse:
     duration_seconds: int | Unset = UNSET
     """Server-computed FinishedAt − StartedAt in whole seconds. Absent until the build reaches a terminal state."""
     cache_status: BuildResponseCacheStatus | Unset = UNSET
-    """Builder cache outcome: hit, miss, or invalidated."""
+    """Builderd cache decision for this build."""
     cache_key_sha256: str | Unset = UNSET
-    """SHA-256 digest of the content-addressed builder cache recipe."""
+    """SHA-256 digest of the versioned BuildCacheRecipe."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
