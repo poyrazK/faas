@@ -146,10 +146,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       go mod edit -require=github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} && \
       go mod edit -require=golang.org/x/net@v0.57.0 && \
       go mod edit -require=golang.org/x/crypto@v0.56.0 && \
-      go mod edit -require=google.golang.org/grpc@v1.83.1 && \
-      go mod download github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} google.golang.org/grpc@v1.83.1 golang.org/x/crypto@v0.56.0 && \
+      go mod edit -require=google.golang.org/grpc@v1.83.2 && \
+      go mod download github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 && \
       archive_module="$(go env GOMODCACHE)/github.com/moby/go-archive@v${GO_ARCHIVE_VERSION}" && \
-      grpc_module="$(go env GOMODCACHE)/google.golang.org/grpc@v1.83.1" && \
+      grpc_module="$(go env GOMODCACHE)/google.golang.org/grpc@v1.83.2" && \
       crypto_module="$(go env GOMODCACHE)/golang.org/x/crypto@v0.56.0" && \
       rm -rf vendor/github.com/moby/go-archive && \
       rm -rf vendor/google.golang.org/grpc && \
@@ -160,7 +160,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       sed -i \
         -e "s#github.com/moby/go-archive v0.2.0#github.com/moby/go-archive v${GO_ARCHIVE_VERSION}#" \
         -e "s#golang.org/x/crypto v0.54.0#golang.org/x/crypto v0.56.0#" \
-        -e "s#google.golang.org/grpc v1.82.1#google.golang.org/grpc v1.83.1#" \
+        -e "s#google.golang.org/grpc v1.82.1#google.golang.org/grpc v1.83.2#" \
         vendor/modules.txt && \
       go test -mod=vendor ./frontend/gateway -run '^TestServeWaitsForColdFrontend$' -count=1 && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
