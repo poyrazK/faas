@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
@@ -676,6 +677,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			log.Warn("imaged: close vmm client", "err", err)
 		}
 	}()
+
+	// All boot-critical storage and runtime bases are staged before this point.
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, func() bool { return true })
+	defer notifyStop()
 
 	return loop.Run(ctx)
 }

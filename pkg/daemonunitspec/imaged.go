@@ -48,7 +48,7 @@ func UnitImaged() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "simple",
+		Type:               "notify",
 		User:               "faas-imaged",
 		Group:              "faas",
 		ExecStart:          `/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml`,

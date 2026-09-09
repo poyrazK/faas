@@ -46,7 +46,7 @@ func UnitGithubd() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "simple",
+		Type:               "notify",
 		User:               "faas",
 		Group:              "faas",
 		ExecStart:          `/opt/faas/current/bin/githubd --config /etc/faas/githubd.toml`,

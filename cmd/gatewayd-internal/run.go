@@ -56,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -3023,6 +3024,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				"socket", gatewaydInternalSocket, "err", err)
 		}
 	}
+
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
+	defer notifyStop()
 
 	select {
 	case err := <-errc:

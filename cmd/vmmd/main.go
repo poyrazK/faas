@@ -39,6 +39,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -1385,6 +1386,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// 200 ms cadence; meterd's sampler appends to
 	// usage_minutes.net_tx_bytes additively per minute.
 	go runNetworkEgressPoll(ctx, mgr, netCache, ops, nil, nil, nil, 0, log)
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, vmmdProbe.ReadyFunc())
+	defer notifyStop()
 
 	// Tier A5 (ADR-066) live-migration lease sweeper. Drops
 	// tracker entries whose lease has expired so a dead vmmd's

@@ -272,7 +272,15 @@ jobs:
       # still run in both cases). On macOS dev the kernel sub-step
       # self-skips; bridge-name guard + Go cross-check still run.
       - name: install nftables
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq nftables
+        run: |
+          set -euo pipefail
+          # The hosted image can carry a stale Google Chrome index. It is not
+          # needed by this job, and a hash mismatch there would abort apt
+          # before nftables can be installed.
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo apt-get install -y -qq nftables
       - name: egress check (Go renderer ↔ Jinja2 + nft syntax + bridge-name guard)
         run: make egress-check
 
@@ -1633,7 +1641,12 @@ jobs:
             go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - name: install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
       - name: e2e tests (shard 1 — 18 tests)
@@ -1712,7 +1725,12 @@ jobs:
             go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - name: install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
       - name: e2e tests (shard 2 — 15 tests)
@@ -1781,7 +1799,12 @@ jobs:
             go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - name: install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
       - name: e2e tests (shard 3 — 24 tests)
@@ -1850,7 +1873,12 @@ jobs:
             go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - name: install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
       - name: e2e tests (shard 4 — 22 tests)

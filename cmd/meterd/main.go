@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/reconciler"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssocket"
 	"github.com/onebox-faas/faas/pkg/mail"
@@ -1256,6 +1257,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		metricsSrv = srv
 		log.Info("meterd metrics listening", "addr", cfg.MetricsAddr)
 	}
+
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, meterdProbe.ReadyFunc())
+	defer notifyStop()
 
 	select {
 	case <-ctx.Done():

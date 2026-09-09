@@ -43,8 +43,8 @@ func assertBasicShape(t *testing.T, name string, u daemonunit.Unit) {
 	if u.WantedBy != "multi-user.target" {
 		t.Errorf("%s: WantedBy = %q, want multi-user.target", name, u.WantedBy)
 	}
-	if u.Type != "simple" {
-		t.Errorf("%s: Type = %q, want simple", name, u.Type)
+	if u.Type != "notify" {
+		t.Errorf("%s: Type = %q, want notify", name, u.Type)
 	}
 	if u.Restart == "" {
 		t.Errorf("%s: Restart empty", name)
