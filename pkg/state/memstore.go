@@ -119,6 +119,9 @@ type MemStore struct {
 	// path index is in-memory only — we walk the map on lookup
 	// (the memstore is a test fixture, not a production path).
 	consumerKeys map[string]ConsumerKey
+	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
+	// stable customer identity independent from rotatable credentials.
+	apiConsumers map[string]APIConsumer
 	// provisionedStaticEgressIPs is the ADR-119 redesign gate.
 	// Keyed by (accountID, customerIP) — the same composite PK
 	// as the Postgres table. Test fixture only.
@@ -815,6 +818,7 @@ func NewMemStore() *MemStore {
 		// keyed by ConsumerKey.ID; cross-tenant IDOR guards are
 		// enforced at the read methods (same as the pg path).
 		consumerKeys:     map[string]ConsumerKey{},
+		apiConsumers:     map[string]APIConsumer{},
 		openAPISnapshots: map[string]OpenAPISnapshot{},
 		// ADR-119 redesign: empty gate (no provisioned IPs in
 		// unit tests unless a test explicitly seeds them).
@@ -14823,6 +14827,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.consumerKeys, kid)
 		}
 	}
+	for cid, c := range m.apiConsumers {
+		if c.AccountID == id {
+			delete(m.apiConsumers, cid)
+		}
+	}
 	for did, d := range m.deployments {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			deletedDeployments[did] = struct{}{}
@@ -18199,6 +18208,10 @@ func (m *MemStore) CreateConsumerKey(_ context.Context, accountID, appID, name, 
 	// Mirror the (account_id, app_id, name) UNIQUE from 00329.
 	for _, k := range m.consumerKeys {
 		if k.AccountID == accountID && k.AppID == appID && k.Name == name {
+			return ConsumerKey{}, ErrConflict
+		}
+		// Mirror the UNIQUE (app_id, prefix) gateway hot-path index.
+		if k.AppID == appID && k.Prefix == prefix {
 			return ConsumerKey{}, ErrConflict
 		}
 	}

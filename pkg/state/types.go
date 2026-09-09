@@ -566,7 +566,37 @@ const (
 	APIKeyStatusRevoked APIKeyStatus = "revoked"
 )
 
-// ConsumerKey is a hashed, per-(account, app) credential for the
+// APIConsumerStatus is the lifecycle state for an application's API
+// consumer. Revocation is terminal in v1; credentials can be rotated
+// without changing the consumer's stable identity.
+type APIConsumerStatus string
+
+const (
+	APIConsumerStatusActive  APIConsumerStatus = "active"
+	APIConsumerStatusRevoked APIConsumerStatus = "revoked"
+)
+
+// APIConsumer is the stable identity of one customer of an application.
+// Credentials (ConsumerKey) are attached to this row so key rotation does
+// not change the identity used for throttling, usage attribution, or billing.
+type APIConsumer struct {
+	ID          string
+	AccountID   string
+	AppID       string
+	ExternalRef string
+	Name        string
+	Status      APIConsumerStatus
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	RevokedAt   *time.Time
+}
+
+// Active reports whether the consumer can authenticate requests.
+func (c APIConsumer) Active() bool {
+	return c.Status == APIConsumerStatusActive && c.RevokedAt == nil
+}
+
+// ConsumerKey is a hashed, per-consumer credential for the
 // application's customers (ADR-120 / issue #975 item #5). Distinct
 // from APIKey because it is scoped to a single (AccountID, AppID)
 // pair (a leaked key affects only one app) and exposed to the
@@ -585,9 +615,12 @@ const (
 // TouchConsumerKeyLastUsed with a 60s debouncer — never a billing
 // signal.
 type ConsumerKey struct {
-	ID         string
-	AccountID  string
-	AppID      string
+	ID        string
+	AccountID string
+	AppID     string
+	// ConsumerID is the stable APIConsumer identity. It is nullable for
+	// legacy rows created before consumer identities were introduced.
+	ConsumerID string
 	Name       string
 	Prefix     string
 	Hash       []byte
