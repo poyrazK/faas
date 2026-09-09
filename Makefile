@@ -430,9 +430,12 @@ backup-restore-drill: ## Run the M8 restore drill end-to-end (must run on EX44 a
 	sudo bash "$(CURDIR)/deploy/scripts/faas-m8-restore-drill.sh"
 
 .PHONY: lint-drill
-lint-drill: ## Static lint of the M8 restore and TLS cutover drill scripts
+lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-m8-restore-drill_test.sh
 	bash deploy/scripts/faas-tls-cutover-drill_test.sh
+	bash deploy/scripts/pg-restore-verify_test.sh
+	bash deploy/scripts/faas-pg-basebackup-push_test.sh
+	bash deploy/scripts/faas-pg-wal-prune_test.sh
 
 .PHONY: m8-evidence-check
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
@@ -451,12 +454,12 @@ tls-cutover-drill: ## Issue #252: current-edge TLS cutover drill (dry-run by def
 	bash deploy/scripts/faas-tls-cutover-drill.sh --$(TLS_CUTOVER_MODE)
 
 .PHONY: backup-push-pg
-backup-push-pg: ## Push the latest basebackup to Hetzner Storage Box (issue #250)
+backup-push-pg: ## Push and verify completed basebackups off-host (issue #250)
 	@sudo systemctl start faas-pg-basebackup-push.service
 	@sudo journalctl -u faas-pg-basebackup-push.service -n 50 --no-pager
 
 .PHONY: backup-restore-verify
-backup-restore-verify: ## T-7 throwaway restore verify on Hetzner Storage Box basebackup (issue #250)
+backup-restore-verify: ## T-7 throwaway restore verify from off-host storage (issue #250)
 	sudo bash deploy/scripts/pg-restore-verify.sh
 
 .PHONY: lint-pg-restore-verify

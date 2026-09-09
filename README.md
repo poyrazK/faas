@@ -5,9 +5,11 @@
 [![codecov](https://codecov.io/gh/poyrazK/faas/graph/badge.svg)](https://codecov.io/gh/poyrazK/faas)
 
 Scale-to-zero Functions-as-a-Service on Firecracker microVMs, deployable on any
-bare-metal x86_64 host. Customer apps park as snapshots on disk and wake on
-request in < 350 ms p50. Gregale runs one box today and is engineered to scale
-out to many control-plane nodes without a code rewrite (see
+bare-metal x86_64 host. Customer apps park as snapshots on disk. On the
+reference SSD node, the platform-only snapshot restore target is p95 < 350 ms;
+public request latency also includes the edge, network distance, and app code.
+Gregale runs one box today and is engineered to scale out to many control-plane
+nodes without a code rewrite (see
 [`docs/scale_out_and_workload_classes.md`](docs/scale_out_and_workload_classes.md)).
 
 - **Spec (source of truth):** [`docs/faas_implementation_spec.md`](docs/faas_implementation_spec.md)
