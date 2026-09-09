@@ -6,8 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // cmdDeploymentSummary renders the app-scoped release cockpit. The explicit
