@@ -23,7 +23,9 @@ PG_ARCHIVE="${FAAS_PG_ARCHIVE:-/var/lib/pgsql/archive}"
 PG_BASEBACKUP_DIR="${FAAS_PG_BASEBACKUP_DIR:-/var/lib/pgsql/basebackup}"
 PG_MAJOR="${PG_MAJOR:-$(find /etc/postgresql -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort | tail -1 || true)}"
 PG_MAJOR="${PG_MAJOR:-15}"
-PG_CONF="${FAAS_PG_CONF:-/etc/postgresql/${PG_MAJOR}/main/postgresql.conf}"
+PG_CLUSTER="${FAAS_PG_CLUSTER:-main}"
+PG_CONF="${FAAS_PG_CONF:-/etc/postgresql/${PG_MAJOR}/${PG_CLUSTER}/postgresql.conf}"
+PG_SERVICE="${FAAS_PG_SERVICE:-postgresql@${PG_MAJOR}-${PG_CLUSTER}.service}"
 PG_DB="${FAAS_PG_DB:-faas}"
 PG_SOCKET="${FAAS_PG_SOCKET:-/var/run/postgresql}"
 PG_PORT="${FAAS_PG_PORT:-5432}"
@@ -62,6 +64,7 @@ RECORD_WRITTEN=0
 POSTGRES_WAS_ACTIVE=0
 PG_DATA_WIPED=0
 RESTORE_EXTRACTED=0
+RECOVERY_PROMOTED=0
 DAEMONS_WERE_STOPPED=0
 PG_CONF_BACKUP=""
 LATEST_BB="-"
@@ -142,6 +145,7 @@ wait_for_promotion() {
       in_recovery="${in_recovery//[[:space:]]/}"
       if [[ "$in_recovery" == "f" ]]; then
         RECOVERY_STATUS="promoted at $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        RECOVERY_PROMOTED=1
         ok "Postgres promoted after $((i * 2))s"
         return 0
       fi
@@ -265,22 +269,12 @@ cleanup() {
   (( CLEANUP_DONE == 0 )) || return 0
   CLEANUP_DONE=1
 
-  # Restore the exact pre-drill PostgreSQL configuration, including owner and
-  # mode. This is safer than trying to sed a user-edited setting back out.
-  if [[ -n "$PG_CONF_BACKUP" && -f "$PG_CONF_BACKUP" ]]; then
-    cp -a "$PG_CONF_BACKUP" "$PG_CONF" 2>/dev/null || warn "could not restore $PG_CONF from backup"
-    if systemctl is-active --quiet postgresql; then
-      systemctl reload postgresql 2>/dev/null || warn "could not reload postgresql after restoring $PG_CONF"
-    fi
-  fi
-  [[ -n "$PG_DATA" && -d "$PG_DATA" ]] && rm -f "$PG_DATA/recovery.signal"
-
   # A failure during the wipe/extract phase can leave PGDATA unusable. Keep the
   # service down in that case; starting the daemons against an empty directory
   # would compound the incident. The operator-facing FAIL record explains why.
   if (( rc != 0 && DRILL_ACTIVE == 1 && DRILL_COMPLETED == 0 )); then
-    if (( POSTGRES_WAS_ACTIVE == 0 )) && systemctl is-active --quiet postgresql; then
-      systemctl stop postgresql 2>/dev/null || warn "could not stop postgresql started by the failed drill"
+    if (( POSTGRES_WAS_ACTIVE == 0 )) && systemctl is-active --quiet "$PG_SERVICE"; then
+      systemctl stop "$PG_SERVICE" 2>/dev/null || warn "could not stop ${PG_SERVICE} started by the failed drill"
     fi
     for unit in "${DAEMONS[@]}"; do
       if ! daemon_was_active "$unit" && systemctl is-active --quiet "faas-${unit}.service"; then
@@ -288,13 +282,43 @@ cleanup() {
       fi
     done
     if (( POSTGRES_WAS_ACTIVE == 1 && PG_DATA_WIPED == 0 )); then
-      systemctl start postgresql 2>/dev/null || warn "could not restart the unwiped PostgreSQL cluster during cleanup"
-    elif (( POSTGRES_WAS_ACTIVE == 1 && PG_DATA_WIPED == 1 && RESTORE_EXTRACTED == 1 )); then
-      systemctl restart postgresql 2>/dev/null || warn "could not restart the extracted PostgreSQL cluster during cleanup"
+      systemctl start "$PG_SERVICE" 2>/dev/null || warn "could not restart the unwiped PostgreSQL cluster during cleanup"
+    elif (( POSTGRES_WAS_ACTIVE == 1 && PG_DATA_WIPED == 1 && RESTORE_EXTRACTED == 1 && RECOVERY_PROMOTED == 0 )); then
+      # Keep the temporary recovery stanza in place until archived WAL has
+      # replayed. Restoring the normal config first would start the old
+      # basebackup without the quiesced WAL boundary and silently lose data.
+      if [[ -n "$PG_CONF_BACKUP" && -f "$PG_CONF_BACKUP" && -f "$PG_DATA/recovery.signal" ]]; then
+        chown -R postgres:postgres "$PG_DATA"
+        chmod 0700 "$PG_DATA"
+        systemctl reset-failed "$PG_SERVICE" 2>/dev/null
+        if systemctl restart "$PG_SERVICE" 2>/dev/null && wait_for_promotion; then
+          ok "recovered the extracted PostgreSQL cluster during cleanup"
+        else
+          systemctl stop "$PG_SERVICE" 2>/dev/null || true
+          warn "${PG_SERVICE} left stopped: archived-WAL recovery failed during cleanup"
+        fi
+      else
+        warn "${PG_SERVICE} left stopped: recovery configuration is incomplete"
+      fi
     elif (( POSTGRES_WAS_ACTIVE == 1 && PG_DATA_WIPED == 1 )); then
-      warn "postgresql left stopped: restored PGDATA extraction is incomplete"
+      warn "${PG_SERVICE} left stopped: restored PGDATA extraction is incomplete"
     fi
-    if (( DAEMONS_WERE_STOPPED == 1 )) && systemctl is-active --quiet postgresql; then
+  fi
+
+  # Restore the exact pre-drill PostgreSQL configuration only after any
+  # failure-path WAL recovery. This is safer than trying to sed a user-edited
+  # setting back out and prevents cleanup from bypassing archived WAL.
+  if [[ -n "$PG_CONF_BACKUP" && -f "$PG_CONF_BACKUP" ]]; then
+    cp -a "$PG_CONF_BACKUP" "$PG_CONF" 2>/dev/null || warn "could not restore $PG_CONF from backup"
+  fi
+  [[ -n "$PG_DATA" && -d "$PG_DATA" ]] && rm -f "$PG_DATA/recovery.signal"
+  if systemctl is-active --quiet "$PG_SERVICE"; then
+    systemctl reload "$PG_SERVICE" 2>/dev/null || warn "could not reload ${PG_SERVICE} after restoring $PG_CONF"
+  fi
+
+  if (( rc != 0 && DRILL_ACTIVE == 1 && DRILL_COMPLETED == 0 )); then
+    if (( DAEMONS_WERE_STOPPED == 1 )) && (( RECOVERY_PROMOTED == 1 || PG_DATA_WIPED == 0 )) \
+      && systemctl is-active --quiet "$PG_SERVICE"; then
       for unit in "${ACTIVE_DAEMONS[@]}"; do
         systemctl start "faas-${unit}.service" 2>/dev/null || warn "could not restart faas-${unit}.service during cleanup"
       done
@@ -323,6 +347,8 @@ command -v tar >/dev/null 2>&1 || fail "tar is required to validate and restore 
 [[ -d "$PG_ARCHIVE" ]] || fail "${PG_ARCHIVE} missing — run the M8 postgres role first"
 [[ -d "$PG_BASEBACKUP_DIR" ]] || fail "${PG_BASEBACKUP_DIR} missing — basebackup is the restore source"
 [[ -f "$PG_CONF" ]] || fail "${PG_CONF} missing — PostgreSQL cluster config is not converged"
+systemctl cat "$PG_SERVICE" >/dev/null 2>&1 \
+  || fail "${PG_SERVICE} is not installed — set FAAS_PG_SERVICE to the real PostgreSQL cluster unit"
 [[ -z "$DRILL_COMMIT" || "$DRILL_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
   || fail "FAAS_DRILL_COMMIT must be the 40-character commit that supplied this script"
 
@@ -359,8 +385,9 @@ else
   ok "host identity is absent on this role (expected for a split control plane)"
 fi
 
-systemctl is-active --quiet postgresql || fail "postgresql must be active before the drill"
+systemctl is-active --quiet "$PG_SERVICE" || fail "${PG_SERVICE} must be active before the drill"
 POSTGRES_WAS_ACTIVE=1
+ok "PostgreSQL cluster service: ${PG_SERVICE}"
 LIVE_PG_DATA="$(psql_query 'SHOW data_directory' | tr -d '[:space:]')"
 [[ "$LIVE_PG_DATA" == /* && -f "$LIVE_PG_DATA/PG_VERSION" ]] \
   || fail "PostgreSQL returned an invalid live data_directory: ${LIVE_PG_DATA}"
@@ -434,12 +461,16 @@ else
 fi
 
 heading "1/7 Stop Postgres (deliberate crash)"
-systemctl stop postgresql
-ok "stopped postgresql"
+systemctl stop "$PG_SERVICE" || fail "failed to stop ${PG_SERVICE}; PGDATA was not touched"
+systemctl is-active --quiet "$PG_SERVICE" && fail "${PG_SERVICE} remained active; PGDATA was not touched"
+if "$PG_ISREADY" -h "$PG_SOCKET" -p "$PG_PORT" -d "$PG_DB" >/dev/null 2>&1; then
+  fail "PostgreSQL still accepts connections after stopping ${PG_SERVICE}; PGDATA was not touched"
+fi
+ok "stopped ${PG_SERVICE}"
 
 heading "2/7 Wipe ${PG_DATA} (disaster simulation)"
 rm -rf "$PG_DATA"
-mkdir -p "$PG_DATA"
+install -d -o postgres -g postgres -m 0700 "$PG_DATA"
 PG_DATA_WIPED=1
 ok "${PG_DATA} wiped"
 
@@ -454,6 +485,7 @@ if [[ -f "$LATEST_BB/pg_wal.tar.gz" ]]; then
 fi
 [[ -f "$PG_DATA/PG_VERSION" ]] || fail "basebackup extraction did not produce PG_VERSION"
 chown -R postgres:postgres "$PG_DATA"
+chmod 0700 "$PG_DATA"
 RESTORE_EXTRACTED=1
 ok "basebackup extracted into ${PG_DATA}"
 
@@ -471,9 +503,10 @@ ok "recovery.signal + restore_command written"
 
 heading "5/7 Start Postgres, replay WAL, and start daemons"
 MIGRATION_START=$(date +%s)
-systemctl start postgresql
-ok "postgresql started"
-wait_for_promotion || fail "Postgres never promoted — inspect journalctl -u postgresql"
+systemctl reset-failed "$PG_SERVICE"
+systemctl start "$PG_SERVICE"
+ok "${PG_SERVICE} started"
+wait_for_promotion || fail "Postgres never promoted — inspect journalctl -u ${PG_SERVICE}"
 
 for unit in "${ACTIVE_DAEMONS[@]}"; do
   systemctl start "faas-${unit}.service"

@@ -118,8 +118,16 @@ grep -q 'DRILL_ACTIVE == 1' "$SCRIPT" \
   || { echo "FAIL: failure cleanup is not guarded from preflight-only execution"; exit 1; }
 grep -q 'PG_DATA_WIPED == 1 && RESTORE_EXTRACTED == 1' "$SCRIPT" \
   || { echo "FAIL: recovery cleanup does not distinguish complete from partial extraction"; exit 1; }
-grep -q 'systemctl restart postgresql' "$SCRIPT" \
-  || { echo "FAIL: failed recovery does not restart PostgreSQL with the restored config"; exit 1; }
+grep -q 'PG_SERVICE="${FAAS_PG_SERVICE:-postgresql@${PG_MAJOR}-${PG_CLUSTER}.service}"' "$SCRIPT" \
+  || { echo "FAIL: drill does not target the real Debian PostgreSQL cluster unit"; exit 1; }
+grep -q 'systemctl restart "$PG_SERVICE"' "$SCRIPT" \
+  || { echo "FAIL: failed recovery does not restart the actual PostgreSQL cluster unit"; exit 1; }
+grep -q 'install -d -o postgres -g postgres -m 0700 "$PG_DATA"' "$SCRIPT" \
+  || { echo "FAIL: restored PGDATA is not created with PostgreSQL-safe permissions"; exit 1; }
+grep -q 'chmod 0700 "$PG_DATA"' "$SCRIPT" \
+  || { echo "FAIL: extracted PGDATA permissions are not enforced before startup"; exit 1; }
+grep -q 'Keep the temporary recovery stanza in place until archived WAL has' "$SCRIPT" \
+  || { echo "FAIL: cleanup may restore the normal config before archived-WAL replay"; exit 1; }
 grep -q "SHOW data_directory" "$SCRIPT" \
   || { echo "FAIL: destructive target is not derived from live PostgreSQL"; exit 1; }
 grep -q 'FAAS_PG_DATA=.*does not match PostgreSQL data_directory' "$SCRIPT" \
