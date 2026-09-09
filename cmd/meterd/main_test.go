@@ -14,10 +14,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	egresspb "github.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1"
@@ -902,6 +904,44 @@ func TestGatewayEgressAdapter_Tracked(t *testing.T) {
 
 	if got := a.Tracked(); got != 2 {
 		t.Errorf("Tracked() = %d, want 2 (inst-A + inst-B)", got)
+	}
+}
+
+type failingEgressStreamClient struct {
+	calls atomic.Int64
+}
+
+func (c *failingEgressStreamClient) StreamBytes(context.Context, *egresspb.StreamBytesRequest, ...grpc.CallOption) (egresspb.EgressTxService_StreamBytesClient, error) {
+	c.calls.Add(1)
+	return nil, errors.New("gateway unavailable")
+}
+
+func TestGatewayEgressAdapter_StreamOpenFailureBacksOff(t *testing.T) {
+	client := &failingEgressStreamClient{}
+	a := &gatewayEgressAdapter{
+		now:  time.Now,
+		data: make(map[string]map[int64]gatewayUsageBucket),
+		dialFn: func(context.Context, string, *tls.Config) (egresspb.EgressTxServiceClient, error) {
+			return client, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.startStream(ctx, "tcp://gateway.invalid:9092", discardLog())
+
+	deadline := time.Now().Add(time.Second)
+	for client.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := client.calls.Load(); got != 1 {
+		t.Fatalf("initial StreamBytes calls = %d, want 1", got)
+	}
+	// The production minimum backoff is 250 ms. Before the regression fix,
+	// the non-blocking dial + failed stream-open path made thousands of calls
+	// in this interval and eventually OOM-killed meterd.
+	time.Sleep(100 * time.Millisecond)
+	if got := client.calls.Load(); got != 1 {
+		t.Fatalf("StreamBytes calls during minimum backoff = %d, want 1", got)
 	}
 }
 
