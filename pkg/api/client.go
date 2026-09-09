@@ -4268,6 +4268,16 @@ func (c *Client) GetAppOpenAPI(ctx context.Context, slug, source string) ([]byte
 	return body, nil
 }
 
+// PreviewAppOpenAPIPolicy returns the read-only declared-vs-observed route
+// diff for an app, including the edge rules matching each route. It never
+// mutates the imported document or policy state; ObservedAvailable is false
+// when the gatewayd route bridge is unavailable.
+func (c *Client) PreviewAppOpenAPIPolicy(ctx context.Context, slug string) (AppOpenAPIPolicyPreviewResponse, error) {
+	var out AppOpenAPIPolicyPreviewResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+slug+"/openapi/preview", nil, &out)
+	return out, err
+}
+
 // ImportAppOpenAPI uploads (or overwrites) the customer's OpenAPI
 // document for an app. Body is the raw OpenAPI document; the
 // server validates shape (Draft 2020-12 + OpenAPI 3.1 schema) +

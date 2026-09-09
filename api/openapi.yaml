@@ -4252,6 +4252,33 @@ paths:
         '422':
           description: "code: openapi_import_invalid or openapi_import_too_many_endpoints. Doc fails the structural-minimum validator or declares more than state.OpenAPIImportMaxEndpoints (50) endpoints on the dry-run endpoint."
 
+  /v1/apps/{slug}/openapi/preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [openapi_import]
+      operationId: previewAppOpenAPIPolicy
+      summary: Preview declared routes, observed routes, and matching edge policies.
+      description: |
+        Read-only route-policy preview for API-hosting roadmap item 11.
+        Joins the persisted OpenAPI declaration with gatewayd's observed
+        route labels and the app's edge rules. Each route is classified as
+        `matched`, `declared_only`, or `observed_only`; `covered` is true
+        when at least one enabled edge rule matches the path and method.
+        When the gateway bridge is unavailable the response remains useful,
+        sets `observed_available` to false, and reports
+        `source=degraded: routes_unavailable`. No policy or document writes
+        occur on this endpoint.
+      responses:
+        '200':
+          description: Declared-vs-observed route and policy preview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOpenAPIPolicyPreviewResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/diff:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -21014,6 +21041,73 @@ components:
           description: "Number of operations in the dry-run doc."
           x-since: "2026-08"
           x-issue: "975"
+
+    AppOpenAPIPolicyPreviewResponse:
+      description: |
+        Read-only declared-vs-observed route and edge-policy preview
+        (API-hosting roadmap item 11 / ADR-126 follow-up). The response
+        never writes an OpenAPI document or edge rule.
+      type: object
+      required: [app_id, source, observed_available, routes]
+      properties:
+        app_id:
+          type: string
+          format: uuid
+        source:
+          type: string
+          description: "preview, empty: no_import, or degraded: routes_unavailable."
+        observed_available:
+          type: boolean
+          description: "Whether the gatewayd observed-route bridge returned successfully."
+        openapi_version:
+          type: string
+          description: "OpenAPI version from the persisted declaration, when present."
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/AppOpenAPIPolicyPreviewRoute' }
+        suggestions:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleSuggestion' }
+
+    AppOpenAPIPolicyPreviewRoute:
+      description: "One declared/observed path-method row with policy coverage and drift status."
+      type: object
+      required: [path, method, status, declared, observed, covered]
+      properties:
+        path: { type: string }
+        method:
+          type: string
+          enum: [get, put, post, delete, options, head, patch, trace]
+        status:
+          type: string
+          enum: [matched, declared_only, observed_only]
+        declared: { type: boolean }
+        observed: { type: boolean }
+        covered:
+          type: boolean
+          description: "True when at least one enabled edge rule matches this path and method."
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/AppOpenAPIPolicyPreviewRule' }
+
+    AppOpenAPIPolicyPreviewRule:
+      description: "Read-only edge-rule subset explaining why a preview route is covered."
+      type: object
+      required: [id, match_host, match_path, match_methods, priority, enabled, kind, action]
+      properties:
+        id: { type: string, format: uuid }
+        match_host: { type: string }
+        match_path: { type: string }
+        match_methods:
+          type: array
+          items: { type: string }
+        priority: { type: integer }
+        enabled: { type: boolean }
+        kind: { type: string }
+        validate_mode: { type: string }
+        action:
+          type: object
+          additionalProperties: true
 
     AppRoutesResponse:
       description: |

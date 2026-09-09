@@ -1336,7 +1336,7 @@ func (s *server) handler() http.Handler {
 	// handlers_diff.go:diffApp.
 	mux.HandleFunc("POST /v1/apps/{slug}/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.diffApp)))
 	// ADR-126 / issue #975 item #2 — OpenAPI Import + Auto-Generation.
-	// Four app-scoped routes keyed on {slug}, distinct from the
+	// Five app-scoped routes keyed on {slug}, distinct from the
 	// deployment-keyed getOpenAPIDoc / patchOpenAPIDoc / openAPIDocDelete
 	// family above (item #1, lines 1025-1027). The GET accepts
 	// ?source=manual_import|auto so the dashboard can fetch either
@@ -1347,6 +1347,10 @@ func (s *server) handler() http.Handler {
 	// rides the read-scope chain with no requireMFA (same posture
 	// as /v1/apps/{slug}/diff just above).
 	mux.HandleFunc("GET /v1/apps/{slug}/openapi", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPI)))
+	// Read-only route-policy preview: declared OpenAPI operations joined with
+	// gatewayd-observed routes and matching edge rules. It deliberately stays
+	// on the read-scope chain with no MFA because it performs no writes.
+	mux.HandleFunc("GET /v1/apps/{slug}/openapi/preview", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPIPolicyPreview)))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.postAppOpenAPIImport))))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi/dry-run", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postAppOpenAPIImportDryRun)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppOpenAPIImport))))

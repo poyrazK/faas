@@ -904,6 +904,10 @@ Import an app OpenAPI document from a JSON file or stdin
 
 Preview uncovered routes without importing the document
 
+### openapi preview
+
+Preview declared routes, observed routes, and matching edge policies
+
 ### openapi rm
 
 Remove the imported app OpenAPI document

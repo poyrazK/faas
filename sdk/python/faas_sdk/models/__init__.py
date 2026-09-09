@@ -73,6 +73,12 @@ from .app_open_api_import_dry_run_response import AppOpenAPIImportDryRunResponse
 from .app_open_api_import_response import AppOpenAPIImportResponse
 from .app_open_api_import_response_openapi_version import AppOpenAPIImportResponseOpenapiVersion
 from .app_open_api_import_response_source import AppOpenAPIImportResponseSource
+from .app_open_api_policy_preview_response import AppOpenAPIPolicyPreviewResponse
+from .app_open_api_policy_preview_route import AppOpenAPIPolicyPreviewRoute
+from .app_open_api_policy_preview_route_method import AppOpenAPIPolicyPreviewRouteMethod
+from .app_open_api_policy_preview_route_status import AppOpenAPIPolicyPreviewRouteStatus
+from .app_open_api_policy_preview_rule import AppOpenAPIPolicyPreviewRule
+from .app_open_api_policy_preview_rule_action import AppOpenAPIPolicyPreviewRuleAction
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_response import AppResponse
@@ -924,6 +930,12 @@ __all__ = (
     "AppOpenAPIImportResponse",
     "AppOpenAPIImportResponseOpenapiVersion",
     "AppOpenAPIImportResponseSource",
+    "AppOpenAPIPolicyPreviewResponse",
+    "AppOpenAPIPolicyPreviewRoute",
+    "AppOpenAPIPolicyPreviewRouteMethod",
+    "AppOpenAPIPolicyPreviewRouteStatus",
+    "AppOpenAPIPolicyPreviewRule",
+    "AppOpenAPIPolicyPreviewRuleAction",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppResponse",

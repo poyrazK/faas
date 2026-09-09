@@ -6847,6 +6847,47 @@ type EdgeRuleSuggestion struct {
 	Action  map[string]any `json:"action"`
 }
 
+// AppOpenAPIPolicyPreviewResponse is the read-only declared-vs-observed
+// contract preview for an app (ADR-126 follow-up / API-hosting roadmap item
+// 11). Routes are sorted by path and method; each row includes the edge rules
+// that match it so a developer can see contract drift and policy coverage
+// before changing any rules.
+type AppOpenAPIPolicyPreviewResponse struct {
+	AppID             string                         `json:"app_id"`
+	Source            string                         `json:"source"`
+	ObservedAvailable bool                           `json:"observed_available"`
+	OpenAPIVersion    string                         `json:"openapi_version,omitempty"`
+	Routes            []AppOpenAPIPolicyPreviewRoute `json:"routes"`
+	Suggestions       []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
+}
+
+// AppOpenAPIPolicyPreviewRoute is one path/method row in the policy preview.
+// Status is one of matched, declared_only, or observed_only.
+type AppOpenAPIPolicyPreviewRoute struct {
+	Path     string                        `json:"path"`
+	Method   string                        `json:"method"`
+	Status   string                        `json:"status"`
+	Declared bool                          `json:"declared"`
+	Observed bool                          `json:"observed"`
+	Covered  bool                          `json:"covered"`
+	Rules    []AppOpenAPIPolicyPreviewRule `json:"rules,omitempty"`
+}
+
+// AppOpenAPIPolicyPreviewRule is the stable read-only rule subset attached to
+// a preview route. Action remains an opaque JSON object, matching the edge
+// rule API's existing wire contract.
+type AppOpenAPIPolicyPreviewRule struct {
+	ID           string          `json:"id"`
+	MatchHost    string          `json:"match_host"`
+	MatchPath    string          `json:"match_path"`
+	MatchMethods []string        `json:"match_methods"`
+	Priority     int             `json:"priority"`
+	Enabled      bool            `json:"enabled"`
+	Kind         string          `json:"kind"`
+	ValidateMode string          `json:"validate_mode,omitempty"`
+	Action       json.RawMessage `json:"action"`
+}
+
 // DebugTelemetryRequestItem is one row of per-app request telemetry
 // returned by GET /v1/apps/{slug}/debug/requests (ADR-127 / PR-A).
 // The fields are 1:1 with the request_telemetry table columns; the

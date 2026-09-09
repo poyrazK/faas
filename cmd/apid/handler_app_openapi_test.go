@@ -7,6 +7,7 @@ package main
 //   GET    /v1/apps/{slug}/openapi?source=manual_import|auto
 //   POST   /v1/apps/{slug}/openapi
 //   POST   /v1/apps/{slug}/openapi/dry-run
+//   GET    /v1/apps/{slug}/openapi/preview
 //   DELETE /v1/apps/{slug}/openapi
 //
 // Test surface (table-driven where applicable):
@@ -18,6 +19,7 @@ package main
 //   - POST: 200 happy path, 413 too large, 422 invalid, 422 too
 //     many endpoints, 403 per-account quota
 //   - POST dry-run: 200 happy path, 422 invalid
+//   - GET preview: declared-vs-observed route and policy coverage
 //   - DELETE: 204 happy path, 204 idempotent
 //
 // The MemStore seeds the imported doc directly via
@@ -153,6 +155,49 @@ func TestGetAppOpenAPI_ManualImport_Missing(t *testing.T) {
 	rec := e.do(t, "GET", "/v1/apps/manual-import-missing/openapi?source=manual_import", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetAppOpenAPIPolicyPreview_ReadOnly pins API-hosting roadmap deliverable
+// 11 / ADR-126 follow-up: the preview joins a persisted declaration with
+// matching policy rows and degrades honestly when gatewayd is unavailable.
+func TestGetAppOpenAPIPolicyPreview_ReadOnly(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedApp(t, e, "policy-preview")
+	seedImport(t, e, app.ID, []byte(sampleOpenAPIDoc), 1, "3.1.0")
+	if _, err := e.store.CreateEdgeRule(t.Context(), state.CreateEdgeRuleParams{
+		AccountID:    e.acct.ID,
+		AppID:        app.ID,
+		MatchPath:    "/users",
+		MatchMethods: []string{"GET"},
+		Priority:     10,
+		Enabled:      true,
+		Kind:         state.EdgeRuleKindValidate,
+		Action:       state.EdgeRuleAction{Kind: state.EdgeRuleKindValidate},
+	}); err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+
+	rec := e.do(t, "GET", "/v1/apps/policy-preview/openapi/preview", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out api.AppOpenAPIPolicyPreviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode preview: %v; body=%s", err, rec.Body.String())
+	}
+	if out.Source != "degraded: routes_unavailable" || out.ObservedAvailable {
+		t.Fatalf("source=%q observed_available=%t", out.Source, out.ObservedAvailable)
+	}
+	if out.OpenAPIVersion != "3.1.0" || len(out.Routes) != 1 {
+		t.Fatalf("preview metadata/routes: %+v", out)
+	}
+	route := out.Routes[0]
+	if route.Path != "/users" || route.Method != "get" || route.Status != "declared_only" || !route.Covered || len(route.Rules) != 1 {
+		t.Fatalf("route preview: %+v", route)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control=%q, want no-store", got)
 	}
 }
 

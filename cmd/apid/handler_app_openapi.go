@@ -2,11 +2,12 @@ package main
 
 // ADR-126 / issue #975 item #2 — OpenAPI Import + Auto-Generation.
 //
-// Four app-scoped routes:
+// Five app-scoped routes:
 //
 //   GET    /v1/apps/{slug}/openapi?source=manual_import|auto
 //   POST   /v1/apps/{slug}/openapi                          (import)
 //   POST   /v1/apps/{slug}/openapi/dry-run                  (suggestions)
+//   GET    /v1/apps/{slug}/openapi/preview                  (contract + policy preview)
 //   DELETE /v1/apps/{slug}/openapi
 //
 // All four flow through authLimited → (requireMFA on writes) →
@@ -106,6 +107,96 @@ func (s *server) getAppOpenAPI(w http.ResponseWriter, r *http.Request, acct stat
 			fmt.Sprintf("observed=%s", source)))
 		return
 	}
+}
+
+// getAppOpenAPIPolicyPreview returns a read-only declared-vs-observed route
+// diff with the edge rules that match each route. It intentionally does not
+// reuse the auto-generated document response: the preview keeps provenance
+// and policy coverage explicit so a developer can decide what to change
+// before any policy write.
+func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	// Spec: API-hosting roadmap deliverable 11 / ADR-126 follow-up —
+	// declared-vs-observed contract drift and route-policy preview.
+	slug := r.PathValue("slug")
+	app, ok := s.loadApp(w, r, acct, slug)
+	if !ok {
+		return
+	}
+
+	raw, _, err := s.store.GetAppOpenAPIDoc(r.Context(), app.ID, app.AccountID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+			"failed to read imported OpenAPI document", err.Error()))
+		return
+	}
+
+	var spec *openapidiff.Spec
+	if len(raw) > 0 {
+		spec, err = openapidiff.LoadBytes(raw)
+		if err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "openapi_import_invalid",
+				"persisted OpenAPI document could not be parsed", err.Error()))
+			return
+		}
+	}
+
+	observed, observedAvailable := s.fetchObservedRoutesWithStatus(r.Context(), app.ID)
+	rules, err := s.store.ListEdgeRulesForApp(r.Context(), app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+			"failed to read app edge rules", err.Error()))
+		return
+	}
+
+	routes := openapidiff.BuildRoutePolicyPreview(spec, observed, rules)
+	outRoutes := make([]api.AppOpenAPIPolicyPreviewRoute, 0, len(routes))
+	for _, route := range routes {
+		outRules := make([]api.AppOpenAPIPolicyPreviewRule, 0, len(route.Rules))
+		for _, rule := range route.Rules {
+			outRules = append(outRules, api.AppOpenAPIPolicyPreviewRule{
+				ID: rule.ID, MatchHost: rule.MatchHost, MatchPath: rule.MatchPath,
+				MatchMethods: rule.MatchMethods, Priority: rule.Priority,
+				Enabled: rule.Enabled, Kind: rule.Kind, ValidateMode: rule.ValidateMode,
+				Action: rule.Action,
+			})
+		}
+		outRoutes = append(outRoutes, api.AppOpenAPIPolicyPreviewRoute{
+			Path: route.Path, Method: route.Method, Status: route.Status,
+			Declared: route.Declared, Observed: route.Observed,
+			Covered: route.Covered, Rules: outRules,
+		})
+	}
+
+	source := "preview"
+	if len(raw) == 0 {
+		source = "empty: no_import"
+	} else if !observedAvailable {
+		source = "degraded: routes_unavailable"
+	}
+	resp := api.AppOpenAPIPolicyPreviewResponse{
+		AppID: app.ID, Source: source, ObservedAvailable: observedAvailable,
+		Routes: outRoutes,
+	}
+	if spec != nil {
+		resp.OpenAPIVersion = spec.OpenAPIVersion()
+	}
+	if len(raw) > 0 {
+		dryRun, dryErr := openapidiff.ComputeDryRun(raw, rules)
+		if dryErr != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "openapi_import_invalid",
+				"persisted OpenAPI document could not be analyzed", dryErr.Error()))
+			return
+		}
+		resp.Suggestions = make([]api.EdgeRuleSuggestion, len(dryRun.Suggestions))
+		for i, suggestion := range dryRun.Suggestions {
+			resp.Suggestions[i] = api.EdgeRuleSuggestion{
+				Path: suggestion.Path, Methods: suggestion.Methods,
+				Kind: suggestion.Kind, Action: suggestion.Action,
+			}
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // serveOpenAPIDocManualImport returns the persisted customer
@@ -322,28 +413,33 @@ func renderOperationJSON(op *openapidiff.Operation) map[string]any {
 // zero (the per-route histogram surface lives in a separate
 // /metrics scrape, not on this control-listener endpoint).
 func (s *server) fetchObservedRoutes(ctx context.Context, appID string) []openapidiff.RouteRow {
+	rows, _ := s.fetchObservedRoutesWithStatus(ctx, appID)
+	return rows
+}
+
+func (s *server) fetchObservedRoutesWithStatus(ctx context.Context, appID string) ([]openapidiff.RouteRow, bool) {
 	if s.gatewaydControlURL == "" {
-		return nil
+		return nil, false
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, openAPIImportDialTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(dialCtx, http.MethodGet, openAPIImportEndpoint(s.gatewaydControlURL, appID), nil)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	client := &http.Client{Timeout: openAPIImportDialTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		s.log.Debug("apid→gatewayd observed-routes dial failed", "err", err.Error(), "app_id", appID)
-		return nil
+		return nil, false
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil
+		return nil, false
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var env struct {
 		Slug   string   `json:"slug"`
@@ -351,13 +447,13 @@ func (s *server) fetchObservedRoutes(ctx context.Context, appID string) []openap
 		Routes []string `json:"routes"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
-		return nil
+		return nil, false
 	}
 	rows := make([]openapidiff.RouteRow, 0, len(env.Routes))
 	for _, label := range env.Routes {
 		rows = append(rows, openapidiff.RouteRow{Route: label})
 	}
-	return rows
+	return rows, true
 }
 
 // readAndValidateImportBody is the shared body-read + size-cap +

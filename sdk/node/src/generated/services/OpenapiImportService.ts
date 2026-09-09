@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AppOpenAPIImportDryRunResponse } from '../models/AppOpenAPIImportDryRunResponse.js';
 import type { AppOpenAPIImportResponse } from '../models/AppOpenAPIImportResponse.js';
+import type { AppOpenAPIPolicyPreviewResponse } from '../models/AppOpenAPIPolicyPreviewResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -190,6 +191,41 @@ export class OpenapiImportService {
         401: `code: unauthorized`,
         413: `code: openapi_import_too_large. Body exceeds state.OpenAPIImportMaxDocBytes (256 KiB) on the dry-run endpoint.`,
         422: `code: openapi_import_invalid or openapi_import_too_many_endpoints. Doc fails the structural-minimum validator or declares more than state.OpenAPIImportMaxEndpoints (50) endpoints on the dry-run endpoint.`,
+      },
+    });
+  }
+  /**
+   * Preview declared routes, observed routes, and matching edge policies.
+   * Read-only route-policy preview for API-hosting roadmap item 11.
+   * Joins the persisted OpenAPI declaration with gatewayd's observed
+   * route labels and the app's edge rules. Each route is classified as
+   * `matched`, `declared_only`, or `observed_only`; `covered` is true
+   * when at least one enabled edge rule matches the path and method.
+   * When the gateway bridge is unavailable the response remains useful,
+   * sets `observed_available` to false, and reports
+   * `source=degraded: routes_unavailable`. No policy or document writes
+   * occur on this endpoint.
+   *
+   * @returns AppOpenAPIPolicyPreviewResponse Declared-vs-observed route and policy preview.
+   * @throws ApiError
+   */
+  public static previewAppOpenApiPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppOpenAPIPolicyPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/openapi/preview',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }
