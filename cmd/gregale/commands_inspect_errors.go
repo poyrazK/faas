@@ -159,6 +159,7 @@ func renderDeploymentFailure(w io.Writer, dep api.DeploymentResponse) {
 	if dep.Error != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", dep.Error)
 	}
+	renderDeploymentBuildPlan(w, dep.BuildPlan)
 	if dep.ErrorHint != "" {
 		RenderHintRow(w, dep.ErrorHint)
 	}
@@ -175,5 +176,42 @@ func renderDeploymentFailure(w io.Writer, dep api.DeploymentResponse) {
 	// has the same "→ docs" line the live-error renderer emits.
 	if dep.ErrorCode != "" {
 		RenderDocsRow(w, docsURLForCode(dep.ErrorCode))
+	}
+}
+
+// renderDeploymentBuildPlan shows the source profile the zero-config
+// pipeline actually selected for a failed deployment. The profile is
+// persisted with the deployment, so this remains useful after the build
+// workspace has been cleaned up and makes startup/port failures actionable.
+func renderDeploymentBuildPlan(w io.Writer, plan *api.BuildPlan) {
+	if plan == nil {
+		return
+	}
+	if plan.Framework == "" && plan.Runtime == "" && plan.Version == "" &&
+		plan.Entrypoint == "" && plan.Port == 0 && plan.HealthPath == "" && plan.Class == "" {
+		return
+	}
+	_, _ = fmt.Fprint(w, "  detected:")
+	if plan.Framework != "" {
+		_, _ = fmt.Fprintf(w, " %s", plan.Framework)
+	}
+	if plan.Version != "" {
+		_, _ = fmt.Fprintf(w, " %s", plan.Version)
+	}
+	if plan.Runtime != "" {
+		_, _ = fmt.Fprintf(w, " (runtime %s)", plan.Runtime)
+	}
+	if plan.Class != "" {
+		_, _ = fmt.Fprintf(w, " [%s]", plan.Class)
+	}
+	_, _ = fmt.Fprintln(w)
+	if plan.Entrypoint != "" {
+		_, _ = fmt.Fprintf(w, "  start: %s\n", plan.Entrypoint)
+	}
+	if plan.Port != 0 {
+		_, _ = fmt.Fprintf(w, "  port: %d\n", plan.Port)
+	}
+	if plan.HealthPath != "" {
+		_, _ = fmt.Fprintf(w, "  health: %s\n", plan.HealthPath)
 	}
 }

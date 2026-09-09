@@ -2540,6 +2540,21 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 		App:        dashboard.AppListItem{Slug: app.Slug},
 		Deployment: dashboardDeploymentItem(dep),
 	}
+	// Keep the dashboard's failure explanation aligned with the API/CLI
+	// projection: the persisted profile is the source of truth for the
+	// inferred runtime, start command, port, and health path. This remains
+	// available after the build spool is cleaned up.
+	if plan := s.deploymentResponse(dep, app).BuildPlan; plan != nil {
+		data.BuildPlan = &dashboard.BuildPlanView{
+			Framework:  plan.Framework,
+			Runtime:    plan.Runtime,
+			Version:    plan.Version,
+			Entrypoint: plan.Entrypoint,
+			Port:       plan.Port,
+			HealthPath: plan.HealthPath,
+			Class:      plan.Class,
+		}
+	}
 	// A superseded deployment is a valid rollback target. Surface the
 	// same app-scoped rollback action that already exists on the app
 	// detail page so the operator can recover from the deployment

@@ -897,8 +897,13 @@ type WorkflowStepItem struct {
 type DeploymentDetailData struct {
 	App        AppListItem
 	Deployment DeploymentItem
-	Scan       *ScanPayload
-	Stages     *StagePayload
+	// BuildPlan is the persisted zero-config profile selected for this
+	// deployment. Keeping it separate from DeploymentItem lets list rows
+	// stay compact while failed-deployment detail pages explain the
+	// start/port/health assumptions behind a diagnosis.
+	BuildPlan *BuildPlanView
+	Scan      *ScanPayload
+	Stages    *StagePayload
 	// CanRollback is true for a superseded deployment that can be
 	// selected as the rollback target. The handler binds the form to
 	// the same app-scoped rollback endpoint used by the app detail
@@ -948,6 +953,20 @@ type DeploymentDetailData struct {
 	// template can pick a CSS palette without re-implementing
 	// the kind→severity mapping.
 	DeploymentAudit []DeploymentAuditRow
+}
+
+// BuildPlanView is the dashboard-safe projection of api.BuildPlan. It
+// intentionally contains only inferred, non-secret source metadata so the
+// dashboard can show customers what zero-config chose without exposing
+// environment values or build internals.
+type BuildPlanView struct {
+	Framework  string
+	Runtime    string
+	Version    string
+	Entrypoint string
+	Port       int
+	HealthPath string
+	Class      string
 }
 
 // HostingReceiptView is the dashboard-safe projection of the durable API
