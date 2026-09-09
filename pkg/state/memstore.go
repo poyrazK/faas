@@ -105,6 +105,7 @@ type MemStore struct {
 	objectGrants           map[string]map[string]int64
 	objectReports          []api.ObjectStorageUsageReport
 	objectAuthorizations   map[string]int64
+	objectProviderRequests map[string]int64
 	objectAccessGrants     map[string]ObjectBucketAccessGrant
 	objectS3Credentials    map[string]ObjectS3Credential
 	objectMultipartUploads map[string]ObjectMultipartUpload

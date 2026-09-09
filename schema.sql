@@ -8346,6 +8346,14 @@ CREATE TABLE IF NOT EXISTS object_storage_authorizations (
     count bigint NOT NULL CHECK (count > 0),
     PRIMARY KEY (account_id, period_start)
 );
+CREATE TABLE IF NOT EXISTS object_storage_request_metrics (
+    bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
+    period_start timestamptz NOT NULL CHECK (period_start = date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),
+    request_count bigint NOT NULL DEFAULT 0 CHECK (request_count BETWEEN 0 AND 1152921504606846976),
+    PRIMARY KEY (bucket_id, period_start)
+);
+CREATE INDEX IF NOT EXISTS object_storage_request_metrics_period_idx
+    ON object_storage_request_metrics (period_start, bucket_id);
 CREATE TABLE IF NOT EXISTS object_storage_inventory_samples (
     token text PRIMARY KEY CHECK (token <> ''),
     bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
