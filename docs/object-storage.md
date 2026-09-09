@@ -197,6 +197,37 @@ Compute remains stateless: this binding supplies S3 SDK configuration, not a
 persistent filesystem mount. The app must still have outbound access to
 `s3.gregale.dev` under its egress policy.
 
+### Release gates and staging smoke
+
+Run the read-only release preflight before promoting a release. It checks that
+the provider registry is loaded and enabled, limits/regions are non-zero, and
+the compute-binding routes are present in the deployed binary:
+
+```sh
+FAAS_TOKEN=... \
+GREGALE_APP_SLUG=disposable-storage-smoke \
+GREGALE_API_URL=https://api.gregale.dev \
+make object-storage-release-preflight
+```
+
+After the preflight passes, run the mutating qualification against the same
+disposable app. It creates a uniquely named bucket, exercises direct S3
+object I/O, creates and rotates a compute binding, verifies that the managed
+secret names remain stable while the access key changes, revokes both
+credentials, and deletes the bucket on every exit path:
+
+```sh
+FAAS_TOKEN=... \
+GREGALE_APP_SLUG=disposable-storage-smoke \
+GREGALE_API_URL=https://api.gregale.dev \
+make object-storage-gateway-smoke
+```
+
+The smoke test requires `aws`, `curl`, and `jq`. It never prints credential
+material or signed URLs. Use a disposable app and do not run it against a
+customer bucket; the cleanup trap removes the temporary object, bindings,
+credential, and bucket even when a check fails.
+
 This first endpoint slice supports ListBuckets for the credential's one bucket,
 HeadBucket, GetBucketLocation, ListObjectsV2 without delimiters, and
 GetObject/HeadObject/PutObject/DeleteObject. It validates header-based AWS
