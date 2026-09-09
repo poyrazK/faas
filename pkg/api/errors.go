@@ -1504,6 +1504,16 @@ const (
 	// create that would subsume an existing tenant-surface hostname.
 	CodeWildcardDomainTenantSurfaceOverlap = "wildcard_domain_tenant_surface_overlap"
 
+	// Disposable one-shot executions (ADR-171).
+	CodeExecutionsNotAllowed     = "executions_not_allowed"
+	CodeExecutionRuntimeInvalid  = "execution_runtime_invalid"
+	CodeExecutionSourceInvalid   = "execution_source_invalid"
+	CodeExecutionPayloadInvalid  = "execution_payload_invalid"
+	CodeExecutionPayloadTooLarge = "execution_payload_too_large"
+	CodeExecutionLimitInvalid    = "execution_limit_invalid"
+	CodeExecutionLimitExceeded   = "execution_limit_exceeded"
+	CodeExecutionNetworkInvalid  = "execution_network_invalid"
+
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement).
 	//
 	// CodeJobsNotAllowed is the Free-plan gate for all /v1/jobs
@@ -1978,6 +1988,17 @@ func StatusForCode(code string) int {
 	case CodeUnsupportedMediaType:
 		return http.StatusUnsupportedMediaType
 	case CodeRequestTooLarge:
+		return http.StatusRequestEntityTooLarge
+	// Disposable one-shot executions (ADR-171). Shape errors are 422;
+	// byte caps use 413; paid-plan resource ceilings are 403 because the
+	// same request can become admissible on a larger plan.
+	case CodeExecutionsNotAllowed, CodeExecutionLimitExceeded:
+		return http.StatusForbidden
+	case CodeExecutionRuntimeInvalid, CodeExecutionSourceInvalid,
+		CodeExecutionPayloadInvalid, CodeExecutionLimitInvalid,
+		CodeExecutionNetworkInvalid:
+		return http.StatusUnprocessableEntity
+	case CodeExecutionPayloadTooLarge:
 		return http.StatusRequestEntityTooLarge
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Eight
 	// codes that ship with Mega-1 (CR-8 / code-review #8 — the
