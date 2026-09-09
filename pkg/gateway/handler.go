@@ -3902,6 +3902,21 @@ func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
 	return ip, true
 }
 
+// stampTrustedClientIP replaces the customer-controlled value of
+// x-faas-client-ip with the one address established by the public listener's
+// single trusted X-Forwarded-For hop. Invalid or ambiguous forwarding chains
+// fail closed by removing the header entirely; the existing IP allowlist and
+// geo paths retain their own deny/unknown handling.
+func stampTrustedClientIP(r *http.Request) {
+	if r == nil {
+		return
+	}
+	r.Header.Del(wire.ClientIPHeader)
+	if ip, ok := clientIPFromTrustedXFF(r); ok {
+		r.Header.Set(wire.ClientIPHeader, ip.String())
+	}
+}
+
 // singleSlash collapses a path to the canonical slash form (no
 // double slashes from `To: "/v1"` + `/api/...`). Helper for
 // matchAndApplyRewrite's prefix-add and replace branches.
@@ -5597,6 +5612,10 @@ haveApp:
 	// arbitrary instance by setting the header (issue #168 trust model).
 	r.Header.Set("x-faas-instance", target.InstanceID)
 	r.Header.Set("x-faas-app", app.ID)
+	// Customer workloads get one unambiguous client address. The inbound
+	// x-faas-client-ip value is never trusted; stampTrustedClientIP derives
+	// it from the already-sanitized public-to-internal X-Forwarded-For hop.
+	stampTrustedClientIP(r)
 
 	// Per-request wake-timing recorder (spec §6.3) installed AFTER
 	// upstream stamping so the trace sees only the proxy hop, not the
