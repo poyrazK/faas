@@ -194,6 +194,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		PRNumber:        ann.PRNumber,
 		HostingObserver: s.ops,
 		HostingFlow:     "first_deploy",
+		ServiceRollout:  app.Manifest.ExecutionMode == api.ExecutionModeService,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))

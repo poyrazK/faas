@@ -1,7 +1,7 @@
 //go:build metal
 
 // deploy_wake_metal_test.go — M5 §14 acceptance: faas deploy → parked → first
-// request wakes; plus the §14 V2 / spec §6.3 wake-latency 100-cycle p50/p95
+// request wakes; plus the §14 V2 / spec §6.3 wake-latency 100-cycle p50/p95/p99
 // loop (closes STATUS.md:201-204 "loop driver doesn't exist").
 //
 // End-to-end through the real wire: apid → imaged (pull from fake OCI
@@ -49,7 +49,7 @@ const helloBody = "hello from faas"
 //
 //  1. deploy-then-parked              — apid → imaged → schedd → vmmd → parked
 //  2. first-request-wakes             — gatewayd request triggers a wake from snapshot
-//  3. wake-latency-p50p95-100cycles   — internal gateway first-byte diagnostic
+//  3. wake-latency-p99-100cycles      — internal gateway first-byte diagnostic
 //     over 100 park→wake cycles; the platform restore SLO is in pkg/fcvm
 //  4. idle-park                       — schedd reaper parks the live instance
 //  5. second-request-wakes            — fresh wake from the same snapshot, asserts a new instance id
@@ -200,19 +200,19 @@ func TestDeployWakeMetal(t *testing.T) {
 		assertWakeLatencyObserved(t, h.GatewayControlURL)
 	})
 
-	// -- 3. wake-latency-p50p95-100cycles ------------------------------------
-	t.Run("wake-latency-p50p95-100cycles", func(t *testing.T) {
+	// -- 3. wake-latency-p99-100cycles ---------------------------------------
+	t.Run("wake-latency-p99-100cycles", func(t *testing.T) {
 		// Diagnostic: 100 park→wake cycles over the internal gateway's
 		// gateway_wake_latency_seconds histogram (request received → first
 		// upstream byte, per Part A). The platform-only V2 restore gate lives
 		// in pkg/fcvm/TestMetalParkWakeCycle and excludes this proxy interval.
 		//
 		// The histogram is the load-bearing SLO signal; this test is the one
-		// that asserts the on-the-wire number backs the dashboard's p50/p95
+		// that asserts the on-the-wire number backs the dashboard's p50/p95/p99
 		// panels (deploy/grafana/faas-fleet.json:10-41). We compute quantiles
 		// from the cumulative bucket counts using pkg/gateway/testhist
-		// (standard PromQL histogram_quantile() interpolation) and assert
-		// the historical internal-gateway p50/p95 budgets.
+		// (standard PromQL histogram_quantile() interpolation) and assert both
+		// the historical p50/p95 budgets and the tail-latency p99/p999 gate.
 		//
 		// Wall-clock math: per cycle we wait `idle_timeout (10s) + reaper_tick
 		// (10s) ≈ 20s` for park, then ~350ms for wake, then ~5ms state wait
@@ -293,16 +293,26 @@ func TestDeployWakeMetal(t *testing.T) {
 		}
 		p50 := testhist.QuantileScrape(t, sc, 0.50)
 		p95 := testhist.QuantileScrape(t, sc, 0.95)
-		t.Logf("wake_latency over %d cycles: p50=%v p95=%v (samples=%d sum=%.3fs)",
-			cycles, p50, p95, sc.SampleCount, sc.SampleSum)
+		p99 := testhist.QuantileScrape(t, sc, 0.99)
+		p999 := testhist.QuantileScrape(t, sc, 0.999)
+		t.Logf("wake_latency over %d cycles: p50=%v p95=%v p99=%v p999=%v (samples=%d sum=%.3fs)",
+			cycles, p50, p95, p99, p999, sc.SampleCount, sc.SampleSum)
 
 		const p50Budget = 350 * time.Millisecond
 		const p95Budget = 800 * time.Millisecond
+		const p99Budget = 500 * time.Millisecond
+		const p999Budget = 800 * time.Millisecond
 		if p50 > p50Budget {
 			t.Errorf("internal first-byte wake_latency p50 = %v, want <= %v", p50, p50Budget)
 		}
 		if p95 > p95Budget {
 			t.Errorf("internal first-byte wake_latency p95 = %v, want <= %v", p95, p95Budget)
+		}
+		if p99 > p99Budget {
+			t.Errorf("internal first-byte wake_latency p99 = %v, want <= %v", p99, p99Budget)
+		}
+		if p999 > p999Budget {
+			t.Errorf("internal first-byte wake_latency p999 = %v, want <= %v", p999, p999Budget)
 		}
 
 		// ADR-098 C11: phase-decomposed wake telemetry. The

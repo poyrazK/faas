@@ -42,35 +42,87 @@
 //     on vmmd → the v1 shell bridge takes over entirely. This is
 //     the disaster rollback (pre-existing ADR-028 amendment).
 //
-// The metal runner that ships these gates is the operator's
-// job (per spec §14 — "A bare-metal x86_64 control-plane node
-// remains the source of truth for the §14 metal acceptance
-// gates"). The Go test stub below is a placeholder for future
-// CI integration; the load-bearing pins are the non-metal
-// bridge_h2c_terminator_e2e_test.go tests, which run on every
-// CI runner (no KVM required).
+// The operator-owned G19.3 harness provisions the fixtures and runs these
+// gates (per spec §14 — "A bare-metal x86_64 control-plane node remains the
+// source of truth for the §14 metal acceptance gates"). These Go tests invoke
+// that harness when a metal runner is configured; the non-metal
+// bridge_h2c_terminator_e2e_test.go tests remain the CI-safe bridge pins.
 //
 //go:build metal
 
 package e2e_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 )
+
+const defaultMetalH2CFixtureEnv = "/etc/faas/metal-h2c-acceptance/fixture-apps.env"
+
+// runMetalH2CAcceptanceGate delegates the real-VM assertions to the G19.3
+// harness installed by deploy/ansible/roles/metal-h2c-acceptance. Keeping the
+// fixture provisioning and rollback commands in that operator-owned harness
+// avoids inventing credentials or service-mutation logic in a Go test. The
+// FAAS_H2C_ACCEPTANCE_HARNESS override lets a metal runner use its installed
+// copy; the repository copy is useful for an explicit local acceptance run.
+func runMetalH2CAcceptanceGate(t *testing.T, gate string, fixtures ...string) {
+	t.Helper()
+	root := repoRoot()
+	if root == "" {
+		t.Skip("module root not reachable — run from the repo root or fix cwd")
+	}
+
+	harness := os.Getenv("FAAS_H2C_ACCEPTANCE_HARNESS")
+	if harness == "" {
+		candidates := []string{
+			"/opt/faas/metal-h2c-acceptance/metal-acceptance.sh",
+			filepath.Join(root, "deploy", "ansible", "roles", "metal-h2c-acceptance", "files", "metal-acceptance.sh"),
+		}
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate); err == nil {
+				harness = candidate
+				break
+			}
+		}
+	}
+	if harness == "" {
+		t.Skip("G19.3 metal H2C harness is not installed; set FAAS_H2C_ACCEPTANCE_HARNESS")
+	}
+	if _, err := os.Stat(harness); err != nil {
+		t.Skipf("G19.3 metal H2C harness is unavailable at %s: %v", harness, err)
+	}
+
+	fixtureEnv := os.Getenv("FAAS_H2C_FIXTURE_ENV")
+	if fixtureEnv == "" {
+		fixtureEnv = defaultMetalH2CFixtureEnv
+	}
+	if _, err := os.Stat(fixtureEnv); err != nil {
+		t.Skipf("G19.3 fixture environment is unavailable at %s: %v", fixtureEnv, err)
+	}
+
+	args := append([]string{harness, gate}, fixtures...)
+	cmd := exec.Command("bash", args...)
+	cmd.Env = append(os.Environ(), "FAAS_H2C_FIXTURE_ENV="+fixtureEnv)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("metal H2C gate %s failed: %v", gate, err)
+	}
+}
 
 // TestMetal_AppProtocolH2CPriorKnowledge is the M8 row 5 metal
 // acceptance gate: a real Firecracker guest running the
 // H2C-capable runner listener receives an H2 prior-knowledge
 // request end-to-end. The fixture (deployed app, running VM,
-// bridged netns) is set up by the operator's metal harness
-// (deploy/ansible/roles/metal-h2c-acceptance/ in the future);
-// this Go test asserts the H2 framing reaches the guest.
+// bridged netns) is set up by the operator's G19.3 metal harness; this Go
+// test invokes its H2 framing gate.
 func TestMetal_AppProtocolH2CPriorKnowledge(t *testing.T) {
-	t.Skip("metal-only; requires /dev/kvm + bare-metal x86_64 (see CLAUDE.md). " +
-		"Operator acceptance per spec §14 M8 row 5: " +
-		"curl --http2-prior-knowledge against app:port must yield " +
-		"`:status: 200` over an H2 frame on the guest access log. " +
-		"Tracked by the metal test runner fixture, not a Go unit test.")
+	if !metalAvailable(t) {
+		return
+	}
+	runMetalH2CAcceptanceGate(t, "h2c-prior-knowledge", "app_http2_prior_knowledge")
 }
 
 // TestMetal_AppProtocolGRPCTrailers is the M8 row 5 gRPC
@@ -78,19 +130,19 @@ func TestMetal_AppProtocolH2CPriorKnowledge(t *testing.T) {
 // (unary) and ServerStreamingEcho; the trailer pair must
 // round-trip end-to-end through the H2C terminator.
 func TestMetal_AppProtocolGRPCTrailers(t *testing.T) {
-	t.Skip("metal-only; requires /dev/kvm + bare-metal x86_64. " +
-		"Operator acceptance per spec §14 M8 row 5: " +
-		"Go gRPC client hits Echo + ServerStreamingEcho, " +
-		"resp.Trailer.Get(\"Grpc-Status\") must == \"0\".")
+	if !metalAvailable(t) {
+		return
+	}
+	runMetalH2CAcceptanceGate(t, "grpc-trailers", "app_grpc_unary", "app_grpc_server_streaming")
 }
 
 // TestMetal_AppProtocolH1Default is the regression: app with
 // app_protocol=http1 continues to receive H1 framing on the wire.
 func TestMetal_AppProtocolH1Default(t *testing.T) {
-	t.Skip("metal-only; requires /dev/kvm + bare-metal x86_64. " +
-		"Regression per spec §14 M8 row 5: " +
-		"curl -v against http1 app shows H1 framing on the wire; " +
-		"the H1+chunked legacy bridge path stays live for the http1 slice.")
+	if !metalAvailable(t) {
+		return
+	}
+	runMetalH2CAcceptanceGate(t, "http1", "app_http1_default")
 }
 
 // TestMetal_BridgeSurgicalRollback asserts
@@ -98,17 +150,18 @@ func TestMetal_AppProtocolH1Default(t *testing.T) {
 // app_protocol (the surgical rollback switch per ADR-126
 // §Decision 7).
 func TestMetal_BridgeSurgicalRollback(t *testing.T) {
-	t.Skip("metal-only; requires /dev/kvm + bare-metal x86_64. " +
-		"Surgical rollback per ADR-126 §Decision 7: " +
-		"set FAAS_BRIDGE_PROTOCOL=h1 on vmmd → http2/grpc apps " +
-		"fall back to H1+chunked on the wire.")
+	if !metalAvailable(t) {
+		return
+	}
+	runMetalH2CAcceptanceGate(t, "surgical-rollback", "app_surgical_rollback_target")
 }
 
 // TestMetal_BridgeWholesaleRollback asserts
 // FAAS_STREAM_BRIDGE_VERSION=v1 reverts to the v1 shell bridge
 // (pre-existing ADR-028 amendment disaster rollback).
 func TestMetal_BridgeWholesaleRollback(t *testing.T) {
-	t.Skip("metal-only; requires /dev/kvm + bare-metal x86_64. " +
-		"Wholesale rollback per ADR-028: " +
-		"set FAAS_STREAM_BRIDGE_VERSION=v1 on vmmd → shell bridge takes over.")
+	if !metalAvailable(t) {
+		return
+	}
+	runMetalH2CAcceptanceGate(t, "wholesale-rollback", "app_surgical_rollback_target")
 }

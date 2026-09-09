@@ -400,33 +400,48 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		// P2a + P2b of the operator-side observability mega-PR
-		// (Commit 5b). Operator recovery primitives reuse the schedd
-		// target and mTLS paths from /etc/faas/meterd.toml; `force-cold-
-		// boot` also opens a state.Store via FAAS_PG_DSN to resolve
-		// the latest deployment before dialing schedd. Both
-		// require --yes as a tripwire (matches the force-drain
-		// --yes ack pattern at compute-nodes force-drain).
+		// Operator recovery primitives use the same authenticated apid
+		// session + durable intent receipts as compute-node lifecycle.
+		// Direct database/schedd access is break-glass only and reuses
+		// the mTLS routing material installed for meterd.
 		Name:    dispatchInstances,
 		DocSlug: "instances",
-		Short:   "Instance recovery primitives (instances force-park|force-cold-boot)",
+		Short:   "Authenticated instance recovery (force-park|force-cold-boot|force-restart)",
 		Subcommands: []cliSub{
 			{
 				Name:  "force-park",
-				Short: "Force-park a wedged live instance via schedd's ParkInstance gRPC RPC",
+				Short: "Submit and poll a durable intent to park a wedged live instance",
 				Flags: []cliFlag{
 					{Name: "instance-id", Short: "instance id (uuid) to force-park (required)"},
-					{Name: "reason", Short: "audit reason slug [a-z0-9_]{1,64} (default: operator_force_park)"},
+					{Name: "reason", Short: "durable audit reason slug [a-z0-9_]{1,64}"},
+					{Name: "timeout", Short: "intent polling timeout"},
+					{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+					{Name: "break-glass-local", Short: "bypass apid and call the local schedd"},
 					{Name: "yes", Short: "acknowledge that the instance will be evicted from the wake path (required)"},
 				},
 			},
 			{
 				Name:  "force-cold-boot",
-				Short: "Mark the latest warm + init snapshots of an app's latest deployment stale",
+				Short: "Submit and poll a durable intent to stale an app's latest snapshots",
 				Flags: []cliFlag{
 					{Name: "app-slug", Short: "app slug whose latest deployment will be cold-booted on next wake (required)"},
-					{Name: "reason", Short: "audit reason slug [a-z0-9_]{1,64} (default: operator_force_cold_boot)"},
+					{Name: "reason", Short: "durable audit reason slug [a-z0-9_]{1,64}"},
+					{Name: "timeout", Short: "intent polling timeout"},
+					{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+					{Name: "break-glass-local", Short: "bypass apid and use the local database and schedd"},
 					{Name: "yes", Short: "acknowledge that the customer's next wake will be a cold boot (required)"},
+				},
+			},
+			{
+				Name:  "force-restart",
+				Short: "Submit and poll a durable intent to restart a wedged live instance",
+				Flags: []cliFlag{
+					{Name: "instance-id", Short: "instance id (uuid) to force-restart (required)"},
+					{Name: "reason", Short: "durable audit reason slug [a-z0-9_]{1,64}"},
+					{Name: "timeout", Short: "intent polling timeout"},
+					{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+					{Name: "break-glass-local", Short: "bypass apid and call the local schedd"},
+					{Name: "yes", Short: "acknowledge the kill and next-wake cold boot (required)"},
 				},
 			},
 		},

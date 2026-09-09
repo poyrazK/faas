@@ -41,7 +41,8 @@ pinning (`snapshots.fc_version`), and the vsock post-restore resume
 hook (ADR-022) that re-seeds entropy + steps clock — V6 acceptance
 green in `pkg/fcvm/v6_resume_ext4_metal_test.go`.
 
-**Remaining:** §14 V2 platform latency loop driver (100 cycles, p95 < 350 ms)
+**Remaining:** §14 V2 platform latency loop driver (100 cycles per app class,
+p95 < 350 ms, p99 ≤ 500 ms, p999 ≤ 800 ms)
 — see [What's next](#whats-next).
 
 ## M4 — gatewayd-public + gatewayd-internal + schedd. ✅
@@ -996,10 +997,13 @@ explicitly open issues that the doc otherwise implies are closed.
   operator runbook at `docs/ops/gatewayd-public-tls-cutover.md` (the legacy `docs/ops/gatewayd-tls-cutover.md` retains the pre-PR-A cut-over steps; current process lives in the public-edge runbook).
 - **§14 V2 latency driver** — 100 platform-only park→wake cycles per app class,
   p95 < 350 ms from `wake.boot_started` through `wake.boot_completed` on
-  the reference SSD node. The gate is wired via
-  `pkg/fcvm/TestMetalParkWakeCycle`; the internal gateway first-byte
-  cohort remains a separate diagnostic. Per-app-class (Express, Next.js,
-  Flask, FastAPI, Go static) gating is the M8 follow-up. Runs on
+  the reference SSD node. The internal gateway first-byte cohort now also
+  enforces p99 ≤ 500 ms and p999 ≤ 800 ms in
+  `TestDeployWakeMetal/wake-latency-p99-100cycles`; its per-phase p99/p999
+  view is the `Wake phase latency (p99 / p999)` dashboard panel. The gate is
+  wired via `pkg/fcvm/TestMetalParkWakeCycle`; the internal gateway cohort
+  remains a separate diagnostic. Reference-SSD execution is recorded here
+  when the metal acceptance run is available. Runs on
   `make metal-lima RUN_ARGS='-run TestDeployWakeMetal'`.
 - **Documented timed restore drill** — §14 M8: PG + one app back
   serving on a clean VM < 30 min, recorded as executed. Run
@@ -1038,9 +1042,10 @@ explicitly open issues that the doc otherwise implies are closed.
   traffic before the lateral-movement deny. Host ports and public multi-port
   routing remain separate follow-ups; loopback discovery within one task remains
   supported (ADR-164 and ADR-165).
-- **Resource and cost isolation** — named RAM/CPU profiles and ephemeral disk
-  ceilings are present; per-container CPU/disk enforcement and a combined
-  compute + S3 + managed-PostgreSQL usage/budget view remain follow-up work.
+- **Resource and cost isolation** — named RAM/CPU profiles, per-node vCPU
+  admission, ephemeral disk ceilings, and the account-level compute + S3 +
+  managed-PostgreSQL usage projection are present; runtime per-container
+  CPU/disk enforcement remains follow-up work.
 
 ### Open security & infrastructure issues
 

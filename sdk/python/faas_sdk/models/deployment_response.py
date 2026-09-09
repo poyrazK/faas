@@ -101,6 +101,10 @@ class DeploymentResponse:
     error_relevant_logs: list[LogExcerpt] | Unset = UNSET
     """Per-line log excerpts explaining the failure (error-explanations cluster). Capped at 20 entries × 512 bytes
     by the CLI tripwire."""
+    source_url: None | str | Unset = UNSET
+    """Upstream repository or registry reference that produced this deployment, when known."""
+    commit_sha: None | str | Unset = UNSET
+    """Upstream commit SHA that produced this deployment, when known."""
     source_root: str | Unset = UNSET
     """Repository-relative build root used by a workspace context upload; omitted when the archive root is built."""
     has_overrides: bool | Unset = UNSET
@@ -326,6 +330,18 @@ class DeploymentResponse:
             for error_relevant_logs_item_data in self.error_relevant_logs:
                 error_relevant_logs_item = error_relevant_logs_item_data.to_dict()
                 error_relevant_logs.append(error_relevant_logs_item)
+
+        source_url: None | str | Unset
+        if isinstance(self.source_url, Unset):
+            source_url = UNSET
+        else:
+            source_url = self.source_url
+
+        commit_sha: None | str | Unset
+        if isinstance(self.commit_sha, Unset):
+            commit_sha = UNSET
+        else:
+            commit_sha = self.commit_sha
 
         source_root = self.source_root
 
@@ -587,6 +603,10 @@ class DeploymentResponse:
             field_dict["error_fix"] = error_fix
         if error_relevant_logs is not UNSET:
             field_dict["error_relevant_logs"] = error_relevant_logs
+        if source_url is not UNSET:
+            field_dict["source_url"] = source_url
+        if commit_sha is not UNSET:
+            field_dict["commit_sha"] = commit_sha
         if source_root is not UNSET:
             field_dict["source_root"] = source_root
         if has_overrides is not UNSET:
@@ -768,6 +788,24 @@ class DeploymentResponse:
                 error_relevant_logs_item = LogExcerpt.from_dict(error_relevant_logs_item_data)
 
                 error_relevant_logs.append(error_relevant_logs_item)
+
+        def _parse_source_url(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        source_url = _parse_source_url(d.pop("source_url", UNSET))
+
+        def _parse_commit_sha(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        commit_sha = _parse_commit_sha(d.pop("commit_sha", UNSET))
 
         source_root = d.pop("source_root", UNSET)
 
@@ -1276,6 +1314,8 @@ class DeploymentResponse:
             error_why=error_why,
             error_fix=error_fix,
             error_relevant_logs=error_relevant_logs,
+            source_url=source_url,
+            commit_sha=commit_sha,
             source_root=source_root,
             has_overrides=has_overrides,
             override_entrypoint=override_entrypoint,

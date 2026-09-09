@@ -11,6 +11,7 @@ export type { AccountExportResponse } from './AccountExportResponse.js';
 export type { AccountLimits } from './AccountLimits.js';
 export type { AccountResponse } from './AccountResponse.js';
 export type { AccountSLOResponse } from './AccountSLOResponse.js';
+export type { AccountUsageResponse } from './AccountUsageResponse.js';
 export type { AddTenantHostnameRequest } from './AddTenantHostnameRequest.js';
 export type { AddTrustedSignerRequest } from './AddTrustedSignerRequest.js';
 export type { AdminRefundResponse } from './AdminRefundResponse.js';

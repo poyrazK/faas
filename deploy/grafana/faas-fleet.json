@@ -2225,10 +2225,49 @@
     },
     {
       "id": 414,
+      "type": "timeseries",
+      "title": "Wake phase latency (p99 / p999)",
+      "description": "Tail wake latency by phase (issue #1051). p99 must remain below 500 ms and p999 below 800 ms on the reference SSD acceptance cohort; the phase label makes queue, scheduler, vmmd, and guest-readiness regressions distinguishable.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 246},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, phase) (rate(gateway_wake_phase_duration_seconds_bucket{phase=~\"queue_wait|coordinator_wait|schedd_admit|vmmd_wake|guest_ready|cold_fallback_reason\"}[5m])))",
+          "legendFormat": "p99 {{phase}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.999, sum by (le, phase) (rate(gateway_wake_phase_duration_seconds_bucket{phase=~\"queue_wait|coordinator_wait|schedd_admit|vmmd_wake|guest_ready|cold_fallback_reason\"}[5m])))",
+          "legendFormat": "p999 {{phase}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "red", "value": 0.8}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
+    },
+    {
+      "id": 415,
       "type": "heatmap",
       "title": "Request latency distribution (trace exemplars)",
       "description": "Raw request-duration buckets retain trace_id exemplars. Hover an exemplar marker to open the configured Grafana trace destination; if no destination is configured, use the displayed trace_id with the observer endpoint.",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 246},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 254},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
@@ -2258,11 +2297,11 @@
       }
     },
     {
-      "id": 415,
+      "id": 416,
       "type": "heatmap",
       "title": "Wake latency distribution (trace exemplars)",
       "description": "Raw wake-latency buckets retain trace_id exemplars. Hover an exemplar marker to open the configured Grafana trace destination; if no destination is configured, use the displayed trace_id with the observer endpoint.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 246},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 254},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {

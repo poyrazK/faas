@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" role="img" aria-labelledby="title desc">
+  <title id="title">Gregale deployment and instance lifecycle</title>
+  <desc id="desc">Deployment pipeline from pending through build, imaging, snapshotting and ready, followed by parked, waking, running and cold boot fallback.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+    <style>
+      .state { fill:#eff6ff; stroke:#2563eb; stroke-width:2; rx:12; }
+      .fallback { fill:#fff7ed; stroke:#ea580c; stroke-width:2; rx:12; }
+      .terminal { fill:#fef2f2; stroke:#dc2626; stroke-width:2; rx:12; }
+      .label { font: 600 16px system-ui, sans-serif; fill:#0f172a; text-anchor:middle; }
+      .small { font: 13px system-ui, sans-serif; fill:#334155; text-anchor:middle; }
+      .edge { stroke:#334155; stroke-width:2; fill:none; marker-end:url(#arrow); }
+      .dashed { stroke-dasharray:7 5; }
+    </style>
+  </defs>
+  <rect width="1200" height="650" fill="white"/>
+  <text x="600" y="34" font-family="system-ui, sans-serif" font-size="22" font-weight="700" text-anchor="middle" fill="#0f172a">Deployment and instance lifecycle</text>
+  <text x="600" y="58" class="small">durable deployment states (blue) · ADR-005 cold-boot recovery (orange)</text>
+
+  <rect class="state" x="35" y="100" width="120" height="54"/><text class="label" x="95" y="133">pending</text>
+  <rect class="state" x="205" y="100" width="120" height="54"/><text class="label" x="265" y="133">building</text>
+  <rect class="state" x="375" y="100" width="120" height="54"/><text class="label" x="435" y="133">imaging</text>
+  <rect class="state" x="545" y="100" width="145" height="54"/><text class="label" x="617" y="133">snapshotting</text>
+  <rect class="state" x="740" y="100" width="120" height="54"/><text class="label" x="800" y="133">ready/live</text>
+  <path class="edge" d="M155 127 H205"/><path class="edge" d="M325 127 H375"/><path class="edge" d="M495 127 H545"/><path class="edge" d="M690 127 H740"/>
+
+  <rect class="state" x="740" y="260" width="120" height="54"/><text class="label" x="800" y="293">parked</text>
+  <rect class="state" x="950" y="260" width="120" height="54"/><text class="label" x="1010" y="293">waking</text>
+  <path class="edge" d="M800 154 V260"/><path class="edge" d="M860 287 H950"/>
+  <rect class="state" x="950" y="420" width="120" height="54"/><text class="label" x="1010" y="453">running</text>
+  <path class="edge" d="M1010 314 V420"/>
+  <rect class="fallback" x="740" y="420" width="145" height="54"/><text class="label" x="812" y="453">cold_booting</text>
+  <path class="edge dashed" d="M950 287 H812 V420"/>
+  <path class="edge" d="M885 447 H950"/>
+  <path class="edge dashed" d="M1010 420 V314"/>
+  <text class="small" x="886" y="342">compatible snapshot</text>
+  <text class="small" x="850" y="384">missing / stale / restore error</text>
+
+  <rect class="terminal" x="390" y="260" width="120" height="54"/><text class="label" x="450" y="293">failed</text>
+  <path class="edge dashed" d="M265 154 V210 H450 V260"/><path class="edge dashed" d="M435 154 V260"/><path class="edge dashed" d="M617 154 V210 H450 V260"/>
+  <rect class="terminal" x="390" y="420" width="120" height="54"/><text class="label" x="450" y="453">stopped</text>
+  <path class="edge dashed" d="M950 447 H510"/>
+  <text class="small" x="600" y="520">stopped → next request → cold_booting</text>
+  <text class="small" x="600" y="610">snapshot is a cache; rootfs cold boot remains the source-of-truth recovery path</text>
+</svg>

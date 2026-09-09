@@ -191,6 +191,22 @@ never automatically reactivates the node. Direct database mutation exists only
 as `--break-glass-db --yes` and is reserved for the reviewed
 [`database-repair`](../break-glass/database-repair.md) procedure.
 
+### Instance recovery
+
+The destructive instance-recovery commands use the same operator session and
+return only after their durable schedd intent reaches a terminal state:
+
+```
+gregalectl instances force-park --instance-id <uuid> --yes --reason incident_123
+gregalectl instances force-cold-boot --app-slug <slug> --yes --reason incident_123
+gregalectl instances force-restart --instance-id <uuid> --yes --reason incident_123
+```
+
+Each command emits an intent ID and trace ID for incident correlation. During
+an apid outage, `--break-glass-local --yes --reason <incident_slug>` preserves
+the former direct schedd/database path and prints a loud unaudited-action
+warning.
+
 `target_url` is the VM manager endpoint. `gateway_target_url` is the
 separate private HTTP data-plane endpoint; the manifest/Ansible pipeline
 derives it from the node hostname, so normal node joins do not require a

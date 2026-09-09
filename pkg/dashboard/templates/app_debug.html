@@ -27,6 +27,9 @@
     .regression { border: 1px solid #fecaca; border-left: 4px solid #dc2626; border-radius: 6px; padding: 0.7rem 0.85rem; margin: 0.5rem 0; }
     .regression strong { color: #991b1b; }
     .detail { padding: 0.8rem; border: 1px solid #e5e7eb; border-radius: 6px; }
+    .compare { padding: 0.8rem; border: 1px solid #bfdbfe; border-left: 4px solid #2563eb; border-radius: 6px; }
+    .compare select { min-width: 14rem; }
+    .compare-table td:nth-child(n+2) { white-space: nowrap; }
     .explanation { padding: 0.65rem 0.8rem; background: #eff6ff; border-left: 4px solid #2563eb; border-radius: 4px; }
     .span-table { font-size: 0.9rem; }
     .span-table td:nth-child(3) { white-space: nowrap; }
@@ -71,11 +74,58 @@
           <article class="regression">
             <strong>{{.Factor}}× slower</strong> on <code>{{.Route}}</code>
             <span class="muted">· p95 {{.P95MS}} ms vs {{.P95BaseMS}} ms baseline · {{.AffectedCount}} affected requests</span>
-            <br><small class="muted">deployment <code>{{.DeploymentID}}</code> · first {{.FirstDetectedAt}} · last {{.LastDetectedAt}} · <a href="{{.RequestsURL}}">inspect requests →</a></small>
+            <br><small class="muted">deployment <code>{{.DeploymentID}}</code> · first {{.FirstDetectedAt}} · last {{.LastDetectedAt}} · <a href="{{.RequestsURL}}">inspect requests →</a>{{if .CompareURL}} · <a href="{{.CompareURL}}">compare deployments →</a>{{end}}</small>
           </article>
         {{end}}
       {{else}}
         <p class="empty muted">No active regression observations in this window.</p>
+      {{end}}
+
+      {{if ge (len .Data.Deployments) 2}}
+        <h2 id="compare">Deployment comparison</h2>
+        <div class="compare">
+          <p class="muted">Compare the observed latency distribution for two deployments in the current retention window. The source is the newer deployment by default.</p>
+          <form class="toolbar" method="get" action="/dashboard/apps/{{.Data.AppSlug}}/debug">
+            <input type="hidden" name="since" value="{{.Data.Since}}">
+            <input type="hidden" name="route" value="{{.Data.Route}}">
+            <input type="hidden" name="compare" value="1">
+            <label>Source
+              <select name="compare_source">
+                {{range .Data.Deployments}}<option value="{{.ID}}"{{if and $.Data.Compare (eq .ID $.Data.Compare.SourceID)}} selected{{end}}>{{.Label}} · {{.RowCount}} rows · last {{.LastSeenAt}}</option>{{end}}
+              </select>
+            </label>
+            <label>Mirror
+              <select name="compare_mirror">
+                {{range .Data.Deployments}}<option value="{{.ID}}"{{if and $.Data.Compare (eq .ID $.Data.Compare.MirrorID)}} selected{{end}}>{{.Label}} · {{.RowCount}} rows · last {{.LastSeenAt}}</option>{{end}}
+              </select>
+            </label>
+            <label>Route <input name="compare_route" value="{{if .Data.Compare}}{{.Data.Compare.Route}}{{end}}" placeholder="all routes"></label>
+            <button type="submit">Compare</button>
+          </form>
+          {{if not .Data.Compare.Compared}}
+            <p class="empty muted">Choose deployments and select Compare to see p50, p95, and p99 latency side by side.</p>
+          {{else if .Data.Compare.ErrorMessage}}
+            <p class="error">{{.Data.Compare.ErrorMessage}}</p>
+          {{else if .Data.Compare.Rows}}
+            <table class="compare-table" aria-label="Deployment latency comparison">
+              <thead><tr><th>Route</th><th>Source p50 / p95 / p99</th><th>Mirror p50 / p95 / p99</th><th>Requests</th><th>p95 change</th></tr></thead>
+              <tbody>
+              {{range .Data.Compare.Rows}}
+                <tr>
+                  <td><code>{{.Route}}</code></td>
+                  <td>{{.SourceP50MS}} / {{.SourceP95MS}} / {{.SourceP99MS}} ms</td>
+                  <td>{{.MirrorP50MS}} / {{.MirrorP95MS}} / {{.MirrorP99MS}} ms</td>
+                  <td>{{.SourceN}} / {{.MirrorN}}</td>
+                  <td>{{if .Factor}}<span class="badge {{if gt .DeltaP95MS 0}}regressed{{else}}ok{{end}}">{{.Factor}} ({{.DeltaP95MS}} ms)</span>{{else}}<span class="muted">insufficient traffic</span>{{end}}</td>
+                </tr>
+              {{end}}
+              </tbody>
+            </table>
+            <p class="muted">Rows are count-weighted percentiles. A missing side is shown as zero rather than inferred from the other deployment.</p>
+          {{else}}
+            <p class="empty muted">No route had retained telemetry in both deployments for this window.</p>
+          {{end}}
+        </div>
       {{end}}
 
       <h2 id="requests">Recent requests</h2>
@@ -118,7 +168,7 @@
             </form>
           {{end}}
           {{if .Data.Replay}}
-            <div class="replay-result">
+            <div class="replay-result" data-debug-replay-state="{{.Data.Replay.State}}">
               <h3>Replay status</h3>
               <p><strong>{{.Data.Replay.State}}</strong> · invocation <code>{{.Data.Replay.ID}}</code> · queued {{.Data.Replay.CreatedAt}}{{if .Data.Replay.CompletedAt}} · completed {{.Data.Replay.CompletedAt}}{{end}}</p>
               {{if .Data.Replay.LastError}}<p class="error">{{.Data.Replay.LastError}}</p>{{end}}
@@ -126,14 +176,14 @@
                 <p>Source: <strong>HTTP {{.Data.Replay.SourceStatusCode}}</strong>, {{.Data.Replay.SourceLatencyMS}} ms · Mirror: <strong>HTTP {{.Data.Replay.MirrorStatusCode}}</strong>, {{.Data.Replay.MirrorLatencyMS}} ms</p>
                 {{if .Data.Replay.StatusDiff}}<p class="error">The mirror returned a different HTTP status.</p>{{else if .Data.Replay.Crashed}}<p class="error">The mirror failed before producing an HTTP response.</p>{{else}}<p class="notice">The mirror returned the same HTTP status.</p>{{end}}
               {{else if eq .Data.Replay.State "queued"}}
-                <p class="muted">Waiting for the scheduler. Refresh to check again.</p>
+                {{if $.Data.ReplayPollExhausted}}<p class="muted">Automatic polling stopped after one minute. Refresh to check the final status.</p>{{else}}<p class="muted">Waiting for the scheduler. Checking again in a few seconds…</p>{{end}}
               {{else if eq .Data.Replay.State "running"}}
-                <p class="muted">The mirror invocation is running. Refresh to check again.</p>
+                {{if $.Data.ReplayPollExhausted}}<p class="muted">Automatic polling stopped after one minute. Refresh to check the final status.</p>{{else}}<p class="muted">The mirror invocation is running. Checking again in a few seconds…</p>{{end}}
               {{end}}
             </div>
           {{end}}
           {{if .Data.Selected.Regression}}
-            <p class="muted">This request matches the active regression on <code>{{.Data.Selected.Regression.Route}}</code> ({{.Data.Selected.Regression.Factor}}× baseline).</p>
+            <p class="muted">This request matches the active regression on <code>{{.Data.Selected.Regression.Route}}</code> ({{.Data.Selected.Regression.Factor}}× baseline).{{if .Data.Selected.Regression.CompareURL}} <a href="{{.Data.Selected.Regression.CompareURL}}">Compare deployments →</a>{{end}}</p>
           {{end}}
           <h3>Request timeline</h3>
           {{if .Data.Selected.Timeline}}
@@ -167,6 +217,19 @@
       {{end}}
     {{end}}
   </main>
+  {{if .Data.ReplayPollActive}}
+    <script nonce="{{.Nonce}}">
+      (() => {
+        const next = new URL(window.location.href);
+        const parsedPoll = Number.parseInt(next.searchParams.get("replay_poll") || "0", 10);
+        const poll = Number.isFinite(parsedPoll) && parsedPoll >= 0 ? parsedPoll : 0;
+        next.searchParams.set("replay_poll", String(Math.min(poll + 1, 20)));
+        next.searchParams.delete("action");
+        next.searchParams.delete("error");
+        window.setTimeout(() => window.location.replace(next.toString()), 3000);
+      })();
+    </script>
+  {{end}}
   <footer>onebox faas · production debugger · server-rendered with safe replay</footer>
 </body>
 </html>
