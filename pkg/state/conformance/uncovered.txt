@@ -176,12 +176,12 @@ DeleteAccount
 DeleteAccountPassword
 DeleteAlertRule
 DeleteApp
-DeleteAppLogDrain
 DeleteAppEnv
 DeleteAppEnvInScope
 DeleteAppErrorRequestsByIDs
 DeleteAppErrorRequestsOlderThan
 DeleteAppErrorsByIDs
+DeleteAppLogDrain
 DeleteAppOpenAPIDoc
 DeleteAppPermanently
 DeleteAppRegistryCredential
@@ -351,10 +351,10 @@ ListAllEventsPaged
 ListAllInstances
 ListAppEnv
 ListAppEnvInScope
-ListAppLogDrainsForApp
 ListAppErrorFingerprintsForPurge
 ListAppErrorGroups
 ListAppErrorRequests
+ListAppLogDrainsForApp
 ListAppRegistryCredentials
 ListAppSecrets
 ListAppSecretsForAccount
