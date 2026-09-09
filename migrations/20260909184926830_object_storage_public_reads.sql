@@ -8,6 +8,7 @@ ALTER TABLE object_buckets
     ADD COLUMN IF NOT EXISTS public_read boolean NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS serve_at text;
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -28,6 +29,7 @@ BEGIN
     END IF;
 END
 $$;
+-- +goose StatementEnd
 
 CREATE UNIQUE INDEX IF NOT EXISTS object_buckets_public_serve_at_idx
     ON object_buckets (app_id, serve_at)
