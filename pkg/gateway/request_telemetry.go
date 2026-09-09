@@ -9,8 +9,9 @@
 //
 // Cardinality discipline is NOT the recorder's job in PR-A — the
 // publisher (request_telemetry_publisher.go) is where the
-// (app_id, deployment_id, route, status, minute) dedupe collapses
-// burst traffic to a representative row + count. Doing it in the
+// (app_id, deployment_id, route, status, dimensions, minute,
+// latency-bucket) dedupe collapses burst traffic to bounded
+// representative rows + count. Doing it in the
 // publisher keeps the recorder's hot path to O(1) under one mutex.
 //
 // The recorder NEVER opens a Postgres connection (CLAUDE.md
@@ -46,8 +47,8 @@ import (
 // Count=1 (one observed request). The publisher's
 // collapseRequestTelemetry increments Count when multiple rows fold
 // into the same (app, deployment, route, method, status, dimensions,
-// minute) bucket.
-// bucket. The apid receiver passes Count verbatim to the sqlc
+// minute, latency-bucket) bucket. The apid receiver passes Count
+// verbatim to the sqlc
 // INSERT. Pre-PR-B clients (the recorder compiled against PR-A)
 // never set Count; Go zero-value 0 is corrected to 1 at the
 // recorder's enqueue boundary (RecordFromObserve) so a publisher

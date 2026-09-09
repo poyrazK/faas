@@ -397,11 +397,11 @@ type Querier interface {
 	//
 	// PR-B (ADR-127 §PR-B): the publisher collapse in
 	// pkg/gateway/request_telemetry_publisher.go coalesces requests with
-	// the same (app, deployment, route, method, status, minute_bucket) into
-	// one row with `count` = the number of originals. count is INT NOT NULL
-	// DEFAULT 1 (00440) so pre-PR-B clients keep working — the DEFAULT
-	// fires for any INSERT that omits the column. PR-B's publisher always
-	// passes it explicitly.
+	// the same (app, deployment, route, method, status, dimensions,
+	// minute_bucket, latency_bucket) into one row with `count` = the number
+	// of originals. count is INT NOT NULL DEFAULT 1 (00440) so pre-PR-B
+	// clients keep working — the DEFAULT fires for any INSERT that omits
+	// the column. PR-B's publisher always passes it explicitly.
 	InsertRequestTelemetry(ctx context.Context, db DBTX, arg InsertRequestTelemetryParams) error
 	// One row per dead-lettered record. The reason is the closed-vocab
 	// failure mode (rate_limited, poison_record, max_attempts,
@@ -901,9 +901,11 @@ type Querier interface {
 	// weighted throughout the same way as RequestTelemetryAnalyticsSummary.
 	RequestTelemetryAnalyticsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByRouteParams) ([]RequestTelemetryAnalyticsByRouteRow, error)
 	// Customer-facing request analytics over a bounded retention window.
-	// The recorder collapses identical requests into rows with `count`, so
-	// all request/error/cold-boot totals and percentiles must expand that
-	// weight rather than treating each stored row as one request.
+	// The recorder collapses identical requests into bounded latency-bucket
+	// rows with `count`, so all request/error/cold-boot totals and percentiles
+	// must expand that weight rather than treating each stored row as one
+	// request. Latency representatives are conservative within the bucket
+	// width documented by requestTelemetryLatencyBucketUpperBound.
 	RequestTelemetryAnalyticsSummary(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsSummaryParams) (RequestTelemetryAnalyticsSummaryRow, error)
 	// Zero-filled UTC hourly request analytics for customer charts. The
 	// recorder collapses rows by count, so all totals and percentile ranks
@@ -919,11 +921,12 @@ type Querier interface {
 	// cron + PR Debugger UX v1 compare handler). Single index scan
 	// over the existing request_telemetry_app_dep_received_idx
 	// (PR-A migration 00427) so the four aggregates share one
-	// window. The recorder collapses burst traffic into rows with a
-	// `count` weight; expand that weight mathematically instead of
-	// treating each aggregate row as one request. The rank/floor
-	// formulation below is equivalent to percentile_cont over the
-	// expanded multiset, without materializing one row per request.
+	// window. The recorder collapses burst traffic into bounded
+	// latency-bucket rows with a `count` weight; expand that weight
+	// mathematically instead of treating each aggregate row as one
+	// request. The rank/floor formulation below is equivalent to
+	// percentile_cont over the expanded multiset of bucket
+	// representatives, without materializing one row per request.
 	RequestTelemetryBaselineP95ByRoute(ctx context.Context, db DBTX, arg RequestTelemetryBaselineP95ByRouteParams) ([]RequestTelemetryBaselineP95ByRouteRow, error)
 	// Per-deployment drilldown. Used by gregale debug compare and the
 	// regression detector (PR-B). Includes the publisher's `count`

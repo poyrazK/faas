@@ -3289,7 +3289,10 @@ paths:
       description: |
         Recent request telemetry rows for an app — status, latency_ms, route,
         method, deployment_id, cold_boot, trace_id, received_at, and the
-        number of original requests represented by each collapsed row.
+        number of original requests represented by each collapsed row. Rows
+        are split by bounded latency bucket so aggregate percentiles retain
+        distribution signal; `latency_ms` is that bucket's inclusive upper
+        bound (and can therefore be slightly conservative).
         PR-A ships the read endpoint only; the write-side (publisher
         → gRPC IncrementRequestTelemetry → apid receiver → sqlc
         INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -23469,7 +23472,7 @@ components:
 
     DebugTelemetryRequestItem:
       type: object
-      description: "One row per gateway-served request, persisted by the recorder (PR-A)."
+      description: "One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."
       required: [id, deployment_id, route, method, status, latency_ms, count, cold_boot, received_at]
       properties:
         id: { type: string, format: uuid }
@@ -23477,7 +23480,7 @@ components:
         route: { type: string, description: "Route template (NOT expanded URL)." }
         method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
         status: { type: integer, minimum: 100, maximum: 599 }
-        latency_ms: { type: integer, minimum: 0 }
+        latency_ms: { type: integer, minimum: 0, description: "Inclusive upper bound of the bounded latency bucket represented by this row." }
         count: { type: integer, minimum: 1, description: "Number of original requests represented by this collapsed telemetry row." }
         cold_boot: { type: boolean }
         trace_id: { type: [string, 'null'], description: "W3C trace-id hex (32 chars), null when unset." }
