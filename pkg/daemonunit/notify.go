@@ -30,7 +30,7 @@ func Notify(state string) error {
 	if err != nil {
 		return fmt.Errorf("daemonunit: sd_notify dial: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if _, err := conn.Write([]byte(state)); err != nil {
 		return fmt.Errorf("daemonunit: sd_notify write: %w", err)
 	}
