@@ -226,7 +226,7 @@ FIELDS
     echo
     echo "- Postgres role wired and converged (wal_level=replica, archive_mode=on, archive_command replays the local WAL archive)."
     echo "- Postgres_backup role wired and converged (faas-pg-basebackup.timer enabled)."
-    echo "- The newest backup was restored by extracting base.tar.gz and pg_wal.tar.gz; archived WAL promotion was verified with pg_is_in_recovery()."
+    echo "- The newest backup was restored from base.tar.gz (plus pg_wal.tar.gz when present); archived WAL promotion was verified with pg_is_in_recovery()."
     echo "- The host.age SHA-256 was stamped before the wipe and verified again before restoring the identity."
     echo
     echo "## Anomalies / observations"
@@ -373,9 +373,10 @@ mkdir -p "$PG_DATA"
 ok "${PG_DATA} wiped"
 
 heading "3/7 Restore basebackup + pg_wal"
-# `faas-pg-basebackup.service` uses -Ft -z, so the backup directory contains
-# compressed tar members. Extract both members; rsyncing the tar files into
-# PGDATA would leave PostgreSQL with no PG_VERSION and never exercise restore.
+# `faas-pg-basebackup.service` uses -Ft -z -X fetch, so the required WAL is
+# normally inside base.tar.gz. Keep the optional pg_wal.tar.gz extraction for
+# backups made with stream mode. Copying the tar files into PGDATA would leave
+# PostgreSQL with no PG_VERSION and never exercise restore.
 tar -xzf "$LATEST_BB/base.tar.gz" -C "$PG_DATA"
 if [[ -f "$LATEST_BB/pg_wal.tar.gz" ]]; then
   tar -xzf "$LATEST_BB/pg_wal.tar.gz" -C "$PG_DATA"

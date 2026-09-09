@@ -25,6 +25,12 @@ set -euo pipefail
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/faas-m8-restore-drill.sh"
 EVIDENCE_CHECK="$(cd "$(dirname "$0")" && pwd)/check-restore-drill-evidence.sh"
 TEMPLATE="$(cd "$(dirname "$0")" && pwd)/../../docs/drills/TEMPLATE-restore-drill.md"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+BASEBACKUP_SERVICE="$REPO_ROOT/deploy/systemd/faas-pg-basebackup.service"
+BASEBACKUP_TIMER="$REPO_ROOT/deploy/systemd/faas-pg-basebackup.timer"
+BASEBACKUP_PUSH_TIMER="$REPO_ROOT/deploy/systemd/faas-pg-basebackup-push.timer"
+POSTGRES_ROLE="$REPO_ROOT/deploy/ansible/roles/postgres/tasks/main.yml"
+PEER_ACCESS_ROLE="$REPO_ROOT/deploy/ansible/roles/control_plane_peer_access/tasks/main.yml"
 
 # 1. Syntax check on the drill script. Does NOT execute.
 bash -n "$SCRIPT" || { echo "FAIL: bash -n $SCRIPT"; exit 1; }
@@ -63,8 +69,9 @@ grep -q "host.age.sha256" "$SCRIPT" \
   || { echo "FAIL: missing host.age SHA sidecar logic"; exit 1; }
 echo "OK: host.age preservation steps present"
 
-# 5. The nightly producer uses tar format. The drill must extract the base
-#    and WAL members; rsyncing base.tar.gz into PGDATA is not a restore.
+# 5. The nightly producer uses tar format with `-X fetch`, which embeds required
+#    WAL in base.tar.gz. The optional pg_wal.tar.gz branch keeps compatibility
+#    with separately streamed backups; copying either archive is not a restore.
 grep -q 'tar -xzf "\$LATEST_BB/base.tar.gz"' "$SCRIPT" \
   || { echo "FAIL: drill does not extract base.tar.gz"; exit 1; }
 grep -q 'pg_wal.tar.gz' "$SCRIPT" \
@@ -82,3 +89,29 @@ grep -q 'migration-up-time' "$SCRIPT" \
 grep -q 'pg_is_in_recovery' "$SCRIPT" \
   || { echo "FAIL: missing explicit promotion check"; exit 1; }
 echo "OK: tar restore, cleanup, migration, row-count, and promotion checks present"
+
+# 7. Validate the production basebackup producer contract. systemd expands a
+#    single `%` in ExecStart as a unit specifier, so date's format characters
+#    must be doubled. The calendar form below is accepted by Ubuntu 24.04's
+#    systemd; the formerly used ISO-like `T...Z` form is rejected.
+grep -Fq 'date -u +%%Y-%%m-%%dT%%H%%M%%SZ' "$BASEBACKUP_SERVICE" \
+  || { echo "FAIL: basebackup service date format is not systemd-escaped"; exit 1; }
+grep -Fq 'rm -rf -- "$${out}"' "$BASEBACKUP_SERVICE" \
+  || { echo "FAIL: basebackup service does not clean a failed partial backup"; exit 1; }
+grep -Fq 'OnCalendar=*-*-* 03:00:00 UTC' "$BASEBACKUP_TIMER" \
+  || { echo "FAIL: local basebackup timer has an incompatible calendar"; exit 1; }
+grep -Fq 'OnCalendar=*-*-* 03:30:00 UTC' "$BASEBACKUP_PUSH_TIMER" \
+  || { echo "FAIL: basebackup push timer has an incompatible calendar"; exit 1; }
+if command -v systemd-analyze >/dev/null 2>&1; then
+  systemd-analyze calendar '*-*-* 03:00:00 UTC' >/dev/null
+  systemd-analyze calendar '*-*-* 03:30:00 UTC' >/dev/null
+fi
+
+# 8. pg_basebackup connects to the replication pseudo-database. PostgreSQL's
+#    `local all postgres peer` HBA rule does not match replication traffic;
+#    both topology renderers must keep the narrow local peer rule.
+for role in "$POSTGRES_ROLE" "$PEER_ACCESS_ROLE"; do
+  grep -Eq '^ +local +replication +postgres +peer$' "$role" \
+    || { echo "FAIL: missing local postgres replication peer rule in $role"; exit 1; }
+done
+echo "OK: basebackup systemd and PostgreSQL replication contracts present"

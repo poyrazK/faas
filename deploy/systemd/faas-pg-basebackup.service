@@ -29,17 +29,20 @@ Environment=PG_BB_ROOT=/var/lib/pgsql/basebackup
 Environment=PG_BB_LABEL=faas-m8-nightly
 ExecStart=/usr/bin/env bash -c '\
   set -euo pipefail; \
-  ts=$$(date -u +%Y-%m-%dT%H%M%SZ); \
+  ts=$$(date -u +%%Y-%%m-%%dT%%H%%M%%SZ); \
   out="$${PG_BB_ROOT}/basebackup-$${ts}"; \
   mkdir -p "$${out}"; \
   pg_bindir=$$(/usr/bin/pg_config --bindir); \
-  "$${pg_bindir}/pg_basebackup" \
+  if ! "$${pg_bindir}/pg_basebackup" \
     -Ft -z \
     -D "$${out}" \
     -P \
     -X fetch \
     --checkpoint=fast \
-    --label="$${PG_BB_LABEL}"; \
+    --label="$${PG_BB_LABEL}"; then \
+    rm -rf -- "$${out}"; \
+    exit 1; \
+  fi; \
   echo "wrote $${out}"'
 SuccessExitStatus=0
 TimeoutStartSec=30min

@@ -113,6 +113,8 @@ ${LIVE_PG_BIN}/initdb -D "$RESTORE_PGDATA" --auth=peer --username=postgres >/dev
 ok "initdb complete"
 
 tar -xzf "$RESTORE_STAGE/base.tar.gz" -C "$RESTORE_PGDATA"
+# `-X fetch` places required WAL inside base.tar.gz. A separately streamed
+# pg_wal.tar.gz is accepted for compatibility with older/operator-made backups.
 [[ -f "$RESTORE_STAGE/pg_wal.tar.gz" ]] \
   && tar -xzf "$RESTORE_STAGE/pg_wal.tar.gz" -C "$RESTORE_PGDATA"
 ok "basebackup unpacked"
