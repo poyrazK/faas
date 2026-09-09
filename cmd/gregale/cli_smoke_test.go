@@ -85,6 +85,10 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 			// Return a plain DeploymentResponse — the SSE tail is opened
 			// separately on /v1/deployments/{id}/logs by streamDeployLogs.
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "pending", AppID: "smoke-app"})
+		case r.Method == "GET" && r.URL.Path == "/v1/deployments/d-smoke":
+			// The CLI reads the terminal row after the live frame so a
+			// durable hosting receipt can be rendered when present.
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "smoke-app"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/") && strings.HasSuffix(r.URL.Path, "/logs"):
 			hits[2] = r.URL.Path
 			w.Header().Set("Content-Type", "text/event-stream")

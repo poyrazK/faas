@@ -1312,6 +1312,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if explicit["no-wait"] && *noWaitDeploy {
 		waitForDeploy = false
 	}
+	// Preserve the historical queued JSON response unless the operator
+	// explicitly asks for the terminal receipt with --json --wait.
+	jsonWait := jsonOutput && explicit["wait"] && waitForDeploy
 	var requireAuthnPtr *bool
 	var publicAuthPtr *api.PublicAuthBlock
 	switch {
@@ -1403,12 +1406,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintFail(os.Stderr, "--repo cannot be combined with --only or --project-slug")
 			return 1
 		}
-		return cmdDeployRepoSourceRefContextWithWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
+		return cmdDeployRepoSourceRefContextWithJSONWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
 			Reason:     *reason,
 			Tag:        *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy),
 			PRNumber:   *prNumber,
-		}, waitForDeploy)
+		}, waitForDeploy, jsonWait)
 	}
 
 	// --template materializes an embedded starter project. For function
@@ -2082,11 +2085,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					sourceSHA256 = sha
 				}
 			}
-			return jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
+			if !jsonWait {
+				return jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
+			}
 		}
 		if !waitForDeploy {
 			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 			return 0
+		}
+		if jsonWait {
+			return writeWaitedDeploymentReceipt(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256)
 		}
 		return streamDeployLogsContext(ctx, client, dep, slug)
 	}
@@ -2119,7 +2127,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Deploy failed", err)
 	}
 	execution.notifyQueued(dep)
-	if jsonOutput {
+	if jsonOutput && !jsonWait {
 		// Image deploy path: no source tarball bytes (the digest
 		// rides on dep.ImageDigest), no git detection (prov is
 		// nil from the function-scope hoist), so commit_sha /
@@ -2133,6 +2141,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if !waitForDeploy {
 		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 		return 0
+	}
+	if jsonWait {
+		return writeWaitedDeploymentReceipt(ctx, client, dep, nil, deployedAppURL(slug), "")
 	}
 	return streamDeployLogsContext(ctx, client, dep, slug)
 }
@@ -3670,10 +3681,10 @@ func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentR
 		// is the canonical case where the stream never opened and
 		// the build row is already terminal.
 		if b, ok := pollBuildStatusContext(ctx, c, dep, 5*time.Second); ok {
-			return terminalExitForBuild(b, appSlug)
+			return terminalExitForBuildContext(ctx, c, b, appSlug)
 		}
 		if final, ok := pollDeploymentFinalContext(ctx, c, dep); ok {
-			return terminalExitForDeploymentAs(final, appSlug)
+			return terminalExitForDeploymentContext(ctx, c, final, appSlug)
 		}
 		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs --deployment %s", dep.ID)
 		return 3
@@ -3734,9 +3745,7 @@ streamLoop:
 				if json.Unmarshal([]byte(e.Data), &status) == nil &&
 					(status.Status == statusLive || status.Status == deploymentStatusFailed) {
 					if status.Status == statusLive {
-						PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
-						printDeployColdWakeSentence()
-						return 0
+						return renderSuccessfulDeployment(ctx, c, dep, appSlug)
 					}
 					return renderDeployFailure(dep)
 				}
@@ -3778,7 +3787,7 @@ streamLoop:
 	// fall back to pollDeploymentFinal when the new poll reports
 	// the build is still queued or running.
 	if b, ok := pollBuildStatusContext(ctx, c, dep, 60*time.Second); ok {
-		return terminalExitForBuild(b, appSlug)
+		return terminalExitForBuildContext(ctx, c, b, appSlug)
 	}
 	// Tarball/function deployments created by older API paths may not carry
 	// BuildID.  In that case the build poll above is intentionally skipped,
@@ -3787,7 +3796,7 @@ streamLoop:
 	// the deployment row through that recovery window so a healthy deployment
 	// is not reported as exit 3 merely because the SSE stream ended first.
 	if final, ok := pollDeploymentFinalUntilContext(ctx, c, dep, 5*time.Minute); ok {
-		return terminalExitForDeploymentAs(final, appSlug)
+		return terminalExitForDeploymentContext(ctx, c, final, appSlug)
 	}
 	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs --deployment %s", dep.ID)
 	return 3
@@ -3938,10 +3947,12 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 }
 
 func terminalExitForDeploymentAs(d api.DeploymentResponse, appSlug string) int {
+	return terminalExitForDeploymentContext(context.Background(), nil, d, appSlug)
+}
+
+func terminalExitForDeploymentContext(ctx context.Context, c *Client, d api.DeploymentResponse, appSlug string) int {
 	if d.Status == statusLive {
-		PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
-		printDeployColdWakeSentence()
-		return 0
+		return renderSuccessfulDeployment(ctx, c, d, appSlug)
 	}
 	return renderDeployFailure(d)
 }
@@ -3954,10 +3965,13 @@ func terminalExitForDeploymentAs(d api.DeploymentResponse, appSlug string) int {
 // failure_class=…" block and exit 2 (same exit-code convention as
 // terminalExitForDeployment's renderDeployFailure path).
 func terminalExitForBuild(b api.BuildResponse, appID string) int {
+	return terminalExitForBuildContext(context.Background(), nil, b, appID)
+}
+
+func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appID string) int {
 	if b.Status == buildStatusSucceeded {
-		PrintOK(osStdout, "Deployed. %s", deployedAppURL(appID))
-		printDeployColdWakeSentence()
-		return 0
+		dep := api.DeploymentResponse{ID: b.DeploymentID, Status: statusLive}
+		return renderSuccessfulDeployment(ctx, c, dep, appID)
 	}
 	// Failed build — surface the lifecycle info. End users hitting
 	// this path are CI scripts that lost their SSE; the canonical
