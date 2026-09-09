@@ -6119,6 +6119,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				ColdBoot:     cold,
 				TraceID:      telemetryTraceID(requestID),
 				ReceivedAt:   time.Now(),
+				WakeID:       target.WakeID,
+				InstanceID:   target.InstanceID,
 				UAFamily:     uaFamily,
 				ReferrerHost: referrerHost,
 				Country:      country,

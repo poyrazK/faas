@@ -135,6 +135,7 @@ export type { DebugRequestEvidenceResponse } from './DebugRequestEvidenceRespons
 export type { DebugTelemetryListResponse } from './DebugTelemetryListResponse.js';
 export type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 export type { DebugTelemetrySpan } from './DebugTelemetrySpan.js';
+export type { DebugTimelineEvent } from './DebugTimelineEvent.js';
 export type { DelayedTaskRequest } from './DelayedTaskRequest.js';
 export type { DelayedTaskResponse } from './DelayedTaskResponse.js';
 export type { DeploymentAuditResponse } from './DeploymentAuditResponse.js';

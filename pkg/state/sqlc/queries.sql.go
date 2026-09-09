@@ -2041,7 +2041,7 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 
 const getRequestTelemetryByAppAndID = `-- name: GetRequestTelemetryByAppAndID :one
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, spans_summary
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id
 FROM request_telemetry
 WHERE app_id = $1
   AND id = $2
@@ -2069,6 +2069,8 @@ type GetRequestTelemetryByAppAndIDRow struct {
 	TraceID      pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
 	SpansSummary []byte
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 // Direct request drill-down for the customer debugger. The app_id
@@ -2094,6 +2096,8 @@ func (q *Queries) GetRequestTelemetryByAppAndID(ctx context.Context, db DBTX, ar
 		&i.TraceID,
 		&i.ReceivedAt,
 		&i.SpansSummary,
+		&i.WakeID,
+		&i.InstanceID,
 	)
 	return i, err
 }
@@ -2553,11 +2557,11 @@ const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec
 INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
-    ua_family, referrer_host, country
+    ua_family, referrer_host, country, wake_id, instance_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14
+    $12, $13, $14, $15, $16
 )
 `
 
@@ -2576,6 +2580,8 @@ type InsertRequestTelemetryParams struct {
 	UaFamily     string
 	ReferrerHost string
 	Country      string
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 // ---------------------------------------------------------------------------
@@ -2628,6 +2634,8 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.UaFamily,
 		arg.ReferrerHost,
 		arg.Country,
+		arg.WakeID,
+		arg.InstanceID,
 	)
 	return err
 }
@@ -4467,7 +4475,7 @@ func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg L
 
 const listRequestTelemetryByApp = `-- name: ListRequestTelemetryByApp :many
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at
+       cold_boot, trace_id, received_at, wake_id, instance_id
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
@@ -4496,6 +4504,8 @@ type ListRequestTelemetryByAppRow struct {
 	ColdBoot     bool
 	TraceID      pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 // Canonical read pattern: "give me the last N requests for this app".
@@ -4529,6 +4539,8 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 			&i.ColdBoot,
 			&i.TraceID,
 			&i.ReceivedAt,
+			&i.WakeID,
+			&i.InstanceID,
 		); err != nil {
 			return nil, err
 		}

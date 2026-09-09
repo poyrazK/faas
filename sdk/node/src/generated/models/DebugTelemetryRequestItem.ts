@@ -28,5 +28,13 @@ export type DebugTelemetryRequestItem = {
    */
   trace_id?: string | null;
   received_at: string;
+  /**
+   * Opaque wake identifier when this request admitted a wake; omitted for warm requests.
+   */
+  wake_id?: string;
+  /**
+   * Opaque instance identifier that served the request; omitted when no target was reached.
+   */
+  instance_id?: string;
 };
 

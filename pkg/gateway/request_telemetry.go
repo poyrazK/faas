@@ -65,6 +65,12 @@ type RequestTelemetryRow struct {
 	TraceID      string // W3C trace-id hex (32 chars); "" when unset
 	ReceivedAt   time.Time
 	Count        int // PR-B: collapse aggregate; >= 1 (CHECK in 00428). Recorder sets to 1.
+	// Causal identifiers retained for the debugger timeline. WakeID is set
+	// only when this request admitted a new wake; InstanceID identifies the
+	// selected VM when the request reached a target. They are opaque strings
+	// and never contain customer payloads.
+	WakeID     string
+	InstanceID string
 	// These dimensions are normalized at the edge. Raw User-Agent, referrer
 	// URLs, and IP addresses never enter this row or the gRPC payload.
 	UAFamily     string // normalized family, e.g. chrome, safari, bot
