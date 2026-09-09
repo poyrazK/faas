@@ -7,6 +7,13 @@ global:
   external_labels:
     box: "{{ ansible_hostname }}"
 
+# Trace exemplars are retained in a bounded circular buffer so Grafana can
+# query a concrete request from a latency bucket without turning trace IDs
+# into metric labels. The systemd unit enables --enable-feature=exemplar-storage.
+storage:
+  exemplars:
+    max_exemplars: {{ prom_exemplar_max_size }}
+
 # Alert rules — evaluated every 30s against the closed (daemon, severity)
 # label set declared in faas.rules.yml. Three severities map to receivers
 # via the Alertmanager role (deploy/ansible/roles/alertmanager/):

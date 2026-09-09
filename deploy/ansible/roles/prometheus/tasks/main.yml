@@ -30,6 +30,15 @@
   ansible.builtin.debug:
     var: prom_version
 
+- name: prometheus — assert exemplar buffer is positive
+  ansible.builtin.assert:
+    that:
+      - prom_exemplar_max_size is defined
+      - prom_exemplar_max_size | int > 0
+    fail_msg: >-
+      prom_exemplar_max_size must be a positive integer so the bounded
+      exemplar buffer cannot be accidentally disabled or rendered invalid.
+
 # Loopback bind discipline (CLAUDE.md §Component ownership). The
 # alertmanager target must not be reachable off-box: alert payloads
 # contain operational labels (component, family, severity) that the

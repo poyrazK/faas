@@ -23,6 +23,10 @@ prom_release_sha256: "31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e
 prom_listen_addr: "127.0.0.1:9095"
 prom_retention_days: 15
 prom_data_dir: /var/lib/prometheus
+# Prometheus keeps exemplars in a bounded in-memory circular buffer. The
+# platform opts in explicitly because exemplar storage is disabled by default
+# even on supported Prometheus releases.
+prom_exemplar_max_size: 100000
 
 # The control-plane Prometheus discovers active compute gateway listeners from
 # apid's loopback registry endpoint. This is intentionally a URL, not an

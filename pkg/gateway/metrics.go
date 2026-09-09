@@ -9,6 +9,9 @@
 //     ADR-042; full request-received → handler-return duration, not TTFB;
 //     class ∈ {2xx,3xx,4xx,5xx}; per-app series pre-instantiated by
 //     PreInstantiateApp so the §12 panel surfaces from first request)
+//     Observations made inside a sampled request also carry a trace_id
+//     Prometheus exemplar; the trace_id is metadata on a sample, not a
+//     time-series label, so it does not expand cardinality.
 //   - gateway_wake_latency_seconds                    histogram
 //   - gateway_wake_queue_wait_seconds                 histogram (M8 §12 dashboard)
 //   - gateway_queue_depth{app, account_id}           gauge (set/cleared by
@@ -1698,7 +1701,7 @@ func (m *Metrics) ObserveRequestDuration(appID, class string, d time.Duration) {
 	// pre-deployment-label paths. The Handler hot path goes
 	// through ObserveRequestDurationByDeployment which threads
 	// the deployment id through deploymentLabelSet.
-	m.requestDuration.WithLabelValues(appID, class, emptyDeploymentLabel).Observe(d.Seconds())
+	m.ObserveRequestDurationByDeployment(appID, class, emptyDeploymentLabel, d)
 }
 
 // ObserveRequestDurationByDeployment records the full request
@@ -1714,7 +1717,21 @@ func (m *Metrics) ObserveRequestDurationByDeployment(appID, class, deployment st
 	if m == nil {
 		return
 	}
-	m.requestDuration.WithLabelValues(appID, class, deployment).Observe(d.Seconds())
+	m.ObserveRequestDurationByDeploymentWithTrace(appID, class, deployment, d, "")
+}
+
+// ObserveRequestDurationByDeploymentWithTrace records request duration and,
+// when traceID is a sampled active request trace, attaches it as a Prometheus
+// exemplar. Exemplars let Grafana jump from a latency sample to the exact
+// request without turning trace IDs into unbounded metric labels.
+//
+// The traceID argument is derived from the active OTel SpanContext by the
+// Handler; an empty value preserves the legacy no-trace path.
+func (m *Metrics) ObserveRequestDurationByDeploymentWithTrace(appID, class, deployment string, d time.Duration, traceID string) {
+	if m == nil {
+		return
+	}
+	observeWithTraceExemplar(m.requestDuration.WithLabelValues(appID, class, deployment), d.Seconds(), traceID)
 }
 
 // PreInstantiateApp writes zero-valued series for the closed (class)
@@ -1903,8 +1920,19 @@ func (m *Metrics) ObserveLeaderBootstrapAbort(reason string) {
 }
 
 func (m *Metrics) ObserveColdBoot(appID string, latency time.Duration, nodeID string) {
+	m.ObserveColdBootWithTrace(appID, latency, nodeID, "")
+}
+
+// ObserveColdBootWithTrace records a cold boot and its wake latency. When the
+// request has a sampled OTel trace, the aggregate and per-node latency
+// histograms receive the same trace_id exemplar so either dashboard view can
+// be used to open the trace.
+func (m *Metrics) ObserveColdBootWithTrace(appID string, latency time.Duration, nodeID, traceID string) {
+	if m == nil {
+		return
+	}
 	m.coldBoot.WithLabelValues(appID).Inc()
-	m.wakeLatency.Observe(latency.Seconds())
+	observeWithTraceExemplar(m.wakeLatency, latency.Seconds(), traceID)
 	if m.wakeLatencyByNode == nil {
 		return
 	}
@@ -1912,7 +1940,21 @@ func (m *Metrics) ObserveColdBoot(appID string, latency time.Duration, nodeID st
 	if label == "" {
 		label = "__unknown"
 	}
-	m.wakeLatencyByNode.WithLabelValues(label).Observe(latency.Seconds())
+	observeWithTraceExemplar(m.wakeLatencyByNode.WithLabelValues(label), latency.Seconds(), traceID)
+}
+
+// observeWithTraceExemplar keeps the exemplar path optional. Older/custom
+// Prometheus observers may not implement ExemplarObserver; the measurement
+// must still be recorded in that case. traceID is intentionally not a metric
+// label because it is high-cardinality request metadata.
+func observeWithTraceExemplar(observer prometheus.Observer, value float64, traceID string) {
+	if traceID != "" {
+		if exemplarObserver, ok := observer.(prometheus.ExemplarObserver); ok {
+			exemplarObserver.ObserveWithExemplar(value, prometheus.Labels{"trace_id": traceID})
+			return
+		}
+	}
+	observer.Observe(value)
 }
 
 // ObserveWakeQueueWait records how long a request waited in the
