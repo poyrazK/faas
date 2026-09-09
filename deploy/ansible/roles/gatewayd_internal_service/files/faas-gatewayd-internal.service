@@ -24,6 +24,8 @@ Environment=FAAS_LOG_ARCHIVE_CREDS_PATH=%d/faas_archive_creds
 LoadCredential=faas_session_key:/etc/faas/secrets/session.key
 LoadCredential=faas_archive_creds:-/etc/faas/secrets/storage-box/archive-creds.json
 NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
