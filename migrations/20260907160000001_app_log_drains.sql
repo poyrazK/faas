@@ -1,4 +1,4 @@
--- filename: 20260907160000000_app_log_drains.sql
+-- filename: 20260907160000001_app_log_drains.sql
 -- +goose Up
 -- +goose StatementBegin
 
