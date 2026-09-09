@@ -4846,6 +4846,13 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	if d.TrafficPercent == 0 && !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !serviceRollout {
 		d.TrafficPercent = 100
 	}
+	// Preserve an explicit timestamp supplied by internal callers and
+	// fixtures. The database default remains authoritative for normal
+	// production writes that leave CreatedAt unset.
+	var createdAt any
+	if !d.CreatedAt.IsZero() {
+		createdAt = d.CreatedAt
+	}
 	row := tx.QueryRow(ctx,
 		`insert into deployments (id, app_id, image_digest, kind, source_path, source_root, source_bytes, source_sha256, handler, log_path, source_url, commit_sha,
 		                          override_entrypoint, override_cmd, override_env, override_env_secrets, override_port, override_healthcheck,
@@ -4860,10 +4867,10 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number, workflows,
 		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
-		                          traffic_percent_explicit)
+		                          traffic_percent_explicit, created_at)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
-		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38)
+		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()))
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -4903,7 +4910,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		// deployments_pr_number_positive_chk CHECK (which rejects 0).
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
-		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit)
+		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
