@@ -10,7 +10,7 @@ evaluation_interval: 30s
 tests:
   - name: "idle public status expressions remain finite"
     promql_expr_test:
-      - expr: '((sum(rate(gateway_requests_total{code=~"2.."}[5m])) / sum(rate(gateway_requests_total[5m])) * 100) and sum(rate(gateway_requests_total[5m])) > 0) or vector(100)'
+      - expr: '((sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) / sum(rate(gateway_requests_total{app!="-"}[5m])) * 100) and sum(rate(gateway_requests_total{app!="-"}[5m])) > 0) or vector(100)'
         eval_time: 5m
         exp_samples:
           - labels: '{}'
@@ -31,8 +31,10 @@ tests:
     input_series:
       - series: 'gateway_requests_total{code="200",app="low-volume"}'
         values: '0+1x50'
+      - series: 'gateway_requests_total{code="404",app="-"}'
+        values: '0+3x50'
     promql_expr_test:
-      - expr: 'sum(rate(gateway_requests_total{code=~"2.."}[5m])) / sum(rate(gateway_requests_total[5m]))'
+      - expr: 'sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) / sum(rate(gateway_requests_total{app!="-"}[5m]))'
         eval_time: 15m
         exp_samples:
           - labels: '{}'

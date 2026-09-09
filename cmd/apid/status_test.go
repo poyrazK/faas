@@ -82,7 +82,7 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 			name:     "api availability",
 			query:    statusAPIAvailabilityQuery,
 			fallback: "or vector(100)",
-			guard:    "sum(rate(gateway_requests_total[5m])) > 0",
+			guard:    "sum(rate(gateway_requests_total{app!=\"-\"}[5m])) > 0",
 		},
 		{
 			name:     "wake p95",
@@ -109,6 +109,10 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 	}
 	if !strings.Contains(statusBuildSuccessQuery, `code=~"ok|cache_hit"`) {
 		t.Fatalf("build success numerator includes a non-success outcome: %q", statusBuildSuccessQuery)
+	}
+	if strings.Contains(statusAPIAvailabilityQuery, `gateway_requests_total[5m]`) ||
+		!strings.Contains(statusAPIAvailabilityQuery, `app!="-"`) {
+		t.Fatalf("API availability query includes unresolved-host traffic: %q", statusAPIAvailabilityQuery)
 	}
 }
 

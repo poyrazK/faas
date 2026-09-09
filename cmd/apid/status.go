@@ -104,8 +104,8 @@ type statusCache struct {
 
 const (
 	statusAPIAvailabilityQuery = `(
-		(sum(rate(gateway_requests_total{code=~"2.."}[5m])) / sum(rate(gateway_requests_total[5m])) * 100)
-		and sum(rate(gateway_requests_total[5m])) > 0
+		(sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) / sum(rate(gateway_requests_total{app!="-"}[5m])) * 100)
+		and sum(rate(gateway_requests_total{app!="-"}[5m])) > 0
 	) or vector(100)`
 	statusWakeP95Query = `(
 		(histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) * 1000)
@@ -185,7 +185,10 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	var firstErr error
 	okCount := 0
 
-	// 1. API availability over last 5m: 2xx / total.
+	// 1. API availability over last 5m: 2xx / total for resolved apps.
+	// Requests with app="-" never reached a tenant route (unknown Host and
+	// direct-address probes); counting them makes Internet scans look like a
+	// platform outage.
 	if pct, err := c.client.QueryScalar(ctx, statusAPIAvailabilityQuery); err == nil {
 		snap.APIAvailabilityPct = pct
 		okCount++
