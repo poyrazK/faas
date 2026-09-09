@@ -34,6 +34,43 @@ func TestStatusJSONHandlerNoPrometheusURL(t *testing.T) {
 	}
 }
 
+// An idle histogram is returned by Prometheus as the string "NaN". The
+// public handler must still emit valid JSON rather than committing a 200
+// response and then failing json.Encoder with an empty body.
+func TestStatusJSONHandlerIdleHistogramEmitsJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		switch {
+		case strings.Contains(query, "gateway_wake_latency_seconds_bucket"):
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"NaN"]}]}}`))
+		case strings.Contains(query, "builderd_ops_total"):
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+		case strings.Contains(query, "ALERTS"):
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"0"]}]}}`))
+		default:
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	s := newServer(nil, slog.Default(), "unset", nil)
+	s.WithStatusCache(srv.URL, "")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/status/slo.json", nil)
+	s.statusJSONHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var snap StatusPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
+		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+	}
+	if snap.APIAvailabilityPct != 100 || snap.WakeP95MS != 0 || snap.BuildSuccessPct != 0 {
+		t.Fatalf("snapshot = %+v, want finite API=100 and idle wake/build=0", snap)
+	}
+}
+
 // TestStatusCacheFreshnessFastPath: a freshly-fetched cache must not
 // re-query Prometheus within the 30s TTL. fetch() runs four PromQL
 // queries per refresh (api avail, wake p95, build success, degraded

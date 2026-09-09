@@ -46,10 +46,13 @@ faas_compute_allowed_ports:
 # Control-plane ingress to compute services. The manifest generator sets
 # these only on compute-only hosts; an empty list keeps the one-box policy.
 faas_control_plane_allowed_cidrs: []
-# Compute-side TCP services reached by the control plane. 9092 is the
-# gatewayd-internal egress stream; it is kept in the same explicit allowlist
-# as vmmd and gatewayd so the port is not opened on unrelated hosts.
+# Compute-side TCP services reached by the control plane. The three metrics
+# listeners remain limited to the private control-plane CIDRs; they are not
+# opened by the public 22/80/443 rule.
 faas_control_plane_allowed_ports:
   - 50051
   - 8080
   - 9092
+  - 9102
+  - 9104
+  - 9105

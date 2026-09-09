@@ -15,11 +15,13 @@ unit on loopback.
 - `imaged`    `:9102`
 - `builderd` `:9105` on single-box installs (the daemon's canonical default)
 
-On a split deployment, compute gateway metrics are discovered through apid's
-loopback HTTP service-discovery endpoint, backed by the active `compute_nodes`
-registry. Adding, draining, or replacing a compute node therefore does not
-require editing the Prometheus target list or restarting Prometheus. The
-public gateway explicitly rejects that internal endpoint.
+On a split deployment, compute gateway, vmmd, imaged, builderd and Promtail
+metrics are discovered through separate apid loopback HTTP service-discovery
+endpoints backed by the active `compute_nodes` registry. The manifest renderer
+binds each compute daemon's metrics listener to that node's private transport
+address. Adding, draining, or replacing a compute node therefore does not
+require editing the Prometheus target list or restarting Prometheus. The public
+gateway explicitly rejects the internal endpoints.
 - `meterd`    `:9106`
 - `prometheus` `:9095` (loopback self-scrape for alerting-path health)
 - `githubd`   `:8083`

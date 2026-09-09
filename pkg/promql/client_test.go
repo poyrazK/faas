@@ -72,6 +72,23 @@ func TestQueryScalarEmptyResult(t *testing.T) {
 	}
 }
 
+func TestQueryScalarRejectsNonFiniteResult(t *testing.T) {
+	for _, value := range []string{"NaN", "+Inf", "-Inf"} {
+		t.Run(value, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"` + value + `"]}]}}`))
+			}))
+			t.Cleanup(srv.Close)
+			c := NewClient(srv.URL, srv.Client())
+			if _, err := c.QueryScalar(context.Background(), "histogram_quantile(...)"); err == nil {
+				t.Fatal("expected error on non-finite result")
+			} else if !strings.Contains(err.Error(), "non-finite") {
+				t.Fatalf("err = %v, want non-finite error", err)
+			}
+		})
+	}
+}
+
 // TestQueryScalarNon200 asserts non-200 → error.
 func TestQueryScalarNon200(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -58,7 +59,9 @@ func (c *Client) BaseURL() string { return c.baseURL }
 // QueryScalar runs query against Prometheus and returns the first
 // scalar. Returns an error on transport failure, non-2xx, parse
 // error, unsupported resultType (only vector and scalar are valid
-// here), or empty result.
+// here), empty result, or a non-finite sample. Prometheus uses NaN
+// for histogram queries with no observations; returning it would
+// poison JSON responses assembled by callers.
 //
 // PromQL has three result shapes; only "scalar" and "vector" can
 // appear for the instant-query API endpoint we call, and they're
@@ -108,17 +111,7 @@ func (c *Client) QueryScalar(ctx context.Context, query string) (float64, error)
 	if len(pr.Data.Result) == 0 {
 		return 0, fmt.Errorf("no data for query %q", query)
 	}
-	raw, ok := pr.Data.Result[0].Value[1].(string)
-	if !ok {
-		return 0, fmt.Errorf("unexpected value shape for query %q", query)
-	}
-	// ParseFloat (not fmt.Sscanf "%f") — locale-safe and consistent
-	// with pkg/fcvm/metrics.go::DefaultLvFcUsedPct.
-	f, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse %q for query %q: %w", raw, query, err)
-	}
-	return f, nil
+	return parseSampleValue(pr.Data.Result[0].Value, query)
 }
 
 // queryResponse is the JSON envelope Prometheus returns for the
@@ -422,6 +415,9 @@ func parseSampleValue(v [2]any, query string) (float64, error) {
 	f, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		return 0, fmt.Errorf("parse %q for query %q: %w", raw, query, err)
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("non-finite value %q for query %q", raw, query)
 	}
 	return f, nil
 }

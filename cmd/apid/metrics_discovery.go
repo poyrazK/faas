@@ -8,6 +8,9 @@ import (
 
 const (
 	computeMetricsDiscoveryPath  = "/v1/internal/metrics/targets"
+	vmmdMetricsDiscoveryPath     = "/v1/internal/metrics/vmmd-targets"
+	imagedMetricsDiscoveryPath   = "/v1/internal/metrics/imaged-targets"
+	builderdMetricsDiscoveryPath = "/v1/internal/metrics/builderd-targets"
 	promtailMetricsDiscoveryPath = "/v1/internal/metrics/promtail-targets"
 	maxMetricsDiscoveryTargets   = 1000
 )
@@ -29,6 +32,18 @@ type prometheusTargetGroup struct {
 // and the apid listener is loopback by default.
 func (s *server) computeMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
 	s.metricsDiscovery(w, r, "gatewayd-internal", computeMetricsTarget)
+}
+
+func (s *server) vmmdMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "vmmd", daemonMetricsTarget("9104"))
+}
+
+func (s *server) imagedMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "imaged", daemonMetricsTarget("9102"))
+}
+
+func (s *server) builderdMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "builderd", daemonMetricsTarget("9105"))
 }
 
 // promtailMetricsDiscovery serves the control-plane Prometheus HTTP-SD
@@ -156,6 +171,23 @@ func promtailMetricsTarget(raw string) (string, bool) {
 		return "", false
 	}
 	return net.JoinHostPort(host, "9080"), true
+}
+
+// daemonMetricsTarget keeps compute daemon discovery tied to the active node
+// registry. The registered gateway endpoint supplies the private host identity;
+// each daemon keeps its canonical metrics port.
+func daemonMetricsTarget(port string) func(string) (string, bool) {
+	return func(raw string) (string, bool) {
+		target, ok := computeMetricsTarget(raw)
+		if !ok {
+			return "", false
+		}
+		host, _, err := net.SplitHostPort(target)
+		if err != nil {
+			return "", false
+		}
+		return net.JoinHostPort(host, port), true
+	}
 }
 
 func isLoopbackRemote(remote string) bool {

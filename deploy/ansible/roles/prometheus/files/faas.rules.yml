@@ -146,11 +146,11 @@ groups:
       - record: faas_compute_metrics_healthy_targets:by_job
         expr: |
           sum by (job) (
-            up{job=~"gatewayd-internal|promtail-compute"}
+            up{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"}
           )
           or on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} * 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} * 0
           )
 
       - record: faas_compute_metrics_scrape_coverage:by_job
@@ -159,22 +159,22 @@ groups:
           /
           on (job)
           clamp_min(
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"},
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"},
             1
           )
 
       - alert: FaasComputeMetricsScrapeCoverageLow
         expr: |
           (
-            faas_compute_metrics_scrape_coverage:by_job{job=~"gatewayd-internal|promtail-compute"} < 1
+            faas_compute_metrics_scrape_coverage:by_job{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} < 1
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} > 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -189,15 +189,15 @@ groups:
       - alert: FaasComputeMetricsScrapeTargetDown
         expr: |
           (
-            up{job=~"gatewayd-internal|promtail-compute"} == 0
+            up{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} == 0
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} > 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -212,11 +212,11 @@ groups:
       - alert: FaasComputeMetricsDiscoveryStale
         expr: |
           (
-            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} == 0
+            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} == 0
           )
           or
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} > 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 120
           )
         for: 5m
         labels:
@@ -231,15 +231,15 @@ groups:
       - alert: FaasComputeMetricsDiscoveryEmpty
         expr: |
           (
-            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|promtail-compute"} > 0
+            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} == 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} == 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -252,7 +252,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
       - alert: FaasComputeMetricsDiscoveryInvalidTargets
-        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|promtail-compute"} > 0
+        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
         for: 10m
         labels:
           severity: warn
@@ -632,15 +632,15 @@ groups:
       # Prometheus retains 15 days.
       #
       # `sum(rate(...[5m])) > 0` guards the denominator so an idle box
-      # (no traffic yet) produces `false < 0.995` rather than `NaN < 0.995`
-      # (which is false too but masks a real breach window if the rate
-      # resets mid-window).
+      # does not alert. Do not clamp a rate denominator to 1: at less than
+      # one request per second that changes the ratio and makes successful
+      # low-volume traffic look unavailable.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasApiAvailabilityLow
         expr: |
           (sum(rate(gateway_requests_total{code=~"2.."}[5m]))
             /
-          clamp_min(sum(rate(gateway_requests_total[5m])), 1))
+          sum(rate(gateway_requests_total[5m])))
             < 0.995
           and sum(rate(gateway_requests_total[5m])) > 0
         for: 10m
@@ -658,7 +658,7 @@ groups:
           (
             (
               sum(rate(gateway_requests_total{code!~"2.."}[1h]))
-              / clamp_min(sum(rate(gateway_requests_total[1h])), 1)
+              / sum(rate(gateway_requests_total[1h]))
             ) > 0.072
             and sum(rate(gateway_requests_total[1h])) > 0
           )
@@ -666,7 +666,7 @@ groups:
           (
             (
               sum(rate(gateway_requests_total{code!~"2.."}[6h]))
-              / clamp_min(sum(rate(gateway_requests_total[6h])), 1)
+              / sum(rate(gateway_requests_total[6h]))
             ) > 0.03
             and sum(rate(gateway_requests_total[6h])) > 0
           )
@@ -684,7 +684,7 @@ groups:
         expr: |
           (sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m]))
             /
-          clamp_min(sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])), 1))
+          sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])))
             < 0.99
           and sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) > 0
         for: 15m
@@ -702,7 +702,7 @@ groups:
           (
             (
               sum(rate(builderd_ops_total{op="build",code!~"ok|cache_hit|user_error"}[1h]))
-              / clamp_min(sum(rate(builderd_ops_total{op="build",code!="user_error"}[1h])), 1)
+              / sum(rate(builderd_ops_total{op="build",code!="user_error"}[1h]))
             ) > 0.144
             and sum(rate(builderd_ops_total{op="build",code!="user_error"}[1h])) > 0
           )
@@ -710,7 +710,7 @@ groups:
           (
             (
               sum(rate(builderd_ops_total{op="build",code!~"ok|cache_hit|user_error"}[6h]))
-              / clamp_min(sum(rate(builderd_ops_total{op="build",code!="user_error"}[6h])), 1)
+              / sum(rate(builderd_ops_total{op="build",code!="user_error"}[6h]))
             ) > 0.06
             and sum(rate(builderd_ops_total{op="build",code!="user_error"}[6h])) > 0
           )
@@ -2278,14 +2278,14 @@ groups:
         expr: |
           sum by (app) (rate(gateway_requests_total{code!~"2.."}[1h]))
             /
-          clamp_min(sum by (app) (rate(gateway_requests_total[1h])), 1)
+          sum by (app) (rate(gateway_requests_total[1h]))
             / 0.005
 
       - record: faas_slo_burn_rate_6h:by_app
         expr: |
           sum by (app) (rate(gateway_requests_total{code!~"2.."}[6h]))
             /
-          clamp_min(sum by (app) (rate(gateway_requests_total[6h])), 1)
+          sum by (app) (rate(gateway_requests_total[6h]))
             / 0.005
 
       - alert: FaasSLOBurnRateHigh
