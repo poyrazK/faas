@@ -451,6 +451,7 @@ func TestForwardingReverseProxy_HappyPath(t *testing.T) {
 	req.Header.Set("x-faas-stream", "true")
 	req.Header.Set("x-faas-instance", "i-test")
 	req.Header.Set("x-faas-protocol", "http2")
+	req.Header.Set("x-faas-client-ip", "203.0.113.42")
 
 	rec := httptest.NewRecorder()
 	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, req)
@@ -466,8 +467,8 @@ func TestForwardingReverseProxy_HappyPath(t *testing.T) {
 	}
 
 	// First Send must be the init frame with Stream=true and the
-	// expected method/uri/headers (x-faas-* stripped, Content-Type
-	// preserved).
+	// expected method/uri/headers (internal x-faas-* stripped,
+	// trusted client IP preserved, Content-Type preserved).
 	if len(stream.Sends) < 1 {
 		t.Fatalf("expected ≥ 1 Send (init), got %d", len(stream.Sends))
 	}
@@ -500,6 +501,16 @@ func TestForwardingReverseProxy_HappyPath(t *testing.T) {
 	}
 	if gotHeaders["Authorization"] != "Bearer tok" {
 		t.Errorf("Authorization = %q, want Bearer tok", gotHeaders["Authorization"])
+	}
+	var clientIP string
+	for name, value := range gotHeaders {
+		if strings.EqualFold(name, "x-faas-client-ip") {
+			clientIP = value
+			break
+		}
+	}
+	if clientIP != "203.0.113.42" {
+		t.Errorf("x-faas-client-ip = %q, want 203.0.113.42", clientIP)
 	}
 
 	// The client body must have been sent as one or more body_chunk

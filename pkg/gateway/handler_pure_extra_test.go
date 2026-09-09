@@ -359,6 +359,41 @@ func TestClientIPFromTrustedXFF_V6Valid(t *testing.T) {
 	}
 }
 
+func TestStampTrustedClientIP(t *testing.T) {
+	t.Run("valid overwrites forged value", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "http://app.example/", nil)
+		r.Header.Set("X-Forwarded-For", " 203.0.113.42 ")
+		r.Header.Set("x-faas-client-ip", "198.51.100.7")
+
+		stampTrustedClientIP(r)
+		if got := r.Header.Get("x-faas-client-ip"); got != "203.0.113.42" {
+			t.Fatalf("x-faas-client-ip = %q, want 203.0.113.42", got)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		xff  []string
+	}{
+		{name: "missing", xff: nil},
+		{name: "multiple", xff: []string{"203.0.113.42", "198.51.100.7"}},
+		{name: "invalid", xff: []string{"not-an-ip"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "http://app.example/", nil)
+			r.Header.Set("x-faas-client-ip", "198.51.100.7")
+			for _, value := range tc.xff {
+				r.Header.Add("X-Forwarded-For", value)
+			}
+
+			stampTrustedClientIP(r)
+			if got := r.Header.Get("x-faas-client-ip"); got != "" {
+				t.Fatalf("x-faas-client-ip = %q, want empty", got)
+			}
+		})
+	}
+}
+
 // --- bearerTokenFromHeader ---------------------------------------
 
 func TestBearerTokenFromHeader(t *testing.T) {
