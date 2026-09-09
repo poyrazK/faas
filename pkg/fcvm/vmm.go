@@ -3257,11 +3257,29 @@ func prepareConfigFIFO(path string, uid, gid int) error {
 	return nil
 }
 
+const configFIFOReaderFallbackTimeout = 30 * time.Second
+
 // writeConfigFIFO releases a Firecracker cold boot after the mount namespace
 // has been repaired. O_NONBLOCK avoids wedging vmmd if jailer exits early.
+// The caller's boot deadline owns the handoff budget: under an admitted burst,
+// CPU and disk contention can delay Firecracker's FIFO open beyond five
+// seconds even though the boot remains healthy. Background callers still get
+// a bounded fallback so a dead jailer cannot wedge vmmd indefinitely.
 func writeConfigFIFO(ctx context.Context, path string, body []byte) error {
-	deadline := time.NewTimer(5 * time.Second)
-	defer deadline.Stop()
+	return writeConfigFIFOWithFallback(ctx, path, body, configFIFOReaderFallbackTimeout)
+}
+
+func writeConfigFIFOWithFallback(ctx context.Context, path string, body []byte, fallback time.Duration) error {
+	if fallback <= 0 {
+		return fmt.Errorf("config reader fallback timeout must be positive")
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, fallback)
+		defer cancel()
+	}
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
 	for {
 		f, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
 		if err == nil {
@@ -3274,10 +3292,8 @@ func writeConfigFIFO(ctx context.Context, path string, body []byte) error {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("config reader did not open FIFO")
-		case <-time.After(10 * time.Millisecond):
+			return fmt.Errorf("config reader did not open FIFO: %w", ctx.Err())
+		case <-poll.C:
 		}
 	}
 }

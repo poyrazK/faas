@@ -48,6 +48,57 @@ func TestConsoleShowsGuestHaltedReadsTail(t *testing.T) {
 	}
 }
 
+func TestWriteConfigFIFOUsesCallerBurstDeadline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firecracker-config.fifo")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	type readResult struct {
+		body []byte
+		err  error
+	}
+	read := make(chan readResult, 1)
+	go func() {
+		// Open after the injected fallback has elapsed. A caller-supplied boot
+		// deadline must continue to govern this admitted burst handoff.
+		time.Sleep(75 * time.Millisecond)
+		f, err := os.Open(path)
+		if err != nil {
+			read <- readResult{err: err}
+			return
+		}
+		defer f.Close()
+		body, err := io.ReadAll(f)
+		read <- readResult{body: body, err: err}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	want := []byte(`{"boot-source":{}}`)
+	if err := writeConfigFIFOWithFallback(ctx, path, want, 20*time.Millisecond); err != nil {
+		t.Fatalf("write config with caller deadline: %v", err)
+	}
+	result := <-read
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if !bytes.Equal(result.body, want) {
+		t.Fatalf("config body = %q, want %q", result.body, want)
+	}
+}
+
+func TestWriteConfigFIFOBoundsBackgroundCaller(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firecracker-config.fifo")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := writeConfigFIFOWithFallback(context.Background(), path, nil, 25*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("write config without reader error = %v, want context deadline exceeded", err)
+	}
+}
+
 func TestDestroyWaitForUsesConfiguredBuilderTimeout(t *testing.T) {
 	v := NewJailerVMM(t.TempDir(), 0)
 	v.destroyWait = time.Second
