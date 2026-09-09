@@ -1,11 +1,11 @@
 // commands_instances.go — operator-side recovery primitives.
 //
 // P2a (force-park) + P2b (force-cold-boot) + P2d (force-restart)
-// wired to the schedd gRPC socket. All subcommands dial
-// `unix:///run/faas/schedd.sock` via the FAAS_SCHEDD_ADDR env
-// (env-wins-over-default pattern from cmd/meterd/main.go:672-678)
-// so the e2e harness can point at a per-test socket without
-// rewriting the unit file.
+// wired to schedd gRPC. All subcommands reuse the target and mTLS
+// paths installed in /etc/faas/meterd.toml; single-box deployments
+// without that file retain the unix:///run/faas/schedd.sock default.
+// FAAS_SCHEDD_ADDR can override only the target for tests and incident
+// response.
 //
 // The three subcommands are intentionally thin wrappers — they
 // call the same gRPC RPCs that pkg/meterd already calls
@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -60,21 +61,63 @@ func cmdInstancesDispatch(args []string) int {
 	}
 }
 
-// openScheddClientFromEnv dials the schedd gRPC server using
-// FAAS_SCHEDD_ADDR (env-wins-over-default, mirrors meterd's
-// scheddAddr resolution at cmd/meterd/main.go:672-678). Returns
-// a *scheddgrpc.Client + a close func that closes the underlying
-// gRPC connection.
-//
-// No TLS config is passed — the schedd socket is a local unix
-// socket and meterd's DialContext nil-tlsCfg call path is
-// already the production precedent (cmd/meterd/main.go:569).
-func openScheddClientFromEnv() (*scheddgrpc.Client, func(), error) {
-	target := os.Getenv("FAAS_SCHEDD_ADDR")
-	if target == "" {
-		target = "unix:///run/faas/schedd.sock"
+const operatorMeterdConfigPath = "/etc/faas/meterd.toml"
+
+// operatorScheddConfig is the subset of meterd.toml gregalectl needs to
+// reach schedd. Reusing the installed meterd client leaf keeps the local,
+// root-only operator path on the same mTLS trust boundary as meterd without
+// duplicating routing configuration in a second file.
+type operatorScheddConfig struct {
+	Target   string `toml:"schedd_socket"`
+	CertPath string `toml:"schedd_tls_cert_path"`
+	KeyPath  string `toml:"schedd_tls_key_path"`
+	CAPath   string `toml:"schedd_tls_ca_path"`
+}
+
+func loadOperatorScheddConfig(path string) (operatorScheddConfig, error) {
+	cfg := operatorScheddConfig{Target: "unix:///run/faas/schedd.sock"}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
+		return operatorScheddConfig{}, fmt.Errorf("read schedd routing config %q: %w", path, err)
 	}
-	cli, err := scheddgrpc.DialContext(context.Background(), target, (*tls.Config)(nil))
+	if _, err := toml.Decode(string(b), &cfg); err != nil {
+		return operatorScheddConfig{}, fmt.Errorf("parse schedd routing config %q: %w", path, err)
+	}
+	if cfg.Target == "" {
+		cfg.Target = "unix:///run/faas/schedd.sock"
+	}
+	return cfg, nil
+}
+
+func resolveOperatorScheddConnection(path string) (string, *tls.Config, error) {
+	cfg, err := loadOperatorScheddConfig(path)
+	if err != nil {
+		return "", nil, err
+	}
+	target := cfg.Target
+	if override := os.Getenv("FAAS_SCHEDD_ADDR"); override != "" {
+		target = override
+	}
+	tlsCfg, err := wire.LoadClientTLSConfigWithPrefix("schedd_", cfg.CertPath, cfg.KeyPath, cfg.CAPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("load schedd TLS: %w", err)
+	}
+	return target, tlsCfg, nil
+}
+
+// openScheddClientFromEnv dials schedd using the routing and mTLS material
+// already installed for meterd. FAAS_SCHEDD_ADDR remains an explicit target
+// override for tests and incident response; the TLS cluster still comes from
+// meterd.toml so overriding a split-box target cannot silently downgrade it.
+func openScheddClientFromEnv() (*scheddgrpc.Client, func(), error) {
+	target, tlsCfg, err := resolveOperatorScheddConnection(operatorMeterdConfigPath)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("gregalectl instances: %w", err)
+	}
+	cli, err := scheddgrpc.DialContext(context.Background(), target, tlsCfg)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("gregalectl instances: dial schedd %s: %w", target, err)
 	}

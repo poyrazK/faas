@@ -401,9 +401,9 @@ var cliCommands = []cliCommand{
 	},
 	{
 		// P2a + P2b of the operator-side observability mega-PR
-		// (Commit 5b). Operator recovery primitives — `force-park`
-		// dials schedd directly via FAAS_SCHEDD_ADDR, `force-cold-
-		// boot` opens a state.Store via FAAS_PG_DSN to resolve
+		// (Commit 5b). Operator recovery primitives reuse the schedd
+		// target and mTLS paths from /etc/faas/meterd.toml; `force-cold-
+		// boot` also opens a state.Store via FAAS_PG_DSN to resolve
 		// the latest deployment before dialing schedd. Both
 		// require --yes as a tripwire (matches the force-drain
 		// --yes ack pattern at compute-nodes force-drain).

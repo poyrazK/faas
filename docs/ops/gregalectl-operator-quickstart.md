@@ -196,6 +196,24 @@ separate private HTTP data-plane endpoint; the manifest/Ansible pipeline
 derives it from the node hostname, so normal node joins do not require a
 second hand-written address.
 
+### Instance recovery
+
+```
+sudo gregalectl instances force-park \
+    --instance-id <uuid> --reason wedged_guest --yes
+sudo gregalectl instances force-cold-boot \
+    --app-slug <slug> --reason snapshot_validation --yes
+sudo gregalectl instances force-restart \
+    --instance-id <uuid> --reason failed_healthcheck --yes
+```
+
+These commands dial schedd directly. They reuse `schedd_socket` and the
+`schedd_tls_*` client paths from `/etc/faas/meterd.toml`, which makes the same
+commands work on single-box Unix-socket installs and split-box mTLS installs.
+`FAAS_SCHEDD_ADDR` overrides the target for incident response while retaining
+the configured TLS trust material. Run the commands as root so the CLI can
+read the sealed database configuration and the meterd client key.
+
 ### Fleet topology coordinator
 
 ```
