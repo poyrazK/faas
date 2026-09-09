@@ -33,6 +33,49 @@ Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
    require a restart; the enable flag does not.
 5. Run the qualification checks below before admitting customers.
 
+### Deploy the branded gateway
+
+The production Ansible path keeps this optional until a backend is qualified.
+Set the following inventory values on the control-plane host:
+
+```yaml
+faas_object_storage_gateway_managed: true
+faas_object_storage_gateway_enabled: true
+faas_object_storage_config_src: /operator/config/object-storage.json
+# S3/R2/OVH only; GCS with attached ADC does not need this file.
+faas_object_storage_provider_env_src: /operator/secrets/object-storage.env
+```
+
+The `s3_gateway_service` role installs the hardened systemd unit, bounded spool
+directory, provider registry, optional root-only provider environment file,
+the matching apid drop-in, and an isolated Caddy site for `s3.gregale.dev`.
+It validates that the public endpoint and signing region remain
+`https://s3.gregale.dev` and `us-east-1`, starts the daemon, and requires its
+database-aware readiness endpoint on `127.0.0.1:9096` to pass. Prometheus
+scrapes `/metrics` only when this role is enabled. Normal releases restart and
+health-gate an enabled gateway after switching `/opt/faas/current`.
+
+Before running the role, create a **DNS-only** Cloudflare A/AAAA record for
+`s3.gregale.dev` pointing at the public Caddy edge. Do not enable the orange-
+cloud proxy for this hostname: Cloudflare request-size and duration ceilings
+must not become undocumented Gregale storage limits.
+
+The daemon being healthy does not enable customer storage. Keep the global
+`s3_enabled` runtime configuration false until provider qualification passes,
+then enable it and run the cleanup-safe branded smoke:
+
+```sh
+FAAS_TOKEN=... \
+GREGALE_APP_SLUG=storage-smoke \
+make object-storage-gateway-smoke
+```
+
+The smoke creates a uniquely named bucket and credential, exercises HEAD,
+PUT, GET, LIST and DELETE through `s3.gregale.dev`, verifies revocation, then
+deletes the credential and bucket. Its exit trap repeats cleanup after a
+failure and prints the exact bucket name if provider cleanup still needs
+operator attention.
+
 ### Run the live provider qualification
 
 The repository includes an opt-in qualification test that exercises the

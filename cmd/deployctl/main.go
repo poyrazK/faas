@@ -1,6 +1,6 @@
 // Command deployctl drives the systemd unit + daemons.json generator
 // that powers DEPLOY-2 (issue #649). One Go source of truth —
-// pkg/daemonunitspec — emits the 8 production daemon unit files into
+// pkg/daemonunitspec — emits the production daemon unit files into
 // every deploy tree + the control-plane-only faas-cp.slice + the
 // cd-controlplane workflow's daemons.json inventory.
 //
@@ -111,7 +111,7 @@ type target struct {
 
 // sliceIndex is the slot of the tree that also ships faas-cp.slice
 // (the control_plane_service ansible role). The slice is the
-// control-plane wrapper, not a Registry member, so it is emitted by
+// control-plane wrapper, not a registry member, so it is emitted by
 // name rather than by daemon iteration.
 const sliceIndex = 1
 
@@ -135,6 +135,7 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/gatewayd_internal_service/files", skip: only("gatewayd-internal")},
 	{dir: "deploy/ansible/roles/gatewayd_public_service/files", skip: only("gatewayd-public")},
 	{dir: "deploy/ansible/roles/builderd_service/files", skip: only("builderd")},
+	{dir: "deploy/ansible/roles/s3_gateway_service/files", skip: only("s3-gatewayd")},
 }
 
 // ansibleRoleSkips: the control_plane_service role ships apid, meterd
@@ -148,16 +149,18 @@ func ansibleRoleSkips() map[string]bool {
 		"imaged":            true,
 		"gatewayd-public":   true,
 		"gatewayd-internal": true,
+		"s3-gatewayd":       true,
 	}
 }
 
-// only returns the skip-set for a single-daemon role: every Registry
-// daemon except `name` is skipped. Deriving it from the Registry means
+// only returns the skip-set for a single-daemon role: every generated
+// daemon except `name` is skipped. Deriving it from UnitEntries means
 // a new daemon is automatically excluded from every single-daemon role
 // instead of silently appearing in all of them.
 func only(name string) map[string]bool {
-	skip := make(map[string]bool, len(daemonunitspec.Registry))
-	for _, entry := range daemonunitspec.Registry {
+	entries := daemonunitspec.UnitEntries()
+	skip := make(map[string]bool, len(entries))
+	for _, entry := range entries {
 		if entry.Name != name {
 			skip[entry.Name] = true
 		}
@@ -169,8 +172,9 @@ func only(name string) map[string]bool {
 // ship githubd or meterd (those only exist on the control plane).
 func legacySkips() map[string]bool {
 	return map[string]bool{
-		"githubd": true,
-		"meterd":  true,
+		"githubd":     true,
+		"meterd":      true,
+		"s3-gatewayd": true,
 	}
 }
 
@@ -325,7 +329,7 @@ func generateTo(ts []target, dirs []string, daemonsPath string) error {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d, err)
 		}
-		for _, entry := range daemonunitspec.Registry {
+		for _, entry := range daemonunitspec.UnitEntries() {
 			if t.skip[entry.Name] {
 				continue
 			}

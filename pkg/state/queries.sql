@@ -1553,11 +1553,11 @@ delete from oidc_exchanged_tokens where id = $1;
 --
 -- PR-B (ADR-127 §PR-B): the publisher collapse in
 -- pkg/gateway/request_telemetry_publisher.go coalesces requests with
--- the same (app, deployment, route, method, status, minute_bucket) into
--- one row with `count` = the number of originals. count is INT NOT NULL
--- DEFAULT 1 (00440) so pre-PR-B clients keep working — the DEFAULT
--- fires for any INSERT that omits the column. PR-B's publisher always
--- passes it explicitly.
+-- the same (app, deployment, route, method, status, dimensions,
+-- minute_bucket, latency_bucket) into one row with `count` = the number
+-- of originals. count is INT NOT NULL DEFAULT 1 (00440) so pre-PR-B
+-- clients keep working — the DEFAULT fires for any INSERT that omits
+-- the column. PR-B's publisher always passes it explicitly.
 INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
@@ -1617,11 +1617,12 @@ LIMIT $5;
 -- cron + PR Debugger UX v1 compare handler). Single index scan
 -- over the existing request_telemetry_app_dep_received_idx
 -- (PR-A migration 00427) so the four aggregates share one
--- window. The recorder collapses burst traffic into rows with a
--- `count` weight; expand that weight mathematically instead of
--- treating each aggregate row as one request. The rank/floor
--- formulation below is equivalent to percentile_cont over the
--- expanded multiset, without materializing one row per request.
+-- window. The recorder collapses burst traffic into bounded
+-- latency-bucket rows with a `count` weight; expand that weight
+-- mathematically instead of treating each aggregate row as one
+-- request. The rank/floor formulation below is equivalent to
+-- percentile_cont over the expanded multiset of bucket
+-- representatives, without materializing one row per request.
 WITH weighted AS (
     SELECT route,
            latency_ms,
@@ -1690,9 +1691,11 @@ FROM values_at_rank;
 
 -- name: RequestTelemetryAnalyticsSummary :one
 -- Customer-facing request analytics over a bounded retention window.
--- The recorder collapses identical requests into rows with `count`, so
--- all request/error/cold-boot totals and percentiles must expand that
--- weight rather than treating each stored row as one request.
+-- The recorder collapses identical requests into bounded latency-bucket
+-- rows with `count`, so all request/error/cold-boot totals and percentiles
+-- must expand that weight rather than treating each stored row as one
+-- request. Latency representatives are conservative within the bucket
+-- width documented by requestTelemetryLatencyBucketUpperBound.
 WITH filtered AS (
     SELECT latency_ms, cold_boot, status, count::bigint AS request_count
     FROM request_telemetry

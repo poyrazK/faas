@@ -1,5 +1,6 @@
 // request_telemetry_test.go — table-driven tests for the recorder +
 // publisher (ADR-127).
+// adr: 127
 //
 // Covers:
 //   - RecordFromObserve kill-switch pass-through when Enabled=false
@@ -495,17 +496,20 @@ func TestCollapseRequestTelemetry_AggregatesAndPreservesCounts(t *testing.T) {
 	third.Count = 2
 	rows := []RequestTelemetryRow{first, second, third}
 	got := collapseRequestTelemetry(rows)
-	if len(got) != 2 {
-		t.Fatalf("expected two minute buckets, got %d", len(got))
+	if len(got) != 3 {
+		t.Fatalf("expected two minute buckets and two latency buckets in the first, got %d", len(got))
 	}
-	if got[0].Count != 8 {
-		t.Errorf("aggregated Count = %d, want 8", got[0].Count)
+	firstMinuteCount := 0
+	for _, row := range got {
+		if row.ReceivedAt.Equal(base.ReceivedAt.Truncate(time.Minute)) {
+			firstMinuteCount += row.Count
+		}
 	}
-	if got[0].LatencyMS != 80 {
-		t.Errorf("aggregated LatencyMS = %d, want max 80", got[0].LatencyMS)
+	if firstMinuteCount != 8 {
+		t.Errorf("first minute represented Count = %d, want 8", firstMinuteCount)
 	}
-	if got[1].Count != 2 {
-		t.Errorf("second bucket Count = %d, want 2", got[1].Count)
+	if got[2].Count != 2 {
+		t.Errorf("second minute Count = %d, want 2", got[2].Count)
 	}
 }
 

@@ -1,0 +1,9 @@
+# ADR-168 · Container node-local service proxy
+
+- **Status:** accepted
+- **Date:** 2026-09-08
+- **Decision:** Add a trusted node-local HTTP service proxy at `/v1/internal/services/<slug>[/<path>]`. The proxy resolves the service slug through the shared app store, authorizes the caller and target app to the same account, leases the live replica snapshot from ADR-167 for five seconds, and forwards through the existing per-node vmmd transport. A stale target is quarantined for the lease and one alternate endpoint is tried for bodyless idempotent requests.
+- **Why:** The cross-VM endpoint registry made replica discovery available, but workloads still had no reusable routing contract. Building on the gateway's existing vmmd bridge avoids a second transport and keeps node IDs opaque while the guest-facing identity boundary is completed.
+- **Security boundary:** The first mount is on the loopback control listener. Requests require the platform-owned caller-app header; the proxy strips it before forwarding and performs an account ownership check. A guest-facing listener must additionally bind that header to the instance observed from the guest network and install an explicit netns firewall admission rule.
+- **Consequences:** In-box components can call another same-account service by slug across compute nodes with bounded stale-cache behavior and safe retry semantics. Unknown services return 404, unavailable registry or transport returns 503, and cross-account callers return 403. Guest DNS/resolution, remote-IP caller binding, and public multi-port routing remain separate follow-ups.
+- **Rejected alternatives:** Direct guest dialing of compute-node addresses would expose transport identities and bypass the vmmd boundary. A second service registry would drift from gateway wake/eviction state. Retrying requests with bodies could duplicate side effects, so retries are limited to bodyless idempotent methods.

@@ -16,10 +16,17 @@ func TestCatalogProfiles(t *testing.T) {
 		t.Fatalf("fixture count = %d, want at least 15", len(catalog.Fixtures))
 	}
 	tags := map[string]bool{}
+	quickRuntime := 0
 	for _, fixture := range catalog.Fixtures {
 		fixture := fixture
+		hasRuntime, hasQuick := false, false
 		for _, tag := range fixture.Tags {
 			tags[tag] = true
+			hasRuntime = hasRuntime || tag == "runtime"
+			hasQuick = hasQuick || tag == "quick"
+		}
+		if hasRuntime && hasQuick {
+			quickRuntime++
 		}
 		t.Run(fixture.ID, func(t *testing.T) {
 			files := make(fstest.MapFS, len(fixture.Files))
@@ -40,5 +47,8 @@ func TestCatalogProfiles(t *testing.T) {
 		if !tags[tag] {
 			t.Errorf("catalog has no %q fixture", tag)
 		}
+	}
+	if quickRuntime < 3 {
+		t.Fatalf("catalog has %d quick runtime fixtures, want at least 3", quickRuntime)
 	}
 }

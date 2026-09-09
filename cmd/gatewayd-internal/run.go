@@ -2400,6 +2400,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		logsHandler = logsMux
 	}
 
+	// Issue #1398 O4: customer runtime log drains consume the same
+	// per-app schedd stream as the live logs endpoint, independently of
+	// whether a customer currently has an SSE viewer open. The manager
+	// reconciles enabled rows so create/update/delete changes take effect
+	// without a gateway restart; delivery remains bounded and non-blocking.
+	if deps.pgStore != nil && deps.scheddRouter != nil {
+		unseal, unsealErr := newAppLogDrainUnsealer(deps.hostKeyDir)
+		if unsealErr != nil {
+			log.Warn("gatewayd-internal: customer log drains disabled until gateway restart", "err", unsealErr)
+		}
+		manager := newAppLogDrainManager(
+			deps.pgStore,
+			appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
+			unseal,
+			deps.metrics,
+			log,
+		)
+		go manager.Run(ctx)
+	}
+
 	// Tier A9 / ADR-084: standby write-redirect gate. The gate
 	// sits in front of every apid-bound mutating request; on a
 	// two-node fleet, standby writes are either relayed to the
@@ -2704,6 +2724,51 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			internalRoutesHandler(handler, resolve, log).ServeHTTP(w, r)
 		})
+	}
+	// ADR-168: expose the node-local service proxy on the trusted control
+	// listener. This is the first data-plane consumer of ADR-167's endpoint
+	// registry: it resolves a service slug, checks that the caller and target
+	// belong to the same account, and forwards through the existing per-node
+	// vmmd bridge. The listener remains loopback-only; binding the same
+	// contract for guests requires remote-IP instance identity and netns
+	// firewall admission, which is the next networking slice.
+	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
+		pgStore := deps.pgStore
+		serviceProxy := gateway.NewServiceProxy(gateway.ServiceProxyConfig{
+			Provider: serviceEndpointProvider,
+			Resolve: func(ctx context.Context, service string) (string, bool, error) {
+				app, err := pgStore.AppBySlug(ctx, service)
+				if errors.Is(err, state.ErrNotFound) {
+					return "", false, nil
+				}
+				if err != nil {
+					return "", false, fmt.Errorf("resolve service %q: %w", service, err)
+				}
+				return app.ID, app.ID != "", nil
+			},
+			Authorize: func(ctx context.Context, callerAppID, targetAppID string) error {
+				caller, err := pgStore.AppByID(ctx, callerAppID)
+				if errors.Is(err, state.ErrNotFound) {
+					return gateway.ErrServiceProxyDenied
+				}
+				if err != nil {
+					return fmt.Errorf("load caller app: %w", err)
+				}
+				target, err := pgStore.AppByID(ctx, targetAppID)
+				if errors.Is(err, state.ErrNotFound) {
+					return gateway.ErrServiceProxyDenied
+				}
+				if err != nil {
+					return fmt.Errorf("load target app: %w", err)
+				}
+				if caller.AccountID == "" || caller.AccountID != target.AccountID {
+					return gateway.ErrServiceProxyDenied
+				}
+				return nil
+			},
+			Forward: deps.nodeCache.Forwarding(),
+		})
+		controlMux.Handle("/v1/internal/services/", serviceProxy)
 	}
 
 	// Track every *http.Server we spin up so the shutdown path can drain

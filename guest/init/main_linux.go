@@ -100,6 +100,12 @@ func boot() error {
 		diskCtx, diskCancel := context.WithCancel(context.Background())
 		defer diskCancel()
 		startDiskTelemetry(diskCtx)
+		// Workload identity is served through a loopback-only metadata
+		// endpoint. The proxy soft-fails on kernels without AF_VSOCK so
+		// existing deployments retain their current boot contract.
+		if err := startWorkloadIdentityProxy(slog.Default()); err != nil {
+			slog.Default().Warn("workload identity proxy unavailable", "err", err)
+		}
 	}
 	// Job VMs (issue #1184 Workstream A / ADR-099) are
 	// single-shot: load /etc/faas/job.json, exec the customer's
@@ -358,6 +364,7 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	// keeping the live edit here means the precedence assertion
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
+	env = StampWorkloadIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env. The
 	// W3C trace context was shipped from the host via the vsock

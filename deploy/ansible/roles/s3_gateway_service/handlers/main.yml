@@ -1,0 +1,22 @@
+---
+- name: s3_gateway_service — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-s3-gatewayd
+
+- name: s3_gateway_service — try-restart faas-s3-gatewayd
+  ansible.builtin.command: systemctl try-restart faas-s3-gatewayd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-s3-gatewayd
+  when: faas_object_storage_gateway_enabled | bool
+
+- name: s3_gateway_service — try-restart faas-apid
+  ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-apid for object storage
+
+- name: s3_gateway_service — reload Caddy
+  ansible.builtin.systemd_service:
+    name: caddy.service
+    state: reloaded
+  listen: reload Caddy for object storage

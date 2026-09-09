@@ -32,7 +32,7 @@ CREATE TABLE public.request_telemetry (
     route           TEXT NOT NULL,
     method          TEXT NOT NULL,
     status          INT  NOT NULL CHECK (status BETWEEN 100 AND 599),
-    latency_ms      INT  NOT NULL CHECK (latency_ms >= 0),
+    latency_ms      INT  NOT NULL CHECK (latency_ms >= 0), -- bounded bucket upper bound for collapsed rows
     cold_boot       BOOLEAN NOT NULL DEFAULT false,
     trace_id        TEXT,                              -- W3C trace-id hex (32 chars)
     spans_summary   JSONB,                             -- ADR-127 §3 customer OTel ingest
@@ -56,7 +56,7 @@ Replay-safe posture (`IF NOT EXISTS` / `IF EXISTS` everywhere, `TestNewMigration
 
 New middleware `pkg/gateway/request_telemetry.go` mirroring `cmd/gatewayd-internal/app_errors_recorder.go` shape:
 
-- `requestTelemetryRecorder` holds an in-process ring buffer (`ringBufferSize=4096`) + LRU dedupe by `(app_id, deployment_id, route, status)` at minute granularity (collapses bursty identical rows to a counted representative).
+- `requestTelemetryRecorder` holds an in-process ring buffer (`ringBufferSize=4096`). The publisher collapses by `(app_id, deployment_id, route, method, status, dimensions, minute, bounded latency bucket)` into counted representatives so percentile queries retain distribution signal without persisting one row per request.
 - `Middleware(next)` returns `http.Handler`. Reads `r.Context()` keys already populated by gateway middleware (`gregale.account_id`, `gregale.app_id`, `gregale.deployment_id`, `gregale.route_template`) — same keys `app_errors_recorder.go:475-478` uses.
 - **Hot path wired at `Handler.observe`** (`pkg/gateway/handler.go:5456-5524`) — extend `observe` to enqueue a row before returning. Status + elapsed + app + deployment + route + cold are all already resolved at that site.
 
@@ -169,7 +169,7 @@ Issue #517 closed the wake timeline. Issue #477 closed consumer_keys. The mirror
 - **Positive**: the example insight is fully derivable end-to-end. Operators stop correlating disjoint signals by hand. Hobby-tier SLA investigations become one query. Cloud-Run parity for request traces + regressions.
 - **Positive**: supersedes the `gateway_request_duration_seconds{app}` blind spot for any future per-deployment histogram (`gateway_wake_latency_seconds`, queue depth, etc.) — the `deploymentLabelSet` pattern is reusable.
 - **Negative**: per-request write amplification. At 1k RPS sustained, ~86M rows/day before partitioning; monthly partitions keep index size bounded, but Postgres IOPS grows. Mitigated by the per-account rate cap (`DebugTelemetryRequestsPerMinute`).
-- **Negative**: cardinality on the latency histogram. Mitigated by `deploymentLabelSet` cap. Scale plan can hit the cap; overflow collapses to `__other__`, surfaces in a panel.
+- **Negative**: latency percentiles are quantized to bounded bucket representatives (10ms through 1s, widening for slow outliers). This introduces a conservative error bounded by the selected bucket width, but avoids the materially worse per-minute-maximum bias of the original collapse.
 - **Negative**: customer OTel ingest opens a new auth surface (`/v1/otel/v1/traces`). Mitigated by `api_keys` validation via loopback RPC; per-account rate limit; span count cap.
 - **Compatibility**: additive — no existing endpoint, table, or wire field changes. The recorder hot path is one extra call at `Handler.observe`; the histogram label set widens (Prometheus rollups for `{app, class}` continue to work as `deployment="*"` aggregates).
 - **Migration**: one new table (`00427_request_telemetry.sql`), replay-safe. Slot 387 confirmed unowned (only PR #1024 and PR #1049 hold reservations at that slot; reservations carve-out per `scripts/ci/check_migration_slots.sh`).

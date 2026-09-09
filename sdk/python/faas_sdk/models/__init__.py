@@ -53,6 +53,9 @@ from .app_error_sample_response_headers_sample import AppErrorSampleResponseHead
 from .app_error_summary_item import AppErrorSummaryItem
 from .app_error_summary_item_error_class import AppErrorSummaryItemErrorClass
 from .app_errors_summary_response import AppErrorsSummaryResponse
+from .app_log_drain_response import AppLogDrainResponse
+from .app_log_drain_response_auth_header_masked import AppLogDrainResponseAuthHeaderMasked
+from .app_log_drain_response_kind import AppLogDrainResponseKind
 from .app_manifest import AppManifest
 from .app_manifest_crawler_policy import AppManifestCrawlerPolicy
 from .app_manifest_env import AppManifestEnv
@@ -169,6 +172,8 @@ from .create_alert_rule_request_comparison import CreateAlertRuleRequestComparis
 from .create_alert_rule_request_failure_source import CreateAlertRuleRequestFailureSource
 from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
+from .create_app_log_drain_request import CreateAppLogDrainRequest
+from .create_app_log_drain_request_kind import CreateAppLogDrainRequestKind
 from .create_app_request import CreateAppRequest
 from .create_app_request_app_protocol import CreateAppRequestAppProtocol
 from .create_app_request_cpu_millicores import CreateAppRequestCpuMillicores
@@ -755,6 +760,8 @@ from .update_alert_rule_request_action import UpdateAlertRuleRequestAction
 from .update_alert_rule_request_comparison import UpdateAlertRuleRequestComparison
 from .update_alert_rule_request_metric import UpdateAlertRuleRequestMetric
 from .update_alert_rule_request_window_spec import UpdateAlertRuleRequestWindowSpec
+from .update_app_log_drain_request import UpdateAppLogDrainRequest
+from .update_app_log_drain_request_kind import UpdateAppLogDrainRequestKind
 from .update_app_request import UpdateAppRequest
 from .update_app_request_app_protocol import UpdateAppRequestAppProtocol
 from .update_app_request_cpu_millicores_type_1 import UpdateAppRequestCpuMillicoresType1
@@ -893,6 +900,9 @@ __all__ = (
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
     "AppliedBuild",
+    "AppLogDrainResponse",
+    "AppLogDrainResponseAuthHeaderMasked",
+    "AppLogDrainResponseKind",
     "ApplyResponse",
     "ApplyResponseAppsItem",
     "AppManifest",
@@ -1008,6 +1018,8 @@ __all__ = (
     "CreateAlertRuleRequestFailureSource",
     "CreateAlertRuleRequestMetric",
     "CreateAlertRuleRequestWindowSpec",
+    "CreateAppLogDrainRequest",
+    "CreateAppLogDrainRequestKind",
     "CreateAppRequest",
     "CreateAppRequestAppProtocol",
     "CreateAppRequestCpuMillicores",
@@ -1582,6 +1594,8 @@ __all__ = (
     "UpdateAlertRuleRequestComparison",
     "UpdateAlertRuleRequestMetric",
     "UpdateAlertRuleRequestWindowSpec",
+    "UpdateAppLogDrainRequest",
+    "UpdateAppLogDrainRequestKind",
     "UpdateAppRequest",
     "UpdateAppRequestAppProtocol",
     "UpdateAppRequestCpuMillicoresType1",
