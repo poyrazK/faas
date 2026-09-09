@@ -641,6 +641,10 @@ type AppResponse struct {
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
 	Status       string `json:"status"`
+	// BuildCacheHitRatePct is the trailing 30-day share of cache-eligible
+	// deployments served from the builder cache. It is zero when no build has
+	// reached a cache decision in the window.
+	BuildCacheHitRatePct float64 `json:"build_cache_hit_rate_pct"`
 	// DeletedAt and DeleteGraceUntil are populated for a soft-deleted
 	// app so clients can show the restore deadline. They are omitted
 	// for live apps.
@@ -1570,6 +1574,11 @@ type BuildResponse struct {
 	StartedAt       string `json:"started_at,omitempty"`
 	FinishedAt      string `json:"finished_at,omitempty"`
 	DurationSeconds int    `json:"duration_seconds,omitempty"`
+	// CacheStatus and CacheKeySHA256 are populated once builderd makes a
+	// cache decision. The status is hit|miss|invalidated; the key is the
+	// digest of the versioned BuildCacheRecipe.
+	CacheStatus    string `json:"cache_status,omitempty"`
+	CacheKeySHA256 string `json:"cache_key_sha256,omitempty"`
 }
 
 // BuildListResponse is the page shape for GET /v1/builds
@@ -1649,14 +1658,19 @@ type ListDeploymentAuditResponse struct {
 
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
-	StageState  json.RawMessage `json:"stage_state,omitempty"`
-	ID          string          `json:"id"`
-	AppID       string          `json:"app_id"`
-	BuildID     string          `json:"build_id,omitempty"`
-	ImageDigest string          `json:"image_digest"`
-	Kind        string          `json:"kind"`
-	Status      string          `json:"status"`
-	Error       string          `json:"error,omitempty"`
+	StageState json.RawMessage `json:"stage_state,omitempty"`
+	ID         string          `json:"id"`
+	AppID      string          `json:"app_id"`
+	BuildID    string          `json:"build_id,omitempty"`
+	// BuildCacheStatus and CacheKeySHA256 mirror the associated build's
+	// durable cache decision. They are populated on deployment detail reads
+	// after builderd reaches the cache lookup.
+	BuildCacheStatus string `json:"build_cache_status,omitempty"`
+	CacheKeySHA256   string `json:"cache_key_sha256,omitempty"`
+	ImageDigest      string `json:"image_digest"`
+	Kind             string `json:"kind"`
+	Status           string `json:"status"`
+	Error            string `json:"error,omitempty"`
 	// ErrorCode carries the RFC 7807 code ADR-021 lifted from the
 	// puller-side sentinels (image_not_found / image_egress_denied /
 	// image_manifest_invalid). Empty for every deployment created

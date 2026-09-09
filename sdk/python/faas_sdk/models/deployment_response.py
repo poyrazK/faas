@@ -90,6 +90,10 @@ class DeploymentResponse:
     """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
     rebuilt."""
     build_id: None | str | Unset = UNSET
+    build_cache_status: str | Unset = UNSET
+    """Builder cache outcome for the deployment's build: hit, miss, or invalidated."""
+    cache_key_sha256: str | Unset = UNSET
+    """SHA-256 digest of the content-addressed builder cache recipe."""
     error: None | str | Unset = UNSET
     error_code: None | str | Unset = UNSET
     error_hint: None | str | Unset = UNSET
@@ -293,6 +297,10 @@ class DeploymentResponse:
             build_id = UNSET
         else:
             build_id = self.build_id
+
+        build_cache_status = self.build_cache_status
+
+        cache_key_sha256 = self.cache_key_sha256
 
         error: None | str | Unset
         if isinstance(self.error, Unset):
@@ -591,6 +599,10 @@ class DeploymentResponse:
             field_dict["stage_state"] = stage_state
         if build_id is not UNSET:
             field_dict["build_id"] = build_id
+        if build_cache_status is not UNSET:
+            field_dict["build_cache_status"] = build_cache_status
+        if cache_key_sha256 is not UNSET:
+            field_dict["cache_key_sha256"] = cache_key_sha256
         if error is not UNSET:
             field_dict["error"] = error
         if error_code is not UNSET:
@@ -734,6 +746,10 @@ class DeploymentResponse:
             return cast(None | str | Unset, data)
 
         build_id = _parse_build_id(d.pop("build_id", UNSET))
+
+        build_cache_status = d.pop("build_cache_status", UNSET)
+
+        cache_key_sha256 = d.pop("cache_key_sha256", UNSET)
 
         def _parse_error(data: object) -> None | str | Unset:
             if data is None:
@@ -1308,6 +1324,8 @@ class DeploymentResponse:
             created_at=created_at,
             stage_state=stage_state,
             build_id=build_id,
+            build_cache_status=build_cache_status,
+            cache_key_sha256=cache_key_sha256,
             error=error,
             error_code=error_code,
             error_hint=error_hint,

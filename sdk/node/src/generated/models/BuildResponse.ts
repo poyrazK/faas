@@ -43,5 +43,13 @@ export type BuildResponse = {
    * Server-computed FinishedAt − StartedAt in whole seconds. Absent until the build reaches a terminal state.
    */
   duration_seconds?: number;
+  /**
+   * Builderd cache decision for this build.
+   */
+  cache_status?: 'hit' | 'miss' | 'invalidated';
+  /**
+   * SHA-256 digest of the versioned BuildCacheRecipe.
+   */
+  cache_key_sha256?: string;
 };
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -29,6 +30,12 @@ type BuildCacheRecipe struct {
 	BuilderBaseIdentity string    `json:"builder_base_identity"`
 	TargetPlatform      string    `json:"target_platform"`
 }
+
+const (
+	cacheOutcomeHit         = "hit"
+	cacheOutcomeMiss        = "miss"
+	cacheOutcomeInvalidated = "invalidated"
+)
 
 func (r BuildCacheRecipe) key() (string, error) {
 	r.BuilderBaseIdentity = strings.TrimSpace(r.BuilderBaseIdentity)
@@ -57,6 +64,22 @@ func (r BuildCacheRecipe) key() (string, error) {
 	return fmt.Sprintf("recipe-v%d-%s", buildCacheRecipeVersion, hex.EncodeToString(sum[:])), nil
 }
 
+// KeySHA256 returns the digest portion of the versioned cache key. The public
+// cache path keeps its recipe-vN prefix for on-disk compatibility, while API
+// consumers receive the stable 64-character digest only.
+func (r BuildCacheRecipe) KeySHA256() (string, error) {
+	key, err := r.key()
+	if err != nil {
+		return "", err
+	}
+	const separator = "-"
+	idx := strings.LastIndex(key, separator)
+	if idx < 0 || idx == len(key)-1 {
+		return "", errors.New("cache: malformed build recipe key")
+	}
+	return key[idx+len(separator):], nil
+}
+
 // LookupBuild misses on invalid input or any legacy entry. Falling back to an
 // archive-only key could return an artifact produced for a different member.
 func (c *Cache) LookupBuild(recipe BuildCacheRecipe) (CacheEntry, bool) {
@@ -74,6 +97,30 @@ func (c *Cache) LookupBuild(recipe BuildCacheRecipe) (CacheEntry, bool) {
 		c.touchEntry(entry.Path)
 	}
 	return entry, ok
+}
+
+// ClassifyBuild reports why a recipe lookup will not be a hit. A present
+// artifact that fails the integrity sidecars is an invalidation; an absent
+// artifact is an ordinary miss. The classification is advisory and the
+// subsequent LeaseBuild call remains the authority for serving the artifact.
+func (c *Cache) ClassifyBuild(recipe BuildCacheRecipe) string {
+	if c == nil || c.root == "" {
+		return cacheOutcomeMiss
+	}
+	key, err := recipe.key()
+	if err != nil {
+		return cacheOutcomeMiss
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	path := c.entryPath(key, recipe.Framework, recipe.Plan)
+	if _, err := os.Stat(path); err != nil {
+		return cacheOutcomeMiss
+	}
+	if _, ok := c.lookupKey(key, recipe.Framework, recipe.Plan); ok {
+		return cacheOutcomeHit
+	}
+	return cacheOutcomeInvalidated
 }
 
 // StoreBuild publishes under the same normalized recipe used by LookupBuild.

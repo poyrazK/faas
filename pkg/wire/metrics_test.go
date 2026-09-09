@@ -131,6 +131,28 @@ func TestOpsMetrics_ObserveBuild(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_BuildCacheOutcomeClosedSet(t *testing.T) {
+	m := wire.NewOpsMetrics("builderd")
+	m.ObserveBuildCacheOutcome("hit")
+	m.ObserveBuildCacheOutcome("miss")
+	m.ObserveBuildCacheOutcome("invalidated")
+	m.ObserveBuildCacheOutcome("customer-controlled-label")
+
+	body := render(t, m)
+	for _, want := range []string{
+		`builderd_build_cache_outcome_total{outcome="hit"} 1`,
+		`builderd_build_cache_outcome_total{outcome="miss"} 1`,
+		`builderd_build_cache_outcome_total{outcome="invalidated"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing cache outcome line %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "customer-controlled-label") {
+		t.Fatal("invalid cache outcome minted a Prometheus label")
+	}
+}
+
 func TestOpsMetrics_ObserveBuildNilSafe(t *testing.T) {
 	// builderd unit tests construct the orchestrator without metrics; the
 	// observers must be no-ops on a nil receiver rather than panicking.
@@ -138,6 +160,7 @@ func TestOpsMetrics_ObserveBuildNilSafe(t *testing.T) {
 	m.ObserveBuildCount("ok")
 	m.ObserveBuildDuration("ok", time.Second)
 	m.ObserveBuildQueueWait(time.Second)
+	m.ObserveBuildCacheOutcome("hit")
 }
 
 func TestOpsMetrics_ObserveImagedOCIPull(t *testing.T) {

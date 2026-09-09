@@ -7946,7 +7946,8 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 		 values ($1, $2, $3, 'queued', $4)
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''), started_at, finished_at, enqueued_at,
-		           cancelled_at, cancelled_by_deployment_cascade`,
+		           cancelled_at, cancelled_by_deployment_cascade,
+		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`,
 		deploymentID, string(kind), sourceBytes, nullString(logPath))
 	return scanBuild(row)
 }
@@ -7968,7 +7969,7 @@ func (s *PgStore) CreateBuildWithID(ctx context.Context, id, deploymentID string
 	}
 	build, err := scanBuild(tx.QueryRow(ctx, `insert into builds(id,deployment_id,kind,source_bytes,status,log_path)
 	values($1,$2,$3,$4,'queued',$5)
-	returning id,deployment_id,kind,source_bytes,status,coalesce(failure_class,''),coalesce(log_path,''),started_at,finished_at,enqueued_at,cancelled_at,cancelled_by_deployment_cascade`, id, deploymentID, kind, sourceBytes, nullString(logPath)))
+	returning id,deployment_id,kind,source_bytes,status,coalesce(failure_class,''),coalesce(log_path,''),started_at,finished_at,enqueued_at,cancelled_at,cancelled_by_deployment_cascade,coalesce(cache_status,''),coalesce(cache_key_sha256,'')`, id, deploymentID, kind, sourceBytes, nullString(logPath)))
 	if err != nil {
 		return Build{}, err
 	}
@@ -8004,7 +8005,8 @@ func (s *PgStore) BuildByID(ctx context.Context, id string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
 		        started_at, finished_at, enqueued_at,
-		        cancelled_at, cancelled_by_deployment_cascade
+		        cancelled_at, cancelled_by_deployment_cascade,
+		        coalesce(cache_status,''), coalesce(cache_key_sha256,'')
 		 from builds where id = $1`, id)
 	return scanBuild(row)
 }
@@ -8013,7 +8015,8 @@ func (s *PgStore) BuildByDeployment(ctx context.Context, deploymentID string) (B
 	row := s.pool.QueryRow(ctx,
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
 		        started_at, finished_at, enqueued_at,
-		        cancelled_at, cancelled_by_deployment_cascade
+		        cancelled_at, cancelled_by_deployment_cascade,
+		        coalesce(cache_status,''), coalesce(cache_key_sha256,'')
 		 from builds where deployment_id = $1
 		 order by started_at desc nulls last limit 1`, deploymentID)
 	return scanBuild(row)
@@ -8291,7 +8294,8 @@ func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
 		           started_at, finished_at, enqueued_at,
-		           cancelled_at, cancelled_by_deployment_cascade`,
+		           cancelled_at, cancelled_by_deployment_cascade,
+		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`,
 		id)
 	b, err := scanBuild(row)
 	if err != nil {
@@ -8326,7 +8330,8 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
 		           started_at, finished_at, enqueued_at,
-		           cancelled_at, cancelled_by_deployment_cascade`)
+		           cancelled_at, cancelled_by_deployment_cascade,
+		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`)
 	b, err := scanBuild(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -8362,7 +8367,8 @@ func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairness
     returning id, deployment_id, kind, source_bytes, status,
               coalesce(failure_class,''), coalesce(log_path,''),
               started_at, finished_at, enqueued_at,
-              cancelled_at, cancelled_by_deployment_cascade`,
+		           cancelled_at, cancelled_by_deployment_cascade,
+		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`,
 		fmt.Sprintf("%d milliseconds", fairnessWindow.Milliseconds()))
 	b, err := scanBuild(row)
 	if err != nil {
@@ -18457,7 +18463,7 @@ func scanDeployments(rows pgx.Rows) ([]Deployment, error) {
 
 func scanBuild(row pgx.Row) (Build, error) {
 	b := Build{}
-	var kind, statusStr, fc string
+	var kind, statusStr, fc, cacheStatus, cacheKeySHA256 string
 	// pgtype.Timestamptz is the canonical nullable timestamptz
 	// reader in this file (see test_request_id_tz_row at
 	// pgstore.go:12322) — its `.Valid` flag round-trips NULL
@@ -18474,7 +18480,7 @@ func scanBuild(row pgx.Row) (Build, error) {
 	// the trap by always being a value type with a `.Valid`
 	// flag.
 	var startedAt, finishedAt, cancelledAt pgtype.Timestamptz
-	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade); err != nil {
+	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade, &cacheStatus, &cacheKeySHA256); err != nil {
 		return Build{}, mapErr(err)
 	}
 	if startedAt.Valid {
@@ -18490,6 +18496,8 @@ func scanBuild(row pgx.Row) (Build, error) {
 	b.Kind = DeploymentKind(kind)
 	b.Status = BuildStatus(statusStr)
 	b.FailureClass = FailureClass(fc)
+	b.CacheStatus = cacheStatus
+	b.CacheKeySHA256 = cacheKeySHA256
 	return b, nil
 }
 
@@ -19726,7 +19734,8 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 	rows, err := s.pool.Query(ctx,
 		`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 		        coalesce(b.failure_class,''), coalesce(b.log_path,''),
-		        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade
+		        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade,
+		        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,'')
 		 from builds b
 		 join deployments d on d.id = b.deployment_id
 		 join apps a on a.id = d.app_id
@@ -19739,7 +19748,7 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 	var out []Build
 	for rows.Next() {
 		b := Build{}
-		var kind, statusStr, fc string
+		var kind, statusStr, fc, cacheStatus, cacheKeySHA256 string
 		// pgtype.Timestamptz for nullable timestamps (same
 		// pattern as ListBuildsForAccountPaged immediately
 		// below and scanBuild at pgstore.go:10962): &b.StartedAt
@@ -19747,7 +19756,7 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 		// pointers) and pgx v5.10.0 rejects NULL into a fresh
 		// *time.Time under rows.Scan.
 		var startedAt, finishedAt, cancelledAt pgtype.Timestamptz
-		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade); err != nil {
+		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade, &cacheStatus, &cacheKeySHA256); err != nil {
 			return nil, err
 		}
 		if startedAt.Valid {
@@ -19763,6 +19772,8 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 		b.Kind = DeploymentKind(kind)
 		b.Status = BuildStatus(statusStr)
 		b.FailureClass = FailureClass(fc)
+		b.CacheStatus = cacheStatus
+		b.CacheKeySHA256 = cacheKeySHA256
 		out = append(out, b)
 	}
 	return out, rows.Err()
@@ -19829,7 +19840,8 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		rows, err = s.pool.Query(ctx,
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
-			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade
+			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade,
+			        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,'')
 			 from builds b
 			 join deployments d on d.id = b.deployment_id
 			 join apps a on a.id = d.app_id
@@ -19847,7 +19859,8 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		rows, err = s.pool.Query(ctx,
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
-			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade
+			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade,
+			        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,'')
 			 from builds b
 			 join deployments d on d.id = b.deployment_id
 			 join apps a on a.id = d.app_id
@@ -19883,7 +19896,8 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		rows, err = s.pool.Query(ctx,
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
-			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade
+			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade,
+			        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,'')
 			 from builds b
 			 join deployments d on d.id = b.deployment_id
 			 join apps a on a.id = d.app_id
@@ -19905,7 +19919,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 	var out []Build
 	for rows.Next() {
 		b := Build{}
-		var kind, statusStr, fc string
+		var kind, statusStr, fc, cacheStatus, cacheKeySHA256 string
 		// pgtype.Timestamptz is the canonical nullable timestamp
 		// reader here (mirrors scanBuild at pgstore.go:10962):
 		// &b.StartedAt / &b.FinishedAt are *time.Time (Build
@@ -19916,7 +19930,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		// timestamp.
 		var startedAt, finishedAt, cancelledAt pgtype.Timestamptz
 		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes,
-			&statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade); err != nil {
+			&statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade, &cacheStatus, &cacheKeySHA256); err != nil {
 			return nil, err
 		}
 		if startedAt.Valid {
@@ -19932,6 +19946,8 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		b.Kind = DeploymentKind(kind)
 		b.Status = BuildStatus(statusStr)
 		b.FailureClass = FailureClass(fc)
+		b.CacheStatus = cacheStatus
+		b.CacheKeySHA256 = cacheKeySHA256
 		out = append(out, b)
 	}
 	return out, rows.Err()

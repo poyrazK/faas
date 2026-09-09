@@ -37,6 +37,10 @@ export type AppResponse = {
   idle_timeout_s?: number | null;
   min_instances: number;
   status: string;
+  /**
+   * Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache decision was recorded in the window.
+   */
+  build_cache_hit_rate_pct: number;
   deleted_at?: string | null;
   delete_grace_until?: string | null;
   url: string;

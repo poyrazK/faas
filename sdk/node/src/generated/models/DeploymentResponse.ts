@@ -19,6 +19,14 @@ export type DeploymentResponse = {
   id: string;
   app_id: string;
   build_id?: string | null;
+  /**
+   * Builderd cache decision for the associated build. Omitted until the build reaches its cache lookup.
+   */
+  build_cache_status?: 'hit' | 'miss' | 'invalidated';
+  /**
+   * SHA-256 digest of the versioned BuildCacheRecipe. Plan, runtime base, builder identity, platform, framework, and source root remain part of the digest input.
+   */
+  cache_key_sha256?: string;
   image_digest: string;
   kind: string;
   status: string;

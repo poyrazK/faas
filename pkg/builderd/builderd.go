@@ -636,7 +636,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		recipe.BuilderBaseIdentity = buildEnvironment.BuilderBaseIdentity
 		recipe.TargetPlatform = buildEnvironment.TargetPlatform
 	}
-	if cached, ok := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID); ok {
+	cacheKeySHA256, cacheKeyErr := recipe.KeySHA256()
+	if cacheKeyErr != nil {
+		cacheKeySHA256 = ""
+	}
+	cached, cacheOutcome, cacheHit := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID)
+	b.observeCacheOutcome(ctx, build.ID, cacheOutcome, cacheKeySHA256)
+	if cacheHit {
 		if b.stopIfBuildCancelled(ctx, build.ID) {
 			b.cache.ReleaseLease(cached.Path)
 			return BuildResult{}, nil
@@ -649,7 +655,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
 		buildStart = time.Now()
 		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
-		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("cache hit (%s, %d bytes) — skipping vm spawn\n", cached.Path, cached.Bytes))
+		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[build] cache hit (sha256:%s) — skipping vm spawn\n", cacheKeySHA256))
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true,
 				BuildkitVer: cached.Toolchain.BuildkitVer, RailpackVer: cached.Toolchain.RailpackVer,
@@ -660,6 +666,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return completed, completeErr
 
 	}
+	b.emitBuildLog(ctx, build.ID, "[build] cache "+cacheOutcome+", scheduling vm\n")
 
 	// Slot allocation (CLAUDE.md: builds never outrank tenant wakes).
 	slot, releaseSlot, acquired := b.acquireSlot()
@@ -913,23 +920,43 @@ func (b *Builderd) buildEnvironmentStillCurrent(want BuildEnvironment) bool {
 	return true
 }
 
-func (b *Builderd) lookupCurrentCacheEntry(recipe BuildCacheRecipe, environment BuildEnvironment, available bool, deploymentID string) (CacheEntry, bool) {
+func (b *Builderd) lookupCurrentCacheEntry(recipe BuildCacheRecipe, environment BuildEnvironment, available bool, deploymentID string) (CacheEntry, string, bool) {
 	if !available {
-		return CacheEntry{}, false
+		return CacheEntry{}, cacheOutcomeMiss, false
 	}
+	outcome := b.cache.ClassifyBuild(recipe)
 	cached, ok, err := b.cache.LeaseBuild(recipe, deploymentID)
 	if err != nil {
 		b.log.Warn("builderd: build cache lease failed; rebuilding", "deployment", deploymentID, "err", err)
-		return CacheEntry{}, false
+		return CacheEntry{}, cacheOutcomeMiss, false
 	}
 	if !ok {
-		return CacheEntry{}, false
+		return CacheEntry{}, outcome, false
 	}
 	if !b.buildEnvironmentStillCurrent(environment) {
 		b.cache.ReleaseLease(cached.Path)
-		return CacheEntry{}, false
+		return CacheEntry{}, cacheOutcomeInvalidated, false
 	}
-	return cached, true
+	return cached, cacheOutcomeHit, true
+}
+
+type buildCacheOutcomeWriter interface {
+	SetBuildCacheOutcome(context.Context, string, string, string) error
+}
+
+// observeCacheOutcome persists the decision before the terminal build write
+// and increments the closed-set metric. Both are best-effort so a telemetry
+// failure cannot turn a valid build into a failed deployment.
+func (b *Builderd) observeCacheOutcome(ctx context.Context, buildID, outcome, keySHA256 string) {
+	if outcome != cacheOutcomeHit && outcome != cacheOutcomeMiss && outcome != cacheOutcomeInvalidated {
+		outcome = cacheOutcomeMiss
+	}
+	b.ops.ObserveBuildCacheOutcome(outcome)
+	if writer, ok := b.store.(buildCacheOutcomeWriter); ok {
+		if err := writer.SetBuildCacheOutcome(ctx, buildID, outcome, keySHA256); err != nil && !errors.Is(err, state.ErrNotFound) {
+			b.log.Warn("builderd: persist cache outcome", "build", buildID, "outcome", outcome, "err", err)
+		}
+	}
 }
 
 // snapshotBootPayload identifies the compute node that produced the local

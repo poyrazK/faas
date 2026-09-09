@@ -14744,7 +14744,7 @@ components:
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
-      required: [id, slug, type, ram_mb, cpu_millicores, configured_resources, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
+      required: [id, slug, type, ram_mb, cpu_millicores, configured_resources, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, build_cache_hit_rate_pct, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
@@ -14778,6 +14778,12 @@ components:
         idle_timeout_s: { type: [integer, "null"] }
         min_instances: { type: integer }
         status: { type: string , example: "active"}
+        build_cache_hit_rate_pct:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: "Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache decision was recorded in the window."
         deleted_at: { type: [string, "null"], format: date-time }
         delete_grace_until: { type: [string, "null"], format: date-time }
         url: { type: string, format: uri }
@@ -15902,6 +15908,14 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         build_id: { type: [string, "null"], pattern: '^[a-f0-9]{32}$' }
+        build_cache_status:
+          type: string
+          enum: [hit, miss, invalidated]
+          description: "Builderd cache decision for the associated build. Omitted until the build reaches its cache lookup."
+        cache_key_sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: "SHA-256 digest of the versioned BuildCacheRecipe. Plan, runtime base, builder identity, platform, framework, and source root remain part of the digest input."
         image_digest: { type: string }
         kind: { type: string }
         status: { type: string , example: "active"}
@@ -16702,6 +16716,8 @@ components:
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
         duration_seconds: { type: integer, description: "Server-computed FinishedAt − StartedAt in whole seconds. Absent until the build reaches a terminal state." }
+        cache_status: { type: string, enum: [hit, miss, invalidated], description: "Builderd cache decision for this build." }
+        cache_key_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: "SHA-256 digest of the versioned BuildCacheRecipe." }
 
     BuildListResponse:
       description: |
