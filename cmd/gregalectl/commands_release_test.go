@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -31,6 +32,16 @@ func TestCmdReleaseDispatch_Help(t *testing.T) {
 	for _, h := range []string{"-h", "--help"} {
 		if code := cmdReleaseDispatch([]string{h}); code != 0 {
 			t.Errorf("cmdReleaseDispatch(%s) = %d, want 0", h, code)
+		}
+	}
+}
+
+func TestReleaseUsageDocumentsCanonicalInstallPath(t *testing.T) {
+	var out bytes.Buffer
+	printReleaseUsage(&out)
+	for _, want := range []string{"--tarball-path PATH", "release.cosign.bundle", "release.sbom.json"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("release help missing %q", want)
 		}
 	}
 }

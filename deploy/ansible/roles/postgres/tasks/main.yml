@@ -145,6 +145,10 @@
       # one-box FaaS security baseline (spec §11): unix-socket only.
       # Production clients connect via the local socket in /var/run/postgresql.
       local   all             postgres                                peer
+      # pg_basebackup uses PostgreSQL's replication pseudo-database. The
+      # `all` rule above does not match it, so authorize only the local
+      # postgres OS user through peer authentication.
+      local   replication     postgres                                peer
       # Control-plane services run as dedicated OS users but connect as the
       # single faas database role. The ident map keeps peer auth local and
       # avoids placing the database password in sealed.env on the control box.
