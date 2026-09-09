@@ -634,7 +634,7 @@ export class AuthService {
     /**
      * Exact mutation action the token will authorize.
      */
-    action: 'auth.logout' | 'auth.session.revoke' | 'auth.sessions.revoke_all' | 'mfa_confirm' | 'mfa_recover' | 'mfa_disable' | 'set_password',
+    action: 'auth.logout' | 'auth.session.revoke' | 'auth.sessions.revoke_all' | 'mfa_confirm' | 'mfa_recover' | 'mfa_disable' | 'mfa_disable_email' | 'mfa_disable_email_confirm' | 'set_password',
     /**
      * Dashboard session cookie. Sealed; opaque to the client
      * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.

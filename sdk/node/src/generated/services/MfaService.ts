@@ -4,6 +4,10 @@
 /* eslint-disable */
 import type { MFAConfirmRequest } from '../models/MFAConfirmRequest.js';
 import type { MFAConfirmResponse } from '../models/MFAConfirmResponse.js';
+import type { MFADisableEmailConfirmRequest } from '../models/MFADisableEmailConfirmRequest.js';
+import type { MFADisableEmailConfirmResponse } from '../models/MFADisableEmailConfirmResponse.js';
+import type { MFADisableEmailRequest } from '../models/MFADisableEmailRequest.js';
+import type { MFADisableEmailResponse } from '../models/MFADisableEmailResponse.js';
 import type { MFADisableRequest } from '../models/MFADisableRequest.js';
 import type { MFADisableResponse } from '../models/MFADisableResponse.js';
 import type { MFAEnrollResponse } from '../models/MFAEnrollResponse.js';
@@ -139,6 +143,54 @@ export class MfaService {
       errors: {
         400: `Both or neither of password/recovery_code set.`,
         401: `Invalid credentials or recovery code.`,
+      },
+    });
+  }
+  /**
+   * Request email-assisted MFA disable.
+   * Sends a one-time confirmation link to the account email and
+   * starts a mandatory 24-hour server-side cooldown. A newer
+   * request invalidates any earlier link.
+   *
+   * @returns MFADisableEmailResponse Confirmation email queued.
+   * @throws ApiError
+   */
+  public static mfaDisableEmail({
+    requestBody,
+  }: {
+    requestBody: MFADisableEmailRequest,
+  }): CancelablePromise<MFADisableEmailResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/mfa/disable-email',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+      },
+    });
+  }
+  /**
+   * Confirm email-assisted MFA disable.
+   * Consumes the emailed one-time token after the mandatory
+   * 24-hour cooldown and clears the account's MFA state.
+   *
+   * @returns MFADisableEmailConfirmResponse MFA disabled.
+   * @throws ApiError
+   */
+  public static mfaDisableEmailConfirm({
+    requestBody,
+  }: {
+    requestBody: MFADisableEmailConfirmRequest,
+  }): CancelablePromise<MFADisableEmailConfirmResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/mfa/disable-email/confirm',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `Invalid or already-consumed email token.`,
+        425: `The 24-hour cooldown has not elapsed.`,
       },
     });
   }
