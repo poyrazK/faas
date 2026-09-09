@@ -153,15 +153,14 @@ func TestColdBootCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
 		}
 	}
 	assertCPU(filepath.Join(parent, "cpu.max"), "100000 100000\n")
-	assertCPU(filepath.Join(parent, WorkloadNameMain, "cpu.max"), "100000 100000\n")
-	assertCPU(filepath.Join(parent, "metrics", "cpu.max"), "50000 100000\n")
+	if _, err := os.Stat(filepath.Join(parent, WorkloadNameMain)); !os.IsNotExist(err) {
+		t.Fatalf("host workload leaf must not be created; guest-init owns per-workload cgroups, err=%v", err)
+	}
 
 	if err := v.restoreColdBootCPUFence(lease, workloads, profile.ConfiguredMillicores); err != nil {
 		t.Fatalf("restore configured fence: %v", err)
 	}
 	assertCPU(filepath.Join(parent, "cpu.max"), "25000 100000\n")
-	assertCPU(filepath.Join(parent, WorkloadNameMain, "cpu.max"), "25000 100000\n")
-	assertCPU(filepath.Join(parent, "metrics", "cpu.max"), "50000 100000\n")
 }
 
 func TestColdBootCPUProfileResolvesLegacyZeroToPlanCeiling(t *testing.T) {

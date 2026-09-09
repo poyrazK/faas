@@ -9,6 +9,14 @@ recent successful `builder-base` publish. The job checks out the exact commit
 that published `ghcr.io/poyrazk/builder-base:sha-<commit>` and tests its amd64
 child on `faas-compute-node-2` in `europe-west3-c`.
 
+Compute node 2 is the HDD correctness host. Its snapshot timings are logged as
+diagnostics and are excluded from the release latency cohort. The sub-350 ms
+assertion in `TestMetalParkWakeCycle` is enabled only when
+`FAAS_TEST_REFERENCE_SSD=1`; set that variable only for a run on the designated
+SSD compute node. The measured interval is the platform wake from
+`wake.boot_started.at` through `wake.boot_completed.at`. Cloudflare, public
+network distance, proxying, and application execution are outside that gate.
+
 The workflow uses GitHub OIDC through this keyless GCP identity:
 
 - workload identity pool: `github-actions`

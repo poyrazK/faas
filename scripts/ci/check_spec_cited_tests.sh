@@ -122,10 +122,16 @@ fi
 
 missing=()
 for path in "${owned_tests[@]}"; do
-  if ! git show "${head_sha}:${path}" 2>/dev/null \
-    | grep -Eq '^[[:space:]]*//[[:space:]]*(spec:[[:space:]]*§[0-9]+([.][0-9]+)*|adr:[[:space:]]*[0-9]{3})([[:space:]]|$)'; then
-    missing+=("$path")
-  fi
+	# Do not pipe git show into grep -q under pipefail. When the citation is
+	# near the start of a large test file, grep exits after the match and git
+	# receives SIGPIPE; the successful citation is then reported as missing.
+	content="$(git show "${head_sha}:${path}" 2>/dev/null)" || {
+		missing+=("$path")
+		continue
+	}
+	if ! grep -Eq '^[[:space:]]*//[[:space:]]*(spec:[[:space:]]*§[0-9]+([.][0-9]+)*|adr:[[:space:]]*[0-9]{3})([[:space:]]|$)' <<< "$content"; then
+		missing+=("$path")
+	fi
 done
 
 if ((${#missing[@]} > 0)); then
