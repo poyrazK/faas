@@ -21,7 +21,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/instancestats"
 	"github.com/onebox-faas/faas/pkg/state"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -36,6 +38,27 @@ func withIncomingCorrelation(ctx context.Context) context.Context {
 		return ctx
 	}
 	return wire.WithContext(ctx, fields)
+}
+
+func newWakeSpan(ctx context.Context, operation, appID, deploymentID, scope, trigger string, desired int) (context.Context, oteltrace.Span) {
+	return pkgtrace.StartSpan(ctx, "schedd.wake",
+		attribute.String("operation", operation),
+		attribute.String("app_id", appID),
+		attribute.String("deployment_id", deploymentID),
+		attribute.String("scope", scope),
+		attribute.String("trigger", trigger),
+		attribute.Int("desired_instances", desired),
+	)
+}
+
+func finishWakeSpan(span oteltrace.Span, err error) {
+	if err != nil {
+		span.SetAttributes(attribute.String("outcome", "error"))
+		span.RecordError(err)
+	} else {
+		span.SetAttributes(attribute.String("outcome", "ok"))
+	}
+	span.End()
 }
 
 // LogFrameSink is the per-frame callback the StreamAppLogs handler
@@ -388,7 +411,9 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 	// `pr-{N}-{slug}.<zone>` Host header. Empty scope = legacy
 	// prod behaviour, threaded via WithScope at the engine entry.
 	ctx = withIncomingCorrelation(ctx)
-	res, err := s.engine.Wake(ctx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
+	wakeCtx, wakeSpan := newWakeSpan(ctx, "wake", req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger(), 1)
+	res, err := s.engine.Wake(wakeCtx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
+	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -425,6 +450,7 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 		return nil, err
 	}
 	start := time.Now()
+	ctx = withIncomingCorrelation(ctx)
 	// PR-A3 (issue #72 / ADR-125): is_mirror routes the admit
 	// through Engine.AdmitMirrorInstance so the per-rule slot
 	// cap fires and mode='mirror' is stamped on the instances
@@ -432,7 +458,9 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 	// shape as the normal path; the gateway consumes
 	// at-capacity vs admitted identically.
 	if req.GetIsMirror() {
-		res, err := s.engine.AdmitMirrorInstance(ctx, req.GetAppId(), req.GetMirrorRuleId(), req.GetDeploymentId())
+		wakeCtx, wakeSpan := newWakeSpan(ctx, "admit_mirror", req.GetAppId(), req.GetDeploymentId(), "", "mirror", 1)
+		res, err := s.engine.AdmitMirrorInstance(wakeCtx, req.GetAppId(), req.GetMirrorRuleId(), req.GetDeploymentId())
+		finishWakeSpan(wakeSpan, err)
 		s.ops.Observe(op, time.Since(start), err)
 		if err != nil {
 			// ErrMirrorSlotAtCapacity is a benign cap-at-max
@@ -469,11 +497,13 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 	// A burst continuation carries the scheduler's narrow cooldown
 	// bypass marker; it does not change any capacity or placement
 	// checks in Engine.AdmitInstance.
-	engineCtx := withIncomingCorrelation(ctx)
+	wakeCtx, wakeSpan := newWakeSpan(ctx, "admit_instance", req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger(), 1)
+	engineCtx := wakeCtx
 	if req.GetBurstContinuation() {
 		engineCtx = sched.WithBurstContinuation(engineCtx)
 	}
 	res, err := s.engine.AdmitInstance(engineCtx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
+	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -514,13 +544,20 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 	var out sched.CoordOutcome
 	var err error
 	ctx = withIncomingCorrelation(ctx)
+	desired := int(req.GetDesiredInstances())
+	spanDesired := desired
+	if spanDesired < 1 {
+		spanDesired = 1
+	}
+	wakeCtx, wakeSpan := newWakeSpan(ctx, "ensure_wake", req.GetAppId(), "", "", req.GetTrigger(), spanDesired)
 	if capacity, ok := s.engine.(interface {
 		EnsureWakeCapacity(context.Context, string, string, int) (sched.CoordOutcome, error)
 	}); ok && req.GetDesiredInstances() > 1 {
-		out, err = capacity.EnsureWakeCapacity(ctx, req.GetAppId(), req.GetTrigger(), int(req.GetDesiredInstances()))
+		out, err = capacity.EnsureWakeCapacity(wakeCtx, req.GetAppId(), req.GetTrigger(), desired)
 	} else {
-		out, err = s.engine.EnsureWake(ctx, req.GetAppId(), req.GetTrigger())
+		out, err = s.engine.EnsureWake(wakeCtx, req.GetAppId(), req.GetTrigger())
 	}
+	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		// Per-app queue-full is a 503; the engine returns the typed

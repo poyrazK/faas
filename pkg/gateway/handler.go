@@ -28,7 +28,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sched"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -4864,6 +4866,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// or alter the headers — strictly observability.
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
 	w = rec
+	// Semantic request span. The public listener already creates an inbound
+	// otelhttp span, but gatewayd-internal also serves the handler directly in
+	// split-node and test paths. This child gives the routing, wake, and
+	// forwarding work one stable span regardless of how the request arrived.
+	requestCtx, requestSpan := pkgtrace.StartSpan(r.Context(), "gateway.request",
+		attribute.String("http.method", r.Method))
+	r = r.WithContext(requestCtx)
+	defer func() {
+		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
+		requestSpan.End()
+	}()
 
 	// Stamp the request-received timestamp onto the context so every exit
 	// path can measure the SAME elapsed interval (was previously always
@@ -4940,6 +4953,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	requestSpan.SetAttributes(
+		attribute.String("app_id", app.ID),
+		attribute.String("app_plan", string(app.Plan)),
+	)
 	triggerClass := ClassifyWakeTrigger(r)
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
@@ -5454,8 +5471,25 @@ haveApp:
 			wakeCtx, cancelWakePage = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
 			defer cancelWakePage()
 		}
+		// The semantic span encloses admission and boot coordination only. The
+		// later gateway.forward span is separate, so a slow guest response does
+		// not make wake latency look worse than it is.
+		wakeCtx, wakeSpan := pkgtrace.StartSpan(wakeCtx, "gateway.wake",
+			attribute.String("app_id", app.ID),
+			attribute.String("app_plan", string(app.Plan)),
+			attribute.Int("desired_instances", maxInstances),
+		)
 		//nolint:contextcheck // request ctx at handler boundary.
 		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS)
+		wakeSpan.SetAttributes(
+			attribute.Bool("cold", cold),
+			attribute.String("wake_id", wakeID),
+			attribute.String("wake_method", wakeMethod.String()),
+		)
+		if err != nil {
+			wakeSpan.RecordError(err)
+		}
+		wakeSpan.End()
 		if err != nil {
 			if showWakePage && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
@@ -5524,8 +5558,20 @@ haveApp:
 	// hits are recovered via the next deployment_changed notify
 	// that re-seeds the cache.
 	if !pick.OK && pick.ColdBucket != "" {
+		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(r.Context(), "gateway.wake_fanout",
+			attribute.String("app_id", app.ID),
+			attribute.String("deployment_id", pick.ColdBucket),
+		)
 		//nolint:contextcheck // request ctx at handler boundary; this is the wake-fan-out retry branch.
-		bucketWakeID, bucketMethod, _, bucketErr := h.backend.Admit(r.Context(), app.ID, pick.ColdBucket, app.Scope, sched.TriggerGateway, limits.MaxConcurrency)
+		bucketWakeID, bucketMethod, _, bucketErr := h.backend.Admit(fanoutCtx, app.ID, pick.ColdBucket, app.Scope, sched.TriggerGateway, limits.MaxConcurrency)
+		fanoutSpan.SetAttributes(
+			attribute.String("wake_id", bucketWakeID),
+			attribute.String("wake_method", bucketMethod.String()),
+		)
+		if bucketErr != nil {
+			fanoutSpan.RecordError(bucketErr)
+		}
+		fanoutSpan.End()
 		if bucketErr != nil {
 			// Log-and-continue: the existing "warmest bucket"
 			// fallback inside Pick already handled the
@@ -5582,6 +5628,24 @@ haveApp:
 	// request's admission belongs in a wake timeline; warm traffic must not
 	// append synchronous wake events for the rest of the VM's lifetime.
 	target.WakeID = wakeID
+
+	// Semantic bridge span. The request context is passed through the existing
+	// otelgrpc client instrumentation, so vmmd's forwarding server span and
+	// the guest-side bridge remain children of this span. Stable identifiers
+	// are used here; request paths and headers are intentionally excluded.
+	forwardCtx, forwardSpan := pkgtrace.StartSpan(r.Context(), "gateway.forward",
+		attribute.String("app_id", app.ID),
+		attribute.String("instance_id", target.InstanceID),
+		attribute.String("deployment_id", target.DeploymentID),
+		attribute.String("node_id", target.NodeID),
+		attribute.String("protocol", decideProtocol(app)),
+		attribute.Bool("cold", cold),
+	)
+	r = r.WithContext(forwardCtx)
+	defer func() {
+		forwardSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
+		forwardSpan.End()
+	}()
 
 	// Mirror fan-out (issue #72 / ADR-124 / ADR-125 PR-A3). After
 	// the customer request has been routed, fan out one goroutine

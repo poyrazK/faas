@@ -27,7 +27,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/storage"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -3486,10 +3488,25 @@ func readyTimeoutFor(defaultTimeout time.Duration, startupDeadlineS ...int) time
 	return defaultTimeout
 }
 
-func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath string, startupDeadlineS ...int) error {
+func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath string, startupDeadlineS ...int) (err error) {
 	readyTimeout := readyTimeoutFor(v.readyTimeout, startupDeadlineS...)
 	deadline := time.Now().Add(readyTimeout)
 	addr := net.JoinHostPort(l.HostIP.String(), "8080")
+	ctx, readinessSpan := pkgtrace.StartSpan(ctx, "guest.readiness",
+		attribute.String("instance_id", l.Instance),
+		attribute.Bool("healthcheck_configured", healthcheckPath != ""),
+	)
+	probeCount := 0
+	defer func() {
+		readinessSpan.SetAttributes(attribute.Int("probe_count", probeCount))
+		if err != nil {
+			readinessSpan.SetAttributes(attribute.String("outcome", "error"))
+			readinessSpan.RecordError(err)
+		} else {
+			readinessSpan.SetAttributes(attribute.String("outcome", "ready"))
+		}
+		readinessSpan.End()
+	}()
 	// issue #517 / PR-C / ADR-064 — stamp the readiness probe start
 	// so the wake.readiness_200 emit can carry the elapsed_ms
 	// field. Keep it local: one JailerVMM serves many concurrent instances.
@@ -3509,6 +3526,7 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			probeCount++
 			conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 			if err == nil {
 				_ = conn.Close()
@@ -3535,7 +3553,6 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 	// every iteration. The host loop is bounded by ctx.Done() and
 	// the deadline.
 	client := v.healthcheckClient()
-	probeCount := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
