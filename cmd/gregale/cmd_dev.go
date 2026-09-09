@@ -409,8 +409,9 @@ func cmdDev(args []string) int {
 			started := time.Now()
 			devTelemetry := newDevPhaseTracker()
 			execution := deployExecution{
-				prefixBuildLogs: true,
-				developerSource: syncState,
+				prefixBuildLogs:  true,
+				streamLogsOnJSON: true,
+				developerSource:  syncState,
 				extraSourceExcludes: func() []string {
 					if envFilePath == "" {
 						return nil
@@ -428,13 +429,28 @@ func cmdDev(args []string) int {
 				},
 				onStage: devTelemetry.observeStage,
 			}
+			if jsonOutput {
+				execution.onTerminal = func(dep api.DeploymentResponse) int {
+					devTelemetry.setDeploymentID(dep.ID)
+					if dep.Status == deploymentStatusFailed {
+						return 1
+					}
+					return 0
+				}
+			}
 			code := cmdDeployTarballToExisting(deployCtx, config.deployArgs(session.App.Slug, sourceDir), true, execution)
 			if code == 0 {
 				devTelemetry.finishRouteSwitch()
 			}
-			if code == 0 && !jsonOutput {
-				PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
-				devTelemetry.render(osStdout)
+			if code == 0 {
+				if jsonOutput {
+					if receiptCode := jsonOut(writeNDJSON([]devSyncReceipt{devTelemetry.receipt("live")})); receiptCode != 0 {
+						return receiptCode
+					}
+				} else {
+					PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
+					devTelemetry.render(osStdout)
+				}
 			}
 			if code == 0 {
 				openDevBrowser()

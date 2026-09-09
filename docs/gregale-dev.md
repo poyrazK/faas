@@ -43,6 +43,7 @@ gregale dev status             # show developer-environment quota usage
 gregale dev --no-logs          # keep the watcher quiet for scripts
 gregale dev --open             # open the verified dev URL after the first live sync
 gregale dev --env-file .env.dev # opt in to syncing local config as secrets
+gregale dev --once --json      # emit one machine-readable edit-to-live receipt
 ```
 
 `--open` launches the stable developer URL in the default browser after the
@@ -66,11 +67,17 @@ transient API or scheduler interruption. `--once` remains finite and does not
 attach the stream.
 
 Each sync also ends with a compact phase summary, for example
-`sync=1.2s · cache=0.3s · build=2.4s · boot=1.1s · ready=0.4s · route=0ms`.
+`sync=1.2s · cache=0.3s · build=2.4s · boot=1.1s · ready=0.4s · route=0ms · edit-to-live=5.4s · slo<=15s (met)`.
 The source transfer is measured by the CLI; the cache, build, boot, and
 readiness values come from the deployment stage timings. Build output is
 prefixed with `build |` so it stays distinguishable from the app-level
 `runtime |` stream in the same terminal.
+
+With `--json`, each successful sync emits one `developer_sync` receipt. It
+contains the deployment id, total edit-to-live milliseconds, the 15-second
+cached-edit target, a `within_slo` boolean, and the phase timings. Receipts are
+NDJSON so a long-running watcher can be consumed incrementally; no source,
+secret, or runtime-log content is included.
 
 The URL is stable for an account, local developer installation, and source
 directory. Teammates and separate clones or worktrees therefore get independent
