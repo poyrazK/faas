@@ -266,6 +266,9 @@ jobs:
             "${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:/opt/faas/releases/${RELEASE_ID}/"
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
-            "/opt/faas/releases/${RELEASE_ID}/bin/deployctl bundle-check /opt/faas/releases/${RELEASE_ID} && /opt/faas/releases/${RELEASE_ID}/bin/deployctl deploy ${RELEASE_ID}"
+            "/opt/faas/releases/${RELEASE_ID}/bin/deployctl bundle-check /opt/faas/releases/${RELEASE_ID} &&
+             /opt/faas/releases/${RELEASE_ID}/bin/deployctl deploy ${RELEASE_ID} &&
+             ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
+             mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
 
       # Legacy mutable upload/restart steps removed; deployment is handled by the immutable release controller above.
