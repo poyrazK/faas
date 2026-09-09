@@ -50,7 +50,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
+	"github.com/onebox-faas/faas/pkg/rootfs"
 )
 
 // ensureSidecarExt4 returns the path to a sidecar ext4 image,
@@ -69,13 +71,13 @@ import (
 // port is hardcoded to the busybox httpd listen port; the
 // customer-pinned port comes from WorkloadSpec.Port on the wake
 // wire and is the value the test's main workload uses to dial.
-func ensureSidecarExt4(t *testing.T, dir string, port int) string {
+func ensureSidecarExt4(t *testing.T, dir, name string, port int) string {
 	t.Helper()
-	dst := filepath.Join(dir, fmt.Sprintf("sidecar-%d.ext4", port))
+	dst := filepath.Join(dir, fmt.Sprintf("sidecar-%s-%d.ext4", name, port))
 	if _, err := os.Stat(dst); err == nil {
 		return dst
 	}
-	if err := buildSidecarExt4(dst, port); err != nil {
+	if err := buildSidecarExt4(dst, name, port); err != nil {
 		t.Fatalf("build sidecar ext4: %v", err)
 	}
 	return dst
@@ -87,7 +89,7 @@ func ensureSidecarExt4(t *testing.T, dir string, port int) string {
 // canonical sidecar image convention. The mkfs call is the same
 // journal-less recipe as buildBusyboxExt4 because guest-init mounts the
 // sidecar drive read-only and chroots the workload into its /upper tree.
-func buildSidecarExt4(dst string, port int) error {
+func buildSidecarExt4(dst, name string, port int) error {
 	bb, err := exec.LookPath("busybox")
 	if err != nil {
 		return fmt.Errorf("busybox not on PATH: %w", err)
@@ -124,6 +126,14 @@ func buildSidecarExt4(dst string, port int) error {
 	}
 	if err := os.WriteFile(filepath.Join(work, "upper/index.html"), []byte("<h1>sidecar-ready</h1>\n"), 0o644); err != nil {
 		return err
+	}
+	if err := rootfs.InjectWorkloadManifest(filepath.Join(work, "upper"), name, api.AppManifest{
+		Entrypoint: []string{"/usr/local/bin/start.sh"},
+		WorkingDir: "/",
+		User:       "0",
+		Port:       port,
+	}); err != nil {
+		return fmt.Errorf("inject workload manifest: %w", err)
 	}
 
 	// Pre-size the file (modern e2fsprogs refuses zero-block input).
@@ -196,7 +206,7 @@ func TestMetalSidecarBoot(t *testing.T) {
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	sidecar := ensureSidecarExt4(t, tmp, 9090)
+	sidecar := ensureSidecarExt4(t, tmp, "metrics", 9090)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -285,7 +295,7 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	sidecar := ensureSidecarExt4(t, tmp, 9091)
+	sidecar := ensureSidecarExt4(t, tmp, "metrics", 9091)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -347,8 +357,8 @@ func TestMetalTwoSidecarsColdBoot(t *testing.T) {
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	sc0 := ensureSidecarExt4(t, tmp, 9100)
-	sc1 := ensureSidecarExt4(t, tmp, 9101)
+	sc0 := ensureSidecarExt4(t, tmp, "metrics", 9100)
+	sc1 := ensureSidecarExt4(t, tmp, "logger", 9101)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -434,7 +444,7 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	sidecar := ensureOOMSidecarExt4(t, tmp, 9092)
+	sidecar := ensureOOMSidecarExt4(t, tmp, "stress", 9092)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -552,9 +562,9 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 // for a single test, we duplicate the body — the contract is
 // simple enough that the shared skeleton is a constant body, and
 // the test wants to extend it with a single fixture file path.
-func ensureOOMSidecarExt4(t *testing.T, dir string, port int) string {
+func ensureOOMSidecarExt4(t *testing.T, dir, name string, port int) string {
 	t.Helper()
-	dst := filepath.Join(dir, fmt.Sprintf("sidecar-oom-%d.ext4", port))
+	dst := filepath.Join(dir, fmt.Sprintf("sidecar-oom-%s-%d.ext4", name, port))
 	if _, err := os.Stat(dst); err == nil {
 		return dst
 	}
@@ -603,6 +613,14 @@ func ensureOOMSidecarExt4(t *testing.T, dir string, port int) string {
 	}
 	if err := os.WriteFile(filepath.Join(work, "upper/var/log/index.html"), []byte("<h1>oom-test</h1>\n"), 0o644); err != nil {
 		t.Fatalf("write index: %v", err)
+	}
+	if err := rootfs.InjectWorkloadManifest(filepath.Join(work, "upper"), name, api.AppManifest{
+		Entrypoint: []string{"/usr/local/bin/start.sh"},
+		WorkingDir: "/",
+		User:       "0",
+		Port:       port,
+	}); err != nil {
+		t.Fatalf("inject workload manifest: %v", err)
 	}
 
 	if f, err := os.Create(dst); err != nil {
