@@ -64,6 +64,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/logs  → live + archived app logs
 //	GET /dashboard/apps/{slug}/env|secrets → environment + secrets editor
 //	GET /dashboard/apps/{slug}/errors → grouped errors + drill-down
+//	GET /dashboard/apps/{slug}/debug → production debugger
 //	GET /dashboard/apps/{slug}/domains → custom domains + TLS/doctor status
 //	GET /dashboard/apps/{slug}/instances → instance fleet + lifecycle actions
 //	GET /dashboard/apps/{slug}/edge-rules → edge rules + CORS presets
@@ -152,6 +153,12 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// fingerprint drill-down and the oldest redacted sample.
 			if eslug, ok := parseAppErrorsPath(slug); ok {
 				s.renderAppErrors(w, r, log, acct, eslug)
+				return
+			}
+			// ADR-127 dashboard debugger — regression feed, request
+			// telemetry table, and bounded span-evidence drill-down.
+			if dslug, ok := parseAppDebugPath(slug); ok {
+				s.renderAppDebug(w, r, log, acct, dslug)
 				return
 			}
 			// G2 / issue #1397 — combined environment and write-only

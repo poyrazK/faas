@@ -18394,15 +18394,16 @@ func (m *MemStore) UpsertRegressionObservation(_ context.Context, _ sqlc.UpsertR
 }
 
 // ListActiveRegressionsByApp is intentionally unsupported by MemStore;
-// dashboard and handler tests that need regression rows belong on PgStore.
+// dashboard reads degrade gracefully in local/unit environments while
+// production uses the Postgres implementation.
 func (m *MemStore) ListActiveRegressionsByApp(_ context.Context, _ sqlc.ListActiveRegressionsByAppParams) ([]sqlc.ListActiveRegressionsByAppRow, error) {
-	panic("memstore: ListActiveRegressionsByApp unimplemented")
+	return nil, errMemStoreRequestTelemetry
 }
 
 // ListDeploymentsForCompare is intentionally unsupported by MemStore;
 // it reads request_telemetry's deployment history.
 func (m *MemStore) ListDeploymentsForCompare(_ context.Context, _ sqlc.ListDeploymentsForCompareParams) ([]sqlc.ListDeploymentsForCompareRow, error) {
-	panic("memstore: ListDeploymentsForCompare unimplemented")
+	return nil, errMemStoreRequestTelemetry
 }
 
 // ListAppsWithRecentTelemetry is intentionally unsupported by MemStore;
