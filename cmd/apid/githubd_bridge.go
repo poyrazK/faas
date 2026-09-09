@@ -347,6 +347,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		ActorVia:         "github",
 		ActorFromIP:      "127.0.0.1",
 		ActorPusherLogin: req.Pusher,
+		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,
 		// Issue #977 / ADR-116: annotation surface forwarded onto
 		// the deployment row. DeployedBy prefers SenderLogin (the
 		// actor who triggered the webhook — for pull_request events,
