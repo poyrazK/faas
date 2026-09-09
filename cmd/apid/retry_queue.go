@@ -46,6 +46,7 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 		SourcePath: dep.SourcePath, SourceBytes: dep.SourceBytes,
 		SourceBuildID: build.ID,
 		LogSpool:      spoolRoot(), Log: s.log,
+		ServiceRollout: app.Manifest.ExecutionMode == api.ExecutionModeService,
 	})
 	if err != nil {
 		if errors.Is(err, apidsource.ErrRetrySourceUnavailable) {

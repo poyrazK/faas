@@ -298,6 +298,68 @@ func TestEnqueue_HappyPath_SecondDeploy_FiresSupersede(t *testing.T) {
 	}
 }
 
+func TestEnqueue_ServiceRolloutKeepsPreviousGenerationLive(t *testing.T) {
+	st := state.NewMemStore()
+	acct, err := st.CreateAccount(context.Background(), "service@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := st.CreateApp(context.Background(), state.App{
+		AccountID:     acct.ID,
+		Slug:          "service-app",
+		RootDir:       ".",
+		WorkloadClass: state.WorkloadClassHTTP,
+		Type:          state.AppTypeApp,
+		Status:        state.AppActive,
+		Manifest:      state.AppManifest{ExecutionMode: api.ExecutionModeService},
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	notif := &recordingNotifier{}
+	srcPath, srcBytes := stageSource(t, t.TempDir())
+
+	first, err := Enqueue(context.Background(), st, notif, EnqueueParams{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: srcPath,
+		SourceBytes: srcBytes, LogSpool: t.TempDir(), Log: quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("first Enqueue: %v", err)
+	}
+	if err := st.MarkDeploymentLive(context.Background(), first.DeploymentID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
+
+	notif.mu.Lock()
+	notif.calls = nil
+	notif.mu.Unlock()
+	second, err := Enqueue(context.Background(), st, notif, EnqueueParams{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: srcPath,
+		SourceBytes: srcBytes, LogSpool: t.TempDir(), Log: quietLogger(),
+		ServiceRollout: true,
+	})
+	if err != nil {
+		t.Fatalf("service rollout Enqueue: %v", err)
+	}
+	old, err := st.DeploymentByID(context.Background(), first.DeploymentID)
+	if err != nil {
+		t.Fatalf("load previous deployment: %v", err)
+	}
+	newDep, err := st.DeploymentByID(context.Background(), second.DeploymentID)
+	if err != nil {
+		t.Fatalf("load rollout deployment: %v", err)
+	}
+	if old.Status != state.DeployLive || old.TrafficPercent != 100 {
+		t.Fatalf("previous deployment = status:%q traffic:%d; want live/100", old.Status, old.TrafficPercent)
+	}
+	if !state.IsServiceRollout(newDep) || newDep.TrafficPercent != 0 || newDep.Status != state.DeployBuilding {
+		t.Fatalf("service rollout = status:%q traffic:%d state:%q; want building/0/rolling_out", newDep.Status, newDep.TrafficPercent, newDep.RolloutState)
+	}
+	if got := notif.callCount(); got != 1 {
+		t.Fatalf("notify calls = %d, want 1 (build_queued only)", got)
+	}
+}
+
 func TestEnqueue_NotifyFailureIsBestEffort(t *testing.T) {
 	st := state.NewMemStore()
 	app := mustSeedApp(t, st)

@@ -311,6 +311,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			Workflows:       marshalWorkflowDefinitions(workflows),
 			HostingObserver: s.ops,
 			HostingFlow:     hostingFlow,
+			ServiceRollout:  app.Manifest.ExecutionMode == api.ExecutionModeService,
 		})
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
