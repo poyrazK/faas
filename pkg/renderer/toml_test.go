@@ -347,6 +347,38 @@ func TestRenderTOML_PerDaemonMetricsAddr(t *testing.T) {
 	}
 }
 
+func TestRenderTOML_ComputeMetricsBindPrivateHost(t *testing.T) {
+	tests := []struct {
+		daemon string
+		want   string
+	}{
+		{daemon: "vmmd", want: `metrics_addr = "10.42.0.2:9104"`},
+		{daemon: "imaged", want: `metrics_addr = "10.42.0.2:9102"`},
+		{daemon: "builderd", want: `metrics_addr = "10.42.0.2:9105"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.daemon, func(t *testing.T) {
+			dc := fixtureTOML(tc.daemon)
+			if dc.Bind == "" {
+				dc.Bind = "tcp://127.0.0.1:1"
+			}
+			body, _, err := renderTOML(tomlRenderCtx{
+				Daemon:      tc.daemon,
+				DC:          dc,
+				HostName:    "compute-a.faas",
+				HostAddress: "10.42.0.2:50051",
+				HostRole:    "compute-only",
+			})
+			if err != nil {
+				t.Fatalf("renderTOML: %v", err)
+			}
+			if !strings.Contains(string(body), tc.want) {
+				t.Fatalf("body missing %q:\n%s", tc.want, body)
+			}
+		})
+	}
+}
+
 // TestRenderTOML_AppsDomainFlowsThrough pins that the manifest's
 // DNS.AppsDomain flows into apid + gatewayd-internal TOMLs (the two
 // daemons whose HostKeys declare apps_domain). An empty AppsDomain

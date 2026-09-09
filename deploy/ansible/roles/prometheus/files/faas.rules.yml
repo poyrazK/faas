@@ -146,11 +146,11 @@ groups:
       - record: faas_compute_metrics_healthy_targets:by_job
         expr: |
           sum by (job) (
-            up{job=~"gatewayd-internal|promtail-compute"}
+            up{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"}
           )
           or on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} * 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} * 0
           )
 
       - record: faas_compute_metrics_scrape_coverage:by_job
@@ -159,22 +159,22 @@ groups:
           /
           on (job)
           clamp_min(
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"},
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"},
             1
           )
 
       - alert: FaasComputeMetricsScrapeCoverageLow
         expr: |
           (
-            faas_compute_metrics_scrape_coverage:by_job{job=~"gatewayd-internal|promtail-compute"} < 1
+            faas_compute_metrics_scrape_coverage:by_job{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} < 1
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} > 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -189,15 +189,15 @@ groups:
       - alert: FaasComputeMetricsScrapeTargetDown
         expr: |
           (
-            up{job=~"gatewayd-internal|promtail-compute"} == 0
+            up{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} == 0
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} > 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -212,11 +212,11 @@ groups:
       - alert: FaasComputeMetricsDiscoveryStale
         expr: |
           (
-            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} == 0
+            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} == 0
           )
           or
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} > 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 120
           )
         for: 5m
         labels:
@@ -231,15 +231,15 @@ groups:
       - alert: FaasComputeMetricsDiscoveryEmpty
         expr: |
           (
-            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|promtail-compute"} > 0
+            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|promtail-compute"} == 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} == 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -252,7 +252,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
       - alert: FaasComputeMetricsDiscoveryInvalidTargets
-        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|promtail-compute"} > 0
+        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
         for: 10m
         labels:
           severity: warn

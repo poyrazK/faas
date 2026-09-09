@@ -3,6 +3,7 @@ package renderer
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"net/netip"
 	"sort"
 	"strings"
@@ -102,7 +103,7 @@ func renderTOML(ctx tomlRenderCtx) ([]byte, map[string]string, error) {
 	if ctx.HostRole == "compute-only" {
 		dbURL = ""
 	}
-	if err := emitPrivateKeys(ctx.Daemon, ctx.DC, dbURL, ctx.AppsDomain, ctx.HostAddress, host.PrivateKeys, flat); err != nil {
+	if err := emitPrivateKeys(ctx.Daemon, ctx.DC, dbURL, ctx.AppsDomain, ctx.HostAddress, ctx.HostRole, host.PrivateKeys, flat); err != nil {
 		return nil, nil, err
 	}
 
@@ -130,9 +131,9 @@ func renderTOML(ctx tomlRenderCtx) ([]byte, map[string]string, error) {
 // flatMap under their leaf names. Missing manifest values (e.g. a
 // schedd with no apps_domain) yield an empty value; the validator +
 // daemon-load path handle the absent-key shape.
-func emitPrivateKeys(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain, hostAddress string, keys []string, flat map[string]string) error {
+func emitPrivateKeys(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain, hostAddress, hostRole string, keys []string, flat map[string]string) error {
 	for _, k := range keys {
-		v, err := privateKeyValue(daemon, dc, dbURL, appsDomain, hostAddress, k)
+		v, err := privateKeyValue(daemon, dc, dbURL, appsDomain, hostAddress, hostRole, k)
 		if err != nil {
 			return fmt.Errorf("renderer: %s: %s: %w", daemon, k, err)
 		}
@@ -156,7 +157,7 @@ func emitPrivateKeys(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 // into their TOML so the daemons can serve tenant requests with
 // the canonical apps_domain. Empty appsDomain is acceptable (the
 // daemon falls back to FAAS_APPS_DOMAIN env var).
-func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain, hostAddress, key string) (string, error) {
+func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain, hostAddress, hostRole, key string) (string, error) {
 	switch key {
 	case "socket_path":
 		// unix:///run/faas/<daemon>.sock → /run/faas/<daemon>.sock
@@ -180,7 +181,7 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		if dc.Bind == "" {
 			return "", nil
 		}
-		return defaultMetricsAddrForDaemon(daemon), nil
+		return metricsAddrForHost(daemon, hostRole, hostAddress)
 	case "db_url":
 		// The manifest is the source of truth for the shared database
 		// endpoint. Leaving this empty makes db.Open fall back to the
@@ -308,6 +309,25 @@ func defaultMetricsAddrForDaemon(daemon string) string {
 		return addr
 	}
 	return ""
+}
+
+func metricsAddrForHost(daemon, hostRole, hostAddress string) (string, error) {
+	listener := defaultMetricsAddrForDaemon(daemon)
+	if hostRole != "compute-only" || (daemon != "vmmd" && daemon != "imaged" && daemon != "builderd") {
+		return listener, nil
+	}
+	if hostAddress == "" {
+		return listener, nil
+	}
+	host, _, err := net.SplitHostPort(hostAddress)
+	if err != nil {
+		return "", fmt.Errorf("compute metrics require a host:port address: %w", err)
+	}
+	_, port, err := net.SplitHostPort(listener)
+	if err != nil {
+		return "", fmt.Errorf("invalid canonical metrics address %q: %w", listener, err)
+	}
+	return net.JoinHostPort(host, port), nil
 }
 
 // emitComputeNodeBlock populates the flatMap with the [compute_node]

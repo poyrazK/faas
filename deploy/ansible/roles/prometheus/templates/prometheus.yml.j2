@@ -73,6 +73,24 @@ scrape_configs:
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
     target_limit: {{ prom_compute_metrics_target_limit }}
     metrics_path: "/metrics"
+  - job_name: "vmmd"
+    http_sd_configs:
+      - url: "{{ prom_compute_vmmd_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+  - job_name: "imaged"
+    http_sd_configs:
+      - url: "{{ prom_compute_imaged_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+  - job_name: "builderd"
+    http_sd_configs:
+      - url: "{{ prom_compute_builderd_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
   # Issue #274: discover every compute-host Promtail endpoint from the same
   # active registry, but through a separate HTTP-SD endpoint so the gateway
   # scrape never attempts to hit Promtail's port.
