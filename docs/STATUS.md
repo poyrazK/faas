@@ -567,8 +567,9 @@ The §12 dashboard pipeline is wired end-to-end:
   `schedd /metrics/fcvm`) so the alert rules' data sources are
   actually scraped. New jobs added: `builderd 9105`, `githubd 8083`.
 - **Status page degraded flag** — `cmd/apid/status.go::fetch` runs a
-  fourth PromQL
-  `count(ALERTS{alertstate="firing",severity=~"page|warn"}) > 0`
+  fourth PromQL query over firing warn/page platform alerts. It excludes
+  `alert_preset_signals` and `alert_preset_correlation`, whose alerts describe
+  one tenant's configured policy rather than fleet health.
   alongside the existing three. The boolean lands on
   `pkg/api.StatusPage.Degraded` and `deploy/statuspage/index.html`
   renders a red "Service degraded" pill driven by it. The public page
@@ -578,8 +579,9 @@ The §12 dashboard pipeline is wired end-to-end:
 #### Status page degraded-flag contract
 
 - `Source = "prometheus"` — clean snapshot, no degraded pill.
-- `Source = "degraded: firing alerts"` — at least one warn- or
-  page-severity alert is currently firing; the pill is visible.
+- `Source = "degraded: firing alerts"` — at least one fleet/platform warn- or
+  page-severity alert is currently firing; the pill is visible. Tenant alert
+  presets remain visible to their account without changing public status.
 - `Source = "degraded: <error>"` — the full Prometheus pipeline is
   unreachable; the handler returns the last cached snapshot with the
   error stringified. Pre-existing graceful-degradation contract from

@@ -3352,10 +3352,11 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
-	// Degraded is true when at least one page- or warn-severity alert
-	// is currently firing on the local Prometheus. The public status
-	// page renders a "degraded" pill when this is true so prospects
-	// and customers see the same picture the operator's pager sees.
+	// Degraded is true when at least one fleet/platform page- or warn-severity
+	// alert is currently firing on the local Prometheus. Per-account alert
+	// preset signals stay private to their customer and do not change the
+	// fleet-wide public status. The public status page renders a "degraded"
+	// pill when this is true.
 	//
 	// The flag is intentionally conservative: a transient PromQL
 	// error against ALERTS{} is treated as "no firing alerts" rather
