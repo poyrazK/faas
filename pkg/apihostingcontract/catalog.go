@@ -15,11 +15,12 @@ var catalogJSON []byte
 
 // Fixture is one source-tree contract case.
 type Fixture struct {
-	ID          string            `json:"id"`
-	Description string            `json:"description"`
-	Tags        []string          `json:"tags,omitempty"`
-	Files       map[string]string `json:"files"`
-	Expected    Expected          `json:"expected"`
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	// Tags classify acceptance coverage (for example runtime, quick, or sse).
+	Tags     []string          `json:"tags,omitempty"`
+	Files    map[string]string `json:"files"`
+	Expected Expected          `json:"expected"`
 }
 
 // Expected is the profile and readiness contract asserted by the fixture runner.
