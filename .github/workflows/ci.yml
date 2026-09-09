@@ -1101,6 +1101,12 @@ jobs:
           ansible control_plane -i inventory/hosts.ini -c local \
             -e @roles/prometheus/defaults/main.yml \
             -e ansible_hostname=ci-control-plane \
+            -e prom_promtail_enabled=true \
+            -m ansible.builtin.template \
+            -a "src=$(pwd)/roles/prometheus/templates/prometheus.yml.j2 dest=$RUNNER_TEMP/prometheus-with-promtail.yml"
+          ansible control_plane -i inventory/hosts.ini -c local \
+            -e @roles/prometheus/defaults/main.yml \
+            -e ansible_hostname=ci-control-plane \
             -m ansible.builtin.template \
             -a "src=$(pwd)/roles/prometheus/templates/prometheus.service.j2 dest=$RUNNER_TEMP/prometheus.service"
           grep -q 'job_name: "gatewayd-internal"' "$RUNNER_TEMP/prometheus.yml"
@@ -1111,6 +1117,13 @@ jobs:
           grep -q 'http://127.0.0.1:8081/v1/internal/metrics/imaged-targets' "$RUNNER_TEMP/prometheus.yml"
           grep -q 'job_name: "builderd"' "$RUNNER_TEMP/prometheus.yml"
           grep -q 'http://127.0.0.1:8081/v1/internal/metrics/builderd-targets' "$RUNNER_TEMP/prometheus.yml"
+          if grep -q 'job_name: "promtail' "$RUNNER_TEMP/prometheus.yml"; then
+            echo 'default Prometheus config scrapes Promtail without an enabled Loki transport' >&2
+            exit 1
+          fi
+          grep -q 'job_name: "promtail"' "$RUNNER_TEMP/prometheus-with-promtail.yml"
+          grep -q 'job_name: "promtail-compute"' "$RUNNER_TEMP/prometheus-with-promtail.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/promtail-targets' "$RUNNER_TEMP/prometheus-with-promtail.yml"
           grep -q 'target_limit: 1000' "$RUNNER_TEMP/prometheus.yml"
           grep -q -- '--web.listen-address=127.0.0.1:9095' "$RUNNER_TEMP/prometheus.service"
           if grep -q '{{' "$RUNNER_TEMP/prometheus.service"; then

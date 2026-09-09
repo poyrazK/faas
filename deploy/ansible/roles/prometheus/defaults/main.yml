@@ -43,6 +43,11 @@ prom_compute_metrics_discovery_refresh_interval: "15s"
 # permits; Prometheus must not accept an unbounded HTTP-SD response.
 prom_compute_metrics_target_limit: 1000
 prom_compute_promtail_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/promtail-targets"
+# Promtail is installed only when the operator has provisioned the dedicated
+# Loki transport and mTLS credentials. Keep both local and compute Promtail
+# scrapes absent until then; otherwise a valid no-Loki deployment starts with
+# permanently down targets.
+prom_promtail_enabled: false
 
 # Optional dedicated Loki meta-monitoring target. The provider supplies the
 # observability host address and mTLS files; an empty target keeps the normal
@@ -132,3 +137,4 @@ prom_targets:
     host: 127.0.0.1
     port: 9080
     box_roles: [control-plane]
+    enabled: "{{ prom_promtail_enabled | bool }}"

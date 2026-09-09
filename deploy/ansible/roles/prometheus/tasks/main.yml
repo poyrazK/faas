@@ -76,6 +76,7 @@
       prom_compute_promtail_discovery_url={{ prom_compute_promtail_discovery_url }}
       must remain the loopback apid HTTP-SD endpoint. Promtail target
       metadata must not be fetched over a public or provider-specific URL.
+  when: prom_promtail_enabled | bool
 
 - name: prometheus — assert compute target limit is bounded
   ansible.builtin.assert:
