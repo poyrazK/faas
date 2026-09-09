@@ -1594,22 +1594,64 @@ type RequestAnalyticsRouteView struct {
 // a CSRF-protected replay action and a bounded status projection for the
 // invocation it just queued.
 type DebugPageData struct {
-	AppSlug       string
-	Plan          string
-	PlanAllowed   bool
-	Since         string
-	WindowStart   string
-	WindowEnd     string
-	WindowClamped bool
-	Route         string
-	ErrorMessage  string
-	ActionMessage string
-	ActionError   bool
-	ReplayCSRF    string
-	Regressions   []DebugRegressionView
-	Requests      []DebugRequestView
-	Selected      *DebugRequestDetailView
-	Replay        *DebugReplayView
+	AppSlug             string
+	Plan                string
+	PlanAllowed         bool
+	Since               string
+	WindowStart         string
+	WindowEnd           string
+	WindowClamped       bool
+	Route               string
+	ErrorMessage        string
+	ActionMessage       string
+	ActionError         bool
+	ReplayCSRF          string
+	Regressions         []DebugRegressionView
+	Deployments         []DebugDeploymentView
+	Compare             *DebugCompareView
+	Requests            []DebugRequestView
+	Selected            *DebugRequestDetailView
+	Replay              *DebugReplayView
+	ReplayPoll          int
+	ReplayPollActive    bool
+	ReplayPollExhausted bool
+}
+
+// DebugDeploymentView is a bounded deployment option for the dashboard
+// compare panel. The list is derived from observed telemetry, so deployments
+// without traffic are deliberately not presented as comparable.
+type DebugDeploymentView struct {
+	ID          string
+	Label       string
+	FirstSeenAt string
+	LastSeenAt  string
+	RowCount    int64
+}
+
+// DebugCompareView is the server-rendered projection of the public compare
+// contract. It keeps the dashboard free of API response JSON and includes
+// preformatted deltas so templates do not need arithmetic helpers.
+type DebugCompareView struct {
+	SourceID     string
+	MirrorID     string
+	Route        string
+	Compared     bool
+	Rows         []DebugCompareRouteView
+	ErrorMessage string
+}
+
+type DebugCompareRouteView struct {
+	Route       string
+	SourceP50MS int
+	SourceP95MS int
+	SourceP99MS int
+	SourceN     int64
+	MirrorP50MS int
+	MirrorP95MS int
+	MirrorP99MS int
+	MirrorN     int64
+	DeltaP95MS  int
+	Factor      string
 }
 
 // DebugReplayView is the template-safe status projection for a debugger
@@ -1644,6 +1686,7 @@ type DebugRegressionView struct {
 	FirstDetectedAt string
 	LastDetectedAt  string
 	RequestsURL     string
+	CompareURL      string
 }
 
 // DebugRequestView is one row in the debugger request table.

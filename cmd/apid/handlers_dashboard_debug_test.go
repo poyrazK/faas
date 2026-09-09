@@ -176,3 +176,38 @@ func TestDashboardDebugReplayActionFlash(t *testing.T) {
 	}
 
 }
+
+func TestDashboardDebugReplayPollIsBounded(t *testing.T) {
+	for _, tt := range []struct {
+		raw  string
+		want int
+	}{
+		{raw: "", want: 0},
+		{raw: "3", want: 3},
+		{raw: "-1", want: 0},
+		{raw: "garbage", want: 0},
+		{raw: "999", want: dashboardDebugReplayPollLimit},
+	} {
+		if got := parseDashboardDebugReplayPoll(tt.raw); got != tt.want {
+			t.Errorf("parseDashboardDebugReplayPoll(%q) = %d, want %d", tt.raw, got, tt.want)
+		}
+	}
+}
+
+func TestDashboardDebugRegressionCompareURLUsesRetainedPeer(t *testing.T) {
+	deployments := []dashboard.DebugDeploymentView{
+		{ID: "11111111-1111-1111-1111-111111111111"},
+		{ID: "22222222-2222-2222-2222-222222222222"},
+	}
+	got := dashboardDebugRegressionCompareURL("debug-app", "24h", deployments[0].ID, "/api/items", deployments)
+	if !strings.Contains(got, "/dashboard/apps/debug-app/debug?") ||
+		!strings.Contains(got, "compare_source="+deployments[0].ID) ||
+		!strings.Contains(got, "compare_mirror="+deployments[1].ID) ||
+		!strings.Contains(got, "compare=1") ||
+		!strings.Contains(got, "compare_route=%2Fapi%2Fitems") {
+		t.Fatalf("compare URL = %q, missing retained source/mirror selection", got)
+	}
+	if got := dashboardDebugRegressionCompareURL("debug-app", "24h", "missing", "/api/items", deployments); got != "" {
+		t.Fatalf("compare URL for an unknown source = %q, want empty", got)
+	}
+}
