@@ -264,6 +264,27 @@ func TestCollapseRequestTelemetry_TraceIDFirstNonEmpty(t *testing.T) {
 	}
 }
 
+func TestCollapseRequestTelemetry_InstanceIDIsRepresentative(t *testing.T) {
+	t.Parallel()
+	appID := uuid.New()
+	deployID := uuid.New()
+	accountID := uuid.New()
+	base := time.Date(2026, 8, 24, 18, 42, 0, 0, time.UTC)
+	rows := []RequestTelemetryRow{
+		makeCollapseRow(accountID, appID, deployID, "GET /v1/foo", "GET", 200, 12, false, "", base),
+		makeCollapseRow(accountID, appID, deployID, "GET /v1/foo", "GET", 200, 12, false, "", base.Add(time.Second)),
+	}
+	rows[0].InstanceID = "instance-a"
+	rows[1].InstanceID = "instance-b"
+	collapsed := collapseRequestTelemetry(rows)
+	if len(collapsed) != 1 {
+		t.Fatalf("len(collapsed) = %d, want 1", len(collapsed))
+	}
+	if collapsed[0].InstanceID != "" {
+		t.Fatalf("InstanceID = %q, want empty for an ambiguous aggregate", collapsed[0].InstanceID)
+	}
+}
+
 func TestCollapseRequestTelemetry_CountClampedToAtLeastOne(t *testing.T) {
 	t.Parallel()
 	appID := uuid.New()

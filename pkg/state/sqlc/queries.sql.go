@@ -2041,7 +2041,7 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 
 const getRequestTelemetryByAppAndID = `-- name: GetRequestTelemetryByAppAndID :one
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, spans_summary
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id
 FROM request_telemetry
 WHERE app_id = $1
   AND id = $2
@@ -2069,6 +2069,8 @@ type GetRequestTelemetryByAppAndIDRow struct {
 	TraceID      pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
 	SpansSummary []byte
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 // Direct request drill-down for the customer debugger. The app_id
@@ -2094,6 +2096,8 @@ func (q *Queries) GetRequestTelemetryByAppAndID(ctx context.Context, db DBTX, ar
 		&i.TraceID,
 		&i.ReceivedAt,
 		&i.SpansSummary,
+		&i.WakeID,
+		&i.InstanceID,
 	)
 	return i, err
 }
@@ -2553,11 +2557,11 @@ const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec
 INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
-    ua_family, referrer_host, country
+    ua_family, referrer_host, country, wake_id, instance_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14
+    $12, $13, $14, $15, $16
 )
 `
 
@@ -2576,6 +2580,8 @@ type InsertRequestTelemetryParams struct {
 	UaFamily     string
 	ReferrerHost string
 	Country      string
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 // ---------------------------------------------------------------------------
@@ -2628,6 +2634,8 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.UaFamily,
 		arg.ReferrerHost,
 		arg.Country,
+		arg.WakeID,
+		arg.InstanceID,
 	)
 	return err
 }
@@ -4467,7 +4475,7 @@ func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg L
 
 const listRequestTelemetryByApp = `-- name: ListRequestTelemetryByApp :many
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at
+       cold_boot, trace_id, received_at, wake_id, instance_id
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
@@ -4496,6 +4504,8 @@ type ListRequestTelemetryByAppRow struct {
 	ColdBoot     bool
 	TraceID      pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 // Canonical read pattern: "give me the last N requests for this app".
@@ -4529,6 +4539,8 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 			&i.ColdBoot,
 			&i.TraceID,
 			&i.ReceivedAt,
+			&i.WakeID,
+			&i.InstanceID,
 		); err != nil {
 			return nil, err
 		}
@@ -6916,6 +6928,126 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const objectStorageProviderBuckets = `-- name: ObjectStorageProviderBuckets :many
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets
+WHERE backend_id = $1 AND backend_fingerprint = $2
+ORDER BY physical_name, id
+`
+
+type ObjectStorageProviderBucketsParams struct {
+	BackendID          string
+	BackendFingerprint string
+}
+
+func (q *Queries) ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg ObjectStorageProviderBucketsParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectStorageProviderBuckets, arg.BackendID, arg.BackendFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectStorageProviderRequestIncrement = `-- name: ObjectStorageProviderRequestIncrement :exec
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, request_count)
+VALUES ($1, $2, 1)
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET request_count = object_storage_request_metrics.request_count + 1
+`
+
+type ObjectStorageProviderRequestIncrementParams struct {
+	BucketID    pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectStorageProviderRequestIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestIncrementParams) error {
+	_, err := db.Exec(ctx, objectStorageProviderRequestIncrement, arg.BucketID, arg.PeriodStart)
+	return err
+}
+
+const objectStorageProviderRequestMetrics = `-- name: ObjectStorageProviderRequestMetrics :many
+SELECT b.id, b.account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
+       $3::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count
+FROM object_buckets b
+LEFT JOIN object_storage_request_metrics m
+  ON m.bucket_id = b.id AND m.period_start = $3
+WHERE b.backend_id = $1 AND b.backend_fingerprint = $2
+ORDER BY b.physical_name, b.id
+`
+
+type ObjectStorageProviderRequestMetricsParams struct {
+	BackendID          string
+	BackendFingerprint string
+	PeriodStart        pgtype.Timestamptz
+}
+
+type ObjectStorageProviderRequestMetricsRow struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	PeriodStart        pgtype.Timestamptz
+	RequestCount       int64
+}
+
+func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestMetricsParams) ([]ObjectStorageProviderRequestMetricsRow, error) {
+	rows, err := db.Query(ctx, objectStorageProviderRequestMetrics, arg.BackendID, arg.BackendFingerprint, arg.PeriodStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageProviderRequestMetricsRow{}
+	for rows.Next() {
+		var i ObjectStorageProviderRequestMetricsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.PeriodStart,
+			&i.RequestCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one

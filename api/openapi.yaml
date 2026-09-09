@@ -3421,9 +3421,9 @@ paths:
       operationId: getAppDebugRequestEvidence
       summary: Get request evidence and explanation (ADR-127).
       description: |
-        Returns bounded, redacted span evidence for one request and
-        links it to a matching active regression observation when one
-        exists. Database statements are sanitized fingerprints; raw
+        Returns a deterministic request/wake timeline plus bounded,
+        redacted span evidence for one request and links it to a matching
+        active regression observation when one exists. Database statements are sanitized fingerprints; raw
         attributes, status messages, request bodies, and headers are
         never returned. The explanation is deterministic and suitable
         as input to a future asynchronous synthesis layer. Plan-gated
@@ -3577,6 +3577,36 @@ paths:
   /v1/apps/{slug}/deployments:
     parameters:
       - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listAppDeployments
+      summary: List deployments for an app.
+      description: |
+        Paged backwards (newest first) for the app identified by `slug`.
+        `next_before` is an opaque RFC3339Nano cursor from the last row in
+        the page; pass it as `before` to fetch older deployments. Unknown or
+        cross-account app slugs return the same IDOR-safe 404 surface as the
+        other app-scoped endpoints.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Page size for this app (1–200; default 50).
+        - name: before
+          in: query
+          schema: { type: string, format: date-time }
+          description: RFC3339Nano cursor from a previous response's next_before.
+      responses:
+        '200':
+          description: A paginated list of deployments for the app.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentListResponse'
+                example: {"items":[],"next_before":null}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [deployments]
       operationId: createDeployment
@@ -23747,6 +23777,8 @@ components:
         cold_boot: { type: boolean }
         trace_id: { type: [string, 'null'], description: "W3C trace-id hex (32 chars), null when unset." }
         received_at: { type: string, format: date-time }
+        wake_id: { type: string, description: "Opaque wake identifier when this request admitted a wake; omitted for warm requests." }
+        instance_id: { type: string, description: "Opaque instance identifier that served the request; omitted when no target was reached." }
 
     DebugTelemetrySpan:
       type: object
@@ -23774,16 +23806,34 @@ components:
             - $ref: '#/components/schemas/DebugTelemetrySpan'
             - type: "null"
 
+    DebugTimelineEvent:
+      type: object
+      description: "Deterministic, bounded request and wake lifecycle marker. Raw event payloads are not returned."
+      required: [at, phase, kind, summary]
+      properties:
+        at: { type: string, format: date-time }
+        phase: { type: string, enum: [request, wake, error, regression] }
+        kind: { type: string, maxLength: 128 }
+        actor: { type: string, maxLength: 128 }
+        summary: { type: string, maxLength: 256 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        approximate: { type: boolean, description: "True when the marker is derived from a collapsed minute bucket rather than an exact request timestamp." }
+
     DebugRequestEvidenceResponse:
       type: object
-      description: "Request metadata, bounded span evidence, matching regression, and explanation."
-      required: [request, spans, spans_truncated, explanation, generated_at]
+      description: "Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."
+      required: [request, timeline, spans, spans_truncated, explanation, generated_at]
       properties:
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
         regression:
           oneOf:
             - $ref: '#/components/schemas/DebugRegressionItem'
             - type: "null"
+        timeline:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/DebugTimelineEvent' }
         spans:
           type: array
           maxItems: 100

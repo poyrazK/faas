@@ -775,6 +775,9 @@ type Querier interface {
 	ObjectS3CredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectS3CredentialResolveRow, error)
 	ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg ObjectS3CredentialRevokeParams) (int64, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
+	ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg ObjectStorageProviderBucketsParams) ([]ObjectBucket, error)
+	ObjectStorageProviderRequestIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestIncrementParams) error
+	ObjectStorageProviderRequestMetrics(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestMetricsParams) ([]ObjectStorageProviderRequestMetricsRow, error)
 	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)
 	ObjectUsageAuthorize(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeParams) error
 	ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)

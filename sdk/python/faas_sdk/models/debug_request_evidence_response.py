@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.debug_regression_item import DebugRegressionItem
     from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
     from ..models.debug_telemetry_span import DebugTelemetrySpan
+    from ..models.debug_timeline_event import DebugTimelineEvent
 
 
 T = TypeVar("T", bound="DebugRequestEvidenceResponse")
@@ -21,10 +22,11 @@ T = TypeVar("T", bound="DebugRequestEvidenceResponse")
 
 @_attrs_define
 class DebugRequestEvidenceResponse:
-    """Request metadata, bounded span evidence, matching regression, and explanation."""
+    """Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."""
 
     request: DebugTelemetryRequestItem
     """One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."""
+    timeline: list[DebugTimelineEvent]
     spans: list[DebugTelemetrySpan]
     spans_truncated: bool
     explanation: DebugEvidenceExplanation
@@ -37,6 +39,11 @@ class DebugRequestEvidenceResponse:
         from ..models.debug_regression_item import DebugRegressionItem
 
         request = self.request.to_dict()
+
+        timeline = []
+        for timeline_item_data in self.timeline:
+            timeline_item = timeline_item_data.to_dict()
+            timeline.append(timeline_item)
 
         spans = []
         for spans_item_data in self.spans:
@@ -62,6 +69,7 @@ class DebugRequestEvidenceResponse:
         field_dict.update(
             {
                 "request": request,
+                "timeline": timeline,
                 "spans": spans,
                 "spans_truncated": spans_truncated,
                 "explanation": explanation,
@@ -79,9 +87,17 @@ class DebugRequestEvidenceResponse:
         from ..models.debug_regression_item import DebugRegressionItem
         from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
         from ..models.debug_telemetry_span import DebugTelemetrySpan
+        from ..models.debug_timeline_event import DebugTimelineEvent
 
         d = dict(src_dict)
         request = DebugTelemetryRequestItem.from_dict(d.pop("request"))
+
+        timeline = []
+        _timeline = d.pop("timeline")
+        for timeline_item_data in _timeline:
+            timeline_item = DebugTimelineEvent.from_dict(timeline_item_data)
+
+            timeline.append(timeline_item)
 
         spans = []
         _spans = d.pop("spans")
@@ -115,6 +131,7 @@ class DebugRequestEvidenceResponse:
 
         debug_request_evidence_response = cls(
             request=request,
+            timeline=timeline,
             spans=spans,
             spans_truncated=spans_truncated,
             explanation=explanation,

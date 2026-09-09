@@ -1258,6 +1258,12 @@ type ObjectStorageMultipartUpload struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type ObjectStorageRequestMetric struct {
+	BucketID     pgtype.UUID
+	PeriodStart  pgtype.Timestamptz
+	RequestCount int64
+}
+
 type ObjectStorageS3Credential struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
@@ -1445,6 +1451,8 @@ type RequestTelemetry struct {
 	UaFamily     string
 	ReferrerHost string
 	Country      string
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 type RequestTelemetry202608 struct {

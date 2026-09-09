@@ -127,6 +127,15 @@ message IncrementRequestTelemetryRequest {
   // country — ISO 3166-1 alpha-2 uppercase country code from the existing
   // trusted edge geo resolver, or __unknown__. The source IP is not retained.
   string country = 14;
+
+  // wake_id — the newly admitted wake that served this request. Empty for
+  // warm requests; retained only as an opaque correlation identifier so the
+  // debugger can join the row to the wake event timeline.
+  string wake_id = 15;
+
+  // instance_id — the selected VM instance that served this request. Empty
+  // when the request never reached a routable target.
+  string instance_id = 16;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

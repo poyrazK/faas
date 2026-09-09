@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -57,7 +58,28 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 	store := state.NewPgStore(pool)
+	requestMetrics, ok := any(store).(state.ObjectStorageProviderUsageStore)
+	if !ok {
+		return errors.New("s3-gatewayd: state store lacks object-storage request metrics")
+	}
 	ops := wire.NewOpsMetrics("s3_gateway")
+	usageJobs, err := usageExportJobs(registry, requestMetrics, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if len(usageJobs) > 0 {
+		usageRuns := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "s3_gateway_usage_exports_total", Help: "Object-storage provider usage export attempts."}, []string{"backend", "outcome"})
+		usageLastSuccess := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "s3_gateway_usage_export_last_success_timestamp_seconds", Help: "Unix timestamp of the last successful object-storage usage export."}, []string{"backend"})
+		ops.Registry().MustRegister(usageRuns, usageLastSuccess)
+		go objectstorage.RunUsageExports(ctx, func() []objectstorage.UsageExportJob { return usageJobs }, objectstorage.DefaultUsageExportInterval, time.Now, func(backend, outcome string, err error) {
+			usageRuns.WithLabelValues(backend, outcome).Inc()
+			if outcome == "success" {
+				usageLastSuccess.WithLabelValues(backend).Set(float64(time.Now().Unix()))
+				return
+			}
+			log.Warn("s3-gatewayd: object storage usage export failed", "backend_id", backend, "err", err)
+		})
+	}
 	if count, err := s3gateway.RekeyCredentials(ctx, store, identities); err != nil {
 		return fmt.Errorf("s3-gatewayd: rekey credentials: %w", err)
 	} else if count > 0 {
@@ -86,7 +108,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}()
 
 	handler, err := s3gateway.New(s3gateway.Config{
-		Registry: registry, Store: store, Enabled: enabled.Load, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
+		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: enabled.Load, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
 		OpenSecret: func(sealed []byte) (string, error) {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(identities, sealed)
 			if err != nil || namespace != s3gateway.CredentialSecretNamespace || len(plaintext) != 40 {

@@ -105,6 +105,7 @@ type MemStore struct {
 	objectGrants           map[string]map[string]int64
 	objectReports          []api.ObjectStorageUsageReport
 	objectAuthorizations   map[string]int64
+	objectProviderRequests map[string]int64
 	objectAccessGrants     map[string]ObjectBucketAccessGrant
 	objectS3Credentials    map[string]ObjectS3Credential
 	objectMultipartUploads map[string]ObjectMultipartUpload
@@ -5444,6 +5445,26 @@ func (m *MemStore) ListDeploymentsForApp(_ context.Context, appID string, limit,
 		return nil, nil
 	}
 	all = all[offset:]
+	if limit > 0 && limit < len(all) {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
+// ListDeploymentsForAppBefore is the cursor-shaped counterpart to
+// ListDeploymentsForApp. It keeps the in-memory backend's ordering and
+// before semantics aligned with PgStore for handler and conformance tests.
+func (m *MemStore) ListDeploymentsForAppBefore(_ context.Context, appID string, before time.Time, limit int) ([]Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var all []Deployment
+	for _, d := range m.deployments {
+		if d.AppID != appID || (!before.IsZero() && !d.CreatedAt.Before(before)) {
+			continue
+		}
+		all = append(all, d)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
 	if limit > 0 && limit < len(all) {
 		all = all[:limit]
 	}

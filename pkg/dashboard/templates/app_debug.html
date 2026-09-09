@@ -105,10 +105,23 @@
         <div class="detail">
           <p><a href="/dashboard/apps/{{.Data.AppSlug}}/debug?since={{.Data.Since}}&amp;route={{.Data.Route}}#requests">← Back to requests</a></p>
           <p><code>{{.Data.Selected.Request.Method}} {{.Data.Selected.Request.Route}}</code> · HTTP {{.Data.Selected.Request.Status}} · <strong>{{.Data.Selected.Request.LatencyMS}} ms</strong> · {{.Data.Selected.Request.ReceivedAt}}</p>
-          <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
+          <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.InstanceID}} · instance <code>{{.Data.Selected.Request.InstanceID}}</code>{{end}}{{if .Data.Selected.Request.WakeID}} · wake <code>{{.Data.Selected.Request.WakeID}}</code>{{end}}{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
           <div class="explanation"><strong>{{.Data.Selected.EvidenceStatus}}</strong>: {{.Data.Selected.Explanation}}</div>
           {{if .Data.Selected.Regression}}
             <p class="muted">This request matches the active regression on <code>{{.Data.Selected.Regression.Route}}</code> ({{.Data.Selected.Regression.Factor}}× baseline).</p>
+          {{end}}
+          <h3>Request timeline</h3>
+          {{if .Data.Selected.Timeline}}
+            <table class="span-table" aria-label="Request timeline">
+              <thead><tr><th>At</th><th>Phase</th><th>Event</th><th>Details</th></tr></thead>
+              <tbody>
+              {{range .Data.Selected.Timeline}}
+                <tr><td><code>{{if .Approximate}}~{{end}}{{.At}}</code></td><td><span class="badge">{{.Phase}}</span></td><td><code>{{.Kind}}</code>{{if .Actor}}<br><small class="muted">{{.Actor}}</small>{{end}}</td><td>{{.Summary}}{{if .DurationMS}} · {{.DurationMS}} ms{{end}}{{if .Status}} · HTTP {{.Status}}{{end}}</td></tr>
+              {{end}}
+              </tbody>
+            </table>
+          {{else}}
+            <p class="muted">No timeline markers were retained for this request.</p>
           {{end}}
           <h3>Span evidence</h3>
           {{if .Data.Selected.Spans}}

@@ -42,6 +42,7 @@ import (
 	evts "github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -346,7 +347,13 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	for name, vals := range stripHopByHop(r.Header) {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
 			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, "x-faas-invocation-id")) {
-			continue
+			// x-faas-client-ip is the one customer-facing platform
+			// header. Handler.ServeHTTP overwrites it from the trusted
+			// XFF hop immediately before dispatch; every other x-faas-*
+			// header remains internal metadata.
+			if !strings.EqualFold(name, wire.ClientIPHeader) {
+				continue
+			}
 		}
 		for _, v := range vals {
 			init.Headers = append(init.Headers, &vmmdpb.Header{Name: name, Value: v})

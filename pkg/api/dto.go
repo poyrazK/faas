@@ -2688,7 +2688,8 @@ func (u UsageResponse) TotalEgressGB() float64 {
 	return float64(u.TXBytes+u.NetTxBytes) / (1024 * 1024 * 1024)
 }
 
-// DeploymentListResponse is the page shape for GET /v1/deployments.
+// DeploymentListResponse is the page shape for GET /v1/deployments and
+// GET /v1/apps/{slug}/deployments.
 // Items is the page (in created_at DESC order); NextBefore is the
 // cursor the caller should pass on the next request to page BACKWARDS
 // (the dashboard's "older deploys" link). Empty NextBefore means the
@@ -6863,6 +6864,8 @@ type DebugTelemetryRequestItem struct {
 	ColdBoot     bool    `json:"cold_boot"`
 	TraceID      *string `json:"trace_id"`
 	ReceivedAt   string  `json:"received_at"`
+	WakeID       string  `json:"wake_id,omitempty"`
+	InstanceID   string  `json:"instance_id,omitempty"`
 }
 
 // DebugTelemetryListOptions controls the server-side filters for a request
@@ -6906,12 +6909,27 @@ type DebugEvidenceExplanation struct {
 	PrimarySpan *DebugTelemetrySpan `json:"primary_span,omitempty"`
 }
 
+// DebugTimelineEvent is one deterministic causal marker for a request. Wake
+// events are reduced to their kind and a bounded summary; raw event payloads
+// and request bodies never cross this surface.
+type DebugTimelineEvent struct {
+	At          string `json:"at"`
+	Phase       string `json:"phase"`
+	Kind        string `json:"kind"`
+	Actor       string `json:"actor,omitempty"`
+	Summary     string `json:"summary"`
+	DurationMS  int64  `json:"duration_ms,omitempty"`
+	Status      int    `json:"status,omitempty"`
+	Approximate bool   `json:"approximate,omitempty"`
+}
+
 // DebugRequestEvidenceResponse combines request metadata, bounded span
 // evidence, a matching active regression observation, and a deterministic
 // explanation for GET /v1/apps/{slug}/debug/requests/{req_id}/evidence.
 type DebugRequestEvidenceResponse struct {
 	Request        DebugTelemetryRequestItem `json:"request"`
 	Regression     *DebugRegressionItem      `json:"regression,omitempty"`
+	Timeline       []DebugTimelineEvent      `json:"timeline"`
 	Spans          []DebugTelemetrySpan      `json:"spans"`
 	SpansTruncated bool                      `json:"spans_truncated"`
 	Explanation    DebugEvidenceExplanation  `json:"explanation"`

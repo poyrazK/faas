@@ -1433,6 +1433,8 @@ type DebugRequestView struct {
 	Count        int
 	ColdBoot     bool
 	TraceID      string
+	WakeID       string
+	InstanceID   string
 	ReceivedAt   string
 	DetailURL    string
 }
@@ -1443,11 +1445,25 @@ type DebugRequestView struct {
 type DebugRequestDetailView struct {
 	Request        DebugRequestView
 	Regression     *DebugRegressionView
+	Timeline       []DebugTimelineEventView
 	Spans          []DebugSpanView
 	SpansTruncated bool
 	Explanation    string
 	EvidenceStatus string
 	GeneratedAt    string
+}
+
+// DebugTimelineEventView is the template-safe projection of a deterministic
+// request timeline marker. Raw wake-event payloads are never rendered.
+type DebugTimelineEventView struct {
+	At          string
+	Phase       string
+	Kind        string
+	Actor       string
+	Summary     string
+	DurationMS  int64
+	Status      int
+	Approximate bool
 }
 
 // DebugSpanView is the template-safe subset of an OTel span summary.

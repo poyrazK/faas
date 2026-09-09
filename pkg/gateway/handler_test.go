@@ -828,6 +828,37 @@ func TestHandlerStampsXFaasInstanceHeader(t *testing.T) {
 	}
 }
 
+// TestHandlerStampsTrustedClientIPHeader ensures customer workloads receive
+// one canonical client address, while an inbound x-faas-client-ip attempt is
+// overwritten rather than trusted.
+func TestHandlerStampsTrustedClientIPHeader(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get("x-faas-client-ip")))
+	}))
+	t.Cleanup(upstream.Close)
+
+	b := &fakeBackend{
+		app:      App{ID: "app-client-ip", Plan: api.PlanFree},
+		host:     "client-ip.apps.dom",
+		upstream: upstream.Listener.Addr().String(),
+	}
+	b.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "i-client-ip"})
+	h := NewHandlerWith(b, NewMetrics(), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "http://client-ip.apps.dom/", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.42")
+	req.Header.Set("x-faas-client-ip", "198.51.100.7")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != "203.0.113.42" {
+		t.Fatalf("upstream saw x-faas-client-ip=%q, want 203.0.113.42", got)
+	}
+}
+
 // TestFanOutAdmitsUpToCapThenReuses (issue #168) — max_concurrency is a
 // ceiling, not a request-per-instance target. A burst to a cold app
 // performs one wake and all followers reuse that target. Reactive scale-up

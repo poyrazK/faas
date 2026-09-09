@@ -2213,6 +2213,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					TraceId:          row.TraceID,
 					ReceivedAtUnixMs: row.ReceivedAt.UnixMilli(),
 					Count:            int32(row.Count),
+					WakeId:           row.WakeID,
+					InstanceId:       row.InstanceID,
 				}
 				if row.Count < 1 {
 					req.Count = 1

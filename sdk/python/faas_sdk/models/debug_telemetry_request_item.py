@@ -35,6 +35,10 @@ class DebugTelemetryRequestItem:
     received_at: datetime.datetime
     trace_id: None | str | Unset = UNSET
     """W3C trace-id hex (32 chars), null when unset."""
+    wake_id: str | Unset = UNSET
+    """Opaque wake identifier when this request admitted a wake; omitted for warm requests."""
+    instance_id: str | Unset = UNSET
+    """Opaque instance identifier that served the request; omitted when no target was reached."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +66,10 @@ class DebugTelemetryRequestItem:
         else:
             trace_id = self.trace_id
 
+        wake_id = self.wake_id
+
+        instance_id = self.instance_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -79,6 +87,10 @@ class DebugTelemetryRequestItem:
         )
         if trace_id is not UNSET:
             field_dict["trace_id"] = trace_id
+        if wake_id is not UNSET:
+            field_dict["wake_id"] = wake_id
+        if instance_id is not UNSET:
+            field_dict["instance_id"] = instance_id
 
         return field_dict
 
@@ -112,6 +124,10 @@ class DebugTelemetryRequestItem:
 
         trace_id = _parse_trace_id(d.pop("trace_id", UNSET))
 
+        wake_id = d.pop("wake_id", UNSET)
+
+        instance_id = d.pop("instance_id", UNSET)
+
         debug_telemetry_request_item = cls(
             id=id,
             deployment_id=deployment_id,
@@ -123,6 +139,8 @@ class DebugTelemetryRequestItem:
             cold_boot=cold_boot,
             received_at=received_at,
             trace_id=trace_id,
+            wake_id=wake_id,
+            instance_id=instance_id,
         )
 
         debug_telemetry_request_item.additional_properties = d

@@ -493,6 +493,26 @@ func TestListDeployments_EncodesCursor(t *testing.T) {
 	}
 }
 
+func TestListAppDeployments_UsesAppScopedRoute(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	cursor := "2026-08-30T12:34:56.123456789Z"
+	if _, err := c.ListAppDeployments(context.Background(), "history-app", cursor, 25); err != nil {
+		t.Fatalf("ListAppDeployments: %v", err)
+	}
+	want := "/v1/apps/history-app/deployments?before=" + url.QueryEscape(cursor) + "&limit=25"
+	if gotRequestURI != want {
+		t.Errorf("RequestURI = %q, want %q", gotRequestURI, want)
+	}
+}
+
 func TestListOrgInvitations_EncodesCursor(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

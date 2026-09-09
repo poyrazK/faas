@@ -1,3 +1,4 @@
+// adr: 127
 // handler_request_telemetry_test.go — proves the Handler.observe
 // → recorder wiring (ADR-127) emits a row end-to-end without going
 // through the gateway's ServeHTTP / fakeBackend scaffolding.
@@ -58,6 +59,7 @@ func TestHandlerObserveEnqueuesRow(t *testing.T) {
 	h.observe(r, 200, app.String(), string(api.PlanPro), true, Target{
 		NodeID:       "n1",
 		InstanceID:   "i2",
+		WakeID:       "wake-2",
 		DeploymentID: deployment.String(),
 	})
 
@@ -90,11 +92,17 @@ func TestHandlerObserveEnqueuesRow(t *testing.T) {
 		switch row.Status {
 		case 201:
 			saw201 = true
+			if row.InstanceID != "i1" || row.WakeID != "" {
+				t.Errorf("warm target identifiers = (%q, %q), want (i1, empty)", row.InstanceID, row.WakeID)
+			}
 			if row.ColdBoot {
 				t.Errorf("first row: ColdBoot should be false, got true")
 			}
 		case 200:
 			saw200 = true
+			if row.InstanceID != "i2" || row.WakeID != "wake-2" {
+				t.Errorf("cold target identifiers = (%q, %q), want (i2, wake-2)", row.InstanceID, row.WakeID)
+			}
 			if !row.ColdBoot {
 				t.Errorf("second row: ColdBoot should be true, got false")
 			}

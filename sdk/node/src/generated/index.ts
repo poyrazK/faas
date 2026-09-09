@@ -141,6 +141,7 @@ export type { DebugRequestEvidenceResponse } from './models/DebugRequestEvidence
 export type { DebugTelemetryListResponse } from './models/DebugTelemetryListResponse.js';
 export type { DebugTelemetryRequestItem } from './models/DebugTelemetryRequestItem.js';
 export type { DebugTelemetrySpan } from './models/DebugTelemetrySpan.js';
+export type { DebugTimelineEvent } from './models/DebugTimelineEvent.js';
 export type { DelayedTaskRequest } from './models/DelayedTaskRequest.js';
 export type { DelayedTaskResponse } from './models/DelayedTaskResponse.js';
 export type { DeploymentAuditResponse } from './models/DeploymentAuditResponse.js';
