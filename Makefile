@@ -179,7 +179,7 @@ proto-normalize: proto
 	done
 
 # DEPLOY-2 (issue #649 / ADR-078): pkg/daemonunit + pkg/daemonunitspec
-# generate the systemd unit files for the 8 production daemons +
+# generate the systemd unit files for the production daemons +
 # faas-cp.slice + deploy/etc/daemons.json. The CI gate runs
 # `make generate-check` on every PR; modifications to
 # pkg/daemonunitspec/<daemon>.go require running `make generate`
@@ -189,7 +189,7 @@ generate: ## (re)generate systemd unit files + daemons.json from pkg/daemonunits
 	$(GO) run ./cmd/deployctl/ generate
 
 .PHONY: generate-check
-generate-check: ## CI gate: assert generated == committed for every deploy tree (legacy + 7 ansible roles) + daemons.json
+generate-check: ## CI gate: assert generated == committed for every deploy tree (legacy + 8 ansible roles) + daemons.json
 	$(GO) run ./cmd/deployctl/ check
 
 .PHONY: generate-diff
@@ -1048,9 +1048,17 @@ sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Cli
 object-storage-qualify: ## Operator-only: run the opt-in live object-storage provider qualification
 	@FAAS_OBJECT_STORAGE_LIVE_TEST=1 $(GO) test ./pkg/objectstorage -run '^TestLiveProviderQualification$$' -count=1 -v
 
+.PHONY: object-storage-gateway-smoke
+object-storage-gateway-smoke: ## Operator-only: exercise s3.gregale.dev and delete all temporary data
+	@deploy/scripts/s3-gateway-smoke.sh
+
 .PHONY: managed-postgres-qualify
 managed-postgres-qualify: ## Operator-only: run the explicit staging managed PostgreSQL provider qualification
 	@$(GO) run ./cmd/managed-postgres-qualify
+
+.PHONY: managed-postgres-qualify-verify
+managed-postgres-qualify-verify: ## Operator-only: verify a saved staging managed PostgreSQL qualification approval
+	@$(GO) run ./cmd/managed-postgres-qualify --verify
 
 .PHONY: sdk-gen-node
 sdk-gen-node: ## Regenerate sdk/node/src/generated from api/openapi.yaml

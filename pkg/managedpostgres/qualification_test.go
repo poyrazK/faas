@@ -219,3 +219,143 @@ func TestNewStagingCanaryAccountGate(t *testing.T) {
 		t.Fatal("oversized allowlist opened the gate")
 	}
 }
+
+func TestBuildAndEvaluateQualificationApproval(t *testing.T) {
+	provider := &qualificationProvider{capabilities: testCapabilities()}
+	report, err := QualifyProvider(context.Background(), provider, QualificationOptions{
+		ProviderName: "fake",
+		ResourceID:   "qualification-approval",
+		Spec:         testSpec(),
+		Mutating:     true,
+	})
+	if err != nil {
+		t.Fatalf("QualifyProvider: %v", err)
+	}
+	now := report.CompletedAt.Add(time.Minute)
+	lifecycle := passingLifecycleQualificationReport()
+	approval, err := BuildQualificationApproval(report, &lifecycle, "backend-default", "fingerprint-default", []string{"account-b", "account-a"}, now, time.Hour)
+	if err != nil {
+		t.Fatalf("BuildQualificationApproval: %v", err)
+	}
+	artifact := QualificationArtifact{
+		Version:            qualificationArtifactVersion,
+		BackendID:          "backend-default",
+		BackendFingerprint: "fingerprint-default",
+		Spec:               testSpec(),
+		Report:             report,
+		Lifecycle:          &lifecycle,
+		Approval:           &approval,
+		ApprovalEnv: map[string]string{
+			QualificationEnv:            "true",
+			QualificationBackendEnv:     approval.BackendID,
+			QualificationFingerprintEnv: approval.BackendFingerprint,
+			QualificationUntilEnv:       approval.ExpiresAt.UTC().Format(time.RFC3339),
+			CanaryAccountsEnv:           "account-a,account-b",
+		},
+	}
+	readiness := EvaluateQualificationArtifact(artifact, "backend-default", "fingerprint-default", []string{"account-a", "account-b"}, now)
+	if !readiness.Ready || len(readiness.Reasons) != 0 {
+		t.Fatalf("readiness = %+v", readiness)
+	}
+	if len(approval.CanaryAccounts) != 2 || approval.CanaryAccounts[0] != "account-a" {
+		t.Fatalf("approval = %+v", approval)
+	}
+}
+
+func TestEvaluateQualificationArtifactFailsClosed(t *testing.T) {
+	provider := &qualificationProvider{capabilities: testCapabilities()}
+	report, err := QualifyProvider(context.Background(), provider, QualificationOptions{
+		ProviderName: "fake",
+		ResourceID:   "qualification-approval-invalid",
+		Spec:         testSpec(),
+		Mutating:     true,
+	})
+	if err != nil {
+		t.Fatalf("QualifyProvider: %v", err)
+	}
+	now := report.CompletedAt.Add(time.Minute)
+	approval, err := BuildQualificationApproval(report, nil, "backend-default", "fingerprint-default", nil, now, time.Hour)
+	if err != nil {
+		t.Fatalf("BuildQualificationApproval: %v", err)
+	}
+	artifact := QualificationArtifact{
+		Version:            qualificationArtifactVersion,
+		BackendID:          "backend-default",
+		BackendFingerprint: "fingerprint-default",
+		Spec:               testSpec(),
+		Report:             report,
+		Approval:           &approval,
+	}
+	readiness := EvaluateQualificationArtifact(artifact, "other-backend", "other-fingerprint", nil, now.Add(2*time.Hour))
+	if readiness.Ready {
+		t.Fatal("invalid approval was reported ready")
+	}
+	for _, wanted := range []string{"backend_mismatch", "backend_fingerprint_mismatch", "approval_expired", "lifecycle_not_qualified"} {
+		found := false
+		for _, reason := range readiness.Reasons {
+			if reason == wanted {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("readiness reasons = %v, missing %q", readiness.Reasons, wanted)
+		}
+	}
+}
+
+func TestParseStagingCanaryAccountsRejectsDuplicates(t *testing.T) {
+	if _, err := ParseStagingCanaryAccounts("account-a,account-a"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("duplicate allowlist error = %v", err)
+	}
+}
+
+func TestRegistryVerifyQualificationArtifactChecksConfiguredBackend(t *testing.T) {
+	provider := &qualificationProvider{capabilities: testCapabilities()}
+	registry := testRegistry(t, provider, nil)
+	backend, err := registry.Default(registry.DefaultRegion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := QualifyProvider(context.Background(), provider, QualificationOptions{
+		ProviderName: backend.Driver,
+		ResourceID:   "qualification-registry",
+		Spec:         testSpec(),
+		Mutating:     true,
+	})
+	if err != nil {
+		t.Fatalf("QualifyProvider: %v", err)
+	}
+	now := report.CompletedAt.Add(time.Minute)
+	lifecycle := passingLifecycleQualificationReport()
+	approval, err := BuildQualificationApproval(report, &lifecycle, backend.ID, backend.Fingerprint, nil, now, time.Hour)
+	if err != nil {
+		t.Fatalf("BuildQualificationApproval: %v", err)
+	}
+	artifact := QualificationArtifact{
+		Version:            QualificationArtifactVersion,
+		BackendID:          backend.ID,
+		BackendFingerprint: backend.Fingerprint,
+		Spec:               testSpec(),
+		Report:             report,
+		Lifecycle:          &lifecycle,
+		Approval:           &approval,
+	}
+	readiness := registry.VerifyQualificationArtifact(artifact, nil, now)
+	if !readiness.Ready {
+		t.Fatalf("readiness = %+v", readiness)
+	}
+	artifact.BackendFingerprint = "changed"
+	readiness = registry.VerifyQualificationArtifact(artifact, nil, now)
+	if readiness.Ready {
+		t.Fatal("changed backend fingerprint was reported ready")
+	}
+}
+
+func passingLifecycleQualificationReport() LifecycleQualificationReport {
+	checks := make([]QualificationCheck, 0, len(requiredLifecycleQualificationChecks))
+	for _, name := range requiredLifecycleQualificationChecks {
+		checks = append(checks, QualificationCheck{Name: name, Passed: true})
+	}
+	return LifecycleQualificationReport{Checks: checks}
+}

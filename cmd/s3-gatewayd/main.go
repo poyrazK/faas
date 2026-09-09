@@ -57,6 +57,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 	store := state.NewPgStore(pool)
+	ops := wire.NewOpsMetrics("s3_gateway")
 	if count, err := s3gateway.RekeyCredentials(ctx, store, identities); err != nil {
 		return fmt.Errorf("s3-gatewayd: rekey credentials: %w", err)
 	} else if count > 0 {
@@ -124,6 +125,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	dataServer := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
 	controlMux := http.NewServeMux()
+	controlMux.Handle("GET /metrics", ops.Handler())
 	controlMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	controlMux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		probeCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -168,6 +170,9 @@ func loadIdentities(getenv func(string) string) ([]*age.X25519Identity, error) {
 	if previousPath := getenv("FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH"); previousPath != "" {
 		previous, err := secretbox.LoadHostKey(previousPath)
 		if err != nil {
+			if errors.Is(err, secretbox.ErrHostKeyNotFound) {
+				return identities, nil
+			}
 			return nil, fmt.Errorf("s3-gatewayd: load previous host age identity: %w", err)
 		}
 		identities = append(identities, previous)

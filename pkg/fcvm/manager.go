@@ -2341,6 +2341,38 @@ func (m *Manager) InstanceAppID(instance string) (string, error) {
 	return inst.AppID, nil
 }
 
+// InstanceIdentity returns the app and account principals attached to a live
+// instance. The workload-identity vsock receiver uses the single lock-held
+// lookup to avoid minting a token from a stale app/account pair while an
+// instance is being parked or destroyed.
+func (m *Manager) InstanceIdentity(instance string) (appID, accountID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok {
+		return "", "", fmt.Errorf("fcvm: InstanceIdentity %s: not live", instance)
+	}
+	return inst.AppID, inst.AccountID, nil
+}
+
+// InstanceIdentityByCID resolves the peer CID and its app/account principal
+// under one lock. This is the host-vsock token boundary: a park/reuse racing a
+// request can therefore only produce a complete old tuple or a not-live error,
+// never a mixed identity.
+func (m *Manager) InstanceIdentityByCID(cid uint32) (instance, appID, accountID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	instance, ok := m.cidToID[cid]
+	if !ok {
+		return "", "", "", fmt.Errorf("fcvm: InstanceIdentityByCID %d: not live", cid)
+	}
+	inst, ok := m.live[instance]
+	if !ok {
+		return "", "", "", fmt.Errorf("fcvm: InstanceIdentityByCID %d: instance %s not live", cid, instance)
+	}
+	return instance, inst.AppID, inst.AccountID, nil
+}
+
 // InstanceDeploymentIDAndAppID (issue #463 / ADR-069 / PR-B AC #1)
 // resolves both the deployment_id and app_id under a single
 // lock-held read so a Park racing a vsock DGRAM recv returns a

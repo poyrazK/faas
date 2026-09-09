@@ -59,9 +59,31 @@ command provisions one resource, retries the same idempotency key to exercise
 ambiguous-create recovery, inspects it, reads a complete usage window, issues
 and revokes a read/write credential, and deletes the resource. It always
 attempts cleanup after an intermediate failure and emits a JSON report with
-only stable check codes. The report's backend ID and fingerprint are the
-values that may be copied into the staging provisioning gates after an
-operator reviews the run.
+only stable check codes. The command also emits a versioned `approval`
+envelope, an `approval_env` block when all rollout checks pass, and a
+machine-readable `readiness` result.
+The approval is bound to the report digest, exact backend fingerprint, expiry,
+and the current canary allowlist. A provider-only run remains useful evidence
+but is not rollout-ready until the lifecycle smoke has passed.
+
+Save the JSON output as an operator-owned artifact and verify it without making
+provider calls:
+
+```sh
+FAAS_ENVIRONMENT=staging \
+FAAS_MANAGED_POSTGRES_CONFIG=/etc/faas/managed-postgres.json \
+FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS=acct_demo \
+FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH=/var/lib/faas/managed-postgres-qualification.json \
+go run ./cmd/managed-postgres-qualify --verify
+```
+
+Verification compares the artifact with the configured single default
+backend, its non-secret placement fingerprint, the provider-neutral spec, and
+the current canary allowlist. It exits non-zero with stable blocking reasons
+when the approval is missing, expired, tampered with, or not lifecycle
+qualified. The `approval_env` values are the exact staging gate values to
+apply only after the report is reviewed; provisioning remains disabled until
+the operator deliberately enables it.
 
 Set `FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` for the second,
 control-plane smoke in the same isolated run. After the provider checks pass,

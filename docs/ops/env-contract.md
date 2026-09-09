@@ -144,7 +144,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, s3-gatewayd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_AGE_KEY` | githubd | `default` |  |  | `` |  |
-| `FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH` | s3-gatewayd | `default` |  |  | `` | optional systemd credential path during host-age rotation overlap |
+| `FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH` | s3-gatewayd | `unit` |  |  | `` | optional systemd credential path during host-age rotation overlap |
 | `FAAS_HOST_AGE_PUB` | githubd | `default` |  |  | `` |  |
 | `FAAS_HOST_AGE_RECIPIENT_PATH` | apid, vmmd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_BRIDGE_CIDR` | vmmd | `default` |  |  | `` |  |
@@ -188,6 +188,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` | shared | `default` |  |  | `` | exact managed PostgreSQL backend ID approved by the isolated qualification run |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT` | shared | `default` |  |  | `` | exact non-secret backend fingerprint approved by the isolated qualification run |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` | shared | `default` |  |  | `` | RFC3339 expiry for the staging qualification approval; expired approvals fail closed |
+| `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` | shared | `default` |  |  | `` | operator-owned JSON qualification artifact path used by managed-postgres-qualify --verify; verification is read-only and staging-only |
+| `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL` | shared | `default` |  |  | `` | optional approval lifetime for a qualification artifact; must be positive and no longer than 90 days |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |  | `` |  |
 | `FAAS_MFA_RECOVERY_HMAC_KEY` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
@@ -198,7 +200,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |  | `` |  |
-| `FAAS_OBJECT_STORAGE_CONFIG` | apid, s3-gatewayd, shared | `default` |  |  | `` | provider-registry JSON path; optional for apid but required by s3-gatewayd; s3_enabled runtime config separately defaults off (docs/object-storage.md) |
+| `FAAS_OBJECT_STORAGE_CONFIG` | apid, s3-gatewayd, shared | `unit` |  |  | `` | s3-gatewayd unit and opt-in apid drop-in use /etc/faas/object-storage.json; s3_enabled runtime config separately defaults off |
 | `FAAS_OCI_BLOB_CACHE_DIR` | imaged | `default` |  |  | `` | defaults to <FAAS_STORAGE_CACHE_DIR>/oci-blobs for OCI-backed deployments; local-storage deployments may opt in explicitly |
 | `FAAS_OCI_BLOB_CACHE_MAX_BYTES` | imaged | `default` |  |  | `` | 8 GiB byte budget for the node-local OCI blob cache; override when sizing compute-node disks |
 | `FAAS_OCI_INSECURE` | imaged | `dev-only` |  |  | `` | must never be set on a production host |
@@ -256,10 +258,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
-| `FAAS_S3_GATEWAY_CONTROL_ADDR` | s3-gatewayd | `default` |  | 127.0.0.1:9096 | `` |  |
-| `FAAS_S3_GATEWAY_LISTEN_ADDR` | s3-gatewayd | `default` |  | 127.0.0.1:8084 | `` |  |
-| `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `default` |  | single-box | `` | production control-plane service must set control-plane explicitly |
-| `FAAS_S3_GATEWAY_SPOOL_DIR` | s3-gatewayd | `default` |  |  | `` | optional single-PUT staging directory; empty uses the OS temporary directory |
+| `FAAS_S3_GATEWAY_CONTROL_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:9096 | `` |  |
+| `FAAS_S3_GATEWAY_LISTEN_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:8084 | `` |  |
+| `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `dropin` |  | single-box | `` | production control-plane service must set control-plane explicitly |
+| `FAAS_S3_GATEWAY_SPOOL_DIR` | s3-gatewayd | `unit` |  |  | `` | production unit stages bounded single-PUT bodies under /var/spool/faas/s3-gatewayd |
 | `FAAS_SAFEDEPLOY_STUCK_AFTER` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_SAFEDEPLOY_TOKEN` | meterd | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); Safe Deploy activation requires this and FAAS_CANARY_PROGRESSION_TOKEN together |
 | `FAAS_SAMPLE_INTERVAL` | meterd | `default` |  |  | `` |  |
@@ -336,3 +338,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` |  |  | `` | deprecated fallback delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
 | `FAAS_WORKFLOWS_ENABLED` | schedd | `unit` |  |  | `` | explicit 0 in faas-schedd.service; set to 1 to activate durable workflow dispatch |
 | `FAAS_WORKLOAD_` | guest | `guest` |  |  | `` | guest-init injects per-task loopback endpoint metadata for the main workload and declared sidecars |
+| `FAAS_WORKLOAD_IDENTITY_ISSUER` | vmmd | `default` |  |  | `` | optional vmmd workload-identity issuer override; config TOML is the primary deployment setting |
+| `FAAS_WORKLOAD_IDENTITY_KEY_ID` | vmmd | `default` |  |  | `` | optional vmmd workload-identity key ID override; config TOML is the primary deployment setting |
+| `FAAS_WORKLOAD_IDENTITY_KEY_PATH` | vmmd | `default` |  |  | `` | optional vmmd workload-identity signing-key path override; an empty path leaves issuance disabled |
+| `FAAS_WORKLOAD_IDENTITY_TTL_SECONDS` | vmmd | `default` |  |  | `` | optional vmmd workload-identity token lifetime override (30..3600 seconds) |

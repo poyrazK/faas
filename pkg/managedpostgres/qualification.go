@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -50,6 +52,314 @@ type QualificationReport struct {
 // and connection URLs never cross this boundary.
 type LifecycleQualificationReport struct {
 	Checks []QualificationCheck `json:"checks"`
+}
+
+// QualificationArtifactVersion is bumped whenever the approval document
+// shape or validation semantics change incompatibly.
+const QualificationArtifactVersion = 1
+
+const qualificationArtifactVersion = QualificationArtifactVersion
+
+var requiredProviderQualificationChecks = [...]string{
+	"provider_present", "resource_identity", "spec_valid", "capabilities_valid", "spec_supported",
+	"provision", "provision_observed", "provision_idempotent", "provision_idempotent_identity",
+	"inspect", "inspect_observed", "usage", "usage_valid", "credentials_issue", "credentials_valid",
+	"scale_to_zero_probe", "credentials_revoke", "delete", "delete_recovery", "delete_complete", "delete_recovery_complete",
+}
+
+var requiredLifecycleQualificationChecks = [...]string{
+	"service_present", "binding_service_present", "lifecycle_identity", "lifecycle_access", "lifecycle_spec",
+	"database_create", "database_ready", "binding_create", "binding_ready", "binding_delete", "database_delete",
+}
+
+// QualificationApproval is the non-secret approval material an operator may
+// use to enable the staging provisioning gate. It is intentionally bound to a
+// report digest and to the exact backend placement fingerprint, so changing a
+// provider configuration cannot silently reuse an old qualification run.
+type QualificationApproval struct {
+	Version            int       `json:"version"`
+	Provider           string    `json:"provider"`
+	BackendID          string    `json:"backend_id"`
+	BackendFingerprint string    `json:"backend_fingerprint"`
+	QualifiedAt        time.Time `json:"qualified_at"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	ReportSHA256       string    `json:"report_sha256"`
+	LifecycleValidated bool      `json:"lifecycle_validated"`
+	CanaryAccounts     []string  `json:"canary_accounts,omitempty"`
+}
+
+// QualificationReadiness is a stable, machine-readable result for operator
+// tooling. Reasons contain codes only; provider responses and credentials are
+// never included.
+type QualificationReadiness struct {
+	Ready   bool     `json:"ready"`
+	Reasons []string `json:"reasons,omitempty"`
+}
+
+// QualificationArtifact is the complete JSON document emitted by the
+// qualification command. It contains only provider-neutral specs, stable
+// check codes, and non-secret backend identity material.
+type QualificationArtifact struct {
+	Version            int                           `json:"version"`
+	BackendID          string                        `json:"backend_id"`
+	BackendFingerprint string                        `json:"backend_fingerprint"`
+	Spec               Spec                          `json:"spec"`
+	Report             QualificationReport           `json:"report"`
+	Lifecycle          *LifecycleQualificationReport `json:"lifecycle,omitempty"`
+	Approval           *QualificationApproval        `json:"approval,omitempty"`
+	ApprovalEnv        map[string]string             `json:"approval_env,omitempty"`
+	Readiness          QualificationReadiness        `json:"readiness"`
+}
+
+// BuildQualificationApproval creates an approval envelope from a successful
+// provider qualification. A missing lifecycle report is allowed here so the
+// command can still emit provider evidence, but readiness remains blocked
+// until the control-plane lifecycle smoke is present and passing.
+func BuildQualificationApproval(report QualificationReport, lifecycle *LifecycleQualificationReport, backendID, backendFingerprint string, canaryAccounts []string, now time.Time, ttl time.Duration) (QualificationApproval, error) {
+	if err := ValidateQualificationReport(report); err != nil {
+		return QualificationApproval{}, err
+	}
+	if strings.TrimSpace(backendID) == "" || backendID != strings.TrimSpace(backendID) || len(backendID) > 255 {
+		return QualificationApproval{}, ErrInvalid
+	}
+	if strings.TrimSpace(backendFingerprint) == "" || backendFingerprint != strings.TrimSpace(backendFingerprint) || len(backendFingerprint) > 255 {
+		return QualificationApproval{}, ErrInvalid
+	}
+	if lifecycle != nil {
+		if err := ValidateLifecycleQualificationReport(*lifecycle); err != nil {
+			return QualificationApproval{}, err
+		}
+	}
+	accounts := append([]string(nil), canaryAccounts...)
+	if err := validateCanaryAccounts(accounts); err != nil {
+		return QualificationApproval{}, err
+	}
+	sort.Strings(accounts)
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	if ttl > 90*24*time.Hour {
+		return QualificationApproval{}, ErrInvalid
+	}
+	qualifiedAt := report.CompletedAt.UTC()
+	if qualifiedAt.IsZero() {
+		qualifiedAt = now
+	}
+	if report.StartedAt.After(qualifiedAt) {
+		return QualificationApproval{}, ErrInvalid
+	}
+	expiresAt := now.Add(ttl)
+	if !expiresAt.After(qualifiedAt) {
+		return QualificationApproval{}, ErrInvalid
+	}
+	return QualificationApproval{
+		Version:            qualificationArtifactVersion,
+		Provider:           report.Provider,
+		BackendID:          backendID,
+		BackendFingerprint: backendFingerprint,
+		QualifiedAt:        qualifiedAt,
+		ExpiresAt:          expiresAt,
+		ReportSHA256:       qualificationReportSHA256(report),
+		LifecycleValidated: lifecycle != nil,
+		CanaryAccounts:     accounts,
+	}, nil
+}
+
+// ValidateQualificationReport checks that a report is complete and contains
+// no failed assertions. It is deliberately independent of any provider SDK.
+func ValidateQualificationReport(report QualificationReport) error {
+	if strings.TrimSpace(report.Provider) == "" || report.Provider != strings.TrimSpace(report.Provider) || report.ResourceID == "" || len(report.ResourceID) > 255 || !report.Mutating || report.StartedAt.IsZero() || report.CompletedAt.IsZero() || report.CompletedAt.Before(report.StartedAt) {
+		return ErrInvalid
+	}
+	if !hasQualificationChecks(report.Checks, requiredProviderQualificationChecks[:]) {
+		return ErrInvalid
+	}
+	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS < 0 {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+// ValidateLifecycleQualificationReport checks that every lifecycle assertion
+// passed and that the report is not an empty placeholder.
+func ValidateLifecycleQualificationReport(report LifecycleQualificationReport) error {
+	if !hasQualificationChecks(report.Checks, requiredLifecycleQualificationChecks[:]) {
+		return ErrInvalid
+	}
+	return nil
+}
+
+func hasQualificationChecks(checks []QualificationCheck, required []string) bool {
+	if len(checks) != len(required) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(checks))
+	for _, check := range checks {
+		if strings.TrimSpace(check.Name) == "" || !check.Passed || (check.Passed && check.Error != "") {
+			return false
+		}
+		seen[check.Name] = struct{}{}
+	}
+	if len(seen) != len(required) {
+		return false
+	}
+	for _, name := range required {
+		if _, ok := seen[name]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// EvaluateQualificationArtifact verifies an artifact against the currently
+// configured backend and canary allowlist. It never performs provider calls.
+// A non-ready result is expected while lifecycle qualification or operator
+// gate configuration is incomplete.
+func EvaluateQualificationArtifact(artifact QualificationArtifact, expectedBackendID, expectedBackendFingerprint string, expectedCanaryAccounts []string, now time.Time) QualificationReadiness {
+	var reasons []string
+	add := func(reason string) {
+		for _, existing := range reasons {
+			if existing == reason {
+				return
+			}
+		}
+		reasons = append(reasons, reason)
+	}
+	if artifact.Version != qualificationArtifactVersion {
+		add("artifact_version_invalid")
+	}
+	if artifact.Approval == nil {
+		add("approval_missing")
+		return QualificationReadiness{Ready: false, Reasons: reasons}
+	}
+	approval := *artifact.Approval
+	if approval.Version != qualificationArtifactVersion {
+		add("approval_version_invalid")
+	}
+	if artifact.BackendID == "" || artifact.BackendID != approval.BackendID || artifact.BackendID != expectedBackendID {
+		add("backend_mismatch")
+	}
+	if artifact.BackendFingerprint == "" || artifact.BackendFingerprint != approval.BackendFingerprint || artifact.BackendFingerprint != expectedBackendFingerprint {
+		add("backend_fingerprint_mismatch")
+	}
+	if approval.Provider == "" || approval.Provider != artifact.Report.Provider {
+		add("provider_mismatch")
+	}
+	if err := ValidateQualificationReport(artifact.Report); err != nil {
+		switch {
+		case errors.Is(err, ErrQualificationFailed):
+			add("provider_checks_failed")
+		case errors.Is(err, ErrUnavailable):
+			add("scale_to_zero_evidence_missing")
+		default:
+			add("report_invalid")
+		}
+	}
+	if approval.ReportSHA256 == "" || approval.ReportSHA256 != qualificationReportSHA256(artifact.Report) {
+		add("report_digest_mismatch")
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if approval.QualifiedAt.IsZero() || approval.ExpiresAt.IsZero() || !approval.ExpiresAt.After(approval.QualifiedAt) {
+		add("approval_window_invalid")
+	} else if !approval.ExpiresAt.After(now.UTC()) {
+		add("approval_expired")
+	}
+	if !approval.QualifiedAt.Equal(artifact.Report.CompletedAt) || approval.ExpiresAt.Sub(approval.QualifiedAt) > 90*24*time.Hour {
+		add("approval_window_invalid")
+	}
+	if !approval.LifecycleValidated {
+		add("lifecycle_not_qualified")
+	} else if artifact.Lifecycle == nil {
+		add("lifecycle_report_missing")
+	} else if err := ValidateLifecycleQualificationReport(*artifact.Lifecycle); err != nil {
+		add("lifecycle_checks_failed")
+	}
+	if err := validateCanaryAccounts(approval.CanaryAccounts); err != nil {
+		add("canary_accounts_invalid")
+	} else if !sameCanaryAccounts(approval.CanaryAccounts, expectedCanaryAccounts) {
+		add("canary_accounts_mismatch")
+	}
+	if len(artifact.ApprovalEnv) > 0 {
+		if artifact.ApprovalEnv[QualificationEnv] != "true" || artifact.ApprovalEnv[QualificationBackendEnv] != approval.BackendID || artifact.ApprovalEnv[QualificationFingerprintEnv] != approval.BackendFingerprint || artifact.ApprovalEnv[QualificationUntilEnv] != approval.ExpiresAt.UTC().Format(time.RFC3339) {
+			add("approval_env_mismatch")
+		}
+		if len(approval.CanaryAccounts) > 0 && artifact.ApprovalEnv[CanaryAccountsEnv] != strings.Join(approval.CanaryAccounts, ",") {
+			add("approval_env_mismatch")
+		}
+	}
+	return QualificationReadiness{Ready: len(reasons) == 0, Reasons: reasons}
+}
+
+// VerifyQualificationArtifact checks the artifact against the registry's
+// single default backend and current staging canary allowlist. It is a pure
+// configuration check; provider APIs are never contacted.
+func (r *Registry) VerifyQualificationArtifact(artifact QualificationArtifact, expectedCanaryAccounts []string, now time.Time) QualificationReadiness {
+	if r == nil {
+		return QualificationReadiness{Reasons: []string{"registry_unavailable"}}
+	}
+	regions := r.Regions()
+	if len(regions) != 1 {
+		return QualificationReadiness{Reasons: []string{"default_backend_count_invalid"}}
+	}
+	backend, err := r.Default(regions[0])
+	if err != nil {
+		return QualificationReadiness{Reasons: []string{"default_backend_unavailable"}}
+	}
+	readiness := EvaluateQualificationArtifact(artifact, backend.ID, backend.Fingerprint, expectedCanaryAccounts, now)
+	if artifact.Spec.Region != backend.Region {
+		readiness.Reasons = append(readiness.Reasons, "spec_region_mismatch")
+		readiness.Ready = false
+	}
+	if err := backend.Capabilities.Supports(artifact.Spec); err != nil {
+		readiness.Reasons = append(readiness.Reasons, "spec_unsupported")
+		readiness.Ready = false
+	}
+	return readiness
+}
+
+func qualificationReportSHA256(report QualificationReport) string {
+	encoded, _ := json.Marshal(report)
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
+}
+
+func validateCanaryAccounts(accounts []string) error {
+	if len(accounts) > 100 {
+		return ErrInvalid
+	}
+	seen := make(map[string]struct{}, len(accounts))
+	for _, account := range accounts {
+		if strings.TrimSpace(account) == "" || account != strings.TrimSpace(account) || len(account) > 255 {
+			return ErrInvalid
+		}
+		if _, ok := seen[account]; ok {
+			return ErrInvalid
+		}
+		seen[account] = struct{}{}
+	}
+	return nil
+}
+
+func sameCanaryAccounts(left, right []string) bool {
+	left = append([]string(nil), left...)
+	right = append([]string(nil), right...)
+	sort.Strings(left)
+	sort.Strings(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // LifecycleQualificationOptions identifies one disposable control-plane
