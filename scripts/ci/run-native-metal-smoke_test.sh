@@ -57,8 +57,12 @@ grep -Fq 'mount -t tmpfs tmpfs /run/netns' "${runner}" || {
   echo "native metal wrapper does not give the namespace batch a private /run/netns" >&2
   exit 1
 }
-grep -Fq 'FAAS_TEST_NETWORK_BATCH' "${runner}" || {
-  echo "native metal wrapper does not enable FAAS_TEST_NETWORK_BATCH for the batch" >&2
+# Must be an ASSIGNMENT on a non-comment line. The first version of this
+# pin grepped for the bare name and matched the comment above the command,
+# so it passed while the six tests skipped for want of the variable. A
+# check that asserts a string appears somewhere is not a check.
+grep -vE '^[[:space:]]*#' "${runner}" | grep -Fq 'FAAS_TEST_NETWORK_BATCH=1' || {
+  echo "native metal wrapper does not set FAAS_TEST_NETWORK_BATCH=1 for the batch (a comment mentioning it does not count)" >&2
   exit 1
 }
 grep -Fq 'namespace batch executed no test' "${runner}" || {

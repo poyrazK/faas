@@ -232,7 +232,8 @@ echo "native metal smoke: compile the namespace-batch test binary"
 
 echo "native metal smoke: run the namespace batch under unshare"
 set +e
-unshare --mount --net --propagation private -- \
+FAAS_TEST_NETWORK_BATCH=1 \
+  unshare --mount --net --propagation private -- \
   sh -c 'ip link set lo up 2>/dev/null; mount -t tmpfs tmpfs /run/netns && exec "$0" -test.run "$1" -test.timeout=10m -test.v' \
   "${batch_bin}" "${batch_tests}" 2>&1 | tee "${batch_log}"
 batch_rc="${PIPESTATUS[0]}"
