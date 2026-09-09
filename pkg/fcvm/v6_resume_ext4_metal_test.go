@@ -1,5 +1,7 @@
 //go:build metal
 
+// spec: §14
+
 // v6_resume_ext4_metal_test.go — build (or fetch) the V6 acceptance rootfs.
 //
 // Spec §14 V6 / §11: two guest restores from one snapshot must yield distinct
@@ -177,7 +179,7 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
-	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/faas", "tmp"} {
+	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/faas", "usr/local/bin", "tmp", "overlay"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			return err
 		}
@@ -187,7 +189,7 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 	// the guest can exec it without an interpreter. We use `go build` against
 	// the source dir, output to <work>/sbin/init directly.
 	bin := filepath.Join(work, "sbin", "init")
-	cmd := exec.Command("go", "build", "-trimpath", "-tags", "linux", "-o", bin, ".")
+	cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-tags", "linux", "-o", bin, ".")
 	cmd.Dir = guestInitSrc
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
 	cmd.Stderr = os.Stderr

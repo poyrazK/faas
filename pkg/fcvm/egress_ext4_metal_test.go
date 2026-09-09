@@ -1,5 +1,7 @@
 //go:build metal
 
+// spec: §11
+
 // egress_ext4_metal_test.go — tier-1 of the network roadmap regression:
 // boot a guest and prove that bridged-tenant egress actually works
 // end-to-end after the host MASQUERADE + boot-persistent bridge +
@@ -19,8 +21,8 @@
 // How:
 //   1. Build a one-off guest rootfs whose /init is a shell script
 //      that runs three probes (route, public wget, SMTP nc), writes
-//      results into /var/www/, then `exec busybox httpd -f -p 8080 -h
-//      /var/www` so the host test can fetch them via the DNAT path
+//      results into a tmpfs-backed /tmp/www/, then `exec busybox httpd -f
+//      -p 8080 -h /tmp/www` so the host test can fetch them via the DNAT path
 //      already exercised by TestMetalDNATPublishedToGuestPort.
 //   2. Boot the guest through Manager.ColdBoot with the same image
 //      for BaseKey/LayerKey (the M0 documented exception; there's no
@@ -39,7 +41,7 @@
 //     the URL must be present in the test process's environment before
 //     the guest rootfs is built (the fixture uses the host env at
 //     fixture-build time, not at assertion time). The host test then
-//     reads `/var/www/result/public` and `/var/www/result/public-exit`
+//     reads `/tmp/www/result/public` and `/tmp/www/result/public-exit`
 //     via httpd.
 //   - When FAAS_TEST_EGRESS_URL is unset (the default), the public
 //     probe is skipped — so a hermetic dev loop with no public
@@ -89,19 +91,22 @@ const egressFixtureName = "egress-guest.ext4"
 // each probe we write the result (NOT the exit code as the body) so
 // a failing wget still produces a body for the host to read.
 //
-// The trailing `exec busybox httpd -f -p 8080 -h /var/www` shifts
+// The trailing `exec busybox httpd -f -p 8080 -h /tmp/www` shifts
 // the guest's lifespan: it serves until killed. The host test fetches
 // the result files via /result/route /result/public /result/smtp,
 // then explicitly calls m.Destroy to poweroff the VM.
 const egressProbeScript = `#!/bin/sh
 set +e
-mkdir -p /var/www/result
+# The base drive is intentionally read-only. Mount a private tmpfs for probe
+# output, matching the writable scratch space available to normal workloads.
+busybox mount -t tmpfs -o mode=1777 tmpfs /tmp
+mkdir -p /tmp/www/result
 # Probe 1: guest default route. The guest's own ip command — proves
 # it's the guest OS, not the host netns. Fail-soft: missing busybox
 # ip applet (older builds) writes "no-ip" so the assertion fails
 # loudly rather than silently passing on a missing binary.
-if busybox ip -4 route show default > /var/www/result/route 2>&1; then :; else
-  busybox echo "no-ip" > /var/www/result/route
+if busybox ip -4 route show default > /tmp/www/result/route 2>&1; then :; else
+  busybox echo "no-ip" > /tmp/www/result/route
 fi
 # Probe 2: public egress — only attempt if FAAS_TEST_EGRESS_URL is set.
 # busybox wget runs out of /var/www as docroot, with --timeout so the
@@ -109,21 +114,21 @@ fi
 # (server-side skip), not a pass — the host test distinguishes by
 # checking the file size.
 if [ -n "$FAAS_TEST_EGRESS_URL" ]; then
-  busybox wget --timeout=5 -O /var/www/result/public "$FAAS_TEST_EGRESS_URL" \
-    > /var/www/result/public-exit 2>&1
-  busybox echo "rc=$?" > /var/www/result/public-exit
+  busybox wget --timeout=5 -O /tmp/www/result/public "$FAAS_TEST_EGRESS_URL" \
+    > /tmp/www/result/public-exit 2>&1
+  busybox echo "rc=$?" > /tmp/www/result/public-exit
 fi
 # Probe 3: SMTP port is dropped at the per-netns chain (tap0 iifname).
 # busybox nc -w 2 -z exits nonzero on timeout; capture exit code as
 # body so the host can grep for smtp-dropped OR the actual reason.
-if busybox nc -w 2 -z 8.8.8.8 25 > /var/www/result/smtp 2>&1; then
-  busybox echo "smtp-ok" > /var/www/result/smtp
+if busybox nc -w 2 -z 8.8.8.8 25 > /tmp/www/result/smtp 2>&1; then
+  busybox echo "smtp-ok" > /tmp/www/result/smtp
 else
-  busybox echo "smtp-dropped" > /var/www/result/smtp
+  busybox echo "smtp-dropped" > /tmp/www/result/smtp
 fi
 # Hand the docroot to httpd. -f keeps it foregrounded so the kernel
 # keeps the guest alive (until poweroff -f from the host).
-exec busybox httpd -f -p 8080 -h /var/www
+exec busybox httpd -f -p 8080 -h /tmp/www
 `
 
 // ensureEgressGuestExt4 builds (and caches inside dir) a tiny ext4
@@ -148,7 +153,7 @@ func ensureEgressGuestExt4(t *testing.T, dir string) string {
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
-	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "var", "var/www", "var/www/result"} {
+	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "tmp", "etc"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", sub, err)
 		}
@@ -200,7 +205,7 @@ func ensureEgressGuestExt4(t *testing.T, dir string) string {
 }
 
 // fetchEgressResult does a GET against the guest's httpd-served probe
-// result file (relative to the httpd docroot /var/www). Two-letter
+// result file (relative to the httpd docroot /tmp/www). Two-letter
 // helper so the test body stays readable — this is the only place we
 // have to round-trip through http. Uses inst.Lease.HostIP (the same
 // DNAT path TestMetalDNATPublishedToGuestPort exercises) so we catch a

@@ -172,6 +172,10 @@ export FAAS_TEST_KERNEL="${kernel}"
 export FAAS_TEST_BASE_ROOTFS="${base_path}"
 export FAAS_TEST_LAYER_ROOTFS="${layer_path}"
 export FAAS_TEST_FC_VERSION="${fc_version}"
+# This workflow targets the HDD acceptance node. It exercises restore
+# correctness and reports latency, but it must never enforce or contribute to
+# the reference-SSD p95 cohort.
+export FAAS_TEST_REFERENCE_SSD=0
 
 # Run the whole pkg/fcvm metal package, not a single boot.
 #
@@ -180,11 +184,10 @@ export FAAS_TEST_FC_VERSION="${fc_version}"
 # self-hosted `metal` job in ci.yml required a runner label no runner
 # carried, so every dispatch of it was cancelled or failed.
 #
-# Tests whose fixtures this script does not stage (FAAS_TEST_VMMD_HELPER,
-# FAAS_TEST_EGRESS_URL, the V6 rootfs pair, and so on) skip themselves
-# cleanly, so the package is safe to run whole. The tally below reports how
-# many actually ran so the remaining gap stays visible instead of being
-# implied by a green check.
+# Tests whose specialized fixtures this script does not stage skip themselves
+# with a concrete reason, so the package is safe to run whole. The tally below
+# reports how many actually ran so the remaining gap stays visible instead of
+# being implied by a green check.
 #
 # -run is deliberately absent. Adding one here is how a suite quietly
 # shrinks back to a single test.
