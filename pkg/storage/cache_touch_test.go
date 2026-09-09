@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -44,9 +45,12 @@ func TestLocalPathDoesNotWaitForCacheTouch(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		got, ok, pathErr := cache.LocalPath(key)
+		got, source, ok, pathErr := cache.LocalPathWithSource(key)
 		if pathErr == nil && (!ok || got != path) {
 			pathErr = ErrNotFound
+		}
+		if pathErr == nil && source != LocalPathSourceCache {
+			pathErr = fmt.Errorf("source = %q, want %q", source, LocalPathSourceCache)
 		}
 		result <- pathErr
 	}()

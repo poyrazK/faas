@@ -293,12 +293,9 @@ func TestCmdInspectUpstreams_BadSlug_NoServerCall(t *testing.T) {
 	}
 }
 
-// TestCmdInspectUpstreams_NoLeafFlag asserts that a bare
-// `gregale inspect <slug>` (no --upstreams) exits 1 with the
-// usage line and zero server calls. The verb without a leaf
-// flag is ambiguous today; future leaves (--env, --crons) will
-// add their own gates here.
-func TestCmdInspectUpstreams_NoLeafFlag(t *testing.T) {
+// TestCmdInspectUpstreams_ScopeWithoutLeaf_NoServerCall asserts that scope is
+// never silently ignored by the new bare-summary path.
+func TestCmdInspectUpstreams_ScopeWithoutLeaf_NoServerCall(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		calls++
@@ -311,14 +308,14 @@ func TestCmdInspectUpstreams_NoLeafFlag(t *testing.T) {
 	_, readStderr, restore := swapIO(t)
 	defer restore()
 
-	if code := cmdInspect([]string{inspectSlug}); code == 0 {
-		t.Errorf("inspect (no leaf) = 0, want nonzero")
+	if code := cmdInspect([]string{inspectSlug, "--scope=primary"}); code == 0 {
+		t.Errorf("inspect (scope without upstreams) = 0, want nonzero")
 	}
 	if calls != 0 {
 		t.Errorf("server calls = %d, want 0", calls)
 	}
-	if !strings.Contains(readStderr(), "usage: gregale inspect") {
-		t.Errorf("stderr missing usage line; got:\n%s", readStderr())
+	if !strings.Contains(readStderr(), "--scope requires --upstreams") {
+		t.Errorf("stderr missing scope validation; got:\n%s", readStderr())
 	}
 }
 

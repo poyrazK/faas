@@ -5285,7 +5285,7 @@ func (s *PgStore) ListDeploymentsByNodeID(ctx context.Context, nodeID string) ([
 // ConcurrencyForDeployment returns the live-instance count for a
 // (app, deployment) pair. Used by the floor trigger's per-deployment
 // floor arithmetic and the reaper's per-deployment idle floor
-// check. The three live states (RUNNING, WAKING, COLD_BOOTING) match
+// check. The three live states (waking, cold_booting, running) match
 // pkg/state/machine.go CountsForConcurrency. PARKING / PARKED /
 // STOPPED do not count (they're shutting down or idle).
 //
@@ -5303,7 +5303,7 @@ func (s *PgStore) ConcurrencyForDeployment(ctx context.Context, appID, deploymen
 		select count(*) from instances
 		 where app_id = $1
 		   and deployment_id = $2
-		   and state in ('RUNNING', 'WAKING', 'COLD_BOOTING')
+		   and state in ('waking', 'cold_booting', 'running')
 	`, appID, deploymentID).Scan(&n)
 	if err != nil {
 		return 0, err
@@ -5886,6 +5886,45 @@ func (s *PgStore) ListDeploymentsForApp(ctx context.Context, appID string, limit
 	return scanDeployments(rows)
 }
 
+// ListDeploymentsForAppBefore returns one cursor page of deployments for an
+// app, newest first. A non-zero before excludes rows at or newer than the
+// cursor; this mirrors ListDeploymentsForAccount and keeps the app-scoped
+// history endpoint on the (app_id, created_at) index. limit <= 0 returns the
+// full remaining tail for parity with ListDeploymentsForApp.
+func (s *PgStore) ListDeploymentsForAppBefore(ctx context.Context, appID string, before time.Time, limit int) ([]Deployment, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if before.IsZero() {
+		if limit > 0 {
+			rows, err = s.pool.Query(ctx,
+				`select `+deploymentSelectColumnsWithRootfs+`
+				 from deployments where app_id = $1 order by created_at desc limit $2`,
+				appID, limit)
+		} else {
+			rows, err = s.pool.Query(ctx,
+				`select `+deploymentSelectColumnsWithRootfs+`
+				 from deployments where app_id = $1 order by created_at desc`, appID)
+		}
+	} else if limit > 0 {
+		rows, err = s.pool.Query(ctx,
+			`select `+deploymentSelectColumnsWithRootfs+`
+			 from deployments where app_id = $1 and created_at < $2
+			 order by created_at desc limit $3`, appID, before, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select `+deploymentSelectColumnsWithRootfs+`
+			 from deployments where app_id = $1 and created_at < $2
+			 order by created_at desc`, appID, before)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDeployments(rows)
+}
+
 // ListDeploymentsForAccount returns every deployment whose app belongs
 // to the account, ordered DESC by created_at. Cursor pagination: pass
 // the previous response's last created_at as `before` to page
@@ -5914,6 +5953,37 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 			 where a.account_id = $1 and a.status <> 'deleted' and d.created_at < $2
 			 order by d.created_at desc limit $3`,
 			accountID, before, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDeployments(rows)
+}
+
+func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if beforeAt.IsZero() {
+		rows, err = s.pool.Query(ctx,
+			`select `+deploymentSelectColumnsQualified+`
+			 from deployments d join apps a on a.id = d.app_id
+			 where a.account_id = $1 and a.status <> 'deleted'
+			 order by d.created_at desc, d.id desc limit $2`,
+			accountID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select `+deploymentSelectColumnsQualified+`
+			 from deployments d join apps a on a.id = d.app_id
+			 where a.account_id = $1 and a.status <> 'deleted'
+			   and (d.created_at, d.id) < ($2, $3::uuid)
+			 order by d.created_at desc, d.id desc limit $4`,
+			accountID, beforeAt, beforeID, limit)
 	}
 	if err != nil {
 		return nil, err
@@ -8107,6 +8177,29 @@ func (s *PgStore) DomainByName(ctx context.Context, domain string) (CustomDomain
 		        coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz),
 		        coalesce(cert_failed_at, 'epoch'::timestamptz)
 		   from custom_domains where domain = $1`, domain)
+	d := CustomDomain{}
+	if err := scanCustomDomain(row, &d); err != nil {
+		return CustomDomain{}, mapErr(err)
+	}
+	return d, nil
+}
+
+// WildcardDomainForHost returns the most-specific wildcard row whose
+// suffix strictly contains host. The leading dot in substr(domain, 2) makes
+// the match label-boundary safe ("badexample.com" cannot match
+// "*.example.com").
+func (s *PgStore) WildcardDomainForHost(ctx context.Context, host string) (CustomDomain, error) {
+	row := s.pool.QueryRow(ctx,
+		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
+		        cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
+		        coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz),
+		        coalesce(cert_failed_at, 'epoch'::timestamptz)
+		   from custom_domains
+		  where domain like '*.%'
+		    and lower($1) like '%' || lower(substr(domain, 2))
+		    and lower($1) <> lower(substr(domain, 3))
+		  order by length(domain) desc
+		  limit 1`, host)
 	d := CustomDomain{}
 	if err := scanCustomDomain(row, &d); err != nil {
 		return CustomDomain{}, mapErr(err)
@@ -13144,13 +13237,13 @@ func (s *PgStore) PerNodeLiveStats(ctx context.Context) ([]PerNodeStats, error) 
 	rows, err := s.pool.Query(ctx, `
 		select n.name                                           as node_name,
 		       count(*)                                         as instances_live,
-		       count(*) filter (where i.state = 'RUNNING')     as instances_running,
-		       count(*) filter (where i.state = 'WAKING')      as instances_waking,
-		       count(*) filter (where i.state = 'COLD_BOOTING') as instances_cold_booting,
+		       count(*) filter (where i.state = 'running')      as instances_running,
+		       count(*) filter (where i.state = 'waking')       as instances_waking,
+		       count(*) filter (where i.state = 'cold_booting') as instances_cold_booting,
 		       coalesce(sum(i.ram_mb + 8), 0)                    as ram_used_mb
 		from instances i
 		join compute_nodes n on n.id = i.node_id
-		where i.state in ('RUNNING', 'WAKING', 'COLD_BOOTING')
+		where i.state in ('waking', 'cold_booting', 'running')
 		group by n.name
 		order by n.name
 	`)
@@ -13191,12 +13284,12 @@ func (s *PgStore) OperatorCapacity(ctx context.Context) (OperatorCapacitySnapsho
 		with live as (
 			select i.node_id,
 			       count(*) as instances_live,
-			       count(*) filter (where i.state = 'RUNNING') as instances_running,
-			       count(*) filter (where i.state = 'WAKING') as instances_waking,
-			       count(*) filter (where i.state = 'COLD_BOOTING') as instances_cold_booting,
+			       count(*) filter (where i.state = 'running') as instances_running,
+			       count(*) filter (where i.state = 'waking') as instances_waking,
+			       count(*) filter (where i.state = 'cold_booting') as instances_cold_booting,
 			       coalesce(sum(i.ram_mb + 8), 0)::bigint as ram_used_mb
 			  from instances i
-			 where i.state in ('RUNNING', 'WAKING', 'COLD_BOOTING')
+			 where i.state in ('waking', 'cold_booting', 'running')
 			 group by i.node_id
 		), placed as (
 			select a.node_id,
@@ -14259,6 +14352,43 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 	}
 	defer rows.Close()
 	var out []Event
+	for rows.Next() {
+		var e Event
+		var rawData []byte
+		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.Kind, &e.Subject, &rawData); err != nil {
+			return nil, err
+		}
+		e.Data = json.RawMessage(rawData)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *PgStore) ListEventsPage(ctx context.Context, subject string, beforeAt time.Time, beforeID int64, limit int) ([]Event, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	subj, err := uuid.Parse(subject)
+	if err != nil {
+		return nil, nil
+	}
+	var rows pgx.Rows
+	if beforeAt.IsZero() {
+		rows, err = s.pool.Query(ctx,
+			`select id, at, actor, kind, subject, data
+			   from events where subject = $1
+			  order by at desc, id desc limit $2`, subj, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select id, at, actor, kind, subject, data
+			   from events where subject = $1 and (at, id) < ($2, $3)
+			  order by at desc, id desc limit $4`, subj, beforeAt, beforeID, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Event, 0, limit)
 	for rows.Next() {
 		var e Event
 		var rawData []byte
@@ -19523,6 +19653,52 @@ func (s *PgStore) ListGdprRequestsForAccount(ctx context.Context, accountID stri
 			g           GdprRequest
 			completedAt pgtype.Timestamptz
 			requestID   pgtype.Text // NULL = no inbound X-Request-Id (PR-5.2)
+		)
+		if err := rows.Scan(&g.ID, &g.AccountID, &g.AccountEmail,
+			&g.Action, &g.RequestedAt, &completedAt, &requestID); err != nil {
+			return nil, err
+		}
+		if completedAt.Valid {
+			g.CompletedAt = completedAt.Time
+		}
+		if requestID.Valid {
+			g.RequestID = requestID.String
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (s *PgStore) ListGdprRequestsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]GdprRequest, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if beforeAt.IsZero() {
+		rows, err = s.pool.Query(ctx,
+			`select id, account_id, account_email, action, requested_at, completed_at, request_id
+			   from gdpr_requests where account_id = $1
+			  order by requested_at desc, id desc limit $2`, accountID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select id, account_id, account_email, action, requested_at, completed_at, request_id
+			   from gdpr_requests
+			  where account_id = $1 and (requested_at, id) < ($2, $3::uuid)
+			  order by requested_at desc, id desc limit $4`, accountID, beforeAt, beforeID, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]GdprRequest, 0, limit)
+	for rows.Next() {
+		var (
+			g           GdprRequest
+			completedAt pgtype.Timestamptz
+			requestID   pgtype.Text
 		)
 		if err := rows.Scan(&g.ID, &g.AccountID, &g.AccountEmail,
 			&g.Action, &g.RequestedAt, &completedAt, &requestID); err != nil {

@@ -111,6 +111,8 @@ Flags (bundle):
 Flags (install):
   --git-sha SHA         40-char lowercase hex git SHA to install (required).
   --releases-root PATH  Releases root (default: /opt/faas/releases).
+  --tarball-path PATH   Canonical release.tar.gz. Expects
+                        release.cosign.bundle and release.sbom.json beside it.
   --node NAME           compute_nodes.name to stamp (default:
                         FAAS_NODE_NAME, then hostname; compute-only
                         installs use NAME.faas).
@@ -1096,7 +1098,7 @@ func assertDrainStatus(ctx context.Context, pool *pgxpool.Pool, nodeName string)
 	err = pool.QueryRow(ctx, `
 		SELECT count(*) FROM instances
 		 WHERE node_id = $1
-		   AND state IN ('WAKING', 'COLD_BOOTING', 'RUNNING')
+		   AND state IN ('waking', 'cold_booting', 'running')
 	`, cnID).Scan(&live)
 	if err != nil {
 		return fmt.Errorf("drain gate: cannot read live-instance count: %w", err)

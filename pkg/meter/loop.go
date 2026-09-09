@@ -221,13 +221,10 @@ func (l *Loop) WithCanaryProgression(p *canary.Progression) *Loop {
 // WithSafeDeploy attaches the safedeploy orchestrator tick
 // runtime (issue #976 / ADR-122 / SAFE-RELEASES-F). cmd/meterd
 // calls this when FAAS_SAFEDEPLOY_TOKEN is set so the goroutine
-// has the apid service-account credential the orchestrator uses
-// for any future api-side calls (today the orchestrator only
-// stamps the state machine via pkg/state.Store — no apid HTTP
-// calls — but the bearer stays wired for forward-compat with
-// pre-deploy diff checks). nil disables the tick (Loop.Run
-// skips the goroutine). Mirrors WithCanaryProgression's
-// nil-skip + env-gate pattern.
+// can stamp rollout transitions and route stuck-rollout recovery
+// through APID's idempotent transaction. nil disables the tick
+// (Loop.Run skips the goroutine). Mirrors
+// WithCanaryProgression's nil-skip + env-gate pattern.
 func (l *Loop) WithSafeDeploy(o *safedeploy.Orchestrator) *Loop {
 	if o == nil {
 		return l
@@ -373,13 +370,10 @@ func (l *Loop) Run(ctx context.Context) error {
 	// orchestrator tick. Gated on WithSafeDeploy (set by
 	// cmd/meterd when FAAS_SAFEDEPLOY_TOKEN is on). The
 	// orchestrator stamps the rollout_state machine — pending
-	// → rolling_out → complete, plus a 30-min stuck-rollout
-	// warn — without making any apid HTTP calls today (the
-	// orchestrator's only writer is pkg/state.Store via
-	// SafedeployStampRollout + AppendDeploymentAudit). The
-	// orchestrator is the canonical owner of the
-	// rollout_state machine per CLAUDE.md ownership rules;
-	// pkg/canary only stamps canary_step + traffic_percent.
+	// → rolling_out → complete — and escalates a 30-min stuck rollout
+	// through APID's idempotent abort endpoint when wired. APID remains
+	// the canonical owner of traffic redistribution and recovery audit
+	// writes; pkg/canary owns canary_step + traffic_percent advances.
 	if l.safedeploy != nil {
 		go func() {
 			errc <- l.runTicks(ctx, l.cfg.SafeDeployInterval,

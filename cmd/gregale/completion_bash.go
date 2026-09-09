@@ -32,7 +32,7 @@ import (
 func cmdCompletionBash() int {
 	w := osStdout
 	renderBashHeader(w)
-	for _, c := range cliCommands {
+	for _, c := range customerCliCommands() {
 		renderBashCommand(w, c)
 	}
 	renderBashFooter(w)
@@ -154,8 +154,9 @@ func renderBashCommand(w io.Writer, c cliCommand) {
 func renderBashFooter(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  # Top-level: complete all known commands.")
 	_, _ = fmt.Fprintln(w, "  if [ $cword -eq 1 ]; then")
-	allCmds := make([]string, 0, len(cliCommands))
-	for _, c := range cliCommands {
+	commands := customerCliCommands()
+	allCmds := make([]string, 0, len(commands))
+	for _, c := range commands {
 		allCmds = append(allCmds, c.Name)
 	}
 	_, _ = fmt.Fprintf(w, "    COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", strings.Join(allCmds, " "))

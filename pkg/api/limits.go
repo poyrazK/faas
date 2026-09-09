@@ -960,6 +960,9 @@ type Limits struct {
 	// is false (a Free customer's POST hits the gate before the store
 	// is touched).
 	TenantSurfacesAllowed bool
+	// WildcardDomainsAllowed gates customer-owned wildcard custom domains.
+	// DNS-01 issuance and suffix routing are reserved for Pro and Scale.
+	WildcardDomainsAllowed bool
 
 	// DataPlacementHintsPerApp (ADR-098 §D5) caps how many
 	// inferred/explicit data_upstreams rows one app may hold. The
@@ -985,6 +988,11 @@ type Limits struct {
 	// N-apps-times-cap-per-app bypass. Both enforced in
 	// pkg/state.CreateAppWebhookIfUnderQuota.
 	WebhookPerAccount int
+	// LogDrainPerApp caps the number of customer runtime log destinations
+	// on one app. It follows the same plan gate as outbound webhooks.
+	LogDrainPerApp int
+	// LogDrainPerAccount caps destinations across all apps in an account.
+	LogDrainPerAccount int
 
 	// TriggersAllowed (issue #757 / ADR-0NN) gates the unified Trigger
 	// primitive (cron + kafka + nats + redis_streams + sqs_compat +
@@ -1757,6 +1765,7 @@ var planLimits = map[Plan]Limits{
 		TenantSurfacesPerAccount:  0,
 		TenantHostnamesPerSurface: 0,
 		TenantSurfacesAllowed:     false,
+		WildcardDomainsAllowed:    false,
 		// Data-placement hints (ADR-098 §D5): Free is gated off —
 		// the handler returns 402 CodePlanLimitDataUpstreams before
 		// any regex match. The 0 here is a defence-in-depth value
@@ -1765,8 +1774,10 @@ var planLimits = map[Plan]Limits{
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Free has no webhooks — the handler returns 402
 		// CodePlanWebhooksNotAllowed before the store is touched.
-		WebhookPerApp:     0,
-		WebhookPerAccount: 0,
+		WebhookPerApp:      0,
+		WebhookPerAccount:  0,
+		LogDrainPerApp:     0,
+		LogDrainPerAccount: 0,
 		// Trigger primitive (issue #757 / ADR-0NN): Free is the
 		// abuse-floor tier — TriggersAllowed=false so a POST on a
 		// Free account gets 402 CodePlanTriggersNotAllowed before the
@@ -1787,9 +1798,9 @@ var planLimits = map[Plan]Limits{
 		MaxESMRecordsPerSecond: 0,
 		BrokerEgressMbit:       0,
 		TLSSkipVerifyAllowed:   false,
-		// Per-account rate limit (ADR-040): Free gets 50/min — enough for
-		// the 1-concurrency plan's traffic envelope.
-		RateLimitPerAccountRPM: 50,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Free app at its advertised 5 rps.
+		RateLimitPerAccountRPM: 300,
 		// Wake-side admission throttle (ADR-099 PR-0). Free caps
 		// wake admissions at 1/min per app + 1/min per account — the
 		// abuse-floor tier should never burst-wake. The apid-side
@@ -2114,13 +2125,16 @@ var planLimits = map[Plan]Limits{
 		TenantSurfacesPerAccount:  1,
 		TenantHostnamesPerSurface: 10,
 		TenantSurfacesAllowed:     true,
+		WildcardDomainsAllowed:    false,
 		// Data-placement hints (ADR-098 §D5): Hobby unlocks the
 		// capture path with a 3-hint cap per app.
 		DataPlacementHintsPerApp: 3,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Hobby gets 3/app, 10/account — mirrors the alert-rule ratio.
-		WebhookPerApp:     3,
-		WebhookPerAccount: 10,
+		WebhookPerApp:      3,
+		WebhookPerAccount:  10,
+		LogDrainPerApp:     3,
+		LogDrainPerAccount: 10,
 		// Trigger primitive (issue #757 / ADR-0NN): Hobby is the
 		// entry paid tier — unlocks the in-platform queue kind and
 		// the sqs_compat kind (the two no-external-broker shapes).
@@ -2149,10 +2163,9 @@ var planLimits = map[Plan]Limits{
 		// The migration-00274 SQL ceiling is 64 MiB so there's
 		// headroom for Pro+ below the hard limit.
 		TriggerPayloadMaxBytes: 1048576,
-		// Per-account rate limit (ADR-040): Hobby gets 200/min — ~10× the
-		// Hobby per-app rps (20) so per-app trips first on a single hot
-		// app, and the account limit catches the cross-app botnet.
-		RateLimitPerAccountRPM: 200,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Hobby app at its advertised 20 rps.
+		RateLimitPerAccountRPM: 1200,
 		// Wake-side admission throttle (ADR-099 PR-0). Hobby
 		// permits a small wake burst — a cron tick on a Hobby
 		// customer's job can legitimately want 5 wakes/min across
@@ -2473,13 +2486,16 @@ var planLimits = map[Plan]Limits{
 		TenantSurfacesPerAccount:  5,
 		TenantHostnamesPerSurface: 50,
 		TenantSurfacesAllowed:     true,
+		WildcardDomainsAllowed:    true,
 		// Data-placement hints (ADR-098 §D5): Pro unlocks the
 		// capture path with a 10-hint cap per app.
 		DataPlacementHintsPerApp: 10,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Pro gets 10/app, 30/account — mirrors the alert-rule ratio.
-		WebhookPerApp:     10,
-		WebhookPerAccount: 30,
+		WebhookPerApp:      10,
+		WebhookPerAccount:  30,
+		LogDrainPerApp:     10,
+		LogDrainPerAccount: 30,
 		// Trigger primitive (issue #757 / ADR-0NN): Pro is the first
 		// tier where the external-broker kinds unlock (Kafka, NATS,
 		// Redis-streams) — the egress-allowlist tier (ADR-031) is
@@ -2502,9 +2518,9 @@ var planLimits = map[Plan]Limits{
 		// hardcoded closeBatch byte cap so Pro customers behave
 		// identically pre/post migration 00274.
 		TriggerPayloadMaxBytes: 6291456,
-		// Per-account rate limit (ADR-040): Pro gets 1000/min — ~10× the
-		// Pro per-app rps (100), same rationale as Hobby.
-		RateLimitPerAccountRPM: 1000,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Pro app at its advertised 100 rps.
+		RateLimitPerAccountRPM: 6000,
 		// Wake-side admission throttle (ADR-099 PR-0). Pro is the
 		// production tier — the per-app burst ceiling of 20/min is
 		// calibrated against a customer running a cron fleet
@@ -2834,6 +2850,7 @@ var planLimits = map[Plan]Limits{
 		TenantSurfacesPerAccount:  25,
 		TenantHostnamesPerSurface: 250,
 		TenantSurfacesAllowed:     true,
+		WildcardDomainsAllowed:    true,
 		// Data-placement hints (ADR-098 §D5): Scale unlocks the
 		// capture path with a 50-hint cap per app — large enough
 		// for a multi-DB SaaS (primary + replicas + read-only +
@@ -2841,8 +2858,10 @@ var planLimits = map[Plan]Limits{
 		DataPlacementHintsPerApp: 50,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Scale gets 25/app, 100/account — mirrors the alert-rule ratio.
-		WebhookPerApp:     25,
-		WebhookPerAccount: 100,
+		WebhookPerApp:      25,
+		WebhookPerAccount:  100,
+		LogDrainPerApp:     25,
+		LogDrainPerAccount: 100,
 		// Trigger primitive (issue #757 / ADR-0NN): Scale is the upper
 		// tier — caps align with the SQL CHECK ceilings (5000 records
 		// / 5 min window / 25 attempts) so a Scale customer's
@@ -2870,12 +2889,9 @@ var planLimits = map[Plan]Limits{
 		// column CHECK remains a safety net, not a binding
 		// constraint.
 		TriggerPayloadMaxBytes: 16777216,
-		// Per-account rate limit (ADR-040): Scale gets 5000/min — ~10× the
-		// Scale per-app rps (500). The fleet-summed alert at 100/min/5m
-		// (FaasPerAccountRateLimitSpike) triggers well before any single
-		// paid customer's bucket fills, which is the intended signal:
-		// coordinated abuse, not baseline load.
-		RateLimitPerAccountRPM: 5000,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Scale app at its advertised 500 rps.
+		RateLimitPerAccountRPM: 30000,
 		// Wake-side admission throttle (ADR-099 PR-0). Scale is
 		// the upper tier — 100 wakes/min per app is enough to drain
 		// a 1000-task parallel job run in 10 min wall-clock, which
@@ -5038,6 +5054,13 @@ func (p Plan) RouteMetricsResponseAllowed() bool {
 	return l.RouteMetricsEnabled
 }
 
+// HealthPathWakesAllowed reports whether the plan may opt a health endpoint
+// into real probes. Health probes are edge-answered by default; only Pro and
+// Scale can pay for the opt-in wake behaviour.
+func (p Plan) HealthPathWakesAllowed() bool {
+	return p == PlanPro || p == PlanScale
+}
+
 // RouteMetricsPerAppCap is the per-app hard cap on the number of
 // distinct routes admitted into the routeLabelSet (ADR-093 D2). When
 // exceeded, all new routes collapse into the reserved __route_other__
@@ -5370,6 +5393,13 @@ func (p Plan) CronLimitPerAccount() int {
 	return l.CronLimitPerAccount
 }
 
+// WildcardDomainsAllowed reports whether the plan may attach customer-owned
+// wildcard domains. Unknown plans fail closed.
+func (p Plan) WildcardDomainsAllowed() bool {
+	l, ok := LimitsFor(p)
+	return ok && l.WildcardDomainsAllowed
+}
+
 // CorsPresetsPerAccount returns the per-account CORS preset cap
 // (issue #975 item #4 / Mega-Foundation #979-b, slot 00294).
 // Free=0 (Free is the abuse-floor tier; the abstraction is the
@@ -5680,6 +5710,25 @@ func (p Plan) WebhookPerAccount() int {
 		return 0
 	}
 	return l.WebhookPerAccount
+}
+
+// LogDrainPerApp returns the per-app customer runtime log destination cap.
+func (p Plan) LogDrainPerApp() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogDrainPerApp
+}
+
+// LogDrainPerAccount returns the per-account customer runtime log
+// destination cap.
+func (p Plan) LogDrainPerAccount() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogDrainPerAccount
 }
 
 // TriggersAllowed (issue #757 / ADR-0NN) returns true if the plan

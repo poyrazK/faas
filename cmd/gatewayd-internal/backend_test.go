@@ -99,6 +99,26 @@ func TestPgRouter_CustomDomainVerifiedOnly(t *testing.T) {
 	}
 }
 
+func TestPgRouter_WildcardCustomDomainRoutesSubdomains(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "wildcard", api.PlanPro)
+	ctx := context.Background()
+	if _, err := store.CreateCustomDomain(ctx, "*.example.com", app.ID, "tok"); err != nil {
+		t.Fatalf("CreateCustomDomain: %v", err)
+	}
+	if err := store.MarkDomainVerified(ctx, "*.example.com"); err != nil {
+		t.Fatalf("MarkDomainVerified: %v", err)
+	}
+	r := pgRouter{store: store, appsSuffix: ".apps.gregale.dev"}
+	got, ok, err := r.ResolveHost(ctx, "api.example.com")
+	if err != nil || !ok || got.ID != app.ID {
+		t.Fatalf("wildcard resolve = %+v, ok=%v, err=%v", got, ok, err)
+	}
+	if _, ok, err := r.ResolveHost(ctx, "example.com"); err != nil || ok {
+		t.Fatalf("wildcard apex resolve ok=%v err=%v, want false/nil", ok, err)
+	}
+}
+
 func TestPgRouter_DeletedAppNotRouted(t *testing.T) {
 	store := state.NewMemStore()
 	app := seedApp(t, store, "gone", api.PlanFree)
@@ -513,18 +533,18 @@ func TestHandleInvalidation_TerminalStatesEvict(t *testing.T) {
 	}
 }
 
-// TestAccountRateLimit_TenOhOneReturns429 — ADR-040 / issue #292
-// acceptance: 1001 requests from the same account in 60s, the 1001st
+// TestAccountRateLimit_ThreeOhOneReturns429 — ADR-040 / issue #1680:
+// 301 requests from the same Free account without refill, the 301st
 // returns 429. Wires the production gateway handler against a real
 // pgRouter + MemStore + PGBackend so the AccountID plumbing is exercised
 // end-to-end (issue #292 threat model: botnet rotating across one
 // customer's apps). The per-app limiter is bypassed so the test isolates
 // the per-account scope; the per-account limiter uses a frozen clock so
-// 1001 sequential requests don't refill mid-loop (Free plan: 50/min RPM
-// burst = 50 tokens).
-func TestAccountRateLimit_TenOhOneReturns429(t *testing.T) {
+// sequential requests don't refill mid-loop (Free plan: 300/min RPM
+// burst = 300 tokens).
+func TestAccountRateLimit_ThreeOhOneReturns429(t *testing.T) {
 	store := state.NewMemStore()
-	app := seedApp(t, store, "ratelimited", api.PlanFree) // Free: per-account burst 50
+	app := seedApp(t, store, "ratelimited", api.PlanFree) // Free: per-account burst 300
 	ctx := context.Background()
 
 	router := pgRouter{store: store, appsSuffix: ".apps.gregale.dev"}
@@ -536,7 +556,7 @@ func TestAccountRateLimit_TenOhOneReturns429(t *testing.T) {
 
 	// Real upstream the legacy proxy can talk to (no real Firecracker
 	// here — the test only needs the proxy path to return 200 so the
-	// 50 burst requests succeed and the 951 429s fire on the per-account
+	// 300 burst requests succeed and the final 429 fires on the per-account
 	// scope).
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("hello"))
@@ -544,16 +564,16 @@ func TestAccountRateLimit_TenOhOneReturns429(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	// FakeScheduler's nodeID is what the legacy proxy dials. Point it
-	// at the upstream listener's address so the 50 successful requests
+	// at the upstream listener's address so the 300 successful requests
 	// actually proxy and return 200.
 	sched := gateway.NewFakeScheduler(upstream.Listener.Addr().String()).
 		WithInstanceID("i-rl").
 		WithWakeID("w-rl")
 	backend := gateway.NewPGBackend(router, sched, testLogger())
 
-	// Frozen clock so the per-account bucket doesn't refill during 1001
-	// sequential requests. Without this the Free plan would refill
-	// 50/60 ≈ 0.83 tokens/sec and the test would race.
+	// Frozen clock so the per-account bucket doesn't refill during 301
+	// sequential requests. Without this the Free plan refills 5 tokens/sec
+	// and the test can race.
 	frozen := time.Now()
 	acctLim := gateway.NewLimiterWithClock(func() time.Time { return frozen })
 
@@ -562,14 +582,14 @@ func TestAccountRateLimit_TenOhOneReturns429(t *testing.T) {
 	h.WithLimiter(unlimitedLimiterForTest()) // bypass per-app scope
 	h.WithAccountLimiter(acctLim)            // frozen-clock per-account
 
-	// Drive 1001 requests sequentially. The first 50 succeed (Free burst),
-	// 51..1001 all 429 with x-faas-rate-limit-scope: account.
+	// Drive 301 requests sequentially. The first 300 succeed (Free burst),
+	// and request 301 is a 429 with x-faas-rate-limit-scope: account.
 	var (
 		ok200   int
 		ok429   int
 		last429 *httptest.ResponseRecorder
 	)
-	for i := 0; i < 1001; i++ {
+	for i := 0; i < 301; i++ {
 		req := httptest.NewRequest("GET", "http://ratelimited.apps.gregale.dev/", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -583,18 +603,18 @@ func TestAccountRateLimit_TenOhOneReturns429(t *testing.T) {
 			t.Fatalf("request %d: status = %d, want 200 or 429", i, rec.Code)
 		}
 	}
-	// 50 successful (Free burst), 951 429s.
-	if ok200 != 50 {
-		t.Errorf("ok200 = %d, want 50 (Free per-account burst)", ok200)
+	// 300 successful (Free burst), then one 429.
+	if ok200 != 300 {
+		t.Errorf("ok200 = %d, want 300 (Free per-account burst)", ok200)
 	}
-	if ok429 != 951 {
-		t.Errorf("ok429 = %d, want 951", ok429)
+	if ok429 != 1 {
+		t.Errorf("ok429 = %d, want 1", ok429)
 	}
 	if last429 == nil {
 		t.Fatal("last429 not captured")
 	}
 	if last429.Header().Get("x-faas-rate-limit-scope") != "account" {
-		t.Errorf("1001st request should carry x-faas-rate-limit-scope: account; got %q",
+		t.Errorf("301st request should carry x-faas-rate-limit-scope: account; got %q",
 			last429.Header().Get("x-faas-rate-limit-scope"))
 	}
 	if last429.Header().Get("Retry-After") == "" {
@@ -602,7 +622,7 @@ func TestAccountRateLimit_TenOhOneReturns429(t *testing.T) {
 	}
 
 	// Scrape the metrics registry and confirm the per-account counter
-	// incremented for this account (at least 951 — could be more if a
+	// incremented for this account (at least one — could be more if a
 	// follow-up scrape happens).
 	mrec := httptest.NewRecorder()
 	mreq := httptest.NewRequest("GET", "/metrics", nil)
@@ -614,7 +634,7 @@ func TestAccountRateLimit_TenOhOneReturns429(t *testing.T) {
 	}
 }
 
-// unlimitedLimiterForTest is the per-app noop limiter used by the 1001-request
+// unlimitedLimiterForTest is the per-app noop limiter used by the 301-request
 // acceptance test so the per-app bucket can't 429 the test before the
 // per-account scope is exercised. Mirrors pkg/gateway/limiters_test.go's
 // unlimitedLimiter but lives here because cmd/gatewayd-internal tests are

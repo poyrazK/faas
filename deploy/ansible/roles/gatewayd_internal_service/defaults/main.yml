@@ -17,6 +17,12 @@ gatewayd_streaming_enabled: true
 # value as apid and gatewayd-public.
 gatewayd_apps_domain: gregale.dev
 
+# ADR-169: guest-facing service discovery listener. Bind the per-host tenant
+# bridge address only; the netns firewall admits this reserved port before the
+# lateral-movement deny. Split-box inventories may override the address when
+# their host_bridge_cidr differs from the legacy 10.100.0.0/16 default.
+gatewayd_service_proxy_listen: "{{ faas_gatewayd_service_proxy_listen | default('10.100.0.1:10080') }}"
+
 # Path of the rendered config file on the box. The alertmanager role
 # uses the same shape (am_config_path) for the alertmanager.yml drop.
 gatewayd_config_path: /etc/faas/gatewayd-internal.toml

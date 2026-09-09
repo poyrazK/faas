@@ -714,17 +714,17 @@ func TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse(t *testing.T) {
 // per-account bucket is exhausted the handler must 429 with
 // x-faas-rate-limit-scope: account. Per-app burst is bypassed with
 // unlimitedLimiter() so the test isolates the account scope — without
-// that bypass the per-app bucket would trip first (burst 500 vs
-// per-account burst 1000 on Pro), and the 429 would carry scope "app".
+// that bypass the per-app bucket would trip first, and the 429 would carry
+// scope "app".
 func TestAccountRateLimitReturns429(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.setLegacyHot()
-	b.app.Plan = api.PlanPro // per-account burst 1000 (RateLimitPerAccountRPM)
+	b.app.Plan = api.PlanFree // smallest account bucket: 300 RPM
 	b.app.AccountID = "acct-rl"
 	h.WithLimiter(NewLimiter().WithNoop()) // bypass per-app scope
 
 	got429 := false
-	for i := 0; i < 1100; i++ {
+	for i := 0; i < 350; i++ {
 		req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -741,7 +741,7 @@ func TestAccountRateLimitReturns429(t *testing.T) {
 		}
 	}
 	if !got429 {
-		t.Error("exceeding the per-account Pro burst (1000) should yield 429")
+		t.Error("exceeding the per-account Free burst (300) should yield 429")
 	}
 	// The metric counter for account-scope rejections must have
 	// incremented. Scrape the registry and confirm.
@@ -749,7 +749,7 @@ func TestAccountRateLimitReturns429(t *testing.T) {
 	mreq := httptest.NewRequest("GET", "/metrics", nil)
 	h.Metrics().Handler().ServeHTTP(mrec, mreq)
 	body := mrec.Body.String()
-	want := `gateway_per_account_rate_limited_total{account_id="acct-rl",plan="pro"} 1`
+	want := `gateway_per_account_rate_limited_total{account_id="acct-rl",plan="free"} 1`
 	if !strings.Contains(body, want) {
 		t.Errorf("missing exposition line %q in body:\n%s", want, body)
 	}
@@ -765,7 +765,7 @@ func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.app.Plan = api.PlanFree // cap = 1 → coalesces to one admit
 	h.WithLimiter(unlimitedLimiter())
-	h.WithAccountLimiter(unlimitedAccountLimiter()) // ADR-040 — 50 concurrent > Free per-account burst 50
+	h.WithAccountLimiter(unlimitedAccountLimiter()) // isolate wake fan-out from the account limit
 
 	var wg sync.WaitGroup
 	var successes atomic.Int32
@@ -825,6 +825,37 @@ func TestHandlerStampsXFaasInstanceHeader(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != "i-stamp-1" {
 		t.Errorf("upstream saw x-faas-instance=%q, want i-stamp-1 (gateway must overwrite inbound)", got)
+	}
+}
+
+// TestHandlerStampsTrustedClientIPHeader ensures customer workloads receive
+// one canonical client address, while an inbound x-faas-client-ip attempt is
+// overwritten rather than trusted.
+func TestHandlerStampsTrustedClientIPHeader(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get("x-faas-client-ip")))
+	}))
+	t.Cleanup(upstream.Close)
+
+	b := &fakeBackend{
+		app:      App{ID: "app-client-ip", Plan: api.PlanFree},
+		host:     "client-ip.apps.dom",
+		upstream: upstream.Listener.Addr().String(),
+	}
+	b.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "i-client-ip"})
+	h := NewHandlerWith(b, NewMetrics(), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "http://client-ip.apps.dom/", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.42")
+	req.Header.Set("x-faas-client-ip", "198.51.100.7")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != "203.0.113.42" {
+		t.Fatalf("upstream saw x-faas-client-ip=%q, want 203.0.113.42", got)
 	}
 }
 
@@ -3879,3 +3910,5 @@ func TestWarmForwardingDoesNotReuseCachedWakeTimeline(t *testing.T) {
 		t.Fatal("request mutated cached target")
 	}
 }
+
+// adr: 040

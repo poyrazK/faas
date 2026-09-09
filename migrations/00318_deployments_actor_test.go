@@ -155,7 +155,10 @@ func TestMigrations_00318_DeploymentsActor(t *testing.T) {
 	// 't' so a future migration that re-introduces NOT VALID
 	// without a follow-up VALIDATE trips here, not at the next
 	// GDPR erasure.
-	var convalidated string
+	// pg_constraint.convalidated is a bool column, so the scan target
+	// is a Go bool — pgx's binary protocol will not decode OID 16 into
+	// a string.
+	var convalidated bool
 	err = pool.QueryRow(ctx, `
 		select c.convalidated
 		  from pg_constraint c
@@ -165,9 +168,8 @@ func TestMigrations_00318_DeploymentsActor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query deployed_by_user_id FK convalidated: %v", err)
 	}
-	if convalidated != "t" {
-		t.Errorf("deployed_by_user_id FK convalidated = %q, want 't' (00304 must have run VALIDATE CONSTRAINT — concurrent apid INSERTs block otherwise)",
-			convalidated)
+	if !convalidated {
+		t.Error("deployed_by_user_id FK convalidated = false, want true (00304 must have run VALIDATE CONSTRAINT — concurrent apid INSERTs block otherwise)")
 	}
 
 	// (5) Replay safety: applying the migration set a second time

@@ -15,6 +15,30 @@
   `GET /v1/apps/{slug}/wakes/{wake_id}/timeline` endpoint, and a
   partial jsonb expression index on `events.data->>'wake_id'`.
 
+## Amendment (2026-09-09, issue #1673): artifact-level restore resolution
+
+`wake.restore_breakdown` now adds
+`resolve_artifacts[{artifact, source, duration_ms}]`. Artifact is `kernel`,
+`base`, `main`, or `sidecar:<name>`; source is `backend_local`, `cache_hit`, or
+`materialized`. The original aggregate `resolve_images_ms` remains unchanged.
+VMMD resolves local-path metadata probes concurrently and materializes misses
+sequentially, so a hot local hit cannot invoke the remote `Get` path and remote
+misses do not create new fetch concurrency. Per-artifact synchronous Info logs
+were removed from the readiness path; the completed breakdown carries the same
+diagnostic data in one durable event. The duplicate post-readiness log is Debug
+level so the default journald sink cannot postpone the RUNNING transition.
+
+## Amendment (2026-09-09, issue #1694): complete cold-boot attribution
+
+`wake.cold_boot_breakdown` provides the matching cold-boot view. Its total
+starts before kernel, base, and workload artifact resolution, so cache misses
+and materialization no longer disappear from the earlier `wake.cold_boot_cpu`
+window, which begins inside the Firecracker boot method. Artifact entries use
+the bounded source set `backend_local`, `cache_hit`, `materialized`, and
+`direct`; byte size remains event data rather than a metric label. The manager
+also records `scan_check_ms` and `cold_boot_ms` in the fleet and per-box wake
+histograms.
+
 ## Context
 
 Issue #517 ("LOGGING: correlation, server-side filters, and gap
@@ -89,7 +113,9 @@ Rejected: `kind string + data map[string]any` (mirrors
 | `wake.queue_accepted` | `{wake_id, app_id, request_id, queue_wait_ms}` | schedd `pkg/sched/engine.go` Wake Phase 1 + `pkg/sched/loop.go` cron boundary |
 | `wake.admitted` | `{wake_id, app_id, request_id, account_id, plan, admitted_at}` | schedd admission gate |
 | `wake.boot_started` | `{wake_id, app_id, instance_id, node_id, method, requested_at}` | schedd boot path + vmmd mirror in `pkg/vmmdgrpc/server.go::CreateFromSnapshot` |
-| `wake.restore_breakdown` | `{wake_id, app_id, instance_id, chroot_ms, materialize_mem_ms, materialize_vmstate_ms, resolve_images_ms, stage_drives_ms, stage_snapshot_ms, helper_ms, start_jailer_ms, bind_tun_ms, load_snapshot_ms, resume_hook_ms, wait_ready_ms, total_ms}` | vmmd `pkg/fcvm/vmm.go::Restore` after successful snapshot readiness |
+| `wake.restore_breakdown` | `{wake_id, app_id, instance_id, chroot_ms, materialize_mem_ms, materialize_vmstate_ms, resolve_images_ms, resolve_artifacts[{artifact, source, duration_ms}], stage_drives_ms, stage_snapshot_ms, helper_ms, start_jailer_ms, bind_tun_ms, load_snapshot_ms, resume_hook_ms, wait_ready_ms, total_ms}` | vmmd `pkg/fcvm/vmm.go::Restore` after successful snapshot readiness |
+| `wake.cold_boot_breakdown` | `{wake_id, app_id, instance_id, resolve_images_ms, resolve_artifacts[{artifact, source, duration_ms, bytes}], chroot_ms, provision_ms, stage_runtime_ms, prepare_config_ms, helper_ms, start_jailer_ms, bind_tun_ms, cgroup_ms, write_config_ms, wait_ready_ms, quota_restore_ms, total_ms}` | vmmd `pkg/fcvm/vmm.go::BootColdBoot` after successful cold-boot readiness |
+| `wake.cold_boot_cpu` | `{wake_id, app_id, instance_id, startup_cpu_millicores, configured_cpu_millicores, pre_ready_ms, wait_ready_ms, quota_restore_ms, total_ms}` | vmmd after cold-boot readiness and successful restoration of the configured host `cpu.max` |
 | `wake.boot_completed` | `{wake_id, app_id, instance_id, node_id, method, started_at, completed_at}` | schedd post-`RecordRuntime` |
 | `wake.boot_failed` | `{wake_id, app_id, instance_id, node_id, method, reason, failed_at}` | schedd boot path alongside `wake_boot_error` audit row |
 | `wake.readiness_200` | `{wake_id, app_id, instance_id, node_id, healthcheck_path, probe_count, elapsed_ms}` | vmmd `pkg/fcvm/vmm.go::waitReady` on the first 2xx probe |

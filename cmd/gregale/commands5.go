@@ -597,6 +597,9 @@ func cmdAppScale(slug string, args []string) int {
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
+	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
+	healthPathWakes := fs.Bool("health-path-wakes", false, "allow health probes to wake the app (Pro/Scale only)")
+	noHealthPathWakes := fs.Bool("no-health-path-wakes", false, "answer health probes at the edge without waking")
 	// ADR-124: per-app wire-protocol selector (scale path).
 	// Mirrors commands2.go:cmdApp — single string flag, empty
 	// value = no change. Free + grpc = 403 server-side.
@@ -693,6 +696,21 @@ func cmdAppScale(slug string, args []string) int {
 		}
 		req.CrawlerPolicy = &v
 	}
+	if *healthPathWakes && *noHealthPathWakes {
+		return printErr("Invalid flags", fmt.Errorf("--health-path-wakes and --no-health-path-wakes are mutually exclusive"))
+	}
+	if explicit["health-path"] {
+		v := *healthPath
+		req.HealthPath = &v
+	}
+	if explicit["health-path-wakes"] {
+		v := true
+		req.HealthPathWakes = &v
+	}
+	if explicit["no-health-path-wakes"] {
+		v := false
+		req.HealthPathWakes = &v
+	}
 	// ADR-124: per-app wire-protocol selector. Closed-set
 	// validation mirrors commands2.go:cmdApp — local check
 	// surfaces a usage error before the round-trip.
@@ -708,8 +726,8 @@ func cmdAppScale(slug string, args []string) int {
 		req.IdleTimeoutS == nil && req.MinInstances == nil &&
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
-		req.RequireAuthn == nil && req.PublicAuth == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--app-protocol http1|http2|grpc]", "apps")
+		req.RequireAuthn == nil && req.PublicAuth == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil {
+		PrintUsage(os.Stderr, "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	client, err := authedClient()

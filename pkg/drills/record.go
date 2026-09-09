@@ -46,6 +46,12 @@ var RequiredTokens = []string{
 	"Operator / commit",
 }
 
+// RecoveryProbeScope prevents restore-drill evidence from being confused with
+// the SSD platform snapshot-restore SLO. The drill probe crosses the public
+// edge and executes the application; the <350 ms gate measures only the
+// internal wake.boot_started.at → wake.boot_completed.at interval.
+const RecoveryProbeScope = "end-to-end recovery probe; outside the <350 ms platform snapshot-restore SLO"
+
 // Metrics is the seven-field drill summary block the bash script populates
 // from live measurements. The bash heredoc and RenderRecord must agree
 // field-for-field; the test locks this contract.
@@ -91,7 +97,7 @@ func RenderRecord(m Metrics) string {
 	row("Wall-clock total", fmt.Sprintf("%d min %d s", m.TotalMin, m.TotalSec))
 	row("RPO via basebackup", fmt.Sprintf("%d min %d s", m.RPOBaseMin, m.RPOBaseSec))
 	row("RPO via WAL", fmt.Sprintf("%d min %d s", m.RPOWALMin, m.RPOWALSec))
-	row("Wake latency", m.WakeLatency+"s")
+	row("Wake latency", m.WakeLatency+"s ("+RecoveryProbeScope+")")
 	row("Basebackup used", m.BasebackupPath)
 	row("Basebackup SHA-256", m.BaseSHA)
 	row("Recovery stanza status", m.RecoveryStatus)

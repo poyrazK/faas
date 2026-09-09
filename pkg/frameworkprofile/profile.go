@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/markers"
 )
 
@@ -32,12 +33,16 @@ type Profile struct {
 	// PackageManager records the lockfile/package-manager choice used by
 	// static inference. It is advisory metadata; the builder remains the
 	// authority for dependency installation.
-	PackageManager string    `json:"package_manager,omitempty"`
-	StartCommand   string    `json:"start_command,omitempty"`
-	Port           int       `json:"port"`
-	HealthPath     string    `json:"health_path"`
-	Inferred       bool      `json:"inferred"`
-	Warnings       []Warning `json:"warnings,omitempty"`
+	PackageManager string `json:"package_manager,omitempty"`
+	StartCommand   string `json:"start_command,omitempty"`
+	Port           int    `json:"port"`
+	HealthPath     string `json:"health_path"`
+	Inferred       bool   `json:"inferred"`
+	// ConfigFile identifies the optional source manifest that supplied an
+	// explicit hosting override. It is metadata only; the values above remain
+	// the effective contract used by the builder and runtime.
+	ConfigFile string    `json:"config_file,omitempty"`
+	Warnings   []Warning `json:"warnings,omitempty"`
 }
 
 // Warning is actionable profile feedback. Source paths are relative to the
@@ -85,9 +90,31 @@ func Analyze(fsys fs.FS) (Profile, error) {
 			profile.HealthPath = health
 		}
 	}
+	if cfg, present, err := hostingconfig.Load(fsys); err != nil {
+		return Profile{}, err
+	} else if present {
+		applyHostingConfig(&profile, cfg)
+		if fileExists(fsys, "gregale.yaml") {
+			profile.ConfigFile = "gregale.yaml"
+		} else {
+			profile.ConfigFile = "gregale.yml"
+		}
+	}
 	profile.Warnings = append(profile.Warnings, loopbackWarnings(fsys)...)
 	profile.Inferred = profile.StartCommand != "" && profile.Framework != string(markers.FrameworkUnknown)
 	return profile, nil
+}
+
+func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {
+	if start := strings.TrimSpace(cfg.Start); start != "" {
+		profile.StartCommand = start
+	}
+	if cfg.Port != 0 {
+		profile.Port = cfg.Port
+	}
+	if health := strings.TrimSpace(cfg.Health); health != "" {
+		profile.HealthPath = health
+	}
 }
 
 func inferNode(fsys fs.FS, profile *Profile) {

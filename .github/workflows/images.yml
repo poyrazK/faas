@@ -68,6 +68,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Required checks must also run on the queue's temporary merge ref,
+  # otherwise the queue waits forever for a status that never arrives.
+  merge_group:
   workflow_dispatch:
 
 # On a branch, only the newest push is interesting, so runs cancel each
@@ -87,21 +90,24 @@ on:
 # its own lane; branches keep the cheap cancel-the-stale-run behaviour.
 concurrency:
   group: images-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-  cancel-in-progress: true
+  # See ci.yml: a cancelled check evicts the pull request from the queue.
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 permissions:
   contents: read
   packages: write   # ghcr.io/poyrazk push (GITHUB_TOKEN)
 
 jobs:
-  # Keep this detector small and dependency-free. It is the single source
-  # of truth for whether the expensive image matrix is required, and its
-  # output is consumed by the always-on gate below.
+  # Keep this detector small and dependency-free. Builder-base and runtime
+  # bases have different byte inputs, so deciding them separately prevents a
+  # daemon-only change from paying for unrelated image builds. Both outputs
+  # are consumed by the always-on gate below.
   runtime-change:
     name: runtime change detection
     runs-on: ubuntu-latest
     outputs:
-      relevant: ${{ steps.changed.outputs.relevant }}
+      builder: ${{ steps.changed.outputs.builder }}
+      bases: ${{ steps.changed.outputs.bases }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -120,7 +126,8 @@ jobs:
           set -euo pipefail
 
           if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "builder=true" >> "$GITHUB_OUTPUT"
+            echo "bases=true" >> "$GITHUB_OUTPUT"
             echo "Manual dispatch: runtime matrix requested."
             exit 0
           fi
@@ -136,29 +143,41 @@ jobs:
           # A first push has no usable parent. Fail closed toward running
           # the matrix; a false negative here would be a silent bypass.
           if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "builder=true" >> "$GITHUB_OUTPUT"
+            echo "bases=true" >> "$GITHUB_OUTPUT"
             echo "No usable base SHA: runtime matrix requested."
             exit 0
           fi
 
           changed="$(git diff --name-only "$base" "$head")"
           printf '%s\n' "$changed"
-          # The trusted native builder gate runs the metal acceptance fixture
-          # from the published source commit. A fixture-only change therefore
-          # must publish a matching builder-base image, or the post-merge gate
-          # would silently skip the new test and wait for a scheduled run.
-          if grep -Eq '^(images/|guest/init/|guest/runners/|pkg/fcvm/builder_acceptance_metal_test\.go$|pkg/(builderd|imaged|oci|rootfs|api)/|cmd/imaged/|cmd/apid/handlers_templates(_test)?\.go$|cmd/gregale/templates/|cmd/gregale/cli_meta\.go$|cmd/gregale/commands_init|migrations/.*runtime.*\.sql$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image|validate-runtime-docs)\.sh$|docs/runtimes/|docs/faas_implementation_spec\.md$|\.github/workflows/images\.yml$)' <<<"$changed"; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "Runtime-affecting change detected."
-          else
-            echo "relevant=false" >> "$GITHUB_OUTPUT"
-            echo "No runtime-affecting change detected."
+          builder=false
+          bases=false
+
+          # builder-base embeds guest/init. Keep its imported local Go
+          # packages in this list so a shared wire-contract change rebuilds
+          # the binary even when guest/init itself is untouched. The native
+          # builder acceptance fixture also needs a publisher run at its
+          # source commit.
+          if grep -Eq '^(images/(builder-base\.Dockerfile|buildkit-frontend-startup\.patch|buildkit-session-health\.patch|builder-resolv\.conf|Dockerfile\.lock)$|guest/init/|pkg/(api|reqbudget|sourcecontext|statefuldenylist)/|go\.(mod|sum)$|pkg/fcvm/builder_acceptance_metal_test\.go$|scripts/ci/(install-grype|update-grype-db|scan-oci-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+            builder=true
           fi
+
+          # Runtime bases contain only these Dockerfiles and the shared
+          # skeleton. Daemon code and guest runner shims ship in the signed
+          # release bundle and cannot change these image bytes.
+          if grep -Eq '^(images/(base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+            bases=true
+          fi
+
+          echo "builder=$builder" >> "$GITHUB_OUTPUT"
+          echo "bases=$bases" >> "$GITHUB_OUTPUT"
+          echo "Image build decision: builder=$builder bases=$bases"
 
   builder-base:
     name: builder-base (linux/amd64 + linux/arm64)
     needs: runtime-change
-    if: needs.runtime-change.outputs.relevant == 'true'
+    if: needs.runtime-change.outputs.builder == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # Issue #938 / PR-B / ADR-114: PR builds push to a local
@@ -391,7 +410,7 @@ jobs:
   runtime-bases:
     name: ${{ matrix.image }} (linux/amd64)
     needs: runtime-change
-    if: needs.runtime-change.outputs.relevant == 'true'
+    if: needs.runtime-change.outputs.bases == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -553,7 +572,8 @@ jobs:
         env:
           DETECTION_RESULT: ${{ needs.runtime-change.result }}
           SOURCE_RESULT: ${{ needs.runtime-source-contract.result }}
-          RELEVANT: ${{ needs.runtime-change.outputs.relevant }}
+          BUILDER_RELEVANT: ${{ needs.runtime-change.outputs.builder }}
+          BASES_RELEVANT: ${{ needs.runtime-change.outputs.bases }}
           BUILDER_RESULT: ${{ needs.builder-base.result }}
           BASES_RESULT: ${{ needs.runtime-bases.result }}
         shell: bash
@@ -567,14 +587,16 @@ jobs:
             echo "::error::runtime source contract did not complete: $SOURCE_RESULT"
             exit 1
           fi
-          if [[ "$RELEVANT" != true ]]; then
-            echo "No runtime-affecting files changed; runtime image matrix was not required."
+          if [[ "$BUILDER_RELEVANT" == true && "$BUILDER_RESULT" != success ]]; then
+            echo "::error::builder-base contract result: $BUILDER_RESULT"
+            exit 1
+          fi
+          if [[ "$BASES_RELEVANT" == true && "$BASES_RESULT" != success ]]; then
+            echo "::error::runtime-base contract result: $BASES_RESULT"
+            exit 1
+          fi
+          if [[ "$BUILDER_RELEVANT" != true && "$BASES_RELEVANT" != true ]]; then
+            echo "No image-byte inputs changed; runtime image builds were not required."
             exit 0
           fi
-          for result in "$BUILDER_RESULT" "$BASES_RESULT"; do
-            if [[ "$result" != success ]]; then
-              echo "::error::runtime image contract result: $result"
-              exit 1
-            fi
-          done
           echo "Runtime image and source-artifact contracts passed."

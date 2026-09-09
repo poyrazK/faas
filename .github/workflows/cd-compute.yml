@@ -74,6 +74,11 @@ on:
         required: false
         default: false
         type: boolean
+      skip_fleet_preflight:
+        description: "Reuse a recent successful full-fleet preflight when an intentionally offline peer would block this node rollout"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: cd-compute-${{ inputs.node || inputs.claim_file || inputs.fleet_bundle_url }}
@@ -679,6 +684,7 @@ jobs:
           # so the final cleanup step can reclaim them after an interrupted
           # join.
           TMPDIR: ${{ runner.temp }}
+          SKIP_FLEET_PREFLIGHT: ${{ inputs.skip_fleet_preflight }}
         run: |
           set -euo pipefail
           # The supplied deployment key/user are the fleet operator identity,
@@ -698,7 +704,10 @@ jobs:
             --artifact-dir "$ARTIFACT_DIR"
             --repo-root "$GITHUB_WORKSPACE"
             --timeout 40m
-            --lease-ttl 50m
+            # The CLI refreshes this lease every third of the TTL while it is
+            # alive. Keep the abandoned-worker recovery window short so a
+            # cancelled rollout can be retried without manual database repair.
+            --lease-ttl 5m
             # A failed preflight or convergence leaves a durable failed job.
             # This workflow is the retry-safe owner of the exact desired
             # node/release state, so resume that state instead of requiring
@@ -716,6 +725,12 @@ jobs:
             exit 1
           }
           JOIN_ARGS+=(--ssh-host-key-sha256 "$SSH_HOST_KEY_SHA256")
+          if [[ "$SKIP_FLEET_PREFLIGHT" == "true" ]]; then
+            # This is an explicit operator assertion that the complete fleet
+            # passed preflight recently. It lets an existing healthy node roll
+            # while another manifest peer is intentionally powered off.
+            JOIN_ARGS+=(--skip-fleet-preflight)
+          fi
           if [[ -n "$FLEET_BUNDLE_URL" ]]; then
             JOIN_ARGS+=(
               --fleet-bundle-file "$ARTIFACT_DIR/fleet-enrollment.yaml"

@@ -32,8 +32,8 @@ func Test_00411_LivenessRestartCount(t *testing.T) {
 		var got int
 		err := pool.QueryRow(ctx,
 			`INSERT INTO deployments (id, app_id, source_path)
-			 VALUES ('00000000-0000-0000-0000-0000000000411',
-			         '00000000-0000-0000-0000-0000000000412',
+			 VALUES ('00000000-0000-0000-0000-000000000411',
+			         '00000000-0000-0000-0000-000000000412',
 			         '/tmp/test-default')
 			 RETURNING liveness_restart_count`).Scan(&got)
 		if err != nil {
@@ -50,14 +50,14 @@ func Test_00411_LivenessRestartCount(t *testing.T) {
 		_, err := pool.Exec(ctx,
 			`UPDATE deployments
 			 SET liveness_restart_count = liveness_restart_count + 1
-			 WHERE id = '00000000-0000-0000-0000-0000000000411'`)
+			 WHERE id = '00000000-0000-0000-0000-000000000411'`)
 		if err != nil {
 			t.Fatalf("bump liveness_restart_count: %v", err)
 		}
 		var got int
 		err = pool.QueryRow(ctx,
 			`SELECT liveness_restart_count FROM deployments
-			 WHERE id = '00000000-0000-0000-0000-0000000000411'`).Scan(&got)
+			 WHERE id = '00000000-0000-0000-0000-000000000411'`).Scan(&got)
 		if err != nil {
 			t.Fatalf("read liveness_restart_count: %v", err)
 		}
@@ -74,7 +74,7 @@ func Test_00411_LivenessRestartCount(t *testing.T) {
 		_, err := pool.Exec(ctx,
 			`UPDATE deployments
 			 SET liveness_restart_count = -1
-			 WHERE id = '00000000-0000-0000-0000-0000000000411'`)
+			 WHERE id = '00000000-0000-0000-0000-000000000411'`)
 		if err == nil {
 			t.Fatal("negative liveness_restart_count accepted; MUST be rejected by CHECK")
 		}

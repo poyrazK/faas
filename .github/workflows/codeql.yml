@@ -16,6 +16,10 @@ on:
     # appear under Security > Code scanning.
     - cron: "0 2 * * SUN"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   actions: read
   contents: read

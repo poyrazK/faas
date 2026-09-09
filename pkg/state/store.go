@@ -65,7 +65,7 @@ var ErrCertFingerprintDrift = errors.New("state: compute_node cert fingerprint d
 // unique index instances_wake_attempt_active_idx (migration 00350,
 // multi-host safety cluster PR-5 / audit F4) rejects an INSERT
 // because another schedd has already inserted a row with the same
-// wake_id AND state IN ('WAKING', 'COLD_BOOTING'). The caller
+// wake_id AND state IN ('waking', 'cold_booting'). The caller
 // (pkg/sched.Engine.EnsureWake) recovers by reading the existing
 // row via ReadActiveInstanceForWakeID and observing the winner's
 // progress.
@@ -84,7 +84,7 @@ var ErrConcurrentWake = errors.New("state: concurrent wake — wake_id conflict"
 // partial unique index instances_wake_attempt_active_idx (migration
 // 00350) rejects its CREATE INSTANCE call because another schedd has
 // already inserted an in-flight row with the same wake_id AND state
-// IN ('WAKING', 'COLD_BOOTING'). The engine surfaces this as a
+// IN ('waking', 'cold_booting'). The engine surfaces this as a
 // "another box is handling this wake" outcome — the caller must
 // propagate it; the gateway-side retry / cron-side reschedule /
 // redeploy handles the follow-up.
@@ -856,6 +856,11 @@ type Store interface {
 	// the GDPR export bundle's audit slice so the customer sees their
 	// own actions reflected in the same JSON.
 	ListGdprRequestsForAccount(ctx context.Context, accountID string, limit int) ([]GdprRequest, error)
+	// ListGdprRequestsForAccountPage is the stable keyset-paginated form used
+	// by account export. Rows are ordered by (requested_at, id) descending;
+	// beforeAt/beforeID identify the last row from the previous page. A zero
+	// beforeAt starts from the newest row.
+	ListGdprRequestsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]GdprRequest, error)
 	// CompleteGdprRequest stamps completed_at on the most recent
 	// un-completed row of (account_id, action). Called by pkg/grace
 	// after DeleteAccount succeeds so the delete row in the ledger
@@ -1625,8 +1630,8 @@ type Store interface {
 	// index added in migration 00007.
 	ListDeploymentsByNodeID(ctx context.Context, nodeID string) ([]Deployment, error)
 	// ConcurrencyForDeployment returns the live-instance count for a
-	// (app, deployment) pair — the sum of state IN ('RUNNING',
-	// 'WAKING', 'COLD_BOOTING'). Backed by the partial index added
+	// (app, deployment) pair — the sum of state IN ('waking',
+	// 'cold_booting', 'running'). Backed by the partial index added
 	// in migration 00132.
 	ConcurrencyForDeployment(ctx context.Context, appID, deploymentID string) (int, error)
 	// UpdateDeploymentMinInstances stamps the per-deployment cold-wake
@@ -2423,6 +2428,10 @@ type Store interface {
 	// bound). MemStore sorts in memory; PgStore uses a LIMIT/OFFSET or
 	// keyset pagination (deferred — LIMIT/OFFSET is fine at one-box scale).
 	ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error)
+	// ListDeploymentsForAccountPage is the stable keyset-paginated form used
+	// by account export. The ID tie-breaker prevents rows with identical
+	// created_at values from being skipped at a page boundary.
+	ListDeploymentsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error)
 
 	// Deployment logs (M7.5 slice 5).
 	//
@@ -4385,6 +4394,10 @@ type Store interface {
 	// without an inbound trace_id keep that shape.
 	AppendEventWithTrace(ctx context.Context, actor, kind string, subject *string, data []byte, traceID *string) error
 	ListEvents(ctx context.Context, subject string, limit int) ([]Event, error)
+	// ListEventsPage returns subject events ordered by (at, id) descending.
+	// beforeAt/beforeID identify the last row from the previous page; a zero
+	// beforeAt starts from the newest row.
+	ListEventsPage(ctx context.Context, subject string, beforeAt time.Time, beforeID int64, limit int) ([]Event, error)
 	// ListEventsByWakeID (issue #517 / PR-C, ADR-064) is the
 	// wake-timeline read-side query. Filters on the jsonb
 	// expression index events_wake_id_idx
@@ -5414,6 +5427,16 @@ type Store interface {
 	// ListAppWebhooksForAccount backs the per-account GET endpoint
 	// and the operator's "all webhooks for an account" view.
 	ListAppWebhooksForAccount(ctx context.Context, accountID string) ([]AppWebhook, error)
+
+	// Customer log drains (issue #1398 O4). Drains tail the existing runtime
+	// log stream and forward records to an HTTP JSON or OTLP endpoint.
+	CreateAppLogDrain(ctx context.Context, d AppLogDrain) (AppLogDrain, error)
+	CreateAppLogDrainIfUnderQuota(ctx context.Context, d AppLogDrain, limits api.Limits) (AppLogDrain, error)
+	AppLogDrainByID(ctx context.Context, id string) (AppLogDrain, error)
+	UpdateAppLogDrain(ctx context.Context, id string, params UpdateAppLogDrainParams) (AppLogDrain, error)
+	DeleteAppLogDrain(ctx context.Context, id string) error
+	ListAppLogDrainsForApp(ctx context.Context, appID string) ([]AppLogDrain, error)
+	ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, error)
 
 	// RecordAppWebhookDelivery is the apid-side enqueue. Called by
 	// the event emitters (cron dispatcher, app lifecycle handlers)

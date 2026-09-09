@@ -49,8 +49,8 @@ const helloBody = "hello from faas"
 //
 //  1. deploy-then-parked              — apid → imaged → schedd → vmmd → parked
 //  2. first-request-wakes             — gatewayd request triggers a wake from snapshot
-//  3. wake-latency-p50p95-100cycles   — §14 V2 / spec §6.3 SLO gate (p50 ≤ 350 ms,
-//     p95 ≤ 800 ms over 100 park→wake cycles)
+//  3. wake-latency-p50p95-100cycles   — internal gateway first-byte diagnostic
+//     over 100 park→wake cycles; the platform restore SLO is in pkg/fcvm
 //  4. idle-park                       — schedd reaper parks the live instance
 //  5. second-request-wakes            — fresh wake from the same snapshot, asserts a new instance id
 //
@@ -202,16 +202,17 @@ func TestDeployWakeMetal(t *testing.T) {
 
 	// -- 3. wake-latency-p50p95-100cycles ------------------------------------
 	t.Run("wake-latency-p50p95-100cycles", func(t *testing.T) {
-		// §14 V2 / spec §6.3 / Appendix D V2 gate: 100 park→wake cycles,
-		// p50 ≤ 350 ms, p95 ≤ 800 ms over the gateway_wake_latency_seconds
-		// histogram (request-received → first upstream byte, per Part A).
+		// Diagnostic: 100 park→wake cycles over the internal gateway's
+		// gateway_wake_latency_seconds histogram (request received → first
+		// upstream byte, per Part A). The platform-only V2 restore gate lives
+		// in pkg/fcvm/TestMetalParkWakeCycle and excludes this proxy interval.
 		//
 		// The histogram is the load-bearing SLO signal; this test is the one
 		// that asserts the on-the-wire number backs the dashboard's p50/p95
 		// panels (deploy/grafana/faas-fleet.json:10-41). We compute quantiles
 		// from the cumulative bucket counts using pkg/gateway/testhist
 		// (standard PromQL histogram_quantile() interpolation) and assert
-		// both p50 and p95 against the §6.3 budget.
+		// the historical internal-gateway p50/p95 budgets.
 		//
 		// Wall-clock math: per cycle we wait `idle_timeout (10s) + reaper_tick
 		// (10s) ≈ 20s` for park, then ~350ms for wake, then ~5ms state wait
@@ -298,10 +299,10 @@ func TestDeployWakeMetal(t *testing.T) {
 		const p50Budget = 350 * time.Millisecond
 		const p95Budget = 800 * time.Millisecond
 		if p50 > p50Budget {
-			t.Errorf("wake_latency p50 = %v, want <= %v (spec §6.3 / Appendix D V2)", p50, p50Budget)
+			t.Errorf("internal first-byte wake_latency p50 = %v, want <= %v", p50, p50Budget)
 		}
 		if p95 > p95Budget {
-			t.Errorf("wake_latency p95 = %v, want <= %v (spec §6.3 / Appendix D V2)", p95, p95Budget)
+			t.Errorf("internal first-byte wake_latency p95 = %v, want <= %v", p95, p95Budget)
 		}
 
 		// ADR-098 C11: phase-decomposed wake telemetry. The

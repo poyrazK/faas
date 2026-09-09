@@ -28,6 +28,55 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DeploymentsService {
   /**
+   * List deployments for an app.
+   * Paged backwards (newest first) for the app identified by `slug`.
+   * `next_before` is an opaque RFC3339Nano cursor from the last row in
+   * the page; pass it as `before` to fetch older deployments. Unknown or
+   * cross-account app slugs return the same IDOR-safe 404 surface as the
+   * other app-scoped endpoints.
+   *
+   * @returns DeploymentListResponse A paginated list of deployments for the app.
+   * @throws ApiError
+   */
+  public static listAppDeployments({
+    slug,
+    limit = 50,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Page size for this app (1–200; default 50).
+     */
+    limit?: number,
+    /**
+     * RFC3339Nano cursor from a previous response's next_before.
+     */
+    before?: string,
+  }): CancelablePromise<DeploymentListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Create a deployment.
    * Two content-types are accepted:
    * - `application/json` (`CreateDeploymentRequest` with an `image` field): prebuilt OCI reference.
@@ -78,6 +127,40 @@ export class DeploymentsService {
         403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Fetch the latest deployment for an app.
+   * Returns the app's newest deployment by `created_at DESC`. The app slug
+   * and deployment are resolved within the authenticated account; an
+   * unknown or cross-account app and a never-deployed app all return the
+   * same IDOR-safe 404 surface.
+   *
+   * @returns DeploymentResponse The latest deployment.
+   * @throws ApiError
+   */
+  public static getLatestAppDeployment({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/latest',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
@@ -714,7 +797,8 @@ export class DeploymentsService {
    * Bulk soft-delete terminal-but-not-current deployments.
    * ADR-124 deployment queue controls — bulk soft-delete rows
    * in {superseded, failed, cancelled} older than the cutoff
-   * (default 168h). Plan-gated (Free returns 402). Retention
+   * (default 168h). Plan-gated (Free returns 402
+   * `plan_reorder_disabled`). Retention
    * cap enforced inside the store so INV 3 stays satisfied.
    *
    * @returns ClearObsoleteReport Cleared.
@@ -743,6 +827,14 @@ export class DeploymentsService {
       },
       body: requestBody,
       mediaType: 'application/json',
+      errors: {
+        402: `code: plan_reorder_disabled — this plan does not include deployment queue controls.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
     });
   }
   /**

@@ -148,10 +148,10 @@ var (
 
 // debugRequestEvidenceHandler — GET /v1/apps/{slug}/debug/requests/{req_id}/evidence
 //
-// Returns bounded, redacted span evidence for one request and links it to an
-// active regression observation when the regression cron has produced one.
-// The response is deliberately deterministic and contains no LLM call; a
-// future synthesis layer can consume this safe structure asynchronously.
+// Returns a deterministic request/wake timeline, bounded redacted span
+// evidence, and an active regression observation when the regression cron has
+// produced one. The response contains no LLM call; a future synthesis layer
+// can consume this safe structure asynchronously.
 func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -206,10 +206,16 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 			break
 		}
 	}
+	timeline, err := s.buildDebugRequestTimeline(r.Context(), app.ID, request, regression)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get debug request timeline"))
+		return
+	}
 
 	writeJSON(w, http.StatusOK, api.DebugRequestEvidenceResponse{
 		Request:        request,
 		Regression:     regression,
+		Timeline:       timeline,
 		Spans:          spans,
 		SpansTruncated: truncated,
 		Explanation:    buildDebugEvidenceExplanation(request, regression, spans),
@@ -321,6 +327,8 @@ func debugTelemetryRowToItem(row sqlc.ListRequestTelemetryByAppRow) api.DebugTel
 		row.ColdBoot,
 		row.TraceID,
 		row.ReceivedAt,
+		row.WakeID,
+		row.InstanceID,
 	)
 }
 
@@ -336,6 +344,8 @@ func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIDRow) api.D
 		row.ColdBoot,
 		row.TraceID,
 		row.ReceivedAt,
+		row.WakeID,
+		row.InstanceID,
 	)
 }
 
@@ -347,6 +357,7 @@ func debugTelemetryItemFromFields(
 	coldBoot bool,
 	traceID pgtype.Text,
 	receivedAt pgtype.Timestamptz,
+	wakeID, instanceID pgtype.Text,
 ) api.DebugTelemetryRequestItem {
 	item := api.DebugTelemetryRequestItem{
 		// pgtype.UUID -> hyphenated hex string. Falls back to "" when
@@ -361,12 +372,146 @@ func debugTelemetryItemFromFields(
 		Count:        int(count),
 		ColdBoot:     coldBoot,
 		ReceivedAt:   timeFromPg(receivedAt),
+		WakeID:       textFromPg(wakeID),
+		InstanceID:   textFromPg(instanceID),
 	}
 	if traceID.Valid {
 		s := traceID.String
 		item.TraceID = &s
 	}
 	return item
+}
+
+func textFromPg(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
+}
+
+const debugTimelineMaxEvents = 200
+
+// buildDebugRequestTimeline joins the retained request row to the wake event
+// stream using the opaque wake_id captured at the gateway. The request/error
+// markers are synthesized from the row itself, so a failed request remains
+// explainable even when no wake was involved. Event payloads are intentionally
+// reduced to a stable summary; arbitrary JSON never reaches the customer.
+func (s *server) buildDebugRequestTimeline(ctx context.Context, appID string, request api.DebugTelemetryRequestItem, regression *api.DebugRegressionItem) ([]api.DebugTimelineEvent, error) {
+	receivedAt, err := time.Parse(time.RFC3339Nano, request.ReceivedAt)
+	if err != nil {
+		return nil, err
+	}
+	timeline := make([]api.DebugTimelineEvent, 0, 16)
+	startAt := receivedAt.Add(-time.Duration(request.LatencyMS) * time.Millisecond)
+	timeline = append(timeline, api.DebugTimelineEvent{
+		At:      startAt.UTC().Format(time.RFC3339Nano),
+		Phase:   "request",
+		Kind:    "request.received",
+		Summary: "representative request entered the gateway",
+		// received_at is the minute bucket boundary for collapsed rows,
+		// so request markers are intentionally labeled approximate.
+		Approximate: true,
+	})
+
+	if request.WakeID != "" {
+		events, listErr := s.store.ListEventsByWakeID(ctx, request.WakeID, time.Time{}, debugTimelineMaxEvents+1)
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, event := range events {
+			if !eventDataHasAppID(event.Data, appID) {
+				continue
+			}
+			// Reserve room for the request completion/error and optional
+			// regression markers so a very chatty wake never hides the
+			// outcome that the customer is investigating.
+			if len(timeline) >= debugTimelineMaxEvents-4 {
+				break
+			}
+			timeline = append(timeline, api.DebugTimelineEvent{
+				At:      event.At.UTC().Format(time.RFC3339Nano),
+				Phase:   "wake",
+				Kind:    event.Kind,
+				Actor:   event.Actor,
+				Summary: debugWakeTimelineSummary(event),
+			})
+		}
+	}
+
+	if regression != nil && regression.LastDetectedAt != "" {
+		timeline = append(timeline, api.DebugTimelineEvent{
+			At:      regression.LastDetectedAt,
+			Phase:   "regression",
+			Kind:    "regression.detected",
+			Summary: fmt.Sprintf("route regression observed at %sx baseline", regression.Factor),
+		})
+	}
+
+	timeline = append(timeline, api.DebugTimelineEvent{
+		At:          receivedAt.UTC().Format(time.RFC3339Nano),
+		Phase:       "request",
+		Kind:        "request.completed",
+		Summary:     fmt.Sprintf("representative request completed in %dms", request.LatencyMS),
+		DurationMS:  int64(request.LatencyMS),
+		Status:      request.Status,
+		Approximate: true,
+	})
+	if request.Status >= http.StatusBadRequest {
+		timeline = append(timeline, api.DebugTimelineEvent{
+			At:      receivedAt.UTC().Format(time.RFC3339Nano),
+			Phase:   "error",
+			Kind:    "request.error",
+			Summary: fmt.Sprintf("HTTP %d response", request.Status),
+			Status:  request.Status,
+		})
+	}
+
+	sort.SliceStable(timeline, func(i, j int) bool {
+		if timeline[i].At != timeline[j].At {
+			return timeline[i].At < timeline[j].At
+		}
+		return debugTimelinePhaseRank(timeline[i].Phase) < debugTimelinePhaseRank(timeline[j].Phase)
+	})
+	if len(timeline) > debugTimelineMaxEvents {
+		timeline = timeline[:debugTimelineMaxEvents]
+	}
+	return timeline, nil
+}
+
+func debugTimelinePhaseRank(phase string) int {
+	switch phase {
+	case "request":
+		return 0
+	case "wake":
+		return 1
+	case "error":
+		return 2
+	case "regression":
+		return 3
+	default:
+		return 4
+	}
+}
+
+func debugWakeTimelineSummary(event state.Event) string {
+	switch event.Kind {
+	case "wake.queue_accepted":
+		return "wake queued for admission"
+	case "wake.admitted":
+		return "wake admitted"
+	case "wake.boot_started":
+		return "instance boot started"
+	case "wake.readiness_200":
+		return "instance readiness probe returned 200"
+	case "wake.proxy_first_byte":
+		return "first byte received from instance"
+	case "wake.boot_completed":
+		return "instance boot completed"
+	case "wake.boot_failed":
+		return "instance boot failed"
+	default:
+		return "wake lifecycle event"
+	}
 }
 
 // uuidFromPg renders a pgtype.UUID as the canonical hyphenated-hex

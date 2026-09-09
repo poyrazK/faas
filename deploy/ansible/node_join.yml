@@ -28,6 +28,40 @@
           {{ faas_join_inventory_name }}, got {{ inventory_hostname }} with
           role {{ faas_box_role | default('unset') }}.
 
+    - name: Probe the managed-host bootstrap contract
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          test "$(cat /var/lib/faas/bootstrap/bootstrap-contract.sha256)" = "{{ faas_join_bootstrap_contract_sha256 }}"
+          test -c /dev/kvm
+          test -d /srv/fc
+          mountpoint -q /srv/fc
+          test -L /opt/faas/current
+          test -d "$(readlink -f /opt/faas/current)"
+          test -x /usr/local/bin/gregalectl
+          test -s /etc/faas/manifest.yaml
+          test -s /etc/faas/storage.env
+          test -s /etc/faas/runtime-bases.env
+          for service in faas-vmmd faas-gatewayd-internal faas-builderd faas-imaged; do
+            systemctl is-enabled --quiet "$service.service"
+            systemctl is-active --quiet "$service.service"
+          done
+        executable: /bin/bash
+      register: faas_join_managed_host_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Select full bootstrap or managed-host rollout
+      ansible.builtin.set_fact:
+        faas_join_bootstrap_contract_current: "{{ faas_join_managed_host_probe.rc == 0 }}"
+
+    - name: Report the managed-host rollout decision
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Managed-host bootstrap contract is current; skipping OS and role convergence.'
+             if faas_join_bootstrap_contract_current
+             else 'Managed-host bootstrap contract is absent or stale; running full convergence.' }}
+
     - name: Create bootstrap directories
       ansible.builtin.file:
         path: "{{ item.path }}"
@@ -83,6 +117,14 @@
         name: faas
         state: present
         system: true
+
+    - name: Allow shared daemons to traverse the shared config directory
+      ansible.builtin.file:
+        path: /etc/faas
+        state: directory
+        owner: root
+        group: faas
+        mode: "0750"
 
     - name: Allow shared daemons to traverse the shared secret directory
       ansible.builtin.file:
@@ -152,6 +194,30 @@
         group: root
         mode: preserve
       no_log: true
+
+    # The operator-side PKI archive deliberately stores private keys as
+    # root-only. The full bootstrap roles grant access only to the leaves
+    # consumed by unprivileged compute daemons. Reapply that narrow contract
+    # after every trust-bundle refresh because the managed-host fast path
+    # skips those roles.
+    - name: Restore unprivileged compute daemon access to staged TLS leaves
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: file
+        owner: root
+        group: faas
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/faas/tls/gatewayd/schedd-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/gatewayd/schedd-client.crt, mode: "0440" }
+        - { path: /etc/faas/tls/gatewayd/vmmd-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/gatewayd/vmmd-client.crt, mode: "0440" }
+        - { path: /etc/faas/tls/gatewayd/apid-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/gatewayd/apid-client.crt, mode: "0444" }
+        - { path: /etc/faas/tls/builderd/vmmd-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/imaged/vmmd-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/egress/egress.key, mode: "0440" }
+        - { path: /etc/faas/tls/egress/egress.crt, mode: "0444" }
 
     - name: Stage the image-signing private key
       ansible.builtin.copy:
@@ -241,6 +307,7 @@
           test -s "$tmp";
           install -o root -g root -m 0644 "$tmp"
           /var/lib/faas/bootstrap/vmlinux;
+          rm -f "$tmp";
           trap - EXIT
         executable: /bin/bash
       changed_when: true
@@ -252,6 +319,22 @@
         owner: root
         group: root
         mode: "0644"
+
+    - name: Delete kernel temporaries left by interrupted or older rollouts
+      ansible.builtin.command:
+        argv:
+          - find
+          - /var/lib/faas/bootstrap
+          - -maxdepth
+          - "1"
+          - -type
+          - f
+          - -name
+          - vmlinux.*
+          - -print
+          - -delete
+      register: faas_join_kernel_temp_cleanup
+      changed_when: (faas_join_kernel_temp_cleanup.stdout | trim) != ''
 
     - name: Stage the release SBoM
       ansible.builtin.copy:
@@ -298,6 +381,24 @@
 
 - name: Converge the adopted node with the production bootstrap
   import_playbook: bootstrap.yml
+  when: >-
+    not (hostvars[inventory_hostname].faas_join_bootstrap_contract_current |
+         default(false) | bool)
+
+- name: Record successful compute bootstrap convergence
+  hosts: compute_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  tasks:
+    - name: Persist the exact bootstrap source contract
+      ansible.builtin.copy:
+        dest: /var/lib/faas/bootstrap/bootstrap-contract.sha256
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ faas_join_bootstrap_contract_sha256 }}\n"
 
 - name: Verify the signed release before promoting its operator CLI
   hosts: compute_nodes
@@ -452,7 +553,11 @@
          (faas_release_install.stderr | default('')))
       changed_when: true
 
-    - name: Retry release installation after SBoM baseline initialization
+    # The first install already verified the Cosign bundle and extracted the
+    # release before the missing-baseline gate stopped activation. Reuse that
+    # staged release here so the retry runs the catalog and SBoM gates without
+    # repeating tarball verification and extraction.
+    - name: Retry staged release installation after SBoM baseline initialization
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -460,8 +565,6 @@
           - install
           - --git-sha
           - "{{ faas_join_release_git_sha }}"
-          - --tarball-path
-          - /var/lib/faas/bootstrap/release.tar.gz
           - --node
           - "{{ faas_join_database_node }}"
           - --role

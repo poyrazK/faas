@@ -1,0 +1,8 @@
+# ADR-168 · Temporary cold-boot CPU allowance
+
+- **Status:** accepted
+- **Date:** 2026-09-09
+- **Decision:** Start an app cold boot with a host `cpu.max` allowance of `min(1000m, plan ceiling)`. After the readiness probe succeeds, VMMD restores the app's configured sustained allowance before returning success. Snapshot restores, builders, jobs, and no-readiness export boots retain their existing CPU behavior.
+- **Why:** The host cgroup contains Firecracker, so applying a 250m sustained quota before releasing the config FIFO throttles kernel boot, guest-init, filesystem setup, and runtime initialization. Controlled SSD-node observations showed the same small Python workload taking 9.31–14.94 seconds at 250m while comparable 1000m boots completed in about 2.7 seconds. Customer traffic cannot route before readiness, so the temporary allowance consumes idle startup capacity without changing the customer's steady-state resource contract.
+- **Consequences:** `wake.cold_boot_cpu` records the startup and configured allowances plus pre-readiness, readiness, quota-restore, and total VMMD timings. A failure before or during quota restoration fails the boot and invokes the existing kill path, so a VM cannot remain alive or become routable with the temporary allowance. The parent Firecracker cgroup and the optional main workload inspection leaf are both lowered before return.
+- **Rejected alternatives:** Keeping the configured quota throughout startup preserves the measured resource-profile penalty. Raising CPU after the guest starts misses kernel and guest-init work. Lowering the quota asynchronously after routing creates an interval where customer traffic can consume the startup allowance.

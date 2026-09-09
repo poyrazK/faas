@@ -64,15 +64,18 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/logs  → live + archived app logs
 //	GET /dashboard/apps/{slug}/env|secrets → environment + secrets editor
 //	GET /dashboard/apps/{slug}/errors → grouped errors + drill-down
+//	GET /dashboard/apps/{slug}/debug → production debugger
 //	GET /dashboard/apps/{slug}/domains → custom domains + TLS/doctor status
 //	GET /dashboard/apps/{slug}/instances → instance fleet + lifecycle actions
 //	GET /dashboard/apps/{slug}/edge-rules → edge rules + CORS presets
+//	GET /dashboard/apps/{slug}/webhooks → outbound webhooks + deliveries
 //	GET /dashboard/apps/{slug}/jobs → jobs and queue view (app filter)
 //	GET /dashboard/apps/{slug}/queues → queue state + samples (alias)
 //	GET /dashboard/jobs             → jobs, runs, and all application queues
 //	GET /dashboard/usage             → usage meter
 //	GET /dashboard/billing           → plan + usage + last invoice + portal link (issue #253)
 //	GET /dashboard/account           → account + keys + GitHub connect
+//	GET /dashboard/postgres          → managed PostgreSQL database/binding status
 //
 // The sessionAuth middleware (server.go) runs first; the account is
 // already on context when these fire.
@@ -110,6 +113,12 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G8 / issue #1397 — outbound webhook subscriptions,
+			// recent deliveries, secret rotation, and dead-letter retry.
+			if wslug, ok := parseAppWebhooksPath(slug); ok {
+				s.renderAppWebhooks(w, r, log, acct, wslug)
+				return
+			}
 			// G4 / issue #1397 — edge rules and reusable CORS presets.
 			// The form adapters below delegate to the existing JSON API
 			// handlers so the dashboard cannot drift from API validation.
@@ -151,6 +160,12 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// fingerprint drill-down and the oldest redacted sample.
 			if eslug, ok := parseAppErrorsPath(slug); ok {
 				s.renderAppErrors(w, r, log, acct, eslug)
+				return
+			}
+			// ADR-127 dashboard debugger — regression feed, request
+			// telemetry table, and bounded span-evidence drill-down.
+			if dslug, ok := parseAppDebugPath(slug); ok {
+				s.renderAppDebug(w, r, log, acct, dslug)
 				return
 			}
 			// G2 / issue #1397 — combined environment and write-only
@@ -210,6 +225,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPricing(w, r, log, acct)
 		case path == "/dashboard/invoices":
 			s.renderInvoices(w, r, log, acct)
+		case path == "/dashboard/postgres":
+			s.renderManagedPostgres(w, r, log, acct)
 		case path == "/dashboard/audit-events":
 			// Wave 0 PR-C / ADR-047: the operator/customer surface
 			// for stateless-advisory audit rows. Mirrors

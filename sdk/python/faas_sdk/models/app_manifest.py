@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_manifest_crawler_policy import AppManifestCrawlerPolicy, check_app_manifest_crawler_policy
 from ..models.app_manifest_execution_mode_type_1 import (
     AppManifestExecutionModeType1,
     check_app_manifest_execution_mode_type_1,
@@ -112,6 +113,12 @@ class AppManifest:
     """Persisted per-app robots.txt body; empty uses the platform allow-all default."""
     head_wakes: bool | Unset = False
     """Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."""
+    crawler_policy: AppManifestCrawlerPolicy | Unset = "wake"
+    """Effective policy for known monitor/crawler requests."""
+    health_path: str | Unset = "/healthz"
+    """Monitor-facing health path."""
+    health_path_wakes: bool | Unset = False
+    """Whether health probes may wake this app."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -226,6 +233,14 @@ class AppManifest:
 
         head_wakes = self.head_wakes
 
+        crawler_policy: str | Unset = UNSET
+        if not isinstance(self.crawler_policy, Unset):
+            crawler_policy = self.crawler_policy
+
+        health_path = self.health_path
+
+        health_path_wakes = self.health_path_wakes
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -269,6 +284,12 @@ class AppManifest:
             field_dict["robots_txt"] = robots_txt
         if head_wakes is not UNSET:
             field_dict["head_wakes"] = head_wakes
+        if crawler_policy is not UNSET:
+            field_dict["crawler_policy"] = crawler_policy
+        if health_path is not UNSET:
+            field_dict["health_path"] = health_path
+        if health_path_wakes is not UNSET:
+            field_dict["health_path_wakes"] = health_path_wakes
 
         return field_dict
 
@@ -508,6 +529,17 @@ class AppManifest:
 
         head_wakes = d.pop("head_wakes", UNSET)
 
+        _crawler_policy = d.pop("crawler_policy", UNSET)
+        crawler_policy: AppManifestCrawlerPolicy | Unset
+        if isinstance(_crawler_policy, Unset):
+            crawler_policy = UNSET
+        else:
+            crawler_policy = check_app_manifest_crawler_policy(_crawler_policy)
+
+        health_path = d.pop("health_path", UNSET)
+
+        health_path_wakes = d.pop("health_path_wakes", UNSET)
+
         app_manifest = cls(
             entrypoint=entrypoint,
             env=env,
@@ -528,6 +560,9 @@ class AppManifest:
             favicon=favicon,
             robots_txt=robots_txt,
             head_wakes=head_wakes,
+            crawler_policy=crawler_policy,
+            health_path=health_path,
+            health_path_wakes=health_path_wakes,
         )
 
         app_manifest.additional_properties = d

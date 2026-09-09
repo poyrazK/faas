@@ -12,6 +12,8 @@ const (
 	QualificationBackendEnv         = "FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND"
 	QualificationFingerprintEnv     = "FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT"
 	QualificationUntilEnv           = "FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL"
+	QualificationApprovalPathEnv    = "FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH"
+	QualificationApprovalTTLEnv     = "FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL"
 	CanaryAccountsEnv               = "FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS"
 	QualificationStagingEnvironment = "staging"
 )
@@ -63,24 +65,48 @@ func NewStagingCanaryAccountGate(getenv func(string) string) func(string) bool {
 		if getenv == nil || strings.TrimSpace(accountID) == "" {
 			return false
 		}
-		raw := strings.TrimSpace(getenv(CanaryAccountsEnv))
-		if raw == "" {
-			return true
-		}
-		parts := strings.Split(raw, ",")
-		if len(parts) > 100 {
+		accounts, err := ParseStagingCanaryAccounts(getenv(CanaryAccountsEnv))
+		if err != nil {
 			return false
 		}
-		allowed := false
-		for _, part := range parts {
-			candidate := strings.TrimSpace(part)
-			if candidate == "" || len(candidate) > 255 {
-				return false
-			}
+		if len(accounts) == 0 {
+			return true
+		}
+		for _, candidate := range accounts {
 			if candidate == accountID {
-				allowed = true
+				return true
 			}
 		}
-		return allowed
+		return false
 	}
+}
+
+// ParseStagingCanaryAccounts parses the operator-owned exact account allowlist.
+// An empty value means that all otherwise-qualified staging accounts are
+// eligible. The parser is shared by the provisioning gate and qualification
+// approval artifacts so a malformed value cannot be interpreted differently by
+// rollout tooling and apid.
+func ParseStagingCanaryAccounts(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > 100 {
+		return nil, ErrInvalid
+	}
+	accounts := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		candidate := strings.TrimSpace(part)
+		if candidate == "" || len(candidate) > 255 {
+			return nil, ErrInvalid
+		}
+		if _, ok := seen[candidate]; ok {
+			return nil, ErrInvalid
+		}
+		seen[candidate] = struct{}{}
+		accounts = append(accounts, candidate)
+	}
+	return accounts, nil
 }

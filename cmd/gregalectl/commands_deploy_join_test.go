@@ -2,16 +2,157 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestResolveJoinPrivateAddressesSeedsSkippedPreflightFacts(t *testing.T) {
+	m, err := manifest.Load(splitboxJoinManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(_ context.Context, network, host string) ([]net.IP, error) {
+		if network != "ip4" {
+			t.Fatalf("lookup network = %q, want ip4", network)
+		}
+		switch host {
+		case "fsn-1.gregale.dev":
+			return []net.IP{net.ParseIP("10.42.0.1")}, nil
+		case "fsn-2.gregale.dev":
+			return []net.IP{net.ParseIP("10.42.0.2"), net.ParseIP("10.42.0.2")}, nil
+		default:
+			return nil, fmt.Errorf("unexpected host %s", host)
+		}
+	}
+
+	addresses, err := resolveJoinPrivateAddresses(t.Context(), m, lookup)
+	if err != nil {
+		t.Fatalf("resolveJoinPrivateAddresses: %v", err)
+	}
+	if got := addresses["fsn-1"]; got != "10.42.0.1" {
+		t.Fatalf("fsn-1 address = %q, want 10.42.0.1", got)
+	}
+	if got := addresses["fsn-2"]; got != "10.42.0.2" {
+		t.Fatalf("fsn-2 address = %q, want 10.42.0.2", got)
+	}
+
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedJoinPrivateAddressFacts(files, addresses)
+	for _, file := range files {
+		host := strings.TrimSuffix(filepath.Base(file.Path), ".yml")
+		address := addresses[host]
+		if address == "" {
+			continue
+		}
+		if !strings.Contains(string(file.Body), `faas_private_address: "`+address+`"`) {
+			t.Fatalf("%s host vars do not contain resolved private address %s:\n%s", host, address, file.Body)
+		}
+	}
+}
+
+func TestResolveJoinPrivateAddressesRejectsPublicAnswer(t *testing.T) {
+	m, err := manifest.Load(splitboxJoinManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(_ context.Context, _, _ string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("203.0.113.10")}, nil
+	}
+	_, err = resolveJoinPrivateAddresses(t.Context(), m, lookup)
+	if err == nil || !strings.Contains(err.Error(), "outside overlay") {
+		t.Fatalf("resolveJoinPrivateAddresses error = %v, want outside-overlay rejection", err)
+	}
+}
+
+func TestNodeJoinLeaseRefreshInterval(t *testing.T) {
+	tests := []struct {
+		name string
+		ttl  time.Duration
+		want time.Duration
+	}{
+		{name: "workflow lease", ttl: 5 * time.Minute, want: 100 * time.Second},
+		{name: "minimum", ttl: time.Second, want: time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nodeJoinLeaseRefreshInterval(tt.ttl); got != tt.want {
+				t.Fatalf("nodeJoinLeaseRefreshInterval(%s) = %s, want %s", tt.ttl, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
+	ansibleDir := t.TempDir()
+	for _, dir := range []string{"group_vars", "roles/example/tasks"} {
+		if err := os.MkdirAll(filepath.Join(ansibleDir, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, body := range map[string]string{
+		"bootstrap.yml":                "---\n",
+		"node_join.yml":                "---\n",
+		"requirements.yml":             "collections: []\n",
+		"group_vars/all.yml":           "faas_box_role: compute-only\n",
+		"roles/example/tasks/main.yml": "---\n",
+	} {
+		if err := os.WriteFile(filepath.Join(ansibleDir, path), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	before, err := joinBootstrapContractHash(ansibleDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != len("sha256:")+sha256.Size*2 || !strings.HasPrefix(before, "sha256:") {
+		t.Fatalf("bootstrap contract hash = %q", before)
+	}
+	if err := os.WriteFile(filepath.Join(ansibleDir, "roles/example/tasks/main.yml"), []byte("---\n- debug: msg=changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := joinBootstrapContractHash(ansibleDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == before {
+		t.Fatalf("bootstrap contract hash did not change after a role change: %s", after)
+	}
+}
+
+func TestNodeJoinFullBootstrapPreservesPlayLevelRoleSemantics(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	converge := strings.Index(playbook, "Converge the adopted node with the production bootstrap")
+	record := strings.Index(playbook, "Record successful compute bootstrap convergence")
+	if converge < 0 || record < 0 || converge >= record {
+		t.Fatalf("node_join.yml is missing the full bootstrap convergence block")
+	}
+	block := playbook[converge:record]
+	if !strings.Contains(block, "import_playbook: bootstrap.yml") {
+		t.Fatalf("full node convergence must retain bootstrap.yml play-level role semantics")
+	}
+	if !strings.Contains(block, "faas_join_bootstrap_contract_current") {
+		t.Fatalf("full bootstrap convergence must remain conditional on the managed-host contract")
+	}
+}
 
 func splitboxJoinManifest(t *testing.T) string {
 	t.Helper()
@@ -521,6 +662,17 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ansibleDir, "node_join.yml"), []byte("---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(ansibleDir, "bootstrap.yml"), []byte("---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ansibleDir, "requirements.yml"), []byte("---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"group_vars", "roles"} {
+		if err := os.MkdirAll(filepath.Join(ansibleDir, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	artifactDir := t.TempDir()
 	tarball := filepath.Join(artifactDir, releaseTarballName)
@@ -585,13 +737,25 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	oldRunner := ansiblePlaybookRunner
 	oldVerifier := joinControlPlaneVerifier
 	oldRegistrar := joinReleaseBundleRegistrar
+	oldLookup := joinPrivateAddressLookup
 	t.Cleanup(func() {
 		ansiblePlaybookRunner = oldRunner
 		joinControlPlaneVerifier = oldVerifier
 		joinReleaseBundleRegistrar = oldRegistrar
+		joinPrivateAddressLookup = oldLookup
 	})
 	joinControlPlaneVerifier = func(context.Context, *deployJoinReport, string) error { return nil }
 	joinReleaseBundleRegistrar = func(context.Context, string, string, string) error { return nil }
+	joinPrivateAddressLookup = func(_ context.Context, _, host string) ([]net.IP, error) {
+		switch host {
+		case "fsn-1.gregale.dev":
+			return []net.IP{net.ParseIP("10.42.0.1")}, nil
+		case "fsn-2.gregale.dev":
+			return []net.IP{net.ParseIP("10.42.0.2")}, nil
+		default:
+			return nil, fmt.Errorf("unexpected private host %s", host)
+		}
+	}
 	var calls [][]string
 	ansiblePlaybookRunner = func(_ context.Context, _ string, args []string) error {
 		calls = append(calls, append([]string(nil), args...))

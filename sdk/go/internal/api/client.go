@@ -304,6 +304,13 @@ func (c *Client) GetDeployment(ctx context.Context, id string) (DeploymentRespon
 	return out, c.do(ctx, "GET", "/v1/deployments/"+id, nil, &out)
 }
 
+// GetLatestAppDeployment returns the newest deployment for one app. A 404
+// means either the app is not visible to the caller or it has never deployed.
+func (c *Client) GetLatestAppDeployment(ctx context.Context, slug string) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/latest", nil, &out)
+}
+
 // GetDeploymentScan returns the per-deploy grype CVE scan
 // payload for one deployment (issue #464 / ADR-055). The
 // handler returns a 404 in three cases — the deployment
@@ -1139,6 +1146,23 @@ func (c *Client) ListDeployments(ctx context.Context, before string, limit int) 
 	}
 	if limit > 0 {
 		path += "limit=" + fmt.Sprintf("%d", limit)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListAppDeployments returns one cursor page of deployments for an app slug.
+func (c *Client) ListAppDeployments(ctx context.Context, slug, before string, limit int) (DeploymentListResponse, error) {
+	var out DeploymentListResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	path := "/v1/apps/" + slug + "/deployments"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }

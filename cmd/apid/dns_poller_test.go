@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+func TestCheckTXT_WildcardUsesZoneChallengeName(t *testing.T) {
+	old := txtLookupFunc
+	t.Cleanup(func() { txtLookupFunc = old })
+	var got string
+	txtLookupFunc = func(_ context.Context, target string) ([]string, error) {
+		got = target
+		return []string{"token"}, nil
+	}
+	if !checkTXT(context.Background(), "*.example.com", "token") {
+		t.Fatal("wildcard TXT token was not accepted")
+	}
+	if got != "_faas-verify.example.com" || strings.Contains(got, "*") {
+		t.Fatalf("TXT lookup target = %q, want zone owner", got)
+	}
+}
 
 // TestMemStore_OldestDoctorObservation (ADR-120 Tier A1) walks
 // the three observable states: empty table → zero time.Time;

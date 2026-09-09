@@ -34,6 +34,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
@@ -63,6 +64,13 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	uploadStarted := time.Now()
+	uploadOutcome := "failed"
+	defer func() {
+		if s.ops != nil {
+			s.ops.ObserveAPIHostingPhase("first_deploy", "upload", uploadOutcome, time.Since(uploadStarted))
+		}
+	}()
 
 	// MED-2 fix: cap the request body BEFORE multipart parsing so a
 	// malicious oversize body trips http.MaxBytesError on the first
@@ -180,16 +188,19 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		ActorFromIP: middleware.ClientIP(r),
 		// Issue #977 / ADR-116: annotation surface forwarded onto
 		// the deployment row from the request's annotationForm.
-		Reason:     ann.Reason,
-		Tag:        ann.Tag,
-		DeployedBy: ann.DeployedBy,
-		PRNumber:   ann.PRNumber,
+		Reason:          ann.Reason,
+		Tag:             ann.Tag,
+		DeployedBy:      ann.DeployedBy,
+		PRNumber:        ann.PRNumber,
+		HostingObserver: s.ops,
+		HostingFlow:     "first_deploy",
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 		return
 	}
 	sourceAccepted = true
+	uploadOutcome = "completed"
 
 	s.auditLocalTarballDeploy(r.Context(), acct, app, res, sidecar, spoolBytes, ann)
 

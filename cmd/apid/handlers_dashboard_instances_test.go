@@ -30,7 +30,7 @@ func TestDashboardHandler_AppInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	instance, err := store.CreateInstance(t.Context(), app.ID, dep.ID, "RUNNING", 256, "node-1", "wake-1")
+	instance, err := store.CreateInstance(t.Context(), app.ID, dep.ID, string(state.StateRunning), 256, "node-1", "wake-1")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

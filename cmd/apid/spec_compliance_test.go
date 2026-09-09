@@ -46,6 +46,7 @@ const (
 	orgsFile              = "orgs.go"            // issue #190 / IAM-6 / ADR-061 PR 5
 	scanFile              = "dto_scan.go"        // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
 	webhooksFile          = "webhooks.go"        // issue #476 / ADR-076
+	logDrainsFile         = "logdrains.go"       // issue #1398 O4 — customer runtime log destinations
 	billingFile           = "billing.go"         // PR-P3 — admin reconcile + future billing DTOs
 	diffFile              = "diff.go"            // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
 	upstreamsFile         = "upstreams.go"       // ADR-098 §9.A PR-B
@@ -178,13 +179,6 @@ var routeExclude = map[string]bool{
 	"GET /v1/orgs/me":                               true, // PR-4 LoadOrg seam (issue #190 / IAM-6 / ADR-061); documented in PR 5 alongside the rest of /v1/orgs/{slug}
 	"GET /v1/traces/{trace_id}":                     true, // issue #555: gatewayd-public trace endpoint (mounted via bare /v1/traces/ prefix; the scanner doesn't match it)
 
-	// ADR-081 Durable Execution Workflows (Step Functions)
-	"GET /v1/apps/{slug}/workflows/runs":         true,
-	"GET /v1/workflows/runs/{id}":                true,
-	"GET /v1/workflows/runs/{id}/steps":          true,
-	"POST /v1/apps/{slug}/workflows/{name}/runs": true,
-	"POST /v1/workflows/runs/{id}/cancel":        true,
-	"POST /v1/workflows/runs/{id}/events":        true,
 	// Issue #961 / Mega-B PR-3 / ADR-116. The dashboard's
 	// /dashboard/apps/new wizard renders GET /v1/templates as the
 	// "Starting template" dropdown. Cookie-session-authenticated
@@ -201,6 +195,20 @@ var routeExclude = map[string]bool{
 	// cmd/sdk-coverage/main.go::routeExclude; the two lists must
 	// move together.
 	"POST /v1/otel/v1/traces": true,
+}
+
+func init() {
+	// Issue #1397 G8: dashboard form routes are session-cookie surfaces,
+	// intentionally absent from the public OpenAPI document.
+	for _, route := range []string{
+		"POST /dashboard/apps/{slug}/webhooks",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/toggle",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/delete",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/rotate-secret",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/deliveries/{did}/retry",
+	} {
+		routeExclude[route] = true
+	}
 }
 
 // dtoExclude lists pkg/api exported DTOs that are intentionally not in the
@@ -236,6 +244,7 @@ var dtoExclude = map[string]bool{
 	"AppWebhookDeliveryRow":           true,
 	"ListAppWebhookDeliveriesOptions": true,
 	"RotateAppWebhookSecretRequest":   true,
+	"AppLogDrainRow":                  true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
 	// a per-plan ceiling argument bag (RateLimitRPS / RateLimitBurst)
@@ -819,6 +828,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", orgsFile),
 		filepath.Join(root, "pkg", "api", scanFile),
 		filepath.Join(root, "pkg", "api", webhooksFile),
+		filepath.Join(root, "pkg", "api", logDrainsFile),
 		filepath.Join(root, "pkg", "api", billingFile),
 		filepath.Join(root, "pkg", "api", diffFile),
 		filepath.Join(root, "pkg", "api", upstreamsFile),

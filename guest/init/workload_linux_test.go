@@ -1,5 +1,7 @@
 //go:build linux
 
+// adr: 069
+
 // Workload orchestration tests (issue #463 / ADR-069 / PR-B).
 //
 // The guest-init orchestrator's three-step dispatch (init sequentially →
@@ -330,16 +332,12 @@ func TestFullRootfsSidecarRoot(t *testing.T) {
 	if err := os.MkdirAll(upper, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A path-shaped directory in an optimized root must not opt itself into
-	// direct-root execution; only the builder-owned marker enables it.
+	// A path-shaped directory must not opt itself into direct-root execution;
+	// only guest-init's post-mount marker enables it.
 	if got, err := fullRootfsSidecarRootAt(root, "metrics"); err != nil || got != "" {
 		t.Fatalf("unmarked direct root = %q, err %v; want empty root", got, err)
 	}
-	marker := filepath.Join(root, "etc", "faas", ".full-rootfs")
-	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(marker, []byte(api.FullRootfsMarkerValue), 0o444); err != nil {
+	if err := writeSidecarMountMarker(root); err != nil {
 		t.Fatal(err)
 	}
 	want := filepath.Join(root, "run", "faas", "sidecars", "metrics", "upper")
@@ -353,12 +351,12 @@ func TestFullRootfsSidecarRoot(t *testing.T) {
 
 func TestFullRootfsSidecarRootRejectsMarkerSymlink(t *testing.T) {
 	root := t.TempDir()
-	marker := filepath.Join(root, "etc", "faas", ".full-rootfs")
+	marker := filepath.Join(root, strings.TrimPrefix(sidecarMountMarkerPath, "/"))
 	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	target := filepath.Join(t.TempDir(), "marker")
-	if err := os.WriteFile(target, []byte(api.FullRootfsMarkerValue), 0o444); err != nil {
+	if err := os.WriteFile(target, []byte(sidecarMountMarkerValue), 0o444); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, marker); err != nil {
@@ -418,6 +416,31 @@ func TestDiscoverSidecarDevicesCarriesWorkloadNames(t *testing.T) {
 	}
 	if got[0].workloadName != "metrics" || got[1].workloadName != "migrator" {
 		t.Fatalf("workload names = %q, %q", got[0].workloadName, got[1].workloadName)
+	}
+}
+
+func TestDiscoverSidecarDevicesReadsOptimizedDriveRoster(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "upper", "etc", "faas", "workloads.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(workloadRoster{
+		Main:     workloadSpec{Name: "main", Type: "main"},
+		Sidecars: []workloadSpec{{Name: "metrics", Type: "sidecar"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	got, err := discoverSidecarDevices(root)
+	if err != nil {
+		t.Fatalf("discoverSidecarDevices: %v", err)
+	}
+	if len(got) != 1 || got[0].device != "/dev/vdc" || got[0].workloadName != "metrics" {
+		t.Fatalf("optimized drive devices = %+v", got)
 	}
 }
 

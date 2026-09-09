@@ -3,9 +3,10 @@
 //
 //   - wildcard *.<apps_domain> via DNS-01 (Hetzner DNS API token from
 //     /etc/faas/secrets/hetzner-dns.token, sealed at rest per §11/G2)
-//   - on-demand HTTP-01 for customer custom_domains, gated by a Postgres
-//     lookup against the custom_domains allowlist so an attacker can't
-//     trick gatewayd-internal into minting a cert for an unrelated hostname
+//   - on-demand HTTP-01 for exact customer custom_domains, gated by a Postgres
+//     lookup against the custom_domains allowlist; customer-owned wildcard
+//     domains are minted by the gatewayd-internal DNS-01 issuer (ADR-167), so
+//     the edge cannot be tricked into minting an unrelated hostname
 //   - storage at /var/lib/faas/certs (root:root 0700)
 //
 // pkg/gateway/tls_wire.go wires the certmagic.Manager; pkg/gateway/dns01_hetzner.go

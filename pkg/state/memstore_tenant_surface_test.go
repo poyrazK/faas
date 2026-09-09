@@ -379,6 +379,48 @@ func TestMemStoreTenantHostnameVerifiedAndList(t *testing.T) {
 	}
 }
 
+func TestMemStoreListTenantSurfaceHostnames(t *testing.T) {
+	m, ctx, acct, app, lim := tenantSurfaceFixture(t)
+
+	active, err := m.CreateTenantSurfaceIfUnderQuota(ctx, CreateTenantSurfaceParams{
+		AccountID: acct.ID, AppID: app.ID, Name: "global-active",
+	}, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := m.CreateTenantSurfaceIfUnderQuota(ctx, CreateTenantSurfaceParams{
+		AccountID: acct.ID, AppID: app.ID, Name: "global-deleted",
+	}, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// CreateTenantHostnameIfUnderQuota indexes each row by both its original
+	// and lowercase names. The global listing must deduplicate those aliases
+	// while excluding hostnames belonging to the deleted surface.
+	if _, err := m.CreateTenantHostnameIfUnderQuota(ctx, CreateTenantHostnameParams{
+		SurfaceID: active.ID, Hostname: "Zed.Example", ChallengeToken: "tok-z",
+	}, lim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateTenantHostnameIfUnderQuota(ctx, CreateTenantHostnameParams{
+		SurfaceID: deleted.ID, Hostname: "gone.example", ChallengeToken: "tok-gone",
+	}, lim); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteTenantSurface(ctx, deleted.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := m.ListTenantSurfaceHostnames(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "Zed.Example" {
+		t.Fatalf("global hostnames = %#v, want [Zed.Example]", got)
+	}
+}
+
 func TestMemStoreTenantHostnameDeleteAndResolve(t *testing.T) {
 	m, ctx, acct, app, lim := tenantSurfaceFixture(t)
 	surf, _ := m.CreateTenantSurfaceIfUnderQuota(ctx, CreateTenantSurfaceParams{

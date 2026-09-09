@@ -107,8 +107,7 @@ func TestMigrations_00271_ComputeNodesRelease(t *testing.T) {
 	//     one-time UPDATE.
 	if _, err := pool.Exec(ctx, `
 		insert into compute_nodes
-			(name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, active)
-		values ('000271-no-release-row', 'tcp://127.0.0.1:1', 1, 256, 1, 256, true)
+			(name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ('000271-no-release-row', 'tcp://127.0.0.1:1', 1, 256, 1, 256, 'active'::compute_node_lifecycle)
 	`); err != nil {
 		t.Errorf("insert compute_nodes with NULL release columns (must succeed under nullable): %v", err)
 	}

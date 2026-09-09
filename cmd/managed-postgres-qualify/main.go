@@ -21,14 +21,35 @@ import (
 )
 
 type qualificationOutput struct {
+	Version            int                                           `json:"version"`
 	BackendID          string                                        `json:"backend_id"`
 	BackendFingerprint string                                        `json:"backend_fingerprint"`
 	Spec               managedpostgres.Spec                          `json:"spec"`
 	Report             managedpostgres.QualificationReport           `json:"report"`
 	Lifecycle          *managedpostgres.LifecycleQualificationReport `json:"lifecycle,omitempty"`
+	Approval           *managedpostgres.QualificationApproval        `json:"approval,omitempty"`
+	ApprovalEnv        map[string]string                             `json:"approval_env,omitempty"`
+	Readiness          managedpostgres.QualificationReadiness        `json:"readiness"`
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--verify" {
+		path := strings.TrimSpace(os.Getenv(managedpostgres.QualificationApprovalPathEnv))
+		for index := 2; index < len(os.Args); index++ {
+			if os.Args[index] == "--approval" && index+1 < len(os.Args) {
+				path = strings.TrimSpace(os.Args[index+1])
+				index++
+				continue
+			}
+			_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify --verify [--approval PATH]")
+			os.Exit(2)
+		}
+		os.Exit(runVerify(os.Getenv, path, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 {
+		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--verify [--approval PATH]]")
+		os.Exit(2)
+	}
 	os.Exit(run(os.Getenv, os.Stdout, os.Stderr))
 }
 
@@ -68,6 +89,11 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 			_, _ = fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT must be a positive duration")
 			return 2
 		}
+	}
+	approvalTTL, err := parseQualificationApprovalTTL(getenv)
+	if err != nil {
+		_, _ = fmt.Fprintln(errorOutput, managedpostgres.QualificationApprovalTTLEnv+" must be positive and no longer than 90 days")
+		return 2
 	}
 	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), backend.Provider, managedpostgres.QualificationOptions{
 		ProviderName: backend.Driver,
@@ -111,8 +137,44 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 			qualificationErr = fmt.Errorf("%w: lifecycle_service", managedpostgres.ErrQualificationFailed)
 		}
 	}
+	canaryAccounts, canaryErr := managedpostgres.ParseStagingCanaryAccounts(getenv(managedpostgres.CanaryAccountsEnv))
+	if canaryErr != nil && qualificationErr == nil {
+		qualificationErr = fmt.Errorf("%w: canary_accounts", managedpostgres.ErrQualificationFailed)
+	}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
+	result.Version = managedpostgres.QualificationArtifactVersion
+	if qualificationErr == nil {
+		approval, approvalErr := managedpostgres.BuildQualificationApproval(
+			result.Report, result.Lifecycle, result.BackendID, result.BackendFingerprint,
+			canaryAccounts, time.Now().UTC(), approvalTTL,
+		)
+		if approvalErr == nil {
+			result.Approval = &approval
+		} else {
+			qualificationErr = fmt.Errorf("%w: approval", managedpostgres.ErrQualificationFailed)
+		}
+	}
+	artifact := managedpostgres.QualificationArtifact{
+		Version:            result.Version,
+		BackendID:          result.BackendID,
+		BackendFingerprint: result.BackendFingerprint,
+		Spec:               result.Spec,
+		Report:             result.Report,
+		Lifecycle:          result.Lifecycle,
+		Approval:           result.Approval,
+		ApprovalEnv:        result.ApprovalEnv,
+	}
+	if canaryErr != nil {
+		result.Readiness = managedpostgres.QualificationReadiness{Reasons: []string{"canary_accounts_invalid"}}
+	} else {
+		result.Readiness = managedpostgres.EvaluateQualificationArtifact(artifact, result.BackendID, result.BackendFingerprint, canaryAccounts, time.Now().UTC())
+		if result.Readiness.Ready && result.Approval != nil {
+			result.ApprovalEnv = approvalEnvironment(*result.Approval)
+			artifact.ApprovalEnv = result.ApprovalEnv
+			result.Readiness = managedpostgres.EvaluateQualificationArtifact(artifact, result.BackendID, result.BackendFingerprint, canaryAccounts, time.Now().UTC())
+		}
+	}
 	if err := encoder.Encode(result); err != nil {
 		_, _ = fmt.Fprintln(errorOutput, "cannot write qualification report")
 		return 1
@@ -122,6 +184,112 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+const (
+	qualificationApprovalTTLDefault = 24 * time.Hour
+	qualificationApprovalTTLMax     = 90 * 24 * time.Hour
+)
+
+func qualificationApprovalTTL(getenv func(string) string) time.Duration {
+	ttl, err := parseQualificationApprovalTTL(getenv)
+	if err != nil {
+		return qualificationApprovalTTLDefault
+	}
+	return ttl
+}
+
+func parseQualificationApprovalTTL(getenv func(string) string) (time.Duration, error) {
+	if getenv == nil {
+		return qualificationApprovalTTLDefault, nil
+	}
+	value := strings.TrimSpace(getenv(managedpostgres.QualificationApprovalTTLEnv))
+	if value == "" {
+		return qualificationApprovalTTLDefault, nil
+	}
+	ttl, err := time.ParseDuration(value)
+	if err != nil || ttl <= 0 || ttl > qualificationApprovalTTLMax {
+		return 0, errors.New("invalid approval ttl")
+	}
+	return ttl, nil
+}
+
+func approvalEnvironment(approval managedpostgres.QualificationApproval) map[string]string {
+	values := map[string]string{
+		managedpostgres.QualificationEnv:            "true",
+		managedpostgres.QualificationBackendEnv:     approval.BackendID,
+		managedpostgres.QualificationFingerprintEnv: approval.BackendFingerprint,
+		managedpostgres.QualificationUntilEnv:       approval.ExpiresAt.UTC().Format(time.RFC3339),
+	}
+	if len(approval.CanaryAccounts) > 0 {
+		values[managedpostgres.CanaryAccountsEnv] = strings.Join(approval.CanaryAccounts, ",")
+	}
+	return values
+}
+
+func runVerify(getenv func(string) string, path string, output, errorOutput io.Writer) int {
+	if getenv == nil || !strings.EqualFold(strings.TrimSpace(getenv(managedpostgres.EnvironmentEnv)), managedpostgres.QualificationStagingEnvironment) {
+		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification verification requires FAAS_ENVIRONMENT=staging")
+		return 2
+	}
+	if strings.TrimSpace(path) == "" {
+		_, _ = fmt.Fprintln(errorOutput, "an approval artifact path is required via --approval or "+managedpostgres.QualificationApprovalPathEnv)
+		return 2
+	}
+	artifact, err := readQualificationArtifact(path)
+	if err != nil {
+		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification approval artifact is unavailable")
+		return 2
+	}
+	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	if err != nil || registry == nil {
+		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification configuration is unavailable")
+		return 2
+	}
+	canaryAccounts, err := managedpostgres.ParseStagingCanaryAccounts(getenv(managedpostgres.CanaryAccountsEnv))
+	if err != nil {
+		_, _ = fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS is malformed")
+		return 2
+	}
+	readiness := registry.VerifyQualificationArtifact(artifact, canaryAccounts, time.Now().UTC())
+	result := struct {
+		ArtifactVersion int                                    `json:"artifact_version"`
+		Readiness       managedpostgres.QualificationReadiness `json:"readiness"`
+	}{ArtifactVersion: artifact.Version, Readiness: readiness}
+	encoder := json.NewEncoder(output)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(result); err != nil {
+		_, _ = fmt.Fprintln(errorOutput, "cannot write qualification verification")
+		return 1
+	}
+	if !readiness.Ready {
+		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification approval is not ready")
+		return 1
+	}
+	return 0
+}
+
+func readQualificationArtifact(path string) (managedpostgres.QualificationArtifact, error) {
+	file, err := os.Open(path) //nolint:forbidigo
+	if err != nil {
+		return managedpostgres.QualificationArtifact{}, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || info.Size() > 1<<20 {
+		return managedpostgres.QualificationArtifact{}, errors.New("approval artifact exceeds size limit")
+	}
+	decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
+	decoder.DisallowUnknownFields()
+	var artifact managedpostgres.QualificationArtifact
+	if err := decoder.Decode(&artifact); err != nil {
+		return managedpostgres.QualificationArtifact{}, err
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return managedpostgres.QualificationArtifact{}, errors.New("approval artifact has trailing data")
+	}
+	return artifact, nil
 }
 
 func isLiveQualificationEnabled(getenv func(string) string) bool {

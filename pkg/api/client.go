@@ -599,6 +599,13 @@ func (c *Client) GetDeployment(ctx context.Context, id string) (DeploymentRespon
 	return out, c.do(ctx, "GET", "/v1/deployments/"+id, nil, &out)
 }
 
+// GetLatestAppDeployment returns the newest deployment for one app. A 404
+// means either the app is not visible to the caller or it has never deployed.
+func (c *Client) GetLatestAppDeployment(ctx context.Context, slug string) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/latest", nil, &out)
+}
+
 // GetDeploymentScan returns the per-deploy grype CVE scan
 // payload for one deployment (issue #464 / ADR-055). Returns
 // the typed api.ScanResult envelope (status, severity counts,
@@ -3356,6 +3363,24 @@ func (c *Client) ListDeployments(ctx context.Context, before string, limit int) 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListAppDeployments returns one cursor page of deployments for slug. The
+// app-scoped route avoids making app-centric callers scan account-wide pages.
+func (c *Client) ListAppDeployments(ctx context.Context, slug, before string, limit int) (DeploymentListResponse, error) {
+	var out DeploymentListResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/deployments"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetBillingPortal returns the active provider's billing
 // portal URL for the authenticated account (issue #253). Empty string
 // means the box has FAAS_BILLING_PORTAL_URL unset — the CLI prints a
@@ -3898,6 +3923,32 @@ func (c *Client) ListAppWebhookDeliveries(ctx context.Context, slug, id string, 
 func (c *Client) RetryAppWebhookDelivery(ctx context.Context, slug, id, deliveryID string) (AppWebhookRetryDeliveryResponse, error) {
 	var out AppWebhookRetryDeliveryResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
+}
+
+// --- Customer runtime log drains (issue #1398 O4) -------------------------
+
+func (c *Client) ListAppLogDrains(ctx context.Context, slug string) ([]AppLogDrainResponse, error) {
+	var out []AppLogDrainResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains", nil, &out)
+}
+
+func (c *Client) CreateAppLogDrain(ctx context.Context, slug string, req CreateAppLogDrainRequest) (AppLogDrainResponse, error) {
+	var out AppLogDrainResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/log-drains", req, &out)
+}
+
+func (c *Client) GetAppLogDrain(ctx context.Context, slug, id string) (AppLogDrainResponse, error) {
+	var out AppLogDrainResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains/"+id, nil, &out)
+}
+
+func (c *Client) UpdateAppLogDrain(ctx context.Context, slug, id string, req UpdateAppLogDrainRequest) (AppLogDrainResponse, error) {
+	var out AppLogDrainResponse
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/log-drains/"+id, req, &out)
+}
+
+func (c *Client) DeleteAppLogDrain(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/log-drains/"+id, nil, nil)
 }
 
 // --- /v1/account/dpa (spec §17 G6) ----------------------------------------

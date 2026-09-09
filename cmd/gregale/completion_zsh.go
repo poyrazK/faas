@@ -35,7 +35,7 @@ import (
 func cmdCompletionZsh() int {
 	w := osStdout
 	renderZshHeader(w)
-	for _, c := range cliCommands {
+	for _, c := range customerCliCommands() {
 		renderZshCommand(w, c)
 	}
 	renderZshFooter(w)
@@ -61,7 +61,7 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "_gregale() {")
 	_, _ = fmt.Fprintln(w, "  local -a commands")
 	_, _ = fmt.Fprintln(w, "  commands=(")
-	for _, c := range cliCommands {
+	for _, c := range customerCliCommands() {
 		_, _ = fmt.Fprintf(w, "    \"%s:%s\"\n", c.Name, escapeZshDQ(c.Short))
 	}
 	_, _ = fmt.Fprintln(w, "  )")
@@ -106,7 +106,7 @@ func renderZshCommand(w io.Writer, c cliCommand) {
 // $words[2] (the first arg after `gregale`).
 func renderZshFooter(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  case \"$words[2]\" in")
-	for _, c := range cliCommands {
+	for _, c := range customerCliCommands() {
 		_, _ = fmt.Fprintf(w, "    %s) _gregale_%s ;;\n", c.Name, c.Name)
 	}
 	_, _ = fmt.Fprintln(w, "  esac")

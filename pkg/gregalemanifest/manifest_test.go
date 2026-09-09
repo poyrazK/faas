@@ -84,6 +84,41 @@ func TestLoad_WorkflowDSL(t *testing.T) {
 	}
 }
 
+func TestLoad_HostingOverrides(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(`hosting:
+  start: "go run ./cmd/api"
+  port: 9090
+  health: /readyz
+`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m, ok, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !ok || m.Hosting == nil {
+		t.Fatalf("manifest = %+v, want hosting config", m)
+	}
+	if m.Hosting.Start != "go run ./cmd/api" || m.Hosting.Port != 9090 || m.Hosting.Health != "/readyz" {
+		t.Fatalf("hosting = %+v, want configured values", *m.Hosting)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestLoad_HostingOverridesAreStrict(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("hosting:\n  command: node server.js\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, _, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "field command not found") {
+		t.Fatalf("error = %v, want unknown hosting field", err)
+	}
+}
+
 func TestValidateForPlan_WorkflowsArePaidOnly(t *testing.T) {
 	m := &Manifest{Workflows: []api.WorkflowSpec{{
 		Name:  "free-workflow",

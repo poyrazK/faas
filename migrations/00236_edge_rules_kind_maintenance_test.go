@@ -146,10 +146,10 @@ func TestMigrations_00236_EdgeRulesKindMaintenance(t *testing.T) {
 	if gotKind != "maintenance" {
 		t.Errorf("kind round-trip: got %q, want 'maintenance'", gotKind)
 	}
-	if !strings.Contains(string(gotAction), `"retry_after_seconds":3600`) {
+	if !strings.Contains(compactJSON(t, gotAction), `"retry_after_seconds":3600`) {
 		t.Errorf("action jsonb round-trip: got %s, want action.maintenance.retry_after_seconds=3600", string(gotAction))
 	}
-	if !strings.Contains(string(gotAction), `Scheduled payment rollout`) {
+	if !strings.Contains(compactJSON(t, gotAction), `Scheduled payment rollout`) {
 		t.Errorf("action jsonb round-trip: got %s, want action.maintenance.message substring", string(gotAction))
 	}
 
@@ -182,6 +182,11 @@ func TestMigrations_00236_EdgeRulesKindMaintenance(t *testing.T) {
 			actionShape = `{"validate":{"schema":{}}}`
 		case "limit":
 			actionShape = `{"limit":{"max_body_bytes":1048576}}`
+		case "geo":
+			actionShape = `{"geo":{"allow_countries":["DE"],"deny_countries":[]}}`
+		}
+		if actionShape == "" {
+			t.Fatalf("no action shape for kind %q: extend the switch when the vocabulary grows", k)
 		}
 		if _, err := pool.Exec(ctx, `
 			insert into edge_rules (id, account_id, app_id, match_host, match_path,

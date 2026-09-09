@@ -173,6 +173,15 @@ type Config struct {
 	// for the on-disk shape.
 	StaticEgressIPBundlePath string `toml:"static_egress_ip_bundle"`
 
+	// Workload identity signing material. When KeyPath is empty the guest
+	// endpoint remains installed but returns identity_not_configured. The
+	// issuer and key id are copied into every assertion; TTL is bounded to
+	// 30..3600 seconds by loadWorkloadIdentitySigner.
+	WorkloadIdentityKeyPath string        `toml:"workload_identity_key_path"`
+	WorkloadIdentityIssuer  string        `toml:"workload_identity_issuer"`
+	WorkloadIdentityKeyID   string        `toml:"workload_identity_key_id"`
+	WorkloadIdentityTTL     time.Duration `toml:"workload_identity_ttl"`
+
 	// NodeKeyPath is the on-disk path to the slice-3 per-node
 	// ECDSA P-256 signing key vmmd uses to sign CapacityReport
 	// (ADR-053). Defaults to defaultNodeKeyPath

@@ -2,8 +2,11 @@
 
 Apps on onebox FaaS scale to zero. When nobody is using your app
 its instances are parked — a snapshot on disk, zero resident RAM.
-The next request wakes an instance; the snapshot is restored and
-your app is serving within ~350 ms.
+The next request wakes an instance. On the reference SSD node, Gregale targets
+p95 below 350 ms for the platform interval from `wake.boot_started` through
+`wake.boot_completed`. The full public request also includes Cloudflare, network
+and physical distance, proxying, and your app's response time, so its latency can
+be higher.
 
 This is the trick that makes the per-GB-RAM-hour price work. The
 trade-off is that the **first request to a parked app pays the

@@ -15,18 +15,23 @@ var catalogJSON []byte
 
 // Fixture is one source-tree contract case.
 type Fixture struct {
-	ID          string            `json:"id"`
-	Description string            `json:"description"`
-	Files       map[string]string `json:"files"`
-	Expected    Expected          `json:"expected"`
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	// Tags classify acceptance coverage (for example runtime, quick, or sse).
+	Tags     []string          `json:"tags,omitempty"`
+	Files    map[string]string `json:"files"`
+	Expected Expected          `json:"expected"`
 }
 
-// Expected is the profile contract asserted by the fixture runner.
+// Expected is the profile and readiness contract asserted by the fixture runner.
 type Expected struct {
-	Framework    string `json:"framework"`
-	Port         int    `json:"port"`
-	StartCommand string `json:"start_command"`
-	Inferred     bool   `json:"inferred"`
+	Framework      string `json:"framework"`
+	PackageManager string `json:"package_manager"`
+	StartCommand   string `json:"start_command"`
+	Port           int    `json:"port"`
+	HealthPath     string `json:"health_path"`
+	ConfigFile     string `json:"config_file,omitempty"`
+	Inferred       bool   `json:"inferred"`
 }
 
 // Catalog is the versioned fixture catalog.
@@ -57,6 +62,7 @@ func Validate(catalog Catalog) error {
 		return fmt.Errorf("fixtures must not be empty")
 	}
 	idPattern := regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+	tagPattern := regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 	seen := make(map[string]struct{}, len(catalog.Fixtures))
 	ids := make([]string, 0, len(catalog.Fixtures))
 	for i, fixture := range catalog.Fixtures {
@@ -71,8 +77,21 @@ func Validate(catalog Catalog) error {
 		if fixture.Description == "" || len(fixture.Files) == 0 {
 			return fmt.Errorf("fixture %q needs a description and at least one file", fixture.ID)
 		}
-		if fixture.Expected.Framework == "" || fixture.Expected.Port < 1 || fixture.Expected.Port > 65535 {
+		if fixture.Expected.Framework == "" || fixture.Expected.PackageManager == "" || fixture.Expected.Port < 1 || fixture.Expected.Port > 65535 {
 			return fmt.Errorf("fixture %q has invalid expected profile", fixture.ID)
+		}
+		if fixture.Expected.HealthPath == "" || fixture.Expected.HealthPath[0] != '/' {
+			return fmt.Errorf("fixture %q has invalid expected health path %q", fixture.ID, fixture.Expected.HealthPath)
+		}
+		seenTags := make(map[string]struct{}, len(fixture.Tags))
+		for _, tag := range fixture.Tags {
+			if tag == "" || !tagPattern.MatchString(tag) {
+				return fmt.Errorf("fixture %q has invalid tag %q", fixture.ID, tag)
+			}
+			if _, ok := seenTags[tag]; ok {
+				return fmt.Errorf("fixture %q repeats tag %q", fixture.ID, tag)
+			}
+			seenTags[tag] = struct{}{}
 		}
 	}
 	if !sort.StringsAreSorted(ids) {

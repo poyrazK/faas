@@ -10,6 +10,41 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// coldBootCPUProfile describes the temporary host-side CPU allowance used
+// while an app microVM boots and the sustained allowance restored before the
+// instance can be published as ready. Both values are effective millicores;
+// ConfiguredMillicores resolves the legacy zero value to the plan ceiling.
+type coldBootCPUProfile struct {
+	StartupMillicores    int
+	ConfiguredMillicores int
+}
+
+// resolveColdBootCPUProfile grants at most one host CPU while an app cold
+// boots, bounded by the owning plan's cpu.max ceiling. The customer-selected
+// sustained quota is returned separately so the caller can restore it after
+// readiness and before routing.
+func resolveColdBootCPUProfile(plan api.Plan, configuredMillicores int) (coldBootCPUProfile, error) {
+	quota := plan.CPUQuotaUS()
+	period := plan.CPUPeriodUS()
+	if quota <= 0 || period <= 0 {
+		return coldBootCPUProfile{}, fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", plan, quota, period)
+	}
+	if configuredMillicores != 0 && !api.ValidAppCPUMillicores(configuredMillicores) {
+		return coldBootCPUProfile{}, fmt.Errorf("fcvm: cgroup: invalid cpu_millicores %d", configuredMillicores)
+	}
+
+	planCeiling := int(int64(quota) * 1000 / int64(period))
+	configured := configuredMillicores
+	if configured == 0 {
+		configured = planCeiling
+	}
+	if configured > planCeiling {
+		return coldBootCPUProfile{}, fmt.Errorf("fcvm: cgroup: configured cpu_millicores %d exceeds plan %q ceiling %d", configured, plan, planCeiling)
+	}
+	startup := min(api.DefaultAppCPUMillicores, planCeiling)
+	return coldBootCPUProfile{StartupMillicores: startup, ConfiguredMillicores: configured}, nil
+}
+
 // cgroupRoot is the canonical cgroup v2 unified mount (spec §3 ADR-008:
 // cgroups v1 must be off). Package-level (not const) so cgroup_test.go
 // can substitute t.TempDir() under a t.Cleanup. Production callers

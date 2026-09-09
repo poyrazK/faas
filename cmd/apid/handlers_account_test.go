@@ -636,6 +636,111 @@ func TestExportAccount_BuildAppID_Populated(t *testing.T) {
 	}
 }
 
+// TestExportAccount_DeploymentHistorySpansPages pins the GDPR completeness
+// guarantee beyond the old 1,000-row cap. Every row deliberately shares the
+// same timestamp so timestamp-only cursors would drop 751 rows at the first
+// page boundary; the (created_at, id) cursor must return all of them once.
+func TestExportAccount_DeploymentHistorySpansPages(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedOneApp(t, e, "export-pages-app")
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	const count = 1001
+	for i := 0; i < count; i++ {
+		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1)
+		if _, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+			ID: id, AppID: app.ID, CreatedAt: createdAt,
+			Kind: state.DeploymentKindImage, Status: state.DeployFailed,
+		}); err != nil {
+			t.Fatalf("CreateDeployment(%d): %v", i, err)
+		}
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := len(bundle.Deployments); got != count {
+		t.Fatalf("deployments = %d, want %d", got, count)
+	}
+	seen := make(map[string]struct{}, count)
+	for _, deployment := range bundle.Deployments {
+		if _, duplicate := seen[deployment.ID]; duplicate {
+			t.Fatalf("duplicate deployment %s", deployment.ID)
+		}
+		seen[deployment.ID] = struct{}{}
+	}
+}
+
+// TestExportAccount_AuditHistorySpansPages proves the audit section no longer
+// stops at 1,000 rows. Equal timestamps exercise the id tie-breaker used by
+// both the in-memory and PostgreSQL implementations.
+func TestExportAccount_AuditHistorySpansPages(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	requestedAt := time.Now().UTC().Truncate(time.Microsecond)
+	const count = 1001
+	for i := 0; i < count; i++ {
+		id := fmt.Sprintf("10000000-0000-0000-0000-%012d", i+1)
+		if err := e.store.AppendGdprRequest(context.Background(), state.GdprRequest{
+			ID: id, AccountID: e.acct.ID, AccountEmail: e.acct.Email,
+			Action: state.GdprActionDelete, RequestedAt: requestedAt,
+		}); err != nil {
+			t.Fatalf("AppendGdprRequest(%d): %v", i, err)
+		}
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	gdprRows := 0
+	for _, row := range bundle.AuditTrail {
+		if row.Source == "gdpr" && row.Action == string(state.GdprActionDelete) {
+			gdprRows++
+		}
+	}
+	if gdprRows != count {
+		t.Fatalf("GDPR audit rows = %d, want %d", gdprRows, count)
+	}
+}
+
+func TestExportAccount_EventHistorySpansPages(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	const count = 1001
+	for i := 0; i < count; i++ {
+		if err := e.store.AppendEventAt(context.Background(), "account-test", "export.page", &e.acct.ID,
+			[]byte(fmt.Sprintf(`{"row":%d}`, i)), at); err != nil {
+			t.Fatalf("AppendEventAt(%d): %v", i, err)
+		}
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	eventRows := 0
+	for _, row := range bundle.AuditTrail {
+		if row.Source == "event" && row.Kind == "export.page" {
+			eventRows++
+		}
+	}
+	if eventRows != count {
+		t.Fatalf("account event rows = %d, want %d", eventRows, count)
+	}
+}
+
 // TestDashboardAccountExport_ReturnsAttachment is the regression test
 // for the Bug 5 fix (PR #83 review). Before the fix, the dashboard
 // account page linked `<a href="/v1/account/export">` — that endpoint

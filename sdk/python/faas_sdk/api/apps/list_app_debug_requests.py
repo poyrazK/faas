@@ -117,7 +117,10 @@ def sync_detailed(
 
      Recent request telemetry rows for an app — status, latency_ms, route,
     method, deployment_id, cold_boot, trace_id, received_at, and the
-    number of original requests represented by each collapsed row.
+    number of original requests represented by each collapsed row. Rows
+    are split by bounded latency bucket so aggregate percentiles retain
+    distribution signal; `latency_ms` is that bucket's inclusive upper
+    bound (and can therefore be slightly conservative).
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -170,7 +173,10 @@ def sync(
 
      Recent request telemetry rows for an app — status, latency_ms, route,
     method, deployment_id, cold_boot, trace_id, received_at, and the
-    number of original requests represented by each collapsed row.
+    number of original requests represented by each collapsed row. Rows
+    are split by bounded latency bucket so aggregate percentiles retain
+    distribution signal; `latency_ms` is that bucket's inclusive upper
+    bound (and can therefore be slightly conservative).
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -218,7 +224,10 @@ async def asyncio_detailed(
 
      Recent request telemetry rows for an app — status, latency_ms, route,
     method, deployment_id, cold_boot, trace_id, received_at, and the
-    number of original requests represented by each collapsed row.
+    number of original requests represented by each collapsed row. Rows
+    are split by bounded latency bucket so aggregate percentiles retain
+    distribution signal; `latency_ms` is that bucket's inclusive upper
+    bound (and can therefore be slightly conservative).
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -269,7 +278,10 @@ async def asyncio(
 
      Recent request telemetry rows for an app — status, latency_ms, route,
     method, deployment_id, cold_boot, trace_id, received_at, and the
-    number of original requests represented by each collapsed row.
+    number of original requests represented by each collapsed row. Rows
+    are split by bounded latency bucket so aggregate percentiles retain
+    distribution signal; `latency_ms` is that bucket's inclusive upper
+    bound (and can therefore be slightly conservative).
     PR-A ships the read endpoint only; the write-side (publisher
     → gRPC IncrementRequestTelemetry → apid receiver → sqlc
     INSERT) lands in PR-B. The endpoint is plan-gated by

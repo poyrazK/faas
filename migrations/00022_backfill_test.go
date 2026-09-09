@@ -104,10 +104,16 @@ func TestMigrations_00022_SnapshotsStorageKey_Backfill(t *testing.T) {
 	// safe for new inserts that don't know about storage_key yet.
 	// Pin that with a second deployment + a snapshot insert that
 	// omits storage_key — expect '' (the default) back.
+	// status is 'superseded', not 'live': migration 00213 added the
+	// partial unique index deployments_app_scope_live_uniq over
+	// (app_id, scope) WHERE status = 'live', so a second live
+	// deployment on the same app would collide (23505). The snapshot
+	// default this step pins is orthogonal to deployment status — any
+	// legal non-live status serves as the FK target.
 	if _, err := pool.Exec(ctx, `
 		insert into deployments (id, app_id, kind, image_digest, status, created_at)
 		values ('22222222-2222-2222-2222-222222222222',
-		        '00000000-0000-0000-0000-000000000002', 'image', 'sha256:other', 'live', now())
+		        '00000000-0000-0000-0000-000000000002', 'image', 'sha256:other', 'superseded', now())
 	`); err != nil {
 		t.Fatalf("seed second deployment: %v", err)
 	}

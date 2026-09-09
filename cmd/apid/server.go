@@ -1274,7 +1274,15 @@ func (s *server) handler() http.Handler {
 	}
 
 	// Deployments.
+	// App-scoped deployment history read. The slug is resolved through
+	// loadApp so cross-account probes collapse to the same 404 surface as
+	// the latest-deployment endpoint; pagination stays on the app's index.
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.listAppDeployments))))
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createDeployment))))))
+	// App-scoped latest-deployment read. This is the public counterpart to
+	// Store.LatestDeployment already used by the dashboard and deploy pipeline;
+	// it avoids forcing app-centric clients through the account-wide list.
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/latest", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getLatestAppDeployment))))
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments/dev-source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.handleDevSourceDeploy))))))
 	// ADR-117 §Production-ready follow-on, C2 — per-stage retry.
 	// Same auth chain as createDeployment (authLimited → requireMFA
@@ -1408,9 +1416,9 @@ func (s *server) handler() http.Handler {
 	// derives the next stage from persisted state and the store commits
 	// traffic, canary state, rollout completion, and audit atomically.
 	mux.HandleFunc("POST /v1/deployments/{id}/canary/advance", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.advanceCanary)))))
-	// ADR-124 deployment queue controls. Four routes; cancel +
-	// clear-obsolete (Free-allowed); reorder + clear-obsolete's
-	// plan-gated path use ScopeDeployWrite + Plan.QueueControlsAllowed.
+	// ADR-124 deployment queue controls. Four routes; cancel is
+	// Free-allowed. Reorder and clear-obsolete use ScopeDeployWrite
+	// plus Plan.QueueControlsAllowed.
 	// The {slug} form on cancel lets us honour the same loadApp
 	// IDOR gate that POST /v1/apps/{slug}/deployments uses; the
 	// id-only form on the other three mirrors the existing PATCH
@@ -1735,6 +1743,16 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAppWebhookSecret))))
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
+
+	// Customer runtime log drains (issue #1398 O4). Each destination is
+	// provider-neutral: HTTP JSON covers compatible intake endpoints, while
+	// OTLP targets a collector or any vendor's OTLP/HTTP endpoint (including
+	// Datadog through its OTLP-compatible collector path).
+	mux.HandleFunc("GET /v1/apps/{slug}/log-drains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppLogDrains))))
+	mux.HandleFunc("POST /v1/apps/{slug}/log-drains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppLogDrain)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrain))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppLogDrain))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppLogDrain))))
 
 	// Move 2: event-driven surface (handlers_invocations.go).
 	// Charged routes take idempotent so retries are safe; the long-poll
@@ -2455,6 +2473,15 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/secrets", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetSecret))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteSecret))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/rotate", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRotateSecret))))
+	// G8 / issue #1397 — outbound webhook forms. All mutations use the
+	// existing JSON handlers through a named dashboard CSRF envelope, so
+	// validation, ownership, plan gates, audit rows, and RFC 7807 errors
+	// stay identical to the API/CLI paths.
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateAppWebhook))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/toggle", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardToggleAppWebhook))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteAppWebhook))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/rotate-secret", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRotateAppWebhookSecret))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRetryAppWebhookDelivery))))
 	// G6 / issue #1397 — app instance lifecycle controls. The GET page
 	// mints a named CSRF envelope; this form adapter verifies it before
 	// applying the same app-scoped park/wake/restart transitions as the

@@ -1,6 +1,7 @@
 // gregale inspect — read-only operator surface for inspecting
-// per-app state (issue #952). First leaf: `--upstreams`
-// (ADR-098 §9.A captured-upstream table). Future leaves
+// per-app state (issue #952). A bare invocation renders the
+// application-intelligence summary; `--upstreams` selects the
+// ADR-098 §9.A captured-upstream table. Future leaves
 // (--env, --crons, --instances, …) add a flag here and a
 // commands_inspect_<noun>.go dispatcher file — keeps the verb
 // itself a single dispatcher and the per-leaf logic isolated.
@@ -13,8 +14,9 @@
 // keeps the per-leaf renderer in commands_inspect_<noun>.go
 // narrow (≤50 lines per the handlers convention).
 //
-// UX shape (the v1 leaf):
+// UX shape:
 //
+//	$ gregale inspect <slug>
 //	$ gregale inspect <slug> --upstreams
 //	$ gregale inspect <slug> --upstreams --scope <scope>
 //	$ gregale inspect <slug> --upstreams --json
@@ -30,9 +32,8 @@ import (
 )
 
 // cmdInspect is the verb-level dispatcher for
-// `gregale inspect <slug> [flags]`. v1 recognises only one leaf
-// (`--upstreams`); unknown leaves print the same usage hint
-// with no server call (the validator runs before authedClient).
+// `gregale inspect <slug> [flags]`. A bare invocation aggregates the
+// existing app, deployment, OpenAPI, upstream, and alert surfaces.
 //
 // Why --upstreams is a flag and not a positional subcommand:
 // the issue wording is authoritative — `gregale inspect <slug>
@@ -42,10 +43,8 @@ import (
 // the customer wants to see).
 //
 // inspectUsage is the single source of truth for the verb's
-// usage line. The dispatcher prints it on every bad-args path
-// (missing slug, trailing positional, missing leaf flag) so
-// drift across the three call sites is impossible — the test
-// file pins this exact wording.
+// usage line. The dispatcher prints it on bad-args paths, and the
+// test file pins this exact wording.
 const inspectUsage = "usage: gregale inspect <slug> [--upstreams] [--scope <scope>] [--errors] [--json]"
 
 func cmdInspect(args []string) int {
@@ -79,13 +78,14 @@ func cmdInspect(args []string) int {
 		PrintUsage(os.Stderr, inspectUsage, "inspect")
 		return 1
 	}
-	// At least one leaf flag is required for v1 — the verb without
-	// any leaf would be ambiguous (future leaves will add their
-	// own gates). A bare `gregale inspect myapp` exits 1 with
-	// the same usage line, no server call.
+	// The bare form is the application-intelligence summary. A scope
+	// only has meaning for the explicit upstream table, so reject it
+	// before auth/network rather than silently ignoring the filter.
 	if !*upstreams && !*errorsFlag {
-		PrintUsage(os.Stderr, inspectUsage, "inspect")
-		return 1
+		if *scope != "" {
+			return printErr("Invalid flags", fmt.Errorf("--scope requires --upstreams"))
+		}
+		return cmdInspectSummary(slug)
 	}
 	// Mutually exclusive: --upstreams hits /v1/apps/{slug}/upstreams;
 	// --errors hits the latest deployment via the deployments list.

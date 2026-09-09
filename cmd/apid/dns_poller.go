@@ -77,7 +77,8 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 				// Drifted domains must repair the routing target before the
 				// TXT challenge can restore verification. This prevents a
 				// stale TXT record from immediately re-enabling a wrong CNAME.
-				if pointsToG := checkPointsToGregale(ctx, d.Domain); pointsToG.Status != probeOK {
+				probeDomain, _ := state.WildcardProbeHost(d.Domain)
+				if pointsToG := checkPointsToGregale(ctx, probeDomain); pointsToG.Status != probeOK {
 					continue
 				}
 			}
@@ -88,9 +89,8 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 			if err := s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertPending, time.Time{}, "", checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
 				log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
 			}
-			// Use the canonical channel constant (no LISTEN consumer yet —
-			// recorded here so the next dns_poller→imaged LISTEN path picks up
-			// the right name without a find/replace).
+			// gatewayd-internal listens for this event to eagerly mint a
+			// customer-owned wildcard certificate with DNS-01.
 			_ = s.notif.Notify(ctx, db.NotifyDomainVerify, `{"domain":"`+d.Domain+`"}`)
 			log.Info("domain verified", "domain", d.Domain)
 		} else if d.CertStatus != state.CustomDomainCertDNSDrifted {
@@ -215,7 +215,7 @@ type pendingDomainRow struct {
 // checkTXT does a TXT lookup for _faas-verify.<domain> and reports whether
 // any returned record equals the expected token.
 func checkTXT(ctx context.Context, domain, expected string) bool {
-	target := "_faas-verify." + domain
+	target := state.CustomDomainChallengeName(domain)
 	records, err := txtLookupFunc(ctx, target)
 	if err != nil {
 		return false
@@ -330,7 +330,8 @@ func (s *server) emitDoctorSkip(log *slog.Logger) {
 }
 
 func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domain string) error {
-	dnsFound, pointsToG, caa, aaaa := runProbesParallel(ctx, domain)
+	probeDomain, _ := state.WildcardProbeHost(domain)
+	dnsFound, pointsToG, caa, aaaa := runProbesParallel(ctx, probeDomain)
 	// Translate probe results into the observation row
 	// shape. probeOK → true, probeFail → false, probePending
 	// → false (we treat "transient" as "not currently
@@ -387,7 +388,7 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		if legacyErr == nil && !legacy.Verified() {
 			obs.CertState = certStatusPending
 		} else {
-			obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, domain)
+			obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, probeDomain)
 			obs.CertCheckedAt = time.Now().UTC()
 		}
 

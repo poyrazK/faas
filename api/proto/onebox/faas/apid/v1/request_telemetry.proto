@@ -85,12 +85,12 @@ message IncrementRequestTelemetryRequest {
   // anything else).
   int32 http_status = 6;
 
-  // latency_ms — the bucket's representative latency (max within
-  // the minute, mirrors what the regression detector compares
-  // against baseline). Wall-clock from Handler.ServeHTTP entry
-  // to observe exit for the FIRST row that populated the bucket;
-  // subsequent rows fold in via the publisher's collapse
-  // aggregate.
+  // latency_ms — the inclusive upper bound of the bounded latency
+  // bucket represented by this row. The publisher includes the
+  // bucket in its collapse key so percentile queries retain the
+  // latency distribution rather than collapsing to one minute-level
+  // maximum. Wall-clock from Handler.ServeHTTP entry to observe exit
+  // for the original requests represented by count.
   int32 latency_ms = 7;
 
   // cold_boot — true when ANY of the rows that folded into this
@@ -127,6 +127,15 @@ message IncrementRequestTelemetryRequest {
   // country — ISO 3166-1 alpha-2 uppercase country code from the existing
   // trusted edge geo resolver, or __unknown__. The source IP is not retained.
   string country = 14;
+
+  // wake_id — the newly admitted wake that served this request. Empty for
+  // warm requests; retained only as an opaque correlation identifier so the
+  // debugger can join the row to the wake event timeline.
+  string wake_id = 15;
+
+  // instance_id — the selected VM instance that served this request. Empty
+  // when the request never reached a routable target.
+  string instance_id = 16;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

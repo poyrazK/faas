@@ -23,8 +23,10 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
@@ -91,49 +93,73 @@ func TestMigrations_00133_DeploymentsMinInstances(t *testing.T) {
 		t.Fatalf("seed accounts: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into apps (id, account_id, slug)
+		insert into apps (id, account_id, slug, ram_mb)
 		values ('00000000-0000-0000-0000-000000000133',
 		        '00000000-0000-0000-0000-000000000133',
-		        'min-test')
+		        'min-test', 256)
 	`); err != nil {
 		t.Fatalf("seed apps: %v", err)
 	}
 
-	// Insert at floor = 0 (the inheritance default). Should pass.
-	if _, err := pool.Exec(ctx, `
+	// The seed rows carry status 'building', not 'ready': 'ready' was
+	// never in deployments_status_check (pending / building / imaging /
+	// snapshotting / live / failed / superseded / cancelled), and
+	// 'building' also keeps every row out of the
+	// deployments_app_scope_live_uniq partial unique index (WHERE
+	// status = 'live'), which would otherwise reject the second
+	// accepted row below. min_instances is orthogonal to both.
+	const insertAtFloor = `
 		insert into deployments (id, app_id, kind, source_path, source_bytes, status, image_digest, min_instances)
-		values ('00000000-0000-0000-0000-000000000133',
+		values ($1,
 		        '00000000-0000-0000-0000-000000000133',
-		        'tarball', '/tmp/test.tar', 0, 'ready', 'sha256:0', 0)
-	`); err != nil {
+		        'tarball', '/tmp/test.tar', 0, 'building', 'sha256:0', $2)`
+
+	// Insert at floor = 0 (the inheritance default). Should pass.
+	if _, err := pool.Exec(ctx, insertAtFloor,
+		"00000000-0000-0000-0000-000000000133", 0); err != nil {
 		t.Fatalf("insert at floor 0: %v", err)
 	}
 	// Insert at floor = 100 (the upper bound). Should pass.
-	if _, err := pool.Exec(ctx, `
-		insert into deployments (id, app_id, kind, source_path, source_bytes, status, image_digest, min_instances)
-		values ('00000000-0000-0000-0000-000000000233',
-		        '00000000-0000-0000-0000-000000000133',
-		        'tarball', '/tmp/test.tar', 0, 'ready', 'sha256:0', 100)
-	`); err != nil {
+	if _, err := pool.Exec(ctx, insertAtFloor,
+		"00000000-0000-0000-0000-000000000233", 100); err != nil {
 		t.Fatalf("insert at floor 100: %v", err)
 	}
-	// Insert at floor = -1 (negative). Should fail.
-	if _, err := pool.Exec(ctx, `
-		insert into deployments (id, app_id, kind, source_path, source_bytes, status, image_digest, min_instances)
-		values ('00000000-0000-0000-0000-000000000333',
-		        '00000000-0000-0000-0000-000000000133',
-		        'tarball', '/tmp/test.tar', 0, 'ready', 'sha256:0', -1)
-	`); err == nil {
-		t.Errorf("insert at floor -1: expected CHECK violation, got nil")
+	// Insert at floor = 50 (mid-range). Should pass — pins that the
+	// constraint is a RANGE and not an enumeration of the endpoints.
+	if _, err := pool.Exec(ctx, insertAtFloor,
+		"00000000-0000-0000-0000-000000000533", 50); err != nil {
+		t.Fatalf("insert at floor 50: %v", err)
 	}
-	// Insert at floor = 101 (> 100). Should fail.
-	if _, err := pool.Exec(ctx, `
-		insert into deployments (id, app_id, kind, source_path, source_bytes, status, image_digest, min_instances)
-		values ('00000000-0000-0000-0000-000000000433',
-		        '00000000-0000-0000-0000-000000000133',
-		        'tarball', '/tmp/test.tar', 0, 'ready', 'sha256:0', 101)
-	`); err == nil {
-		t.Errorf("insert at floor 101: expected CHECK violation, got nil")
+	// Out-of-range floors must be rejected by
+	// deployments_min_instances_chk specifically. Matching on the
+	// SQLSTATE and the constraint name (rather than just "some error")
+	// is what stops this assertion from silently passing because an
+	// unrelated constraint — a status CHECK, a unique index — happened
+	// to reject the row first.
+	for _, tc := range []struct {
+		name  string
+		id    string
+		floor int
+	}{
+		{"negative", "00000000-0000-0000-0000-000000000333", -1},
+		{"above 100", "00000000-0000-0000-0000-000000000433", 101},
+	} {
+		_, err := pool.Exec(ctx, insertAtFloor, tc.id, tc.floor)
+		if err == nil {
+			t.Errorf("insert at floor %d (%s): expected CHECK violation, got nil", tc.floor, tc.name)
+			continue
+		}
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) {
+			t.Errorf("insert at floor %d (%s): got %v, want a *pgconn.PgError", tc.floor, tc.name, err)
+			continue
+		}
+		if pgErr.Code != "23514" {
+			t.Errorf("insert at floor %d (%s): got SQLSTATE %s, want 23514 (check_violation)", tc.floor, tc.name, pgErr.Code)
+		}
+		if pgErr.ConstraintName != "deployments_min_instances_chk" {
+			t.Errorf("insert at floor %d (%s): got constraint %q, want deployments_min_instances_chk", tc.floor, tc.name, pgErr.ConstraintName)
+		}
 	}
 
 	// (5) Update path: write a positive value, read it back. This

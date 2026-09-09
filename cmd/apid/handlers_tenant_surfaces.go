@@ -357,6 +357,15 @@ func (s *server) addTenantHostname(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("unknown plan"))
 		return
 	}
+	if ws, ok := s.store.(state.CustomDomainWildcardStore); ok {
+		if wildcard, werr := ws.WildcardDomainForHost(r.Context(), hostname); werr == nil {
+			api.WriteProblem(w, api.ErrWildcardDomainTenantSurfaceOverlap(wildcard.Domain, hostname))
+			return
+		} else if !errors.Is(werr, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrCapacity("could not check wildcard-domain overlap"))
+			return
+		}
+	}
 	h, err := s.store.CreateTenantHostnameIfUnderQuota(r.Context(), state.CreateTenantHostnameParams{
 		SurfaceID:      surf.ID,
 		Hostname:       hostname,

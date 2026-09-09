@@ -59,9 +59,31 @@ command provisions one resource, retries the same idempotency key to exercise
 ambiguous-create recovery, inspects it, reads a complete usage window, issues
 and revokes a read/write credential, and deletes the resource. It always
 attempts cleanup after an intermediate failure and emits a JSON report with
-only stable check codes. The report's backend ID and fingerprint are the
-values that may be copied into the staging provisioning gates after an
-operator reviews the run.
+only stable check codes. The command also emits a versioned `approval`
+envelope, an `approval_env` block when all rollout checks pass, and a
+machine-readable `readiness` result.
+The approval is bound to the report digest, exact backend fingerprint, expiry,
+and the current canary allowlist. A provider-only run remains useful evidence
+but is not rollout-ready until the lifecycle smoke has passed.
+
+Save the JSON output as an operator-owned artifact and verify it without making
+provider calls:
+
+```sh
+FAAS_ENVIRONMENT=staging \
+FAAS_MANAGED_POSTGRES_CONFIG=/etc/faas/managed-postgres.json \
+FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS=acct_demo \
+FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH=/var/lib/faas/managed-postgres-qualification.json \
+go run ./cmd/managed-postgres-qualify --verify
+```
+
+Verification compares the artifact with the configured single default
+backend, its non-secret placement fingerprint, the provider-neutral spec, and
+the current canary allowlist. It exits non-zero with stable blocking reasons
+when the approval is missing, expired, tampered with, or not lifecycle
+qualified. The `approval_env` values are the exact staging gate values to
+apply only after the report is reviewed; provisioning remains disabled until
+the operator deliberately enables it.
 
 Set `FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` for the second,
 control-plane smoke in the same isolated run. After the provider checks pass,
@@ -231,3 +253,33 @@ branch without a second POST. Deleting a source is rejected while an active
 restore descendant exists, and deleting a restore target removes only its
 branch. Cutover remains an explicit binding operation; restore never silently
 rewires an app.
+
+## Customer usability
+
+The `gregale postgres` command is the supported customer entry point for the
+provider-neutral API:
+
+```sh
+gregale postgres list
+gregale postgres create orders --region eu --class development
+gregale postgres get DATABASE_ID
+gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z
+gregale postgres bindings create DATABASE_ID --app APP_ID --scope production --environment-key DATABASE_URL
+gregale postgres bindings list DATABASE_ID
+gregale postgres delete DATABASE_ID
+```
+
+Pass `--json` to any read or write command for automation. JSON responses use
+the same DTOs as the public API and deliberately contain no password, endpoint,
+connection URL, or secret ciphertext. Human output shows lifecycle state,
+placement, storage/restore allowances, and binding generation/state so a
+customer can tell whether a workload is ready without opening provider
+consoles.
+
+The signed-in dashboard exposes the same read-only view at
+`/dashboard/postgres`. It is safe to bookmark during a rollout: when the
+managed-Postgres service is disabled or temporarily unavailable, the page
+shows an explicit status message rather than implying that an empty catalog is
+healthy. Database creation, restore, deletion, and binding changes stay on the
+CLI/API surface, where the existing authentication, plan, idempotency, and
+provider-neutral validation rules apply.

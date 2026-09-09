@@ -51,6 +51,25 @@ directory. Both modes keep the repository's `commit_sha` in the JSON
 receipt when Git metadata is available; `dirty: true` indicates that
 the repository had local changes at deploy time.
 
+## Optional hosting overrides
+
+Zero-config inference is the default. If a repository uses a non-standard
+entrypoint or readiness route, add a small `hosting` block to the
+`gregale.yaml` (or `gregale.yml`) next to the deployed source:
+
+```yaml
+hosting:
+  start: "npm run serve"
+  port: 8787
+  health: /ready
+```
+
+Each field is optional. `start` replaces the inferred process command,
+`port` selects the listen port, and `health` selects the HTTP readiness path.
+The CLI validates the block before creating the app; the same values are
+applied to the server-side profile captured from the exact uploaded source.
+Omitting the block leaves the normal framework profile unchanged.
+
 For a decomposed monorepo deploy (one CLI invocation, N apps), use
 `gregale scan --path .` and the project-plan apply path; see the
 decomposition PR (issue #791 / ADR-090). A direct `--path` deploy is

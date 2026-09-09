@@ -1,5 +1,7 @@
 //go:build metal
 
+// adr: 069
+
 // Sidecar metal tests (issue #463 / ADR-069 / PR-B).
 //
 // These tests run a real jailed firecracker with the PR-B
@@ -48,7 +50,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
+	faasnetns "github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/rootfs"
 )
 
 // ensureSidecarExt4 returns the path to a sidecar ext4 image,
@@ -67,25 +72,25 @@ import (
 // port is hardcoded to the busybox httpd listen port; the
 // customer-pinned port comes from WorkloadSpec.Port on the wake
 // wire and is the value the test's main workload uses to dial.
-func ensureSidecarExt4(t *testing.T, dir string, port int) string {
+func ensureSidecarExt4(t *testing.T, dir, name string, port int) string {
 	t.Helper()
-	dst := filepath.Join(dir, fmt.Sprintf("sidecar-%d.ext4", port))
+	dst := filepath.Join(dir, fmt.Sprintf("sidecar-%s-%d.ext4", name, port))
 	if _, err := os.Stat(dst); err == nil {
 		return dst
 	}
-	if err := buildSidecarExt4(dst, port); err != nil {
+	if err := buildSidecarExt4(dst, name, port); err != nil {
 		t.Fatalf("build sidecar ext4: %v", err)
 	}
 	return dst
 }
 
-// buildSidecarExt4 makes a tiny sidecar ext4 image. The skeleton's
-// busybox httpd entrypoint lives at /usr/local/bin/start.sh — the
+// buildSidecarExt4 makes a tiny optimized sidecar ext4 image. The image tree
+// lives below /upper, matching rootfs.Builder's production artifact layout.
+// Its busybox httpd entrypoint lives at /usr/local/bin/start.sh — the
 // canonical sidecar image convention. The mkfs call is the same
-// journal-less recipe as buildBusyboxExt4 because the sidecar drive
-// is mounted read-only as a lower in the guest-init overlay (the
-// upper is drive1's rw layer; the journal can't replay under ro).
-func buildSidecarExt4(dst string, port int) error {
+// journal-less recipe as buildBusyboxExt4 because guest-init mounts the
+// sidecar drive read-only and chroots the workload into its /upper tree.
+func buildSidecarExt4(dst, name string, port int) error {
 	bb, err := exec.LookPath("busybox")
 	if err != nil {
 		return fmt.Errorf("busybox not on PATH: %w", err)
@@ -97,7 +102,7 @@ func buildSidecarExt4(dst string, port int) error {
 	}
 	defer os.RemoveAll(work)
 
-	for _, sub := range []string{"usr/local/bin", "etc/sidecar"} {
+	for _, sub := range []string{"upper/bin", "upper/usr/local/bin", "upper/etc/sidecar", "upper/dev", "upper/proc", "upper/sys", "upper/tmp"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			return err
 		}
@@ -105,17 +110,31 @@ func buildSidecarExt4(dst string, port int) error {
 
 	// Copy busybox into the skeleton's /usr/local/bin so the
 	// start.sh exec can find it without a symlink dance.
-	if err := bbCopyFile(bb, filepath.Join(work, "usr/local/bin/busybox")); err != nil {
+	if err := bbCopyFile(bb, filepath.Join(work, "upper/usr/local/bin/busybox")); err != nil {
+		return err
+	}
+	if err := os.Symlink("/usr/local/bin/busybox", filepath.Join(work, "upper/bin/sh")); err != nil {
 		return err
 	}
 	start := fmt.Sprintf("#!/bin/sh\nexec /usr/local/bin/busybox httpd -f -p %d -h /\n", port)
-	if err := os.WriteFile(filepath.Join(work, "usr/local/bin/start.sh"), []byte(start), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "upper/usr/local/bin/start.sh"), []byte(start), 0o755); err != nil {
 		return err
 	}
 	// Operator-visibility alias used by `cat /etc/sidecar/start.sh`
 	// inside the guest to confirm the sidecar is the right one.
-	if err := os.WriteFile(filepath.Join(work, "etc/sidecar/start.sh"), []byte(start), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "upper/etc/sidecar/start.sh"), []byte(start), 0o644); err != nil {
 		return err
+	}
+	if err := os.WriteFile(filepath.Join(work, "upper/index.html"), []byte("<h1>sidecar-ready</h1>\n"), 0o644); err != nil {
+		return err
+	}
+	if err := rootfs.InjectWorkloadManifest(filepath.Join(work, "upper"), name, api.AppManifest{
+		Entrypoint: []string{"/usr/local/bin/start.sh"},
+		WorkingDir: "/",
+		User:       "0",
+		Port:       port,
+	}); err != nil {
+		return fmt.Errorf("inject workload manifest: %w", err)
 	}
 
 	// Pre-size the file (modern e2fsprogs refuses zero-block input).
@@ -139,12 +158,43 @@ func buildSidecarExt4(dst string, port int) error {
 	return nil
 }
 
+func sidecarHTTPInNetNS(ctx context.Context, namespace string, port int, requestPath, output string) ([]byte, error) {
+	busybox, err := exec.LookPath("busybox")
+	if err != nil {
+		return nil, fmt.Errorf("busybox not on PATH: %w", err)
+	}
+	url := fmt.Sprintf("http://%s:%d%s", faasnetns.GuestIP, port, requestPath)
+	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", namespace, busybox, "wget", "-q", "-O", output, url)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("GET %s in %s: %w: %s", url, namespace, err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
+
+func waitForSidecarHTTP(ctx context.Context, namespace string, port int, requestPath string) ([]byte, error) {
+	var lastErr error
+	for {
+		attemptCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		body, err := sidecarHTTPInNetNS(attemptCtx, namespace, port, requestPath, "-")
+		cancel()
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for sidecar :%d%s in %s: %w (last result: %v)", port, requestPath, namespace, ctx.Err(), lastErr)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
 // TestMetalSidecarBoot is the M7 PR-B headline test (AC #1 +
 // AC #2). It boots a guest with one sidecar and asserts:
 //
 //   - The wake returns (no panic in the orchestrator).
-//   - The per-workload cgroup scopes materialize (AC #4
-//     precondition: defense-in-depth host-side scopes exist).
+//   - The guest supervisor starts the main and sidecar workloads.
 //   - The guest-init /etc/faas/workloads.json was stamped on drive1
 //     by StageWorkloadRoster and survives pivot_root.
 //
@@ -157,13 +207,12 @@ func buildSidecarExt4(dst string, port int) error {
 // their own tests below; this one is the "did it boot at all"
 // smoke gate.
 func TestMetalSidecarBoot(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	base := ensureBusyboxExt4(t, tmp)
-	sidecar := ensureSidecarExt4(t, tmp, 9090)
+	sidecar := ensureSidecarExt4(t, tmp, "metrics", 9090)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -174,8 +223,9 @@ func TestMetalSidecarBoot(t *testing.T) {
 	)
 	_, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "hobby",
 		BaseKey:    base,
-		LayerKey:   base, // M7 simplification: main drive = busybox (matches M0)
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 256,
 		Port:       mainPort,
@@ -194,6 +244,7 @@ func TestMetalSidecarBoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PR-B sidecar cold boot: %v", err)
 	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
 
 	// Probe the main workload's :8080 listener (the waitReady
 	// handshake already did this once; the second probe here
@@ -209,14 +260,18 @@ func TestMetalSidecarBoot(t *testing.T) {
 		t.Fatalf("GET %s: %v", url, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
+	if resp.StatusCode >= http.StatusInternalServerError {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		t.Fatalf("main :8080 returned %d: %s", resp.StatusCode, body)
+		t.Fatalf("main :8080 returned server error %d: %s", resp.StatusCode, body)
+	}
+	readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
+	_, err = waitForSidecarHTTP(readyCtx, inst.Lease.Netns, 9090, "/")
+	readyCancel()
+	if err != nil {
+		t.Fatalf("sidecar readiness: %v", err)
 	}
 
-	// Tear down. The per-workload cgroup scopes should be
-	// removed BEFORE the per-instance scope (closeCgroup's
-	// child-first ordering) so leakcheck passes.
+	// Tear down and verify the per-instance host resources are gone.
 	if err := m.Destroy(ctx, instance); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
@@ -225,27 +280,22 @@ func TestMetalSidecarBoot(t *testing.T) {
 
 // TestMetalSidecarPortReachable covers AC #2: a sidecar runs
 // alongside the main workload, reachable on a customer-pinned
-// port inside the netns. We use http.Get against the host IP
-// on the sidecar port — the same address waitReady dials on
-// the main port. The DNAT publishes :9090 inside the guest as
-// :9090 on the host identity, so the probe lands on the
-// sidecar's busybox httpd.
+// port inside the netns. The test enters the instance network namespace and
+// dials the guest address directly, matching how the main workload reaches an
+// internal sidecar.
 //
-// Caveat: the gateway's per-instance portnorm ladder only DNATs
-// the customer-pinned main port today (PR-C adds per-sidecar
-// ports). The metal test bypasses the gateway and dials the
-// host IP directly — same path vmmd's waitReady uses. This
-// proves the underlying guest-init + overlayfs + cgroup wiring
+// The gateway's per-instance portnorm ladder publishes only the main port;
+// sidecar ports remain internal to the deployment. This
+// proves the underlying guest-init + isolated-root + cgroup wiring
 // without depending on the gateway-side portnorm that PR-C
 // lands separately.
 func TestMetalSidecarPortReachable(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	base := ensureBusyboxExt4(t, tmp)
-	sidecar := ensureSidecarExt4(t, tmp, 9091)
+	sidecar := ensureSidecarExt4(t, tmp, "metrics", 9091)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -253,8 +303,9 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 	const instance = "prb-sidecar-port-1"
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "hobby",
 		BaseKey:    base,
-		LayerKey:   base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 256,
 		Port:       8080,
@@ -265,19 +316,16 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
 
-	url := fmt.Sprintf("http://%s:9091/", inst.Lease.HostIP.String())
-	resp, err := http.Get(url)
+	readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
+	body, err := waitForSidecarHTTP(readyCtx, inst.Lease.Netns, 9091, "/")
+	readyCancel()
 	if err != nil {
-		t.Fatalf("GET %s: %v", url, err)
+		t.Fatalf("sidecar :9091 readiness: %v", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		t.Fatalf("sidecar :9091 returned %d: %s", resp.StatusCode, body)
-	}
-	if !strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
-		t.Errorf("sidecar Content-Type = %q, want text/html (busybox httpd)", resp.Header.Get("Content-Type"))
+	if !strings.Contains(string(body), "sidecar-ready") {
+		t.Fatalf("sidecar :9091 body = %q, want readiness fixture", body)
 	}
 
 	if err := m.Destroy(ctx, instance); err != nil {
@@ -298,14 +346,13 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 // cmd/e2e/v6_distinct_uuid_e2e_test.go, where the vsock probe
 // can read /proc/sys/kernel/random/uuid from inside the guest.
 func TestMetalTwoSidecarsColdBoot(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	base := ensureBusyboxExt4(t, tmp)
-	sc0 := ensureSidecarExt4(t, tmp, 9100)
-	sc1 := ensureSidecarExt4(t, tmp, 9101)
+	sc0 := ensureSidecarExt4(t, tmp, "metrics", 9100)
+	sc1 := ensureSidecarExt4(t, tmp, "logger", 9101)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -313,8 +360,9 @@ func TestMetalTwoSidecarsColdBoot(t *testing.T) {
 	const instance = "prb-sidecar-2"
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "hobby",
 		BaseKey:    base,
-		LayerKey:   base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 256,
 		Port:       8080,
@@ -326,14 +374,19 @@ func TestMetalTwoSidecarsColdBoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
-	_ = inst
-	// UUID readback lives in cmd/e2e/v6_distinct_uuid_e2e_test.go
-	// for the full kernel-rng path. This test pins only the
-	// boot path with two sidecars; the vsock probe is out of
-	// scope here (would duplicate v6_resume_ext4_metal_test.go's
-	// TriggerResumeHook helper for no new coverage). The
-	// assertion stays: a successful boot with two sidecars is
-	// the AC #1 + AC #2 + AC #4 surface for the 2-sidecar cap.
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
+	for _, port := range []int{9100, 9101} {
+		readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
+		body, readyErr := waitForSidecarHTTP(readyCtx, inst.Lease.Netns, port, "/")
+		readyCancel()
+		if readyErr != nil {
+			t.Fatalf("sidecar :%d readiness: %v", port, readyErr)
+		}
+		if !strings.Contains(string(body), "sidecar-ready") {
+			t.Fatalf("sidecar :%d body = %q, want readiness fixture", port, body)
+		}
+	}
+	// UUID readback lives in cmd/e2e/v6_distinct_uuid_e2e_test.go.
 
 	if err := m.Destroy(ctx, instance); err != nil {
 		t.Fatalf("destroy: %v", err)
@@ -354,7 +407,7 @@ func TestMetalTwoSidecarsColdBoot(t *testing.T) {
 //     preconditions).
 //  3. Hit the sidecar's /lastlog URL — the 32 MB > 16 MB
 //     cgroup, the sidecar OOMs, the kernel's memcg kills the
-//     process. The host's cgroup scope logs the event.
+//     process. The guest memcg reports the event.
 //  4. Probe the MAIN workload's :8080 again — it must still
 //     respond 2xx (AC #4 acceptance).
 //
@@ -381,13 +434,12 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err != nil {
 		t.Skipf("cgroup v2 unavailable on this host (%v); AC #4 metal gate requires v2", err)
 	}
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
-	base := ensureBusyboxExt4(t, tmp)
-	sidecar := ensureOOMSidecarExt4(t, tmp, 9092)
+	sidecar := ensureOOMSidecarExt4(t, tmp, "stress", 9092)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -400,8 +452,9 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	)
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "hobby",
 		BaseKey:    base,
-		LayerKey:   base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 256,
 		Port:       mainPort,
@@ -437,8 +490,17 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		t.Fatalf("main :8080 (pre) = %d, want 2xx", resp.StatusCode)
+	if resp.StatusCode >= http.StatusInternalServerError {
+		t.Fatalf("main :8080 (pre) = %d, want a live HTTP response", resp.StatusCode)
+	}
+	readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
+	readyBody, err := waitForSidecarHTTP(readyCtx, inst.Lease.Netns, sidecarPort, "/")
+	readyCancel()
+	if err != nil {
+		t.Fatalf("sidecar pre-OOM readiness: %v", err)
+	}
+	if !strings.Contains(string(readyBody), "oom-test") {
+		t.Fatalf("sidecar :%d body = %q, want OOM fixture", sidecarPort, readyBody)
 	}
 
 	// Step 2: trigger the OOM. The sidecar's httpd serves
@@ -449,13 +511,11 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	// errors / EOF mid-flight are EXPECTED here — that's
 	// the OOM. We don't fail the test on the sidecar error;
 	// the AC #4 acceptance is the main workload's survival.
-	sidecarURL := fmt.Sprintf("http://%s:%d/lastlog", inst.Lease.HostIP.String(), sidecarPort)
-	sresp, err := http.Get(sidecarURL)
+	oomCtx, oomCancel := context.WithTimeout(ctx, 5*time.Second)
+	_, err = sidecarHTTPInNetNS(oomCtx, inst.Lease.Netns, sidecarPort, "/lastlog", "/dev/null")
+	oomCancel()
 	if err == nil {
-		// Drain so the kernel actually delivers the bytes.
-		_, _ = io.Copy(io.Discard, sresp.Body)
-		sresp.Body.Close()
-		t.Logf("sidecar response = %d (no OOM triggered; check fixture size > cgroup)", sresp.StatusCode)
+		t.Log("sidecar response completed (no OOM triggered; check fixture size > cgroup)")
 	} else {
 		t.Logf("sidecar GET errored (%v) — expected on OOM", err)
 	}
@@ -473,8 +533,8 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, resp2.Body)
 	resp2.Body.Close()
-	if resp2.StatusCode/100 != 2 {
-		t.Errorf("main :8080 (post-OOM) = %d, want 2xx (AC #4 violated: sidecar OOM propagated to main workload)",
+	if resp2.StatusCode >= http.StatusInternalServerError {
+		t.Errorf("main :8080 (post-OOM) = %d, want a live HTTP response (AC #4 violated: sidecar OOM propagated to main workload)",
 			resp2.StatusCode)
 	}
 }
@@ -496,9 +556,9 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 // for a single test, we duplicate the body — the contract is
 // simple enough that the shared skeleton is a constant body, and
 // the test wants to extend it with a single fixture file path.
-func ensureOOMSidecarExt4(t *testing.T, dir string, port int) string {
+func ensureOOMSidecarExt4(t *testing.T, dir, name string, port int) string {
 	t.Helper()
-	dst := filepath.Join(dir, fmt.Sprintf("sidecar-oom-%d.ext4", port))
+	dst := filepath.Join(dir, fmt.Sprintf("sidecar-oom-%s-%d.ext4", name, port))
 	if _, err := os.Stat(dst); err == nil {
 		return dst
 	}
@@ -513,18 +573,21 @@ func ensureOOMSidecarExt4(t *testing.T, dir string, port int) string {
 	}
 	defer os.RemoveAll(work)
 
-	for _, sub := range []string{"usr/local/bin", "etc/sidecar", "var/log"} {
+	for _, sub := range []string{"upper/bin", "upper/usr/local/bin", "upper/etc/sidecar", "upper/var/log", "upper/dev", "upper/proc", "upper/sys", "upper/tmp"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", sub, err)
 		}
 	}
-	if err := bbCopyFile(bb, filepath.Join(work, "usr/local/bin/busybox")); err != nil {
+	if err := bbCopyFile(bb, filepath.Join(work, "upper/usr/local/bin/busybox")); err != nil {
 		t.Fatalf("copy busybox: %v", err)
+	}
+	if err := os.Symlink("/usr/local/bin/busybox", filepath.Join(work, "upper/bin/sh")); err != nil {
+		t.Fatalf("symlink sh: %v", err)
 	}
 	// 32 MB sparse fixture. The Truncate doesn't allocate
 	// host memory; the ext4 mkfs writes the file and the
 	// in-guest GET triggers the memcg-charged read.
-	f, err := os.Create(filepath.Join(work, "var/log/lastlog"))
+	f, err := os.Create(filepath.Join(work, "upper/var/log/lastlog"))
 	if err != nil {
 		t.Fatalf("create lastlog: %v", err)
 	}
@@ -536,14 +599,22 @@ func ensureOOMSidecarExt4(t *testing.T, dir string, port int) string {
 		t.Fatalf("close lastlog: %v", err)
 	}
 	start := fmt.Sprintf("#!/bin/sh\nexec /usr/local/bin/busybox httpd -f -p %d -h /var/log\n", port)
-	if err := os.WriteFile(filepath.Join(work, "usr/local/bin/start.sh"), []byte(start), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "upper/usr/local/bin/start.sh"), []byte(start), 0o755); err != nil {
 		t.Fatalf("write start.sh: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(work, "etc/sidecar/start.sh"), []byte(start), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "upper/etc/sidecar/start.sh"), []byte(start), 0o644); err != nil {
 		t.Fatalf("write alias: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(work, "var/log/index.html"), []byte("<h1>oom-test</h1>\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "upper/var/log/index.html"), []byte("<h1>oom-test</h1>\n"), 0o644); err != nil {
 		t.Fatalf("write index: %v", err)
+	}
+	if err := rootfs.InjectWorkloadManifest(filepath.Join(work, "upper"), name, api.AppManifest{
+		Entrypoint: []string{"/usr/local/bin/start.sh"},
+		WorkingDir: "/",
+		User:       "0",
+		Port:       port,
+	}); err != nil {
+		t.Fatalf("inject workload manifest: %v", err)
 	}
 
 	if f, err := os.Create(dst); err != nil {

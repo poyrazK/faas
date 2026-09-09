@@ -61,6 +61,22 @@ type gatewayTestProvider struct {
 	deleted string
 }
 
+type gatewayRequestMetrics struct {
+	calls int
+	err   error
+}
+
+func (m *gatewayRequestMetrics) RecordObjectStorageProviderRequest(context.Context, string, time.Time) error {
+	m.calls++
+	return m.err
+}
+func (*gatewayRequestMetrics) ListObjectStorageProviderRequestMetrics(context.Context, string, string, time.Time) ([]state.ObjectStorageProviderRequestMetric, error) {
+	return nil, nil
+}
+func (*gatewayRequestMetrics) ListObjectStorageProviderBuckets(context.Context, string, string) ([]state.ObjectBucket, error) {
+	return nil, nil
+}
+
 func (*gatewayTestProvider) CreateBucket(context.Context, string) error { return nil }
 func (*gatewayTestProvider) DeleteBucket(context.Context, string) error { return nil }
 func (p *gatewayTestProvider) ListObjects(context.Context, string, string, string, int32) (objectstorage.ObjectPage, error) {
@@ -181,6 +197,20 @@ func TestGatewayPutAndGetHideProvider(t *testing.T) {
 	}
 	if len(store.admitted) != 2 || store.admitted[0] != "folder/hello.txt" || store.touched != 1 {
 		t.Fatalf("admission=%v touched=%d", store.admitted, store.touched)
+	}
+}
+
+func TestGatewayBlocksProviderCallWhenRequestMetricCannotBeRecorded(t *testing.T) {
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(*http.Request) (*http.Response, error) {
+		t.Fatal("provider must not be called when request metrics fail")
+		return nil, nil
+	})
+	metrics := &gatewayRequestMetrics{err: state.ErrConflict}
+	handler.requestMetrics = metrics
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/key", nil, "UNSIGNED-PAYLOAD"))
+	if recorder.Code != http.StatusServiceUnavailable || metrics.calls != 1 || !strings.Contains(recorder.Body.String(), "ServiceUnavailable") {
+		t.Fatalf("response = %d %s calls=%d", recorder.Code, recorder.Body.String(), metrics.calls)
 	}
 }
 

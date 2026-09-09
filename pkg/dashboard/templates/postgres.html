@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    .muted { color: #888; }
+    .error { background: #fff4f4; border: 1px solid #d33; padding: .6rem .8rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/postgres">PostgreSQL</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>Managed PostgreSQL</h1>
+    <p>Provisioned databases and app bindings for <code>{{.Account.Email}}</code>. Use <code>gregale postgres</code> for create, restore, and delete operations.</p>
+    {{if .Data.Error}}<p class="error">{{.Data.Error}}</p>{{end}}
+    {{if and .Data.Available (not .Data.Error) (not .Data.Databases)}}
+      <p>No managed PostgreSQL databases yet. Create one with <code>gregale postgres create NAME --region REGION</code>.</p>
+    {{end}}
+    {{range .Data.Databases}}
+      <section aria-label="Database {{.Name}}">
+        <h2>{{.Name}} <small class="muted"><code>{{.ID}}</code></small></h2>
+        <table>
+          <tbody>
+            <tr><th>State</th><td><strong>{{.State}}</strong>{{if .LastErrorCode}} <code>{{.LastErrorCode}}</code>{{end}}</td></tr>
+            <tr><th>Placement</th><td>{{.Region}} · PostgreSQL {{.PostgresMajor}} · {{.ServiceClass}} · {{.Availability}}</td></tr>
+            <tr><th>Compute</th><td>{{if .ScaleToZero}}scales to zero when idle{{else}}always on{{end}}</td></tr>
+            <tr><th>Storage / restore</th><td>{{.StorageLimitLabel}} · {{.RestoreWindowSeconds}} seconds</td></tr>
+          </tbody>
+        </table>
+        <h3>App bindings</h3>
+        {{if .BindingsError}}<p class="error">{{.BindingsError}}</p>{{else if .Bindings}}
+          <table>
+            <thead><tr><th>App</th><th>Scope</th><th>Environment key</th><th>Access</th><th>State</th><th>Generation</th></tr></thead>
+            <tbody>{{range .Bindings}}
+              <tr>
+                <td><code>{{.AppID}}</code></td><td>{{.Scope}}</td><td><code>{{.EnvironmentKey}}</code></td>
+                <td>{{.Access}}</td><td>{{.State}}{{if .LastErrorCode}} <code>{{.LastErrorCode}}</code>{{end}}</td><td>{{.CredentialGeneration}}</td>
+              </tr>
+            {{end}}</tbody>
+          </table>
+        {{else}}<p class="muted">No app bindings.</p>{{end}}
+      </section>
+    {{end}}
+  </main>
+  <footer>onebox faas · managed PostgreSQL · credentials stay in app secrets</footer>
+</body>
+</html>

@@ -1189,6 +1189,8 @@ type AppManifest struct {
 	RobotsTxt        string            `json:"robots_txt,omitempty"`
 	HeadWakes        bool              `json:"head_wakes,omitempty"`
 	CrawlerPolicy    string            `json:"crawler_policy,omitempty"`
+	HealthPath       string            `json:"health_path,omitempty"`
+	HealthPathWakes  bool              `json:"health_path_wakes,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1211,7 +1213,8 @@ func (m AppManifest) IsZero() bool {
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
-		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == ""
+		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
+		m.HealthPath == "" && !m.HealthPathWakes
 }
 
 // ScalingPolicy is the per-app autoscaling configuration (issue #462 /
@@ -6434,4 +6437,54 @@ type DeploymentScopeExclusion struct {
 	CreatedBy string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// AppLogDrainKind names the provider-neutral customer log encodings.
+type AppLogDrainKind string
+
+const (
+	AppLogDrainKindHTTPJSON AppLogDrainKind = "http_json"
+	AppLogDrainKindOTLP     AppLogDrainKind = "otlp"
+)
+
+// AppLogDrain is one customer-owned runtime log destination. AuthHeaderSealed
+// is age/X25519 ciphertext and is never returned by the API.
+type AppLogDrain struct {
+	ID               string
+	AppID            string
+	AccountID        string
+	Kind             AppLogDrainKind
+	TargetURL        string
+	AuthHeaderSealed []byte
+	Enabled          bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// UpdateAppLogDrainParams carries the optional fields of UpdateAppLogDrain.
+// A nil pointer means the existing value remains unchanged.
+type UpdateAppLogDrainParams struct {
+	Kind             *AppLogDrainKind
+	TargetURL        *string
+	AuthHeaderSealed *[]byte
+	Enabled          *bool
+}
+
+// AppLogDrainQuotaError is returned when either the per-app or per-account
+// drain cap is reached.
+type AppLogDrainQuotaError struct {
+	Scope    AppLogDrainQuotaScope
+	Limit    int
+	Observed int
+}
+
+type AppLogDrainQuotaScope string
+
+const (
+	AppLogDrainQuotaScopeApp     AppLogDrainQuotaScope = "app"
+	AppLogDrainQuotaScopeAccount AppLogDrainQuotaScope = "account"
+)
+
+func (e *AppLogDrainQuotaError) Error() string {
+	return fmt.Sprintf("state: app log drain quota exceeded (scope=%s, limit=%d, observed=%d)", e.Scope, e.Limit, e.Observed)
 }

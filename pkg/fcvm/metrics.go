@@ -212,10 +212,12 @@ func (m *FrameworkReadyMetrics) ObserveWarmup(runtime, app string, seconds float
 }
 
 // WakePhaseMetrics owns the vmmd_wake_phase_duration_seconds
-// histogram (ADR-098 C11). Three phase labels — restore_ms /
-// netns_tap_ms / guest_ready_ms — match the typed scalars on
+// histogram (ADR-098 C11). The original restore_ms / netns_tap_ms /
+// guest_ready_ms labels match the typed scalars on
 // api/proto/onebox/faas/vmmd/v1/vmmd.proto WakeResponse (tags 11,
-// 12, 13). Stays on a dedicated per-vmmd registry so the vmmd's
+// 12, 13); scan_check_ms and cold_boot_ms expose the pre-guest
+// cold-boot work that previously disappeared inside bring_up. Stays on a
+// dedicated per-vmmd registry so the vmmd's
 // own /metrics surfaces execution timings alongside the event-store write
 // timings in wire.OpsMetrics. The latter uses
 // vmmd_wake_event_write_duration_seconds; it does not measure VM execution.
@@ -236,7 +238,7 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 		reg: reg,
 		phases: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "vmmd_wake_phase_duration_seconds",
-			Help: "Phase-decomposed wake duration (ADR-098 C11). Phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms}. Mirrors the typed scalars on api/proto/onebox/faas/vmmd/v1/vmmd.proto WakeResponse (tags 11, 12, 13).",
+			Help: "Phase-decomposed wake duration (ADR-098 C11). Phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms, scan_check_ms, cold_boot_ms}. The first three mirror the typed WakeResponse scalars; the final two attribute pre-guest cold-boot work.",
 			Buckets: []float64{
 				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
 			},
@@ -246,7 +248,7 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 	// zero-valued series from the moment the daemon binds (mirrors
 	// the wakePhaseDur / wakePhaseEmitted pre-instantiation in
 	// pkg/wire/metrics.go). An idle box renders zero, not absent.
-	for _, phase := range []string{"restore_ms", "netns_tap_ms", "guest_ready_ms"} {
+	for _, phase := range []string{"restore_ms", "netns_tap_ms", "guest_ready_ms", "scan_check_ms", "cold_boot_ms"} {
 		m.phases.WithLabelValues(phase)
 	}
 	reg.MustRegister(m.phases)
@@ -264,8 +266,8 @@ func (m *WakePhaseMetrics) Handler() http.Handler {
 }
 
 // ObserveWakePhase records one wake-phase measurement in seconds.
-// phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms}. ms is the
-// raw millisecond value off the WakeResponse typed scalars; the
+// phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms, scan_check_ms,
+// cold_boot_ms}. ms is the raw millisecond value; the
 // conversion to seconds matches the histogram unit. Safe on a nil
 // receiver.
 func (m *WakePhaseMetrics) ObserveWakePhase(phase string, ms int64) {

@@ -111,10 +111,14 @@ func TestMigrations_00197_BuildsDeploymentStartedIdx(t *testing.T) {
 	`, slot); err != nil {
 		t.Fatalf("seed apps: %v", err)
 	}
-	// One deployment owned by the test app.
+	// One deployment owned by the test app. deployments.kind is a
+	// narrower vocabulary than builds.kind: deployments_kind_check
+	// admits image | tarball | dockerfile | github | preview, so the
+	// parent row is 'tarball' while the child builds below stay
+	// 'railpack' (the builder that runs on a tarball source).
 	if _, err := pool.Exec(ctx, `
 		insert into deployments (id, app_id, image_digest, kind, status)
-		values ($1, $2, 'sha256:' || repeat('a', 64), 'railpack', 'pending')
+		values ($1, $2, 'sha256:' || repeat('a', 64), 'tarball', 'pending')
 		on conflict (id) do nothing
 	`, "00000000-0000-0000-0000-000000000197", slot); err != nil {
 		t.Fatalf("seed deployments: %v", err)
@@ -167,21 +171,70 @@ func TestMigrations_00197_BuildsDeploymentStartedIdx(t *testing.T) {
 		}
 	}
 
-	// (7) EXPLAIN confirms the planner picks the new index. A
-	// regression that drops the composite would force a Seq Scan
-	// on builds, scaling with row count.
-	var plan string
-	if err := pool.QueryRow(ctx, `
+	// (7) EXPLAIN confirms the planner drives the keyset filter off the
+	// new index. Two things make this assertion honest:
+	//
+	//   * `explain (format text)` returns ONE ROW PER PLAN LINE. A
+	//     QueryRow only ever sees the top node ("Limit  (cost=…)"), which
+	//     can never contain an index name — the whole plan has to be
+	//     collected and joined.
+	//   * A three-row table is below the point where any index pays for
+	//     itself, so the planner picks a bitmap scan on whatever index
+	//     matches deployment_id and sorts afterwards. That says nothing
+	//     about this index. Seed a second deployment with a realistic
+	//     build history + ANALYZE so the planner is choosing under
+	//     production-shaped stats.
+	const bulkDeploymentID = "00000000-0000-0000-0000-000000019710"
+	if _, err := pool.Exec(ctx, `
+		insert into deployments (id, app_id, image_digest, kind, status)
+		values ($1, $2, 'sha256:' || repeat('b', 64), 'tarball', 'pending')
+		on conflict (id) do nothing
+	`, bulkDeploymentID, slot); err != nil {
+		t.Fatalf("seed bulk deployment: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		insert into builds (deployment_id, kind, source_bytes, status, started_at)
+		select $1, 'railpack', 100, 'succeeded', now() - (g || ' minutes')::interval
+		  from generate_series(1, 2000) g
+	`, bulkDeploymentID); err != nil {
+		t.Fatalf("seed bulk builds: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `analyze builds`); err != nil {
+		t.Fatalf("analyze builds: %v", err)
+	}
+
+	planRows, err := pool.Query(ctx, `
 		explain (format text)
 		select id from builds
 		 where deployment_id = $1
 		 order by started_at desc nulls last
 		 limit 50
-	`, "00000000-0000-0000-0000-000000000197").Scan(&plan); err != nil {
+	`, bulkDeploymentID)
+	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}
+	var planLines []string
+	for planRows.Next() {
+		var line string
+		if err := planRows.Scan(&line); err != nil {
+			planRows.Close()
+			t.Fatalf("scan explain line: %v", err)
+		}
+		planLines = append(planLines, line)
+	}
+	planRows.Close()
+	if err := planRows.Err(); err != nil {
+		t.Fatalf("explain rows.Err: %v", err)
+	}
+	plan := strings.Join(planLines, "\n")
 	if !strings.Contains(plan, "builds_deployment_started_idx") {
 		t.Errorf("EXPLAIN did not mention builds_deployment_started_idx (planner chose a worse plan):\n%s", plan)
+	}
+	// The index ordering must satisfy the ORDER BY outright — an explicit
+	// Sort node means the DESC NULLS LAST ordering was lost and every
+	// page re-sorts the deployment's whole build history.
+	if strings.Contains(plan, "Sort Key:") {
+		t.Errorf("EXPLAIN contains a Sort node; the index must supply DESC NULLS LAST ordering directly:\n%s", plan)
 	}
 
 	// (8) Replay safety: applying the migration set a second time

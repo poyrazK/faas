@@ -76,9 +76,7 @@ func insertComputeNode(ctx context.Context, t *testing.T, pool *pgxpool.Pool, na
 	t.Helper()
 	var id uuid.UUID
 	err := pool.QueryRow(ctx, `
-		insert into compute_nodes (name, target_url, vpcpus, mem_mb,
-		                          max_concurrency, admission_ceiling_mb, active)
-		values ($1, 'tcp://test:50051', 160, 56000, 200, 47600, true)
+		insert into compute_nodes (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle) values ($1, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle)
 		returning id
 	`, name).Scan(&id)
 	if err != nil {
@@ -140,6 +138,9 @@ func Test00076_ComputeNodeKeys_TableShape(t *testing.T) {
 func Test00076_ComputeNodeKeys_PrimaryKeyEnforced(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -170,6 +171,9 @@ func Test00076_ComputeNodeKeys_PrimaryKeyEnforced(t *testing.T) {
 func Test00076_ComputeNodeKeys_KeyIdShapeCheck(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -196,6 +200,9 @@ func Test00076_ComputeNodeKeys_KeyIdShapeCheck(t *testing.T) {
 func Test00076_ComputeNodeKeys_PemShapeCheck(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -220,6 +227,9 @@ func Test00076_ComputeNodeKeys_PemShapeCheck(t *testing.T) {
 func Test00076_ComputeNodeKeys_PgNotifyOnChange(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 
@@ -279,6 +289,9 @@ func Test00076_ComputeNodeKeys_PgNotifyOnChange(t *testing.T) {
 func Test00076_ComputeNodeKeys_CascadeOnComputeNodeDelete(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	defer pool.Close()
 	migrateUpOnce(ctx, t, pool)
 

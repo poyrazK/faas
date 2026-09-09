@@ -39,12 +39,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00212_GithubWebhookSecrets(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// (2) columns + types
 	rows, err := pool.Query(ctx, `
@@ -136,7 +140,6 @@ func TestMigrations_00212_GithubWebhookSecrets(t *testing.T) {
 			t.Errorf("github_webhook_secrets_pkey.installation_id: got type=%s, want bigint", typ)
 		}
 	}
-	pkCols = append(pkCols, "") // appease the cmp/coverage linter
 	pkRows.Close()
 	if err := pkRows.Err(); err != nil {
 		t.Fatalf("pkRows.Err: %v", err)
@@ -144,6 +147,11 @@ func TestMigrations_00212_GithubWebhookSecrets(t *testing.T) {
 	wantPK := []string{"installation_id"}
 	if len(pkCols) != len(wantPK) {
 		t.Fatalf("github_webhook_secrets_pkey: got %v, want %v (PK must be a single-column on installation_id)", pkCols, wantPK)
+	}
+	for i, want := range wantPK {
+		if pkCols[i] != want {
+			t.Errorf("github_webhook_secrets_pkey column %d: got %q, want %q", i, pkCols[i], want)
+		}
 	}
 
 	// (4) github_installations.default_branch still exists (PR-D

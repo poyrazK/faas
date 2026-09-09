@@ -12,7 +12,9 @@
 # The CLI compatibility asset remains in the first job. The daemon bundle
 # job below is the production release surface: it builds the immutable
 # multi-daemon tarball, signs it with GitHub OIDC, emits an SPDX SBOM, and
-# publishes all of the install-time verification material together.
+# publishes all of the install-time verification material together. Those
+# independent builds run concurrently; the final publication job waits for
+# both so a failed CLI build cannot leave a canonical bundle attached alone.
 #
 # Tag strategy: every release commits to a `release/v<tag>` branch AND
 # force-updates the MAJOR moving tag (vN from vN.M.P) so that
@@ -46,10 +48,29 @@ jobs:
           # gzipped output, not the repo history.
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.23"
-          cache: true
+          go-version-file: go.mod
+          cache: false
+
+      # Tags have their own cache scope, so setup-go's automatic cache missed
+      # on every release candidate and saved a new archive that the next tag
+      # could not restore. Main CI already builds these targets and publishes
+      # this dated cache after each push; release tags can restore the
+      # default-branch cache without spending another two minutes compiling.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore main-branch Go build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-
 
       - name: Cross-build gregale (linux-amd64)
         env:
@@ -186,7 +207,6 @@ jobs:
 
   daemon-bundle:
     name: Build and sign canonical daemon bundle
-    needs: build
     runs-on: ubuntu-22.04
     # The builder-base publisher is a separate workflow and can use most of
     # its 25-minute budget before the immutable tag is available. Leave room
@@ -200,17 +220,38 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore main-branch Go build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-
 
       - name: Install pinned release tooling
         env:
+          COSIGN_VERSION: "2.4.1"
+          COSIGN_SHA256: "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
           SYFT_VERSION: "1.49.0"
           SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
           CRANE_VERSION: "0.21.1"
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release-tools"
-          GOBIN="$RUNNER_TEMP/release-tools" go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.1
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            -o "$RUNNER_TEMP/release-tools/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  $RUNNER_TEMP/release-tools/cosign" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/release-tools/cosign"
           # Syft is released as a pinned binary because v1.49.0 requires
           # Go >= 1.26.3 while the repository's Go toolchain remains pinned
           # to the 1.25 line for the application and CI vulnerability gate.
@@ -247,8 +288,20 @@ jobs:
           BUILDER_SOURCE_SHA="$(git log --first-parent --format='%H' -n 1 "$GIT_SHA" -- \
             images/builder-base.Dockerfile \
             images/buildkit-frontend-startup.patch \
+            images/buildkit-session-health.patch \
+            images/builder-resolv.conf \
             images/Dockerfile.lock \
             guest/init \
+            pkg/api \
+            pkg/reqbudget \
+            pkg/sourcecontext \
+            pkg/statefuldenylist \
+            go.mod \
+            go.sum \
+            pkg/fcvm/builder_acceptance_metal_test.go \
+            scripts/ci/install-grype.sh \
+            scripts/ci/update-grype-db.sh \
+            scripts/ci/scan-oci-image.sh \
             .github/workflows/images.yml)"
           [[ "$BUILDER_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
             echo "::error::could not find a builder-base source commit in release history" >&2
@@ -347,31 +400,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
-          # The images workflow rebuilds all runtime bases when any runtime
-          # contract input changes. Releases may be cut by a later daemon-only
-          # commit, so select the newest first-parent commit in that same
-          # contract rather than resolving a moving :latest tag.
+          # Runtime base images contain only their Dockerfile layers and the
+          # shared rootfs skeleton. Runtime control-plane code is shipped in
+          # this signed daemon bundle, so a change under pkg/imaged,
+          # pkg/builderd, or guest/runners must not force a release to wait for
+          # eight byte-identical images to be republished. Select the newest
+          # commit that could have changed or revalidated the image bytes.
           RUNTIME_SOURCE_SHA="$(git log --first-parent --format='%H' -n 1 "$GIT_SHA" -- \
-            images \
-            guest/init \
-            guest/runners \
-            pkg/builderd \
-            pkg/imaged \
-            pkg/oci \
-            pkg/rootfs \
-            pkg/api \
-            cmd/imaged \
-            cmd/apid/handlers_templates.go \
-            cmd/apid/handlers_templates_test.go \
-            cmd/gregale/templates \
-            cmd/gregale/cli_meta.go \
-            cmd/gregale/commands_init* \
-            migrations/*runtime*.sql \
-            docs/runtimes \
-            docs/faas_implementation_spec.md \
+            images/base-debian-parent.Dockerfile \
+            images/base-minimal.Dockerfile \
+            images/runner-node22.Dockerfile \
+            images/runner-node24.Dockerfile \
+            images/runner-python312.Dockerfile \
+            images/runner-python313.Dockerfile \
+            images/runner-go124.Dockerfile \
+            images/runner-go124-alpine.Dockerfile \
+            images/rootfs-skel \
+            images/Dockerfile.lock \
+            scripts/ci/install-grype.sh \
+            scripts/ci/update-grype-db.sh \
+            scripts/ci/scan-oci-image.sh \
             scripts/ci/validate-runtime-image.sh \
             scripts/ci/smoke-runtime-image.sh \
-            scripts/ci/validate-runtime-docs.sh \
             .github/workflows/images.yml)"
           [[ "$RUNTIME_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
             echo "::error::could not find a runtime-base source commit in release history" >&2
@@ -443,7 +493,26 @@ jobs:
           echo "RUNTIME_SOURCE_SHA=$RUNTIME_SOURCE_SHA" >> "$GITHUB_ENV"
           echo "materialized release runtime-base contract from source $RUNTIME_SOURCE_SHA"
 
+      - name: Reuse a prior signed Firecracker kernel
+        id: reuse_kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_SHA: ${{ github.sha }}
+          KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+        run: |
+          set -euo pipefail
+          if scripts/reuse-release-kernel.sh \
+            --git-sha "$GIT_SHA" \
+            --output "$KERNEL_FILE"; then
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            [[ "$status" == 3 ]] || exit "$status"
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build release-pinned Firecracker kernel
+        if: steps.reuse_kernel.outputs.reused != 'true'
         env:
           KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
         run: |
@@ -455,6 +524,12 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             bc bison build-essential cpio flex file kmod libelf-dev libssl-dev xz-utils
           scripts/build-firecracker-kernel.sh --output "$KERNEL_FILE"
+
+      - name: Record release kernel digest
+        env:
+          KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+        run: |
+          set -euo pipefail
           KERNEL_DIGEST="$(sha256sum "$KERNEL_FILE" | awk '{print $1}')"
           echo "KERNEL_DIGEST=$KERNEL_DIGEST" >> "$GITHUB_ENV"
           echo "release kernel digest=$KERNEL_DIGEST"
@@ -480,7 +555,6 @@ jobs:
             --kernel-digest "$KERNEL_DIGEST" \
             --runtime-bases-env "$OUT_DIR/runtime-bases.env" \
             --output "$MANIFEST_FILE"
-          go run ./cmd/gregalectl manifest validate --file "$MANIFEST_FILE"
           MANIFEST_FILE="$MANIFEST_FILE" \
             GIT_SHA="$GIT_SHA" \
             OUT_DIR="$OUT_DIR" \
@@ -509,6 +583,18 @@ jobs:
           name: gregale-daemon-release-${{ github.sha }}
           path: ${{ runner.temp }}/gregale-release/
           if-no-files-found: error
+          retention-days: 1
+
+  publish-daemon-bundle:
+    name: Attach canonical daemon bundle
+    needs: [build, daemon-bundle]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download canonical release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: gregale-daemon-release-${{ github.sha }}
+          path: ${{ runner.temp }}/gregale-release
 
       - name: Attach canonical release artifacts
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2

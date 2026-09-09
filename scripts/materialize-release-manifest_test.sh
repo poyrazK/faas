@@ -57,5 +57,46 @@ if MANIFEST_FILE="$OUT_A" \
   exit 1
 fi
 
+# The canonical builder must validate with the gregalectl binary it just
+# built. Stub make so the test can prove that ordering without compiling the
+# complete release bundle.
+FAKE_BIN="$TMP_DIR/fake-bin"
+VALIDATION_MARKER="$TMP_DIR/bundled-gregalectl.args"
+mkdir -p "$FAKE_BIN"
+cat > "$FAKE_BIN/make" <<'FAKE_MAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+bindir=
+for arg in "$@"; do
+  case "$arg" in
+    BINDIR=*) bindir=${arg#BINDIR=} ;;
+  esac
+done
+[[ -n "$bindir" ]]
+mkdir -p "$bindir"
+cat > "$bindir/gregalectl" <<'FAKE_GREGLECTL'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$VALIDATION_MARKER"
+exit 42
+FAKE_GREGLECTL
+chmod +x "$bindir/gregalectl"
+FAKE_MAKE
+chmod +x "$FAKE_BIN/make"
+
+set +e
+PATH="$FAKE_BIN:$PATH" \
+  VALIDATION_MARKER="$VALIDATION_MARKER" \
+  MANIFEST_FILE="$OUT_A" \
+  GIT_SHA="$SHA" \
+  OUT_DIR="$TMP_DIR/bundled-validation" \
+  "$REPO_ROOT/scripts/build-canonical-tarball.sh" >/dev/null 2>&1
+validation_status=$?
+set -e
+if [[ "$validation_status" -ne 42 ]]; then
+  echo "build-canonical-tarball did not use bundled gregalectl for validation (status=$validation_status)" >&2
+  exit 1
+fi
+grep -Fqx "manifest validate --file $OUT_A" "$VALIDATION_MARKER"
+
 go run "$REPO_ROOT/cmd/gregalectl" manifest validate --file "$OUT_A" >/dev/null
 echo "materialize-release-manifest: test passed"

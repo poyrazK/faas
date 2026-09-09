@@ -2195,6 +2195,33 @@
         "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
         "tooltip": {"mode": "multi", "sort": "desc"}
       }
+    },
+    {
+      "id": 413,
+      "type": "timeseries",
+      "title": "Per-account gateway throttling (top 20)",
+      "description": "Rejected requests per second by account and plan. Use this with the advertised app/account limits to distinguish customer bursts from a plan-contract regression.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 238},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "topk(20, sum by (account_id, plan) (rate(gateway_per_account_rate_limited_total{account_id!=\"__other__\"}[5m])))",
+          "legendFormat": "{{account_id}} / {{plan}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
     }
   ],
   "refresh": "30s",
@@ -2215,6 +2242,6 @@
   "timezone": "",
   "title": "faas fleet (M8 \u00a712)",
   "uid": "faas-fleet-m8",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

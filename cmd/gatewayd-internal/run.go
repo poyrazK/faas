@@ -34,6 +34,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -334,6 +335,20 @@ func (i runtimeGatedCertIssuer) RequestCertForSurface(ctx context.Context, surfa
 		return nil
 	}
 	return i.delegate.RequestCertForSurface(ctx, surfaceID)
+}
+
+// RequestCertForWildcardDomain is deliberately independent of the tenant-
+// surface runtime flag: F4 wildcard custom domains are their own plan-gated
+// feature and must continue minting when ADR-100 surfaces are dark-launched.
+func (i runtimeGatedCertIssuer) RequestCertForWildcardDomain(ctx context.Context, domain string) error {
+	if i.delegate == nil {
+		return nil
+	}
+	issuer, ok := i.delegate.(gateway.WildcardCertIssuer)
+	if !ok {
+		return nil
+	}
+	return issuer.RequestCertForWildcardDomain(ctx, domain)
 }
 
 func gateCertIssuer(enabled func() bool, delegate gateway.CertIssuer) gateway.CertIssuer {
@@ -1080,8 +1095,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return gateway.App{}, false, err
 			}
-			favicon, robotsTxt, headWakes, crawlerPolicy := edgeAnswersFromManifest(app.Manifest)
-			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode}, true, nil
+			favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
+			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1952,7 +1967,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return gateway.App{}, false
 		}
-		favicon, robotsTxt, headWakes, crawlerPolicy := edgeAnswersFromManifest(app.Manifest)
+		favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
 		return gateway.App{
 			ID:                 app.ID,
 			AccountID:          app.AccountID,
@@ -1977,6 +1992,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			RobotsTxt:       robotsTxt,
 			HeadWakes:       headWakes,
 			CrawlerPolicy:   crawlerPolicy,
+			HealthPath:      healthPath,
+			HealthPathWakes: healthPathWakes,
 		}, true
 	}, deps.edgeRulesAudit)
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
@@ -2197,6 +2214,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					TraceId:          row.TraceID,
 					ReceivedAtUnixMs: row.ReceivedAt.UnixMilli(),
 					Count:            int32(row.Count),
+					WakeId:           row.WakeID,
+					InstanceId:       row.InstanceID,
 				}
 				if row.Count < 1 {
 					req.Count = 1
@@ -2384,6 +2403,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			},
 		})
 		logsHandler = logsMux
+	}
+
+	// Issue #1398 O4: customer runtime log drains consume the same
+	// per-app schedd stream as the live logs endpoint, independently of
+	// whether a customer currently has an SSE viewer open. The manager
+	// reconciles enabled rows so create/update/delete changes take effect
+	// without a gateway restart; delivery remains bounded and non-blocking.
+	if deps.pgStore != nil && deps.scheddRouter != nil {
+		unseal, unsealErr := newAppLogDrainUnsealer(deps.hostKeyDir)
+		if unsealErr != nil {
+			log.Warn("gatewayd-internal: customer log drains disabled until gateway restart", "err", unsealErr)
+		}
+		manager := newAppLogDrainManager(
+			deps.pgStore,
+			appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
+			unseal,
+			deps.metrics,
+			log,
+		)
+		go manager.Run(ctx)
 	}
 
 	// Tier A9 / ADR-084: standby write-redirect gate. The gate
@@ -2638,6 +2677,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	})
 	var controlMux *http.ServeMux
+	var serviceEndpointProvider gateway.ServiceEndpointProvider
+	if provider, ok := deps.backend.(gateway.ServiceEndpointProvider); ok {
+		serviceEndpointProvider = provider
+	}
 	if deps.opsMetrics != nil {
 		// Serve the wire registry together with gateway.Metrics. The old
 		// control mux exposed only handler.Metrics(), so daemon lifecycle,
@@ -2670,9 +2713,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		controlMux.HandleFunc("/v1/internal/apps/", func(w http.ResponseWriter, r *http.Request) {
 			// Path-keyed: ServeMux's HandleFunc uses prefix
 			// match, so /v1/internal/apps/foo/routes and
-			// /v1/internal/apps/bar/routes both reach here.
-			// The handler itself trims the prefix and reads
-			// the slug from r.URL.Path.
+			// /v1/internal/apps/foo/service-endpoints both
+			// reach this dispatcher. Each reader validates its
+			// complete suffix before serving a response.
 			resolve := gateway.ResolveSlugFn(func(slug string) (string, bool) { //nolint:contextcheck // ADR-093 ResolveSlugFn signature is fixed; ctx captured from per-request r.Context().
 				a, err := pgStore.AppBySlug(r.Context(), slug)
 				if err != nil || a.ID == "" {
@@ -2680,14 +2723,65 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				return string(a.ID), true
 			})
+			if strings.HasSuffix(r.URL.Path, "/service-endpoints") {
+				internalServiceEndpointsHandler(serviceEndpointProvider, resolve, log).ServeHTTP(w, r)
+				return
+			}
 			internalRoutesHandler(handler, resolve, log).ServeHTTP(w, r)
 		})
+	}
+	// ADR-168/169: expose the node-local service proxy on the trusted control
+	// listener and, when configured, on the tenant bridge. Both listeners use
+	// the same endpoint registry, account authorizer, and vmmd transport; the
+	// guest listener adds source-IP instance identity before forwarding.
+	var guestServiceProxy http.Handler
+	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
+		pgStore := deps.pgStore
+		serviceProxyConfig := gateway.ServiceProxyConfig{
+			Provider: serviceEndpointProvider,
+			Resolve: func(ctx context.Context, service string) (string, bool, error) {
+				app, err := pgStore.AppBySlug(ctx, service)
+				if errors.Is(err, state.ErrNotFound) {
+					return "", false, nil
+				}
+				if err != nil {
+					return "", false, fmt.Errorf("resolve service %q: %w", service, err)
+				}
+				return app.ID, app.ID != "", nil
+			},
+			Authorize: func(ctx context.Context, callerAppID, targetAppID string) error {
+				caller, err := pgStore.AppByID(ctx, callerAppID)
+				if errors.Is(err, state.ErrNotFound) {
+					return gateway.ErrServiceProxyDenied
+				}
+				if err != nil {
+					return fmt.Errorf("load caller app: %w", err)
+				}
+				target, err := pgStore.AppByID(ctx, targetAppID)
+				if errors.Is(err, state.ErrNotFound) {
+					return gateway.ErrServiceProxyDenied
+				}
+				if err != nil {
+					return fmt.Errorf("load target app: %w", err)
+				}
+				if caller.AccountID == "" || caller.AccountID != target.AccountID {
+					return gateway.ErrServiceProxyDenied
+				}
+				return nil
+			},
+			Forward: deps.nodeCache.Forwarding(),
+		}
+		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
+		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
+			serviceProxyConfig.ResolveCaller = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
+			guestServiceProxy = gateway.NewServiceProxy(serviceProxyConfig)
+		}
 	}
 
 	// Track every *http.Server we spin up so the shutdown path can drain
 	// them in parallel. sslib guidance is "call Shutdown on each" rather
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
-	errc := make(chan error, 4)
+	errc := make(chan error, 5)
 	var servers []*http.Server
 	addSrv := func(s *http.Server) { servers = append(servers, s) }
 
@@ -2847,6 +2941,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if os.Getenv("FAAS_GATEWAY_CONTROL_LISTEN") != "" {
 		if err := assertLoopbackBind(ctrlAddr); err != nil {
 			return fmt.Errorf("gatewayd: FAAS_GATEWAY_CONTROL_LISTEN must bind loopback: %w", err)
+		}
+	}
+	serviceProxyAddr := strings.TrimSpace(cfg.ServiceProxyListen)
+	if serviceProxyAddr != "" {
+		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
+			return err
+		}
+		if guestServiceProxy == nil {
+			log.Warn("gatewayd guest service proxy disabled; dependencies are unavailable", "addr", serviceProxyAddr)
+		} else {
+			srv := deps.newSrv(serviceProxyAddr, guestServiceProxy)
+			srv.Addr = serviceProxyAddr
+			addSrv(srv)
+			l, lerr := deps.listen("tcp", serviceProxyAddr)
+			if lerr != nil {
+				log.Error("gatewayd guest service proxy listen failed", "addr", serviceProxyAddr, "err", lerr)
+				return lerr
+			}
+			go func() {
+				log.Info("gatewayd guest service proxy listening", "addr", serviceProxyAddr)
+				if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
+					errc <- err
+				}
+			}()
 		}
 	}
 	go func() {
@@ -3043,6 +3161,22 @@ func assertLoopbackBind(addr string) error {
 		return nil
 	}
 	return fmt.Errorf("control listener %q is not loopback; bind 127.0.0.1:9090 (or ::1) only", addr)
+}
+
+func validateServiceProxyListen(addr string) error {
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("gatewayd: service_proxy_listen must be host:port: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port != serviceProxyPort {
+		return fmt.Errorf("gatewayd: service_proxy_listen must use reserved port %d", serviceProxyPort)
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() {
+		return fmt.Errorf("gatewayd: service_proxy_listen must bind a private host-bridge address")
+	}
+	return nil
 }
 
 // installComputeMetricsRoute exposes only /metrics on a compute node's

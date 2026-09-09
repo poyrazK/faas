@@ -7,8 +7,7 @@
 //	M0 — boot a hello-Firecracker VM from the pinned kernel + a busybox rootfs.
 //	M1 — boot 50 × 128 MB VMs concurrently and leak zero netns/TAPs/uids on
 //	     teardown.
-//	M3 — park→wake p50 ≤ 350 ms over 100 cycles restoring from a snapshot each
-//	     time.
+//	M3 — platform-only park→RUNNING p95 < 350 ms over 100 snapshot restores.
 package fcvm
 
 import (
@@ -81,6 +80,13 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		for i := 0; i < n; i++ {
+			_ = m.Destroy(cleanupCtx, fmt.Sprintf("m1-%d", i))
+		}
+	})
 
 	type bootResult struct {
 		instance string
@@ -93,7 +99,7 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 			defer bootCancel()
 			id := fmt.Sprintf("m1-%d", i)
 			_, err := m.ColdBoot(bootCtx, ColdBootRequest{
-				Instance: id, BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
+				Instance: id, Plan: "hobby", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
 			})
 			results <- bootResult{instance: id, err: err}
 		}(i, bootCtx, bootCancel)
@@ -124,8 +130,11 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 	}
 }
 
-// TestMetalParkWakeCycle is the M3 latency gate (spec §14, V2): park→wake p50
-// ≤ 350 ms over 100 cycles, restoring from a snapshot each wake.
+// TestMetalParkWakeCycle measures the platform-only M3 interval (spec §14,
+// V2): wake.boot_started → wake.boot_completed over 100 snapshot restores.
+// FAAS_TEST_REFERENCE_SSD=1 turns the measurement into the p95 < 350 ms
+// release gate. Other hosts still exercise restore correctness and report the
+// distribution, but their timings do not enter the SSD acceptance cohort.
 func TestMetalParkWakeCycle(t *testing.T) {
 	kernel, base, layer := metalImages(t)
 
@@ -133,7 +142,11 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detect firecracker version: %v", err)
 	}
-	store, err := storage.NewLocalStorageBackend(t.TempDir())
+	snapshotRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(snapshotRoot, "snap"), 0o2770); err != nil {
+		t.Fatalf("create snapshot root: %v", err)
+	}
+	store, err := storage.NewLocalStorageBackend(snapshotRoot)
 	if err != nil {
 		t.Fatalf("create snapshot storage: %v", err)
 	}
@@ -156,6 +169,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
 	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), "cycle") })
 	if _, err := m.Park(ctx, "cycle", SnapshotSpec{
 		VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey, VMStateStorageKey: snap.VMStateStorageKey,
 	}); err != nil {
@@ -199,12 +213,12 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
 	p50 := latencies[len(latencies)/2]
 	p95 := latencies[len(latencies)*95/100]
-	t.Logf("wake latency over %d cycles: p50=%s p95=%s", cycles, p50, p95)
-	if p50 > 350*time.Millisecond {
-		t.Errorf("wake p50 = %s, want ≤ 350 ms (spec §6.3)", p50)
-	}
-	if p95 > 800*time.Millisecond {
-		t.Errorf("wake p95 = %s, want ≤ 800 ms (spec §6.3)", p95)
+	max := latencies[len(latencies)-1]
+	t.Logf("platform snapshot wake over %d cycles: p50=%s p95=%s max=%s", cycles, p50, p95, max)
+	if os.Getenv("FAAS_TEST_REFERENCE_SSD") == "1" && p95 >= 350*time.Millisecond {
+		t.Errorf("platform snapshot wake p95 = %s, want < 350 ms (spec §6.3)", p95)
+	} else if os.Getenv("FAAS_TEST_REFERENCE_SSD") != "1" {
+		t.Log("platform snapshot wake is diagnostic on this host; set FAAS_TEST_REFERENCE_SSD=1 only on the reference SSD node to enforce p95 < 350 ms")
 	}
 	if m.LeasedCount() != 0 {
 		t.Errorf("leaked leases after cycles: %d", m.LeasedCount())
@@ -281,24 +295,25 @@ func TestMetalHelloBoot(t *testing.T) {
 // probe proves the SYN goes through prerouting DNAT and the ACK comes back
 // (which exercises the established/related accept rule).
 func TestMetalDNATPublishedToGuestPort(t *testing.T) {
-	kernel, _, _ := metalImages(t) // base/layer replaced by hello img
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
-	busybox := ensureBusyboxExt4(t, t.TempDir())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "dnat",
-		BaseKey:    busybox,
-		LayerKey:   busybox,
+		Plan:       "hobby",
+		BaseKey:    base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 	})
 	if err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), "dnat") })
 	// inst.Lease.HostIP is the veth host-side identity (10.100.0.2 for slot 0).
 	// waitReady already proved the kernel booted and the guest is listening;
 	// here we re-probe from a root-ns http.Client to confirm the DNAT actually
@@ -335,7 +350,7 @@ func TestMetalDNATPublishedToGuestPort(t *testing.T) {
 // cgroup is not mounted (Lima without nested cgroup passthrough,
 // macOS dev).
 func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	// TestMain (manager_test.go) clobbers cgroupRoot to a tempdir for
 	// unit tests; reset it to /sys/fs/cgroup so writeMemoryMax (inside
 	// Wake) probes the real path the jailer wrote to. Without this the
@@ -343,7 +358,6 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	// the fence write — a test-fixture bug, not a fence bug.
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 	m := newMetalManager(t, kernel)
-	busybox := ensureBusyboxExt4(t, t.TempDir())
 
 	// Pre-flight: the cgroup fs must be reachable. Skipping (not
 	// failing) is the right behaviour on a dev box that can't mount
@@ -360,13 +374,14 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "mem",
 		Plan:       "hobby",
-		BaseKey:    busybox,
-		LayerKey:   busybox,
+		BaseKey:    base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: memMB,
 	}); err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), "mem") })
 
 	// The fence must equal (plan_mb + PerVMOverheadMB) << 20.
 	wantBytes := (memMB + 8) << 20 // 8 = pkg/api.PerVMOverheadMB
@@ -401,10 +416,9 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 // Skips when `tc` is not on PATH or when /sys/class/net/<vethHost>
 // is not visible (Lima without nested netns passthrough, macOS dev).
 func TestMetalEgressCapEnforced(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
-	busybox := ensureBusyboxExt4(t, t.TempDir())
 
 	if _, err := exec.LookPath("tc"); err != nil {
 		t.Skipf("`tc` not on PATH: %v", err)
@@ -417,8 +431,8 @@ func TestMetalEgressCapEnforced(t *testing.T) {
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "egress",
 		Plan:       "hobby",
-		BaseKey:    busybox,
-		LayerKey:   busybox,
+		BaseKey:    base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 		EgressMbit: rateMbit,
@@ -426,6 +440,7 @@ func TestMetalEgressCapEnforced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), "egress") })
 
 	vethHost := inst.Net.VethHost
 	// Probe live kernel state. `tc -s qdisc show dev <name>` exits 0
@@ -473,13 +488,22 @@ func TestMetalEgressCapEnforced(t *testing.T) {
 //     reseedFromHWRNG io.CopyN call)
 func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 	kernel, _, _ := metalImages(t)
-	m := newMetalManager(t, kernel)
-	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	// Build the V6 rootfs (guest-init + busybox + app.json) in t.TempDir so
 	// each run gets a fresh, isolated image. Pass the repo root through
 	// so buildV6BaseExt4 can `go build ./guest/init` against this checkout.
 	base, layer := ensureV6Ext4(t, t.TempDir(), repoRoot(t))
+	snapshotRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(snapshotRoot, "snap"), 0o2770); err != nil {
+		t.Fatalf("create snapshot root: %v", err)
+	}
+	store, err := storage.NewLocalStorageBackend(snapshotRoot)
+	if err != nil {
+		t.Fatalf("create snapshot storage: %v", err)
+	}
+	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 30*time.Second).WithStorage(store),
+		Paths{Kernel: kernel}, os.Getenv("FAAS_TEST_FC_VERSION"), nil, nil)
+	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -490,6 +514,7 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 	// per acquire).
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "v6prime",
+		Plan:       "hobby",
 		BaseKey:    base,
 		LayerKey:   layer,
 		VcpuCount:  2,
@@ -497,6 +522,11 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("V6 prime cold boot: %v", err)
 	}
+	t.Cleanup(func() {
+		for _, name := range []string{"v6prime", "v6a", "v6b"} {
+			_ = m.Destroy(context.Background(), name)
+		}
+	})
 
 	// Find the prime's host IP by walking live instances — the Manager
 	// doesn't expose a public lookup, but the test owns the only instance
@@ -523,11 +553,12 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 
 	snapDir := t.TempDir()
 	snap := &Snapshot{
-		FCVersion:   os.Getenv("FAAS_TEST_FC_VERSION"),
-		StorageKey:  "snap/v6prime/mem",
-		VMStatePath: snapDir + "/vmstate",
+		FCVersion:         os.Getenv("FAAS_TEST_FC_VERSION"),
+		StorageKey:        "snap/v6prime/mem",
+		VMStateStorageKey: "snap/v6prime/vmstate",
+		VMStatePath:       snapDir + "/vmstate",
 	}
-	if _, err := m.Park(ctx, "v6prime", SnapshotSpec{VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey}); err != nil {
+	if _, err := m.Park(ctx, "v6prime", SnapshotSpec{VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey, VMStateStorageKey: snap.VMStateStorageKey}); err != nil {
 		t.Fatalf("V6 prime park: %v", err)
 	}
 
@@ -555,7 +586,7 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			inst, err := m.Wake(ctx, WakeRequest{
-				Instance: name, BaseKey: base, LayerKey: layer,
+				Instance: name, Plan: "hobby", BaseKey: base, LayerKey: layer,
 				VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
 			})
 			if err != nil {
@@ -757,6 +788,7 @@ func TestMetalGuestEgressToPublicViaMASQUERADE(t *testing.T) {
 
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "egress",
+		Plan:       "hobby",
 		BaseKey:    egressImg,
 		LayerKey:   egressImg,
 		VcpuCount:  2,
@@ -830,3 +862,5 @@ func TestMetalGuestEgressToPublicViaMASQUERADE(t *testing.T) {
 		t.Fatalf("§11 SMTP drop regression — guest reached 8.8.8.8:25 (per-netns layer should have dropped)")
 	}
 }
+
+// spec: §6.3

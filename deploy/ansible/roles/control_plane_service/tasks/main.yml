@@ -37,6 +37,18 @@
     - faas-schedd
     - faas-meterd
 
+# schedd reads the non-secret signing public key directly. Keep the shared
+# parent traversable by the faas group while private children and files retain
+# their narrower modes. Re-converging this role also repairs parent-directory
+# drift before a daemon restart exposes it.
+- name: control_plane_service — allow daemons to traverse the shared secret directory
+  ansible.builtin.file:
+    path: /etc/faas/secrets
+    state: directory
+    owner: root
+    group: faas
+    mode: "0750"
+
 - name: control_plane_service — drop example TOMLs (operator copies to *.toml)
   ansible.builtin.copy:
     src: "{{ item.src }}"

@@ -124,8 +124,11 @@ func (s *syncBuffer) String() string {
 	return s.buf.String()
 }
 
-// waitTCP polls 127.0.0.1:addr until accept succeeds or deadline.
-func waitTCP(t *testing.T, addr string, d time.Duration) {
+// waitTCP polls 127.0.0.1:addr until accept succeeds or deadline. When a
+// subprocess is supplied, include its captured output in the failure. That
+// turns an early boot error into an actionable test failure instead of a
+// misleading generic connection timeout.
+func waitTCP(t *testing.T, addr string, d time.Duration, proc ...*exec.Cmd) {
 	t.Helper()
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
@@ -135,6 +138,9 @@ func waitTCP(t *testing.T, addr string, d time.Duration) {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+	if len(proc) > 0 && proc[0] != nil {
+		t.Fatalf("waitTCP: %s not listening within %s\napid output:\n%s", addr, d, procBuffer(proc[0]))
 	}
 	t.Fatalf("waitTCP: %s not listening within %s", addr, d)
 }
@@ -287,7 +293,12 @@ func startAPIDWithEnv(t *testing.T, extraEnv ...string) (string, *exec.Cmd) {
 	addr := freeTCPAddr(t)
 	env := append(extraEnv, "FAAS_APID_LISTEN="+addr)
 	proc := startProc(t, apidBinary, env)
-	waitTCP(t, addr, 10*time.Second)
+	// APID performs a pool warm-up and migration check before binding. The
+	// e2e suite starts several isolated databases against one CI Postgres
+	// service, so a cold start can exceed the old 10s budget under runner
+	// contention even when the daemon is healthy. Keep the bound finite, but
+	// give the production-shaped boot enough room to complete.
+	waitTCP(t, addr, 30*time.Second, proc)
 	t.Cleanup(func() {
 		if proc.Process == nil {
 			return

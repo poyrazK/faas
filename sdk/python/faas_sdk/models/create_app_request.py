@@ -11,6 +11,10 @@ from ..models.create_app_request_cpu_millicores import (
     CreateAppRequestCpuMillicores,
     check_create_app_request_cpu_millicores,
 )
+from ..models.create_app_request_crawler_policy import (
+    CreateAppRequestCrawlerPolicy,
+    check_create_app_request_crawler_policy,
+)
 from ..models.create_app_request_eviction_priority import (
     CreateAppRequestEvictionPriority,
     check_create_app_request_eviction_priority,
@@ -72,6 +76,13 @@ class CreateAppRequest:
     """Create-time per-app robots.txt body; empty uses the platform allow-all default."""
     head_wakes: bool | Unset = False
     """Create-time opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."""
+    crawler_policy: CreateAppRequestCrawlerPolicy | Unset = "wake"
+    """Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the
+    wake."""
+    health_path: str | Unset = "/healthz"
+    """Monitor-facing health path. Empty/omitted uses /healthz."""
+    health_path_wakes: bool | Unset = False
+    """Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -164,6 +175,14 @@ class CreateAppRequest:
 
         head_wakes = self.head_wakes
 
+        crawler_policy: str | Unset = UNSET
+        if not isinstance(self.crawler_policy, Unset):
+            crawler_policy = self.crawler_policy
+
+        health_path = self.health_path
+
+        health_path_wakes = self.health_path_wakes
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -227,6 +246,12 @@ class CreateAppRequest:
             field_dict["robots_txt"] = robots_txt
         if head_wakes is not UNSET:
             field_dict["head_wakes"] = head_wakes
+        if crawler_policy is not UNSET:
+            field_dict["crawler_policy"] = crawler_policy
+        if health_path is not UNSET:
+            field_dict["health_path"] = health_path
+        if health_path_wakes is not UNSET:
+            field_dict["health_path_wakes"] = health_path_wakes
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -338,6 +363,17 @@ class CreateAppRequest:
 
         head_wakes = d.pop("head_wakes", UNSET)
 
+        _crawler_policy = d.pop("crawler_policy", UNSET)
+        crawler_policy: CreateAppRequestCrawlerPolicy | Unset
+        if isinstance(_crawler_policy, Unset):
+            crawler_policy = UNSET
+        else:
+            crawler_policy = check_create_app_request_crawler_policy(_crawler_policy)
+
+        health_path = d.pop("health_path", UNSET)
+
+        health_path_wakes = d.pop("health_path_wakes", UNSET)
+
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
@@ -387,6 +423,9 @@ class CreateAppRequest:
             favicon=favicon,
             robots_txt=robots_txt,
             head_wakes=head_wakes,
+            crawler_policy=crawler_policy,
+            health_path=health_path,
+            health_path_wakes=health_path_wakes,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,

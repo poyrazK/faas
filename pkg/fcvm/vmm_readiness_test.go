@@ -151,6 +151,10 @@ func TestEmitRestoreBreakdown_EmitsTimelineRow(t *testing.T) {
 		ResumeHookMs:         11,
 		WaitReadyMs:          131,
 		TotalMs:              596,
+		ResolveArtifacts: []restoreArtifactTiming{
+			{Artifact: "kernel", Source: "backend_local", DurationMs: 1},
+			{Artifact: "base", Source: "cache_hit", DurationMs: 4},
+		},
 	})
 
 	var rows []state.Event
@@ -184,6 +188,14 @@ func TestEmitRestoreBreakdown_EmitsTimelineRow(t *testing.T) {
 	if got, ok := payload["total_ms"].(float64); !ok || got != 596 {
 		t.Errorf("payload.total_ms = %v, want 596", payload["total_ms"])
 	}
+	artifacts, ok := payload["resolve_artifacts"].([]any)
+	if !ok || len(artifacts) != 2 {
+		t.Fatalf("payload.resolve_artifacts = %#v, want two entries", payload["resolve_artifacts"])
+	}
+	first, ok := artifacts[0].(map[string]any)
+	if !ok || first["artifact"] != "kernel" || first["source"] != "backend_local" {
+		t.Errorf("payload.resolve_artifacts[0] = %#v", artifacts[0])
+	}
 }
 
 func TestEmitRestoreBreakdown_WithoutWakeIDDoesNotEmit(t *testing.T) {
@@ -201,7 +213,105 @@ func TestEmitRestoreBreakdown_WithoutWakeIDDoesNotEmit(t *testing.T) {
 	}
 }
 
+func TestEmitColdBootBreakdown_EmitsPreGuestAttribution(t *testing.T) {
+	store := state.NewMemStore()
+	platform := buildReadinessPlatform(t, store)
+	v := &JailerVMM{events: platform}
+	wakeID := "w-cold-breakdown-001"
+	ctx := wire.WithContext(context.Background(), wire.CorrelationFields{
+		WakeID: wakeID,
+		AppID:  "app-cold-breakdown-001",
+	})
+	v.emitColdBootBreakdown(ctx, Lease{Instance: "inst-cold-breakdown-001"}, time.Now(), coldBootTimingBreakdown{
+		ResolveImagesMs: 20600,
+		WaitReadyMs:     2809,
+		TotalMs:         23474,
+		ResolveArtifacts: []coldBootArtifactTiming{{
+			Artifact: "main", Source: "cache_hit", DurationMs: 20590, Bytes: 1048576,
+		}},
+	})
+
+	var rows []state.Event
+	deadline := time.Now().Add(time.Second)
+	for len(rows) == 0 && time.Now().Before(deadline) {
+		var err error
+		rows, err = store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0)
+		if err != nil {
+			t.Fatalf("ListEventsByWakeID: %v", err)
+		}
+		if len(rows) == 0 {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if len(rows) != 1 || rows[0].Kind != events.WakeColdBootBreakdown {
+		t.Fatalf("rows = %#v, want one %s", rows, events.WakeColdBootBreakdown)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rows[0].Data, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["resolve_images_ms"] != float64(20600) || payload["total_ms"] != float64(23474) {
+		t.Errorf("payload timings = %#v", payload)
+	}
+	artifacts, ok := payload["resolve_artifacts"].([]any)
+	if !ok || len(artifacts) != 1 {
+		t.Fatalf("payload.resolve_artifacts = %#v", payload["resolve_artifacts"])
+	}
+	artifact, ok := artifacts[0].(map[string]any)
+	if !ok || artifact["source"] != "cache_hit" || artifact["bytes"] != float64(1048576) {
+		t.Errorf("payload.resolve_artifacts[0] = %#v", artifacts[0])
+	}
+}
+
+// adr: 168
+func TestEmitColdBootCPU_EmitsTimelineRow(t *testing.T) {
+	store := state.NewMemStore()
+	platform := buildReadinessPlatform(t, store)
+	v := &JailerVMM{events: platform}
+	wakeID := "w-cold-cpu-001"
+	ctx := wire.WithContext(context.Background(), wire.CorrelationFields{
+		WakeID: wakeID,
+		AppID:  "app-cold-cpu-001",
+	})
+	v.emitColdBootCPU(ctx, Lease{Instance: "inst-cold-cpu-001"}, time.Now(), events.ColdBootCPU{
+		StartupCPUMillicores:    1000,
+		ConfiguredCPUMillicores: 250,
+		PreReadyMs:              2400,
+		WaitReadyMs:             2200,
+		QuotaRestoreMs:          1,
+		TotalMs:                 2401,
+	})
+
+	var rows []state.Event
+	deadline := time.Now().Add(time.Second)
+	for len(rows) == 0 && time.Now().Before(deadline) {
+		var err error
+		rows, err = store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0)
+		if err != nil {
+			t.Fatalf("ListEventsByWakeID: %v", err)
+		}
+		if len(rows) == 0 {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].Kind != events.WakeColdBootCPU {
+		t.Fatalf("kind = %q, want %q", rows[0].Kind, events.WakeColdBootCPU)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rows[0].Data, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["startup_cpu_millicores"] != float64(1000) || payload["configured_cpu_millicores"] != float64(250) {
+		t.Errorf("CPU payload = startup:%v configured:%v, want 1000/250", payload["startup_cpu_millicores"], payload["configured_cpu_millicores"])
+	}
+}
+
 // silence the unsued import warnings when the metric stubs are
 // inlined into the type — the lockless constructors below exist
 // solely to keep the test self-contained.
 var _ = sync.Mutex{}
+
+// adr: 064

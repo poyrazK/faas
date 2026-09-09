@@ -103,7 +103,7 @@ func TestMigrations_00416_OpenAPIImport(t *testing.T) {
 		err := pool.QueryRow(ctx, `
 			SELECT count(*)
 			  FROM information_schema.columns
-			 WHERE table_schema = 'public'
+			 WHERE table_schema = current_schema()
 			   AND table_name = 'app_openapi_docs'
 			   AND column_name = $1`, col).Scan(&n)
 		if err != nil {
@@ -137,7 +137,7 @@ func TestMigrations_00416_OpenAPIImport(t *testing.T) {
 		err := pool.QueryRow(ctx, `
 			SELECT count(*)
 			  FROM pg_indexes
-			 WHERE schemaname = 'public'
+			 WHERE schemaname = current_schema()
 			   AND indexname = $1`, idx).Scan(&n)
 		if err != nil {
 			t.Fatalf("query index %s: %v", idx, err)

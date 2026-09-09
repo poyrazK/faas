@@ -78,15 +78,14 @@ func boot() error {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
 	guestStage("pivot")
-	if fullRootfs, markerErr := fullRootfsMarkerPresent("/"); markerErr != nil {
+	if _, markerErr := fullRootfsMarkerPresent("/"); markerErr != nil {
 		return fmt.Errorf("inspect full-rootfs marker after pivot: %w", markerErr)
-	} else if fullRootfs {
-		// Mount sidecar roots after pivot so image-provided absolute symlinks
-		// such as /run -> /var/run are resolved inside the image root rather
-		// than against the pre-pivot guest filesystem.
-		if err := mountFullRootfsSidecars("/"); err != nil {
-			return fmt.Errorf("mount full-rootfs sidecars: %w", err)
-		}
+	}
+	// Mount every sidecar as its own root after pivot. This applies to both
+	// optimized and full-rootfs main images: sharing the main overlay upper
+	// would let one workload mutate its siblings' filesystem.
+	if err := mountSidecarRoots("/"); err != nil {
+		return fmt.Errorf("mount sidecar roots: %w", err)
 	}
 	mode, buildManifest, err := decideMode(os.DirFS("/"))
 	if err != nil {
@@ -100,6 +99,12 @@ func boot() error {
 		diskCtx, diskCancel := context.WithCancel(context.Background())
 		defer diskCancel()
 		startDiskTelemetry(diskCtx)
+		// Workload identity is served through a loopback-only metadata
+		// endpoint. The proxy soft-fails on kernels without AF_VSOCK so
+		// existing deployments retain their current boot contract.
+		if err := startWorkloadIdentityProxy(slog.Default()); err != nil {
+			slog.Default().Warn("workload identity proxy unavailable", "err", err)
+		}
 	}
 	// Job VMs (issue #1184 Workstream A / ADR-099) are
 	// single-shot: load /etc/faas/job.json, exec the customer's
@@ -358,6 +363,7 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	// keeping the live edit here means the precedence assertion
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
+	env = StampWorkloadIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env. The
 	// W3C trace context was shipped from the host via the vsock
@@ -1757,14 +1763,9 @@ func mountBasics() error {
 // assembleOverlay mounts the app layer and stacks it over the read-only base.
 //
 // PR-B / issue #463 / ADR-069: N+1 drive topology. drive0 (vda) is the
-// shared read-only base; drive1 (vdb) is the per-app rw upper; drive2
-// (vdc), drive3 (vdd), ... are sidecar drives mounted read-only as
-// additional overlay lowers. The single writable upper stays on drive1
-// (ADR-069 §"no shared writable layer between workloads"). The merged
-// root's precedence is base → main → sidecar-0 → sidecar-1 → … so the
-// deployment roster on the main upper and each sidecar's name-scoped
-// runtime manifest are visible from the merged root even though the
-// base ships none.
+// shared read-only base and drive1 (vdb) is the per-app rw upper. Sidecar
+// drives are mounted as independent roots after pivot so they never share
+// this writable upper (ADR-069 §"no shared writable layer").
 //
 // The legacy 2-drive path (no sidecars) is preserved as the default
 // branch: assembleOverlay does NOT touch /proc/partitions or the
@@ -1792,33 +1793,7 @@ func assembleOverlay() (string, error) {
 			return "", err
 		}
 	}
-	// PR-B: discover sidecar count by reading the roster on drive1.
-	// Absent file = legacy 2-drive path; present file with empty
-	// sidecars = legacy supervisor shape; present file with non-empty
-	// sidecars = mount each sidecar drive and stack as additional
-	// read-only lowers.
-	sidecarDevices, err := discoverSidecarDevices(layerMount)
-	if err != nil {
-		return "", fmt.Errorf("discover sidecars: %w", err)
-	}
-	for _, dev := range sidecarDevices {
-		mp := layerMount + "/lower-" + dev.name
-		if err := os.MkdirAll(mp, 0o755); err != nil {
-			return "", fmt.Errorf("mkdir %s: %w", mp, err)
-		}
-		if err := syscall.Mount(dev.device, mp, "ext4", syscall.MS_RDONLY, ""); err != nil {
-			return "", fmt.Errorf("mount sidecar %s at %s: %w", dev.device, mp, err)
-		}
-	}
-	// Build lowerdir in stack order (lowest precedence first): base
-	// = the kernel root (= `/`); sidecar-0, sidecar-1, ... appended
-	// in stability order so sidecar-N has the highest precedence
-	// among the read-only layers.
-	lowerdir := "/"
-	for _, dev := range sidecarDevices {
-		lowerdir += ":" + layerMount + "/lower-" + dev.name
-	}
-	opts := "lowerdir=" + lowerdir +
+	opts := "lowerdir=/" +
 		",upperdir=" + layerMount + "/upper" +
 		",workdir=" + layerMount + "/work"
 	if err := syscall.Mount("overlay", newRoot, "overlay", 0, opts); err != nil {
@@ -1828,9 +1803,8 @@ func assembleOverlay() (string, error) {
 }
 
 // sidecarDevice (issue #463 / ADR-069 / PR-B) is one entry on the
-// sidecar drive list assembleOverlay mounts. name is the
-// stable suffix used as the lower-<name> mountpoint and as the
-// per-drive stamp suffix; device is the kernel device path
+// sidecar drive list mountSidecarRoots mounts. name is the stable
+// mountpoint suffix; device is the kernel device path
 // (e.g. /dev/vdc). The PR-B plan keeps the device naming simple —
 // sidecar-N lives on /dev/vd<c+1> where c is the sidecar index —
 // so the helper doesn't need to walk /proc/partitions or decode
@@ -1850,8 +1824,7 @@ type sidecarDevice struct {
 // is the single writer, vmmd mirrors it into BuildColdBootConfig,
 // and guest-init learns it by reading the same file the
 // orchestrator consumes. Without the roster file (legacy path),
-// the function returns nil and assembleOverlay emits the legacy
-// 2-drive overlay.
+// the function returns nil and boot keeps the legacy 2-drive layout.
 //
 // A missing roster file is the legacy path and returns nil. A malformed
 // roster, invalid sidecar name, or sidecar count above the hard cap fails the
@@ -1859,13 +1832,28 @@ type sidecarDevice struct {
 // is checked by the mount syscall in the caller; this helper never touches
 // devices.
 func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
-	rosterPath := mountRoot + "/" + workloadRosterPath
-	data, err := os.ReadFile(rosterPath)
-	if err != nil {
-		if isNotExist(err) {
-			return nil, nil // legacy 2-drive path
+	rosterRel := strings.TrimPrefix(workloadRosterPath, "/")
+	rosterPaths := []string{
+		filepath.Join(mountRoot, rosterRel),
+		filepath.Join(mountRoot, "upper", rosterRel),
+	}
+	var (
+		data       []byte
+		rosterPath string
+		err        error
+	)
+	for _, candidate := range rosterPaths {
+		data, err = os.ReadFile(candidate)
+		if err == nil {
+			rosterPath = candidate
+			break
 		}
-		return nil, fmt.Errorf("read roster %s: %w", rosterPath, err)
+		if !isNotExist(err) {
+			return nil, fmt.Errorf("read roster %s: %w", candidate, err)
+		}
+	}
+	if rosterPath == "" {
+		return nil, nil // legacy 2-drive path
 	}
 	var roster workloadRoster
 	if err := json.Unmarshal(data, &roster); err != nil {
@@ -1901,12 +1889,11 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 	return out, nil
 }
 
-// mountFullRootfsSidecars attaches each sidecar artifact below the trusted
-// full-rootfs main image. Sidecar artifacts built by pkg/rootfs use the
-// optimized two-drive layout, so their complete image tree is under /upper;
-// runSidecar chroots into that directory while the main workload continues to
-// use the direct pivot root.
-func mountFullRootfsSidecars(mainRoot string) error {
+// mountSidecarRoots attaches each sidecar artifact below the main image.
+// Sidecar artifacts built by pkg/rootfs keep their complete image tree under
+// /upper; runSidecar chroots into that tree for both optimized and full-rootfs
+// main deployments.
+func mountSidecarRoots(mainRoot string) error {
 	devices, err := discoverSidecarDevices(mainRoot)
 	if err != nil {
 		return err
@@ -1950,6 +1937,9 @@ func mountFullRootfsSidecars(mainRoot string) error {
 		if err := mountSidecarRuntimeFilesystems(sidecarRoot); err != nil {
 			return fmt.Errorf("sidecar %q runtime mounts: %w", dev.workloadName, err)
 		}
+	}
+	if err := writeSidecarMountMarker(mainRoot); err != nil {
+		return fmt.Errorf("write sidecar mount marker: %w", err)
 	}
 	return nil
 }
