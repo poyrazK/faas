@@ -4706,22 +4706,28 @@ func (s *server) usageSummary(w http.ResponseWriter, r *http.Request, acct state
 			"Bad month", "expected YYYY-MM"))
 		return
 	}
-	rows, err := s.store.UsageByMonth(r.Context(), acct.ID, month)
+	summary, err := s.buildUsageSummary(r.Context(), acct, monthStr, month)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load usage"))
 		return
 	}
-	dailyRows, err := s.store.UsageDailyForAccount(r.Context(), acct.ID)
+	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, monthStr string, month time.Time) (api.UsageSummaryResponse, error) {
+	rows, err := s.store.UsageByMonth(ctx, acct.ID, month)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not load daily usage"))
-		return
+		return api.UsageSummaryResponse{}, err
+	}
+	dailyRows, err := s.store.UsageDailyForAccount(ctx, acct.ID)
+	if err != nil {
+		return api.UsageSummaryResponse{}, err
 	}
 	var apps []state.App
 	if len(dailyRows) > 0 {
-		apps, err = s.store.ListApps(r.Context(), acct.ID)
+		apps, err = s.store.ListApps(ctx, acct.ID)
 		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not load usage apps"))
-			return
+			return api.UsageSummaryResponse{}, err
 		}
 	}
 	daily := usageDailyPoints(dailyRows, apps)
@@ -4752,7 +4758,7 @@ func (s *server) usageSummary(w http.ResponseWriter, r *http.Request, acct state
 	// are the production default. Storing cents as int64 keeps
 	// floats away from money (spec §Conventions).
 	overageCents := int64(overage * 1.0)
-	writeJSON(w, http.StatusOK, api.UsageSummaryResponse{
+	return api.UsageSummaryResponse{
 		Month:           monthStr,
 		UsedGBHours:     usedGB,
 		IncludedGBHours: included,
@@ -4766,7 +4772,72 @@ func (s *server) usageSummary(w http.ResponseWriter, r *http.Request, acct state
 		UsedIngressGB: float64(netRxBytes) / (1024 * 1024 * 1024),
 		ColdBootTotal: coldBoots,
 		Daily:         daily,
-	})
+	}, nil
+}
+
+// accountUsage serves the account-level usage projection. Compute remains
+// available when an optional service is not configured; configured service
+// accounting failures fail the whole projection so callers do not mistake a
+// missing meter for zero usage.
+func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	monthStr := r.URL.Query().Get("month")
+	if monthStr == "" {
+		monthStr = time.Now().UTC().Format("2006-01")
+	}
+	month, err := time.Parse("2006-01", monthStr)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Bad month", "expected YYYY-MM"))
+		return
+	}
+	compute, err := s.buildUsageSummary(r.Context(), acct, monthStr, month)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load usage"))
+		return
+	}
+	out := api.AccountUsageResponse{Month: monthStr, Compute: compute}
+	now := time.Now().UTC()
+	// Object storage and managed PostgreSQL expose current-month guardrail
+	// snapshots. Do not attach them to a historical compute month and create a
+	// response that appears to describe one period while mixing another.
+	if monthStr != now.Format("2006-01") {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	if s.objectStorage != nil {
+		st, ok := s.store.(state.ObjectStorageAccountingStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("object storage accounting is unavailable"))
+			return
+		}
+		snapshot, err := st.ObjectUsage(r.Context(), acct.ID, now)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not load object storage usage"))
+			return
+		}
+		usage := state.SummarizeObjectUsage(snapshot, s.objectStorage.Accounting, now)
+		charges, err := s.objectStorage.ChargeForUsage(usage)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not calculate object storage usage"))
+			return
+		}
+		out.ObjectStorage = &api.ObjectStorageUsageResponse{Usage: usage, Policy: s.objectStorage.Accounting, Charges: charges}
+	}
+
+	if s.managedPostgres != nil {
+		if limits, ok := api.ManagedPostgresLimitsFor(acct.Plan); ok && limits.DatabasesMax > 0 {
+			usage, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, now, managedPostgresUsageCeilings(limits))
+			if err != nil {
+				managedPostgresProblem(w, err)
+				return
+			}
+			view := managedPostgresUsageView(usage, limits)
+			out.ManagedPostgres = &view
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // usageDaily serves GET /v1/usage/daily?day=YYYY-MM-DD — the

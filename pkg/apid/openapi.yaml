@@ -390,6 +390,37 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/account/usage:
+    get:
+      operationId: getAccountUsage
+      summary: Read the account-wide usage projection
+      description: |
+        Requires usage read scope. Returns the compute usage summary together
+        with optional object-storage and managed-PostgreSQL usage views when
+        those services are configured for the account. Each service keeps its
+        existing freshness and guardrail semantics; omitted optional fields
+        mean that service is not enabled for the account. The optional service
+        views are included only for the current UTC month; historical requests
+        return the compute projection alone.
+      tags: [usage]
+      parameters:
+        - name: month
+          in: query
+          required: false
+          description: UTC calendar month for compute usage, in YYYY-MM form. Defaults to the current month.
+          schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+      responses:
+        '200':
+          description: Account-wide usage projection; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountUsageResponse' }
+        default:
+          description: Authentication or usage accounting error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases/{id}/restore:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -22620,6 +22651,24 @@ components:
             $ref: '#/components/schemas/DailyUsagePoint'
           x-since: "2026-09"
           x-issue: "308"
+
+    AccountUsageResponse:
+      description: "Account-level usage projection across compute and the optional object-storage and managed-PostgreSQL services."
+      type: object
+      required: [month, compute]
+      properties:
+        month: { type: string, pattern: '^\d{4}-\d{2}$' }
+        compute: { $ref: '#/components/schemas/UsageSummaryResponse' }
+        object_storage:
+          type: [object, "null"]
+          description: "Object-storage usage and safety policy when object storage is configured; omitted otherwise."
+          allOf:
+            - $ref: '#/components/schemas/ObjectStorageUsageResponse'
+        managed_postgres:
+          type: [object, "null"]
+          description: "Managed-PostgreSQL usage and guardrail state when the account plan includes it; omitted otherwise."
+          allOf:
+            - $ref: '#/components/schemas/ManagedPostgresUsageResponse'
 
     # ─── Event-driven surface (Move 2) ───────────────────────────────────
 
