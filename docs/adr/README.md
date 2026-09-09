@@ -23,6 +23,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 171 | [Disposable one-shot executions from sanitized runtime snapshots](171-disposable-one-shot-executions.md) | proposed | caller-supplied code execution gap; runtime-snapshot foundation |
 | 168 | [Temporary cold-boot CPU allowance](168-cold-boot-startup-cpu.md) | accepted | SSD-node micro-profile cold-boot measurements; issue #1668 |
 | 165 | [Remote snapshot memory compression](165-remote-snapshot-memory-compression.md) | proposed | SSD-node snapshot publication measurement; reader-first OCI wire-format rollout |
 | 158 | [Provider-neutral resumable multipart object uploads](158-provider-neutral-multipart-uploads.md) | accepted | Large-object and interrupted-upload hardening for S3 preview |
