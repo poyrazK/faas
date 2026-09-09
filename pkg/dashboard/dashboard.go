@@ -589,6 +589,64 @@ type MirrorSummaryPageItem struct {
 	WindowLabel       string
 }
 
+// StorageData is the customer-facing projection for the per-app object
+// storage page (issue #1397 / G10). Bucket placement stays deliberately
+// small; provider names, credentials, leases, and physical bucket names are
+// never sent to the template.
+type StorageData struct {
+	App              AppListItem
+	Enabled          bool
+	Configured       bool
+	Regions          []string
+	DefaultRegion    string
+	MaxUploadBytes   int64
+	MaxBucketsPerApp int
+	Buckets          []StorageBucketPageItem
+	SelectedBucketID string
+	Prefix           string
+	Cursor           string
+	Objects          []StorageObjectPageItem
+	NextCursor       string
+	Usage            *StorageUsagePageItem
+	ActionCSRF       string
+	Action           string
+	ErrorMessage     string
+	SignedURL        *StorageSignedURLPageItem
+}
+
+// StorageBucketPageItem is the safe dashboard projection of an object bucket.
+type StorageBucketPageItem struct {
+	ID        string
+	Name      string
+	Scope     string
+	Region    string
+	State     string
+	CreatedAt string
+}
+
+// StorageObjectPageItem is one bounded provider object-list row.
+type StorageObjectPageItem struct {
+	Key          string
+	SizeBytes    int64
+	LastModified string
+}
+
+// StorageUsagePageItem mirrors one row from GET /v1/usage/storage.
+type StorageUsagePageItem struct {
+	Day           string
+	SnapshotBytes int64
+	LayerBytes    int64
+	TotalBytes    int64
+}
+
+// StorageSignedURLPageItem is shown only in the immediate response to the
+// signed-URL form. It is never persisted or placed in a redirect query.
+type StorageSignedURLPageItem struct {
+	URL       string
+	Method    string
+	ExpiresAt string
+}
+
 // WebhookPageItem is one outbound webhook subscription plus a bounded slice
 // of recent deliveries. Payloads are deliberately omitted from the dashboard
 // projection because they may contain arbitrary customer data.

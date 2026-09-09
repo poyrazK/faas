@@ -69,6 +69,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/instances → instance fleet + lifecycle actions
 //	GET /dashboard/apps/{slug}/edge-rules → edge rules + CORS presets
 //	GET /dashboard/apps/{slug}/webhooks → outbound webhooks + deliveries
+//	GET /dashboard/apps/{slug}/storage → buckets, objects, signed URLs, usage
 //	GET /dashboard/apps/{slug}/jobs → jobs and queue view (app filter)
 //	GET /dashboard/apps/{slug}/queues → queue state + samples (alias)
 //	GET /dashboard/jobs             → jobs, runs, and all application queues
@@ -113,6 +114,12 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G10 / issue #1397 — object storage buckets, objects,
+			// signed URLs, and daily storage usage.
+			if sslug, ok := parseAppStoragePath(slug); ok {
+				s.renderAppStorage(w, r, log, acct, sslug)
+				return
+			}
 			// G9 / issue #1397 — tenant surfaces with hostname
 			// verification and durable certificate state.
 			if tslug, ok := parseAppTenantSurfacesPath(slug); ok {

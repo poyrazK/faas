@@ -211,6 +211,16 @@ func init() {
 	} {
 		routeExclude[route] = true
 	}
+	// Issue #1397 G10: dashboard storage forms are session-cookie
+	// surfaces, intentionally absent from the public OpenAPI document.
+	for _, route := range []string{
+		"POST /dashboard/apps/{slug}/storage/buckets",
+		"POST /dashboard/apps/{slug}/storage/buckets/{bucket}/delete",
+		"POST /dashboard/apps/{slug}/storage/objects/delete",
+		"POST /dashboard/apps/{slug}/storage/signed-url",
+	} {
+		routeExclude[route] = true
+	}
 	// Issue #1397 G8: dashboard form routes are session-cookie surfaces,
 	// intentionally absent from the public OpenAPI document.
 	for _, route := range []string{
