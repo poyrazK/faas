@@ -870,7 +870,103 @@ Both rows are observational — the actual state changes (Stripe `Refund`, `acco
 
 ---
 
-## 6. Instance lifecycle
+## 6. Deployment and instance lifecycle
+
+### 6.0 Deployment pipeline state machine (owners + recovery)
+
+The deploy pipeline has two related state machines. The **deployment row** is
+the durable artifact pipeline (`pending → building → imaging → snapshotting →
+live`); the **instance row** is the runtime (`parked → waking → running`).
+`ready` below is the customer-facing readiness gate (`deployments.status=live`
+and the first instance has passed readiness), not a value stored in the
+`deployments.status` CHECK constraint. `parked` means the instance has no
+resident VM; its snapshot is only a cache.
+
+![Deployment and instance lifecycle](diagrams/deployment-lifecycle.svg)
+
+The canonical Mermaid source for the diagram is committed at
+[`docs/diagrams/deployment-lifecycle.mmd`](diagrams/deployment-lifecycle.mmd).
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> building: apid creates rows + enqueues build
+    building --> imaging: builderd claims and publishes rootfs
+    building --> failed: build/detect/queue error
+    imaging --> snapshotting: imaged publishes rootfs and primes
+    imaging --> failed: image/scan/publish error
+    snapshotting --> ready: schedd Prime boots; vmmd readiness; snapshot recorded
+    snapshotting --> failed: prime/readiness/snapshot error
+    ready --> parked: schedd snapshotAndPark; vmmd writes snapshot
+    parked --> waking: schedd admits request or cron
+    waking --> running: compatible snapshot restored; readiness passes
+    waking --> cold_booting: snapshot absent/stale/incompatible/restore failed
+    cold_booting --> running: vmmd boots rootfs; readiness passes
+    waking --> failed: admission or VM setup error
+    cold_booting --> failed: cold boot/readiness timeout
+    running --> snapshotting: idle/eviction/supersede park
+    snapshotting --> parked: snapshot succeeds
+    snapshotting --> stopped: snapshot fails (next wake cold-boots)
+    stopped --> cold_booting: next request
+    running --> failed: liveness/OOM/crash-loop terminal path
+```
+
+#### Transition ownership and failure semantics
+
+| State | What it means | Primary owner |
+|---|---|---|
+| `pending` | Deployment row exists; no build has been claimed. | **apid** |
+| `building` | A durable build is queued or running. | **builderd** |
+| `imaging` | The build artifact is being converted and checked into a rootfs. | **imaged** |
+| `snapshotting` | Rootfs is published; Prime is creating the first machine-state cache, or a running instance is being parked. | **schedd + vmmd** for the VM; **imaged** for the deployment row |
+| `ready` / `live` | Deployment is routable and readiness has passed. | **imaged** owns `deployments.status`; **schedd** owns instance state |
+| `parked` | No resident VM; a compatible snapshot may accelerate the next wake. | **schedd** |
+| `waking` / `cold_booting` | Admission has reserved capacity and vmmd is restoring or booting. | **schedd** admits; **vmmd** owns Firecracker |
+| `running` | The instance passed readiness and serves traffic. | **schedd** (single writer) with **vmmd** hosting the VM |
+| `failed` / `superseded` | Terminal deployment outcome. | The component that owns the failing transition; **apid** supersedes on a new deploy |
+
+| Transition | Owner(s) | Durable evidence | Failure mode and recovery |
+|---|---|---|---|
+| `∅ → pending` | **apid** | `deployments` row | Invalid input or a deleted app is rejected before a row exists. |
+| `pending → building` | **apid → builderd** | `builds` row plus `deployment_changed`/build notification | A lost notification is recoverable from the durable queue; enqueue failure marks the deployment `failed`. |
+| `building → imaging` | **builderd** | builder claim, framework detection, published artifact | Detect/build/guest errors classify the build failure and leave an actionable `failed` deployment; redelivery is status-guarded. |
+| `imaging → snapshotting` | **imaged** | `rootfs_path`/OCI key and stage history | Pull, scan, signature, or publish errors call `SetDeploymentFailed`; no VM is started from an unverified layer. |
+| `snapshotting → ready` | **schedd + vmmd**, then **imaged** | `Engine.Prime`, readiness receipt, `snapshot_written`, deployment `live` | Placement, cold-boot, readiness, or snapshot failure marks the deployment failed. Prime is cold boot by design, then parks the VM. |
+| `ready → parked` | **schedd + vmmd**, **imaged** records the snapshot | `Engine.snapshotAndPark`, `snapshots` row | Park watchdog or disk failure ends at `stopped`; the next request cold-boots and retries the snapshot. |
+| `parked → waking` | **schedd** | instance state + wake audit | Admission/placement failure returns capacity/error to the caller; no partial VM is retained. |
+| `waking → running` (restore) | **schedd + vmmd** | `CreateFromSnapshot`, readiness, instance `running` | A missing, stale, version-incompatible, or failed restore immediately follows the cold-boot edge below. |
+| `waking → cold_booting` (ADR-005) | **schedd** selects; **vmmd** boots | `usableSnapshotForWake` result and wake method | Cold boot from the deployment rootfs is always legal. A failed restore is marked stale so subsequent wakes skip it. |
+| `cold_booting → running` | **vmmd**, **schedd** records | `CreateColdBoot`, readiness, instance `running` | Startup timeout, network/jailer, or readiness failure becomes `failed`; retry is a new wake. |
+| `running → snapshotting → parked` | **schedd + vmmd** | `snapshotAndPark`, `snapshot_written` | Idle/eviction/supersede parks normally; snapshot failure produces `stopped`, preserving cold-boot recovery. |
+| `running → failed` | **schedd** | liveness/OOM/crash-loop event and instance terminal state | `DestroyForLivenessFailure` and OOM paths eagerly stale the latest snapshot; repeated failures may evict the app cold. |
+| current deployment → `superseded` | **apid** on the next deploy | `CreateDeployment` supersede update | The new deployment owns traffic; retained snapshot material is rollback/GC material, never the active source of truth. |
+
+#### Snapshot invalidation and cold-boot contract
+
+Snapshots are disposable machine-state caches. A wake may use one only when
+all compatibility checks pass: `stale=false`, the Firecracker version matches,
+the memory shape matches, required storage locators exist, and (for HTTP/2 or
+gRPC apps) the base-image version matches. The following events invalidate a
+snapshot or force the same cold path:
+
+- Firecracker upgrade or operator sweep via
+  `imaged.Handler.MarkFCSnapshotsStale` (called by
+  `pkg/imaged/loop.go::runFCSweep`), keyed by `snapshots.fc_version`.
+- A base-image/app-protocol change via
+  `MarkAppProtocolSnapshotsStale`.
+- RAM-shape mismatch, an explicit `ForceColdBootNextWake`, or a liveness/OOM
+  destroy; these mark the affected snapshot stale before the next wake.
+- Missing/corrupt snapshot data or a restore error; the wake marks the row
+  stale and calls `CreateColdBoot` from the deployment rootfs.
+
+This is ADR-005's invariant: **a snapshot can improve latency, but a deploy
+must never depend on one existing or being restorable**. The implementation
+anchors are `pkg/apid/apidsource/apidsource.go::Enqueue`,
+`pkg/builderd/detect.go::DetectAtRoot`, `pkg/imaged/handler.go::transitionWithStage`
+and `::MarkFCSnapshotsStale`, `pkg/sched/engine.go::Prime`,
+`::snapshotAndPark`, `::usableSnapshotForWake`, and
+`::DestroyForLivenessFailure`, plus `pkg/fcvm/snapshot.go` and
+[`ADR-005`](adr/005-snapshot-pin-fc-version.md).
 
 ### 6.1 State machine (owner: schedd; single writer)
 
