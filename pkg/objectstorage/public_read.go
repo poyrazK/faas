@@ -66,7 +66,7 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 		c.Enabled = func() bool { return true }
 	}
 	if c.HTTPClient == nil {
-		var transport http.RoundTripper = http.DefaultTransport
+		transport := http.DefaultTransport
 		if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
 			clone := defaultTransport.Clone()
 			clone.ResponseHeaderTimeout = 30 * time.Second
@@ -183,7 +183,7 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "object storage is temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	defer response.Body.Close() // best effort; the provider response is already accounted
+	defer func() { _ = response.Body.Close() }() // best effort; the provider response is already accounted
 	if response.StatusCode == http.StatusNotModified {
 		copyPublicObjectHeaders(w.Header(), response.Header)
 		w.Header().Set("Cache-Control", publicImmutableCacheControl)
