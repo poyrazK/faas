@@ -1,0 +1,21 @@
+stateDiagram-v2
+    [*] --> pending
+    pending --> building: apid creates rows + enqueues build
+    building --> imaging: builderd claims and publishes rootfs
+    building --> failed: build/detect/queue error
+    imaging --> snapshotting: imaged publishes rootfs and primes
+    imaging --> failed: image/scan/publish error
+    snapshotting --> ready: schedd Prime boots; vmmd readiness; snapshot recorded
+    snapshotting --> failed: prime/readiness/snapshot error
+    ready --> parked: schedd snapshotAndPark; vmmd writes snapshot
+    parked --> waking: schedd admits request or cron
+    waking --> running: compatible snapshot restored; readiness passes
+    waking --> cold_booting: snapshot absent/stale/incompatible/restore failed
+    cold_booting --> running: vmmd boots rootfs; readiness passes
+    waking --> failed: admission or VM setup error
+    cold_booting --> failed: cold boot/readiness timeout
+    running --> snapshotting: idle/eviction/supersede park
+    snapshotting --> parked: snapshot succeeds
+    snapshotting --> stopped: snapshot fails (next wake cold-boots)
+    stopped --> cold_booting: next request
+    running --> failed: liveness/OOM/crash-loop terminal path
