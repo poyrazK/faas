@@ -21,6 +21,7 @@ CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner cap_fsetid cap_kill 
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/runtime-bases.env
+EnvironmentFile=-/etc/faas/otel.env
 Environment=TMPDIR=/srv/fc/base
 Environment=FAAS_BASE_STAGING_ROOT=/dev/shm/faas-base-staging
 Environment=FAAS_BASE_EXTRACT_ROOT=/srv/fc/base-staging

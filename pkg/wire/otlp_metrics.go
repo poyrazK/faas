@@ -8,6 +8,8 @@ package wire
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -199,7 +201,13 @@ func startOTLPMetricsWithPrefix(
 		health.enabled.Set(1)
 	}
 	interval := otlpMetricsInterval()
-	client := &http.Client{Timeout: 5 * time.Second}
+	client, clientErr := otlpMetricsHTTPClient(target)
+	if clientErr != nil {
+		if health != nil {
+			health.up.Set(0)
+		}
+		return nil, fmt.Errorf("otlp metrics: configure HTTP client: %w", clientErr)
+	}
 	headers := otlpHeaders()
 	bridgeStart := uint64(time.Now().UnixNano())
 	stop := make(chan struct{})
@@ -324,6 +332,95 @@ func otlpMetricsInterval() time.Duration {
 	return defaultOTLPMetricsInterval
 }
 
+func otlpMetricsHTTPClient(target string) (*http.Client, error) {
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return nil, fmt.Errorf("parse target: %w", err)
+	}
+	if otlpBoolEnv("OTEL_EXPORTER_OTLP_METRICS_INSECURE", "OTEL_EXPORTER_OTLP_INSECURE") && parsed.Scheme != "http" {
+		return nil, fmt.Errorf("insecure export requires an http endpoint, got %q", parsed.Scheme)
+	}
+
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("http.DefaultTransport is not an *http.Transport")
+	}
+	transport = transport.Clone()
+	tlsConfig, err := otlpTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Scheme == "http" && tlsConfig != nil {
+		return nil, errors.New("TLS certificate configuration requires an https endpoint")
+	}
+	if tlsConfig != nil {
+		transport.TLSClientConfig = tlsConfig
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   otlpTimeout(),
+	}, nil
+}
+
+func otlpTLSConfig() (*tls.Config, error) {
+	caPath := otlpEnvValue("OTEL_EXPORTER_OTLP_METRICS_CERTIFICATE", "OTEL_EXPORTER_OTLP_CERTIFICATE")
+	clientCertPath := otlpEnvValue("OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE", "OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE")
+	clientKeyPath := otlpEnvValue("OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY", "OTEL_EXPORTER_OTLP_CLIENT_KEY")
+	if (clientCertPath == "") != (clientKeyPath == "") {
+		return nil, errors.New("client certificate and key must be configured together")
+	}
+	if caPath == "" && clientCertPath == "" {
+		return nil, nil
+	}
+
+	config := &tls.Config{MinVersion: tls.VersionTLS12}
+	if caPath != "" {
+		pem, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("read CA certificate %q: %w", caPath, err)
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil || roots == nil {
+			roots = x509.NewCertPool()
+		}
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("CA certificate %q contains no PEM certificates", caPath)
+		}
+		config.RootCAs = roots
+	}
+	if clientCertPath != "" {
+		cert, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load OTLP client certificate: %w", err)
+		}
+		config.Certificates = []tls.Certificate{cert}
+	}
+	return config, nil
+}
+
+func otlpTimeout() time.Duration {
+	raw := otlpEnvValue("OTEL_EXPORTER_OTLP_METRICS_TIMEOUT", "OTEL_EXPORTER_OTLP_TIMEOUT")
+	if raw != "" {
+		if milliseconds, err := strconv.ParseInt(raw, 10, 64); err == nil && milliseconds > 0 {
+			return time.Duration(milliseconds) * time.Millisecond
+		}
+	}
+	return 5 * time.Second
+}
+
+func otlpEnvValue(specific, generic string) string {
+	if value := strings.TrimSpace(os.Getenv(specific)); value != "" {
+		return value
+	}
+	return strings.TrimSpace(os.Getenv(generic))
+}
+
+func otlpBoolEnv(specific, generic string) bool {
+	value := otlpEnvValue(specific, generic)
+	parsed, err := strconv.ParseBool(value)
+	return err == nil && parsed
+}
+
 func otlpHeaders() http.Header {
 	raw := os.Getenv("OTEL_EXPORTER_OTLP_METRICS_HEADERS")
 	if raw == "" {
@@ -432,7 +529,22 @@ func prometheusFamiliesToOTLP(
 }
 
 func resourceAttributes(serviceName, serviceVersion string) []*commonpb.KeyValue {
-	attrs := []*commonpb.KeyValue{stringAttribute("service.name", serviceName)}
+	attrs := make([]*commonpb.KeyValue, 0, 3)
+	// The trace SDK already consumes OTEL_RESOURCE_ATTRIBUTES through
+	// resource.WithFromEnv. Parse the same operator-owned setting here so
+	// metrics exported by the Prometheus bridge retain deployment identity.
+	for _, pair := range strings.Split(os.Getenv("OTEL_RESOURCE_ATTRIBUTES"), ",") {
+		key, value, ok := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" || key == "service.name" || key == "service.version" {
+			continue
+		}
+		if decoded, err := url.QueryUnescape(strings.TrimSpace(value)); err == nil {
+			value = decoded
+		}
+		attrs = append(attrs, stringAttribute(key, value))
+	}
+	attrs = append(attrs, stringAttribute("service.name", serviceName))
 	if serviceVersion != "" {
 		attrs = append(attrs, stringAttribute("service.version", serviceVersion))
 	}

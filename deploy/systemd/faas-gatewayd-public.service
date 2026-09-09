@@ -8,6 +8,7 @@ StartLimitIntervalSec=60s
 StartLimitBurst=5
 
 [Service]
+EnvironmentFile=-/etc/faas/otel.env
 Type=notify
 User=faas
 Group=faas

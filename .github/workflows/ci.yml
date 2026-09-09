@@ -301,6 +301,9 @@ jobs:
       - name: systemd hardening gate
         run: make systemd-hardening-check
 
+      - name: OTLP unit wiring gate
+        run: make otlp-unit-check
+
       # sealed-env-scope-check (issue #585 / ADR-127): the apid unit
       # is the only legitimate consumer of /etc/faas/sealed.env. Every
       # other daemon must use LoadCredential= or a per-daemon

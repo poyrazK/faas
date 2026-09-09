@@ -4,10 +4,11 @@
 #
 #   1. [control_plane] — fsn-1: shared preconditions + control-plane-only
 #      roles (postgres, postgres_backup, control_plane_service,
-#      gatewayd_public_service, githubd_service, log_archive).
+#      gatewayd_public_service, githubd_service, otlp_exporter,
+#      log_archive).
 #   2. [compute_nodes] — fsn-2: shared preconditions + compute-only
 #      roles (vmmd_service, gatewayd_internal_service,
-#      compute_only_service, log_archive).
+#      compute_only_service, otlp_exporter, log_archive).
 # Per-box role isolation is enforced at two layers:
 #   - This playbook only applies the role subset each box needs.
 #   - Each daemon's role gate (pkg/role, PR-1) refuses to start under
@@ -75,6 +76,10 @@
     - role: firecracker
     - role: supply_chain_scanners
     - role: systemd_slices
+    # Optional OTLP traces + metrics configuration. The role only validates
+    # the operator-owned root-only env file and installs the example;
+    # export stays disabled when /etc/faas/otel.env is absent.
+    - role: otlp_exporter
     - role: nftables
     - role: overlay
     - role: node_exporter
@@ -124,6 +129,8 @@
     - role: firecracker
     - role: supply_chain_scanners
     - role: systemd_slices
+    # Keep the optional OTLP configuration tripwire consistent on compute nodes.
+    - role: otlp_exporter
     - role: nftables
     - role: overlay
     - role: node_exporter

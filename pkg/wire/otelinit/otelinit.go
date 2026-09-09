@@ -9,13 +9,14 @@
 // to coordinate the lifecycle and would let pkg/wire tests leak
 // background goroutines.
 //
-// Why a no-op fallback when OTEL_EXPORTER_OTLP_ENDPOINT is unset:
+// Why a no-op fallback when neither OTEL_EXPORTER_OTLP_ENDPOINT nor
+// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set:
 // the issue #555 acceptance tests must work without an otel-collector
 // running. The SDK noop provider lets every site call tracer.Start
 // without a nil-check; the shutdown func is a no-op when the
 // provider is noop.
 //
-// Security note (issue #555 review): OTEL_EXPORTER_OTLP_ENDPOINT is
+// Security note (issue #555 review): the OTLP endpoint variables are
 // an operator-controlled trust input. Explicit https:// endpoints use
 // the SDK's TLS transport; explicit http:// endpoints and legacy bare
 // host:port values use plaintext. On a one-box deployment the
@@ -49,9 +50,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// envEndpoint is the OTel-standard env var for the OTLP/HTTP endpoint.
-// Issue #555 acceptance #4 toggles export via this single setting.
-const envEndpoint = "OTEL_EXPORTER_OTLP_ENDPOINT"
+const (
+	// envEndpoint is the generic OTel-standard env var for the OTLP/HTTP
+	// endpoint. The signal-specific endpoint takes precedence when present.
+	envEndpoint       = "OTEL_EXPORTER_OTLP_ENDPOINT"
+	envTracesEndpoint = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+)
 
 // envSamplingRate is the OTel-standard env var for the head sampler.
 // Issue #555 acceptance #5: 1 req/s default; first 100 requests of a
@@ -119,9 +123,9 @@ type Config struct {
 }
 
 // Init wires up the OTel SDK per the config. Returns a Handle whose
-// Shutdown func flushes the batch processor and shuts down the
-// exporter. The shutdown is a no-op when OTEL_EXPORTER_OTLP_ENDPOINT
-// is unset (the noop provider path). Init is safe to call at most
+// exporter. The shutdown is a no-op when neither OTEL_EXPORTER_OTLP_ENDPOINT
+// nor OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set (the noop provider path).
+// Init is safe to call at most
 // once per daemon; subsequent calls panic via SetTracerProvider.
 //
 // log is the daemon's correlation logger. It is used for one-time
@@ -169,34 +173,30 @@ func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 	// operator toggles the endpoint on.
 	counter := NewDeploymentCounter(cfg.WindowSize)
 
-	endpoint := os.Getenv(envEndpoint)
+	endpoint := otlpTraceEndpoint()
 	if endpoint == "" {
 		// No exporter configured. Install the SDK noop provider so
 		// call sites do not have to nil-check. The shutdown returned
 		// here is a no-op. The counter is still constructed so the
 		// watcher can wire against it.
 		otel.SetTracerProvider(noop.NewTracerProvider())
-		log.Info("otelinit: no OTEL_EXPORTER_OTLP_ENDPOINT set; spans are no-op")
+		log.Info("otelinit: no OTLP trace endpoint set; spans are no-op")
 		return &Handle{
 			Shutdown:          func(context.Context) error { return nil },
 			DeploymentCounter: counter,
 		}, nil
 	}
 
-	// OTLP/HTTP supports both the legacy host:port form and a full URL.
-	// Full HTTPS URLs retain TLS; bare host:port and explicit HTTP remain
-	// plaintext for backwards compatibility.
-	exporterOptions := []otlptracehttp.Option{otlptracehttp.WithTimeout(5 * time.Second)}
-	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
-		exporterOptions = append(exporterOptions, otlptracehttp.WithEndpointURL(endpoint))
-		if strings.HasPrefix(endpoint, "http://") {
-			exporterOptions = append(exporterOptions, otlptracehttp.WithInsecure())
-		}
-	} else {
-		exporterOptions = append(exporterOptions,
-			otlptracehttp.WithEndpoint(endpoint),
+	// Let the SDK consume standard endpoint, headers, timeout, compression,
+	// and TLS variables. Preserve Gregale's legacy bare host:port form by
+	// translating only that form into an explicit plaintext URL; passing
+	// endpoint options for every case would override signal-specific env vars.
+	var exporterOptions []otlptracehttp.Option
+	if !strings.Contains(endpoint, "://") {
+		exporterOptions = []otlptracehttp.Option{
+			otlptracehttp.WithEndpointURL("http://" + endpoint),
 			otlptracehttp.WithInsecure(),
-		)
+		}
 	}
 	client, err := otlptracehttp.New(ctx, exporterOptions...)
 	if err != nil {
@@ -253,6 +253,13 @@ func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 		},
 		DeploymentCounter: counter,
 	}, nil
+}
+
+func otlpTraceEndpoint() string {
+	if endpoint := strings.TrimSpace(os.Getenv(envTracesEndpoint)); endpoint != "" {
+		return endpoint
+	}
+	return strings.TrimSpace(os.Getenv(envEndpoint))
 }
 
 // Tracer returns the OTel tracer for the named instrumentation scope.

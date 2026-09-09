@@ -18,11 +18,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
@@ -38,6 +36,8 @@ import (
 // envTraceRingCap is the FAAS-flavored env var for the ring cap.
 // Defaults to DefaultTraceRingCap when unset.
 const envTraceRingCap = "FAAS_TRACE_RING_CAP"
+
+const envTracesEndpoint = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
 
 // gatewayDefaultSamplingRate is the head sampler rate when
 // OTEL_TRACES_SAMPLER_ARG is unset. 1.0 matches the otelinit
@@ -150,7 +150,7 @@ func InstallTracePipelineWithRegistry(ctx context.Context, name, version string,
 		// GET /v1/traces/{trace_id} even when the collector is
 		// down.
 		log.Warn("trace_setup: OTLP exporter disabled", "err", otlpErr)
-		if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		if traceOTLPEndpoint() != "" {
 			health.SetUnavailable()
 		}
 	}
@@ -198,31 +198,33 @@ func buildRingFromEnv() *TraceRing {
 	return NewTraceRing(cap)
 }
 
-// buildOTLPExporter returns the OTLP/HTTP exporter if
-// OTEL_EXPORTER_OTLP_ENDPOINT is set, nil otherwise.
+// buildOTLPExporter returns the OTLP/HTTP exporter if either the generic or
+// trace-specific standard endpoint is set, nil otherwise. The SDK consumes
+// standard headers, timeout, compression, and TLS variables directly.
 func buildOTLPExporter(ctx context.Context, log *slog.Logger) (sdktrace.SpanExporter, error) {
-	raw := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if raw == "" {
+	endpoint := traceOTLPEndpoint()
+	if endpoint == "" {
 		return nil, nil
 	}
-	endpoint := raw
-	if u, err := url.Parse(raw); err == nil && u.Host != "" {
-		endpoint = u.String()
-	}
 	log.Info("trace_setup: OTLP exporter enabled", "endpoint", endpoint)
-	options := []otlptracehttp.Option{otlptracehttp.WithTimeout(5 * time.Second)}
-	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
-		options = append(options, otlptracehttp.WithEndpointURL(endpoint))
-		if strings.HasPrefix(endpoint, "http://") {
-			options = append(options, otlptracehttp.WithInsecure())
-		}
-	} else {
-		options = append(options,
-			otlptracehttp.WithEndpoint(endpoint),
+	// Passing endpoint options for a fully-qualified value would override the
+	// SDK's signal-specific environment variables. Only translate the legacy
+	// bare host:port form, which the SDK does not accept as a URL.
+	var options []otlptracehttp.Option
+	if !strings.Contains(endpoint, "://") {
+		options = []otlptracehttp.Option{
+			otlptracehttp.WithEndpointURL("http://" + endpoint),
 			otlptracehttp.WithInsecure(),
-		)
+		}
 	}
 	return otlptracehttp.New(ctx, options...)
+}
+
+func traceOTLPEndpoint() string {
+	if endpoint := strings.TrimSpace(os.Getenv(envTracesEndpoint)); endpoint != "" {
+		return endpoint
+	}
+	return strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 }
 
 // multiExporter fans ExportSpans / Shutdown to a list of exporters.
