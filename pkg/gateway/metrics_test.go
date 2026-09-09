@@ -1,5 +1,7 @@
 package gateway
 
+// spec: §6.3
+
 import (
 	"context"
 	"errors"
