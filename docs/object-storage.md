@@ -265,14 +265,16 @@ Example safety values **only**, not approved pricing or plan allowances:
   "max_monthly_requests": 1000000,
   "max_monthly_egress_bytes": 10737418240,
   "max_monthly_authorizations": 100000,
-  "max_report_age_seconds": 3600
+  "max_report_age_seconds": 7200
 }
 ```
 
 Costs use EUR millicents: 1000 millicents = 1 cent. These are ceilings on
 reported upstream cost, not customer invoice rates. Every limit must be
 positive; zero is not an unlimited setting. Report freshness must be 60–86400
-seconds and the key ceiling at most one million.
+seconds and the key ceiling at most one million. OVH access-log-backed
+reporting requires at least 7200 seconds to allow for the provider's normal
+one-hour delivery lag and the five-minute export interval.
 
 An optional `pricing` object can add a provider-neutral customer rate card
 without changing the safety policy:
@@ -335,9 +337,23 @@ physical bucket/account mapping. The source must cover storage, requests,
 egress, and applicable provider charges in the declared EUR cost convention;
 do not import an account-total into each tenant or treat delayed/missing data
 as zero. Neither Gregale's compute MB-seconds nor inventory samples substitute
-for these billing quantities. **No GCS/OVH/AWS/R2 billing exporter is bundled yet**;
-the normalized import contract is provider-neutral, and a real exporter is
-still a deployment prerequisite.
+for these billing quantities.
+
+The repository includes an OVH Public Cloud adapter in
+`pkg/objectstorage/ovh_usage.go`. It reads the provider's signed usage-history
+API and normalizes bucket storage byte-hours, outgoing bandwidth, and provider
+costs when the provider response is denominated in EUR. A non-EUR project is
+rejected until an explicit operator FX/conversion policy exists. OVH's public
+usage response does not currently include a request count, so the branded
+gateway records every outbound provider request attempt in the durable
+`object_storage_request_metrics` ledger. For GA, the OVH runner reads OVH
+Server Access Logging from the configured operator bucket per physical bucket
+and month, which also covers direct provider URLs; it fails closed when a log
+object is missing, malformed, partial, or unknown. It never substitutes
+signed-URL issuance counts or an explicit zero for unavailable data. The
+catalog and request source are injected through narrow interfaces so a
+qualified R2, AWS, GCS, or storage-node adapter can replace OVH without
+changing this report contract.
 
 Provider adapters may implement the `objectstorage.UsageReportExporter` seam
 and publish through `objectstorage.ExportUsageReports`. The helper validates
@@ -347,6 +363,23 @@ permissions. This keeps provider credentials, billing APIs, and attribution
 logic outside the data drivers; the adapter remains responsible for
 obtaining authoritative data and mapping each physical Gregale bucket to one
 account.
+
+For an OVH backend, set `usage.driver` to `ovh`, provide the three OVH API
+credential environment-variable names, and configure `request_log_bucket` (and
+optionally `request_log_prefix`) for a dedicated same-region bucket receiving
+[OVH Server Access Logging](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-server-access-logging)
+from every managed physical bucket. Keep
+`usage_reports_path` in the operator-owned registry. `s3-gatewayd` runs the
+exporter immediately and every five minutes, atomically replaces that file, and
+exposes `s3_gateway_usage_exports_total` plus the last-success timestamp on its
+control-plane metrics endpoint. OVH access logs are delivered asynchronously
+(normally about one hour later), so the report's `observed_at` is intentionally
+one hour behind the wall clock. Missing credentials, an unreadable/malformed
+log object, or a failed export does not publish a partial report; `apid`
+therefore continues to enforce the configured freshness window and fails closed
+when the previous report ages out. The durable request ledger remains useful
+for gateway diagnostics, but access logs are authoritative because API-issued
+direct S3 URLs bypass the gateway.
 
 All fields are required, including explicit zero measurements. Reports must
 match catalogued backend placement. Identical repeats are harmless;

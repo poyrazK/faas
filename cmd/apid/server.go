@@ -1274,6 +1274,10 @@ func (s *server) handler() http.Handler {
 	}
 
 	// Deployments.
+	// App-scoped deployment history read. The slug is resolved through
+	// loadApp so cross-account probes collapse to the same 404 surface as
+	// the latest-deployment endpoint; pagination stays on the app's index.
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.listAppDeployments))))
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createDeployment))))))
 	// App-scoped latest-deployment read. This is the public counterpart to
 	// Store.LatestDeployment already used by the dashboard and deploy pipeline;
@@ -1739,6 +1743,16 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAppWebhookSecret))))
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
+
+	// Customer runtime log drains (issue #1398 O4). Each destination is
+	// provider-neutral: HTTP JSON covers compatible intake endpoints, while
+	// OTLP targets a collector or any vendor's OTLP/HTTP endpoint (including
+	// Datadog through its OTLP-compatible collector path).
+	mux.HandleFunc("GET /v1/apps/{slug}/log-drains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppLogDrains))))
+	mux.HandleFunc("POST /v1/apps/{slug}/log-drains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppLogDrain)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrain))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppLogDrain))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppLogDrain))))
 
 	// Move 2: event-driven surface (handlers_invocations.go).
 	// Charged routes take idempotent so retries are safe; the long-poll

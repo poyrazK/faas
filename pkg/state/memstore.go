@@ -105,6 +105,7 @@ type MemStore struct {
 	objectGrants           map[string]map[string]int64
 	objectReports          []api.ObjectStorageUsageReport
 	objectAuthorizations   map[string]int64
+	objectProviderRequests map[string]int64
 	objectAccessGrants     map[string]ObjectBucketAccessGrant
 	objectS3Credentials    map[string]ObjectS3Credential
 	objectMultipartUploads map[string]ObjectMultipartUpload
@@ -235,6 +236,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks          map[string]AppWebhook
 	appWebhookDeliveries map[string]AppWebhookDelivery
+	appLogDrains         map[string]AppLogDrain
 	// deploymentScopeExclusions backs the ADR-124 follow-up #3
 	// persistent --exclude history (migration 00418). Keyed by row
 	// id (uuid string) for symmetry with appWebhooks; the (account,
@@ -784,6 +786,7 @@ func NewMemStore() *MemStore {
 		alertDeliveries:           map[string]AlertDelivery{},
 		appWebhooks:               map[string]AppWebhook{},
 		appWebhookDeliveries:      map[string]AppWebhookDelivery{},
+		appLogDrains:              map[string]AppLogDrain{},
 		deploymentScopeExclusions: map[string]DeploymentScopeExclusion{}, // ADR-124 follow-up #3
 		uploadSessions:            map[string]sqlc.UploadSession{},
 		uploadCommitOutcomes:      map[string]sqlc.UploadCommitOutcome{},
@@ -5446,6 +5449,26 @@ func (m *MemStore) ListDeploymentsForApp(_ context.Context, appID string, limit,
 		return nil, nil
 	}
 	all = all[offset:]
+	if limit > 0 && limit < len(all) {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
+// ListDeploymentsForAppBefore is the cursor-shaped counterpart to
+// ListDeploymentsForApp. It keeps the in-memory backend's ordering and
+// before semantics aligned with PgStore for handler and conformance tests.
+func (m *MemStore) ListDeploymentsForAppBefore(_ context.Context, appID string, before time.Time, limit int) ([]Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var all []Deployment
+	for _, d := range m.deployments {
+		if d.AppID != appID || (!before.IsZero() && !d.CreatedAt.Before(before)) {
+			continue
+		}
+		all = append(all, d)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
 	if limit > 0 && limit < len(all) {
 		all = all[:limit]
 	}
@@ -18402,15 +18425,16 @@ func (m *MemStore) UpsertRegressionObservation(_ context.Context, _ sqlc.UpsertR
 }
 
 // ListActiveRegressionsByApp is intentionally unsupported by MemStore;
-// dashboard and handler tests that need regression rows belong on PgStore.
+// dashboard reads degrade gracefully in local/unit environments while
+// production uses the Postgres implementation.
 func (m *MemStore) ListActiveRegressionsByApp(_ context.Context, _ sqlc.ListActiveRegressionsByAppParams) ([]sqlc.ListActiveRegressionsByAppRow, error) {
-	panic("memstore: ListActiveRegressionsByApp unimplemented")
+	return nil, errMemStoreRequestTelemetry
 }
 
 // ListDeploymentsForCompare is intentionally unsupported by MemStore;
 // it reads request_telemetry's deployment history.
 func (m *MemStore) ListDeploymentsForCompare(_ context.Context, _ sqlc.ListDeploymentsForCompareParams) ([]sqlc.ListDeploymentsForCompareRow, error) {
-	panic("memstore: ListDeploymentsForCompare unimplemented")
+	return nil, errMemStoreRequestTelemetry
 }
 
 // ListAppsWithRecentTelemetry is intentionally unsupported by MemStore;

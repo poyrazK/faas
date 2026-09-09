@@ -1388,6 +1388,95 @@ type RequestAnalyticsRouteView struct {
 	TrendURL      string
 }
 
+// DebugPageData is the read-only, server-rendered production debugger
+// surface for one app. The API/CLI remain the automation interface; this
+// projection keeps the dashboard template free of state/sqlc types and
+// makes the retention and plan gates visible to customers.
+type DebugPageData struct {
+	AppSlug       string
+	Plan          string
+	PlanAllowed   bool
+	Since         string
+	WindowStart   string
+	WindowEnd     string
+	WindowClamped bool
+	Route         string
+	ErrorMessage  string
+	Regressions   []DebugRegressionView
+	Requests      []DebugRequestView
+	Selected      *DebugRequestDetailView
+}
+
+// DebugRegressionView carries the bounded regression observation plus a
+// stable link to the affected request list. Keeping the URL pre-built avoids
+// introducing template helper functions for query escaping.
+type DebugRegressionView struct {
+	DeploymentID    string
+	Route           string
+	P95MS           int
+	P95BaseMS       int
+	AffectedCount   int
+	Factor          string
+	FirstDetectedAt string
+	LastDetectedAt  string
+	RequestsURL     string
+}
+
+// DebugRequestView is one row in the debugger request table.
+type DebugRequestView struct {
+	ID           string
+	DeploymentID string
+	Route        string
+	Method       string
+	Status       int
+	LatencyMS    int
+	Count        int
+	ColdBoot     bool
+	TraceID      string
+	WakeID       string
+	InstanceID   string
+	ReceivedAt   string
+	DetailURL    string
+}
+
+// DebugRequestDetailView is the selected request drill-down. Spans and the
+// explanation are already bounded/redacted by the API handler's shared
+// projection, so the dashboard never renders raw customer attributes.
+type DebugRequestDetailView struct {
+	Request        DebugRequestView
+	Regression     *DebugRegressionView
+	Timeline       []DebugTimelineEventView
+	Spans          []DebugSpanView
+	SpansTruncated bool
+	Explanation    string
+	EvidenceStatus string
+	GeneratedAt    string
+}
+
+// DebugTimelineEventView is the template-safe projection of a deterministic
+// request timeline marker. Raw wake-event payloads are never rendered.
+type DebugTimelineEventView struct {
+	At          string
+	Phase       string
+	Kind        string
+	Actor       string
+	Summary     string
+	DurationMS  int64
+	Status      int
+	Approximate bool
+}
+
+// DebugSpanView is the template-safe subset of an OTel span summary.
+type DebugSpanView struct {
+	Name        string
+	Kind        string
+	DurationMS  int64
+	Status      string
+	DBStatement string
+	TraceID     string
+	SpanID      string
+}
+
 // RecentInstanceItem is one row of the Recent Wakes table on the
 // dashboard app-detail page.
 //
@@ -1772,6 +1861,48 @@ type AccountData struct {
 	// window-selector nav; AsOf is the pre-formatted
 	// timestamp.
 	SLODuration views.SLOStamp
+}
+
+// ManagedPostgresData is the customer-facing database overview payload.
+// It contains lifecycle and binding metadata only; provider credentials and
+// connection URLs are intentionally not part of the dashboard projection.
+type ManagedPostgresData struct {
+	Available bool
+	Error     string
+	Databases []ManagedPostgresDatabaseItem
+}
+
+// ManagedPostgresDatabaseItem is one database row on /dashboard/postgres.
+type ManagedPostgresDatabaseItem struct {
+	ID                   string
+	Name                 string
+	Region               string
+	PostgresMajor        int
+	ServiceClass         string
+	Availability         string
+	ScaleToZero          bool
+	StorageLimitBytes    int64
+	StorageLimitLabel    string
+	RestoreWindowSeconds int64
+	State                string
+	LastErrorCode        string
+	CreatedAt            string
+	UpdatedAt            string
+	Bindings             []ManagedPostgresBindingItem
+	BindingsError        string
+}
+
+// ManagedPostgresBindingItem is the safe metadata shown for an app binding.
+// The secret value remains in the app-secret subsystem and is never rendered.
+type ManagedPostgresBindingItem struct {
+	ID                   string
+	AppID                string
+	Scope                string
+	EnvironmentKey       string
+	Access               string
+	CredentialGeneration int64
+	State                string
+	LastErrorCode        string
 }
 
 // AuthCapabilitiesView is the dashboard-facing slice of

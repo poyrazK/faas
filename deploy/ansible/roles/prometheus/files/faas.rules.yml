@@ -2331,3 +2331,73 @@ groups:
           summary: "Account {{ $labels.account_id }} has >=1 alert_preset firing"
           description: "One or more alert_preset signal(s) for account {{ $labels.account_id }} are currently firing: api_down, spend_eur_20, deploy_failed, cert_expiring_14d, or queue_backlog_growing. All 5 alert-preset catalog signals contribute to this correlation; the queue signal carries an `account_id` label (admitted via accountLabelSet, overflow=`__other__`) as of PR-D. The number after `count` is the breadth of the firing preset set; cross-reference per-preset alerts above for the actual signal."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertPresetAnyFiringAccount.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # Managed PostgreSQL preview health. These signals are deliberately
+  # account/provider agnostic: the daemon metrics never carry customer IDs,
+  # provider resource IDs, or error text. The provisioning gate is expected
+  # to be 0 outside an explicitly approved staging canary, so it is exposed
+  # for dashboards rather than turned into a noisy always-on alert.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_managed_postgres
+    interval: 30s
+    rules:
+      - record: faas_managed_postgres_reconcile_failures:rate10m
+        expr: sum(rate(apid_managed_postgres_reconcile_total{outcome="failed"}[10m]))
+
+      - record: faas_managed_postgres_usage_deferred:rate15m
+        expr: sum(rate(apid_managed_postgres_usage_collection_sweeps_total{outcome=~"degraded|error"}[15m]))
+
+      - alert: FaasManagedPostgresReconcileFailures
+        expr: faas_managed_postgres_reconcile_failures:rate10m > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL reconciliation is failing"
+          description: "The managed PostgreSQL lifecycle or binding reconciler has recorded a failed attempt during the last 10m. Inspect the apid managed-postgres logs and the resource state; provider errors are normalized and never include credentials or connection URLs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      - alert: FaasManagedPostgresReconcileDeferred
+        expr: sum(rate(apid_managed_postgres_reconcile_total{outcome="deferred"}[10m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL reconciliation is deferred"
+          description: "Managed PostgreSQL lifecycle or binding work has remained deferred for 15m. This commonly means the provider is unavailable, the rollout gate is closed, or a parent resource is not ready; verify the gate before retrying provider work."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      - alert: FaasManagedPostgresUsageCollectionStale
+        expr: |
+          apid_managed_postgres_usage_policy_enabled == 1
+          and
+          (
+            apid_managed_postgres_usage_last_success_timestamp_seconds == 0
+            or time() - apid_managed_postgres_usage_last_success_timestamp_seconds > 900
+          )
+        for: 10m
+        labels:
+          severity: page
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL usage collection is stale"
+          description: "The usage ledger is enabled but apid has not completed a full provider usage sweep for more than 15m. New database reservations fail closed while observations are stale; check the usage collector, provider API, and apid database connectivity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      - alert: FaasManagedPostgresUsageCollectionDeferred
+        expr: faas_managed_postgres_usage_deferred:rate15m > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL usage collection is partially deferred"
+          description: "At least one managed PostgreSQL usage sweep was degraded or failed during the last 15m. The collector preserves complete-window accounting and leaves incomplete resources for retry; inspect deferred counts before changing COGS ceilings."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"

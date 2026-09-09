@@ -253,6 +253,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/rollback":               "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":       "RecoverRollout",
 	"POST /v1/apps/{slug}/deployments":            "Deploy",
+	"GET /v1/apps/{slug}/deployments":             "ListAppDeployments",
 	"GET /v1/apps/{slug}/deployments/latest":      "GetLatestAppDeployment",
 	"POST /v1/apps/{slug}/deployments/dev-source": "DeployDevSource",
 	"POST /v1/apps/{slug}/deployments/source-ref": "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
@@ -438,6 +439,14 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/webhooks/{id}/rotate-secret":          "RotateAppWebhookSecret",
 	"GET /v1/apps/{slug}/webhooks/{id}/deliveries":              "ListAppWebhookDeliveries",
 	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry": "RetryAppWebhookDelivery",
+
+	// Issue #1398 O4 — customer runtime log destinations. Hyphenated path
+	// segments need explicit noun-oriented SDK names.
+	"GET /v1/apps/{slug}/log-drains":         "ListAppLogDrains",
+	"POST /v1/apps/{slug}/log-drains":        "CreateAppLogDrain",
+	"GET /v1/apps/{slug}/log-drains/{id}":    "GetAppLogDrain",
+	"PATCH /v1/apps/{slug}/log-drains/{id}":  "UpdateAppLogDrain",
+	"DELETE /v1/apps/{slug}/log-drains/{id}": "DeleteAppLogDrain",
 
 	// ADR-098 §9.A — connection-aware data upstreams (PR-B hand-off).
 	// The auto-derivation would produce Swagger-style names

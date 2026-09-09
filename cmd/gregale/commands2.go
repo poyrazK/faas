@@ -144,6 +144,11 @@ const (
 	// `gregale deployments` to list; pagination flags live on the handler.
 	dispatchDeployments = "deployments"
 
+	// Managed PostgreSQL is a customer-facing resource backed by the
+	// provider-neutral API. Keep the noun in one place so the dispatcher,
+	// completion metadata, and tests cannot drift.
+	dispatchPostgres = "postgres"
+
 	// Singular deployment-get. Lifted so the dispatch literal stays
 	// constant-named (goconst); the constant does NOT route through
 	// appSlugFallback — the dispatch table places it before the
@@ -196,7 +201,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -259,6 +264,9 @@ func cmdApp(args []string) int {
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL unless --public-auth is also set")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
+	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
+	healthPathWakes := fs.Bool("health-path-wakes", false, "allow health probes to wake the app (Pro/Scale only)")
+	noHealthPathWakes := fs.Bool("no-health-path-wakes", false, "answer health probes at the edge without waking")
 	// ADR-124: per-app wire-protocol selector. Single string
 	// flag (closed set {http1, http2, grpc}) — empty value
 	// means "use the per-plan default" (http1 universal). The
@@ -453,6 +461,21 @@ func cmdApp(args []string) int {
 		}
 		req.CrawlerPolicy = &v
 	}
+	if *healthPathWakes && *noHealthPathWakes {
+		return printErr("Invalid flags", fmt.Errorf("--health-path-wakes and --no-health-path-wakes are mutually exclusive"))
+	}
+	if explicit["health-path"] {
+		v := *healthPath
+		req.HealthPath = &v
+	}
+	if explicit["health-path-wakes"] {
+		v := true
+		req.HealthPathWakes = &v
+	}
+	if explicit["no-health-path-wakes"] {
+		v := false
+		req.HealthPathWakes = &v
+	}
 	// ADR-124: per-app wire-protocol selector. Validate the
 	// closed set locally so a typo surfaces as a usage error
 	// before the round-trip (the apid side returns the same
@@ -517,7 +540,7 @@ func cmdApp(args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil {
+		req.OverflowNode == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -621,6 +644,8 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %s\n", "require authn:", "disabled")
 		}
 		fmt.Printf("%-30s %s\n", "crawler policy:", a.Manifest.EffectiveCrawlerPolicy())
+		fmt.Printf("%-30s %s\n", "health path:", a.Manifest.HealthPath)
+		fmt.Printf("%-30s %t\n", "health path wakes:", a.Manifest.HealthPathWakes)
 		// Tier A10 / ADR-088: surface the resolved overflow_node
 		// preference (the UUID apid returns) so the customer can
 		// verify their PATCH round-tripped. nil on the wire means

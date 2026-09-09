@@ -65,6 +65,13 @@ only and do not pause a rollout. A read failure is fail-closed (the canary is
 held until the alert state can be read again). The fleet counter
 `canary_progression_health_gate_blocked_total` records these holds.
 
+GitHub-connected deployments project the rollout state as well as the build
+state. A canary remains `in_progress` in the GitHub Check Run and Deployment
+timeline until `rollout_state=complete`; an aborted rollout is reported as a
+failed check with the abort reason and stage links. Rollout-step changes enqueue
+the same durable check outbox used by build transitions, so a stopped `githubd`
+process catches up after restart.
+
 ## Production rollout
 
 Promote the exact tested secret/configuration through the normal deployment
@@ -76,10 +83,15 @@ slice. Watch these signals for at least one full rollout window:
 - `safedeploy_orchestrator_audit_emit_failed_total`
 - `canary_progression_health_gate_blocked_total`
 - `deployment_audit_emitted_total{outcome="failed"}`
+- `safedeploy_orchestrator_auto_aborted_total`
+- `safedeploy_orchestrator_auto_abort_failed_total`
 
 The default stage and orchestrator cadence is 30 seconds. The default stuck
-threshold is 30 minutes; tune `FAAS_SAFEDEPLOY_STUCK_AFTER` only after staging
-has established the expected rollout duration.
+threshold is 30 minutes. Once a rollout exceeds that threshold, meterd makes
+one idempotent APID `abort` request so traffic is redistributed to the last
+known-good revision and the deployment audit records the automatic action.
+Tune `FAAS_SAFEDEPLOY_STUCK_AFTER` only after staging has established the
+expected rollout duration.
 
 ## Kill switch and recovery
 

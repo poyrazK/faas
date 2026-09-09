@@ -36,6 +36,27 @@ func (c *Client) ListDeploymentsAll(ctx context.Context) ([]DeploymentResponse, 
 	}
 }
 
+// ListAppDeploymentsAll walks the cursor on GET /v1/apps/{slug}/deployments
+// until the server returns an empty cursor.
+func (c *Client) ListAppDeploymentsAll(ctx context.Context, slug string) ([]DeploymentResponse, error) {
+	var out []DeploymentResponse
+	cursor := ""
+	for {
+		page, err := c.ListAppDeployments(ctx, slug, cursor, 200)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, page.Items...)
+		if page.NextBefore == "" {
+			return out, nil
+		}
+		cursor = page.NextBefore
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+	}
+}
+
 // GetBuildsAll walks the next_before cursor on GET /v1/builds
 // until the server returns an empty cursor, returning every
 // build the account owns in started_at DESC NULLS LAST order

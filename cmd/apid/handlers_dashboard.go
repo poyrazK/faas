@@ -64,6 +64,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/logs  → live + archived app logs
 //	GET /dashboard/apps/{slug}/env|secrets → environment + secrets editor
 //	GET /dashboard/apps/{slug}/errors → grouped errors + drill-down
+//	GET /dashboard/apps/{slug}/debug → production debugger
 //	GET /dashboard/apps/{slug}/domains → custom domains + TLS/doctor status
 //	GET /dashboard/apps/{slug}/instances → instance fleet + lifecycle actions
 //	GET /dashboard/apps/{slug}/edge-rules → edge rules + CORS presets
@@ -73,6 +74,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/usage             → usage meter
 //	GET /dashboard/billing           → plan + usage + last invoice + portal link (issue #253)
 //	GET /dashboard/account           → account + keys + GitHub connect
+//	GET /dashboard/postgres          → managed PostgreSQL database/binding status
 //
 // The sessionAuth middleware (server.go) runs first; the account is
 // already on context when these fire.
@@ -153,6 +155,12 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 				s.renderAppErrors(w, r, log, acct, eslug)
 				return
 			}
+			// ADR-127 dashboard debugger — regression feed, request
+			// telemetry table, and bounded span-evidence drill-down.
+			if dslug, ok := parseAppDebugPath(slug); ok {
+				s.renderAppDebug(w, r, log, acct, dslug)
+				return
+			}
 			// G2 / issue #1397 — combined environment and write-only
 			// secrets editor. Both /env and /secrets are aliases for
 			// the same scope-aware page.
@@ -210,6 +218,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPricing(w, r, log, acct)
 		case path == "/dashboard/invoices":
 			s.renderInvoices(w, r, log, acct)
+		case path == "/dashboard/postgres":
+			s.renderManagedPostgres(w, r, log, acct)
 		case path == "/dashboard/audit-events":
 			// Wave 0 PR-C / ADR-047: the operator/customer surface
 			// for stateless-advisory audit rows. Mirrors

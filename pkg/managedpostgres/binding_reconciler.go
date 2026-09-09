@@ -11,6 +11,7 @@ type BindingReconcileObservation struct {
 	BindingID string
 	Operation BindingState
 	Outcome   ReconcileOutcome
+	Duration  time.Duration
 }
 
 type BindingReconcileSummary struct {
@@ -89,6 +90,7 @@ func (r *BindingReconciler) Sweep(ctx context.Context) (BindingReconcileSummary,
 			return summary, err
 		}
 		operation := BindingStateProvisioning
+		started := r.now()
 		var result Binding
 		if binding.State == BindingStateDeleting {
 			operation = BindingStateDeleting
@@ -109,7 +111,7 @@ func (r *BindingReconciler) Sweep(ctx context.Context) (BindingReconcileSummary,
 			sweepErrors = append(sweepErrors, err)
 		}
 		if r.observe != nil {
-			r.observe(BindingReconcileObservation{BindingID: binding.ID, Operation: operation, Outcome: outcome})
+			r.observe(BindingReconcileObservation{BindingID: binding.ID, Operation: operation, Outcome: outcome, Duration: r.now().Sub(started)})
 		}
 	}
 	return summary, errors.Join(sweepErrors...)

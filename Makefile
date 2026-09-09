@@ -254,6 +254,14 @@ spec-cited-tests-check: ## Require changed core-path tests to cite a spec sectio
 spec-cited-tests-check-test: ## Exercise the spec-cited-tests CI gate with synthetic pull request events
 	bash scripts/ci/check_spec_cited_tests_test.sh
 
+.PHONY: migration-version-hygiene-check
+migration-version-hygiene-check: ## Reject hand-typed migration versions and versions already claimed by an open PR
+	bash scripts/ci/check_migration_version_hygiene.sh
+
+.PHONY: migration-version-hygiene-check-test
+migration-version-hygiene-check-test: ## Exercise the migration-version gate with synthetic pull request events
+	bash scripts/ci/check_migration_version_hygiene_test.sh
+
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live in the `floors` dict inside the python heredoc below
 # (no separate Make variable — keeping the table adjacent to the verifier
@@ -481,9 +489,9 @@ metal-lima-m5: ## Run the M5 §14 deploy-to-park cold-boot acceptance on Lima (s
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo env RUN_TARGET=./cmd/e2e/ ./deploy/lima/run-metal.sh -run 'TestDeployWakeMetal/deploy-then-parked'
 
 .PHONY: metal-lima-api-hosting
-metal-lima-api-hosting: ## Run the API-hosting reference-node receipt + public smoke + park/wake acceptance
+metal-lima-api-hosting: ## Run API-hosting receipt, runtime-matrix, public-smoke, and park/wake acceptance (set FAAS_E2E_API_HOSTING_CATALOG=full for all catalog fixtures)
 	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false
-	limactl shell --workdir "$(CURDIR)" faas-metal sudo env RUN_TARGET=./cmd/e2e/ ./deploy/lima/run-metal.sh -run '^Test(BuildMetal|SourceDeployWakeMetal)$$'
+	limactl shell --workdir "$(CURDIR)" faas-metal sudo env RUN_TARGET=./cmd/e2e/ ./deploy/lima/run-metal.sh -run '^Test(BuildMetal|CatalogRuntimeParityMetal|SourceDeployWakeMetal)$$'
 
 .PHONY: metal-soak
 metal-soak: ## Issue #587 PR-A.8: 30-min mixed WS/HTTP/Upgrade drain soak on Lima (1-node). Verifies gateway_drain_wait_seconds histogram + gateway_inflight_requests gauge end-to-end. Pre-req: make metal-lima green.

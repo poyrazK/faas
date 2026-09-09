@@ -988,6 +988,11 @@ type Limits struct {
 	// N-apps-times-cap-per-app bypass. Both enforced in
 	// pkg/state.CreateAppWebhookIfUnderQuota.
 	WebhookPerAccount int
+	// LogDrainPerApp caps the number of customer runtime log destinations
+	// on one app. It follows the same plan gate as outbound webhooks.
+	LogDrainPerApp int
+	// LogDrainPerAccount caps destinations across all apps in an account.
+	LogDrainPerAccount int
 
 	// TriggersAllowed (issue #757 / ADR-0NN) gates the unified Trigger
 	// primitive (cron + kafka + nats + redis_streams + sqs_compat +
@@ -1769,8 +1774,10 @@ var planLimits = map[Plan]Limits{
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Free has no webhooks — the handler returns 402
 		// CodePlanWebhooksNotAllowed before the store is touched.
-		WebhookPerApp:     0,
-		WebhookPerAccount: 0,
+		WebhookPerApp:      0,
+		WebhookPerAccount:  0,
+		LogDrainPerApp:     0,
+		LogDrainPerAccount: 0,
 		// Trigger primitive (issue #757 / ADR-0NN): Free is the
 		// abuse-floor tier — TriggersAllowed=false so a POST on a
 		// Free account gets 402 CodePlanTriggersNotAllowed before the
@@ -2124,8 +2131,10 @@ var planLimits = map[Plan]Limits{
 		DataPlacementHintsPerApp: 3,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Hobby gets 3/app, 10/account — mirrors the alert-rule ratio.
-		WebhookPerApp:     3,
-		WebhookPerAccount: 10,
+		WebhookPerApp:      3,
+		WebhookPerAccount:  10,
+		LogDrainPerApp:     3,
+		LogDrainPerAccount: 10,
 		// Trigger primitive (issue #757 / ADR-0NN): Hobby is the
 		// entry paid tier — unlocks the in-platform queue kind and
 		// the sqs_compat kind (the two no-external-broker shapes).
@@ -2483,8 +2492,10 @@ var planLimits = map[Plan]Limits{
 		DataPlacementHintsPerApp: 10,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Pro gets 10/app, 30/account — mirrors the alert-rule ratio.
-		WebhookPerApp:     10,
-		WebhookPerAccount: 30,
+		WebhookPerApp:      10,
+		WebhookPerAccount:  30,
+		LogDrainPerApp:     10,
+		LogDrainPerAccount: 30,
 		// Trigger primitive (issue #757 / ADR-0NN): Pro is the first
 		// tier where the external-broker kinds unlock (Kafka, NATS,
 		// Redis-streams) — the egress-allowlist tier (ADR-031) is
@@ -2847,8 +2858,10 @@ var planLimits = map[Plan]Limits{
 		DataPlacementHintsPerApp: 50,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Scale gets 25/app, 100/account — mirrors the alert-rule ratio.
-		WebhookPerApp:     25,
-		WebhookPerAccount: 100,
+		WebhookPerApp:      25,
+		WebhookPerAccount:  100,
+		LogDrainPerApp:     25,
+		LogDrainPerAccount: 100,
 		// Trigger primitive (issue #757 / ADR-0NN): Scale is the upper
 		// tier — caps align with the SQL CHECK ceilings (5000 records
 		// / 5 min window / 25 attempts) so a Scale customer's
@@ -5041,6 +5054,13 @@ func (p Plan) RouteMetricsResponseAllowed() bool {
 	return l.RouteMetricsEnabled
 }
 
+// HealthPathWakesAllowed reports whether the plan may opt a health endpoint
+// into real probes. Health probes are edge-answered by default; only Pro and
+// Scale can pay for the opt-in wake behaviour.
+func (p Plan) HealthPathWakesAllowed() bool {
+	return p == PlanPro || p == PlanScale
+}
+
 // RouteMetricsPerAppCap is the per-app hard cap on the number of
 // distinct routes admitted into the routeLabelSet (ADR-093 D2). When
 // exceeded, all new routes collapse into the reserved __route_other__
@@ -5690,6 +5710,25 @@ func (p Plan) WebhookPerAccount() int {
 		return 0
 	}
 	return l.WebhookPerAccount
+}
+
+// LogDrainPerApp returns the per-app customer runtime log destination cap.
+func (p Plan) LogDrainPerApp() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogDrainPerApp
+}
+
+// LogDrainPerAccount returns the per-account customer runtime log
+// destination cap.
+func (p Plan) LogDrainPerAccount() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogDrainPerAccount
 }
 
 // TriggersAllowed (issue #757 / ADR-0NN) returns true if the plan

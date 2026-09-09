@@ -3458,9 +3458,9 @@ paths:
       operationId: getAppDebugRequestEvidence
       summary: Get request evidence and explanation (ADR-127).
       description: |
-        Returns bounded, redacted span evidence for one request and
-        links it to a matching active regression observation when one
-        exists. Database statements are sanitized fingerprints; raw
+        Returns a deterministic request/wake timeline plus bounded,
+        redacted span evidence for one request and links it to a matching
+        active regression observation when one exists. Database statements are sanitized fingerprints; raw
         attributes, status messages, request bodies, and headers are
         never returned. The explanation is deterministic and suitable
         as input to a future asynchronous synthesis layer. Plan-gated
@@ -3614,6 +3614,36 @@ paths:
   /v1/apps/{slug}/deployments:
     parameters:
       - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listAppDeployments
+      summary: List deployments for an app.
+      description: |
+        Paged backwards (newest first) for the app identified by `slug`.
+        `next_before` is an opaque RFC3339Nano cursor from the last row in
+        the page; pass it as `before` to fetch older deployments. Unknown or
+        cross-account app slugs return the same IDOR-safe 404 surface as the
+        other app-scoped endpoints.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Page size for this app (1–200; default 50).
+        - name: before
+          in: query
+          schema: { type: string, format: date-time }
+          description: RFC3339Nano cursor from a previous response's next_before.
+      responses:
+        '200':
+          description: A paginated list of deployments for the app.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentListResponse'
+                example: {"items":[],"next_before":null}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [deployments]
       operationId: createDeployment
@@ -9541,6 +9571,111 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # ─── Customer runtime log drains (issue #1398 O4) ─────────────────────────
+  /v1/apps/{slug}/log-drains:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: listAppLogDrains
+      summary: List runtime log destinations for this app.
+      responses:
+        '200':
+          description: The configured log destinations. Authentication headers are always masked.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AppLogDrainResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [observability]
+      operationId: createAppLogDrain
+      summary: Export runtime logs to an external HTTP or OTLP endpoint.
+      description: |
+        The platform tails the existing per-instance runtime log ring and
+        forwards each line through a bounded queue. `http_json` sends a
+        provider-neutral JSON record; `otlp` sends an OTLP/HTTP JSON logs
+        envelope suitable for a collector or vendor OTLP endpoint. The URL
+        is SSRF-checked, and auth_header is sealed at rest and never echoed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppLogDrainRequest' }
+            example:
+              kind: otlp
+              target_url: "https://otel-collector.example.com/v1/logs"
+              auth_header: "Authorization: Bearer <token>"
+              enabled: true
+      responses:
+        '201':
+          description: Log drain created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppLogDrainResponse' }
+        '400': { $ref: '#/components/responses/AppLogDrainInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '403': { $ref: '#/components/responses/PlanLogDrainQuota' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AppLogDrainInvalid' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/log-drains/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [observability]
+      operationId: getAppLogDrain
+      summary: Fetch one runtime log destination.
+      responses:
+        '200':
+          description: The log destination. Authentication headers are masked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppLogDrainResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [observability]
+      operationId: updateAppLogDrain
+      summary: Update a runtime log destination.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAppLogDrainRequest' }
+            example: { enabled: false }
+      responses:
+        '200':
+          description: The updated log destination.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppLogDrainResponse' }
+        '400': { $ref: '#/components/responses/AppLogDrainInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AppLogDrainInvalid' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [observability]
+      operationId: deleteAppLogDrain
+      summary: Delete a runtime log destination.
+      responses:
+        '204': { description: No body. The log drain was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Event-driven surface (Move 2) ─────────────────────────────────────────
   # Customer-facing surface for the Move 1 invocations backend. The five
   # shapes — async_invoke, queue_send, queue_receive, queue_ack, delayed_task
@@ -14459,6 +14594,14 @@ components:
           enum: [wake, cached, block]
           default: wake
           description: "Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the wake."
+        health_path:
+          type: string
+          default: /healthz
+          description: "Monitor-facing health path. Empty/omitted uses /healthz."
+        health_path_wakes:
+          type: boolean
+          default: false
+          description: "Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer."
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -14635,6 +14778,12 @@ components:
           type: [string, "null"]
           enum: [wake, cached, block, null]
           description: "Policy for known monitor/crawler requests. Omit for no change."
+        health_path:
+          type: [string, "null"]
+          description: "Monitor-facing health path. Omit for no change; empty resets to /healthz."
+        health_path_wakes:
+          type: [boolean, "null"]
+          description: "Allow health probes to wake the app. Omit for no change; Pro/Scale only when true."
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -15079,6 +15228,14 @@ components:
           enum: [wake, cached, block]
           default: wake
           description: "Effective policy for known monitor/crawler requests."
+        health_path:
+          type: string
+          default: /healthz
+          description: "Monitor-facing health path."
+        health_path_wakes:
+          type: boolean
+          default: false
+          description: "Whether health probes may wake this app."
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."
@@ -23466,6 +23623,40 @@ components:
         created_at: "2026-08-06T10:00:00Z"
         updated_at: "2026-08-06T10:00:00Z"
 
+    AppLogDrainResponse:
+      type: object
+      description: Runtime log destination with sealed credentials represented by a mask.
+      required: [id, app_id, account_id, kind, target_url, auth_header_masked, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        account_id: { type: string, format: uuid }
+        kind: { type: string, enum: [http_json, otlp] }
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        auth_header_masked: { type: string, enum: ["", "***"] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateAppLogDrainRequest:
+      type: object
+      description: Create a provider-neutral runtime log destination.
+      required: [kind, target_url]
+      properties:
+        kind: { type: string, enum: [http_json, otlp] }
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        auth_header: { type: string, maxLength: 4096, description: "One Name: value pair; sealed at rest and never returned." }
+        enabled: { type: boolean, default: true }
+
+    UpdateAppLogDrainRequest:
+      type: object
+      description: Partially update a runtime log destination; omitted fields remain unchanged.
+      properties:
+        kind: { type: string, enum: [http_json, otlp] }
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        auth_header: { type: string, maxLength: 4096, description: "One Name: value pair; an empty value clears credentials." }
+        enabled: { type: boolean }
+
     CreateAppWebhookRequest:
       type: object
       description: |
@@ -23622,6 +23813,8 @@ components:
         cold_boot: { type: boolean }
         trace_id: { type: [string, 'null'], description: "W3C trace-id hex (32 chars), null when unset." }
         received_at: { type: string, format: date-time }
+        wake_id: { type: string, description: "Opaque wake identifier when this request admitted a wake; omitted for warm requests." }
+        instance_id: { type: string, description: "Opaque instance identifier that served the request; omitted when no target was reached." }
 
     DebugTelemetrySpan:
       type: object
@@ -23649,16 +23842,34 @@ components:
             - $ref: '#/components/schemas/DebugTelemetrySpan'
             - type: "null"
 
+    DebugTimelineEvent:
+      type: object
+      description: "Deterministic, bounded request and wake lifecycle marker. Raw event payloads are not returned."
+      required: [at, phase, kind, summary]
+      properties:
+        at: { type: string, format: date-time }
+        phase: { type: string, enum: [request, wake, error, regression] }
+        kind: { type: string, maxLength: 128 }
+        actor: { type: string, maxLength: 128 }
+        summary: { type: string, maxLength: 256 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        approximate: { type: boolean, description: "True when the marker is derived from a collapsed minute bucket rather than an exact request timestamp." }
+
     DebugRequestEvidenceResponse:
       type: object
-      description: "Request metadata, bounded span evidence, matching regression, and explanation."
-      required: [request, spans, spans_truncated, explanation, generated_at]
+      description: "Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."
+      required: [request, timeline, spans, spans_truncated, explanation, generated_at]
       properties:
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
         regression:
           oneOf:
             - $ref: '#/components/schemas/DebugRegressionItem'
             - type: "null"
+        timeline:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/DebugTimelineEvent' }
         spans:
           type: array
           maxItems: 100
@@ -24159,6 +24370,24 @@ components:
 
     PlanWebhookQuota:
       description: 'code: plan_webhook_quota — per-app or per-account webhook limit reached.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    AppLogDrainInvalid:
+      description: 'code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanLogDrainsNotAllowed:
+      description: 'code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanLogDrainQuota:
+      description: 'code: plan_log_drain_quota — per-app or per-account runtime log destination limit reached.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

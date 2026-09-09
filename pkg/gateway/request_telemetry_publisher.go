@@ -320,7 +320,9 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 //
 //   - Key tuple: (AccountID, AppID, DeploymentID, Route, Method,
 //     Status, normalized dimensions, MinuteBucket(received_at),
-//     LatencyBucket(LatencyMS)). Minute bucket = received_at
+//     LatencyBucket(LatencyMS), WakeID). Minute bucket = received_at. The
+//     instance identifier is carried as representative metadata and is
+//     cleared when a collapsed bucket spans multiple instances.
 //     truncated to the minute so all rows within a 60-second window
 //     fold together. LatencyBucket uses fine-grained 10ms buckets for
 //     normal request latencies and progressively wider buckets for very
@@ -379,6 +381,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			UAFamily:      row.UAFamily,
 			ReferrerHost:  row.ReferrerHost,
 			Country:       row.Country,
+			WakeID:        row.WakeID,
 			LatencyBucket: row.LatencyMS,
 			bucket:        bucket,
 		}.String()
@@ -399,6 +402,11 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 		if agg.TraceID == "" && row.TraceID != "" {
 			agg.TraceID = row.TraceID
 		}
+		// Warm traffic can span multiple instances while retaining the same
+		// bounded bucket. Keep an instance only when it is unambiguous.
+		if agg.InstanceID != row.InstanceID {
+			agg.InstanceID = ""
+		}
 	}
 	return out
 }
@@ -417,6 +425,7 @@ type bucketKey struct {
 	UAFamily      string
 	ReferrerHost  string
 	Country       string
+	WakeID        string
 	LatencyBucket int
 	bucket        time.Time
 }
@@ -427,10 +436,10 @@ func (k bucketKey) String() string {
 	// encoding if the profiler flags it. (Profile showed < 1%
 	// of publisher CPU before the collapse; even at 2x with the
 	// canonical string we're well under 2%.)
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%d|%d",
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%d|%d",
 		k.AccountID, k.AppID, k.DeploymentID,
 		k.Route, k.Method, k.Status, k.UAFamily, k.ReferrerHost,
-		k.Country, k.LatencyBucket, k.bucket.Unix())
+		k.Country, k.WakeID, k.LatencyBucket, k.bucket.Unix())
 }
 
 // requestTelemetryLatencyBucketUpperBound quantizes a request latency to a

@@ -5886,6 +5886,45 @@ func (s *PgStore) ListDeploymentsForApp(ctx context.Context, appID string, limit
 	return scanDeployments(rows)
 }
 
+// ListDeploymentsForAppBefore returns one cursor page of deployments for an
+// app, newest first. A non-zero before excludes rows at or newer than the
+// cursor; this mirrors ListDeploymentsForAccount and keeps the app-scoped
+// history endpoint on the (app_id, created_at) index. limit <= 0 returns the
+// full remaining tail for parity with ListDeploymentsForApp.
+func (s *PgStore) ListDeploymentsForAppBefore(ctx context.Context, appID string, before time.Time, limit int) ([]Deployment, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if before.IsZero() {
+		if limit > 0 {
+			rows, err = s.pool.Query(ctx,
+				`select `+deploymentSelectColumnsWithRootfs+`
+				 from deployments where app_id = $1 order by created_at desc limit $2`,
+				appID, limit)
+		} else {
+			rows, err = s.pool.Query(ctx,
+				`select `+deploymentSelectColumnsWithRootfs+`
+				 from deployments where app_id = $1 order by created_at desc`, appID)
+		}
+	} else if limit > 0 {
+		rows, err = s.pool.Query(ctx,
+			`select `+deploymentSelectColumnsWithRootfs+`
+			 from deployments where app_id = $1 and created_at < $2
+			 order by created_at desc limit $3`, appID, before, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select `+deploymentSelectColumnsWithRootfs+`
+			 from deployments where app_id = $1 and created_at < $2
+			 order by created_at desc`, appID, before)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDeployments(rows)
+}
+
 // ListDeploymentsForAccount returns every deployment whose app belongs
 // to the account, ordered DESC by created_at. Cursor pagination: pass
 // the previous response's last created_at as `before` to page

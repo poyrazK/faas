@@ -297,6 +297,18 @@ type AppErrorRequest struct {
 	Redactions    []string
 }
 
+type AppLogDrain struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Kind             string
+	TargetUrl        string
+	AuthHeaderSealed []byte
+	Enabled          bool
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type AppOpenapiDoc struct {
 	AppID          pgtype.UUID
 	AccountID      pgtype.UUID
@@ -1246,6 +1258,12 @@ type ObjectStorageMultipartUpload struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type ObjectStorageRequestMetric struct {
+	BucketID     pgtype.UUID
+	PeriodStart  pgtype.Timestamptz
+	RequestCount int64
+}
+
 type ObjectStorageS3Credential struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
@@ -1433,6 +1451,8 @@ type RequestTelemetry struct {
 	UaFamily     string
 	ReferrerHost string
 	Country      string
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 type RequestTelemetry202608 struct {

@@ -162,6 +162,10 @@ type AppManifest struct {
 	// CrawlerPolicy controls known monitor/crawler cold requests. Empty is
 	// equivalent to wake for backwards compatibility.
 	CrawlerPolicy string `json:"crawler_policy,omitempty"`
+	// HealthPath is the monitor-facing health endpoint. Empty uses /healthz.
+	HealthPath string `json:"health_path,omitempty"`
+	// HealthPathWakes opts Pro/Scale apps into waking for health probes.
+	HealthPathWakes bool `json:"health_path_wakes,omitempty"`
 }
 
 const (
@@ -595,5 +599,6 @@ func SidecarBuildManifest() AppManifest {
 		Entrypoint: []string{"/bin/sidecar-placeholder"},
 		Port:       DefaultAppPort,
 		Healthz:    "/healthz",
+		HealthPath: "/healthz",
 	}
 }

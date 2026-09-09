@@ -1233,6 +1233,25 @@ CREATE TABLE public.app_webhooks (
 
 
 --
+-- Name: app_log_drains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_log_drains (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    target_url text NOT NULL,
+    auth_header_sealed bytea,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_log_drains_kind_chk CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text]))),
+    CONSTRAINT app_log_drains_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
+);
+
+
+--
 -- Name: apps; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2883,6 +2902,8 @@ CREATE TABLE public.request_telemetry (
     ua_family text DEFAULT '__unknown__'::text NOT NULL,
     referrer_host text DEFAULT '__none__'::text NOT NULL,
     country text DEFAULT '__unknown__'::text NOT NULL,
+    wake_id text,
+    instance_id text,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
@@ -4968,6 +4989,20 @@ CREATE INDEX app_webhook_deliveries_pending_idx ON public.app_webhook_deliveries
 --
 
 CREATE INDEX app_webhooks_account_idx ON public.app_webhooks USING btree (account_id);
+
+
+--
+-- Name: app_log_drains_enabled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_log_drains_enabled_idx ON public.app_log_drains USING btree (enabled, app_id);
+
+
+--
+-- Name: app_log_drains_app_target_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_log_drains_app_target_uniq ON public.app_log_drains USING btree (app_id, target_url);
 
 
 --
@@ -7128,6 +7163,22 @@ ALTER TABLE ONLY public.app_webhooks
 
 
 --
+-- Name: app_log_drains app_log_drains_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_log_drains
+    ADD CONSTRAINT app_log_drains_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_log_drains app_log_drains_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_log_drains
+    ADD CONSTRAINT app_log_drains_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: apps apps_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8295,6 +8346,14 @@ CREATE TABLE IF NOT EXISTS object_storage_authorizations (
     count bigint NOT NULL CHECK (count > 0),
     PRIMARY KEY (account_id, period_start)
 );
+CREATE TABLE IF NOT EXISTS object_storage_request_metrics (
+    bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
+    period_start timestamptz NOT NULL CHECK (period_start = date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),
+    request_count bigint NOT NULL DEFAULT 0 CHECK (request_count BETWEEN 0 AND 1152921504606846976),
+    PRIMARY KEY (bucket_id, period_start)
+);
+CREATE INDEX IF NOT EXISTS object_storage_request_metrics_period_idx
+    ON object_storage_request_metrics (period_start, bucket_id);
 CREATE TABLE IF NOT EXISTS object_storage_inventory_samples (
     token text PRIMARY KEY CHECK (token <> ''),
     bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,

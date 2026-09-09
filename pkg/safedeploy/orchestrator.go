@@ -20,10 +20,10 @@
 //     advances the ladder; orchestrator stamps the rollout
 //     state machine).
 //     - rollout_state='rolling_out' AND canary_step < total AND
-//     the row's been stuck > StuckAfterDuration → log warn,
-//     do NOT auto-recover (the operator CLI `gregale rollouts
-//     recover <slug>` is the manual escape hatch — see
-//     Commit 6).
+//     the row's been stuck > StuckAfterDuration → log warn and,
+//     when APID recovery is wired, abort through the atomic recovery
+//     endpoint. Without that optional client the operator CLI
+//     `gregale rollouts recover <slug>` remains the escape hatch.
 //  3. Each transition writes one deployment_audit row via
 //     Store.AppendDeploymentAudit with the orchestrator's actor
 //     sentinel. Audit emit is best-effort: a Postgres hiccup on
@@ -32,12 +32,9 @@
 //     authoritative — a missed audit row is recoverable by the
 //     operator reading the rollout_state column directly.
 //
-// The orchestrator never calls apid directly. The canary_progression
-// tick (pkg/canary, Commit 3) is the API caller for ladder
-// advances; this orchestrator only stamps the state machine and
-// the audit trail. CLAUDE.md ownership rules are preserved: apid
-// owns deployments.* and the orchestrator's only writes are via
-// the explicit Store methods.
+// Canary progression still owns ladder advances. Automatic stuck recovery
+// calls APID's atomic recovery endpoint; APID remains the sole owner of
+// traffic redistribution and the deployment audit transaction.
 package safedeploy
 
 import (
@@ -57,10 +54,11 @@ import (
 // rolling_out whose canary_step_started_at is older than this
 // window is considered stuck; the orchestrator logs a warning
 // per stuck row per tick (rate-limited via Stats so the log
-// doesn't flood) and leaves the auto-recovery to the manual
-// CLI. cmd/meterd calls SetStuckAfterDuration at boot to apply
-// the FAAS_SAFEDEPLOY_STUCK_AFTER env override — production
-// tuning never requires a code change. The var/duplication
+// doesn't flood) and asks APID to recover it when the optional
+// recovery wiring is present; otherwise the manual CLI remains
+// the escape hatch. cmd/meterd calls SetStuckAfterDuration at
+// boot to apply the FAAS_SAFEDEPLOY_STUCK_AFTER env override —
+// production tuning never requires a code change. The var/duplication
 // with pkg/state.RecoverRolloutStuckAfter is intentional —
 // pkg/safedeploy cannot import pkg/state, so the two stay in
 // lockstep via test-pinned equality (orchestrator_test.go).
@@ -102,11 +100,13 @@ const (
 
 // Orchestrator wires the dependencies Once(ctx) needs.
 type Orchestrator struct {
-	Store   Store
-	Log     *slog.Logger
-	Now     func() time.Time
-	Actor   string // service-account sentinel stamped into deployment_audit
-	Account string // service-account account_id stamped into deployment_audit
+	Store    Store
+	Log      *slog.Logger
+	Now      func() time.Time
+	Actor    string // service-account sentinel stamped into deployment_audit
+	Account  string // service-account account_id stamped into deployment_audit
+	Targets  RolloutTargetResolver
+	Recovery rolloutRecoveryClient
 	// Ops (SAFE-RELEASES-OBS PR-A) is the daemon's wire.OpsMetrics
 	// handle. Nil-allowed (the test seam builds an Orchestrator
 	// without a Prometheus registry); the accessor pattern in
@@ -155,6 +155,8 @@ type Stats struct {
 	// Prometheus collector on the orchestrator struct.
 	StuckCheckMissingTimestamp int
 	AuditEmitFailed            int // per-row audit emit errors (warn-logged, never propagated)
+	AutoAborted                int // stuck rollouts recovered through APID
+	AutoAbortFailed            int // stuck rollouts whose automatic recovery failed
 }
 
 // ErrOrchestratorNilStore is returned when the orchestrator is
@@ -205,12 +207,10 @@ func (o *Orchestrator) Once(ctx context.Context) (Stats, int, error) {
 // Prometheus registry) doesn't have to special-case the wiring.
 //
 // Each accessor returns a prometheus.Counter (LogsDropped /
-// DeploymentAuditGCRowsDeleted precedent); IncOps calls .Inc()
-// on every counter. The Stats values are not branched on here —
-// the journal line at the meterd call site carries the per-tick
-// numbers for log-driven diagnosis, and PR-B's
-// safedeploy_orchestrator_*_total rate() queries roll the
-// Prometheus counter into per-second rates.
+// DeploymentAuditGCRowsDeleted precedent). Existing orchestrator
+// counters retain their historical per-tick semantics; automatic
+// recovery counters use the per-row Stats values so one tick can
+// account for multiple recovery attempts.
 func (o *Orchestrator) IncOps(ops *wire.OpsMetrics, stats Stats, inFlight int) {
 	if ops == nil {
 		return
@@ -232,6 +232,12 @@ func (o *Orchestrator) IncOps(ops *wire.OpsMetrics, stats Stats, inFlight int) {
 	}
 	if c := ops.SafedeployOrchestratorStuckCheckMissingTimestampTotal(); c != nil {
 		c.Inc()
+	}
+	if c := ops.SafedeployOrchestratorAutoAbortedTotal(); c != nil {
+		c.Add(float64(stats.AutoAborted))
+	}
+	if c := ops.SafedeployOrchestratorAutoAbortFailedTotal(); c != nil {
+		c.Add(float64(stats.AutoAbortFailed))
 	}
 	if g := ops.SafedeployInFlightRollouts(); g != nil {
 		g.Set(float64(inFlight))
@@ -270,8 +276,9 @@ func (o *Orchestrator) walkRow(ctx context.Context, d state.Deployment, now time
 		// Stuck detection: rolling_out with canary_step not at
 		// terminal AND canary_step_started_at older than
 		// StuckAfterDuration. Warn-log (rate-limited via
-		// Stats.StuckDetected) but do NOT auto-recover — the
-		// operator CLI is the manual escape hatch (Commit 6).
+		// Stats.StuckDetected) and attempt the optional APID
+		// recovery path; without it the operator CLI remains the
+		// manual escape hatch.
 		//
 		// SAFE-RELEASES code-review hardening (migration 00517):
 		// post-00517 CanaryStepStartedAt is NOT NULL DEFAULT NOW(),
@@ -289,6 +296,7 @@ func (o *Orchestrator) walkRow(ctx context.Context, d state.Deployment, now time
 					"canary_step", d.CanaryStep, "canary_total_steps", d.CanaryTotalSteps,
 					"elapsed", elapsed.String(), "stuck_after", StuckAfterDuration.String())
 				stats.StuckDetected++
+				o.autoAbort(ctx, d, elapsed, stats)
 				return
 			}
 		} else {
@@ -317,6 +325,44 @@ func (o *Orchestrator) walkRow(ctx context.Context, d state.Deployment, now time
 			"deployment_id", d.ID, "rollout_state", d.RolloutState)
 		return
 	}
+}
+
+// autoAbort is deliberately bounded to rows that have already crossed the
+// stuck threshold. A transient health read failure therefore pauses a canary
+// first, then aborts it only if the pause persists for the configured safety
+// window. APID's recovery transaction owns traffic redistribution and the
+// durable audit row; the idempotency key makes repeated meterd ticks safe.
+func (o *Orchestrator) autoAbort(ctx context.Context, d state.Deployment, elapsed time.Duration, stats *Stats) {
+	if o.Recovery == nil || o.Targets == nil {
+		o.Log.Warn("safedeploy: automatic stuck-rollout recovery unavailable; manual recovery remains required",
+			"deployment_id", d.ID, "app_id", d.AppID)
+		return
+	}
+	app, err := o.Targets.AppByID(ctx, d.AppID)
+	if err != nil || app.Slug == "" {
+		stats.AutoAbortFailed++
+		o.Log.Warn("safedeploy: resolve stuck rollout app for automatic abort",
+			"deployment_id", d.ID, "app_id", d.AppID, "err", err)
+		return
+	}
+	reason := fmt.Sprintf("automatic abort: rollout stuck at canary step %d/%d for %s (safety gate or progression worker did not recover)",
+		d.CanaryStep, d.CanaryTotalSteps, elapsed.Round(time.Second))
+	key := fmt.Sprintf("safedeploy/%s/stuck-abort", d.ID)
+	var recoverErr error
+	if keyed, ok := o.Recovery.(keyedSafeDeployClient); ok {
+		_, recoverErr = keyed.RecoverRolloutAndIdempotencyKey(ctx, app.Slug, "abort", reason, key)
+	} else {
+		_, recoverErr = o.Recovery.RecoverRollout(ctx, app.Slug, "abort", reason)
+	}
+	if recoverErr != nil {
+		stats.AutoAbortFailed++
+		o.Log.Warn("safedeploy: automatic stuck-rollout abort failed",
+			"deployment_id", d.ID, "app_slug", app.Slug, "err", recoverErr)
+		return
+	}
+	stats.AutoAborted++
+	o.Log.Warn("safedeploy: automatically aborted stuck rollout",
+		"deployment_id", d.ID, "app_slug", app.Slug, "reason", reason)
 }
 
 // start flips pending → rolling_out and stamps rollout_started_at.

@@ -1561,11 +1561,11 @@ delete from oidc_exchanged_tokens where id = $1;
 INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
-    ua_family, referrer_host, country
+    ua_family, referrer_host, country, wake_id, instance_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14
+    $12, $13, $14, $15, $16
 );
 
 -- name: ListRequestTelemetryByApp :many
@@ -1575,7 +1575,7 @@ INSERT INTO request_telemetry (
 -- timestamptz; handler-side date parsing is at cmd/apid/
 -- handlers_debug_telemetry.go (parseDebugTelemetryWindow).
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at
+       cold_boot, trace_id, received_at, wake_id, instance_id
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
@@ -1589,7 +1589,7 @@ LIMIT $4;
 -- predicate is the database-side tenant boundary; the handler has
 -- already resolved the slug through the caller's account.
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, spans_summary
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id
 FROM request_telemetry
 WHERE app_id = $1
   AND id = $2
@@ -2807,6 +2807,26 @@ SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_s
 -- name: ObjectUsageAuthorize :exec
 INSERT INTO object_storage_authorizations (account_id, period_start, count) VALUES ($1,$2,1)
 ON CONFLICT (account_id,period_start) DO UPDATE SET count = object_storage_authorizations.count + 1;
+
+-- name: ObjectStorageProviderRequestIncrement :exec
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, request_count)
+VALUES ($1, $2, 1)
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET request_count = object_storage_request_metrics.request_count + 1;
+
+-- name: ObjectStorageProviderRequestMetrics :many
+SELECT b.id, b.account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
+       sqlc.arg(period_start)::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count
+FROM object_buckets b
+LEFT JOIN object_storage_request_metrics m
+  ON m.bucket_id = b.id AND m.period_start = sqlc.arg(period_start)
+WHERE b.backend_id = $1 AND b.backend_fingerprint = $2
+ORDER BY b.physical_name, b.id;
+
+-- name: ObjectStorageProviderBuckets :many
+SELECT * FROM object_buckets
+WHERE backend_id = $1 AND backend_fingerprint = $2
+ORDER BY physical_name, id;
 
 -- name: ObjectUsageReports :many
 SELECT r.* FROM object_storage_usage_heads h JOIN object_storage_usage_reports r

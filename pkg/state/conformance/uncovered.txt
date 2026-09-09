@@ -27,6 +27,7 @@ AlertRuleByID
 AppByID
 AppBySlug
 AppBySlugIncludingDeleted
+AppLogDrainByID
 AppWebhookByID
 AppWebhookDeliveryByID
 AppendBuilderUsage
@@ -129,6 +130,8 @@ CreateAccountWithPersonalOrg
 CreateAlertRule
 CreateAlertRuleIfUnderQuota
 CreateApp
+CreateAppLogDrain
+CreateAppLogDrainIfUnderQuota
 CreateAppWebhook
 CreateAppWebhookIfUnderQuota
 CreateBuild
@@ -178,6 +181,7 @@ DeleteAppEnvInScope
 DeleteAppErrorRequestsByIDs
 DeleteAppErrorRequestsOlderThan
 DeleteAppErrorsByIDs
+DeleteAppLogDrain
 DeleteAppOpenAPIDoc
 DeleteAppPermanently
 DeleteAppRegistryCredential
@@ -350,6 +354,7 @@ ListAppEnvInScope
 ListAppErrorFingerprintsForPurge
 ListAppErrorGroups
 ListAppErrorRequests
+ListAppLogDrainsForApp
 ListAppRegistryCredentials
 ListAppSecrets
 ListAppSecretsForAccount
@@ -398,6 +403,7 @@ ListDueInvocations
 ListEdgeRulesForAccount
 ListEdgeRulesForApp
 ListEnabledAlertRules
+ListEnabledAppLogDrains
 ListEnabledCrons
 ListEnabledTriggers
 ListEvents
@@ -654,6 +660,7 @@ UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus
 UpdateAlertRule
 UpdateApp
+UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
 UpdateBuildStatus

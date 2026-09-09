@@ -109,11 +109,6 @@ type JailerVMM struct {
 	// wake.readiness_200 (the first 2xx probe). nil opts out
 	// (pre-PR-C test fixtures).
 	events *events.Platform
-	// readinessStartedAt is the waitReady loop's start timestamp;
-	// captured before the probe loop so the readiness_200 payload
-	// can carry the elapsed_ms field. Reset on every waitReady
-	// call. lazy — populated by waitReady, not at construction.
-	readinessStartedAt time.Time
 }
 
 type ephemeralBind struct {
@@ -756,23 +751,15 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 	if err := writeAppCgroup(l.Instance, l.Plan, l.MemoryMaxMiB, l.CPUMillicores); err != nil {
 		return err
 	}
-	if len(workloads) <= 1 {
-		return nil
-	}
-	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
-	if err := writeWorkloadCgroup(parentScope, WorkloadNameMain, l.MemoryMaxMiB, l.CPUMillicores); err != nil {
-		return err
-	}
-	for _, workload := range workloads[1:] {
-		// Zero values inherit the parent limits; no child leaf is
-		// needed when neither resource has an override.
-		if workload.RamMB == 0 && workload.CPUMillicores == 0 {
-			continue
-		}
-		if err := writeWorkloadCgroup(parentScope, workload.Name, workload.RamMB, workload.CPUMillicores); err != nil {
-			return err
-		}
-	}
+	// Firecracker is the only host process for every workload in the guest.
+	// Keep it in the per-instance leaf and enforce the aggregate VM ceiling
+	// there. A cgroup that contains Firecracker cannot delegate cpu/memory
+	// controllers to child leaves (the cgroup v2 no-internal-process rule),
+	// so attempting to create host-side workload leaves makes every sidecar
+	// boot fail before the config FIFO is released. guest-init creates the
+	// real per-workload leaves inside the microVM, where the workload PIDs can
+	// actually be placed and isolated from one another.
+	_ = workloads
 	return nil
 }
 
@@ -786,12 +773,7 @@ func (v *JailerVMM) restoreColdBootCPUFence(l Lease, workloads []WorkloadSpec, c
 	if err := writeAppCPUMaxTo(parentScope, l.Plan, configuredMillicores); err != nil {
 		return err
 	}
-	if len(workloads) <= 1 {
-		return nil
-	}
-	if err := writeWorkloadCgroup(parentScope, WorkloadNameMain, l.MemoryMaxMiB, configuredMillicores); err != nil {
-		return fmt.Errorf("restore main workload CPU fence: %w", err)
-	}
+	_ = workloads
 	return nil
 }
 
@@ -3275,11 +3257,29 @@ func prepareConfigFIFO(path string, uid, gid int) error {
 	return nil
 }
 
+const configFIFOReaderFallbackTimeout = 30 * time.Second
+
 // writeConfigFIFO releases a Firecracker cold boot after the mount namespace
 // has been repaired. O_NONBLOCK avoids wedging vmmd if jailer exits early.
+// The caller's boot deadline owns the handoff budget: under an admitted burst,
+// CPU and disk contention can delay Firecracker's FIFO open beyond five
+// seconds even though the boot remains healthy. Background callers still get
+// a bounded fallback so a dead jailer cannot wedge vmmd indefinitely.
 func writeConfigFIFO(ctx context.Context, path string, body []byte) error {
-	deadline := time.NewTimer(5 * time.Second)
-	defer deadline.Stop()
+	return writeConfigFIFOWithFallback(ctx, path, body, configFIFOReaderFallbackTimeout)
+}
+
+func writeConfigFIFOWithFallback(ctx context.Context, path string, body []byte, fallback time.Duration) error {
+	if fallback <= 0 {
+		return fmt.Errorf("config reader fallback timeout must be positive")
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, fallback)
+		defer cancel()
+	}
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
 	for {
 		f, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
 		if err == nil {
@@ -3292,10 +3292,8 @@ func writeConfigFIFO(ctx context.Context, path string, body []byte) error {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("config reader did not open FIFO")
-		case <-time.After(10 * time.Millisecond):
+			return fmt.Errorf("config reader did not open FIFO: %w", ctx.Err())
+		case <-poll.C:
 		}
 	}
 }
@@ -3339,6 +3337,25 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) e
 		select {
 		case <-deadline.C:
 			return fmt.Errorf("vmm: jailer did not create a private mount namespace")
+		case <-time.After(1 * time.Millisecond):
+		}
+	}
+	// The jailer unshares its mount namespace before it finishes constructing
+	// the chroot. Under a concurrent boot burst that small gap is observable:
+	// nsenter succeeds, but /dev does not exist yet and the tmpfs mount fails
+	// with ENOENT. Wait for the jailed helper and device directory together;
+	// the helper proves /proc/<pid>/root has switched to this instance rather
+	// than still referring to the host root.
+	for {
+		procRoot := fmt.Sprintf("/proc/%d/root", pid)
+		_, helperErr := os.Stat(filepath.Join(procRoot, "faas-mount-helper"))
+		_, devErr := os.Stat(filepath.Join(procRoot, "dev"))
+		if helperErr == nil && devErr == nil {
+			break
+		}
+		select {
+		case <-deadline.C:
+			return fmt.Errorf("vmm: jailer chroot device tree did not become ready")
 		case <-time.After(1 * time.Millisecond):
 		}
 	}
@@ -3432,9 +3449,8 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 	addr := net.JoinHostPort(l.HostIP.String(), "8080")
 	// issue #517 / PR-C / ADR-064 — stamp the readiness probe start
 	// so the wake.readiness_200 emit can carry the elapsed_ms
-	// field. Per-VMM, not per-call (the deadline is the same); the
-	// loop resets to the deadline at the top of every iteration.
-	v.readinessStartedAt = time.Now()
+	// field. Keep it local: one JailerVMM serves many concurrent instances.
+	readinessStartedAt := time.Now()
 
 	// Legacy TCP-accept — pre-PR-D contract. Byte-identical to the
 	// pre-PR-D loop.
@@ -3453,7 +3469,7 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 			conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 			if err == nil {
 				_ = conn.Close()
-				v.emitReadiness200(ctx, l, healthcheckPath, 1)
+				v.emitReadiness200(ctx, l, healthcheckPath, 1, readinessStartedAt)
 				return nil
 			}
 			// ECONNREFUSED on TCP dial = nothing is listening on
@@ -3488,7 +3504,7 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 		}
 		probeCount++
 		if ok, err := healthcheckProbe(ctx, client, addr, healthcheckPath); err == nil && ok {
-			v.emitReadiness200(ctx, l, healthcheckPath, probeCount)
+			v.emitReadiness200(ctx, l, healthcheckPath, probeCount, readinessStartedAt)
 			return nil
 		}
 		select {
@@ -3553,7 +3569,7 @@ func isConnRefusedErr(err error) bool {
 // canonical source of truth for the readiness moment — the
 // timeline endpoint joins this row to wake.boot_started (schedd)
 // and wake.boot_completed (schedd) under the same wake_id.
-func (v *JailerVMM) emitReadiness200(ctx context.Context, l Lease, healthcheckPath string, probeCount int) {
+func (v *JailerVMM) emitReadiness200(ctx context.Context, l Lease, healthcheckPath string, probeCount int, startedAt time.Time) {
 	if v.events == nil {
 		return
 	}
@@ -3563,7 +3579,7 @@ func (v *JailerVMM) emitReadiness200(ctx context.Context, l Lease, healthcheckPa
 		appID = fields.AppID
 	}
 	now := time.Now()
-	elapsed := now.Sub(v.readinessStartedAt)
+	elapsed := now.Sub(startedAt)
 	v.events.EmitAsync(ctx, events.Readiness200{
 		EmitAt:          now.UTC(),
 		WakeID:          wakeID,

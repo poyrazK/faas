@@ -42,15 +42,16 @@ type Store interface {
 }
 
 type Config struct {
-	Registry    *objectstorage.Registry
-	Store       Store
-	OpenSecret  func([]byte) (string, error)
-	HTTPClient  *http.Client
-	Enabled     func() bool
-	Host        string
-	Region      string
-	SpoolDir    string
-	MaxPutBytes int64
+	Registry       *objectstorage.Registry
+	Store          Store
+	RequestMetrics state.ObjectStorageProviderUsageStore
+	OpenSecret     func([]byte) (string, error)
+	HTTPClient     *http.Client
+	Enabled        func() bool
+	Host           string
+	Region         string
+	SpoolDir       string
+	MaxPutBytes    int64
 	// MaxConcurrentPuts bounds local disk consumed by authenticated uploads
 	// waiting to be verified or forwarded. Zero selects a conservative default.
 	MaxConcurrentPuts int
@@ -59,20 +60,21 @@ type Config struct {
 }
 
 type Handler struct {
-	registry    *objectstorage.Registry
-	store       Store
-	openSecret  func([]byte) (string, error)
-	client      *http.Client
-	enabled     func() bool
-	host        string
-	region      string
-	spoolDir    string
-	maxPutBytes int64
-	putSlots    chan struct{}
-	now         func() time.Time
-	log         *slog.Logger
-	touchMu     sync.Mutex
-	lastTouch   map[string]time.Time
+	registry       *objectstorage.Registry
+	store          Store
+	requestMetrics state.ObjectStorageProviderUsageStore
+	openSecret     func([]byte) (string, error)
+	client         *http.Client
+	enabled        func() bool
+	host           string
+	region         string
+	spoolDir       string
+	maxPutBytes    int64
+	putSlots       chan struct{}
+	now            func() time.Time
+	log            *slog.Logger
+	touchMu        sync.Mutex
+	lastTouch      map[string]time.Time
 }
 
 func New(c Config) (*Handler, error) {
@@ -120,7 +122,7 @@ func New(c Config) (*Handler, error) {
 		c.Log = slog.Default()
 	}
 	return &Handler{
-		registry: c.Registry, store: c.Store, openSecret: c.OpenSecret, client: c.HTTPClient,
+		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, openSecret: c.OpenSecret, client: c.HTTPClient,
 		enabled: c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, putSlots: make(chan struct{}, c.MaxConcurrentPuts), now: c.Now, log: c.Log, lastTouch: map[string]time.Time{},
 	}, nil
@@ -275,6 +277,9 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 			writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "A query parameter is invalid or unsupported.", r.URL.Path, req.requestID)
 			return
 		}
+		if !h.recordProviderRequest(w, r, req) {
+			return
+		}
 		page, err := req.provider.ListObjects(r.Context(), req.bucket.PhysicalName, prefix, cursor, int32(limit))
 		if err != nil {
 			h.providerError(w, r, req, err, "")
@@ -306,6 +311,9 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 		h.upload(w, r, req, key)
 	case http.MethodDelete:
 		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) || !h.admit(w, r, req, key, 0, false) {
+			return
+		}
+		if !h.recordProviderRequest(w, r, req) {
 			return
 		}
 		if err := req.provider.DeleteObject(r.Context(), req.bucket.PhysicalName, key); err != nil {
@@ -414,6 +422,9 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 	for name, value := range signed.Headers {
 		upstream.Header.Set(name, value)
 	}
+	if !h.recordProviderRequest(w, r, req) {
+		return
+	}
 	response, err := h.client.Do(upstream)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
@@ -449,6 +460,9 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 			upstream.Header.Set(name, value)
 		}
 	}
+	if !h.recordProviderRequest(w, r, req) {
+		return
+	}
 	response, err := h.client.Do(upstream)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
@@ -464,6 +478,24 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 	if r.Method == http.MethodGet {
 		_, _ = io.Copy(w, response.Body)
 	}
+}
+
+// recordProviderRequest commits the outbound request attempt before it is
+// sent. A failed commit blocks the request rather than allowing an
+// unaccounted provider call to escape; the resulting 503 is preferable to
+// silently under-reporting customer usage.
+func (h *Handler) recordProviderRequest(w http.ResponseWriter, r *http.Request, req requestContext) bool {
+	if h.requestMetrics == nil {
+		// Unit fixtures may omit persistence. Production s3-gatewayd rejects
+		// startup when the configured store lacks this capability.
+		return true
+	}
+	if err := h.requestMetrics.RecordObjectStorageProviderRequest(r.Context(), req.bucket.ID, h.now().UTC()); err != nil {
+		h.log.Warn("S3 provider request metric write failed", "request_id", req.requestID)
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not record object storage usage.", r.URL.Path, req.requestID)
+		return false
+	}
+	return true
 }
 
 func (h *Handler) closeResponseBody(body io.Closer, requestID string) {

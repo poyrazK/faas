@@ -86,9 +86,9 @@ def sync_detailed(
 ) -> Response[DebugRequestEvidenceResponse | Problem]:
     """Get request evidence and explanation (ADR-127).
 
-     Returns bounded, redacted span evidence for one request and
-    links it to a matching active regression observation when one
-    exists. Database statements are sanitized fingerprints; raw
+     Returns a deterministic request/wake timeline plus bounded,
+    redacted span evidence for one request and links it to a matching
+    active regression observation when one exists. Database statements are sanitized fingerprints; raw
     attributes, status messages, request bodies, and headers are
     never returned. The explanation is deterministic and suitable
     as input to a future asynchronous synthesis layer. Plan-gated
@@ -126,9 +126,9 @@ def sync(
 ) -> DebugRequestEvidenceResponse | Problem | None:
     """Get request evidence and explanation (ADR-127).
 
-     Returns bounded, redacted span evidence for one request and
-    links it to a matching active regression observation when one
-    exists. Database statements are sanitized fingerprints; raw
+     Returns a deterministic request/wake timeline plus bounded,
+    redacted span evidence for one request and links it to a matching
+    active regression observation when one exists. Database statements are sanitized fingerprints; raw
     attributes, status messages, request bodies, and headers are
     never returned. The explanation is deterministic and suitable
     as input to a future asynchronous synthesis layer. Plan-gated
@@ -161,9 +161,9 @@ async def asyncio_detailed(
 ) -> Response[DebugRequestEvidenceResponse | Problem]:
     """Get request evidence and explanation (ADR-127).
 
-     Returns bounded, redacted span evidence for one request and
-    links it to a matching active regression observation when one
-    exists. Database statements are sanitized fingerprints; raw
+     Returns a deterministic request/wake timeline plus bounded,
+    redacted span evidence for one request and links it to a matching
+    active regression observation when one exists. Database statements are sanitized fingerprints; raw
     attributes, status messages, request bodies, and headers are
     never returned. The explanation is deterministic and suitable
     as input to a future asynchronous synthesis layer. Plan-gated
@@ -199,9 +199,9 @@ async def asyncio(
 ) -> DebugRequestEvidenceResponse | Problem | None:
     """Get request evidence and explanation (ADR-127).
 
-     Returns bounded, redacted span evidence for one request and
-    links it to a matching active regression observation when one
-    exists. Database statements are sanitized fingerprints; raw
+     Returns a deterministic request/wake timeline plus bounded,
+    redacted span evidence for one request and links it to a matching
+    active regression observation when one exists. Database statements are sanitized fingerprints; raw
     attributes, status messages, request bodies, and headers are
     never returned. The explanation is deterministic and suitable
     as input to a future asynchronous synthesis layer. Plan-gated

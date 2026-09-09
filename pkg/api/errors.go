@@ -489,6 +489,10 @@ const (
 	// Retry-After BEFORE auth, BEFORE wake. Distinct from
 	// CodeEdgeRuleMaintenance (the per-route fine-grained kind).
 	CodeAppMaintenance = "app_maintenance_mode"
+	// CodeAppHealthUnavailable is the edge-only 503 returned when the last
+	// known wake did not leave a live instance. The health endpoint never
+	// wakes an app unless the per-app opt-in is enabled.
+	CodeAppHealthUnavailable = "app_health_unavailable"
 	// CodeAdmissionRefused marks a wake that schedd refused because
 	// the account's current-month overage cents met/exceeded
 	// accounts.overage_cap_cents (issue #561 / PR-XXX). Distinct
@@ -1149,6 +1153,10 @@ const (
 	// override path).
 	CodePlanRouteMetricsNotAllowed = "plan_route_metrics_not_allowed"
 
+	// M2 monitor-aware health path: real health probes may wake only Pro/Scale
+	// apps. The default edge answer is available on every plan.
+	CodePlanHealthPathWakesNotAllowed = "plan_health_path_wakes_not_allowed"
+
 	// Issue #470 / ADR-055: out-of-range warm-snapshot threshold
 	// values from a PATCH (warm_snapshot_min_requests outside [1,
 	// 100] or warm_snapshot_min_ms outside [100, 60000]). 422 with
@@ -1581,14 +1589,14 @@ const MaxOrgSlugLen = 32
 func StatusForCode(code string) int {
 	switch code {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
-		CodePlanPublicAuthIPAllowlistNotAllowed:
+		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
-		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeHandlerMissing, CodeImageRequired,
+		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist:
 		return http.StatusBadRequest
@@ -1598,7 +1606,7 @@ func StatusForCode(code string) int {
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
 	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
-		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeMirrorSlotAtCapacity:
+		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -1886,6 +1894,10 @@ func StatusForCode(code string) int {
 	case CodePlanWebhooksNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanWebhookQuota:
+		return http.StatusForbidden
+	case CodePlanLogDrainsNotAllowed:
+		return http.StatusPaymentRequired
+	case CodePlanLogDrainQuota:
 		return http.StatusForbidden
 	// Issue #462 / ADR-058 — scaling policy gate. PR-A History
 	// (2026-07-31): Hobby+ tier-up for max_instances. 403 mirrors
@@ -2819,6 +2831,14 @@ const CodePlanWebhooksNotAllowed = "plan_webhooks_not_allowed"
 // can branch on upsell-vs-delete copy without parsing the body.
 const CodePlanWebhookQuota = "plan_webhook_quota"
 
+// CodePlanLogDrainsNotAllowed is the 402 returned when the plan does not
+// include customer-configurable runtime log destinations.
+const CodePlanLogDrainsNotAllowed = "plan_log_drains_not_allowed"
+
+// CodePlanLogDrainQuota is the 403 returned when an unlocked plan reaches a
+// per-app or per-account destination cap.
+const CodePlanLogDrainQuota = "plan_log_drain_quota"
+
 // CodePlanTriggersNotAllowed is the 402 the customer sees when
 // the plan doesn't unlock the unified Trigger primitive at all
 // (Free today, issue #757 / ADR-0NN). Mirrors CodePlanCronsNotAllowed
@@ -2950,6 +2970,10 @@ func ErrPlanAppErrorsNotAllowed(p Plan) *Problem {
 // malformed webhook body — missing target_url, invalid retry_policy,
 // out-of-vocabulary event, oversize webhook_secret, etc.
 const CodeAppWebhookInvalid = "app_webhook_invalid"
+
+// CodeAppLogDrainInvalid is the 400 returned for an invalid drain kind, URL,
+// or authentication header.
+const CodeAppLogDrainInvalid = "app_log_drain_invalid"
 
 // Edge rules (ADR-089). Each code maps to one wire-level failure
 // mode so the CLI can surface a stable, machine-readable error.
@@ -3514,6 +3538,28 @@ func ErrTriggerTLSSkipVerifyNotAllowed(plan Plan) *Problem {
 func ErrAppWebhookInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAppWebhookInvalid,
 		"Invalid webhook", reason)
+}
+
+func ErrPlanLogDrainsNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanLogDrainsNotAllowed,
+		"Log drains unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include customer log drains; upgrade to Hobby or above to export runtime logs.", p)).
+		WithDocs(docsBase + "/plans#observability")
+}
+
+func ErrPlanLogDrainQuota(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodePlanLogDrainQuota,
+		"Log drain limit reached",
+		fmt.Sprintf("%s plan caps log drains at %d for %s; you have %d. Delete one to add another.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#observability")
+}
+
+func ErrAppLogDrainInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeAppLogDrainInvalid,
+		"Invalid log drain", reason)
 }
 
 // ErrTenantSurfacesNotAllowed is returned by apid's createTenantSurface
