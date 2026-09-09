@@ -2011,14 +2011,15 @@ func (s *server) handler() http.Handler {
 	// in-flight builds.
 	mux.HandleFunc("POST /v1/admin/builds/sweep-stuck",
 		s.authLimited(s.requireAdminMutation(s.postSweepStuckBuilds)))
-	// Compute-node lifecycle controls. They are deliberately separate from
-	// the read-only /obs namespace and require both MFA and confirm=true.
-	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/suspend",
-		s.authLimited(s.requireAdminMutation(s.postObsAccountSuspend)))
-	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/restore",
-		s.authLimited(s.requireAdminMutation(s.postObsAccountRestore)))
-	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
-		s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions)))
+	// Account and compute-node lifecycle controls. They are deliberately
+	// separate from the read-only /obs namespace and require strict admin
+	// mutation authentication plus confirm=true.
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/suspend",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountSuspend))))
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/restore",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRestore))))
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/drain",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeDrain))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/force-drain",
