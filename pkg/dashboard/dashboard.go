@@ -1429,6 +1429,8 @@ type RequestAnalyticsRouteView struct {
 	P95MS         int
 	P99MS         int
 	TrendURL      string
+	// DebugURL opens the read-only request explorer filtered to this route.
+	DebugURL string
 }
 
 // DebugPageData is the read-only, server-rendered production debugger
