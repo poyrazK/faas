@@ -102,6 +102,21 @@ type statusCache struct {
 	hasCached bool
 }
 
+const (
+	statusAPIAvailabilityQuery = `(
+		(sum(rate(gateway_requests_total{code=~"2.."}[5m])) / sum(rate(gateway_requests_total[5m])) * 100)
+		and sum(rate(gateway_requests_total[5m])) > 0
+	) or vector(100)`
+	statusWakeP95Query = `(
+		(histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) * 1000)
+		and sum(rate(gateway_wake_latency_seconds_count[5m])) > 0
+	) or vector(0)`
+	statusBuildSuccessQuery = `(
+		(sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m])) / sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) * 100)
+		and sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) > 0
+	) or vector(0)`
+)
+
 // newStatusCache builds a cache. promURL is the local Prometheus base
 // (e.g. "http://10.0.0.1:9090"); empty string disables the cache and
 // the JSON handler returns a degraded payload. The HTTP transport
@@ -171,8 +186,7 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	okCount := 0
 
 	// 1. API availability over last 5m: 2xx / total.
-	availQ := `sum(rate(gateway_requests_total{code=~"2.."}[5m])) / sum(rate(gateway_requests_total[5m])) * 100`
-	if pct, err := c.client.QueryScalar(ctx, availQ); err == nil {
+	if pct, err := c.client.QueryScalar(ctx, statusAPIAvailabilityQuery); err == nil {
 		snap.APIAvailabilityPct = pct
 		okCount++
 	} else {
@@ -183,8 +197,7 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	}
 
 	// 2. Wake p95 (seconds → ms).
-	wakeQ := `histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) * 1000`
-	if ms, err := c.client.QueryScalar(ctx, wakeQ); err == nil {
+	if ms, err := c.client.QueryScalar(ctx, statusWakeP95Query); err == nil {
 		snap.WakeP95MS = ms
 		okCount++
 	} else {
@@ -199,8 +212,7 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	// own code is not a platform failure. Sourced from builderd's real
 	// build counter (ADR-030) — NOT the old vmmd cold-boot proxy, which
 	// measured a different thing entirely (wake success, not build).
-	buildQ := `sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) / sum(rate(builderd_ops_total{op="build"}[5m])) * 100`
-	if pct, err := c.client.QueryScalar(ctx, buildQ); err == nil {
+	if pct, err := c.client.QueryScalar(ctx, statusBuildSuccessQuery); err == nil {
 		snap.BuildSuccessPct = pct
 		okCount++
 	} else {

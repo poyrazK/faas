@@ -71,6 +71,47 @@ func TestStatusJSONHandlerIdleHistogramEmitsJSON(t *testing.T) {
 	}
 }
 
+func TestStatusQueriesDefineIdleValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		fallback string
+		guard    string
+	}{
+		{
+			name:     "api availability",
+			query:    statusAPIAvailabilityQuery,
+			fallback: "or vector(100)",
+			guard:    "sum(rate(gateway_requests_total[5m])) > 0",
+		},
+		{
+			name:     "wake p95",
+			query:    statusWakeP95Query,
+			fallback: "or vector(0)",
+			guard:    "sum(rate(gateway_wake_latency_seconds_count[5m])) > 0",
+		},
+		{
+			name:     "build success",
+			query:    statusBuildSuccessQuery,
+			fallback: "or vector(0)",
+			guard:    "sum(rate(builderd_ops_total{op=\"build\",code!=\"user_error\"}[5m])) > 0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !strings.Contains(tt.query, tt.guard) {
+				t.Fatalf("query %q is missing its non-idle denominator guard %q", tt.query, tt.guard)
+			}
+			if !strings.Contains(tt.query, tt.fallback) {
+				t.Fatalf("query %q is missing idle fallback %q", tt.query, tt.fallback)
+			}
+		})
+	}
+	if !strings.Contains(statusBuildSuccessQuery, `code=~"ok|cache_hit"`) {
+		t.Fatalf("build success numerator includes a non-success outcome: %q", statusBuildSuccessQuery)
+	}
+}
+
 // TestStatusCacheFreshnessFastPath: a freshly-fetched cache must not
 // re-query Prometheus within the 30s TTL. fetch() runs four PromQL
 // queries per refresh (api avail, wake p95, build success, degraded
