@@ -7946,14 +7946,22 @@ func (s *PgStore) UpdateBuildProvenanceSBOM(ctx context.Context, buildID, sbomKe
 // A partial index on builds(status='running') keeps this O(matches)
 // instead of O(table).
 func (s *PgStore) SweepStuckRunningBuilds(ctx context.Context, threshold time.Time) (int, error) {
+	ids, err := s.SweepStuckRunningBuildsWithIDs(ctx, threshold)
+	return len(ids), err
+}
+
+// SweepStuckRunningBuildsWithIDs is the VM-aware reaper seam. The UPDATE and
+// deployment failure remain one transaction, and the returned IDs come from
+// that UPDATE's RETURNING set so builderd only asks vmmd to stop claims that
+// this sweep actually failed.
+func (s *PgStore) SweepStuckRunningBuildsWithIDs(ctx context.Context, threshold time.Time) ([]string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var buildsFlipped, deploymentsFailed int
-	err = tx.QueryRow(ctx, `
+	rows, err := tx.Query(ctx, `
 		with stuck as (
 			select id, deployment_id
 			  from builds
@@ -7967,7 +7975,7 @@ func (s *PgStore) SweepStuckRunningBuilds(ctx context.Context, threshold time.Ti
 			       finished_at = now()
 			  from stuck s
 			 where b.id = s.id
-			returning s.deployment_id
+			returning b.id, b.deployment_id
 		),
 		failed_deployments as (
 			update deployments d
@@ -7979,17 +7987,30 @@ func (s *PgStore) SweepStuckRunningBuilds(ctx context.Context, threshold time.Ti
 			   and d.status in ('pending', 'building', 'imaging', 'snapshotting')
 			returning d.id
 		)
-		select
-			(select count(*) from flipped),
-			(select count(*) from failed_deployments)
-	`, threshold, api.CodeBuildTimeout).Scan(&buildsFlipped, &deploymentsFailed)
+		select f.id
+		  from flipped f
+	 cross join (select count(*) from failed_deployments) _deployment_failure_count
+		 order by f.id
+	`, threshold, api.CodeBuildTimeout)
 	if err != nil {
-		return 0, err
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return buildsFlipped, nil
+	return ids, nil
 }
 
 // QueuedBuildsCount (operator-side observability mega-PR / Commit 7
