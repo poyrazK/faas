@@ -2,6 +2,7 @@ package objectstorage
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -62,7 +63,7 @@ func TestOVHAccessLogRequestMetricsRejectsEmptyLogBucket(t *testing.T) {
 	_, err := (OVHAccessLogRequestMetrics{
 		Store: fakeAccessLogStore{pages: []ObjectPage{{}}}, LogBucket: "logs",
 	}).Metrics(context.Background(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC), []OVHUsageBucket{{AccountID: "acct", PhysicalName: "bucket"}})
-	if err != ErrOVHRequestMetricsMissing {
+	if !errors.Is(err, ErrOVHRequestMetricsMissing) {
 		t.Fatalf("error = %v, want %v", err, ErrOVHRequestMetricsMissing)
 	}
 }
