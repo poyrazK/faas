@@ -254,6 +254,14 @@ spec-cited-tests-check: ## Require changed core-path tests to cite a spec sectio
 spec-cited-tests-check-test: ## Exercise the spec-cited-tests CI gate with synthetic pull request events
 	bash scripts/ci/check_spec_cited_tests_test.sh
 
+.PHONY: migration-version-hygiene-check
+migration-version-hygiene-check: ## Reject hand-typed migration versions and versions already claimed by an open PR
+	bash scripts/ci/check_migration_version_hygiene.sh
+
+.PHONY: migration-version-hygiene-check-test
+migration-version-hygiene-check-test: ## Exercise the migration-version gate with synthetic pull request events
+	bash scripts/ci/check_migration_version_hygiene_test.sh
+
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live in the `floors` dict inside the python heredoc below
 # (no separate Make variable — keeping the table adjacent to the verifier
