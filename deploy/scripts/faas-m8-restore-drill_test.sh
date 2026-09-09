@@ -150,6 +150,8 @@ grep -q 'FAAS_DRILL_COMMIT' "$SCRIPT" \
   || { echo "FAIL: staged scripts cannot record an explicit source commit"; exit 1; }
 grep -q 'FAAS_SCHEDD_METRICS:-http://127.0.0.1:9103/metrics' "$SCRIPT" \
   || { echo "FAIL: restore drill does not probe schedd on its production metrics port"; exit 1; }
+grep -q 'grep -F "fcvm_resident_ram_pct" >/dev/null' "$SCRIPT" \
+  || { echo "FAIL: schedd metrics probe can false-fail from grep -q under pipefail"; exit 1; }
 grep -q 'outside the <350 ms platform snapshot-restore SLO' "$SCRIPT" \
   || { echo "FAIL: recovery probe is not distinguished from platform restore latency"; exit 1; }
 echo "OK: split-role, quiesced-WAL, preflight, and latency-scope contracts present"

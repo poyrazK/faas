@@ -573,7 +573,9 @@ ok "row-count invariants passed (${ROW_COUNT_DIFFS})"
 if daemon_was_active schedd; then
   READY=0
   for i in $(seq 1 60); do
-    if curl -fsS "$SCHEDD_METRICS" 2>/dev/null | grep -q "fcvm_resident_ram_pct"; then
+    # With pipefail, grep -q can close the pipe after its first match and make
+    # curl's SIGPIPE look like a failed probe. Read the response to EOF.
+    if curl -fsS "$SCHEDD_METRICS" 2>/dev/null | grep -F "fcvm_resident_ram_pct" >/dev/null; then
       READY=1
       ok "schedd admission up (after $((i * 2))s)"
       break
