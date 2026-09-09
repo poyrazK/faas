@@ -116,6 +116,10 @@ grep -q -- '--preflight-only' "$SCRIPT" \
   || { echo "FAIL: non-mutating preflight mode missing"; exit 1; }
 grep -q 'DRILL_ACTIVE == 1' "$SCRIPT" \
   || { echo "FAIL: failure cleanup is not guarded from preflight-only execution"; exit 1; }
+grep -q 'PG_DATA_WIPED == 1 && RESTORE_EXTRACTED == 1' "$SCRIPT" \
+  || { echo "FAIL: recovery cleanup does not distinguish complete from partial extraction"; exit 1; }
+grep -q 'systemctl restart postgresql' "$SCRIPT" \
+  || { echo "FAIL: failed recovery does not restart PostgreSQL with the restored config"; exit 1; }
 grep -q "SHOW data_directory" "$SCRIPT" \
   || { echo "FAIL: destructive target is not derived from live PostgreSQL"; exit 1; }
 grep -q 'FAAS_PG_DATA=.*does not match PostgreSQL data_directory' "$SCRIPT" \

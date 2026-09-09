@@ -59,6 +59,8 @@ DRILL_COMPLETED=0
 CLEANUP_DONE=0
 RECORD_WRITTEN=0
 POSTGRES_WAS_ACTIVE=0
+PG_DATA_WIPED=0
+RESTORE_EXTRACTED=0
 DAEMONS_WERE_STOPPED=0
 PG_CONF_BACKUP=""
 LATEST_BB="-"
@@ -284,10 +286,12 @@ cleanup() {
         systemctl stop "faas-${unit}.service" 2>/dev/null || warn "could not stop faas-${unit}.service started by the failed drill"
       fi
     done
-    if (( POSTGRES_WAS_ACTIVE == 1 )) && [[ -f "$PG_DATA/PG_VERSION" ]]; then
-      systemctl start postgresql 2>/dev/null || warn "could not restart postgresql during cleanup"
-    elif (( POSTGRES_WAS_ACTIVE == 1 )); then
-      warn "postgresql left stopped: restored PGDATA is incomplete"
+    if (( POSTGRES_WAS_ACTIVE == 1 && PG_DATA_WIPED == 0 )); then
+      systemctl start postgresql 2>/dev/null || warn "could not restart the unwiped PostgreSQL cluster during cleanup"
+    elif (( POSTGRES_WAS_ACTIVE == 1 && PG_DATA_WIPED == 1 && RESTORE_EXTRACTED == 1 )); then
+      systemctl restart postgresql 2>/dev/null || warn "could not restart the extracted PostgreSQL cluster during cleanup"
+    elif (( POSTGRES_WAS_ACTIVE == 1 && PG_DATA_WIPED == 1 )); then
+      warn "postgresql left stopped: restored PGDATA extraction is incomplete"
     fi
     if (( DAEMONS_WERE_STOPPED == 1 )) && systemctl is-active --quiet postgresql; then
       for unit in "${ACTIVE_DAEMONS[@]}"; do
@@ -433,6 +437,7 @@ ok "stopped postgresql"
 heading "2/7 Wipe ${PG_DATA} (disaster simulation)"
 rm -rf "$PG_DATA"
 mkdir -p "$PG_DATA"
+PG_DATA_WIPED=1
 ok "${PG_DATA} wiped"
 
 heading "3/7 Restore basebackup + pg_wal"
@@ -446,6 +451,7 @@ if [[ -f "$LATEST_BB/pg_wal.tar.gz" ]]; then
 fi
 [[ -f "$PG_DATA/PG_VERSION" ]] || fail "basebackup extraction did not produce PG_VERSION"
 chown -R postgres:postgres "$PG_DATA"
+RESTORE_EXTRACTED=1
 ok "basebackup extracted into ${PG_DATA}"
 
 heading "4/7 Write recovery stanza in ${PG_CONF}"
