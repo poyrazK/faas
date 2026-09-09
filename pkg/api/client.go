@@ -3331,6 +3331,20 @@ func (c *Client) UsageSummary(ctx context.Context, month string) (UsageSummaryRe
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// AccountUsage returns the account-level usage projection. It combines the
+// compute summary with optional object-storage and managed-PostgreSQL views;
+// an empty month asks the server for the current UTC month.
+func (c *Client) AccountUsage(ctx context.Context, month string) (AccountUsageResponse, error) {
+	var out AccountUsageResponse
+	path := "/v1/account/usage"
+	if month != "" {
+		q := url.Values{}
+		q.Set("month", month)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // UsageDaily returns the per-(app, day) rollup rows the meterd rollup
 // loop populated into usage_daily (ADR-048 §5). day is "YYYY-MM-DD"
 // and is required; the server 400s on empty so callers don't get

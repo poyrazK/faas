@@ -1038,9 +1038,10 @@ explicitly open issues that the doc otherwise implies are closed.
   traffic before the lateral-movement deny. Host ports and public multi-port
   routing remain separate follow-ups; loopback discovery within one task remains
   supported (ADR-164 and ADR-165).
-- **Resource and cost isolation** — named RAM/CPU profiles and ephemeral disk
-  ceilings are present; per-container CPU/disk enforcement and a combined
-  compute + S3 + managed-PostgreSQL usage/budget view remain follow-up work.
+- **Resource and cost isolation** — named RAM/CPU profiles, per-node vCPU
+  admission, ephemeral disk ceilings, and the account-level compute + S3 +
+  managed-PostgreSQL usage projection are present; runtime per-container
+  CPU/disk enforcement remains follow-up work.
 
 ### Open security & infrastructure issues
 

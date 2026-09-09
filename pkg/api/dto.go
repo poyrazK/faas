@@ -3031,6 +3031,17 @@ type UsageSummaryResponse struct {
 	Daily []DailyUsagePoint `json:"daily"`
 }
 
+// AccountUsageResponse is the account-level usage projection. Compute keeps
+// the existing monthly usage contract while the optional service views make
+// the object-storage and managed-PostgreSQL meters visible in the same read
+// without changing their separate guardrails.
+type AccountUsageResponse struct {
+	Month           string                        `json:"month"`
+	Compute         UsageSummaryResponse          `json:"compute"`
+	ObjectStorage   *ObjectStorageUsageResponse   `json:"object_storage,omitempty"`
+	ManagedPostgres *ManagedPostgresUsageResponse `json:"managed_postgres,omitempty"`
+}
+
 // ValidateAppConfig checks a requested app config against its plan caps (spec
 // §4.2: validation before work). It returns the first violating *Problem, or nil.
 // The deployed-app COUNT check is done in apid (it needs the store).
