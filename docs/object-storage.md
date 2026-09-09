@@ -335,9 +335,20 @@ physical bucket/account mapping. The source must cover storage, requests,
 egress, and applicable provider charges in the declared EUR cost convention;
 do not import an account-total into each tenant or treat delayed/missing data
 as zero. Neither Gregale's compute MB-seconds nor inventory samples substitute
-for these billing quantities. **No GCS/OVH/AWS/R2 billing exporter is bundled yet**;
-the normalized import contract is provider-neutral, and a real exporter is
-still a deployment prerequisite.
+for these billing quantities.
+
+The repository includes an OVH Public Cloud adapter in
+`pkg/objectstorage/ovh_usage.go`. It reads the provider's signed usage-history
+API and normalizes bucket storage byte-hours, outgoing bandwidth, and provider
+costs when the provider response is denominated in EUR. A non-EUR project is
+rejected until an explicit operator FX/conversion policy exists. OVH's public
+usage response does not currently include a request count,
+so the adapter requires an operator-supplied cumulative request-metrics source
+for every catalogued bucket and fails closed when it is missing, partial, or
+contains an unknown bucket. It never substitutes signed-URL issuance counts or
+an explicit zero. The catalog and request source are injected through narrow
+interfaces so a qualified R2, AWS, GCS, or storage-node adapter can replace OVH
+without changing this report contract.
 
 Provider adapters may implement the `objectstorage.UsageReportExporter` seam
 and publish through `objectstorage.ExportUsageReports`. The helper validates
