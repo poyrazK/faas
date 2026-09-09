@@ -29,6 +29,13 @@ make_event() {
 EOF_EVENT
 }
 
+make_event_refs() {
+  local dir="$1" base="$2" head="$3"
+  cat > "$dir/event.json" <<EOF_EVENT
+{"pull_request":{"number":43,"base":{"ref":"main","sha":"${base}"},"head":{"ref":"test","sha":"${head}"}}}
+EOF_EVENT
+}
+
 run_check() {
   local dir="$1"
   (cd "$dir" && GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$dir/event.json" bash "$checker")
@@ -95,5 +102,51 @@ git -C "$outside_case" add pkg/other/other_test.go
 git -C "$outside_case" commit -q -m 'test(other): add coverage'
 make_event "$outside_case"
 expect_pass 'non-owned test' "$outside_case"
+
+# Commits that land on main after the feature branch diverges are not PR
+# changes. The old two-dot diff treated this base-only, uncited test as a
+# changed file and blocked an otherwise valid pull request.
+base_advanced_case="$test_root/base-advanced"
+git_init "$base_advanced_case"
+git -C "$base_advanced_case" checkout -q -b feature
+printf 'changed\n' > "$base_advanced_case/pkg/sched/engine.go"
+git -C "$base_advanced_case" add pkg/sched/engine.go
+git -C "$base_advanced_case" commit -q -m 'feat(sched): adjust admission'
+feature_head="$(git -C "$base_advanced_case" rev-parse HEAD)"
+git -C "$base_advanced_case" checkout -q main
+mkdir -p "$base_advanced_case/pkg/sched"
+printf 'package sched\n\nfunc TestBaseOnly(t *testing.T) {}\n' > "$base_advanced_case/pkg/sched/base_only_test.go"
+git -C "$base_advanced_case" add pkg/sched/base_only_test.go
+git -C "$base_advanced_case" commit -q -m 'test(sched): add base coverage'
+base_head="$(git -C "$base_advanced_case" rev-parse HEAD)"
+make_event_refs "$base_advanced_case" "$base_head" "$feature_head"
+expect_pass 'base-only test is not a PR change' "$base_advanced_case"
+
+# A base SHA that is not reachable must fail the gate, not pass it. Before the
+# fail-closed guard the diff errored, the file list came back empty, and the
+# checker printed OK — a false pass in a required check.
+unreachable_case="$test_root/unreachable-base"
+git_init "$unreachable_case"
+mkdir -p "$unreachable_case/pkg/sched"
+printf 'package sched\n\nfunc TestUncited(t *testing.T) {}\n' > "$unreachable_case/pkg/sched/uncited_test.go"
+git -C "$unreachable_case" add pkg/sched/uncited_test.go
+git -C "$unreachable_case" commit -q -m 'test(sched): uncited'
+make_event_refs "$unreachable_case" "0000000000000000000000000000000000000000" "$(git -C "$unreachable_case" rev-parse HEAD)"
+expect_fail 'unreachable base sha fails closed' "$unreachable_case"
+
+# Two histories with no common ancestor must also fail closed rather than
+# silently diffing everything or nothing.
+unrelated_case="$test_root/unrelated-histories"
+git_init "$unrelated_case"
+unrelated_base="$(git -C "$unrelated_case" rev-parse HEAD)"
+git -C "$unrelated_case" checkout -q --orphan orphan
+git -C "$unrelated_case" rm -rq --cached . 2>/dev/null || true
+printf 'pkg/sched\npkg/gateway\npkg/meter\npkg/billing\npkg/fcvm\n' > "$unrelated_case/TESTOWNERS"
+mkdir -p "$unrelated_case/pkg/sched"
+printf 'package sched\n\nfunc TestOrphan(t *testing.T) {}\n' > "$unrelated_case/pkg/sched/orphan_test.go"
+git -C "$unrelated_case" add TESTOWNERS pkg/sched/orphan_test.go
+git -C "$unrelated_case" commit -q -m 'test(sched): orphan history'
+make_event_refs "$unrelated_case" "$unrelated_base" "$(git -C "$unrelated_case" rev-parse HEAD)"
+expect_fail 'unrelated histories fail closed' "$unrelated_case"
 
 echo "check_spec_cited_tests: OK"

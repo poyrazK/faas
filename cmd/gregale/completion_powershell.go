@@ -23,7 +23,7 @@ import (
 func cmdCompletionPowershell() int {
 	w := osStdout
 	renderPowershellHeader(w)
-	for _, c := range cliCommands {
+	for _, c := range customerCliCommands() {
 		renderPowershellCommand(w, c)
 	}
 	renderPowershellFooter(w)
@@ -49,7 +49,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "  $tokens = $commandAst.ToString() -split '\\s+'")
 	_, _ = fmt.Fprintln(w, "  if ($tokens.Count -lt 2) {")
-	for _, c := range cliCommands {
+	for _, c := range customerCliCommands() {
 		_, _ = fmt.Fprintf(w, "    if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
 			c.Name, c.Name, c.Name, escapePS(c.Short))
 	}

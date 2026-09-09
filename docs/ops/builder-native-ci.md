@@ -1,6 +1,7 @@
 # Native builder CI
 
-`builder-native.yml` is the post-merge hardware gate for the Gregale builder.
+`builder-native.yml` is the post-merge hardware gate for the Gregale builder
+and the native `pkg/fcvm` package.
 It starts after a successful `images` workflow on `main` when that run published
 `builder-base`, runs nightly, and can be dispatched manually from `main`.
 Non-runtime `images` runs are skipped. Nightly and manual runs select the most
@@ -16,15 +17,34 @@ The workflow uses GitHub OIDC through this keyless GCP identity:
 
 The provider condition admits only `poyrazK/faas`, `refs/heads/main`, and
 `.github/workflows/builder-native.yml@refs/heads/main`. The service account has
-project-level `roles/compute.viewer` and instance-level
-`roles/compute.osAdminLogin` on compute node 2. It can act as the service
-account attached to that VM so OS Login can establish the SSH session. It has
-no service-account key.
+project-level `roles/compute.viewer`, instance-level
+`roles/compute.osAdminLogin` on compute node 2, and the custom
+`gregaleBuilderNodeLifecycle` role. Its lifecycle binding is conditioned on
+the exact resource name for `faas-compute-node-2`, and contains only
+`compute.instances.get`, `compute.instances.start`, and
+`compute.instances.stop`. It can act as the service account attached to that
+VM so OS Login can establish the SSH session. It has no service-account key.
+
+The workflow starts the target instance when it is off, waits for SSH, and
+stops it after the native jobs finish. If the instance was already running,
+the workflow leaves it running. This keeps the test node off between CI runs
+without creating a manual prerequisite for nightly CI.
 
 The target instance has instance-level `enable-oslogin=TRUE` metadata and must
 contain `/etc/faas/builder-acceptance-host`. Removing that marker disables the
 test before it changes service state. The runner also refuses a host with an
 active Firecracker process or any resource detected by `make leakcheck`.
+
+The nightly and manually dispatched workflow also transfers the exact current
+`main` source plus the pinned Go toolchain, creates fresh hello base/layer ext4
+fixtures, and runs the whole metal-tagged `pkg/fcvm` package. Tests that need
+fixtures the workflow does not yet stage skip with their names in the log; a
+run that executes zero tests fails. The output reports passed, skipped, and
+failed totals so the remaining fixture gap is visible. The package exercises
+the production jailer, Firecracker, TAP, network namespace, cgroup, readiness,
+destroy, and leak-check paths on amd64. The metal job waits for builder
+acceptance and both jobs serialize through
+`/var/lock/faas-builder-acceptance.lock`.
 
 The remote command runs as a transient systemd service. Losing the GitHub SSH
 connection therefore does not kill cleanup halfway through. The root wrapper

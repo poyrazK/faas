@@ -53,12 +53,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00222_AppErrors(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// (1) Both tables exist.
 	for _, table := range []string{"app_errors", "app_error_requests"} {
@@ -107,16 +111,23 @@ func TestMigrations_00222_AppErrors(t *testing.T) {
 
 	// (3) CHECK constraints reject malformed input. We need an
 	// account + app row to satisfy the FKs before inserting a
-	// malformed app_errors row. The pgtest harness seeds minimal
-	// data; we read whatever account + app pair exists.
+	// malformed app_errors row. Every test gets its own empty
+	// schema, so seed both here rather than borrowing rows another
+	// test file happened to leave behind.
 	var accountID, appID uuid.UUID
 	if err := pool.QueryRow(ctx, `
-		SELECT a.id, ap.id
-		FROM accounts a
-		JOIN apps ap ON ap.account_id = a.id
-		LIMIT 1
-	`).Scan(&accountID, &appID); err != nil {
-		t.Fatalf("seed account/app not found (apply_walk_test.go must have created them): %v", err)
+		INSERT INTO accounts (id, email, plan, created_at)
+		VALUES (gen_random_uuid(), 'app-errors-test@example.com', 'scale', now())
+		RETURNING id
+	`).Scan(&accountID); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO apps (id, account_id, slug, type, ram_mb, max_concurrency, status, created_at)
+		VALUES (gen_random_uuid(), $1, 'app-errors-test', 'app', 256, 1, 'active', now())
+		RETURNING id
+	`, accountID).Scan(&appID); err != nil {
+		t.Fatalf("seed app: %v", err)
 	}
 
 	// (3a) http_status outside 400..599 → 23514.
@@ -213,18 +224,13 @@ func TestMigrations_00222_AppErrors(t *testing.T) {
 	// (5) FK cascade. Insert one row in each table; delete the
 	// account; both rows must disappear. Then re-insert + delete
 	// the deployment to confirm deployment_id SET NULL.
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO apps (id, account_id, slug, status)
-		VALUES (gen_random_uuid(), $1, 'app-errors-fk-test', 'active')
-		ON CONFLICT (account_id, slug) DO NOTHING
-	`, accountID); err != nil {
-		t.Fatalf("seed app for FK test: %v", err)
-	}
 	var fkAppID uuid.UUID
 	if err := pool.QueryRow(ctx, `
-		SELECT id FROM apps WHERE account_id = $1 AND slug = 'app-errors-fk-test'
+		INSERT INTO apps (id, account_id, slug, status, ram_mb)
+		VALUES (gen_random_uuid(), $1, 'app-errors-fk-test', 'active', 256)
+		RETURNING id
 	`, accountID).Scan(&fkAppID); err != nil {
-		t.Fatalf("re-read fk test app: %v", err)
+		t.Fatalf("seed app for FK test: %v", err)
 	}
 	depID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `

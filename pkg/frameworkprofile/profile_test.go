@@ -106,6 +106,23 @@ func TestAnalyzeNodeUsesDeclaredPackageManagerAndHealthRoute(t *testing.T) {
 	}
 }
 
+func TestAnalyzeAppliesHostingOverrides(t *testing.T) {
+	got, err := Analyze(fstest.MapFS{
+		"package.json": &fstest.MapFile{Data: []byte(`{"dependencies":{"express":"^5"},"scripts":{"start":"node server.js"}}`)},
+		"server.js":    &fstest.MapFile{Data: []byte("app.listen(process.env.PORT);\n")},
+		"gregale.yaml": &fstest.MapFile{Data: []byte("hosting:\n  start: npm run serve\n  port: 8787\n  health: /ready\n")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StartCommand != "npm run serve" || got.Port != 8787 || got.HealthPath != "/ready" {
+		t.Fatalf("profile = %+v, want configured run contract", got)
+	}
+	if got.ConfigFile != "gregale.yaml" || !got.Inferred {
+		t.Fatalf("profile metadata = %+v, want config_file and inferred=true", got)
+	}
+}
+
 func TestAnalyzePythonUsesNestedApplicationEntrypoint(t *testing.T) {
 	got, err := Analyze(fstest.MapFS{
 		"pyproject.toml": &fstest.MapFile{Data: []byte("[project]\ndependencies = ['fastapi', 'uvicorn']\n")},

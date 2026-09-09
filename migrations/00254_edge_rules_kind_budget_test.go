@@ -181,10 +181,10 @@ func TestMigrations_00254_EdgeRulesKindBudget(t *testing.T) {
 	if gotKind != "budget" {
 		t.Errorf("kind round-trip: got %q, want 'budget' (the closed-vocabulary CHECK accepted it on insert + read; pgstore's kind-agnostic jsonb path round-tripped)", gotKind)
 	}
-	if !strings.Contains(string(gotAction), `"budget_ms":3000`) {
+	if !strings.Contains(compactJSON(t, gotAction), `"budget_ms":3000`) {
 		t.Errorf("action jsonb round-trip: got %s, want action.budget.budget_ms=3000 (jsonb must preserve the budget action shape verbatim)", string(gotAction))
 	}
-	if !strings.Contains(string(gotAction), `"allow_override_header":"x-faas-budget-ms"`) {
+	if !strings.Contains(compactJSON(t, gotAction), `"allow_override_header":"x-faas-budget-ms"`) {
 		t.Errorf("action jsonb round-trip: got %s, want action.budget.allow_override_header=\"x-faas-budget-ms\"", string(gotAction))
 	}
 	t.Cleanup(func() {
@@ -202,12 +202,12 @@ func TestMigrations_00254_EdgeRulesKindBudget(t *testing.T) {
 	// kind=maintenance create on this code path. Each iteration
 	// seeds its own row so the inserts don't collide on the
 	// (account_id, app_id, match_host, match_path) uniqueness.
-	for _, k := range []string{"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip", "validate", "limit", "geo", "maintenance"} {
-		k := k
+	for i, k := range []string{"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip", "validate", "limit", "geo", "maintenance"} {
+		i, k := i, k
 		t.Run("vocab_still_accepts_"+k, func(t *testing.T) {
 			// Reuse the same account + app; vary match_path so
 			// each kind row is distinct.
-			probeID := "00000000-0000-0000-0000-00000003" + pad2(k)
+			probeID := "00000000-0000-0000-0000-0000000003" + hex2(i)
 			probeAction := map[string]any{}
 			switch k {
 			case "route":
@@ -283,12 +283,11 @@ func TestMigrations_00254_EdgeRulesKindBudget(t *testing.T) {
 	})
 }
 
-// pad2 truncates a 1- or 2-char kind name to exactly 2 chars so
-// the probe row IDs stay within the 00000000-0000-0000-0000-
-// 00000003XXXX pattern. Mirrors the uuid-sed-residual pattern.
-func pad2(s string) string {
-	if len(s) >= 2 {
-		return s[:2]
-	}
-	return s + "0"
+// hex2 renders i as exactly two hex digits so the probe row IDs stay valid
+// uuids under the 00000000-0000-0000-0000-00000003XX pattern. The previous
+// version sliced the kind NAME ("ro", "re", ...), which is not hex and made
+// every probe insert fail with SQLSTATE 22P02.
+func hex2(i int) string {
+	const hex = "0123456789abcdef"
+	return string([]byte{hex[(i/16)%16], hex[i%16]})
 }

@@ -106,7 +106,7 @@ func appEffectiveLimits() map[string]any {
 		"concurrency_per_instance": 5,
 		"app_request_rate_rps":     20,
 		"app_request_burst":        100,
-		"account_request_rate_rpm": 200,
+		"account_request_rate_rpm": 1200,
 		"request_budget_ms":        3000,
 		"request_budget_max_ms":    30000,
 		"response_write_timeout_s": 900,

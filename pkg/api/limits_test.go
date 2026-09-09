@@ -141,7 +141,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// `custom_domains` path. Allowed=false means the create
 			// handler returns 402 CodeTenantSurfaceQuotaReached before
 			// the store is touched.
-			TenantSurfacesPerAccount: 0, TenantHostnamesPerSurface: 0, TenantSurfacesAllowed: false,
+			TenantSurfacesPerAccount: 0, TenantHostnamesPerSurface: 0, TenantSurfacesAllowed: false, WildcardDomainsAllowed: false,
 			DataPlacementHintsPerApp: 0,
 			// ADR-076 (#476): outbound webhooks — Free gated to 402
 			// (CodePlanWebhooksNotAllowed), same fail-closed shape.
@@ -151,9 +151,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// before the store is touched; the 0/0/0/0/0/0/0 tuple
 			// here is the defence-in-depth value the store still reads.
 			TriggersAllowed: false, TriggerLimitPerApp: 0, TriggerLimitPerAccount: 0, TriggerBatchSizeMax: 0, TriggerBatchWindowMaxSec: 0, TriggerMaxAttemptsMax: 0, TriggerRecordsPerSecondPerApp: 0, TriggerPayloadMaxBytes: 0, MaxESMSourcesPerApp: 0, MaxESMRecordsPerSecond: 0, BrokerEgressMbit: 0, TLSSkipVerifyAllowed: false,
-			// ADR-040: Free gets 50/min — covers the 1-concurrency plan's
-			// traffic envelope with a 50× burst ceiling.
-			RateLimitPerAccountRPM: 50,
+			// ADR-040 / #1680: one Free app can sustain its advertised 5 rps.
+			RateLimitPerAccountRPM: 300,
 			// ADR-104: Free gets 100 — small slice of per-key
 			// cardinality, enough to size 1-2 per-key limits.
 			ThrottleMaxKeysPerRule: 100,
@@ -293,7 +292,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// paid tier. 1 surface with up to 10 verified hostnames.
 			// The "single SaaS customer, handful of end-customer
 			// subdomains" use case is the Hobby use case.
-			TenantSurfacesPerAccount: 1, TenantHostnamesPerSurface: 10, TenantSurfacesAllowed: true,
+			TenantSurfacesPerAccount: 1, TenantHostnamesPerSurface: 10, TenantSurfacesAllowed: true, WildcardDomainsAllowed: false,
 			DataPlacementHintsPerApp: 3,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Hobby tracks KeysMax
 			// (10) one-to-one. Pending invitations = members/2
@@ -309,10 +308,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// customer's fan-out can't saturate schedd's per-app
 			// WakeRateLimiter bucket.
 			TriggersAllowed: true, TriggerLimitPerApp: 2, TriggerLimitPerAccount: 10, TriggerBatchSizeMax: 50, TriggerBatchWindowMaxSec: 30, TriggerMaxAttemptsMax: 3, TriggerRecordsPerSecondPerApp: 100, TriggerPayloadMaxBytes: 1048576, MaxESMSourcesPerApp: 2, MaxESMRecordsPerSecond: 100, BrokerEgressMbit: 10, TLSSkipVerifyAllowed: false,
-			// ADR-040: Hobby gets 200/min — ~10× the per-app rps (20),
-			// so the per-app limit trips first on a single hot app and
-			// the account limit catches the cross-app botnet signature.
-			RateLimitPerAccountRPM: 200,
+			// ADR-040 / #1680: one Hobby app can sustain its advertised 20 rps.
+			RateLimitPerAccountRPM: 1200,
 			// ADR-104: Hobby gets 1000 — meaningful per-key
 			// cardinality on a small/medium deployment.
 			ThrottleMaxKeysPerRule: 1000,
@@ -444,7 +441,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// with up to 50 verified hostnames each. Each surface
 			// still binds to one app (the multi-app variant is the
 			// deferred footgun).
-			TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 50, TenantSurfacesAllowed: true,
+			TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 50, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
 			DataPlacementHintsPerApp: 10,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Pro tracks KeysMax
 			// (50) one-to-one — every team member can hold a key
@@ -459,8 +456,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// to 10/50 + 500/5min/10 attempts so a Pro customer's
 			// 1k-msg/s Kafka consumer can be drained with one trigger.
 			TriggersAllowed: true, TriggerLimitPerApp: 10, TriggerLimitPerAccount: 50, TriggerBatchSizeMax: 500, TriggerBatchWindowMaxSec: 300, TriggerMaxAttemptsMax: 10, TriggerRecordsPerSecondPerApp: 1000, TriggerPayloadMaxBytes: 6291456, MaxESMSourcesPerApp: 10, MaxESMRecordsPerSecond: 1000, BrokerEgressMbit: 50, TLSSkipVerifyAllowed: true,
-			// ADR-040: Pro gets 1000/min — ~10× the per-app rps (100).
-			RateLimitPerAccountRPM: 1000,
+			// ADR-040 / #1680: one Pro app can sustain its advertised 100 rps.
+			RateLimitPerAccountRPM: 6000,
 			// ADR-104: Pro gets 5000 — meaningful per-tenant
 			// cardinality on a multi-tenant deployment.
 			ThrottleMaxKeysPerRule: 5000,
@@ -604,7 +601,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// bounded by LE's 100-SAN-per-cert limit (per_host_san
 			// falls back to per_host above ~100, surfaced via the
 			// cert engine, not quota).
-			TenantSurfacesPerAccount: 25, TenantHostnamesPerSurface: 250, TenantSurfacesAllowed: true,
+			TenantSurfacesPerAccount: 25, TenantHostnamesPerSurface: 250, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
 			DataPlacementHintsPerApp: 50,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Scale tracks KeysMax
 			// (200) one-to-one — SaaS-scale multi-team + rotating-CI.
@@ -626,10 +623,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// picker cache refresh path can validate inside the
 			// deployment_changed pg_notify fanout window.
 			MirrorRuleAllowed: true, MirrorTargetsPerApp: 3,
-			// ADR-040: Scale gets 5000/min — ~10× the per-app rps (500).
-			// The fleet-summed alert at 100/min/5m (FaasPerAccountRateLimitSpike)
-			// triggers well before any single paid customer's bucket fills.
-			RateLimitPerAccountRPM: 5000,
+			// ADR-040 / #1680: one Scale app can sustain its advertised 500 rps.
+			RateLimitPerAccountRPM: 30000,
 			// ADR-104: Scale gets 10000 — full per-tenant
 			// cardinality on a multi-tenant SaaS deployment.
 			ThrottleMaxKeysPerRule: 10000,
@@ -715,6 +710,17 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 		got := MustLimitsFor(p)
 		if got != want[p] {
 			t.Errorf("limits for %s:\n got  %+v\n want %+v", p, got, want[p])
+		}
+	}
+}
+
+func TestWildcardDomainsAllowedIsProPlus(t *testing.T) {
+	for plan, want := range map[Plan]bool{
+		PlanFree: false, PlanHobby: false, PlanPro: true, PlanScale: true,
+	} {
+		limits, ok := LimitsFor(plan)
+		if !ok || limits.WildcardDomainsAllowed != want || plan.WildcardDomainsAllowed() != want {
+			t.Fatalf("%s wildcard gate = %v/%v, want %v", plan, limits.WildcardDomainsAllowed, plan.WildcardDomainsAllowed(), want)
 		}
 	}
 }
@@ -1874,8 +1880,8 @@ func TestPlanEvictionPriorityAccessorsMatchTable(t *testing.T) {
 }
 
 // TestPlanRateLimitPerAccount pins the per-account requests/minute cap
-// per plan (ADR-040 / issue #292). Free 50/min, Hobby 200/min, Pro
-// 1000/min, Scale 5000/min. Unknown plans must fail closed (return 0)
+// per plan (ADR-040 / issues #292 and #1680). Free 300/min, Hobby
+// 1200/min, Pro 6000/min, Scale 30000/min. Unknown plans must fail closed (return 0)
 // so a missing row never silently unlocks cross-app botnets — same
 // contract as CronLimitPerAccount above.
 func TestPlanRateLimitPerAccount(t *testing.T) {
@@ -1883,15 +1889,28 @@ func TestPlanRateLimitPerAccount(t *testing.T) {
 		plan    Plan
 		wantRPM int
 	}{
-		{PlanFree, 50},
-		{PlanHobby, 200},
-		{PlanPro, 1000},
-		{PlanScale, 5000},
+		{PlanFree, 300},
+		{PlanHobby, 1200},
+		{PlanPro, 6000},
+		{PlanScale, 30000},
 		{Plan("unknown"), 0},
 	}
 	for _, c := range cases {
 		if got := c.plan.RateLimitPerAccountRPM(); got != c.wantRPM {
 			t.Errorf("%s.RateLimitPerAccountRPM() = %d, want %d", c.plan, got, c.wantRPM)
+		}
+	}
+}
+
+// TestPlanAccountRateSupportsOneAdvertisedApp prevents the account-wide
+// abuse boundary from silently undercutting the advertised per-app rate.
+func TestPlanAccountRateSupportsOneAdvertisedApp(t *testing.T) {
+	for _, plan := range Plans {
+		limits := MustLimitsFor(plan)
+		minimumRPM := limits.RateLimitRPS * 60
+		if limits.RateLimitPerAccountRPM < minimumRPM {
+			t.Errorf("%s account rate = %d RPM; need at least %d RPM for one app at %d RPS",
+				plan, limits.RateLimitPerAccountRPM, minimumRPM, limits.RateLimitRPS)
 		}
 	}
 }

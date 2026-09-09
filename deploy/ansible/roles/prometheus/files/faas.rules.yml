@@ -1319,24 +1319,24 @@ groups:
       # single customer's many apps (each app stays under per-app rps, but
       # the sum easily blows past the account's plan budget).
       #
-      # Threshold: > 100/min fleet-total for 5m. Tuned as a coordination
-      # signal: a single misbehaving customer peaks well below 100; a
-      # botnet or runaway retry-loop is the realistic source. The §12
+      # Threshold: > 300/min fleet-total for 5m. This matches the
+      # smallest plan's account allowance and signals sustained customer
+      # throttling that needs operator review. The §12
       # dashboard's per-account drill-down pinpoints the offender; the
       # `__other__` row in the exposition is the bounded admission
       # overflow bucket (pre-instantiated at zero so a series with no
       # traffic is visible).
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasPerAccountRateLimitSpike
-        expr: sum(rate(gateway_per_account_rate_limited_total[5m])) > (100 / 60)
+        expr: sum(rate(gateway_per_account_rate_limited_total[5m])) > (300 / 60)
         for: 5m
         labels:
           severity: warn
           component: gatewayd-internal
           family: per_account_rate_limit
         annotations:
-          summary: "Per-account gateway rejections above 100/min (fleet)"
-          description: "Fleet-wide per-account gateway rate-limit rejections have exceeded 100/min over the rolling 5-minute window for 5m. account_id=\"__other__\" is the bounded admission overflow bucket — drill down per-account via `topk(20, sum by (account_id, plan) (rate(gateway_per_account_rate_limited_total[5m])))`. Common causes: single customer burst (misdeploy / runaway retry), coordinated abuse (scanners rotating across an account's apps), or a config-driven throttling regression (plan row dropped to zero)."
+          summary: "Per-account gateway rejections above 300/min (fleet)"
+          description: "Fleet-wide per-account gateway rate-limit rejections have exceeded 300/min over the rolling 5-minute window for 5m. account_id=\"__other__\" is the bounded admission overflow bucket — drill down per-account via `topk(20, sum by (account_id, plan) (rate(gateway_per_account_rate_limited_total[5m])))`. Common causes: single customer burst (misdeploy / runaway retry), coordinated abuse (scanners rotating across an account's apps), or a config-driven throttling regression (plan row dropped to zero)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPerAccountRateLimitSpike.md"
 
       # ─────────────────────────────────────────────────────────────────

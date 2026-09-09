@@ -150,6 +150,8 @@ tags:
       the exit code, and reports back. Lifecycle (created → running →
       succeeded | failed | timeout | oom | cancelled), per-task retry
       with backoff, dead-letter accounting on exhaustion.
+  - name: workflows
+    description: Durable multi-step workflow runs and external events (ADR-081).
   - name: queues
     description: Per-app FIFO queues (send / receive / ack).
   - name: delayed_tasks
@@ -3368,7 +3370,10 @@ paths:
       description: |
         Recent request telemetry rows for an app — status, latency_ms, route,
         method, deployment_id, cold_boot, trace_id, received_at, and the
-        number of original requests represented by each collapsed row.
+        number of original requests represented by each collapsed row. Rows
+        are split by bounded latency bucket so aggregate percentiles retain
+        distribution signal; `latency_ms` is that bucket's inclusive upper
+        bound (and can therefore be slightly conservative).
         PR-A ships the read endpoint only; the write-side (publisher
         → gRPC IncrementRequestTelemetry → apid receiver → sqlc
         INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -3669,6 +3674,29 @@ paths:
         '403': { $ref: '#/components/responses/DeploymentForbidden' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '422': { $ref: '#/components/responses/DeployFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deployments/latest:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: getLatestAppDeployment
+      summary: Fetch the latest deployment for an app.
+      description: |
+        Returns the app's newest deployment by `created_at DESC`. The app slug
+        and deployment are resolved within the authenticated account; an
+        unknown or cross-account app and a never-deployed app all return the
+        same IDOR-safe 404 surface.
+      responses:
+        '200':
+          description: The latest deployment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/deployments/dev-source:
@@ -5368,7 +5396,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ListTenantSurfacesResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [tenant-surfaces]
@@ -5394,10 +5422,18 @@ paths:
               schema: { $ref: '#/components/schemas/TenantSurfaceResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
+        '403':
+          description: "code: tenant_surface_quota | tenant_hostname_quota | forbidden — the account or seed-hostname cap is exhausted, or the caller lacks scope."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409':
+          description: "code: tenant_hostname_already_claimed | conflict — a seed hostname or surface name is already claimed."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/tenant-surfaces/{id}:
     parameters:
@@ -5418,7 +5454,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TenantSurfaceResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [tenant-surfaces]
@@ -5427,7 +5463,7 @@ paths:
       responses:
         '204': { description: Surface and hostnames removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/tenant-surfaces/{id}/hostnames:
@@ -5457,10 +5493,18 @@ paths:
               schema: { $ref: '#/components/schemas/TenantHostnameResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
+        '403':
+          description: "code: tenant_hostname_quota | forbidden — the surface hostname cap is exhausted or the caller lacks scope."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409':
+          description: "code: tenant_hostname_already_claimed | conflict — the hostname belongs to another tenant surface."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/tenant-surfaces/{id}/hostnames/{hostname}:
     parameters:
@@ -5482,7 +5526,7 @@ paths:
       responses:
         '204': { description: Hostname removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ADR-117 PR-C: env-diff matrix endpoint. The response is
@@ -6018,7 +6062,8 @@ paths:
       description: |
         ADR-124 deployment queue controls — bulk soft-delete rows
         in {superseded, failed, cancelled} older than the cutoff
-        (default 168h). Plan-gated (Free returns 402). Retention
+        (default 168h). Plan-gated (Free returns 402
+        `plan_reorder_disabled`). Retention
         cap enforced inside the store so INV 3 stays satisfied.
       requestBody:
         required: false
@@ -6035,6 +6080,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClearObsoleteReport'
+        '402':
+          description: "code: plan_reorder_disabled — this plan does not include deployment queue controls."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/deployments/{id}/traffic:
     parameters:
@@ -7133,6 +7185,194 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # ─── Durable workflows (ADR-081) ────────────────────────────
+
+  /v1/apps/{slug}/workflows/{name}/runs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, minLength: 1 }
+        description: Workflow name from the app's current live deployment.
+    post:
+      tags: [workflows]
+      operationId: createWorkflowRun
+      summary: Start a durable workflow run.
+      description: |
+        Snapshots the named workflow definition from the app's current live
+        deployment and creates a pending run. The optional request body is
+        retained as the workflow input and may be any valid JSON value.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '201':
+          description: The new pending workflow run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: "code: plan_workflows_not_allowed — this plan does not include durable workflows."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: "code: plan_workflows_quota | forbidden — the concurrent-run cap is exhausted or the caller lacks scope."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: "code: workflow_definition_not_found | app_not_found — the app or named live workflow definition does not exist."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/workflows/runs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [workflows]
+      operationId: listWorkflowRuns
+      summary: List durable workflow runs for an app.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, running, awaiting_event, succeeded, failed, dead]
+          description: Optional exact status filter.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Maximum runs to return in this page.
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of runs to skip before returning results.
+      responses:
+        '200':
+          description: A page of workflow runs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowRunsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier to retrieve.
+    get:
+      tags: [workflows]
+      operationId: getWorkflowRun
+      summary: Get a durable workflow run.
+      responses:
+        '200':
+          description: The workflow run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/steps:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier whose step attempts are returned.
+    get:
+      tags: [workflows]
+      operationId: listWorkflowSteps
+      summary: List the step attempts for a workflow run.
+      responses:
+        '200':
+          description: Ordered workflow step attempts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowStepsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/events:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier that receives the event.
+    post:
+      tags: [workflows]
+      operationId: injectWorkflowEvent
+      summary: Deliver an external event to a waiting workflow run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InjectWorkflowEventRequest' }
+      responses:
+        '200':
+          description: The event was recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InjectWorkflowEventResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '409':
+          description: "code: workflow_not_running — only running or awaiting_event runs accept events."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier to cancel.
+    post:
+      tags: [workflows]
+      operationId: cancelWorkflowRun
+      summary: Cancel a durable workflow run.
+      description: |
+        Marks a non-terminal run failed with an operator-cancelled error and
+        skips its pending, running, and waiting steps. Repeating the request on
+        a terminal run returns the existing run.
+      responses:
+        '200':
+          description: The terminal workflow run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
 
   # ─── Jobs (issue #1184 Workstream A / ADR-099) ─────────────
   # Run-to-completion jobs. 11 endpoints mirroring the cron
@@ -13865,6 +14105,11 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
+        workload_class:
+          type: string
+          enum: [http, graphql, grpc, job, worker]
+          description: "Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot may replace it. Distinct from type, which selects the app-vs-function execution contract."
+          example: http
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
         ram_mb: { type: integer , example: 256}
         cpu_millicores: { type: integer, enum: [250, 500, 1000], example: 500 }
@@ -19891,8 +20136,13 @@ components:
         canonical `wake.*` vocabulary is documented in
         `docs/adr/064-wake-timeline-canonical-vocabulary.md`
         (including `wake.restore_breakdown`, which exposes the
-        vmmd snapshot-restore phases in integer milliseconds, plus
-        the aggregate `total_ms`; and build/deploy/boot failure kinds).
+        vmmd snapshot-restore phases in integer milliseconds;
+        `wake.cold_boot_breakdown`, which attributes pre-guest artifact
+        resolution and Firecracker startup phases, including artifact source,
+        duration, and byte size;
+        `wake.cold_boot_cpu`, which records the temporary startup CPU
+        allowance and configured quota restored before routing; and
+        build/deploy/boot failure kinds).
       type: object
       required: [at, kind, actor, data]
       properties:
@@ -23359,7 +23609,7 @@ components:
 
     DebugTelemetryRequestItem:
       type: object
-      description: "One row per gateway-served request, persisted by the recorder (PR-A)."
+      description: "One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher."
       required: [id, deployment_id, route, method, status, latency_ms, count, cold_boot, received_at]
       properties:
         id: { type: string, format: uuid }
@@ -23367,7 +23617,7 @@ components:
         route: { type: string, description: "Route template (NOT expanded URL)." }
         method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
         status: { type: integer, minimum: 100, maximum: 599 }
-        latency_ms: { type: integer, minimum: 0 }
+        latency_ms: { type: integer, minimum: 0, description: "Inclusive upper bound of the bounded latency bucket represented by this row." }
         count: { type: integer, minimum: 1, description: "Number of original requests represented by this collapsed telemetry row." }
         cold_boot: { type: boolean }
         trace_id: { type: [string, 'null'], description: "W3C trace-id hex (32 chars), null when unset." }
@@ -23490,6 +23740,18 @@ components:
 
 
   responses:
+
+    TenantSurfacesNotAllowed:
+      description: "code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces."
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    WorkflowRunNotFound:
+      description: "code: workflow_run_not_found — the run is absent or belongs to another account."
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
 
     Unauthorized:
       description: 'code: unauthorized'

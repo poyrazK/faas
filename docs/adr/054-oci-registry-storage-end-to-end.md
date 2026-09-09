@@ -224,10 +224,27 @@ checks that the refreshed scan names the configured reference, and only then
 commits the new marker and continues admission. A failed or partially
 published generation stays fail-closed.
 
+The marker also pins each remote member of that verified three-key group in
+the node cache. Budget enforcement evicts unpinned snapshots and layers first;
+it does not discard a prepared runtime base merely because unrelated traffic
+fills the shared cache. The runtime matrix uses stable logical keys, so the
+pinned set is bounded and a new release replaces the previous generation at
+those keys. A generation marker for a canonical local parent does not pin its
+redundant cache copy because the parent itself already provides the local fast
+path.
+
 The normal restore path reads the small local marker and scan sidecar without
 a registry round trip. Registry I/O occurs once per node and runtime
 generation, so the consistency repair does not consume the 350 ms full-wake
 latency budget after adoption.
+
+**2026-09-09 / issue #1673 amendment.** Local-path resolution exposes a stable
+source classification (`backend_local` or `cache_hit`) through storage wrappers.
+VMMD probes kernel, base, main, and sidecar local paths concurrently. A false
+probe falls back to the existing sequential `Get` materialization path; a true
+probe never calls `Get`, performs no remote existence check, and copies no blob.
+Cache LRU timestamp touches remain queued and best-effort, so slow metadata
+writes cannot delay restore readiness.
 
 ## Rejected alternatives
 

@@ -158,10 +158,17 @@ func TestMigrations_00025_DeploymentsRootfsKey(t *testing.T) {
 	// case) and confirm the backfill leaves rootfs_key empty so
 	// imaged re-stamps it on the next build via
 	// SetDeploymentRootfs.
+	//
+	// status is 'superseded', not 'live': migration 00213 added the
+	// partial unique index deployments_app_scope_live_uniq over
+	// (app_id, scope) WHERE status = 'live', and the step-(3) row above
+	// already holds the live slot for this app. The backfill UPDATE's
+	// WHERE clause filters on rootfs_key/rootfs_path only, so the
+	// status value is irrelevant to what this step pins.
 	var offRootDeploymentID string
 	if err := pool.QueryRow(ctx, `
 		insert into deployments (app_id, kind, image_digest, status, rootfs_path, created_at)
-		values ($1, 'image', 'sha256:seed-off', 'live', '/opt/custom/rootfs-key-app/__off__.ext4', now())
+		values ($1, 'image', 'sha256:seed-off', 'superseded', '/opt/custom/rootfs-key-app/__off__.ext4', now())
 		returning id
 	`, appID).Scan(&offRootDeploymentID); err != nil {
 		t.Fatalf("seed off-root deployment: %v", err)

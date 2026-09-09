@@ -488,3 +488,4 @@ export { UploadsService } from './services/UploadsService.js';
 export { UpstreamsService } from './services/UpstreamsService.js';
 export { UsageService } from './services/UsageService.js';
 export { WebhooksService } from './services/WebhooksService.js';
+export { WorkflowsService } from './services/WorkflowsService.js';

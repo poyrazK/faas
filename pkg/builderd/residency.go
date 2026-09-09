@@ -123,6 +123,15 @@ type metricsResidentProbe struct {
 // deny-opportunistic sentinel. Only after the probe has actually seen the
 // gauge do we trust the cached value, including a cached 0.
 func NewMetricsResident(ctx context.Context, url string) ResidencyProbe {
+	if url == "" {
+		// The short-circuit this function's doc has described since it was
+		// written, but never actually had: an unwired ScheddMetricsURL used
+		// to start a poller that re-requested "" every residentPollInterval
+		// forever. healthy stays false either way, so the deny-opportunistic
+		// posture is unchanged; what changes is that a partially-deployed
+		// box no longer burns a goroutine and a failing request per tick.
+		return &metricsResidentProbe{}
+	}
 	p := newMetricsResident(ctx, url, true /* startLoop */)
 	return p
 }
@@ -143,7 +152,9 @@ func newMetricsResident(ctx context.Context, url string, startLoop bool) *metric
 	// opportunistic slot until schedd becomes reachable.
 	_ = p.scrape(ctx)
 	if startLoop {
-		go p.loop(ctx)
+		// Read the package var here, on the caller's goroutine, so a test
+		// that swaps it cannot race the poller it just started.
+		go p.loop(ctx, residentPollInterval)
 	}
 	return p
 }
@@ -162,11 +173,13 @@ func (p *metricsResidentProbe) ResidentMB() int {
 // stripping the 2nd slot for a brief schedd hiccup without trusting an
 // indefinitely stale low-residency value.
 //
-// residentPollInterval is captured at loop start to avoid racing with
-// unit tests that swap the package var via t.Cleanup (see
-// residency_test.go for the test-only swap pattern).
-func (p *metricsResidentProbe) loop(ctx context.Context) {
-	interval := residentPollInterval
+// The poll interval is read by the CALLER, in newMetricsResident, and
+// passed in. Reading residentPollInterval here instead looked equivalent
+// but was the bug: the read happened whenever the goroutine was first
+// scheduled, which can be after the test that started it has finished and
+// a later test has already swapped the package var back. The race
+// detector caught it on main under -shuffle (seed 1788861835470908514).
+func (p *metricsResidentProbe) loop(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {

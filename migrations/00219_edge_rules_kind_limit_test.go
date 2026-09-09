@@ -171,7 +171,7 @@ func TestMigrations_00219_EdgeRulesKindLimit(t *testing.T) {
 	if gotKind != "limit" {
 		t.Errorf("kind round-trip: got %q, want 'limit' (the closed-vocabulary CHECK accepted it on insert + read; pgstore's kind-agnostic jsonb path round-tripped)", gotKind)
 	}
-	if !strings.Contains(string(gotAction), `"max_body_bytes":5242880`) {
+	if !strings.Contains(compactJSON(t, gotAction), `"max_body_bytes":5242880`) {
 		t.Errorf("action jsonb round-trip: got %s, want action.max_body_bytes=5242880 (jsonb must preserve the limit action shape verbatim)", string(gotAction))
 	}
 

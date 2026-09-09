@@ -94,8 +94,8 @@ func TestMigrations_00030_Invocations(t *testing.T) {
 		// Insert a parent (app) so the FK accepts our test row.
 		var appID, accountID string
 		if err := pool.QueryRow(ctx, `
-			insert into apps (slug, account_id, runtime)
-			values ('inv-test-app', '00000000-0000-0000-0000-000000000001'::uuid, 'node22')
+			insert into apps (slug, account_id, runtime, ram_mb)
+			values ('inv-test-app', '00000000-0000-0000-0000-000000000001'::uuid, 'node22', 256)
 			returning id
 		`).Scan(&appID); err != nil {
 			// Account row is required by the FK; insert it first.

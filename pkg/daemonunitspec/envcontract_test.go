@@ -122,7 +122,7 @@ func readTree(t *testing.T, root string, dirs []string, keep func(string) bool) 
 
 func renderedUnits() string {
 	var b bytes.Buffer
-	for _, e := range Registry {
+	for _, e := range UnitEntries() {
 		b.Write(e.Unit().Render())
 		b.WriteByte('\n')
 	}
@@ -247,7 +247,7 @@ func TestEnvContract_DeliveryIsWired(t *testing.T) {
 		setInUnits[m[1]] = true
 	}
 	byDaemon := map[string]string{}
-	for _, e := range Registry {
+	for _, e := range UnitEntries() {
 		byDaemon[e.Name] = string(e.Unit().Render())
 	}
 

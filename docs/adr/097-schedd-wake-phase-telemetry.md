@@ -15,7 +15,7 @@
   join to the existing `events` table (`pkg/sched/events.go`) and to the
   gateway-side `gateway_wake_latency_seconds` (pkg/gateway/metrics.go:335-342)
   on the same wake event. No new wire surface, no DB migration.
-- **Why:** The wake-latency SLO (spec §6.3: p50 ≤ 350 ms, p95 ≤ 800 ms;
+- **Why:** The platform snapshot-wake SLO (spec §6.3: p95 < 350 ms through RUNNING;
   dashboard at docs/faas_implementation_spec.md:755) is measured today at
   **one** point — the gateway's first upstream byte
   (`pkg/gateway/handler.go:3010`). When p95 regresses, an operator has no way

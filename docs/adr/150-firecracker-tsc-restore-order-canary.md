@@ -43,7 +43,8 @@ Require register-order and value-preservation regression tests, retained-input
 metal restores with unique UUIDs and no cold fallback, and resource leak checks.
 Then measure the same basic function through the SSD gateway with zero live
 instances before every timed request. Keep failures in the reported results.
-Component timing alone does not establish the full-wake p95 <350 ms target.
+Component timing alone does not establish the platform-only snapshot wake
+p95 <350 ms target (`wake.boot_started` through `wake.boot_completed`).
 
 Rollback removes only `zz-ssd-tsc-order-canary.conf` from the SSD VMMD service,
 reloads systemd, and restarts VMMD when the host has no live guests. The original

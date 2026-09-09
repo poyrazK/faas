@@ -59,6 +59,7 @@
     content: |
       # Managed by Gregale node-join topology convergence; do not edit.
       local   all             postgres                                peer
+      local   replication     postgres                                peer
       local   all             faas                                    peer map=faas_map
       host    faas            faas                                    127.0.0.1/32            scram-sha-256
       host    faas            faas                                    ::1/128                  scram-sha-256

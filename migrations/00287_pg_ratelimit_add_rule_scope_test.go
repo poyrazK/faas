@@ -98,7 +98,7 @@ func TestMigrations_00287_PgRateLimitAddRuleScope(t *testing.T) {
 	// is not written by this test — Phase 3 + Phase 4 do not
 	// require per-rule rows today; the test merely confirms the
 	// CHECK admits the value.
-	var dummyRuleID = "00000000-0000-0000-0000-000000002287a"
+	var dummyRuleID = "00000000-0000-0000-0000-00000002287a"
 	if _, err := pool.Exec(ctx, `
 		insert into pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
 		values ('rule', $1, 'scale', 100, now())
@@ -116,7 +116,7 @@ func TestMigrations_00287_PgRateLimitAddRuleScope(t *testing.T) {
 	// Defends against the easy confusion where a developer adds
 	// 'route' to a new migration's IN list thinking they mean
 	// `kind=route` on edge_rules.
-	var accountID = "00000000-0000-0000-0000-000000002287b"
+	var accountID = "00000000-0000-0000-0000-00000002287b"
 	var dummyRouteScopeErr error
 	if _, err := pool.Exec(ctx, `
 		insert into pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)

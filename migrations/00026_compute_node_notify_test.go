@@ -10,9 +10,12 @@
 //      eviction hook keys on this payload — a regression that drops
 //      the trigger would leave stale conns cached past a node's IP
 //      rotation.
-//   3. UPDATE on compute_nodes (SetComputeNodeActive path) fires the
+//   3. UPDATE on compute_nodes (the drain / recover path) fires the
 //      same channel with the post-update active flag, so the watchdog
 //      and heartbeat goroutine paths both surface in gatewayd-internal's cache.
+//      Since migration 20260904205348784 `active` is a STORED GENERATED
+//      column over `lifecycle`, so the write side flips lifecycle and
+//      the trigger derives active — both renderings are pinned below.
 //
 // The test subscribes via db.Subscribe before issuing the writes so
 // the LISTEN connection is parked on the channel; pg_notify fires
@@ -67,8 +70,9 @@ func TestMigrations_00026_ComputeNodeNotify(t *testing.T) {
 
 	got := waitForNodeNotification(t, notif, newID, 5*time.Second)
 	var p struct {
-		NodeID string `json:"node_id"`
-		Active bool   `json:"active"`
+		NodeID    string `json:"node_id"`
+		Active    bool   `json:"active"`
+		Lifecycle string `json:"lifecycle"`
 	}
 	if err := json.Unmarshal([]byte(got.Payload), &p); err != nil {
 		t.Fatalf("unmarshal payload %q: %v", got.Payload, err)
@@ -77,17 +81,24 @@ func TestMigrations_00026_ComputeNodeNotify(t *testing.T) {
 		t.Errorf("INSERT payload node_id = %q, want %q", p.NodeID, newID)
 	}
 	if !p.Active {
-		t.Errorf("INSERT payload active = false, want true (column default)")
+		t.Errorf("INSERT payload active = false, want true (lifecycle defaults to 'active')")
+	}
+	if p.Lifecycle != "active" {
+		t.Errorf("INSERT payload lifecycle = %q, want %q (column default)", p.Lifecycle, "active")
 	}
 
-	// (2) UPDATE — SetComputeNodeActive's drained-row path. The
-	// payload's active field must mirror the post-update value, not
-	// the pre-update value; gatewayd-internal evicts on either transition but
-	// re-arming on active=true depends on the truth coming through.
+	// (2) UPDATE — the drain / node-down path. Since migration
+	// 20260904205348784 `active` is a STORED GENERATED column derived
+	// from `lifecycle` (true for 'active' and 'recovering'), so the
+	// write side sets lifecycle; writing `active` directly is rejected
+	// with SQLSTATE 428C9. The payload's active field must still mirror
+	// the post-update value, not the pre-update one: gatewayd-internal
+	// evicts on either transition but re-arming on active=true depends
+	// on the truth coming through.
 	if _, err := pool.Exec(ctx,
-		`update compute_nodes set active = false where id = $1`, newID,
+		`update compute_nodes set lifecycle = 'unavailable' where id = $1`, newID,
 	); err != nil {
-		t.Fatalf("update compute_node active=false: %v", err)
+		t.Fatalf("update compute_node lifecycle=unavailable: %v", err)
 	}
 	got = waitForNodeNotification(t, notif, newID, 5*time.Second)
 	if err := json.Unmarshal([]byte(got.Payload), &p); err != nil {
@@ -97,7 +108,31 @@ func TestMigrations_00026_ComputeNodeNotify(t *testing.T) {
 		t.Errorf("UPDATE payload node_id = %q, want %q", p.NodeID, newID)
 	}
 	if p.Active {
-		t.Errorf("UPDATE payload active = true, want false (post-update value)")
+		t.Errorf("UPDATE payload active = true, want false (post-update value of the generated column)")
+	}
+	if p.Lifecycle != "unavailable" {
+		t.Errorf("UPDATE payload lifecycle = %q, want %q (post-update value)", p.Lifecycle, "unavailable")
+	}
+
+	// (3) 'recovering' is the second lifecycle value that maps to
+	// active=true. Pin it so a future narrowing of the generated
+	// column's expression (e.g. `lifecycle = 'active'` only) surfaces
+	// here rather than as nodes silently dropping out of rotation
+	// mid-recovery.
+	if _, err := pool.Exec(ctx,
+		`update compute_nodes set lifecycle = 'recovering' where id = $1`, newID,
+	); err != nil {
+		t.Fatalf("update compute_node lifecycle=recovering: %v", err)
+	}
+	got = waitForNodeNotification(t, notif, newID, 5*time.Second)
+	if err := json.Unmarshal([]byte(got.Payload), &p); err != nil {
+		t.Fatalf("unmarshal recovering payload %q: %v", got.Payload, err)
+	}
+	if !p.Active {
+		t.Errorf("lifecycle=recovering payload active = false, want true (recovering nodes stay in rotation)")
+	}
+	if p.Lifecycle != "recovering" {
+		t.Errorf("recovering payload lifecycle = %q, want %q", p.Lifecycle, "recovering")
 	}
 }
 

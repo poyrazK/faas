@@ -114,6 +114,10 @@ func TestRenderRestoreBreakdown_ExactTotalAndPhases(t *testing.T) {
 			"load_snapshot_ms":   float64(400),
 			"wait_ready_ms":      float64(131),
 			"materialize_mem_ms": float64(3),
+			"resolve_artifacts": []any{
+				map[string]any{"artifact": "kernel", "source": "backend_local", "duration_ms": float64(1)},
+				map[string]any{"artifact": "main", "source": "cache_hit", "duration_ms": float64(4)},
+			},
 		},
 	}
 	got := renderRestoreBreakdown(ev)
@@ -122,9 +126,35 @@ func TestRenderRestoreBreakdown_ExactTotalAndPhases(t *testing.T) {
 		"materialize_mem=3ms",
 		"load_snapshot=400ms",
 		"wait_ready=131ms",
+		"artifacts=kernel/backend_local=1ms,main/cache_hit=4ms",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("renderRestoreBreakdown missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestRenderColdBootBreakdown_AttributesPreGuestDelay(t *testing.T) {
+	ev := api.WakeTimelineEvent{
+		Kind: "wake.cold_boot_breakdown",
+		Data: map[string]any{
+			"total_ms":          float64(23474),
+			"resolve_images_ms": float64(20600),
+			"wait_ready_ms":     float64(2809),
+			"resolve_artifacts": []any{
+				map[string]any{"artifact": "main", "source": "cache_hit", "duration_ms": float64(20590), "bytes": float64(1048576)},
+			},
+		},
+	}
+	got := renderColdBootBreakdown(ev)
+	for _, want := range []string{
+		"cold_boot total=23474ms",
+		"resolve_images=20600ms",
+		"wait_ready=2809ms",
+		"artifacts=main/cache_hit=20590ms/1048576B",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("renderColdBootBreakdown missing %q in %q", want, got)
 		}
 	}
 }
@@ -160,5 +190,25 @@ func TestRenderWakeTimelinePage_DefaultSummaryHidesInternalPhases(t *testing.T) 
 	renderWakeTimelinePageWithOptions(&buf, resp, true)
 	if !strings.Contains(buf.String(), "materialize_mem=3ms") {
 		t.Errorf("verbose output missing internal restore phase:\n%s", buf.String())
+	}
+}
+
+func TestRenderWakeTimelinePage_ColdBootCPUAllowance(t *testing.T) {
+	resp := api.WakeTimelineResponse{
+		WakeID: "wake-cold", AppID: "app-cold", Limit: 50,
+		Events: []api.WakeTimelineEvent{
+			{At: "2026-08-31T12:13:57.696394Z", Kind: "wake.cold_boot_cpu", Actor: "vmmd",
+				Data: map[string]any{
+					"total_ms": float64(2401), "startup_cpu_millicores": float64(1000),
+					"configured_cpu_millicores": float64(250),
+				}},
+			{At: "2026-08-31T12:13:58.302741Z", Kind: "wake.readiness_200", Actor: "vmmd",
+				Data: map[string]any{"elapsed_ms": float64(2200)}},
+		},
+	}
+	var buf bytes.Buffer
+	renderWakeTimelinePage(&buf, resp)
+	if got := buf.String(); !strings.Contains(got, "cold start: cold_boot=2401ms cpu=1000m->250m readiness=2200ms") {
+		t.Errorf("cold-boot summary missing CPU transition:\n%s", got)
 	}
 }

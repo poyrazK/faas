@@ -41,7 +41,7 @@ pinning (`snapshots.fc_version`), and the vsock post-restore resume
 hook (ADR-022) that re-seeds entropy + steps clock — V6 acceptance
 green in `pkg/fcvm/v6_resume_ext4_metal_test.go`.
 
-**Remaining:** §14 V2 latency loop driver (100 cycles, p50 ≤ 350 ms)
+**Remaining:** §14 V2 platform latency loop driver (100 cycles, p95 < 350 ms)
 — see [What's next](#whats-next).
 
 ## M4 — gatewayd-public + gatewayd-internal + schedd. ✅
@@ -994,10 +994,11 @@ explicitly open issues that the doc otherwise implies are closed.
   + `pkg/gateway/cert_expiry.go` refresher, wired into
   `cmd/gatewayd-public/main.go`; three alert rules land in `faas.rules.yml`;
   operator runbook at `docs/ops/gatewayd-public-tls-cutover.md` (the legacy `docs/ops/gatewayd-tls-cutover.md` retains the pre-PR-A cut-over steps; current process lives in the public-edge runbook).
-- **§14 V2 latency driver** — 100 park→wake cycles per app class,
-  p50 ≤ 350 ms / p95 ≤ 800 ms. The Hobby-class gate is wired via
-  `TestDeployWakeMetal/wake-latency-p50p95-100cycles` (extends the
-  prior 10-cycle mean-only subtest). Per-app-class (Express, Next.js,
+- **§14 V2 latency driver** — 100 platform-only park→wake cycles per app class,
+  p95 < 350 ms from `wake.boot_started` through `wake.boot_completed` on
+  the reference SSD node. The gate is wired via
+  `pkg/fcvm/TestMetalParkWakeCycle`; the internal gateway first-byte
+  cohort remains a separate diagnostic. Per-app-class (Express, Next.js,
   Flask, FastAPI, Go static) gating is the M8 follow-up. Runs on
   `make metal-lima RUN_ARGS='-run TestDeployWakeMetal'`.
 - **Documented timed restore drill** — §14 M8: PG + one app back
@@ -1029,10 +1030,13 @@ explicitly open issues that the doc otherwise implies are closed.
   app's sticky-warm hint and choose by current fleet headroom, so a two-node
   fleet can keep desired replicas on separate compute nodes. The scheduler
   coverage lives in `TestConvergeServiceReplicasSpreadsAcrossComputeNodes`.
-- **Workload networking** — host ports, public multi-port routing, and
-  cross-VM service discovery remain the next networking slice. Loopback
-  discovery for workloads within one task is the current contract (ADR-164 and
-  ADR-165).
+- **Workload networking** — the gateway now exposes a deterministic,
+  loopback-only cross-VM service endpoint registry (ADR-167) and a trusted
+  node-local service proxy (ADR-168), both sourced from the same live target
+  cache used for request routing. Guest DNS/proxy binding to instance identity,
+  host ports, and public multi-port routing remain the next networking slices;
+  loopback discovery for workloads within one task remains the current guest
+  contract (ADR-164 and ADR-165).
 - **Resource and cost isolation** — named RAM/CPU profiles and ephemeral disk
   ceilings are present; per-container CPU/disk enforcement and a combined
   compute + S3 + managed-PostgreSQL usage/budget view remain follow-up work.

@@ -7,7 +7,7 @@ name: ci
 #   - golangci-lint (catches errcheck, staticcheck, ineffassign beyond go vet)
 #   - govulncheck (Go vulnerability DB scan)
 #   - Codecov coverage (project gate >= 70%; informational patch)
-#   - workflow_dispatch on the metal job (manual trigger from Actions tab)
+#   - workflow_dispatch for the non-hardware CI bundle
 #   - status badge in README, PR template for milestone gating
 #
 # Dependabot (.github/dependabot.yml) and CodeQL (.github/workflows/codeql.yml)
@@ -158,6 +158,14 @@ jobs:
           restore-keys: |
             go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-lint-${{ runner.os }}-
+      # S4 PR-4a advisory: a useful regression pin should fail on the
+      # merge-base. This report is intentionally non-blocking while the
+      # repository accumulates baseline coverage; the table identifies tests
+      # that are absent or already passing on the base.
+      - name: advisory regression pin report
+        run: make regression-pin-check
+      - name: regression-pin checker tests
+        run: make regression-pin-check-test
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
         with:
@@ -823,6 +831,8 @@ jobs:
           args: -shellcheck ''
       - name: native builder Go toolchain bundle contract
         run: bash scripts/ci/package-go-toolchain_test.sh
+      - name: native metal invocation contract
+        run: bash scripts/ci/run-native-metal-smoke_test.sh
       # ---- former job `capabilities-check`: product capability registry ----
       - name: product capability registry and generated matrix
         run: make capabilities-check
@@ -1298,25 +1308,6 @@ jobs:
             ~/go/pkg/mod
           key: go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
-  metal:
-    # Manual trigger from the Actions tab. Marked workflow_dispatch so the
-    # job can be invoked on-demand once a self-hosted runner is registered
-    # (the spec gates the EX44 acceptance tests on KVM + root). The
-    # `runs-on: [self-hosted, kvm]` label combo fails fast on stock runners.
-    name: metal (KVM + root, manual)
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, kvm]
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: metal tests
-        run: sudo make test-metal
-      - name: leak check
-        run: sudo make leakcheck
-
   migrations:
     # ADR-142 freezes the legacy 1..590 sequence and moves all new migrations
     # to collision-resistant UTC timestamp IDs. The static check validates
@@ -1351,7 +1342,9 @@ jobs:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     name: migrations (IDs + apply)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 40 min: the full per-migration package (~240 Postgres tests) runs here
+    # and a slow runner can stretch it well past its 6.4-8.6 min norm.
+    timeout-minutes: 40
     steps:
       # 2026-07-31: pre-pull postgres with 3-attempt retry. This job
       # is the one that actually hit the Docker Hub pull timeout on
@@ -1455,6 +1448,40 @@ jobs:
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
         run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+
+      # The per-migration Postgres tests (migrations/*_test.go, ~240 of them)
+      # ran nowhere: the pg shards exclude the package with `grep -v
+      # /migrations` and the two steps above name single tests with -run.
+      # They rotted accordingly — 82 of them failed against main until the
+      # PR that added this step. Running the whole package here is what
+      # stops that happening again. Each test gets its own schema from
+      # pkg/db/pgtest, so -p 4 is safe.
+      #
+      # No -race: every test here is a sequential seed-then-assert against
+      # Postgres with no goroutines of its own, so the detector polices
+      # nothing and costs 2.2x wall time (measured on this package). The
+      # concurrency that matters — MigrateUp under the advisory lock — keeps
+      # -race in the apply-and-walk step above.
+      #
+      # synchronous_commit=off: the service container runs stock settings and
+      # each test replays the full migration set, so commit fsync dominates.
+      # Durability is irrelevant to a throwaway CI database.
+      - name: migrations per-migration tests (full package)
+        env:
+          PGOPTIONS: "-c synchronous_commit=off"
+        # No -p: this is a single package, so -p (PACKAGE parallelism) does
+        # nothing here — the 239 tests run sequentially either way. It read
+        # as a tuning knob and was not one.
+        #
+        # -timeout=35m against an observed 6.4-8.6 min band. That looks
+        # generous because the band is not the whole story: run 34259499960
+        # blew past an 18 min timeout on the same commit that then passed in
+        # 7.5 min on re-run. Each test replays ~650 migrations against a
+        # service-container Postgres, so a slow runner stretches the whole
+        # package at once. A timeout is a deadlock backstop, not a
+        # performance assertion; sizing it near the mean just converts
+        # runner variance into red builds.
+        run: go test -count=1 -timeout=35m ./migrations/...
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.

@@ -24,8 +24,11 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -53,6 +56,12 @@ func TestMigrations_00046_APIKeyScopesV2_BackfillAndCheck(t *testing.T) {
 	`, acctID); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
+	// api_keys.org_id is NOT NULL with an FK to orgs (00099 added the
+	// column + api_keys_org_id_fkey; 00134 flipped it NOT NULL), so a
+	// key needs a real org parent. The org is not what 00046 pins —
+	// it is just the FK parent that makes the scope-expansion seeds
+	// insertable.
+	orgID := seedOrg(t, ctx, pool)
 
 	type seed struct {
 		hashHex string
@@ -78,10 +87,10 @@ func TestMigrations_00046_APIKeyScopesV2_BackfillAndCheck(t *testing.T) {
 	for _, s := range seeds {
 		// Re-encode the hash to bytes[] so the column NOT NULL check passes.
 		if _, err := pool.Exec(ctx, `
-			insert into api_keys (id, account_id, key_sha256, label, scopes)
-			values ($1, $2, decode($3, 'hex'), $4, $5)
+			insert into api_keys (id, account_id, key_sha256, label, scopes, org_id)
+			values ($1, $2, decode($3, 'hex'), $4, $5, $6)
 			on conflict (id) do update set scopes = excluded.scopes
-		`, "00000000-0000-0000-0000-00000000"+s.hashHex, acctID, s.hashHex+"00000000000000000000000000000000000000000000000000000000", "legacy-"+s.hashHex, sortedStrings(s.scopes)); err != nil {
+		`, "00000000-0000-0000-0000-00000000"+s.hashHex, acctID, s.hashHex+"00000000000000000000000000000000000000000000000000000000", "legacy-"+s.hashHex, sortedStrings(s.scopes), orgID); err != nil {
 			t.Fatalf("seed %s: %v", s.hashHex, err)
 		}
 	}
@@ -158,13 +167,25 @@ func TestMigrations_00046_APIKeyScopesV2_BackfillAndCheck(t *testing.T) {
 	}
 
 	// (5) The CHECK constraint now rejects an INSERT with an unknown scope.
+	// The org_id is a live FK parent here on purpose: with a dangling
+	// org the INSERT would fail 23503 and the test would "pass" without
+	// ever reaching api_keys_scopes_vocab_chk. Assert the SQLSTATE so
+	// the CHECK is what actually rejects the row.
 	_, err = pool.Exec(ctx, `
-		insert into api_keys (id, account_id, key_sha256, label, scopes)
+		insert into api_keys (id, account_id, key_sha256, label, scopes, org_id)
 		values ('00000000-0000-0000-0000-000000000099', $1, decode('9999000000000000000000000000000000000000000000000000000000000000', 'hex'),
-		        'bad', ARRAY['not-a-scope'])
-	`, acctID)
+		        'bad', ARRAY['not-a-scope'], $2)
+	`, acctID, orgID)
 	if err == nil {
 		t.Fatalf("expected chk violation for unknown scope")
+	}
+	var vocabErr *pgconn.PgError
+	if !errors.As(err, &vocabErr) {
+		t.Fatalf("unknown-scope insert: got non-Postgres error: %v", err)
+	}
+	if vocabErr.Code != "23514" {
+		t.Errorf("unknown-scope insert: got SQLSTATE=%s (%s), want 23514 (api_keys_scopes_vocab_chk)",
+			vocabErr.Code, vocabErr.ConstraintName)
 	}
 
 	// (6) Audit rows landed with the correct from/to payload. The query

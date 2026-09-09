@@ -71,17 +71,20 @@ var forceParkReasonShape = regexp.MustCompile(`^[a-z0-9_]*$`)
 // SCHEDULED, PARKED_FAILED, STOPPED, DELETED, …) returns 409
 // instance_not_parkable WITHOUT writing an intent row.
 //
-// The map is keyed by the raw instance.state string (the
-// `instances.state` column is a plain text column — see
-// migrations/00015) rather than a typed alias, because Go's
-// pkg/state does not export a State type today (the canonical
-// constants live unexported in memstore.go). String comparison
-// against the raw column value is the same shape the state
-// machine at pkg/state/machine.go:88-95 uses internally.
+// Keyed by the raw instance.state string, built from the exported
+// constants in pkg/state/machine.go.
+//
+// It used to hard-code "RUNNING" / "WAKING" / "COLD_BOOTING" on the
+// stated grounds that "pkg/state does not export a State type today
+// (the canonical constants live unexported in memstore.go)". That was
+// not true — machine.go exports State along with StateRunning,
+// StateWaking and StateColdBooting — and instances.state has been
+// lowercase since instances_state_check in migration 00001. The gate
+// therefore matched nothing and rejected every real instance.
 var forceParkableStates = map[string]struct{}{
-	"RUNNING":      {},
-	"WAKING":       {},
-	"COLD_BOOTING": {},
+	string(state.StateRunning):     {},
+	string(state.StateWaking):      {},
+	string(state.StateColdBooting): {},
 }
 
 // operatorIntentPollHorizon is the recommended poll horizon

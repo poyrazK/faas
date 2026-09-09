@@ -33,8 +33,11 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -69,20 +72,25 @@ func TestMigrations_00115_APIKeyExpiryRotation(t *testing.T) {
 	`, acctID); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
+	// api_keys.org_id is NOT NULL with an FK to orgs (column + FK from
+	// 00099, NOT NULL flip in 00134), so every key below needs a live
+	// org parent. 00115 pins expiry / rotation, not org binding — the
+	// org is purely the FK parent that makes these seeds insertable.
+	orgID := seedOrg(t, ctx, pool)
 
 	// (2) Insert a pre-migration-style key (no expires_at, no
 	// status override) and a "rotated" pair (newerKey with
 	// rotated_from_id -> olderKey). Defaults + lineage round
 	// trip in one go.
 	if _, err := pool.Exec(ctx, `
-		insert into api_keys (id, account_id, key_sha256, label, scopes)
+		insert into api_keys (id, account_id, key_sha256, label, scopes, org_id)
 		values
 		    ($1, $2, decode('aaaa00000000000000000000000000000000000000000000000000000000', 'hex'),
-		        'pre-mig', ARRAY['admin']),
+		        'pre-mig', ARRAY['admin'], $4),
 		    ($3, $2, decode('bbbb00000000000000000000000000000000000000000000000000000000', 'hex'),
-		        'rotated', ARRAY['admin'])
+		        'rotated', ARRAY['admin'], $4)
 		on conflict (id) do nothing
-	`, olderKey, acctID, newerKey); err != nil {
+	`, olderKey, acctID, newerKey, orgID); err != nil {
 		t.Fatalf("seed keys: %v", err)
 	}
 	if _, err := pool.Exec(ctx,
@@ -132,11 +140,11 @@ func TestMigrations_00115_APIKeyExpiryRotation(t *testing.T) {
 	// the SQL error to surface a 23514 (check_violation); any
 	// error is fine for this pin, the constraint is the wall.
 	_, err := pool.Exec(ctx, `
-		insert into api_keys (id, account_id, key_sha256, label, scopes, status)
+		insert into api_keys (id, account_id, key_sha256, label, scopes, status, org_id)
 		values ('00000000-0000-0000-0000-0000000000ff', $1,
 		        decode('ffff00000000000000000000000000000000000000000000000000000000', 'hex'),
-		        'bad', ARRAY['admin'], 'unknown')
-	`, acctID)
+		        'bad', ARRAY['admin'], 'unknown', $2)
+	`, acctID, orgID)
 	if err == nil {
 		t.Errorf("expected CHECK violation for status='unknown'")
 	} else if !strings.Contains(strings.ToLower(err.Error()), "check") &&
@@ -165,14 +173,26 @@ func TestMigrations_00115_APIKeyExpiryRotation(t *testing.T) {
 
 	// (6) FK rejects a dangling rotated_from_id.
 	_, err = pool.Exec(ctx, `
-		insert into api_keys (id, account_id, key_sha256, label, scopes, rotated_from_id)
+		insert into api_keys (id, account_id, key_sha256, label, scopes, rotated_from_id, org_id)
 		values ('00000000-0000-0000-0000-0000000000fe', $1,
 		        decode('fefe00000000000000000000000000000000000000000000000000000000', 'hex'),
 		        'dangling', ARRAY['admin'],
-		        '00000000-0000-0000-0000-deadbeefdead')
-	`, acctID)
+		        '00000000-0000-0000-0000-deadbeefdead', $2)
+	`, acctID, orgID)
 	if err == nil {
 		t.Errorf("expected FK violation for dangling rotated_from_id")
+	} else {
+		// org_id is a live parent here, so the only FK that can trip
+		// is api_keys_rotated_from_id_fkey. Pin the SQLSTATE + the
+		// constraint name so a future org-seed regression can't make
+		// this assertion pass for the wrong reason.
+		var fkErr *pgconn.PgError
+		if !errors.As(err, &fkErr) {
+			t.Errorf("dangling rotated_from_id: got non-Postgres error: %v", err)
+		} else if fkErr.Code != "23503" || !strings.Contains(fkErr.ConstraintName, "rotated_from") {
+			t.Errorf("dangling rotated_from_id: got SQLSTATE=%s constraint=%q, want 23503 on the rotated_from_id FK",
+				fkErr.Code, fkErr.ConstraintName)
+		}
 	}
 
 	// (7) Indexes exist with the expected shapes (column list

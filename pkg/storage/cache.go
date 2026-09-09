@@ -256,17 +256,29 @@ func (c *LocalCacheBackend) Root() string { return c.root }
 // they do not scan a stale compatibility file or copy the whole image again.
 // Remote parents intentionally return ok=false through this delegation.
 func (c *LocalCacheBackend) LocalPath(key string) (string, bool, error) {
-	if resolver, ok := c.parent.(LocalPathResolver); ok {
+	path, _, ok, err := c.LocalPathWithSource(key)
+	return path, ok, err
+}
+
+// LocalPathWithSource reports whether the parent supplied a backend-local
+// file or this wrapper supplied a cache hit. It never calls parent.Get, so a
+// cache hit cannot fall through to a remote existence check or blob copy.
+func (c *LocalCacheBackend) LocalPathWithSource(key string) (string, LocalPathSource, bool, error) {
+	if resolver, ok := c.parent.(LocalPathSourceResolver); ok {
+		if p, source, local, err := resolver.LocalPathWithSource(key); err == nil && local {
+			return p, source, true, nil
+		}
+	} else if resolver, ok := c.parent.(LocalPathResolver); ok {
 		if p, local, err := resolver.LocalPath(key); err == nil && local {
-			return p, true, nil
+			return p, LocalPathSourceBackend, true, nil
 		}
 	}
 	cacheFile, _ := c.cacheFileFor(key)
 	if fi, err := os.Stat(cacheFile); err == nil && !fi.IsDir() && fi.Size() > 0 {
 		c.touchCacheFile(cacheFile)
-		return cacheFile, true, nil
+		return cacheFile, LocalPathSourceCache, true, nil
 	}
-	return "", false, nil
+	return "", "", false, nil
 }
 
 // cacheFileFor hashes the storage key into a path-safe
@@ -495,6 +507,9 @@ func (c *LocalCacheBackend) CachedGeneration(key string) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("storage: cache: read generation %q: %w", key, err)
 	}
+	if !regularFileExists(path) && !c.parentLocalArtifactExists(key) {
+		return "", false, nil
+	}
 	generation := strings.TrimSpace(string(b))
 	return generation, generation != "", nil
 }
@@ -510,11 +525,16 @@ func (c *LocalCacheBackend) MarkGeneration(key, generation string) error {
 		return fmt.Errorf("storage: cache: invalid generation for %q", key)
 	}
 	path, _ := c.cacheFileFor(key)
+	parentLocal := c.parentLocalArtifactExists(key)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, err := os.Stat(path); err != nil {
-		return fmt.Errorf("storage: cache: mark generation %q without cached blob: %w", key, err)
+	if !regularFileExists(path) && !parentLocal {
+		return fmt.Errorf("storage: cache: mark generation %q without cached blob: %w", key, os.ErrNotExist)
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o770); err != nil {
+		return fmt.Errorf("storage: cache: create generation directory %q: %w", key, err)
+	}
+	_ = os.Chmod(filepath.Dir(path), 0o770|os.ModeSetgid)
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".faas-cache-generation-*")
 	if err != nil {
 		return fmt.Errorf("storage: cache: create generation marker %q: %w", key, err)
@@ -536,6 +556,23 @@ func (c *LocalCacheBackend) MarkGeneration(key, generation string) error {
 		return fmt.Errorf("storage: cache: install generation marker %q: %w", key, err)
 	}
 	return nil
+}
+
+func regularFileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+// parentLocalArtifactExists reports whether the wrapped backend already owns
+// a canonical local copy. Generation markers for those keys describe that
+// parent artifact, so they do not need a duplicate blob in this cache.
+func (c *LocalCacheBackend) parentLocalArtifactExists(key string) bool {
+	resolver, ok := c.parent.(LocalPathResolver)
+	if !ok {
+		return false
+	}
+	path, local, err := resolver.LocalPath(key)
+	return err == nil && local && path != "" && regularFileExists(path)
 }
 
 // refresh reports whether the next Get must read the parent and replace the
@@ -673,6 +710,7 @@ type cacheEntry struct {
 	path    string
 	size    int64
 	modTime time.Time
+	pinned  bool
 }
 
 // openCache opens a cache entry without loading its contents into memory.
@@ -824,8 +862,13 @@ func (c *LocalCacheBackend) evictCache(key string) {
 }
 
 // enforceBudgetLocked walks the cache directory, sums allocated filesystem
-// bytes, and evicts the oldest entries by mtime until the
-// total drops under maxBytes. Caller holds c.mu.
+// bytes, and evicts the oldest unpinned entries by mtime until the total drops
+// under maxBytes. A generation marker means imaged has verified the complete
+// runtime-base artifact group for an immutable release. Those remote artifacts
+// stay resident so an unrelated snapshot write cannot turn the next daemon
+// restart into a multi-gigabyte registry download. Generation-marked entries
+// backed by a canonical local parent remain evictable because the parent is
+// already the local fast path. Caller holds c.mu.
 func (c *LocalCacheBackend) enforceBudgetLocked() error {
 	entries, err := c.snapshotCacheLocked()
 	if err != nil {
@@ -846,6 +889,9 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 		if total <= c.maxBytes {
 			break
 		}
+		if e.pinned {
+			continue
+		}
 		if err := os.Remove(e.path); err == nil {
 			total -= e.size
 		}
@@ -853,7 +899,9 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 		if err := os.Remove(metaPath); err == nil {
 			_ = err
 		}
-		_ = os.Remove(e.path + ".generation")
+		if !c.parentLocalArtifactExists(e.key) {
+			_ = os.Remove(e.path + ".generation")
+		}
 	}
 	return nil
 }
@@ -898,11 +946,13 @@ func (c *LocalCacheBackend) snapshotCacheLocked() ([]cacheEntry, error) {
 				// the original storage key is unknowable.
 				continue
 			}
+			_, generationErr := os.Stat(path + ".generation")
 			out = append(out, cacheEntry{
 				key:     string(metaBytes),
 				path:    path,
 				size:    cacheDiskUsage(info),
 				modTime: info.ModTime(),
+				pinned:  generationErr == nil && !c.parentLocalArtifactExists(string(metaBytes)),
 			})
 		}
 	}

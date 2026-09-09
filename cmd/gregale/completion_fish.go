@@ -22,7 +22,7 @@ import (
 func cmdCompletionFish() int {
 	w := osStdout
 	renderFishHeader(w)
-	for _, c := range cliCommands {
+	for _, c := range customerCliCommands() {
 		renderFishCommand(w, c)
 	}
 	renderFishFooter(w)

@@ -64,12 +64,25 @@ func TestMigrations_00159_InvocationsReplaySource(t *testing.T) {
 		}
 	}
 
-	// (3) Insert with source='replay' must succeed. Use a freshly
-	// minted UUID so a parallel pgtest run on the same box doesn't
-	// collide on the primary key (migrations-public-prefix-race.md).
+	// (3) Insert with source='replay' must succeed. invocations
+	// carries FKs to accounts + apps, so seed both parents first;
+	// the row IDs are freshly minted so a parallel pgtest run on the
+	// same box doesn't collide (migrations-public-prefix-race.md).
 	invID := randomUUID(t)
-	appID := randomUUID(t)
 	acctID := randomUUID(t)
+	appID := randomUUID(t)
+	if _, err := pool.Exec(ctx, `
+		insert into accounts (id, email, plan, created_at)
+		values ($1::uuid, $2, 'scale', now())`,
+		acctID, acctID+"@example.com"); err != nil {
+		t.Fatalf("seed accounts: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		insert into apps (id, account_id, slug, type, ram_mb, max_concurrency, status, created_at)
+		values ($1::uuid, $2::uuid, 'invocations-replay-source-test', 'app', 128, 1, 'active', now())`,
+		appID, acctID); err != nil {
+		t.Fatalf("seed apps: %v", err)
+	}
 	_, err = pool.Exec(ctx, `
 		insert into invocations
 		    (id, app_id, account_id, source, state, method, path, due_at, created_at)
@@ -87,7 +100,7 @@ func TestMigrations_00159_InvocationsReplaySource(t *testing.T) {
 		insert into invocations
 		    (id, app_id, account_id, source, state, method, path, due_at, created_at)
 		values ($1::uuid, $2::uuid, $3::uuid, 'bogus', 'pending', 'POST', '/', now(), now())`,
-		randomUUID(t), randomUUID(t), randomUUID(t))
+		randomUUID(t), appID, acctID)
 	if err == nil {
 		t.Fatalf("insert with source='bogus' succeeded; CHECK is missing or non-closed")
 	}

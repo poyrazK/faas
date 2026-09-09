@@ -96,11 +96,42 @@ func TestMigrations_00128_EventsSidecarNameIdx(t *testing.T) {
 		t.Errorf("indexdef missing (data->>'sidecar_name') expression: %s", indexDef)
 	}
 
-	// (4) Planner uses the index for ListEventsBySidecar's
-	// query. We seed a small events row so the planner has
-	// statistics and then EXPLAIN the production query. The
-	// expected plan mentions events_sidecar_name_idx; a Seq
-	// Scan on `events` would surface here.
+	// (4) The index is USABLE for ListEventsBySidecar's query, and
+	// answers it correctly.
+	//
+	// Seed a realistic mix: sidecar events the partial predicate
+	// covers, plus non-sidecar noise it must exclude, plus the one
+	// row the production query is looking for. ANALYZE gives the
+	// planner real statistics instead of the bootstrap defaults.
+	//
+	// The EXPLAIN then runs with enable_seqscan disabled (see
+	// explainNoSeqScan in 00072's file). On a test schema of this
+	// size a Seq Scan is genuinely the cheapest plan, so asserting
+	// on the planner's unaided choice would be pinning cost
+	// estimates rather than schema: the question that matters is
+	// whether the planner CAN reach this index for this predicate.
+	// It can only do so if the index still exists under this name,
+	// still keys on the (data->>'sidecar_name') expression, and
+	// still has a predicate implied by the query's `kind IN (...)`.
+	// Break any of those and the plan falls back to Seq Scan even
+	// with the penalty applied.
+	if _, err := pool.Exec(ctx, `
+		insert into events (actor, kind, data)
+		select 'vmmd',
+		       case when g % 2 = 0 then 'wake.sidecar_init_exit' else 'wake.sidecar_restart' end,
+		       jsonb_build_object('sidecar_name', 'bulk-' || g, 'status', 'init_ok', 'exit_code', 0)
+		  from generate_series(1, 500) g
+	`); err != nil {
+		t.Fatalf("seed sidecar events: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		insert into events (actor, kind, data)
+		select 'apid', 'deploy.created',
+		       jsonb_build_object('sidecar_name', 'noise-' || g)
+		  from generate_series(1, 500) g
+	`); err != nil {
+		t.Fatalf("seed non-sidecar noise events: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		insert into events (actor, kind, data)
 		values ('vmmd', 'wake.sidecar_init_exit',
@@ -108,31 +139,39 @@ func TestMigrations_00128_EventsSidecarNameIdx(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("seed events row: %v", err)
 	}
-	rows, err := pool.Query(ctx, `
-		explain (format text)
+	if _, err := pool.Exec(ctx, `analyze events`); err != nil {
+		t.Fatalf("analyze events: %v", err)
+	}
+
+	const listEventsBySidecar = `
 		select id from events
 		where kind in ('wake.sidecar_init_exit', 'wake.sidecar_restart')
 		  and data->>'sidecar_name' = $1
-	`, "metrics-test")
+	`
+	planStr, err := explainNoSeqScan(ctx, t, pool, listEventsBySidecar, "metrics-test")
 	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}
-	defer rows.Close()
-	var plan strings.Builder
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			t.Fatalf("explain scan: %v", err)
-		}
-		plan.WriteString(line)
-		plan.WriteString("\n")
-	}
-	planStr := plan.String()
 	if !strings.Contains(planStr, "events_sidecar_name_idx") {
-		t.Errorf("EXPLAIN did not mention events_sidecar_name_idx; planner falls back to Seq Scan:\n%s", planStr)
+		t.Errorf("planner could not use events_sidecar_name_idx for ListEventsBySidecar even with seqscan disabled:\n%s", planStr)
 	}
 	if strings.Contains(planStr, "Seq Scan on events") {
-		t.Errorf("EXPLAIN chose Seq Scan on events; index not picked up:\n%s", planStr)
+		t.Errorf("EXPLAIN chose Seq Scan on events; index not usable:\n%s", planStr)
+	}
+
+	// The partial predicate must not change the answer: exactly one
+	// row carries sidecar_name = 'metrics-test' under a covered kind,
+	// and the 500 non-sidecar noise rows must stay out of it.
+	var hits int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from events
+		  where kind in ('wake.sidecar_init_exit', 'wake.sidecar_restart')
+		    and data->>'sidecar_name' = $1`, "metrics-test",
+	).Scan(&hits); err != nil {
+		t.Fatalf("count ListEventsBySidecar rows: %v", err)
+	}
+	if hits != 1 {
+		t.Errorf("ListEventsBySidecar('metrics-test') matched %d rows, want 1", hits)
 	}
 
 	// (5) Replay-safety: a second MigrateUp is a no-op.

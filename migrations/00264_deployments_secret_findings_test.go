@@ -170,9 +170,14 @@ func TestMigrations_00264_DeploymentsSecretFindings(t *testing.T) {
 		t.Fatalf("seed apps: %v", err)
 	}
 	findingsJSON := `[{"file":".env.production","line":2,"key":"STRIPE_SECRET_KEY","provider":"stripe_live","severity":"high","snippet":"sk_liv…XXXX"}]`
+	// `deployments` has no `source` / `source_kind` columns: the upload
+	// origin is `source_path` (+ source_url/source_bytes) and the deploy
+	// flavour is `kind` (image|tarball|dockerfile|github|preview). Both
+	// `image_digest` and `status` are NOT NULL with no default, so the
+	// row has to carry them.
 	if _, err := pool.Exec(ctx, `
-		insert into deployments (id, app_id, source, source_kind, scan_status, secret_findings, secret_scanned_at, created_at)
-		values ($1, $2, 'local', 'tarball', 'complete_with_redactions', $3::jsonb, now(), now())
+		insert into deployments (id, app_id, image_digest, kind, source_path, status, scan_status, secret_findings, secret_scanned_at, created_at)
+		values ($1, $2, 'sha256:' || repeat('b', 64), 'tarball', 'local', 'pending', 'complete_with_redactions', $3::jsonb, now(), now())
 		on conflict (id) do nothing
 	`, deploymentID, appID, findingsJSON); err != nil {
 		t.Fatalf("insert deployment: %v (00264 must accept scan_status='complete_with_redactions' + secret_findings jsonb)", err)

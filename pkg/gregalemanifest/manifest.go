@@ -38,6 +38,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/sched"
 )
 
@@ -376,13 +377,14 @@ type QueueConfig struct {
 }
 
 // Manifest is the parsed `gregale.yaml` root. The supported top-level
-// declarations are `triggers` and `workflows`; other keys are validated
-// strictly (yaml.Decoder.KnownFields(true)) so a typo like `trigger:`
-// (singular) surfaces as a load-time error rather than silently shipping a
-// no-op deploy.
+// declarations are `hosting`, `triggers`, and `workflows`; other keys are
+// validated strictly (yaml.Decoder.KnownFields(true)) so a typo like
+// `trigger:` (singular) surfaces as a load-time error rather than silently
+// shipping a no-op deploy.
 type Manifest struct {
-	Triggers  []Trigger          `yaml:"triggers"`
-	Workflows []api.WorkflowSpec `yaml:"workflows,omitempty"`
+	Hosting   *hostingconfig.Config `yaml:"hosting,omitempty"`
+	Triggers  []Trigger             `yaml:"triggers"`
+	Workflows []api.WorkflowSpec    `yaml:"workflows,omitempty"`
 }
 
 // Load reads `gregale.yaml` or `gregale.yml` from dir. Returns
@@ -477,6 +479,11 @@ func (m *Manifest) Validate() error {
 func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m == nil {
 		return nil
+	}
+	if m.Hosting != nil {
+		if err := m.Hosting.Validate(); err != nil {
+			return fmt.Errorf("hosting: %w", err)
+		}
 	}
 	seen := make(map[triggerKey]struct{}, len(m.Triggers))
 	for i, t := range m.Triggers {

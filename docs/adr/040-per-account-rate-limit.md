@@ -53,6 +53,17 @@ RPM by 60 internally to derive rps and uses RPM as the burst
 ceiling, so an account can absorb `RPM` requests before the
 per-minute refill kicks in.
 
+### Amendment (2026-09-09, issue #1680): preserve the advertised app rate
+
+The original account rows undercut a single app's advertised sustained
+rate. For example, Scale advertised 500 requests/second but its shared
+account bucket refilled at only 5000 requests/minute (83.3 requests/second).
+The account rows are now Free 300/min, Hobby 1200/min, Pro 6000/min, and
+Scale 30000/min. A table test enforces
+`RateLimitPerAccountRPM >= RateLimitRPS * 60` for every plan. The account
+bucket remains a finite shared abuse boundary; customers running multiple
+apps share it. Both limits remain visible together in the limits API and CLI.
+
 ### Reuse `pkg/gateway.Limiter`, do not build a parallel type
 
 The new scope shares the existing token-bucket semantics
@@ -110,11 +121,10 @@ at `pkg/gateway/metrics.go:144-146` (ADR-024 H3, PR #345).
 ### Alert: `FaasPerAccountRateLimitSpike`
 
 Fleet-summed `sum(rate(gateway_per_account_rate_limited_total[5m]))
-> (100 / 60)`, `for: 5m`, severity `warn`. The 100/min
-fleet-total threshold is tuned as a **coordination signal**: a
-single misbehaving customer peaks well below 100/min, so the
-alert fires on aggregate abuse, not on a noisy single-tenant
-spike. Per-account drill-down lives in the runbook
+> (300 / 60)`, `for: 5m`, severity `warn`. The 300/min
+fleet-total threshold matches the smallest account allowance and signals
+sustained throttling that needs operator review. Per-account drill-down
+lives in the dashboard and runbook
 (`topk(20, sum by (account_id, plan) (rate(... [5m])))`) rather
 than in the alert expression — keeping the rule evaluation cost
 bounded by fleet cardinality, not by customer cardinality.
@@ -168,10 +178,11 @@ This is the same lazy-flip behavior as the per-app limiter
 
 - **Wire-layer** (`pkg/api/limits_test.go`): extend
   `TestPlanLimitsMatchSpec` to pin the new field; add
-  `TestPlanRateLimitPerAccount` mirroring `TestPlanCronLimits`.
-- **Bucket math** (`pkg/gateway/gateway_test.go`): five new
-  tests — `BurstThenRefill`, `FractionalRefill`, `PerAccountIsolation`,
-  `UnknownPlanFailsClosed`, `PlanChange`.
+  `TestPlanRateLimitPerAccount` plus the cross-field invariant
+  `TestPlanAccountRateSupportsOneAdvertisedApp`.
+- **Bucket math** (`pkg/gateway/gateway_test.go`): tests cover
+  burst/refill, account isolation, unknown plans, plan changes, and
+  five simulated minutes at Scale's advertised 500 requests/second.
 - **Handler** (`pkg/gateway/handler_test.go`):
   `TestAccountRateLimitReturns429` asserts the new 429 path
   carries `Retry-After: 1` and
@@ -182,9 +193,9 @@ This is the same lazy-flip behavior as the per-app limiter
   `WithAccountLimiter(unlimitedAccountLimiter())` so the load
   window doesn't trip the new per-account bucket.
 - **Backend integration** (`cmd/gatewayd/backend_test.go`):
-  `TestAccountRateLimit_TenOhOneReturns429` wires the production
+  `TestAccountRateLimit_ThreeOhOneReturns429` wires the production
   handler through `pgRouter + MemStore + PGBackend` with a frozen
-  clock, fires 1001 sequential requests, and asserts the 1001st
+  clock, fires 301 sequential requests, and asserts the 301st
   returns 429. The frozen clock prevents the Free bucket from
   refilling mid-loop.
 - **Metrics** (`pkg/gateway/metrics_test.go`):
@@ -207,9 +218,10 @@ This is the same lazy-flip behavior as the per-app limiter
 - **Single fleet-wide limiter** — rejected: doesn't bound the
   per-customer blast radius. A single noisy customer could
   starve the wake queue for everyone.
-- **Larger burst per app, smaller per account** — rejected:
-  inverts the issue's stated plan rows (50/200/1000/5000 RPM).
-  Following the issue's table.
+- **Account refill below one app's advertised rate** — the original
+  issue #292 rows used this shape. Issue #1680 demonstrated that it
+  made the per-app RPS contract unsustainable and the amendment above
+  replaced it with a tested floor.
 
 ## Open follow-ups
 
@@ -217,9 +229,8 @@ This is the same lazy-flip behavior as the per-app limiter
    (today the 60s `FlushRoutes` sweep covers it).
 2. `ForgetAccount` admin endpoint for per-customer bucket reset
    without SIGHUP's full drop. Tier-3 work.
-3. Per-account Grafana panel (`plan`-weighted top-N bar). Tier-3.
-4. Customer-visible dashboard quota UX (the "you've used 40 of 50
-   RPM this minute" view). Tier-2, tied to a billing visible-
+3. Customer-visible dashboard quota UX (the "you've used N of M
+   requests this minute" view). Tier-2, tied to a billing visible-
    telemetry decision still pending (gap G2 lean in §17 — sealed
    at-rest envelopes suffice for per-minute observation but not
    for customer-visible replay).

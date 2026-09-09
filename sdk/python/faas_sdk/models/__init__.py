@@ -78,6 +78,7 @@ from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_runtime import AppResponseRuntime
 from .app_response_type import AppResponseType
+from .app_response_workload_class import AppResponseWorkloadClass
 from .app_restart_response import AppRestartResponse
 from .app_routes_response import AppRoutesResponse
 from .app_routes_response_source import AppRoutesResponseSource
@@ -481,6 +482,7 @@ from .list_tenant_surfaces_response import ListTenantSurfacesResponse
 from .list_trigger_dead_letter_response import ListTriggerDeadLetterResponse
 from .list_trigger_records_response import ListTriggerRecordsResponse
 from .list_workflow_runs_response import ListWorkflowRunsResponse
+from .list_workflow_runs_status import ListWorkflowRunsStatus
 from .list_workflow_steps_response import ListWorkflowStepsResponse
 from .log_excerpt import LogExcerpt
 from .log_excerpt_level import LogExcerptLevel
@@ -925,6 +927,7 @@ __all__ = (
     "AppResponseEvictionPriority",
     "AppResponseRuntime",
     "AppResponseType",
+    "AppResponseWorkloadClass",
     "AppRestartResponse",
     "AppRoutesResponse",
     "AppRoutesResponseSource",
@@ -1317,6 +1320,7 @@ __all__ = (
     "ListTriggerDeadLetterResponse",
     "ListTriggerRecordsResponse",
     "ListWorkflowRunsResponse",
+    "ListWorkflowRunsStatus",
     "ListWorkflowStepsResponse",
     "LogExcerpt",
     "LogExcerptLevel",

@@ -1441,7 +1441,7 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 		return fmt.Errorf("imaged: load account: %w", err)
 	}
 
-	if err := h.transitionWithStage(ctx, dep.ID, state.StageSourceDownload, state.StageDependencyRestore, state.DeployBuilding, ""); err != nil {
+	if err := h.transitionWithStage(ctx, dep.ID, state.StageSourceDownload, state.StageDependencyRestore, state.DeployBuilding, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
 	// Issue #195 B1.5: every error path from here forward MUST land
@@ -1504,11 +1504,11 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	// failure logs Warn in runDeployScan itself, the stage
 	// transition still fires so the customer's ticker sees the
 	// image_build row).
-	if err := h.transitionWithStage(ctx, dep.ID, state.StageSecurityScan, state.StageImageBuild, state.DeployImaging, ""); err != nil {
+	if err := h.transitionWithStage(ctx, dep.ID, state.StageSecurityScan, state.StageImageBuild, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
 
-	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSnapshotPrepare, state.DeploySnapshotting, ""); err != nil {
+	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSnapshotPrepare, state.DeploySnapshotting, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
 	// Hand off to schedd: boot the freshly-built layer once, snapshot it, park
@@ -1697,7 +1697,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	// image_build in turn. Caller at handleDeploySourceChanged
 	// (handler.go:1305) and handleSnapshotBoot (handler.go:2305)
 	// have already advanced to `dependency_restore`.
-	if err := h.transitionWithStage(ctx, dep.ID, state.StageDependencyRestore, state.StageSecurityScan, state.DeployImaging, ""); err != nil {
+	if err := h.transitionWithStage(ctx, dep.ID, state.StageDependencyRestore, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
 
@@ -2155,7 +2155,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	// (after this function returns) closes security_scan and
 	// opens image_build. Same seam as buildImageLayer at
 	// handler.go:1551.
-	if err := h.transitionWithStage(ctx, dep.ID, state.StageDependencyRestore, state.StageSecurityScan, state.DeployImaging, ""); err != nil {
+	if err := h.transitionWithStage(ctx, dep.ID, state.StageDependencyRestore, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
 	runtime := app.Runtime
@@ -2562,6 +2562,7 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	// successful deployment: smoke or receipt failures immediately transition
 	// it to failed and retain the failed receipt when possible.
 	var hostingApp state.App
+	verificationStarted := time.Now()
 	hostingReceiptEnabled := h.hostingSmoke != nil
 	if _, ok := h.store.(state.DeploymentHostingReceiptStore); ok {
 		hostingReceiptEnabled = true
@@ -2590,6 +2591,9 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 				smokeErr = hostingSmokeFailure(smoke)
 			}
 			if smokeErr != nil {
+				if h.ops != nil {
+					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
+				}
 				_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
 				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
 				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
@@ -2597,9 +2601,15 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 			}
 		}
 		if err := h.persistHostingReceipt(ctx, hostingApp, dep, smoke); err != nil {
+			if h.ops != nil {
+				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
+			}
 			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "hosting receipt persistence failed: "+err.Error())
 			_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "hosting receipt persistence failed")
 			return fmt.Errorf("imaged: hosting receipt: %w", err)
+		}
+		if h.ops != nil {
+			h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeComplete, time.Since(verificationStarted))
 		}
 	}
 	// ADR-117: close the readiness stage. snapshot_prepare closed
@@ -2608,17 +2618,43 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	// framework_ready_at). The customer sees the readiness row
 	// in the summary block — the `✓ Deployed.` line is owned by
 	// streamDeployLogs and is NOT a stage row.
-	if _, serr := h.store.AppendDeploymentStage(ctx, dep.ID,
+	if appended, serr := h.store.AppendDeploymentStage(ctx, dep.ID,
 		state.StageSnapshotPrepare, state.StageReadiness, time.Now(), ""); serr != nil {
 		h.log.Warn("mark live: stage append failed",
 			"deployment_id", dep.ID, "from", "snapshot_prepare", "to", "readiness", "err", serr)
+	} else if h.ops != nil && len(appended.StageState) > 0 {
+		var ss state.StageState
+		if json.Unmarshal(appended.StageState, &ss) == nil && len(ss.History) > 0 {
+			for i := len(ss.History) - 1; i >= 0; i-- {
+				stage := ss.History[i]
+				if stage.Name == state.StageSnapshotPrepare && stage.StartedAt != nil && stage.EndedAt != nil {
+					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(app), "boot", wire.APIHostingOutcomeComplete, stage.EndedAt.Sub(*stage.StartedAt))
+					break
+				}
+			}
+		}
 	}
 	// PR-A review fix: now close the readiness stage so the
 	// customer's ticker carries a duration_ms on the wire rather
 	// than showing "Readiness passed" stuck on in_progress.
-	if _, serr := h.store.CloseDeploymentStage(ctx, dep.ID, state.StageReadiness, time.Now()); serr != nil {
+	if closed, serr := h.store.CloseDeploymentStage(ctx, dep.ID, state.StageReadiness, time.Now()); serr != nil {
 		h.log.Warn("mark live: stage close failed",
 			"deployment_id", dep.ID, "stage", "readiness", "err", serr)
+	} else if h.ops != nil {
+		if len(closed.StageState) > 0 {
+			var ss state.StageState
+			if json.Unmarshal(closed.StageState, &ss) == nil && len(ss.History) > 0 {
+				last := ss.History[len(ss.History)-1]
+				if last.Name == state.StageReadiness && last.StartedAt != nil && last.EndedAt != nil {
+					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(app), "readiness", wire.APIHostingOutcomeComplete, last.EndedAt.Sub(*last.StartedAt))
+				}
+			}
+		}
+		if state.IsDeveloperApp(app) {
+			// The live notification is the route switch boundary for a
+			// developer environment. There is no customer-derived label.
+			h.ops.ObserveAPIHostingPhase(wire.APIHostingFlowDev, "route_switch", wire.APIHostingOutcomeComplete, 0)
+		}
 	}
 	// Fan out so audit / dashboard SSE see the terminal transition.
 	payload, _ := json.Marshal(struct {
@@ -2728,7 +2764,7 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	// security_scan→image_build closes at the same place as the
 	// source_changed path. Same from→to pair as sites 1551 + 1928 except
 	// `to` is now security_scan instead of image_build.
-	if err := h.transitionWithStage(ctx, dep.ID, fromStage, state.StageSecurityScan, state.DeployImaging, ""); err != nil {
+	if err := h.transitionWithStage(ctx, dep.ID, fromStage, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
 	// Dispatch on the deploy kind — builderd stamps the OCI tarball
@@ -2771,13 +2807,13 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	// image_build transition the customer's ticker would show
 	// "Security scan" stuck on in_progress.
 	h.runDeployScan(ctx, app, dep)
-	if err := h.transitionWithStage(ctx, dep.ID, state.StageSecurityScan, state.StageImageBuild, state.DeployImaging, ""); err != nil {
+	if err := h.transitionWithStage(ctx, dep.ID, state.StageSecurityScan, state.StageImageBuild, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
 	// ADR-117: image_build closes; snapshot_prepare opens. Same
 	// from→to pair as the handleDeploySourceChanged post-scan site
 	// at handler.go:1355.
-	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSnapshotPrepare, state.DeploySnapshotting, ""); err != nil {
+	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSnapshotPrepare, state.DeploySnapshotting, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
 	primePayload, _ := json.Marshal(map[string]string{
@@ -2869,7 +2905,27 @@ func (h *Handler) transition(ctx context.Context, depID string, status state.Dep
 // to thread it. The bare `transition(...)` is preserved for the
 // failure paths that don't want a stage projection (e.g.
 // markDeployFailed's first flip before the active stage is known).
-func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, to state.StageName, status state.DeploymentStatus, errMsg string) error {
+func hostingFlowForApp(app state.App) string {
+	if state.IsDeveloperApp(app) {
+		return wire.APIHostingFlowDev
+	}
+	return wire.APIHostingFlowFirstDeploy
+}
+
+func hostingPhaseForStage(stage state.StageName) string {
+	switch stage {
+	case state.StageDependencyRestore:
+		return "dependency_cache"
+	case state.StageImageBuild:
+		return "build"
+	case state.StageSnapshotPrepare:
+		return "boot"
+	default:
+		return ""
+	}
+}
+
+func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, to state.StageName, status state.DeploymentStatus, errMsg string, hostingFlow ...string) error {
 	if err := h.transition(ctx, depID, status, errMsg); err != nil {
 		return err
 	}
@@ -2899,6 +2955,11 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 			last := ss.History[len(ss.History)-1]
 			if last.StartedAt != nil && last.EndedAt != nil {
 				h.ops.ObserveDeployStageDuration(string(from), "completed", last.EndedAt.Sub(*last.StartedAt))
+				if len(hostingFlow) > 0 {
+					if phase := hostingPhaseForStage(from); phase != "" {
+						h.ops.ObserveAPIHostingPhase(hostingFlow[0], phase, wire.APIHostingOutcomeComplete, last.EndedAt.Sub(*last.StartedAt))
+					}
+				}
 			}
 		}
 	}

@@ -284,7 +284,8 @@ type OpsMetrics struct {
 	// wakeLatency (issue #1059 / ADR-127) — operator-facing per-box
 	// per-phase wake-latency histogram. Labelled by (box, phase).
 	// The closed phase set
-	// {restore_ms, netns_tap_ms, guest_ready_ms} mirrors the
+	// {restore_ms, netns_tap_ms, guest_ready_ms, scan_check_ms,
+	// cold_boot_ms} mirrors the
 	// existing fleet-level vmmd_wake_phase_duration_seconds{phase}
 	// (pkg/fcvm/metrics.go) so the §12 dashboard panel can swap
 	// fleet → per-box without a legend change. The box label is
@@ -989,15 +990,14 @@ type OpsMetrics struct {
 	// via ActivePassiveFailovers in production. Pre-instantiated in
 	// NewOpsMetrics so the row surfaces in /metrics from boot.
 	activePassiveFailoversTotal *prometheus.CounterVec
-	// pgBackupLastPushed — operator-facing gauge stamped by the
-	// apid's pgBackupPushedSampler (cmd/apid/main.go). Holds the
-	// age of the newest tarball in /var/lib/pgsql/basebackup/ (in
-	// seconds; 0 when the dir is empty). The PgBackupStale alert
-	// (deploy/ansible/roles/prometheus/files/pg_backup.rules.yml,
-	// issue #250) queries this gauge; the alert fires when the
-	// value exceeds 86400 (24h). Unlabelled — single-box fleet, no
-	// per-node fan-out needed today.
-	pgBackupLastPushed prometheus.Gauge
+	// Provider-neutral PostgreSQL recovery signals, stamped by apid's
+	// pgBackupPushedSampler from root-written, non-sensitive state files.
+	// The API user deliberately has no access to /var/lib/pgsql itself.
+	pgBackupLastPushed       prometheus.Gauge
+	pgWalArchiveBytes        prometheus.Gauge
+	pgWalArchiveOldestAge    prometheus.Gauge
+	pgWalArchiveNewestAge    prometheus.Gauge
+	pgWalPruneLastSuccessful prometheus.Gauge
 	// alertEvaluatorMu + alertEvaluatorEnabledValue shadow the gauge
 	// so AlertEvaluatorEnabled() can return a bool without scraping
 	// /metrics or relying on a non-existent prometheus.Gauge.Value()
@@ -1480,6 +1480,14 @@ type OpsMetrics struct {
 	// every (stage, status) tuple so /metrics surfaces zero on
 	// boot; only imaged increments via ObserveDeployStageDuration.
 	deployStageDuration *prometheus.HistogramVec
+	// apiHostingPhaseTotal and apiHostingPhaseDuration are the privacy-safe
+	// activation/edit-to-live funnel. Both use only closed flow, phase, and
+	// outcome vocabularies; notably there is no app, account, repository,
+	// source-path, URL, or environment label. This keeps the product signal
+	// useful while making customer data and unbounded cardinality impossible
+	// at the metrics boundary.
+	apiHostingPhaseTotal    *prometheus.CounterVec
+	apiHostingPhaseDuration *prometheus.HistogramVec
 	// deployScanTotal: scanned-deploy counter, labelled by
 	// result ∈ {complete, failed, skipped}. The complete/failed
 	// labels increment once per scan after the 1-retry backoff;
@@ -2118,10 +2126,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// the existing vmmd_wake_phase_duration_seconds{phase} envelope
 	// (spec §6.3 verbatim, ADR-074 §3.5) so the §12 dashboard panel
 	// can swap fleet → per-box without changing the bucketing.
-	wakeLatencyPhases := []string{"restore_ms", "netns_tap_ms", "guest_ready_ms"}
+	wakeLatencyPhases := []string{"restore_ms", "netns_tap_ms", "guest_ready_ms", "scan_check_ms", "cold_boot_ms"}
 	wakeLatency := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_wake_latency_seconds",
-		Help:    "Wall-clock seconds for each per-box vmmd-side wake phase (issue #1059 / ADR-127). phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms}; box label is admission-bounded (overflow → __other__). Per-box sibling of the fleet <prefix>_wake_phase_duration_seconds{phase} (pkg/fcvm/metrics.go) — same bucket set, same phase vocabulary. wake_id is attached as a prometheus.Exemplar on each observation. Bucket set is spec §6.3 verbatim with the 0.3/0.35 pair (ADR-074 §3.5).",
+		Help:    "Wall-clock seconds for each per-box vmmd-side wake phase (issue #1059 / ADR-127). phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms, scan_check_ms, cold_boot_ms}; box label is admission-bounded (overflow → __other__). Per-box sibling of the fleet <prefix>_wake_phase_duration_seconds{phase} (pkg/fcvm/metrics.go) — same bucket set, same phase vocabulary. wake_id is attached as a prometheus.Exemplar on each observation. Bucket set is spec §6.3 verbatim with the 0.3/0.35 pair (ADR-074 §3.5).",
 		Buckets: []float64{0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1, 1.5, 3, 5, 10},
 	}, []string{"box", "phase"})
 	for _, box := range wakeFailureBoxes {
@@ -3284,19 +3292,30 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	if cpuStatsCollectDurLocal != nil {
 		commonCollectors = append(commonCollectors, cpuStatsCollectDurLocal)
 	}
-	// Issue #250 — off-host Postgres backup observability. Same
-	// pre-instantiate-to-0 precedent as alertEvaluatorEnabled above:
-	// without a tick, the gauge must still surface from boot so the
-	// alert rule's `time() - pg_backup_last_pushed_seconds` query
-	// has a series to compare against. Without this, a freshly-booted
-	// box would look identical to one with no basebackup root —
-	// both return NaN, and the alert is silently skipped.
+	// Issues #250/#1695 — off-host Postgres backup and bounded local WAL
+	// observability. Zero means no successful observation has been recorded.
 	pgBackupLastPushed := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prefix + "_pg_backup_last_pushed_seconds",
-		Help: "Age of the newest Postgres basebackup tarball in /var/lib/pgsql/basebackup/, in seconds (issue #250). 0 when the directory is empty. The PgBackupStale alert (deploy/ansible/roles/prometheus/files/pg_backup.rules.yml) queries `time() - pg_backup_last_pushed_seconds > 86400` to surface a stuck push timer; the value is stamped once per minute by cmd/apid's pgBackupPushedSampler goroutine (60s tick).",
+		Help: "Unix timestamp of the last basebackup that was copied and byte-verified in the off-host store. Zero means no verified push has been recorded (issues #250/#1695).",
 	})
-	pgBackupLastPushed.Set(0)
-	commonCollectors = append(commonCollectors, pgBackupLastPushed)
+	pgWalArchiveBytes := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_pg_wal_archive_bytes",
+		Help: "Bytes retained in the local PostgreSQL WAL archive after the most recent verified prune (issue #1695).",
+	})
+	pgWalArchiveOldestAge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_pg_wal_archive_oldest_age_seconds",
+		Help: "Age in seconds of the oldest file retained in the local PostgreSQL WAL archive. Zero means the archive is empty or unobserved (issue #1695).",
+	})
+	pgWalArchiveNewestAge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_pg_wal_archive_newest_age_seconds",
+		Help: "Age in seconds of the newest file retained in the local PostgreSQL WAL archive. Zero means the archive is empty or unobserved (issue #1695).",
+	})
+	pgWalPruneLastSuccessful := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_pg_wal_prune_last_success_timestamp_seconds",
+		Help: "Unix timestamp of the last local WAL prune completed after off-host copy verification. Zero means no verified prune has completed (issue #1695).",
+	})
+	commonCollectors = append(commonCollectors, pgBackupLastPushed, pgWalArchiveBytes,
+		pgWalArchiveOldestAge, pgWalArchiveNewestAge, pgWalPruneLastSuccessful)
 	// ADR-038 / Tier 3 / issue #197 B3.1: build_provenance
 	// populator counter. Single CounterVec with a closed `code`
 	// label set ({ok, error}); pre-instantiated below so both rows
@@ -3386,6 +3405,28 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, stage := range []string{"source_download", "dependency_restore", "image_build", "security_scan", "snapshot_prepare", "readiness"} {
 		for _, status := range []string{"completed", "failed"} {
 			deployStageDuration.WithLabelValues(stage, status)
+		}
+	}
+	// API-hosting activation and edit-to-live funnel. The vocabulary is
+	// intentionally closed and pre-instantiated: these metrics are product
+	// evidence, not a request log, so customer identifiers and arbitrary
+	// failure text must never become labels.
+	apiHostingPhaseTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_api_hosting_phase_total",
+		Help: "Privacy-safe API-hosting funnel observations, labelled only by flow, phase, and outcome. flow ∈ {first_deploy, dev}; phase ∈ {source_detected, source_delta, upload, dependency_cache, build, boot, readiness, verified_url, route_switch}; outcome ∈ {completed, failed, skipped}. No customer, repository, path, URL, or environment labels are permitted.",
+	}, []string{"flow", "phase", "outcome"})
+	apiHostingPhaseDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_api_hosting_phase_duration_seconds",
+		Help:    "Privacy-safe API-hosting funnel phase duration in seconds. Labels are the same closed flow/phase/outcome vocabulary as api_hosting_phase_total; no customer-derived labels are permitted.",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300},
+	}, []string{"flow", "phase", "outcome"})
+	commonCollectors = append(commonCollectors, apiHostingPhaseTotal, apiHostingPhaseDuration)
+	for _, flow := range []string{"first_deploy", "dev"} {
+		for _, phase := range []string{"source_detected", "source_delta", "upload", "dependency_cache", "build", "boot", "readiness", "verified_url", "route_switch"} {
+			for _, outcome := range []string{"completed", "failed", "skipped"} {
+				apiHostingPhaseTotal.WithLabelValues(flow, phase, outcome)
+				apiHostingPhaseDuration.WithLabelValues(flow, phase, outcome)
+			}
 		}
 	}
 	deployScanTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -4507,6 +4548,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apidTenantSurfaceCertExpirySeconds:                    apidTenantSurfaceCertExpirySeconds,
 		apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal: apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal,
 		pgBackupLastPushed:                                    pgBackupLastPushed,
+		pgWalArchiveBytes:                                     pgWalArchiveBytes,
+		pgWalArchiveOldestAge:                                 pgWalArchiveOldestAge,
+		pgWalArchiveNewestAge:                                 pgWalArchiveNewestAge,
+		pgWalPruneLastSuccessful:                              pgWalPruneLastSuccessful,
 		ipLabels:                                              newIPLabelSet(maxIPLabelValues),
 		topTenantRPS:                                          topTenantRPS,
 		topAccounts:                                           newTopAccountSet(topAccountSetCap),
@@ -4560,6 +4605,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		imageScanVulns:                                        imageScanVulns,
 		deployScanDuration:                                    deployScanDuration,
 		deployStageDuration:                                   deployStageDuration,
+		apiHostingPhaseTotal:                                  apiHostingPhaseTotal,
+		apiHostingPhaseDuration:                               apiHostingPhaseDuration,
 		deployScanTotal:                                       deployScanTotal,
 		deployScanVulns:                                       deployScanVulns,
 		liveMigrationDecisions:                                liveMigrationDecisions,
@@ -5201,7 +5248,8 @@ func (m *OpsMetrics) WakeFailure(box, app, reason string) prometheus.Counter {
 // WakeLatency returns the per-(box, phase) histogram observer the
 // per-box wake-path hook sites call to record wake-phase latency
 // (issue #1059 / ADR-127). phase MUST be one of {restore_ms,
-// netns_tap_ms, guest_ready_ms} — the closed vocabulary mirrors the
+// netns_tap_ms, guest_ready_ms, scan_check_ms, cold_boot_ms} — the closed
+// vocabulary mirrors the
 // existing fleet-level vmmd_wake_phase_duration_seconds{phase}
 // histogram so the §12 dashboard panel can swap fleet → per-box
 // without a legend change. box is resolved through the boxLabelSet
@@ -6802,6 +6850,44 @@ func (m *OpsMetrics) ObserveDeployStageDuration(stage, status string, dur time.D
 	m.deployStageDuration.WithLabelValues(stage, status).Observe(dur.Seconds())
 }
 
+const (
+	APIHostingFlowFirstDeploy = "first_deploy"
+	APIHostingFlowDev         = "dev"
+	APIHostingOutcomeComplete = "completed"
+	APIHostingOutcomeFailed   = "failed"
+	APIHostingOutcomeSkipped  = "skipped"
+)
+
+func validAPIHostingFlow(v string) bool {
+	return v == APIHostingFlowFirstDeploy || v == APIHostingFlowDev
+}
+
+func validAPIHostingPhase(v string) bool {
+	switch v {
+	case "source_detected", "source_delta", "upload", "dependency_cache", "build", "boot", "readiness", "verified_url", "route_switch":
+		return true
+	default:
+		return false
+	}
+}
+
+func validAPIHostingOutcome(v string) bool {
+	return v == APIHostingOutcomeComplete || v == APIHostingOutcomeFailed || v == APIHostingOutcomeSkipped
+}
+
+// ObserveAPIHostingPhase records one privacy-safe activation or edit-to-live
+// phase. The flow, phase, and outcome vocabularies are closed; invalid values
+// are dropped instead of minting a new Prometheus series. No customer-derived
+// value may be passed to this method. Safe on a nil receiver.
+func (m *OpsMetrics) ObserveAPIHostingPhase(flow, phase, outcome string, dur time.Duration) {
+	if m == nil || m.apiHostingPhaseTotal == nil || m.apiHostingPhaseDuration == nil ||
+		!validAPIHostingFlow(flow) || !validAPIHostingPhase(phase) || !validAPIHostingOutcome(outcome) || dur < 0 {
+		return
+	}
+	m.apiHostingPhaseTotal.WithLabelValues(flow, phase, outcome).Inc()
+	m.apiHostingPhaseDuration.WithLabelValues(flow, phase, outcome).Observe(dur.Seconds())
+}
+
 // ObserveBuildDuration records one build's wall-clock duration in the
 // build-sized <daemon>_build_duration_seconds histogram (ADR-030),
 // labelled by outcome ∈ {cache_hit,ok,failed}. Deliberately NOT ObserveCode:
@@ -7289,18 +7375,46 @@ func (m *OpsMetrics) ApidTenantSurfaceCertExpiryRefresherWalkCompleteTotal(resul
 	return func() {}
 }
 
-// PgBackupLastPushed returns the unlabelled gauge stamped by the
-// apid's pgBackupPushedSampler goroutine (issue #250). Operators
-// scrape it via the cluster-wide /metrics endpoint; the alert rule
-// `PgBackupStale` (deploy/ansible/roles/prometheus/files/pg_backup.rules.yml)
-// fires when `time() - pg_backup_last_pushed_seconds > 86400`.
-// Safe on a nil receiver (returns nil — same shape as the other
-// accessor shortcuts).
+// PgBackupLastPushed returns the Unix timestamp gauge for the most recent
+// basebackup that was copied and byte-verified off-host.
 func (m *OpsMetrics) PgBackupLastPushed() prometheus.Gauge {
 	if m == nil {
 		return nil
 	}
 	return m.pgBackupLastPushed
+}
+
+// PgWalArchiveBytes returns the local archived-WAL byte gauge.
+func (m *OpsMetrics) PgWalArchiveBytes() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.pgWalArchiveBytes
+}
+
+// PgWalArchiveOldestAge returns the age of the oldest retained WAL file.
+func (m *OpsMetrics) PgWalArchiveOldestAge() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.pgWalArchiveOldestAge
+}
+
+// PgWalArchiveNewestAge returns the age of the newest retained WAL file.
+func (m *OpsMetrics) PgWalArchiveNewestAge() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.pgWalArchiveNewestAge
+}
+
+// PgWalPruneLastSuccessful returns the Unix timestamp gauge for the latest
+// WAL prune that completed after off-host verification.
+func (m *OpsMetrics) PgWalPruneLastSuccessful() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.pgWalPruneLastSuccessful
 }
 
 // SetAlertEvaluatorEnabled stamps the alert-evaluator-enabled gauge.

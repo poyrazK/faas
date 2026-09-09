@@ -70,10 +70,18 @@ jobs:
           cache: true
 
       - name: Install pinned cosign verifier
+        env:
+          COSIGN_VERSION: "2.4.1"
+          COSIGN_SHA256: "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release-tools"
-          GOBIN="$RUNNER_TEMP/release-tools" go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.1
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            -o "$RUNNER_TEMP/release-tools/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  $RUNNER_TEMP/release-tools/cosign" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/release-tools/cosign"
           echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
 
       - name: Download and verify canonical release
@@ -258,6 +266,28 @@ jobs:
             "${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:/opt/faas/releases/${RELEASE_ID}/"
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
-            "/opt/faas/releases/${RELEASE_ID}/bin/deployctl bundle-check /opt/faas/releases/${RELEASE_ID} && /opt/faas/releases/${RELEASE_ID}/bin/deployctl deploy ${RELEASE_ID}"
+            "/opt/faas/releases/${RELEASE_ID}/bin/deployctl bundle-check /opt/faas/releases/${RELEASE_ID} &&
+             /opt/faas/releases/${RELEASE_ID}/bin/deployctl deploy ${RELEASE_ID} &&
+             ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
+             mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
+
+      - name: Restart configured optional S3 gateway
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} 'set -euo pipefail
+            if ! systemctl is-enabled --quiet faas-s3-gatewayd.service; then
+              echo "faas-s3-gatewayd is not enabled; optional object storage remains unchanged"
+              exit 0
+            fi
+            systemctl restart faas-s3-gatewayd.service
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --max-time 2 http://127.0.0.1:9096/readyz >/dev/null; then
+                exit 0
+              fi
+              sleep 2
+            done
+            journalctl -u faas-s3-gatewayd.service -n 100 --no-pager >&2
+            exit 1'
 
       # Legacy mutable upload/restart steps removed; deployment is handled by the immutable release controller above.

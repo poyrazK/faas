@@ -13,7 +13,7 @@ Description=Nightly onebox-faas Postgres base backup push (issue #250)
 #
 # RandomizedDelaySec spreads load across a fleet; on a one-box
 # install it's harmless.
-OnCalendar=*-*-*T03:30:00Z
+OnCalendar=*-*-* 03:30:00 UTC
 Persistent=true
 RandomizedDelaySec=900
 AccuracySec=60s

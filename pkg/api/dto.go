@@ -594,9 +594,14 @@ type AppConfiguredResources struct {
 
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
-	ID              string          `json:"id"`
-	Slug            string          `json:"slug"`
-	Type            string          `json:"type"`
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+	Type string `json:"type"`
+	// WorkloadClass is the runtime-observed application shape. Repository
+	// scanning seeds the value and the first characterization boot may replace
+	// it with http, graphql, grpc, job, or worker. It is distinct from Type,
+	// which selects the app-vs-function execution contract.
+	WorkloadClass   string          `json:"workload_class,omitempty"`
 	Runtime         string          `json:"runtime,omitempty"`
 	RAMMB           int             `json:"ram_mb"`
 	CPUMillicores   int             `json:"cpu_millicores"`

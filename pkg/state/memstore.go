@@ -2938,19 +2938,24 @@ func isInstanceStateLive(state string) bool {
 
 // instanceStateRunning / instanceStateWaking / instanceStateColdBooting
 // are the live-state literals from the spec §6.1 state machine.
-// Mirrored here only to feed isInstanceStateLive — the rest of
-// the codebase continues to use the bare string literals because
-// the SQL CHECK constraint is the load-bearing enforcement and
-// any wider refactor is out of scope.
+//
+// They are DERIVED from the canonical constants in machine.go rather than
+// re-typed. Re-typing them is what broke them: they were spelled 'RUNNING'
+// / 'WAKING' / 'COLD_BOOTING' while instances.state has been lowercase
+// since migration 00001, so isInstanceStateLive returned false for every
+// instance and ConcurrencyForDeployment, PerNodeLiveStats and
+// OperatorCapacity all reported zero. PgStore had the same typo in SQL, so
+// the two implementations agreed — which is why comparing them would not
+// have found it.
 const (
-	instanceStateRunning     = "RUNNING"
-	instanceStateWaking      = "WAKING"
-	instanceStateColdBooting = "COLD_BOOTING"
+	instanceStateRunning     = string(StateRunning)
+	instanceStateWaking      = string(StateWaking)
+	instanceStateColdBooting = string(StateColdBooting)
 )
 
 // ConcurrencyForDeployment mirrors PgStore.ConcurrencyForDeployment.
 // Reads the in-memory instances slice with the same predicate the
-// SQL uses (state IN {'RUNNING','WAKING','COLD_BOOTING'}).
+// SQL uses (state IN {'waking','cold_booting','running'}).
 func (m *MemStore) ConcurrencyForDeployment(_ context.Context, appID, deploymentID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -5482,6 +5487,41 @@ func (m *MemStore) ListDeploymentsForAccount(_ context.Context, accountID string
 	return all, nil
 }
 
+func (m *MemStore) ListDeploymentsForAccountPage(_ context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]struct{})
+	for _, a := range m.apps {
+		if a.AccountID == accountID && a.Status != AppDeleted {
+			owned[a.ID] = struct{}{}
+		}
+	}
+	all := make([]Deployment, 0, limit)
+	for _, d := range m.deployments {
+		if _, ok := owned[d.AppID]; !ok {
+			continue
+		}
+		if !beforeAt.IsZero() && (d.CreatedAt.After(beforeAt) ||
+			(d.CreatedAt.Equal(beforeAt) && d.ID >= beforeID)) {
+			continue
+		}
+		all = append(all, d)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].ID > all[j].ID
+		}
+		return all[i].CreatedAt.After(all[j].CreatedAt)
+	})
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status DeploymentStatus, errMsg string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -7238,6 +7278,28 @@ func (m *MemStore) DomainByName(_ context.Context, domain string) (CustomDomain,
 		return CustomDomain{}, ErrNotFound
 	}
 	return d, nil
+}
+
+// WildcardDomainForHost returns the most-specific wildcard custom domain that
+// covers host. The strict suffix check keeps example.com from matching
+// *.example.com and prevents look-alike domains such as badexample.com from
+// matching.
+func (m *MemStore) WildcardDomainForHost(_ context.Context, host string) (CustomDomain, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best CustomDomain
+	for _, d := range m.domains {
+		if !WildcardMatchesHost(d.Domain, host) {
+			continue
+		}
+		if best.Domain == "" || len(d.Domain) > len(best.Domain) {
+			best = d
+		}
+	}
+	if best.Domain == "" {
+		return CustomDomain{}, ErrNotFound
+	}
+	return best, nil
 }
 
 func (m *MemStore) ListDomainsForApp(_ context.Context, appID string) ([]CustomDomain, error) {
@@ -9090,7 +9152,7 @@ func (m *MemStore) ReadActiveInstanceForWakeID(_ context.Context, wakeID string)
 		if ins.WakeID != wakeID {
 			continue
 		}
-		if ins.State != "WAKING" && ins.State != "COLD_BOOTING" && ins.State != "RUNNING" {
+		if !isInstanceStateLive(ins.State) {
 			continue
 		}
 		if best == nil || ins.StartedAt.After(best.StartedAt) {
@@ -11323,6 +11385,42 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 		if subj == nil || (e.Subject != nil && *e.Subject == *subj) {
 			out = append(out, e)
 		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) ListEventsPage(_ context.Context, subject string, beforeAt time.Time, beforeID int64, limit int) ([]Event, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var subj *uuid.UUID
+	if subject != "" {
+		subj = parseSubjectID(subject)
+		if subj == nil {
+			return nil, nil
+		}
+	}
+	out := make([]Event, 0, limit)
+	for _, e := range m.events {
+		if subj != nil && (e.Subject == nil || *e.Subject != *subj) {
+			continue
+		}
+		if !beforeAt.IsZero() && (e.At.After(beforeAt) ||
+			(e.At.Equal(beforeAt) && e.ID >= beforeID)) {
+			continue
+		}
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].At.Equal(out[j].At) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].At.After(out[j].At)
+	})
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
@@ -16266,6 +16364,35 @@ func (m *MemStore) ListGdprRequestsForAccount(_ context.Context, accountID strin
 		if m.gdprRequests[i].AccountID == accountID {
 			out = append(out, m.gdprRequests[i])
 		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) ListGdprRequestsForAccountPage(_ context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]GdprRequest, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]GdprRequest, 0, limit)
+	for _, r := range m.gdprRequests {
+		if r.AccountID != accountID {
+			continue
+		}
+		if !beforeAt.IsZero() && (r.RequestedAt.After(beforeAt) ||
+			(r.RequestedAt.Equal(beforeAt) && r.ID >= beforeID)) {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].RequestedAt.Equal(out[j].RequestedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].RequestedAt.After(out[j].RequestedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }

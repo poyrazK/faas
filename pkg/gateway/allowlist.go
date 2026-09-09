@@ -35,6 +35,11 @@ import (
 // pkg/gateway stays free of pkg/state.
 type OnDemandLookup func(ctx context.Context, domain string) (any, error)
 
+// OnDemandWildcardLookup is the wildcard custom-domain half of the allowlist.
+// It receives the concrete SNI hostname and should return the most-specific
+// verified wildcard row that covers it.
+type OnDemandWildcardLookup func(ctx context.Context, host string) (any, error)
+
 // OnDemandSurfaceLookup is the tenant-surface half of the allowlist
 // (PR-D commit 4 / ADR-100 amendment). The closure is expected
 // to load the tenant_surface that claims `host` (via
@@ -173,6 +178,35 @@ func NewPGAllowlist(
 	deploySuffix string,
 	log *slog.Logger,
 ) OnDemandAllowlist {
+	return newPGAllowlist(customLookup, nil, previewLookup, surfaceLookup, deploymentLookup, appsSuffix, deploySuffix, log)
+}
+
+// NewPGAllowlistWithWildcard extends NewPGAllowlist with the customer-zone
+// wildcard lookup used by F4. The original constructor remains unchanged for
+// callers that only support exact custom domains.
+func NewPGAllowlistWithWildcard(
+	customLookup OnDemandLookup,
+	wildcardLookup OnDemandWildcardLookup,
+	previewLookup OnDemandPreviewLookup,
+	surfaceLookup OnDemandSurfaceLookup,
+	deploymentLookup OnDemandDeploymentLookup,
+	appsSuffix string,
+	deploySuffix string,
+	log *slog.Logger,
+) OnDemandAllowlist {
+	return newPGAllowlist(customLookup, wildcardLookup, previewLookup, surfaceLookup, deploymentLookup, appsSuffix, deploySuffix, log)
+}
+
+func newPGAllowlist(
+	customLookup OnDemandLookup,
+	wildcardLookup OnDemandWildcardLookup,
+	previewLookup OnDemandPreviewLookup,
+	surfaceLookup OnDemandSurfaceLookup,
+	deploymentLookup OnDemandDeploymentLookup,
+	appsSuffix string,
+	deploySuffix string,
+	log *slog.Logger,
+) OnDemandAllowlist {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -200,6 +234,31 @@ func NewPGAllowlist(
 			if !errors.Is(err, ErrNotFound) {
 				log.Warn("gateway: allowlist lookup failed; failing closed",
 					"host", host, "err", err)
+				return false, nil
+			}
+		}
+
+		// F4 wildcard path. Exact custom domains are checked first so an
+		// exact route cannot be shadowed by a broader wildcard. The lookup
+		// itself is responsible for selecting the most-specific suffix.
+		if wildcardLookup != nil {
+			dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			raw, err := wildcardLookup(dbCtx, host)
+			cancel()
+			if err == nil {
+				v, ok := raw.(verified)
+				if !ok {
+					log.Warn("gateway: wildcard allowlist lookup returned non-verified type; failing closed", "host", host)
+					return false, nil
+				}
+				if !v.Verified() {
+					log.Info("gateway: on-demand denied: wildcard domain exists but TXT challenge unverified", "host", host)
+					return false, nil
+				}
+				return true, nil
+			}
+			if !errors.Is(err, ErrNotFound) {
+				log.Warn("gateway: wildcard allowlist lookup failed; failing closed", "host", host, "err", err)
 				return false, nil
 			}
 		}

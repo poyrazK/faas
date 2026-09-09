@@ -21,12 +21,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_00164_GdprRequestId(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	// Column shape: nullable, TEXT.
 	var nullable string

@@ -297,6 +297,8 @@ type StaticEgressIPEntry struct {
 type bringUpTimings struct {
 	restoreMs    int64
 	netnsTapMs   int64
+	scanCheckMs  int64
+	coldBootMs   int64
 	restoreError string
 }
 
@@ -3296,6 +3298,10 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	var wakeID string
+	if fields, ok := wire.FromContext(ctx); ok {
+		wakeID = fields.WakeID
+	}
 	// Phase timing (see wakePhases). Reported on EVERY failure and on
 	// successes slower than SlowWakeLogThreshold. The named `err`
 	// return is what lets this defer distinguish the two.
@@ -3304,10 +3310,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		switch {
 		case err != nil:
 			m.log.Warn("fcvm: wake failed; phase breakdown",
-				append([]any{"instance", req.Instance, "err", err}, phases.attrs()...)...)
+				append([]any{"wake_id", wakeID, "instance", req.Instance, "err", err}, phases.attrs()...)...)
 		case time.Since(phases.start) >= SlowWakeLogThreshold:
 			m.log.Warn("fcvm: slow wake; phase breakdown",
-				append([]any{"instance", req.Instance,
+				append([]any{"wake_id", wakeID, "instance", req.Instance,
 					"threshold_ms", SlowWakeLogThreshold.Milliseconds()}, phases.attrs()...)...)
 		}
 	}()
@@ -3783,6 +3789,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.wakePhaseMetrics.ObserveWakePhase("restore_ms", timings.restoreMs)
 		m.wakePhaseMetrics.ObserveWakePhase("netns_tap_ms", timings.netnsTapMs)
 		m.wakePhaseMetrics.ObserveWakePhase("guest_ready_ms", guestReadyMs)
+		m.wakePhaseMetrics.ObserveWakePhase("scan_check_ms", timings.scanCheckMs)
+		if method == WakeColdBoot {
+			m.wakePhaseMetrics.ObserveWakePhase("cold_boot_ms", timings.coldBootMs)
+		}
 	}
 	// Issue #1059 / ADR-127: per-box phase observe on the new
 	// *_wake_latency_seconds{box, phase} histogram. The fleet
@@ -3801,6 +3811,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.wakeFailureMetrics.WakeLatency("local", "restore_ms").Observe(float64(timings.restoreMs) / 1000.0)
 		m.wakeFailureMetrics.WakeLatency("local", "netns_tap_ms").Observe(float64(timings.netnsTapMs) / 1000.0)
 		m.wakeFailureMetrics.WakeLatency("local", "guest_ready_ms").Observe(float64(guestReadyMs) / 1000.0)
+		m.wakeFailureMetrics.WakeLatency("local", "scan_check_ms").Observe(float64(timings.scanCheckMs) / 1000.0)
+		if method == WakeColdBoot {
+			m.wakeFailureMetrics.WakeLatency("local", "cold_boot_ms").Observe(float64(timings.coldBootMs) / 1000.0)
+		}
 	}
 	// tailSecondsAccum (issue #667 / ADR-078) starts at 0 on
 	// every Wake; MarkInstanceTailTerminal accumulates into it
@@ -3848,9 +3862,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	m.mu.Unlock()
 	m.rebuildHostSMTPAllowlistRules(ctx)
-	m.log.Info("wake ok", "instance", req.Instance, "method", method.String(),
+	m.log.Info("wake ok", "wake_id", wakeID, "instance", req.Instance, "method", method.String(),
 		"uid", lease.UID, "host_ip", lease.HostIP.String(),
-		"setup_network_ms", timings.netnsTapMs, "restore_ms", timings.restoreMs,
+		"setup_network_ms", timings.netnsTapMs, "scan_check_ms", timings.scanCheckMs,
+		"restore_ms", timings.restoreMs, "cold_boot_ms", timings.coldBootMs,
 		"total_ms", time.Since(phases.start).Milliseconds())
 	// Issue #554 / ADR-078 / PR review fix: start the per-instance
 	// liveness probe loop after the live map insert so the cmd/vmmd
@@ -3887,8 +3902,13 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	// why the function returns the Problem shape rather than a bare
 	// error — the wake-error channel expects it). No-op when storage
 	// is nil (unit tests that don't wire WithStorage continue to pass).
-	if err := m.bringUpScanCheck(ctx, req.BaseKey); err != nil {
-		return WakeColdBoot, err
+	scanCheckStartedAt := time.Now()
+	scanErr := m.bringUpScanCheck(ctx, req.BaseKey)
+	if timings != nil {
+		timings.scanCheckMs = time.Since(scanCheckStartedAt).Milliseconds()
+	}
+	if scanErr != nil {
+		return WakeColdBoot, scanErr
 	}
 	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore {
 		rs := RestoreSpec{
@@ -4015,7 +4035,12 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		SecretsEnvJSON: req.preparedSecretsEnvJSON,
 		APIEnvJSON:     req.preparedAPIEnvJSON,
 	}
-	if err := m.vmm.BootColdBoot(ctx, lease, spec); err != nil {
+	coldBootStartedAt := time.Now()
+	coldBootErr := m.vmm.BootColdBoot(ctx, lease, spec)
+	if timings != nil {
+		timings.coldBootMs = time.Since(coldBootStartedAt).Milliseconds()
+	}
+	if coldBootErr != nil {
 		// Issue #1059 / ADR-127: terminal cold-boot failure
 		// counter. Distinct from the restore-fallback
 		// IncrementAbove because BootColdBoot is reached only
@@ -4027,10 +4052,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// not once per restore-fallback. The classifier gets
 		// the same call shape (Snapshot may be nil here).
 		if m.wakeFailureMetrics != nil {
-			reason := ClassifyWakeError(err, WakeContext{FCVersion: m.fcVersion})
+			reason := ClassifyWakeError(coldBootErr, WakeContext{FCVersion: m.fcVersion})
 			m.wakeFailureMetrics.WakeFailure("", req.AppID, reason).Inc()
 		}
-		return WakeColdBoot, fmt.Errorf("wake %s: cold boot: %w", req.Instance, err)
+		return WakeColdBoot, fmt.Errorf("wake %s: cold boot: %w", req.Instance, coldBootErr)
 	}
 	return WakeColdBoot, nil
 }

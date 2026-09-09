@@ -210,7 +210,7 @@ func notifyCountByChannel(srv *server) int {
 
 // seedRunningInstance inserts an app + deployment + instance row
 // triple into the MemStore and returns the (instance id, app id)
-// tuple. The instance's state defaults to "RUNNING"; callers can
+// tuple. The instance's state defaults to string(state.StateRunning); callers can
 // override via stateStr. The MemStore's CreateInstance takes
 // positional args (mirrors the pgstore's INSERT), so this helper
 // stays shape-compatible.
@@ -280,7 +280,7 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 	t.Run("missing_confirm_returns_400", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "RUNNING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park", nil)
@@ -303,7 +303,7 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 	t.Run("invalid_reason_returns_400", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "RUNNING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 		// Space + punctuation are not in [a-z0-9_]; handler must 400.
 		req := httptest.NewRequest(http.MethodPost,
@@ -364,7 +364,7 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 	t.Run("parked_state_returns_409_no_intent", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "PARKED")
+		insID, _ := seedRunningInstance(t, store, string(state.StateParked))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park?confirm=true&reason=already_parked", nil)
@@ -391,7 +391,7 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 	t.Run("store_returns_error_returns_500", func(t *testing.T) {
 		fake := &fakeStoreForIntent{insertErr: errors.New("connection refused")}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "RUNNING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park?confirm=true", nil)
@@ -415,7 +415,7 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 	t.Run("happy_path_inserts_intent_returns_202", func(t *testing.T) {
 		fake := &fakeStoreForIntent{nextIntentID: "11111111-1111-1111-1111-111111111111"}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "RUNNING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park?confirm=true&reason=incident_42", nil)
@@ -455,7 +455,7 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 		if body["status_url"] != "/v1/admin/operator-intents/11111111-1111-1111-1111-111111111111" {
 			t.Errorf("body.status_url = %v", body["status_url"])
 		}
-		if body["previous_state"] != "RUNNING" {
+		if body["previous_state"] != string(state.StateRunning) {
 			t.Errorf("body.previous_state = %v, want RUNNING", body["previous_state"])
 		}
 		if body["kind"] != "force_park" {
@@ -472,7 +472,7 @@ func TestPostForcePark_TableDriven(t *testing.T) {
 		fake := &fakeStoreForIntent{nextIntentID: "22222222-2222-2222-2222-222222222222"}
 		srv, store, cookie := newForceHarness(t, fake)
 		srv.notif = &failingNotifier{err: errors.New("pg notify dropped")}
-		insID, _ := seedRunningInstance(t, store, "RUNNING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-park?confirm=true", nil)
@@ -686,7 +686,7 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 	t.Run("missing_confirm_returns_400", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "RUNNING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart", nil)
@@ -709,7 +709,7 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 	t.Run("invalid_reason_returns_400", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "RUNNING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 		// Space + punctuation are not in [a-z0-9_]; handler must 400.
 		req := httptest.NewRequest(http.MethodPost,
@@ -770,7 +770,7 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 	t.Run("parked_state_returns_409_no_intent", func(t *testing.T) {
 		fake := &fakeStoreForIntent{}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "PARKED")
+		insID, _ := seedRunningInstance(t, store, string(state.StateParked))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true&reason=already_parked", nil)
@@ -803,7 +803,7 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 		// instance_not_restartable with NO intent row written.
 		fake := &fakeStoreForIntent{}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "WAKING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateWaking))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true", nil)
@@ -833,7 +833,7 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 		// re-read rejects them as state.ErrInstanceNotRunning.
 		fake := &fakeStoreForIntent{}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "COLD_BOOTING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateColdBooting))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true", nil)
@@ -860,7 +860,7 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 	t.Run("store_returns_error_returns_500", func(t *testing.T) {
 		fake := &fakeStoreForIntent{insertErr: errors.New("connection refused")}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "RUNNING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true", nil)
@@ -884,7 +884,7 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 	t.Run("happy_path_inserts_intent_returns_202", func(t *testing.T) {
 		fake := &fakeStoreForIntent{nextIntentID: "44444444-4444-4444-4444-444444444444"}
 		srv, store, cookie := newForceHarness(t, fake)
-		insID, _ := seedRunningInstance(t, store, "RUNNING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true&reason=incident_42", nil)
@@ -924,7 +924,7 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 		if body["status_url"] != "/v1/admin/operator-intents/44444444-4444-4444-4444-444444444444" {
 			t.Errorf("body.status_url = %v", body["status_url"])
 		}
-		if body["previous_state"] != "RUNNING" {
+		if body["previous_state"] != string(state.StateRunning) {
 			t.Errorf("body.previous_state = %v, want RUNNING", body["previous_state"])
 		}
 		if body["kind"] != "force_restart" {
@@ -939,7 +939,7 @@ func TestPostForceRestart_TableDriven(t *testing.T) {
 		fake := &fakeStoreForIntent{nextIntentID: "55555555-5555-5555-5555-555555555555"}
 		srv, store, cookie := newForceHarness(t, fake)
 		srv.notif = &failingNotifier{err: errors.New("pg notify dropped")}
-		insID, _ := seedRunningInstance(t, store, "RUNNING")
+		insID, _ := seedRunningInstance(t, store, string(state.StateRunning))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/instances/"+insID+"/force-restart?confirm=true", nil)

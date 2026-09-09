@@ -13,10 +13,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -106,6 +108,10 @@ var ansiblePlaybookRunner = defaultAnsiblePlaybookRunner
 // host-side release installer can stamp applied_at without racing a missing
 // release_bundles row.
 var joinReleaseBundleRegistrar = registerJoinReleaseBundle
+
+// joinPrivateAddressLookup is a DNS seam for CLI tests. Production skip mode
+// resolves the manifest's stable private names without contacting fleet peers.
+var joinPrivateAddressLookup = net.DefaultResolver.LookupIP
 
 func defaultAnsiblePlaybookRunner(ctx context.Context, workingDir string, args []string) error {
 	cmd := exec.CommandContext(ctx, "ansible-playbook", args...)
@@ -376,8 +382,8 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 			"run complete-fleet preflight unless explicitly skipped",
 			"converge control-plane peer access from the complete manifest",
 			"stage trust material, signed release assets, and manifest",
-			"converge or verify the dedicated XFS fast-root filesystem",
-			"converge the production compute-only Ansible role",
+			"verify the managed-host bootstrap contract and required runtime anchors",
+			"converge the production compute-only Ansible role when that contract is absent or stale",
 			"install the signed release while the database row remains drained",
 			"render configuration, initialize host identity, and unseal supplied backup envelopes",
 			"wait for sockets, gateway, and systemd readiness",
@@ -564,6 +570,10 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		opts.RepoRoot = defaultRepoRoot()
 	}
 	ansibleDir := filepath.Join(opts.RepoRoot, "deploy/ansible")
+	bootstrapContractSHA256, err := joinBootstrapContractHash(ansibleDir)
+	if err != nil {
+		return 3, err
+	}
 	tempRoot, err := os.MkdirTemp("", "gregale-node-join-")
 	if err != nil {
 		return 3, fmt.Errorf("create temporary inventory: %w", err)
@@ -608,8 +618,16 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if err != nil {
 		return 1, fmt.Errorf("render temporary inventory: %w", err)
 	}
+	if opts.SkipFleetPreflight {
+		privateAddresses, resolveErr := resolveJoinPrivateAddresses(ctx, m, joinPrivateAddressLookup)
+		if resolveErr != nil {
+			return 3, fmt.Errorf("resolve private addresses for skipped fleet preflight: %w", resolveErr)
+		}
+		seedJoinPrivateAddressFacts(files, privateAddresses)
+	}
 	for i := range files {
-		if filepath.Base(files[i].Path) == opts.Node+".yml" {
+		base := filepath.Base(files[i].Path)
+		if base == opts.Node+".yml" {
 			files[i].Body = overrideJoinHostVars(files[i].Body, opts)
 		}
 		if err := writeGeneratedAnsibleFile(files[i].Path, files[i].Body, true); err != nil {
@@ -643,29 +661,30 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		return 3, err
 	}
 	vars := map[string]any{
-		"faas_join_inventory_name":           opts.Node,
-		"faas_join_database_node":            report.DatabaseNode,
-		"faas_join_release_git_sha":          report.ReleaseGitSHA,
-		"faas_join_manifest_source":          opts.ManifestFile,
-		"faas_join_bootstrap_binary_source":  opts.BootstrapBinary,
-		"faas_join_cosign_binary_source":     opts.CosignBinary,
-		"faas_join_pki_source":               trustRoot,
-		"faas_join_sign_key_source":          opts.SignKeySource,
-		"faas_join_verify_key_source":        opts.VerifyKeySource,
-		"faas_join_compute_db_env_source":    opts.ComputeDBEnvSource,
-		"faas_join_storage_env_source":       opts.StorageEnvSource,
-		"faas_join_runtime_bases_env_source": opts.RuntimeBasesEnvSource,
-		"faas_join_storage_device":           opts.StorageDevice,
-		"faas_join_format_storage":           opts.FormatStorage,
-		"faas_join_box_age_key_source":       opts.BoxAgeKeySource,
-		"faas_join_rclone_envelope_source":   opts.RcloneEnvelope,
-		"faas_join_archive_envelope_source":  opts.ArchiveEnvelope,
-		"faas_join_node_key_source":          nodeKeySource,
-		"faas_join_node_pub_source":          nodePubSource,
-		"faas_join_release_tarball_source":   opts.ReleaseTarball,
-		"faas_join_release_signature_source": signature,
-		"faas_join_release_sbom_source":      sbom,
-		"faas_join_builder_base_ref":         builderBaseRef,
+		"faas_join_inventory_name":            opts.Node,
+		"faas_join_database_node":             report.DatabaseNode,
+		"faas_join_release_git_sha":           report.ReleaseGitSHA,
+		"faas_join_manifest_source":           opts.ManifestFile,
+		"faas_join_bootstrap_binary_source":   opts.BootstrapBinary,
+		"faas_join_cosign_binary_source":      opts.CosignBinary,
+		"faas_join_pki_source":                trustRoot,
+		"faas_join_sign_key_source":           opts.SignKeySource,
+		"faas_join_verify_key_source":         opts.VerifyKeySource,
+		"faas_join_compute_db_env_source":     opts.ComputeDBEnvSource,
+		"faas_join_storage_env_source":        opts.StorageEnvSource,
+		"faas_join_runtime_bases_env_source":  opts.RuntimeBasesEnvSource,
+		"faas_join_storage_device":            opts.StorageDevice,
+		"faas_join_format_storage":            opts.FormatStorage,
+		"faas_join_box_age_key_source":        opts.BoxAgeKeySource,
+		"faas_join_rclone_envelope_source":    opts.RcloneEnvelope,
+		"faas_join_archive_envelope_source":   opts.ArchiveEnvelope,
+		"faas_join_node_key_source":           nodeKeySource,
+		"faas_join_node_pub_source":           nodePubSource,
+		"faas_join_release_tarball_source":    opts.ReleaseTarball,
+		"faas_join_release_signature_source":  signature,
+		"faas_join_release_sbom_source":       sbom,
+		"faas_join_builder_base_ref":          builderBaseRef,
+		"faas_join_bootstrap_contract_sha256": bootstrapContractSHA256,
 		// A clean provider-created host does not have the release binary or
 		// rendered daemon configuration yet. Defer bootstrap service handlers
 		// and readiness verification until node_join.yml has installed and
@@ -739,6 +758,57 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	return 0, nil
 }
 
+func joinBootstrapContractHash(ansibleDir string) (string, error) {
+	roots := []string{
+		"bootstrap.yml",
+		"group_vars",
+		"node_join.yml",
+		"requirements.yml",
+		"roles",
+	}
+	var paths []string
+	for _, root := range roots {
+		path := filepath.Join(ansibleDir, root)
+		if err := filepath.WalkDir(path, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			paths = append(paths, path)
+			return nil
+		}); err != nil {
+			return "", fmt.Errorf("walk bootstrap contract %s: %w", root, err)
+		}
+	}
+	sort.Strings(paths)
+	hash := sha256.New()
+	for _, path := range paths {
+		rel, err := filepath.Rel(ansibleDir, path)
+		if err != nil {
+			return "", fmt.Errorf("relativize bootstrap contract path %s: %w", path, err)
+		}
+		if _, err := io.WriteString(hash, filepath.ToSlash(rel)); err != nil {
+			return "", fmt.Errorf("hash bootstrap contract path %s: %w", rel, err)
+		}
+		if _, err := hash.Write([]byte{0}); err != nil {
+			return "", fmt.Errorf("hash bootstrap contract separator: %w", err)
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read bootstrap contract path %s: %w", rel, err)
+		}
+		if _, err := hash.Write(body); err != nil {
+			return "", fmt.Errorf("hash bootstrap contract path %s: %w", rel, err)
+		}
+		if _, err := hash.Write([]byte{0}); err != nil {
+			return "", fmt.Errorf("hash bootstrap contract separator: %w", err)
+		}
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 func registerJoinReleaseBundle(ctx context.Context, tarballPath, expectedGitSHA, expectedManifestHash string) error {
 	packed, err := os.ReadFile(tarballPath)
 	if err != nil {
@@ -797,10 +867,7 @@ func sameReleaseDaemonHashes(left, right map[string]string) bool {
 }
 
 func refreshNodeJoinLease(ctx context.Context, store nodejoin.Store, nodeName, owner string, ttl time.Duration, done <-chan struct{}) {
-	interval := ttl / 3
-	if interval < time.Second {
-		interval = time.Second
-	}
+	interval := nodeJoinLeaseRefreshInterval(ttl)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -813,6 +880,14 @@ func refreshNodeJoinLease(ctx context.Context, store nodejoin.Store, nodeName, o
 			_ = store.RefreshLease(ctx, nodeName, owner, ttl)
 		}
 	}
+}
+
+func nodeJoinLeaseRefreshInterval(ttl time.Duration) time.Duration {
+	interval := ttl / 3
+	if interval < time.Second {
+		return time.Second
+	}
+	return interval
 }
 
 func verifyAndActivateJoinedNode(ctx context.Context, report *deployJoinReport, expectedManifestHash string) error {
@@ -1054,6 +1129,66 @@ func overrideJoinHostVars(body []byte, opts *deployJoinOptions) []byte {
 		lines = append(lines, "ansible_ssh_common_args: "+yamlQuote("-o UserKnownHostsFile="+opts.SSHKnownHostsFile+" -o StrictHostKeyChecking=yes"))
 	}
 	return []byte(strings.Join(lines, "\n"))
+}
+
+// resolveJoinPrivateAddresses supplies the host facts that a complete-fleet
+// preflight would normally gather. Skip mode is used by a fresh workflow
+// process, so Ansible's ephemeral fact cache cannot be assumed to exist. The
+// stable private names in the signed manifest remain the source of truth: each
+// one must resolve to exactly one IPv4 address inside the declared overlay.
+// This performs DNS lookups only and never connects to an offline peer.
+func resolveJoinPrivateAddresses(
+	ctx context.Context,
+	m *manifest.Manifest,
+	lookup func(context.Context, string, string) ([]net.IP, error),
+) (map[string]string, error) {
+	_, overlay, err := net.ParseCIDR(strings.TrimSpace(m.Overlay.CIDR))
+	if err != nil {
+		return nil, fmt.Errorf("overlay CIDR %q: %w", m.Overlay.CIDR, err)
+	}
+
+	resolved := make(map[string]string, len(m.Fleet.Hosts))
+	for _, host := range m.Fleet.Hosts {
+		address, _, err := manifest.ParseHostPort(host.Address)
+		if err != nil {
+			return nil, fmt.Errorf("host %s: %w", host.Name, err)
+		}
+		if ip := net.ParseIP(address); ip != nil {
+			continue
+		}
+
+		ips, err := lookup(ctx, "ip4", address)
+		if err != nil {
+			return nil, fmt.Errorf("host %s private name %s: %w", host.Name, address, err)
+		}
+		unique := make(map[string]struct{}, len(ips))
+		for _, candidate := range ips {
+			ip := candidate.To4()
+			if ip == nil {
+				continue
+			}
+			if !overlay.Contains(ip) {
+				return nil, fmt.Errorf("host %s private name %s resolved outside overlay %s: %s", host.Name, address, m.Overlay.CIDR, ip)
+			}
+			unique[ip.String()] = struct{}{}
+		}
+		if len(unique) != 1 {
+			return nil, fmt.Errorf("host %s private name %s resolved to %d distinct IPv4 addresses inside overlay; want exactly 1", host.Name, address, len(unique))
+		}
+		for ip := range unique {
+			resolved[host.Name] = ip
+		}
+	}
+	return resolved, nil
+}
+
+func seedJoinPrivateAddressFacts(files []manifestAnsibleFile, addresses map[string]string) {
+	for i := range files {
+		host := strings.TrimSuffix(filepath.Base(files[i].Path), ".yml")
+		if address := addresses[host]; address != "" {
+			files[i].Body = append(files[i].Body, []byte(fmt.Sprintf("faas_private_address: %q\n", address))...)
+		}
+	}
 }
 
 func hasComputeDatabaseEnv(path string) bool {

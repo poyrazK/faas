@@ -247,6 +247,10 @@ func TestDo_GETCallsDoNotCarryIdempotencyKey(t *testing.T) {
 		{"GetUsage", func(c *Client) error { _, err := c.GetUsage(context.Background(), ""); return err }},
 		{"GetStatusSLO", func(c *Client) error { _, err := c.GetStatusSLO(context.Background()); return err }},
 		{"GetDeployment", func(c *Client) error { _, err := c.GetDeployment(context.Background(), "d1"); return err }},
+		{"GetLatestAppDeployment", func(c *Client) error {
+			_, err := c.GetLatestAppDeployment(context.Background(), "x")
+			return err
+		}},
 		{"UsageSummary", func(c *Client) error { _, err := c.UsageSummary(context.Background(), ""); return err }},
 		// Issue #696 / ADR-082 — customer-facing SLO surface.
 		{"GetAppSLO", func(c *Client) error { _, err := c.GetAppSLO(context.Background(), "x", "24h"); return err }},

@@ -82,6 +82,38 @@ guest-runners: ## Build function-runner shims into ./bin/runners/<runtime>/faas-
 	      ./guest/runners/$$source_rt || exit 1; \
 	done
 
+# Release CI needs the same bytes as `make build`, but invoking `go build`
+# separately for every command makes the Go tool repeatedly load the same
+# package graph. Build each compatible command group in one invocation so Go
+# can schedule and reuse the shared graph itself. Keep the regular build target
+# unchanged for readable local output and narrow single-command failures.
+.PHONY: build-release-batch
+build-release-batch: ## Build the complete static release binary set in batched Go invocations
+	@mkdir -p $(BINDIR) $(BINDIR)/runners
+	@echo "building release daemons (batched)"
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal \
+	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(DAEMONS))
+	@echo "building release CLIs (batched)"
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) \
+	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(CLIS))
+	@echo "building init (guest PID 1)"
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build \
+	  $(GO_BUILD_FLAGS) -o $(BINDIR)/init ./guest/init
+	@echo "building function runners (batched)"
+	@runner_out=$$(mktemp -d); \
+	  trap 'rm -rf "$$runner_out"' EXIT; \
+	  GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build \
+	    $(GO_BUILD_FLAGS) -o "$$runner_out/" \
+	    $(addprefix ./guest/runners/,$(filter-out go124-alpine,$(GUEST_RUNNERS))); \
+	  for rt in $(GUEST_RUNNERS); do \
+	    mkdir -p $(BINDIR)/runners/$$rt; \
+	    source_rt=$$rt; \
+	    if [ "$$rt" = go124-alpine ]; then source_rt=go124; fi; \
+	    install -m 0755 "$$runner_out/$$source_rt" \
+	      $(BINDIR)/runners/$$rt/faas-runner; \
+	  done
+	@install -m 0755 scripts/schedd-brokerq-apply $(BINDIR)/schedd-brokerq-apply
+
 # M1 gRPC codegen (ADR-013). Generated *.pb.go is COMMITTED — do not run
 # `make proto` to produce output; CI uses `proto-check` to verify drift only.
 PROTO_ROOT := api/proto
@@ -147,7 +179,7 @@ proto-normalize: proto
 	done
 
 # DEPLOY-2 (issue #649 / ADR-078): pkg/daemonunit + pkg/daemonunitspec
-# generate the systemd unit files for the 8 production daemons +
+# generate the systemd unit files for the production daemons +
 # faas-cp.slice + deploy/etc/daemons.json. The CI gate runs
 # `make generate-check` on every PR; modifications to
 # pkg/daemonunitspec/<daemon>.go require running `make generate`
@@ -157,7 +189,7 @@ generate: ## (re)generate systemd unit files + daemons.json from pkg/daemonunits
 	$(GO) run ./cmd/deployctl/ generate
 
 .PHONY: generate-check
-generate-check: ## CI gate: assert generated == committed for every deploy tree (legacy + 7 ansible roles) + daemons.json
+generate-check: ## CI gate: assert generated == committed for every deploy tree (legacy + 8 ansible roles) + daemons.json
 	$(GO) run ./cmd/deployctl/ check
 
 .PHONY: generate-diff
@@ -205,6 +237,14 @@ fix-has-test-check: ## Require fix-shaped pull requests to change a Go regressio
 .PHONY: fix-has-test-check-test
 fix-has-test-check-test: ## Exercise the fix-has-test CI gate with synthetic pull request events
 	bash scripts/ci/check_fix_has_test_test.sh
+
+.PHONY: regression-pin-check
+regression-pin-check: ## Report whether changed tests fail on the pull request base (advisory, issue #1529 / PR-4a)
+	bash scripts/ci/check_regression_pin.sh
+
+.PHONY: regression-pin-check-test
+regression-pin-check-test: ## Exercise the advisory regression-pin report with synthetic pull request events
+	bash scripts/ci/check_regression_pin_test.sh
 
 .PHONY: spec-cited-tests-check
 spec-cited-tests-check: ## Require changed core-path tests to cite a spec section or ADR (issue #1529 / PR-4b)
@@ -386,13 +426,20 @@ backup-pg: ## Take a Postgres base backup into /var/lib/pgsql/basebackup/basebac
 	@sudo -u postgres pg_basebackup -Ft -z -D /var/lib/pgsql/basebackup/basebackup-$$(date -u +%Y-%m-%dT%H%M%SZ) -P -X fetch --checkpoint=fast --label=faas-m8-nightly
 
 .PHONY: backup-restore-drill
-backup-restore-drill: ## Run the M8 restore drill end-to-end (must run on EX44 as root)
+backup-restore-drill: ## Run the destructive M8 restore drill on the control plane as root
 	sudo bash "$(CURDIR)/deploy/scripts/faas-m8-restore-drill.sh"
 
+.PHONY: backup-restore-drill-preflight
+backup-restore-drill-preflight: ## Validate the M8 restore drill without stopping services or changing files
+	sudo bash "$(CURDIR)/deploy/scripts/faas-m8-restore-drill.sh" --preflight-only
+
 .PHONY: lint-drill
-lint-drill: ## Static lint of the M8 restore and TLS cutover drill scripts
+lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-m8-restore-drill_test.sh
 	bash deploy/scripts/faas-tls-cutover-drill_test.sh
+	bash deploy/scripts/pg-restore-verify_test.sh
+	bash deploy/scripts/faas-pg-basebackup-push_test.sh
+	bash deploy/scripts/faas-pg-wal-prune_test.sh
 
 .PHONY: m8-evidence-check
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
@@ -411,12 +458,12 @@ tls-cutover-drill: ## Issue #252: current-edge TLS cutover drill (dry-run by def
 	bash deploy/scripts/faas-tls-cutover-drill.sh --$(TLS_CUTOVER_MODE)
 
 .PHONY: backup-push-pg
-backup-push-pg: ## Push the latest basebackup to Hetzner Storage Box (issue #250)
+backup-push-pg: ## Push and verify completed basebackups off-host (issue #250)
 	@sudo systemctl start faas-pg-basebackup-push.service
 	@sudo journalctl -u faas-pg-basebackup-push.service -n 50 --no-pager
 
 .PHONY: backup-restore-verify
-backup-restore-verify: ## T-7 throwaway restore verify on Hetzner Storage Box basebackup (issue #250)
+backup-restore-verify: ## T-7 throwaway restore verify from off-host storage (issue #250)
 	sudo bash deploy/scripts/pg-restore-verify.sh
 
 .PHONY: lint-pg-restore-verify
@@ -1001,9 +1048,17 @@ sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Cli
 object-storage-qualify: ## Operator-only: run the opt-in live object-storage provider qualification
 	@FAAS_OBJECT_STORAGE_LIVE_TEST=1 $(GO) test ./pkg/objectstorage -run '^TestLiveProviderQualification$$' -count=1 -v
 
+.PHONY: object-storage-gateway-smoke
+object-storage-gateway-smoke: ## Operator-only: exercise s3.gregale.dev and delete all temporary data
+	@deploy/scripts/s3-gateway-smoke.sh
+
 .PHONY: managed-postgres-qualify
 managed-postgres-qualify: ## Operator-only: run the explicit staging managed PostgreSQL provider qualification
 	@$(GO) run ./cmd/managed-postgres-qualify
+
+.PHONY: managed-postgres-qualify-verify
+managed-postgres-qualify-verify: ## Operator-only: verify a saved staging managed PostgreSQL qualification approval
+	@$(GO) run ./cmd/managed-postgres-qualify --verify
 
 .PHONY: sdk-gen-node
 sdk-gen-node: ## Regenerate sdk/node/src/generated from api/openapi.yaml

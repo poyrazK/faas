@@ -14,20 +14,15 @@ After=faas-pg-basebackup.service
 # off-host state. The off-host box is the canonical S3-of-one-box
 # replacement the spec explicitly forbids (no local-only backup).
 #
-# Why `rclone sync` (not `copy`): removes orphaned files on the
-# off-host box so a failed intermediate push + basebackup prune
-# doesn't accumulate stale tarballs. The local tree is the source of
-# truth; the box is a mirror.
+# `rclone copy` is deliberate. The off-host store is a recovery source,
+# not a mirror of the smaller local retention window; pruning a local
+# backup must not delete the remote recovery point. Remote retention is
+# owned by the storage backend's lifecycle policy.
 #
-# Why `--config=%d/faas_off_host_backup_rclone`: the rclone.conf is
-# sealed-at-rest via host.age (PR #371 cosign precedent) and decrypted
-# into a tmpfs staging dir at ansible-run time. systemd `LoadCredential=`
-# surfaces the plaintext file inside the unit's $CREDENTIALS_DIRECTORY
-# at activation; systemd's `%d` expands to that directory. The
-# end-to-end chain is: age-sealed on disk → tmpfs staging at ansible
-# run → LoadCredential in unit → rclone reads plaintext at exec time
-# (the network channel is SSH-encrypted by rclone's sftp backend; the
-# file on disk is what we're protecting at rest).
+# The unsealed rclone config is root:root 0400. This unit runs as root and
+# reads that file directly. `LoadCredential=name:-/path` is not valid
+# optional-credential syntax on systemd 255 and silently left production
+# pushes unconfigured (issue #1695).
 #
 # PR-8 (issue #911 / ADR-110 deferred): env var renamed from
 # HETZNER_STORAGE_BOX_BASEBACKUP_PATH → OFF_HOST_BACKUP_BASEBACKUP_PATH.
@@ -44,32 +39,20 @@ Environment=OFF_HOST_BACKUP_BASEBACKUP_PATH=faas-pg-basebackup
 # Provider-specific connection details live in the rclone remote named
 # `offhostbox`; the unit never needs a cloud/provider-specific IP or host.
 Environment=OFF_HOST_BACKUP_REMOTE=offhostbox
+Environment=FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG=/etc/faas/secrets/storage-box/rclone.conf
+Environment=FAAS_PG_BASEBACKUP_ROOT=/var/lib/pgsql/basebackup
+Environment=FAAS_PG_BACKUP_STATE_ROOT=/var/lib/faas/backup-state
+Environment=FAAS_PG_LOCAL_BASEBACKUP_KEEP=2
 # Issue #585 / ADR-127 — sealed.env is apid-only; pg-basebackup-push no
-# longer inherits it. The rclone config (sealed at rest via host.age) is
-# loaded via the optional LoadCredential below. A missing credential is a
-# supported unconfigured state; the timer logs that state and exits cleanly.
-LoadCredential=faas_off_host_backup_rclone:-/etc/faas/secrets/storage-box/rclone.conf
-
-ExecStart=/usr/bin/env bash -c '\
-  set -euo pipefail; \
-  config=%d/faas_off_host_backup_rclone; \
-  [[ -r "$${config}" ]] || { echo "off-host backup disabled: credential not installed" >&2; exit 0; }; \
-  grep -q '^\[offhostbox\]$' "$${config}" || { echo "off-host backup disabled: offhostbox remote not configured" >&2; exit 0; }; \
-  src=/var/lib/pgsql/basebackup; \
-  [[ -d "$${src}" ]] || { echo "no $$src" >&2; exit 1; }; \
-  [[ -n "$$(ls -1A "$${src}")" ]] || { echo "$$src empty — nothing to push" >&2; exit 1; }; \
-  rclone sync "$${src}" "$${OFF_HOST_BACKUP_REMOTE}:$${OFF_HOST_BACKUP_BASEBACKUP_PATH}" \
-    --config="$${config}" \
-    --stats=0 --quiet; \
-  echo "pushed $$src → $${OFF_HOST_BACKUP_REMOTE}:$${OFF_HOST_BACKUP_BASEBACKUP_PATH}"'
+# longer inherits it. A missing rclone config is a supported unconfigured
+# state; the helper logs that state and exits cleanly.
+ExecStart=/usr/local/lib/faas/faas-pg-basebackup-push.sh
 SuccessExitStatus=0
 TimeoutStartSec=2h
 
 # Spec §11: backup tarballs contain customer PII and sealed secrets;
 # any process that touches them must not pass them world-readable.
-# Root-owned run is the right primitive — only root can run the push
-# (matches the LoadCredential pattern: $CREDENTIALS_DIRECTORY is
-# mode 0600 root:root by systemd contract).
+# Root-owned run is required to read the 0400 rclone configuration.
 UMask=0077
 
 # Push is disk + network bound; stdio to journal is fine. Failures

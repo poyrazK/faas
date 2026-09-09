@@ -175,13 +175,13 @@ func TestMigrations_00345_EdgeRulesKindCache(t *testing.T) {
 	if gotKind != "cache" {
 		t.Errorf("kind round-trip: got %q, want 'cache'", gotKind)
 	}
-	if !strings.Contains(string(gotAction), `"max_age_seconds":60`) {
+	if !strings.Contains(compactJSON(t, gotAction), `"max_age_seconds":60`) {
 		t.Errorf("action jsonb round-trip: got %s, want action.cache.max_age_seconds=60", string(gotAction))
 	}
-	if !strings.Contains(string(gotAction), `"stale_if_error_seconds":300`) {
+	if !strings.Contains(compactJSON(t, gotAction), `"stale_if_error_seconds":300`) {
 		t.Errorf("action jsonb round-trip: got %s, want action.cache.stale_if_error_seconds=300", string(gotAction))
 	}
-	if !strings.Contains(string(gotAction), `"Accept-Language"`) {
+	if !strings.Contains(compactJSON(t, gotAction), `"Accept-Language"`) {
 		t.Errorf("action jsonb round-trip: got %s, want action.cache.vary_on to preserve Accept-Language", string(gotAction))
 	}
 

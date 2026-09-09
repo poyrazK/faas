@@ -93,7 +93,7 @@ func TestMigrations_00375_EndpointDiscovery(t *testing.T) {
 		err := pool.QueryRow(ctx, `
 			SELECT count(*)
 			  FROM information_schema.columns
-			 WHERE table_schema = 'public'
+			 WHERE table_schema = current_schema()
 			   AND table_name = 'deployment_openapi_docs'
 			   AND column_name = $1`, col).Scan(&n)
 		if err != nil {
@@ -127,7 +127,7 @@ func TestMigrations_00375_EndpointDiscovery(t *testing.T) {
 		err := pool.QueryRow(ctx, `
 			SELECT count(*)
 			  FROM pg_indexes
-			 WHERE schemaname = 'public'
+			 WHERE schemaname = current_schema()
 			   AND indexname = $1`, idx).Scan(&n)
 		if err != nil {
 			t.Fatalf("query index %s: %v", idx, err)
@@ -147,11 +147,15 @@ func TestMigrations_00375_EndpointDiscovery(t *testing.T) {
 		appID := "00000000-0000-0000-0000-0000003758b1"
 		_, _ = pool.Exec(ctx, `INSERT INTO accounts (id, email, plan) VALUES ($1::uuid, 'ediscovery-acct@example.com', 'hobby') ON CONFLICT (id) DO NOTHING`, accountID)
 		_, _ = pool.Exec(ctx, `INSERT INTO apps (id, account_id, slug, type, ram_mb, max_concurrency, idle_timeout_s) VALUES ($1::uuid, $2::uuid, 'ediscovery-app', 'app', 256, 2, 60) ON CONFLICT (id) DO NOTHING`, appID, accountID)
+		// Only bind placeholders the statement actually references:
+		// pgx Parses with no parameter OIDs, so an unreferenced $n
+		// makes the server answer 42P18 ("could not determine data
+		// type of parameter $n").
 		_, err := pool.Exec(ctx, `
 			INSERT INTO deployments (id, app_id, image_digest, status)
-			VALUES ($1::uuid, $3::uuid, 'sha256:0000000000000000000000000000000000000000000000000000000000000000', 'live')
+			VALUES ($1::uuid, $2::uuid, 'sha256:0000000000000000000000000000000000000000000000000000000000000000', 'live')
 			ON CONFLICT (id) DO NOTHING`,
-			deploymentID, accountID, appID)
+			deploymentID, appID)
 		if err != nil {
 			return "", err
 		}
@@ -223,7 +227,7 @@ func TestMigrations_00375_EndpointDiscovery(t *testing.T) {
 	// gate is rejected by the DB if it slips past.
 	// Re-seed parent rows for the bogus-source test.
 	bogusDeploymentID := "00000000-0000-0000-0000-0000003758d2"
-	_, _ = pool.Exec(ctx, `INSERT INTO deployments (id, app_id, image_digest, status) VALUES ($1::uuid, $3::uuid, 'sha256:0000000000000000000000000000000000000000000000000000000000000000', 'live') ON CONFLICT (id) DO NOTHING`, bogusDeploymentID, accountID, appID)
+	_, _ = pool.Exec(ctx, `INSERT INTO deployments (id, app_id, image_digest, status) VALUES ($1::uuid, $2::uuid, 'sha256:0000000000000000000000000000000000000000000000000000000000000000', 'live') ON CONFLICT (id) DO NOTHING`, bogusDeploymentID, appID)
 	_, err = pool.Exec(ctx, `
 		INSERT INTO deployment_openapi_docs (
 			deployment_id, account_id, app_id, doc, doc_sha256, byte_size, source

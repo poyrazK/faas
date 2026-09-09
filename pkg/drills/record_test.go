@@ -142,7 +142,7 @@ func TestRecord_RenderProducesFields(t *testing.T) {
 		"| Wall-clock total | 14 min 32 s |",
 		"| RPO via basebackup | 0 min 12 s |",
 		"| RPO via WAL | 0 min 4 s |",
-		"| Wake latency | 12s |",
+		"| Wake latency | 12s (end-to-end recovery probe; outside the <350 ms platform snapshot-restore SLO) |",
 		"| Basebackup used | /var/lib/pgsql/basebackup/basebackup-2026-07-25T025932Z |",
 		"| Basebackup SHA-256 | deadbeef |",
 		"| Recovery stanza status | promoted at 2026-07-25T03:14:32Z |",
@@ -154,6 +154,9 @@ func TestRecord_RenderProducesFields(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("RenderRecord missing exact row %q\nfull output:\n%s", want, out)
 		}
+	}
+	if !strings.Contains(TemplateMarkdown(), RecoveryProbeScope) {
+		t.Errorf("operator template must keep recovery-probe scope %q", RecoveryProbeScope)
 	}
 }
 

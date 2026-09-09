@@ -86,6 +86,40 @@ export class DeploymentsService {
     });
   }
   /**
+   * Fetch the latest deployment for an app.
+   * Returns the app's newest deployment by `created_at DESC`. The app slug
+   * and deployment are resolved within the authenticated account; an
+   * unknown or cross-account app and a never-deployed app all return the
+   * same IDOR-safe 404 surface.
+   *
+   * @returns DeploymentResponse The latest deployment.
+   * @throws ApiError
+   */
+  public static getLatestAppDeployment({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/latest',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Create a developer deployment from a complete source snapshot or delta.
    * Transport used only for ad-hoc developer environments created by
    * `gregale dev`. With an empty `dev_source_base`, `source` is a complete
@@ -714,7 +748,8 @@ export class DeploymentsService {
    * Bulk soft-delete terminal-but-not-current deployments.
    * ADR-124 deployment queue controls — bulk soft-delete rows
    * in {superseded, failed, cancelled} older than the cutoff
-   * (default 168h). Plan-gated (Free returns 402). Retention
+   * (default 168h). Plan-gated (Free returns 402
+   * `plan_reorder_disabled`). Retention
    * cap enforced inside the store so INV 3 stays satisfied.
    *
    * @returns ClearObsoleteReport Cleared.
@@ -743,6 +778,14 @@ export class DeploymentsService {
       },
       body: requestBody,
       mediaType: 'application/json',
+      errors: {
+        402: `code: plan_reorder_disabled — this plan does not include deployment queue controls.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
     });
   }
   /**

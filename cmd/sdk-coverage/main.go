@@ -253,6 +253,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/rollback":               "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":       "RecoverRollout",
 	"POST /v1/apps/{slug}/deployments":            "Deploy",
+	"GET /v1/apps/{slug}/deployments/latest":      "GetLatestAppDeployment",
 	"POST /v1/apps/{slug}/deployments/dev-source": "DeployDevSource",
 	"POST /v1/apps/{slug}/deployments/source-ref": "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
 	"GET /v1/uploads/{id}":                        "GetUploadSession",    // issue #1182; resumable session discovery after restart
@@ -339,15 +340,23 @@ var methodRouteMap = map[string]string{
 	"POST /v1/jobs/{name}/runs/{id}/cancel":          "CancelJobRun",
 	"GET /v1/jobs/{name}/runs/{id}/tasks":            "ListJobRunTasks",
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs": "GetJobTaskLogs",
-	"GET /v1/usage/summary":                          "UsageSummary",
-	"GET /v1/usage":                                  "GetUsage",
-	"GET /v1/usage/daily":                            "UsageDaily",
-	"GET /v1/usage/storage":                          "StorageUsage",
-	"GET /v1/invoices":                               "ListInvoices",
-	"POST /v1/invocations/{id}/replay":               "ReplayInvocation", // issue #315 — re-issue a failed/dead_letter invocation
-	"GET /v1/apps/{slug}/secrets":                    "ListSecrets",
-	"GET /v1/domains":                                "ListDomains",
-	"POST /v1/domains":                               "CreateDomain",
+	// ADR-081 durable workflows. The SDK uses resource verbs while the
+	// paths include app and run placeholders, so keep the mapping explicit.
+	"POST /v1/apps/{slug}/workflows/{name}/runs": "RunWorkflow",
+	"GET /v1/apps/{slug}/workflows/runs":         "ListWorkflowRuns",
+	"GET /v1/workflows/runs/{id}":                "GetWorkflowRun",
+	"GET /v1/workflows/runs/{id}/steps":          "ListWorkflowSteps",
+	"POST /v1/workflows/runs/{id}/events":        "SendWorkflowEvent",
+	"POST /v1/workflows/runs/{id}/cancel":        "CancelWorkflowRun",
+	"GET /v1/usage/summary":                      "UsageSummary",
+	"GET /v1/usage":                              "GetUsage",
+	"GET /v1/usage/daily":                        "UsageDaily",
+	"GET /v1/usage/storage":                      "StorageUsage",
+	"GET /v1/invoices":                           "ListInvoices",
+	"POST /v1/invocations/{id}/replay":           "ReplayInvocation", // issue #315 — re-issue a failed/dead_letter invocation
+	"GET /v1/apps/{slug}/secrets":                "ListSecrets",
+	"GET /v1/domains":                            "ListDomains",
+	"POST /v1/domains":                           "CreateDomain",
 
 	// Issue #396 / ADR-045 PR 3 — alert rules. The auto-derivation
 	// would produce names with literal hyphens for the rotate-secret

@@ -57,7 +57,11 @@ func TestMigrations_00487_EdgeRulesCorsPresetFK(t *testing.T) {
 	// check is column_default IS NULL, mirroring the "NULL is the
 	// default, no DEFAULT clause" pattern. Any DEFAULT clause here
 	// would silently land invalid preset IDs on legacy rules.
-	var isNullable, columnDefault string
+	// column_default is SQL NULL for a column with no DEFAULT clause —
+	// which is exactly the state this test pins — so the scan target
+	// must be nullable (*string), not string.
+	var isNullable string
+	var columnDefault *string
 	if err := pool.QueryRow(ctx, `
 		select is_nullable, column_default
 		  from information_schema.columns
@@ -70,8 +74,8 @@ func TestMigrations_00487_EdgeRulesCorsPresetFK(t *testing.T) {
 	if isNullable != "YES" {
 		t.Errorf("edge_rules.cors_preset_id: is_nullable=%q, want YES (the column must be nullable — inline-only rules have NULL)", isNullable)
 	}
-	if columnDefault != "" {
-		t.Errorf("edge_rules.cors_preset_id: column_default=%q, want NULL — the column must NOT carry a DEFAULT (any DEFAULT would silently land invalid cors_presets.id on legacy rules; the gen_random_uuid() default would 23503 on INSERT)", columnDefault)
+	if columnDefault != nil {
+		t.Errorf("edge_rules.cors_preset_id: column_default=%q, want NULL — the column must NOT carry a DEFAULT (any DEFAULT would silently land invalid cors_presets.id on legacy rules; the gen_random_uuid() default would 23503 on INSERT)", *columnDefault)
 	}
 
 	// (3) FK constraint shape. pg_get_constraintdef emits the
