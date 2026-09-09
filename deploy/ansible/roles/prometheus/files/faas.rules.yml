@@ -638,11 +638,11 @@ groups:
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasApiAvailabilityLow
         expr: |
-          (sum(rate(gateway_requests_total{code=~"2.."}[5m]))
+          (sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m]))
             /
-          sum(rate(gateway_requests_total[5m])))
+          sum(rate(gateway_requests_total{app!="-"}[5m])))
             < 0.995
-          and sum(rate(gateway_requests_total[5m])) > 0
+          and sum(rate(gateway_requests_total{app!="-"}[5m])) > 0
         for: 10m
         labels:
           severity: page
@@ -657,18 +657,18 @@ groups:
         expr: |
           (
             (
-              sum(rate(gateway_requests_total{code!~"2.."}[1h]))
-              / sum(rate(gateway_requests_total[1h]))
+              sum(rate(gateway_requests_total{app!="-",code!~"2.."}[1h]))
+              / sum(rate(gateway_requests_total{app!="-"}[1h]))
             ) > 0.072
-            and sum(rate(gateway_requests_total[1h])) > 0
+            and sum(rate(gateway_requests_total{app!="-"}[1h])) > 0
           )
           and
           (
             (
-              sum(rate(gateway_requests_total{code!~"2.."}[6h]))
-              / sum(rate(gateway_requests_total[6h]))
+              sum(rate(gateway_requests_total{app!="-",code!~"2.."}[6h]))
+              / sum(rate(gateway_requests_total{app!="-"}[6h]))
             ) > 0.03
-            and sum(rate(gateway_requests_total[6h])) > 0
+            and sum(rate(gateway_requests_total{app!="-"}[6h])) > 0
           )
         for: 10m
         labels:

@@ -8,13 +8,33 @@ rule_files:
 evaluation_interval: 30s
 
 tests:
+  - name: "idle public status expressions remain finite"
+    promql_expr_test:
+      - expr: '((sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) / sum(rate(gateway_requests_total{app!="-"}[5m])) * 100) and sum(rate(gateway_requests_total{app!="-"}[5m])) > 0) or vector(100)'
+        eval_time: 5m
+        exp_samples:
+          - labels: '{}'
+            value: 100
+      - expr: '((histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) * 1000) and sum(rate(gateway_wake_latency_seconds_count[5m])) > 0) or vector(0)'
+        eval_time: 5m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+      - expr: '((sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m])) / sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) * 100) and sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) > 0) or vector(0)'
+        eval_time: 5m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+
   - interval: 30s
     name: "successful low-volume API traffic does not page"
     input_series:
       - series: 'gateway_requests_total{code="200",app="low-volume"}'
         values: '0+1x50'
+      - series: 'gateway_requests_total{code="404",app="-"}'
+        values: '0+3x50'
     promql_expr_test:
-      - expr: 'sum(rate(gateway_requests_total{code=~"2.."}[5m])) / sum(rate(gateway_requests_total[5m]))'
+      - expr: 'sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) / sum(rate(gateway_requests_total{app!="-"}[5m]))'
         eval_time: 15m
         exp_samples:
           - labels: '{}'

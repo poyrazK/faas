@@ -1,7 +1,7 @@
 # FaasApiAvailabilityLow
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
-Metric: `gateway_requests_total{code=~"2.."}` vs total (gatewayd-internal `/metrics`).
+Metric: `gateway_requests_total{app!="-",code=~"2.."}` vs resolved-app total (gatewayd-internal `/metrics`). Requests labelled `app="-"` never resolved to a tenant route and are excluded.
 Spec: §12 (API availability 99.5% monthly).
 Severity: page.
 
@@ -18,7 +18,7 @@ operator's leading indicator for the monthly SLO.
 ## Verify
 
 ```bash
-curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum(rate(gateway_requests_total{code=~"2.."}[5m]))/sum(rate(gateway_requests_total[5m]))'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m]))/sum(rate(gateway_requests_total{app!="-"}[5m]))'
 # Multi-window burn-rate check (14.4x / 6x of the 99.5% monthly budget).
 curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=sum(rate(gateway_requests_total{code!~"2.."}[1h]))/sum(rate(gateway_requests_total[1h]))'
 curl -fsS https://api.gregale.dev/status/slo.json | jq .
