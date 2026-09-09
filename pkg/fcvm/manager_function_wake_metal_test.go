@@ -73,7 +73,7 @@ func TestMetalFunctionWakeP95(t *testing.T) {
 	// first Park produces a snapshot schedd will actually reuse.
 	const instance = "m7-func"
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
-		Instance: instance, BaseKey: rootfs, LayerKey: rootfs,
+		Instance: instance, Plan: "pro", BaseKey: rootfs, LayerKey: rootfs,
 		VcpuCount: 2, MemSizeMiB: 128,
 	}); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
@@ -89,7 +89,7 @@ func TestMetalFunctionWakeP95(t *testing.T) {
 	for i := 0; i < cycles; i++ {
 		start := time.Now()
 		inst, err := m.Wake(ctx, WakeRequest{
-			Instance: instance, BaseKey: rootfs, LayerKey: rootfs,
+			Instance: instance, Plan: "pro", BaseKey: rootfs, LayerKey: rootfs,
 			VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
 		})
 		if err != nil {

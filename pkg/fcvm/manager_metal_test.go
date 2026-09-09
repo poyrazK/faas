@@ -92,7 +92,7 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 			defer bootCancel()
 			id := fmt.Sprintf("m1-%d", i)
 			_, err := m.ColdBoot(bootCtx, ColdBootRequest{
-				Instance: id, BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
+				Instance: id, Plan: "pro", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
 			})
 			results <- bootResult{instance: id, err: err}
 		}(i, bootCtx, bootCancel)
@@ -287,6 +287,7 @@ func TestMetalDNATPublishedToGuestPort(t *testing.T) {
 
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "dnat",
+		Plan:       "pro",
 		BaseKey:    busybox,
 		LayerKey:   busybox,
 		VcpuCount:  2,
@@ -486,6 +487,7 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 	// per acquire).
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "v6prime",
+		Plan:       "pro",
 		BaseKey:    base,
 		LayerKey:   layer,
 		VcpuCount:  2,
@@ -551,7 +553,7 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			inst, err := m.Wake(ctx, WakeRequest{
-				Instance: name, BaseKey: base, LayerKey: layer,
+				Instance: name, Plan: "pro", BaseKey: base, LayerKey: layer,
 				VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
 			})
 			if err != nil {
@@ -753,6 +755,7 @@ func TestMetalGuestEgressToPublicViaMASQUERADE(t *testing.T) {
 
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "egress",
+		Plan:       "pro",
 		BaseKey:    egressImg,
 		LayerKey:   egressImg,
 		VcpuCount:  2,

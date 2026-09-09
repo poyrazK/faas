@@ -174,6 +174,7 @@ func TestMetalSidecarBoot(t *testing.T) {
 	)
 	_, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "pro",
 		BaseKey:    base,
 		LayerKey:   base, // M7 simplification: main drive = busybox (matches M0)
 		VcpuCount:  2,
@@ -253,6 +254,7 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 	const instance = "prb-sidecar-port-1"
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "pro",
 		BaseKey:    base,
 		LayerKey:   base,
 		VcpuCount:  2,
@@ -313,6 +315,7 @@ func TestMetalTwoSidecarsColdBoot(t *testing.T) {
 	const instance = "prb-sidecar-2"
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "pro",
 		BaseKey:    base,
 		LayerKey:   base,
 		VcpuCount:  2,
@@ -400,6 +403,7 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	)
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "pro",
 		BaseKey:    base,
 		LayerKey:   base,
 		VcpuCount:  2,

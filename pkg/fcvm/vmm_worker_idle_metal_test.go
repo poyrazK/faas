@@ -71,6 +71,7 @@ func TestMetalWorker_NotReapedAfterIdleWindow(t *testing.T) {
 	const instance = "worker-idle"
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "pro",
 		BaseKey:    busybox,
 		LayerKey:   busybox,
 		VcpuCount:  1,

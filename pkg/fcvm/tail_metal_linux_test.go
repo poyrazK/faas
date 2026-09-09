@@ -150,6 +150,7 @@ func TestMetal_TailEndToEnd(t *testing.T) {
 	const instance = "metal-tail-e2e-1"
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "pro",
 		BaseKey:    base,
 		LayerKey:   layer,
 		VcpuCount:  2,
@@ -245,6 +246,7 @@ func TestMetalTail_KeepsWakeRunning(t *testing.T) {
 	const instance = "metal-tail-keep-1"
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "pro",
 		BaseKey:    base,
 		LayerKey:   layer,
 		VcpuCount:  2,

@@ -102,6 +102,7 @@ func TestMetal_StatelessAdvisory_EndToEnd(t *testing.T) {
 	const instance = "metal-advisory-1"
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
+		Plan:       "pro",
 		BaseKey:    base,
 		LayerKey:   layer,
 		VcpuCount:  2,

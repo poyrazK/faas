@@ -57,14 +57,14 @@ func TestMetalServiceReplicas_ConvergeAfterKill(t *testing.T) {
 		replicaB = "svc-replica-b"
 	)
 	instA, errA := m.ColdBoot(ctx, ColdBootRequest{
-		Instance: replicaA, BaseKey: busybox, LayerKey: busybox,
+		Instance: replicaA, Plan: "pro", BaseKey: busybox, LayerKey: busybox,
 		VcpuCount: 1, MemSizeMiB: 128,
 	})
 	if errA != nil {
 		t.Fatalf("boot %s: %v", replicaA, errA)
 	}
 	instB, errB := m.ColdBoot(ctx, ColdBootRequest{
-		Instance: replicaB, BaseKey: busybox, LayerKey: busybox,
+		Instance: replicaB, Plan: "pro", BaseKey: busybox, LayerKey: busybox,
 		VcpuCount: 1, MemSizeMiB: 128,
 	})
 	if errB != nil {

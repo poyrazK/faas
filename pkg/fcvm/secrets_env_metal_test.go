@@ -90,6 +90,7 @@ func TestMetalSecretsEnvReachesGuest(t *testing.T) {
 	const instance = "m5-secrets"
 	inst, err := m.ColdBoot(context.Background(), ColdBootRequest{
 		Instance:         instance,
+		Plan:             "pro",
 		BaseKey:          rootfs,
 		LayerKey:         rootfs,
 		VcpuCount:        2,
