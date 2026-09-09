@@ -1012,6 +1012,8 @@ type deployExecution struct {
 	onSourceSync        func(time.Duration, error)
 	onStage             func(string, string, int64, string)
 	onTerminal          func(api.DeploymentResponse) int
+	onFailure           func(api.DeploymentResponse, string, string)
+	onError             func(error)
 	prefixBuildLogs     bool
 	streamLogsOnJSON    bool
 	developerSource     *devSourceSyncState
@@ -2060,7 +2062,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
 					return 130
 				}
-				return printErr("Bad --tarball", deployErr)
+				code := printErr("Bad --tarball", deployErr)
+				if execution.onError != nil {
+					execution.onError(deployErr)
+				}
+				return code
 			}
 		} else if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			uploadOptions := api.UploadDeployOptions{
@@ -2089,7 +2095,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if errors.Is(uploadErr, context.Canceled) || ctx.Err() != nil {
 					return 130
 				}
-				return printErr("Bad --tarball", uploadErr)
+				code := printErr("Bad --tarball", uploadErr)
+				if execution.onError != nil {
+					execution.onError(uploadErr)
+				}
+				return code
 			}
 		} else {
 			var deployErr error
@@ -2098,7 +2108,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
 					return 130
 				}
-				return printErr("Bad --tarball", deployErr)
+				code := printErr("Bad --tarball", deployErr)
+				if execution.onError != nil {
+					execution.onError(deployErr)
+				}
+				return code
 			}
 		}
 		execution.notifyQueued(dep)
@@ -2127,6 +2141,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 			onStage:         execution.onStage,
 			onTerminal:      execution.onTerminal,
+			onFailure:       execution.onFailure,
 			prefixBuildLogs: execution.prefixBuildLogs,
 			quiet:           streamLogsOnJSON,
 		})
@@ -2157,7 +2172,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
 	})
 	if err != nil {
-		return printErr("Deploy failed", err)
+		code := printErr("Deploy failed", err)
+		if execution.onError != nil {
+			execution.onError(err)
+		}
+		return code
 	}
 	execution.notifyQueued(dep)
 	if jsonOutput && !jsonWait && !streamLogsOnJSON {
@@ -2181,6 +2200,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 		onStage:         execution.onStage,
 		onTerminal:      execution.onTerminal,
+		onFailure:       execution.onFailure,
 		prefixBuildLogs: execution.prefixBuildLogs,
 		quiet:           streamLogsOnJSON,
 	})
@@ -3707,6 +3727,7 @@ func topPatterns(patterns map[string]int, n int) []string {
 type streamDeployOptions struct {
 	onStage         func(string, string, int64, string)
 	onTerminal      func(api.DeploymentResponse) int
+	onFailure       func(api.DeploymentResponse, string, string)
 	prefixBuildLogs bool
 	quiet           bool
 }
@@ -3719,21 +3740,31 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 	if !opts.quiet {
 		PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
 	}
-	terminalDeployment := func(d api.DeploymentResponse) int {
+	terminalDeploymentWithFailure := func(d api.DeploymentResponse, phase, reason string) int {
+		if d.Status == deploymentStatusFailed && opts.onFailure != nil {
+			opts.onFailure(d, phase, reason)
+		}
 		if opts.onTerminal != nil {
 			return opts.onTerminal(d)
 		}
-		return terminalExitForDeploymentContext(ctx, c, d, appSlug)
+		return terminalExitForDeploymentWithFailureContext(ctx, c, d, appSlug, nil)
+	}
+	terminalDeployment := func(d api.DeploymentResponse) int {
+		return terminalDeploymentWithFailure(d, "", d.Error)
 	}
 	terminalBuild := func(b api.BuildResponse) int {
-		if opts.onTerminal != nil {
-			status := statusLive
-			if b.Status == buildStatusFailed {
-				status = deploymentStatusFailed
-			}
-			return opts.onTerminal(api.DeploymentResponse{ID: b.DeploymentID, Status: status, Error: b.FailureClass})
+		status := statusLive
+		if b.Status == buildStatusFailed {
+			status = deploymentStatusFailed
 		}
-		return terminalExitForBuildContext(ctx, c, b, appSlug)
+		dep := api.DeploymentResponse{ID: b.DeploymentID, BuildID: b.ID, Status: status, Error: b.FailureClass}
+		if status == deploymentStatusFailed && opts.onFailure != nil {
+			opts.onFailure(dep, "image_build", b.FailureClass)
+		}
+		if opts.onTerminal != nil {
+			return opts.onTerminal(dep)
+		}
+		return terminalExitForBuildWithFailureContext(ctx, c, b, appSlug, nil)
 	}
 	body, err := c.StreamDeploymentLogs(ctx, dep.ID, nil, 0, true)
 	if err != nil {
@@ -3768,6 +3799,8 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 	}
 	ticker := renderStageTicker(tickerWriter)
 	defer ticker.Close()
+	failedStage := ""
+	failedReason := ""
 streamLoop:
 	for {
 		select {
@@ -3812,6 +3845,10 @@ streamLoop:
 				}
 				if json.Unmarshal([]byte(e.Data), &stage) == nil && stage.Name != "" {
 					ticker.HandleStageFrame(stage.Name, stage.Status, stage.DurationMs, stage.Reason)
+					if stage.Status == stageStatusFailed {
+						failedStage = stage.Name
+						failedReason = stage.Reason
+					}
 					if opts.onStage != nil {
 						opts.onStage(stage.Name, stage.Status, stage.DurationMs, stage.Reason)
 					}
@@ -3824,13 +3861,7 @@ streamLoop:
 					(status.Status == statusLive || status.Status == deploymentStatusFailed) {
 					terminal := dep
 					terminal.Status = status.Status
-					if status.Status == statusLive {
-						return terminalDeployment(terminal)
-					}
-					if opts.onTerminal != nil {
-						return opts.onTerminal(terminal)
-					}
-					return renderDeployFailure(terminal)
+					return terminalDeploymentWithFailure(terminal, failedStage, failedReason)
 				}
 			case "end":
 				var end struct {
@@ -4036,8 +4067,19 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 }
 
 func terminalExitForDeploymentContext(ctx context.Context, c *Client, d api.DeploymentResponse, appSlug string) int {
+	return terminalExitForDeploymentWithFailureContext(ctx, c, d, appSlug, nil)
+}
+
+func terminalExitForDeploymentWithFailure(d api.DeploymentResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
+	return terminalExitForDeploymentWithFailureContext(context.Background(), nil, d, appSlug, onFailure)
+}
+
+func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client, d api.DeploymentResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
 	if d.Status == statusLive {
 		return renderSuccessfulDeployment(ctx, c, d, appSlug)
+	}
+	if onFailure != nil {
+		onFailure(d, "", d.Error)
 	}
 	return renderDeployFailure(d)
 }
@@ -4054,6 +4096,14 @@ func terminalExitForBuild(b api.BuildResponse, appSlug string) int {
 }
 
 func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string) int {
+	return terminalExitForBuildWithFailureContext(ctx, c, b, appSlug, nil)
+}
+
+func terminalExitForBuildWithFailure(b api.BuildResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
+	return terminalExitForBuildWithFailureContext(context.Background(), nil, b, appSlug, onFailure)
+}
+
+func terminalExitForBuildWithFailureContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
 	if b.Status == buildStatusSucceeded {
 		dep := api.DeploymentResponse{ID: b.DeploymentID, Status: statusLive}
 		return renderSuccessfulDeployment(ctx, c, dep, appSlug)
@@ -4063,6 +4113,14 @@ func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResp
 	// log path includes the required app slug positional argument.
 	PrintWarn(os.Stderr, "build %s failed (failure_class=%s); inspect logs with: gregale logs %s --deployment %s --follow",
 		b.ID, b.FailureClass, appSlug, b.DeploymentID)
+	if onFailure != nil {
+		onFailure(api.DeploymentResponse{
+			ID:        b.DeploymentID,
+			BuildID:   b.ID,
+			Error:     b.FailureClass,
+			ErrorCode: inferDevDiagnosticCode(b.FailureClass, "image_build", ""),
+		}, "image_build", b.FailureClass)
+	}
 	return 2
 }
 
