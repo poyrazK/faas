@@ -1043,6 +1043,10 @@ capabilities-check: ## Verify the product capability registry and generated matr
 api-hosting-contract-check: ## Run the metal-free API framework fixture contract
 	@$(GO) run ./cmd/api-hosting-contract
 
+.PHONY: api-hosting-scorecard-check
+api-hosting-scorecard-check: ## Validate API-hosting release targets and evidence locators
+	@$(GO) run ./cmd/api-hosting-scorecard
+
 .PHONY: sdk-check
 sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Client
 	# Pure-read AST/YAML diff (no I/O, no goroutines), so the recipe
@@ -1138,6 +1142,8 @@ pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@$(MAKE) capabilities-check
 	@echo "==> pre-pr: api-hosting-contract-check (metal-free fixture matrix)"
 	@$(MAKE) api-hosting-contract-check
+	@echo "==> pre-pr: api-hosting-scorecard-check (release evidence contract)"
+	@$(MAKE) api-hosting-scorecard-check
 	@echo "==> pre-pr: spec-check (api/openapi.yaml ↔ pkg/apid/openapi.yaml)"
 	@$(MAKE) spec-check
 	@echo "==> pre-pr: proto-check (checked-in *.pb.go matches protoc)"

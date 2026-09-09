@@ -64,6 +64,16 @@
       "acceptance_test": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification"
     },
     {
+      "id": "openapi-contract-preview",
+      "name": "OpenAPI contract preview",
+      "category": "edge",
+      "description": "Compare declared routes with observed routes and matching edge policy before deployment.",
+      "maturity": "preview",
+      "plans": ["free", "hobby", "pro", "scale"],
+      "docs_url": "/docs/api-hosting-openapi",
+      "acceptance_test": "pkg/openapidiff/preview_test.go::TestBuildRoutePolicyPreview"
+    },
+    {
       "id": "pr-previews",
       "name": "Pull-request previews",
       "category": "delivery",
@@ -101,7 +111,7 @@
       "maturity": "beta",
       "plans": ["hobby", "pro", "scale"],
       "docs_url": "https://gregale.dev/docs/runtime-node",
-      "acceptance_test": "pkg/gateway/handler_test.go::TestRawStreamReverseProxy_RemoteWakeNode"
+      "acceptance_test": "pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode"
     },
     {
       "id": "workflows-and-jobs",
