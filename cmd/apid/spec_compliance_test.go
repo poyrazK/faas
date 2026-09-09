@@ -197,6 +197,20 @@ var routeExclude = map[string]bool{
 	"POST /v1/otel/v1/traces": true,
 }
 
+func init() {
+	// Issue #1397 G8: dashboard form routes are session-cookie surfaces,
+	// intentionally absent from the public OpenAPI document.
+	for _, route := range []string{
+		"POST /dashboard/apps/{slug}/webhooks",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/toggle",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/delete",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/rotate-secret",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/deliveries/{did}/retry",
+	} {
+		routeExclude[route] = true
+	}
+}
+
 // dtoExclude lists pkg/api exported DTOs that are intentionally not in the
 // public OpenAPI spec. These are valid types — they live in pkg/api because
 // they cross the apid/CLI boundary — but they belong to non-public surfaces

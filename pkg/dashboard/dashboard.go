@@ -496,6 +496,49 @@ type JobsQueuesData struct {
 	ErrorMessage string
 }
 
+// AppWebhooksData is the customer-facing projection for the per-app
+// outbound-webhook page (issue #1397 / G8). Secrets are never projected;
+// the page only carries the masked marker returned by the API contract.
+type AppWebhooksData struct {
+	App           AppListItem
+	PlanAllowed   bool
+	Events        []string
+	RetryPolicies []string
+	Webhooks      []WebhookPageItem
+	ActionCSRF    string
+	Action        string
+	ErrorMessage  string
+}
+
+// WebhookPageItem is one outbound webhook subscription plus a bounded slice
+// of recent deliveries. Payloads are deliberately omitted from the dashboard
+// projection because they may contain arbitrary customer data.
+type WebhookPageItem struct {
+	ID          string
+	TargetURL   string
+	EventFilter []string
+	RetryPolicy string
+	Enabled     bool
+	CreatedAt   string
+	UpdatedAt   string
+	Deliveries  []WebhookDeliveryPageItem
+}
+
+// WebhookDeliveryPageItem is the safe, compact delivery ledger projection
+// shown on the webhooks page. A retry action is rendered only for dead rows.
+type WebhookDeliveryPageItem struct {
+	ID               string
+	Event            string
+	Attempt          int
+	Status           string
+	LastError        string
+	LastResponseCode int
+	NextAttemptAt    string
+	DeliveredAt      string
+	CreatedAt        string
+	Retryable        bool
+}
+
 // AppEdgeRulesData is the bounded, account-scoped projection rendered by the
 // per-app edge-rules page. Rules and presets are read from the same Store
 // paths used by the API; mutations are form adapters that delegate to those

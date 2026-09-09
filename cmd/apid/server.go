@@ -2473,6 +2473,15 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/secrets", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetSecret))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteSecret))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/rotate", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRotateSecret))))
+	// G8 / issue #1397 — outbound webhook forms. All mutations use the
+	// existing JSON handlers through a named dashboard CSRF envelope, so
+	// validation, ownership, plan gates, audit rows, and RFC 7807 errors
+	// stay identical to the API/CLI paths.
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateAppWebhook))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/toggle", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardToggleAppWebhook))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteAppWebhook))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/rotate-secret", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRotateAppWebhookSecret))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRetryAppWebhookDelivery))))
 	// G6 / issue #1397 — app instance lifecycle controls. The GET page
 	// mints a named CSRF envelope; this form adapter verifies it before
 	// applying the same app-scoped park/wake/restart transitions as the
