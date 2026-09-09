@@ -1011,15 +1011,19 @@ Production debugger (ADR-127)
 
 ### debug requests
 
-Per-request telemetry (list|get|show|evidence|replay)
+Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])
 
 ### debug regressions
 
-Active regression observations
+Active regression observations (list|watch [--interval D] [--once])
 
 ### debug compare
 
 Per-route deployment-vs-deployment compare
+
+### debug bundle
+
+Export a redacted incident investigation bundle (bundle &lt;slug&gt; &lt;req_id&gt; [--output PATH])
 
 
 ## invitations
