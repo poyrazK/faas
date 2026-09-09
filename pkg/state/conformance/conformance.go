@@ -53,11 +53,91 @@ func Run(t *testing.T, open Open) {
 		{"account_credits_issue_list_and_consume", testAccountCredits},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
+		{"export_history_pagination_is_stable", testExportHistoryPagination},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testExportHistoryPagination(t *testing.T, fx *Fixture) {
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	depIDs := []string{
+		"20000000-0000-0000-0000-000000000001",
+		"20000000-0000-0000-0000-000000000002",
+		"20000000-0000-0000-0000-000000000003",
+	}
+	for _, id := range depIDs {
+		if _, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+			ID: id, AppID: fx.App.ID, CreatedAt: at,
+			Kind: state.DeploymentKindImage, Status: state.DeployFailed,
+		}); err != nil {
+			t.Fatalf("CreateDeployment(%s): %v", id, err)
+		}
+	}
+	depPage, err := fx.Store.ListDeploymentsForAccountPage(fx.Ctx, fx.Account.ID, time.Time{}, "", 2)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForAccountPage(first): %v", err)
+	}
+	if len(depPage) != 2 || depPage[0].ID != depIDs[2] || depPage[1].ID != depIDs[1] {
+		t.Fatalf("deployment first page = %+v, want ids 3,2", depPage)
+	}
+	depNext, err := fx.Store.ListDeploymentsForAccountPage(fx.Ctx, fx.Account.ID, depPage[1].CreatedAt, depPage[1].ID, 2)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForAccountPage(next): %v", err)
+	}
+	if len(depNext) == 0 || depNext[0].ID != depIDs[0] {
+		t.Fatalf("deployment next page = %+v, want id 1 first", depNext)
+	}
+
+	gdprIDs := []string{
+		"30000000-0000-0000-0000-000000000001",
+		"30000000-0000-0000-0000-000000000002",
+		"30000000-0000-0000-0000-000000000003",
+	}
+	for _, id := range gdprIDs {
+		if err := fx.Store.AppendGdprRequest(fx.Ctx, state.GdprRequest{
+			ID: id, AccountID: fx.Account.ID, AccountEmail: fx.Account.Email,
+			Action: state.GdprActionDelete, RequestedAt: at,
+		}); err != nil {
+			t.Fatalf("AppendGdprRequest(%s): %v", id, err)
+		}
+	}
+	gdprPage, err := fx.Store.ListGdprRequestsForAccountPage(fx.Ctx, fx.Account.ID, time.Time{}, "", 2)
+	if err != nil {
+		t.Fatalf("ListGdprRequestsForAccountPage(first): %v", err)
+	}
+	if len(gdprPage) != 2 || gdprPage[0].ID != gdprIDs[2] || gdprPage[1].ID != gdprIDs[1] {
+		t.Fatalf("GDPR first page = %+v, want ids 3,2", gdprPage)
+	}
+	gdprNext, err := fx.Store.ListGdprRequestsForAccountPage(fx.Ctx, fx.Account.ID, gdprPage[1].RequestedAt, gdprPage[1].ID, 2)
+	if err != nil {
+		t.Fatalf("ListGdprRequestsForAccountPage(next): %v", err)
+	}
+	if len(gdprNext) != 1 || gdprNext[0].ID != gdprIDs[0] {
+		t.Fatalf("GDPR next page = %+v, want id 1", gdprNext)
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := fx.Store.AppendEvent(fx.Ctx, "conformance", "export.page", &fx.Account.ID, []byte(`{}`)); err != nil {
+			t.Fatalf("AppendEvent(%d): %v", i, err)
+		}
+	}
+	eventPage, err := fx.Store.ListEventsPage(fx.Ctx, fx.Account.ID, time.Time{}, 0, 2)
+	if err != nil {
+		t.Fatalf("ListEventsPage(first): %v", err)
+	}
+	if len(eventPage) != 2 || eventPage[0].ID <= eventPage[1].ID {
+		t.Fatalf("event first page = %+v, want descending ids", eventPage)
+	}
+	eventNext, err := fx.Store.ListEventsPage(fx.Ctx, fx.Account.ID, eventPage[1].At, eventPage[1].ID, 2)
+	if err != nil {
+		t.Fatalf("ListEventsPage(next): %v", err)
+	}
+	if len(eventNext) != 1 || eventNext[0].ID >= eventPage[1].ID {
+		t.Fatalf("event next page = %+v, want final lower id", eventNext)
 	}
 }
 
