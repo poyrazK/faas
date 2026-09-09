@@ -147,6 +147,53 @@ func TestVerifyArtifactMissing(t *testing.T) {
 	}
 }
 
+func TestPinVerifiedArtifactSurvivesCachePressure(t *testing.T) {
+	ctx := context.Background()
+	parent := newMemoryArtifactBackend()
+	const kernelKey = "kernel/1.7.0"
+	kernel := []byte("verified-release-kernel")
+	if err := parent.Put(ctx, kernelKey, bytes.NewReader(kernel)); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(t.TempDir(), "cache"), 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := verifyArtifact(ctx, cache, kernelKey, digestBytes(kernel))
+	if err != nil {
+		t.Fatalf("prewarm verify: %v", err)
+	}
+	if err := pinVerifiedArtifact(cache, kernelKey, report.SHA256); err != nil {
+		t.Fatalf("pinVerifiedArtifact: %v", err)
+	}
+
+	// Two tiny blobs each consume one filesystem block. The 5 KB budget can
+	// retain only one, so the subsequent snapshot write must be evicted while
+	// the release kernel remains locally resident.
+	if err := cache.Put(ctx, "snap/new/mem", strings.NewReader("snapshot")); err != nil {
+		t.Fatal(err)
+	}
+	path, source, ok, err := cache.LocalPathWithSource(kernelKey)
+	if err != nil || !ok || path == "" || source != storage.LocalPathSourceCache {
+		t.Fatalf("kernel residency after pressure = path %q, source %q, ok %t, err %v", path, source, ok, err)
+	}
+	if _, _, ok, err := cache.LocalPathWithSource("snap/new/mem"); err != nil || ok {
+		t.Fatalf("snapshot residency after pressure = ok %t, err %v; want evicted", ok, err)
+	}
+}
+
+func TestPinVerifiedArtifactRequiresLocalCache(t *testing.T) {
+	be := newMemoryArtifactBackend()
+	if err := pinVerifiedArtifact(be, "kernel/1.7.0", strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "no local cache") {
+		t.Fatalf("pinVerifiedArtifact error = %v, want missing-cache failure", err)
+	}
+}
+
+func digestBytes(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
 type memoryArtifactBackend struct {
 	mu   sync.Mutex
 	data map[string][]byte
