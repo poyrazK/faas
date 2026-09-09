@@ -1,5 +1,8 @@
 package fcvm
 
+// spec: §6.3 — bound competing restore work so burst wakes remain within the
+// platform snapshot-wake latency budget; gate wait stays inside that interval.
+
 import (
 	"context"
 	"errors"
