@@ -34,11 +34,66 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+func TestForwardingReverseProxy_InjectsW3CTraceContextIntoGuestHeaders(t *testing.T) {
+	stream := &fakeBidiStream{
+		Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+			{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{
+				Init: &vmmdpb.ForwardHTTPResponseInit{Status: http.StatusNoContent},
+			}},
+		},
+	}
+	cli := &fakeVmmdClient{Stream: stream}
+	lookup := &fakeNodeLookup{cli: cli}
+	proxy := gateway.ForwardingReverseProxy(lookup, nil)
+
+	traceID, err := oteltrace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	if err != nil {
+		t.Fatalf("trace id: %v", err)
+	}
+	spanID, err := oteltrace.SpanIDFromHex("00f067aa0ba902b7")
+	if err != nil {
+		t.Fatalf("span id: %v", err)
+	}
+	traceState, err := oteltrace.ParseTraceState("vendor=value")
+	if err != nil {
+		t.Fatalf("trace state: %v", err)
+	}
+	ctx := oteltrace.ContextWithSpanContext(context.Background(), oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: oteltrace.FlagsSampled,
+		TraceState: traceState,
+	}))
+	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
+	r.Header.Set("x-faas-instance", "i-test")
+	rec := httptest.NewRecorder()
+
+	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, r)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if len(stream.Sends) == 0 || stream.Sends[0].GetInit() == nil {
+		t.Fatal("forwarder did not send an init frame")
+	}
+
+	got := map[string]string{}
+	for _, h := range stream.Sends[0].GetInit().GetHeaders() {
+		got[strings.ToLower(h.GetName())] = h.GetValue()
+	}
+	if got["traceparent"] != "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" {
+		t.Errorf("traceparent = %q, want W3C child context", got["traceparent"])
+	}
+	if got["tracestate"] != "vendor=value" {
+		t.Errorf("tracestate = %q, want vendor=value", got["tracestate"])
+	}
+}
 
 // fakeVmmdClient is a vmmdpb.VmmdClient that records every
 // ForwardHTTPStreamRequest and replies with the canned
