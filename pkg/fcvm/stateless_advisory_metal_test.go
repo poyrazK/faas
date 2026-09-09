@@ -1,6 +1,7 @@
 //go:build metal
 
 // stateless_advisory_metal_test.go — Wave 0 PR-C / ADR-047 metal test.
+// adr: 047
 //
 // Spec §17 G13 / PR-C headline: a guest-init fanotify advisory on
 // writes to state-shaped paths lands in the audit table. The unit

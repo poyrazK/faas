@@ -1,6 +1,7 @@
 //go:build metal
 
 // Service-replicas metal test (M-2 commit 11, ADR-137 §Decision 3).
+// adr: 137
 //
 // The full service-replica state machine (desired/ready/pending,
 // admission, replacement wake scheduling) lives at the sched Engine

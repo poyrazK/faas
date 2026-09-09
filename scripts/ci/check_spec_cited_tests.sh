@@ -122,8 +122,11 @@ fi
 
 missing=()
 for path in "${owned_tests[@]}"; do
+  # Do not use grep -q here. With pipefail, a citation found before the end of
+  # a large test file can close the pipe while git show is still writing,
+  # turning git's SIGPIPE into a false "missing citation" result.
   if ! git show "${head_sha}:${path}" 2>/dev/null \
-    | grep -Eq '^[[:space:]]*//[[:space:]]*(spec:[[:space:]]*§[0-9]+([.][0-9]+)*|adr:[[:space:]]*[0-9]{3})([[:space:]]|$)'; then
+    | grep -E '^[[:space:]]*//[[:space:]]*(spec:[[:space:]]*§[0-9]+([.][0-9]+)*|adr:[[:space:]]*[0-9]{3})([[:space:]]|$)' >/dev/null; then
     missing+=("$path")
   fi
 done

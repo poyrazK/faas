@@ -15,6 +15,7 @@
 // back to mkfs.ext4 -d from the local repo checkout. We build guest-init
 // from this worktree so the listener + resume wire format are guaranteed to
 // match the host (pkg/fcvm/vmm.go::resumeHookMsgResume, ADR-022).
+// adr: 022
 
 package fcvm
 

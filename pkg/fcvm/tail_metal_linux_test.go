@@ -1,6 +1,7 @@
 //go:build metal && linux
 
 // tail_metal_linux_test.go — issue #667 / ADR-078 metal acceptance tests.
+// adr: 078
 //
 // _linux suffix: the metal acceptance suite only runs on Linux
 // (Lima nested KVM is a Linux guest; the bare-metal x86_64 control

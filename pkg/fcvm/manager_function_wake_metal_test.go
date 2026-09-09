@@ -21,6 +21,7 @@
 // netns/tap setup) before it ships.
 //
 // Same env vars as TestMetalHelloBoot: FAAS_TEST_KERNEL.
+// spec: §14
 package fcvm
 
 import (

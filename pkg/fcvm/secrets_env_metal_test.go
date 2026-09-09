@@ -23,6 +23,7 @@
 //
 // Environment: same as TestMetalHelloBoot (FAAS_TEST_KERNEL + a busybox
 // ext4 rootfs). KVM + root required.
+// spec: §11
 
 package fcvm
 

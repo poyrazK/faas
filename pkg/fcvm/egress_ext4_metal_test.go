@@ -53,6 +53,7 @@
 // itself is in pkg/fcvm/manager_metal_test.go (egress_metal_test.go
 // sibling if needed). Keeping the builder here mirrors v6_resume_
 // ext4_metal_test.go:152-223 — same per-fixture layout.
+// spec: §11
 
 package fcvm
 

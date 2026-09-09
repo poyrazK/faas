@@ -76,6 +76,20 @@ git -C "$adr_case" commit -q -m 'test(sched): pin wake admission'
 make_event "$adr_case"
 expect_pass 'ADR citation' "$adr_case"
 
+# Large cited test files must not be rejected when grep finds the citation
+# before git show has finished writing. This reproduces the pipefail/SIGPIPE
+# false negative seen on pkg/fcvm/vmm_test.go.
+large_case="$test_root/large-cited-test"
+git_init "$large_case"
+{
+  printf 'package sched\n\n// spec: §6.3\nfunc TestWake(t *testing.T) {}\n'
+  awk 'BEGIN { for (i = 0; i < 12000; i++) print "// padding" }'
+} > "$large_case/pkg/sched/wake_test.go"
+git -C "$large_case" add pkg/sched/wake_test.go
+git -C "$large_case" commit -q -m 'test(sched): pin large cited test'
+make_event "$large_case"
+expect_pass 'large cited test' "$large_case"
+
 # A changed core-path test without a citation is rejected.
 missing_case="$test_root/missing"
 git_init "$missing_case"

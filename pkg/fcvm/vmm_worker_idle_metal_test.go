@@ -1,6 +1,7 @@
 //go:build metal
 
 // Worker-idle-exemption metal test (M-2 commit 11, ADR-137 §Decision 1).
+// adr: 137
 //
 // The reaper exemption for execution_mode='worker' lives at the sched
 // Engine layer (pkg/sched/reaper.go widened in commit 6 to honour

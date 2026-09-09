@@ -1,6 +1,7 @@
 //go:build metal
 
 // Sidecar metal tests (issue #463 / ADR-069 / PR-B).
+// adr: 069
 //
 // These tests run a real jailed firecracker with the PR-B
 // N+1 drive topology (drive0 = base, drive1 = main RW, drive2
