@@ -1388,6 +1388,79 @@ type RequestAnalyticsRouteView struct {
 	TrendURL      string
 }
 
+// DebugPageData is the read-only, server-rendered production debugger
+// surface for one app. The API/CLI remain the automation interface; this
+// projection keeps the dashboard template free of state/sqlc types and
+// makes the retention and plan gates visible to customers.
+type DebugPageData struct {
+	AppSlug       string
+	Plan          string
+	PlanAllowed   bool
+	Since         string
+	WindowStart   string
+	WindowEnd     string
+	WindowClamped bool
+	Route         string
+	ErrorMessage  string
+	Regressions   []DebugRegressionView
+	Requests      []DebugRequestView
+	Selected      *DebugRequestDetailView
+}
+
+// DebugRegressionView carries the bounded regression observation plus a
+// stable link to the affected request list. Keeping the URL pre-built avoids
+// introducing template helper functions for query escaping.
+type DebugRegressionView struct {
+	DeploymentID    string
+	Route           string
+	P95MS           int
+	P95BaseMS       int
+	AffectedCount   int
+	Factor          string
+	FirstDetectedAt string
+	LastDetectedAt  string
+	RequestsURL     string
+}
+
+// DebugRequestView is one row in the debugger request table.
+type DebugRequestView struct {
+	ID           string
+	DeploymentID string
+	Route        string
+	Method       string
+	Status       int
+	LatencyMS    int
+	Count        int
+	ColdBoot     bool
+	TraceID      string
+	ReceivedAt   string
+	DetailURL    string
+}
+
+// DebugRequestDetailView is the selected request drill-down. Spans and the
+// explanation are already bounded/redacted by the API handler's shared
+// projection, so the dashboard never renders raw customer attributes.
+type DebugRequestDetailView struct {
+	Request        DebugRequestView
+	Regression     *DebugRegressionView
+	Spans          []DebugSpanView
+	SpansTruncated bool
+	Explanation    string
+	EvidenceStatus string
+	GeneratedAt    string
+}
+
+// DebugSpanView is the template-safe subset of an OTel span summary.
+type DebugSpanView struct {
+	Name        string
+	Kind        string
+	DurationMS  int64
+	Status      string
+	DBStatement string
+	TraceID     string
+	SpanID      string
+}
+
 // RecentInstanceItem is one row of the Recent Wakes table on the
 // dashboard app-detail page.
 //

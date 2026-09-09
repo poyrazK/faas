@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1180px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    h2 { border-top: 1px solid #eee; padding-top: 1rem; margin-top: 1.5rem; }
+    .muted { color: #6b7280; }
+    .notice { padding: 0.6rem 0.8rem; border-radius: 5px; background: #fef3c7; color: #92400e; }
+    .error { padding: 0.6rem 0.8rem; border-radius: 5px; background: #fee2e2; color: #991b1b; }
+    .toolbar { display: flex; gap: 0.65rem; align-items: center; flex-wrap: wrap; padding: 0.75rem; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 6px; }
+    .toolbar input { max-width: 14rem; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.8rem; background: #e5e7eb; color: #374151; }
+    .badge.regressed { background: #fee2e2; color: #991b1b; font-weight: 600; }
+    .badge.ok { background: #d1fae5; color: #065f46; }
+    .badge.cold { background: #dbeafe; color: #1e40af; }
+    .regression { border: 1px solid #fecaca; border-left: 4px solid #dc2626; border-radius: 6px; padding: 0.7rem 0.85rem; margin: 0.5rem 0; }
+    .regression strong { color: #991b1b; }
+    .detail { padding: 0.8rem; border: 1px solid #e5e7eb; border-radius: 6px; }
+    .explanation { padding: 0.65rem 0.8rem; background: #eff6ff; border-left: 4px solid #2563eb; border-radius: 4px; }
+    .span-table { font-size: 0.9rem; }
+    .span-table td:nth-child(3) { white-space: nowrap; }
+    .empty { padding: 1rem 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p class="muted"><a href="/dashboard/apps/{{.Data.AppSlug}}">Apps / {{.Data.AppSlug}}</a></p>
+    <h1>Production debugger: <code>{{.Data.AppSlug}}</code></h1>
+    <p>Investigate slow or failed requests using bounded request telemetry and redacted OpenTelemetry evidence. Request bodies and credentials are never stored.</p>
+
+    {{if not .Data.PlanAllowed}}
+      <p class="notice">{{.Data.ErrorMessage}} <a href="/dashboard/pricing">View plans →</a></p>
+    {{else}}
+      <form class="toolbar" method="get" action="/dashboard/apps/{{.Data.AppSlug}}/debug">
+        <strong>Window</strong>
+        <label>Since <input name="since" value="{{.Data.Since}}" placeholder="24h"></label>
+        <label>Route <input name="route" value="{{.Data.Route}}" placeholder="/api/example"></label>
+        <button type="submit">Refresh</button>
+        <span class="muted">{{.Data.WindowStart}} → {{.Data.WindowEnd}}</span>
+        {{if .Data.WindowClamped}}<span class="notice">Window reduced to your plan's telemetry retention.</span>{{end}}
+      </form>
+      {{if .Data.ErrorMessage}}<p class="error">{{.Data.ErrorMessage}}</p>{{end}}
+
+      <h2 id="regressions">Detected regressions</h2>
+      {{if .Data.Regressions}}
+        <p class="muted">The detector compares route latency across deployments. Open a request below to inspect the slowest recorded spans.</p>
+        {{range .Data.Regressions}}
+          <article class="regression">
+            <strong>{{.Factor}}× slower</strong> on <code>{{.Route}}</code>
+            <span class="muted">· p95 {{.P95MS}} ms vs {{.P95BaseMS}} ms baseline · {{.AffectedCount}} affected requests</span>
+            <br><small class="muted">deployment <code>{{.DeploymentID}}</code> · first {{.FirstDetectedAt}} · last {{.LastDetectedAt}} · <a href="{{.RequestsURL}}">inspect requests →</a></small>
+          </article>
+        {{end}}
+      {{else}}
+        <p class="empty muted">No active regression observations in this window.</p>
+      {{end}}
+
+      <h2 id="requests">Recent requests</h2>
+      {{if .Data.Requests}}
+        <table aria-label="Recent debugger requests">
+          <thead><tr><th>Received</th><th>Route</th><th>Status</th><th>Latency</th><th>Count</th><th>Deployment</th><th>Signals</th></tr></thead>
+          <tbody>
+          {{range .Data.Requests}}
+            <tr>
+              <td><a href="{{.DetailURL}}">{{.ReceivedAt}}</a><br><small><code>{{.ID}}</code></small></td>
+              <td><code>{{.Method}} {{.Route}}</code></td>
+              <td>{{.Status}}</td>
+              <td><strong>{{.LatencyMS}} ms</strong></td>
+              <td>{{.Count}}</td>
+              <td><code>{{.DeploymentID}}</code></td>
+              <td>{{if .ColdBoot}}<span class="badge cold">cold boot</span>{{end}}{{if .TraceID}} <span class="badge ok">trace linked</span>{{end}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+        <p class="muted">Showing up to 50 newest telemetry rows. Collapsed rows retain their represented request count.</p>
+      {{else}}
+        <p class="empty muted">No request telemetry in this window. Send traffic to the app, then refresh.</p>
+      {{end}}
+
+      {{if .Data.Selected}}
+        <h2 id="request-detail">Request evidence</h2>
+        <div class="detail">
+          <p><a href="/dashboard/apps/{{.Data.AppSlug}}/debug?since={{.Data.Since}}&amp;route={{.Data.Route}}#requests">← Back to requests</a></p>
+          <p><code>{{.Data.Selected.Request.Method}} {{.Data.Selected.Request.Route}}</code> · HTTP {{.Data.Selected.Request.Status}} · <strong>{{.Data.Selected.Request.LatencyMS}} ms</strong> · {{.Data.Selected.Request.ReceivedAt}}</p>
+          <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
+          <div class="explanation"><strong>{{.Data.Selected.EvidenceStatus}}</strong>: {{.Data.Selected.Explanation}}</div>
+          {{if .Data.Selected.Regression}}
+            <p class="muted">This request matches the active regression on <code>{{.Data.Selected.Regression.Route}}</code> ({{.Data.Selected.Regression.Factor}}× baseline).</p>
+          {{end}}
+          <h3>Span evidence</h3>
+          {{if .Data.Selected.Spans}}
+            <table class="span-table" aria-label="Redacted span evidence">
+              <thead><tr><th>Span</th><th>Kind</th><th>Duration</th><th>Status</th><th>DB fingerprint</th></tr></thead>
+              <tbody>
+              {{range .Data.Selected.Spans}}
+                <tr><td><code>{{.Name}}</code><br><small class="muted"><code>{{.SpanID}}</code></small></td><td>{{.Kind}}</td><td>{{.DurationMS}} ms</td><td>{{if .Status}}{{.Status}}{{else}}—{{end}}</td><td>{{if .DBStatement}}<code>{{.DBStatement}}</code>{{else}}—{{end}}</td></tr>
+              {{end}}
+              </tbody>
+            </table>
+            {{if .Data.Selected.SpansTruncated}}<p class="muted">Evidence was truncated to the 100 slowest spans.</p>{{end}}
+          {{else}}
+            <p class="muted">No linked OTel spans were captured for this request.</p>
+          {{end}}
+          <small class="muted">Evidence generated {{.Data.Selected.GeneratedAt}}. Values are bounded and redacted before rendering.</small>
+        </div>
+      {{end}}
+    {{end}}
+  </main>
+  <footer>onebox faas · production debugger · server-rendered, read-only</footer>
+</body>
+</html>
