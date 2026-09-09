@@ -778,6 +778,7 @@ type Querier interface {
 	ObjectS3CredentialRotate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotateParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
 	ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg ObjectStorageProviderBucketsParams) ([]ObjectBucket, error)
+	ObjectStorageProviderEgressIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderEgressIncrementParams) error
 	ObjectStorageProviderRequestIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestIncrementParams) error
 	ObjectStorageProviderRequestMetrics(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestMetricsParams) ([]ObjectStorageProviderRequestMetricsRow, error)
 	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)

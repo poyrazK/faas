@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -15,6 +16,15 @@ func (s *PgStore) RecordObjectStorageProviderRequest(ctx context.Context, bucket
 	}
 	return sqlc.New().ObjectStorageProviderRequestIncrement(ctx, s.pool, sqlc.ObjectStorageProviderRequestIncrementParams{
 		BucketID: mustPgUUID(bucketID), PeriodStart: objectUsageTime(ObjectStoragePeriod(at)),
+	})
+}
+
+func (s *PgStore) RecordObjectStorageProviderEgress(ctx context.Context, bucketID string, bytes int64, at time.Time) error {
+	if bucketID == "" || bytes < 0 || bytes > api.MaxObjectStoragePolicyValue || at.IsZero() || at.After(time.Now().UTC().Add(time.Minute)) {
+		return ErrConflict
+	}
+	return sqlc.New().ObjectStorageProviderEgressIncrement(ctx, s.pool, sqlc.ObjectStorageProviderEgressIncrementParams{
+		BucketID: mustPgUUID(bucketID), PeriodStart: objectUsageTime(ObjectStoragePeriod(at)), EgressBytes: bytes,
 	})
 }
 
@@ -30,7 +40,7 @@ func (s *PgStore) ListObjectStorageProviderRequestMetrics(ctx context.Context, b
 		out = append(out, ObjectStorageProviderRequestMetric{
 			BucketID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), BackendID: row.BackendID,
 			BackendFingerprint: row.BackendFingerprint, PhysicalName: row.PhysicalName,
-			PeriodStart: row.PeriodStart.Time, RequestCount: row.RequestCount,
+			PeriodStart: row.PeriodStart.Time, RequestCount: row.RequestCount, EgressBytes: row.EgressBytes,
 		})
 	}
 	return out, nil

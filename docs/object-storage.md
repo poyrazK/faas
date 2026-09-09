@@ -1,6 +1,6 @@
 # Customer object storage preview
 
-Gregale can manage private object buckets on interchangeable managed providers
+Gregale can manage object buckets on interchangeable managed providers
 without operating storage nodes. Compute remains stateless: these are not VM
 volumes. The dashboard's Storage page keeps object buckets separate from
 snapshot/image-layer usage.
@@ -16,14 +16,15 @@ Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
    provider placement, region, and exact browser origins. Use a dedicated
    upstream account/project, not one containing unrelated infrastructure buckets.
 3. For `s3`, supply the named access/secret environment variables only to
-   **apid and s3-gatewayd** through the deployment's secret mechanism. For
-   `gcs`, give both daemons Application Default Credentials (ADC) for the
-   configured service account; do not create a downloaded key. Never put
+   **apid, gatewayd-public, and s3-gatewayd** through the deployment's secret
+   mechanism. For `gcs`, give those daemons Application Default Credentials
+   (ADC) for the configured service account; do not create a downloaded key. Never put
    credentials in JSON, app envs, source control, URLs, or logs. Optional S3
    `session_token_env` supports temporary credentials; restart/rotate before
    their expiration.
-4. Set `FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json` for apid and
-   s3-gatewayd, then restart every replica with identical settings. Set
+4. Set `FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json` for apid,
+   gatewayd-public, and s3-gatewayd, then restart every replica with identical
+   settings. Set
    `public_endpoint` to `https://s3.gregale.dev` and `public_region` to
    `us-east-1`; those customer-facing values are independent of the upstream
    provider endpoint and signing region. Loading the configuration does not
@@ -75,6 +76,21 @@ PUT, GET, LIST and DELETE through `s3.gregale.dev`, verifies revocation, then
 deletes the credential and bucket. Its exit trap repeats cleanup after a
 failure and prints the exact bucket name if provider cleanup still needs
 operator attention.
+
+### Publish assets on an app hostname
+
+Create a bucket with `public: true` and a stable `serve_at` path, for example
+`{"name":"assets","public":true,"serve_at":"/assets"}`. Once the bucket
+is ready, `GET` and `HEAD` requests to
+`https://<app>.<apps-domain>/assets/<key>` are served directly by
+`gatewayd-public`; a route hit never wakes or proxies to the app. Responses
+use `Cache-Control: public, max-age=31536000, immutable` and do not require a
+Gregale or S3 signed URL. The mount path is immutable after creation; choose a
+new bucket if an app needs a different public path. Public reads still pass
+through the configured object-storage accounting policy, and successful bytes
+are recorded in the per-bucket request ledger; provider-authoritative egress
+reports then appear in `usage/storage`. Set `public: false` (and omit `serve_at`) for the default
+private bucket behavior.
 
 ### Run the live provider qualification
 

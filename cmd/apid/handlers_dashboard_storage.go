@@ -138,7 +138,7 @@ func (s *server) renderAppStoragePage(w http.ResponseWriter, r *http.Request, lo
 func projectDashboardStorageBuckets(rows []state.ObjectBucket) []dashboard.StorageBucketPageItem {
 	items := make([]dashboard.StorageBucketPageItem, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, dashboard.StorageBucketPageItem{ID: row.ID, Name: row.Name, Scope: row.Scope, Region: row.Region, State: row.State, CreatedAt: dashboardJobsTime(row.CreatedAt)})
+		items = append(items, dashboard.StorageBucketPageItem{ID: row.ID, Name: row.Name, Scope: row.Scope, Region: row.Region, State: row.State, Public: row.PublicRead, ServeAt: row.ServeAt, CreatedAt: dashboardJobsTime(row.CreatedAt)})
 	}
 	return items
 }
@@ -202,7 +202,12 @@ func (s *server) dashboardCreateStorageBucket(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrValidation("could not parse storage form"))
 		return
 	}
-	req := createBucketRequest{Name: strings.TrimSpace(r.FormValue("name")), Scope: strings.TrimSpace(r.FormValue("scope")), Region: strings.TrimSpace(r.FormValue("region"))}
+	serveAt := strings.TrimSpace(r.FormValue("serve_at"))
+	publicRead := r.FormValue("public") == "on" || strings.EqualFold(strings.TrimSpace(r.FormValue("public")), "true")
+	if !publicRead {
+		serveAt = ""
+	}
+	req := createBucketRequest{Name: strings.TrimSpace(r.FormValue("name")), Scope: strings.TrimSpace(r.FormValue("scope")), Region: strings.TrimSpace(r.FormValue("region")), Public: publicRead, ServeAt: serveAt}
 	slug := r.PathValue("slug")
 	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/buckets", "", url.Values{}, req, s.createBucket)
 	if !dashboardMutationSucceeded(w, resp) {

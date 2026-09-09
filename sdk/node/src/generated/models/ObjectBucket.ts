@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Private logical bucket metadata without upstream credentials or placement details.
+ * Logical bucket metadata without upstream credentials or placement details.
  */
 export type ObjectBucket = {
   id: string;
@@ -11,6 +11,8 @@ export type ObjectBucket = {
   scope: string;
   region: string;
   state: 'provisioning' | 'ready' | 'deleting';
+  public: boolean;
+  serve_at?: string;
   created_at: string;
 };
 
