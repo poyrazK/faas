@@ -2381,6 +2381,38 @@ func (c *Client) RotateOrgAPIKey(ctx context.Context, slug, id, label string) (R
 		RotateOrgAPIKeyRequest{Label: label}, &out)
 }
 
+// Per-app deploy tokens. These credentials are scoped to one app and are
+// intended for CI/CD callers that should not hold an account-wide fp_live_
+// key. The plaintext is returned only by CreateDeployToken and
+// RotateDeployToken; ListDeployTokens is always metadata-only.
+
+// ListDeployTokens returns every deploy-token row for an app, including
+// grace and revoked predecessors. The server never returns plaintext here.
+func (c *Client) ListDeployTokens(ctx context.Context, slug string) (ListDeployTokensResponse, error) {
+	var out ListDeployTokensResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deploy-tokens", nil, &out)
+}
+
+// CreateDeployToken mints a deploy:write credential bound to slug. The
+// response contains the plaintext exactly once; store it in CI immediately.
+func (c *Client) CreateDeployToken(ctx context.Context, slug string, req CreateDeployTokenRequest) (DeployTokenResponse, error) {
+	var out DeployTokenResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/deploy-tokens", req, &out)
+}
+
+// RevokeDeployToken permanently disables an app deploy token. The operation
+// is idempotent for an already-revoked row.
+func (c *Client) RevokeDeployToken(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/deploy-tokens/"+id, nil, nil)
+}
+
+// RotateDeployToken atomically mints a replacement and revokes the
+// predecessor. The replacement plaintext is returned exactly once.
+func (c *Client) RotateDeployToken(ctx context.Context, slug, id string, req RotateDeployTokenRequest) (RotateDeployTokenResponse, error) {
+	var out RotateDeployTokenResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/deploy-tokens/"+id+"/rotate", req, &out)
+}
+
 // Audit events (IAM-4, ADR-035). The events table is append-only
 // (spec §5), so this surface is read-only by design. since and
 // kindPrefix are optional — pass empty strings to read the full

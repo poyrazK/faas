@@ -2269,6 +2269,52 @@ type APIKeyResponse struct {
 	Plaintext string `json:"plaintext,omitempty"`
 }
 
+// DeployTokenResponse is the redacted representation of a per-app CI
+// credential. Plaintext is populated only on create/rotate responses.
+type DeployTokenResponse struct {
+	ID            string   `json:"id"`
+	AppID         string   `json:"app_id"`
+	Prefix        string   `json:"prefix"`
+	Label         string   `json:"label,omitempty"`
+	Scopes        []string `json:"scopes"`
+	Status        string   `json:"status"`
+	CreatedAt     string   `json:"created_at"`
+	ExpiresAt     string   `json:"expires_at"`
+	LastUsedAt    string   `json:"last_used_at,omitempty"`
+	RevokedAt     string   `json:"revoked_at,omitempty"`
+	RotatedFromID string   `json:"rotated_from_id,omitempty"`
+	Plaintext     string   `json:"plaintext,omitempty"`
+}
+
+// ListDeployTokensResponse is the body of GET
+// /v1/apps/{slug}/deploy-tokens. Plaintexts are never included in this
+// response; callers receive them only from create and rotate operations.
+type ListDeployTokensResponse struct {
+	Tokens []DeployTokenResponse `json:"tokens"`
+}
+
+// CreateDeployTokenRequest controls a per-app deploy token mint. Scopes are
+// intentionally not caller-controlled in v1: the token is always limited to
+// deploy:write. ExpiresAt is optional and defaults to 90 days.
+type CreateDeployTokenRequest struct {
+	Label     string `json:"label,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// RotateDeployTokenRequest mirrors CreateDeployTokenRequest. An empty label
+// inherits the predecessor's label; an empty expiry uses the default lifetime.
+type RotateDeployTokenRequest struct {
+	Label     string `json:"label,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+type RotateDeployTokenResponse struct {
+	Token           DeployTokenResponse `json:"token"`
+	TokenPlaintext  string              `json:"token_plaintext"`
+	OldTokenID      string              `json:"old_token_id"`
+	OldTokenExpires string              `json:"old_token_expires_at,omitempty"`
+}
+
 // RotateKeyResponse is the body of POST /v1/keys/{id}/rotate
 // (issue #189 / IAM-5). Key is the new key (status='active'); Key is
 // the loader-facing shape (id, prefix, label, scopes, status). The

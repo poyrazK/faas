@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
+    from ..models.app_wake_timeline_response_trigger_class_histogram import AppWakeTimelineResponseTriggerClassHistogram
     from ..models.app_wake_timeline_response_trigger_histogram import AppWakeTimelineResponseTriggerHistogram
     from ..models.wake_timeline_app import WakeTimelineApp
     from ..models.wake_timeline_json_row import WakeTimelineJSONRow
@@ -44,7 +45,8 @@ class AppWakeTimelineResponse:
     don't belong on the wire.
     """
     wake_count_24h: int
-    """Number of instance rows in the trailing 24h window (after the descending-cutoff break)."""
+    """Number of instance rows in the trailing 24h window (after the descending-cutoff break; the endpoint examines
+    up to 100 recent rows)."""
     wake_count_with_meta: int
     """Denominator for at_capacity_pct — count of rows where the events.wake.boot_started LEFT JOIN succeeded."""
     at_capacity_count: int
@@ -54,8 +56,12 @@ class AppWakeTimelineResponse:
     trigger_histogram: AppWakeTimelineResponseTriggerHistogram
     """trigger → N count of WakeBootMeta.Trigger values across the meta-bearing rows. Empty {} on a fresh app,
     never null."""
+    trigger_class_histogram: AppWakeTimelineResponseTriggerClassHistogram
+    """trigger_class → N count of known user/monitor/crawler/preview_bot/unknown classifications. Empty {} on a
+    fresh app, never null."""
     rows: list[WakeTimelineJSONRow]
-    """Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break)."""
+    """Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break) and capped at 100
+    recent rows."""
     as_of: datetime.datetime
     """RFC3339Nano UTC timestamp marking the JSON envelope's authoritative 'as of' instant."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -72,6 +78,8 @@ class AppWakeTimelineResponse:
         at_capacity_pct = self.at_capacity_pct
 
         trigger_histogram = self.trigger_histogram.to_dict()
+
+        trigger_class_histogram = self.trigger_class_histogram.to_dict()
 
         rows = []
         for rows_item_data in self.rows:
@@ -90,6 +98,7 @@ class AppWakeTimelineResponse:
                 "at_capacity_count": at_capacity_count,
                 "at_capacity_pct": at_capacity_pct,
                 "trigger_histogram": trigger_histogram,
+                "trigger_class_histogram": trigger_class_histogram,
                 "rows": rows,
                 "as_of": as_of,
             }
@@ -99,6 +108,9 @@ class AppWakeTimelineResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_wake_timeline_response_trigger_class_histogram import (
+            AppWakeTimelineResponseTriggerClassHistogram,
+        )
         from ..models.app_wake_timeline_response_trigger_histogram import AppWakeTimelineResponseTriggerHistogram
         from ..models.wake_timeline_app import WakeTimelineApp
         from ..models.wake_timeline_json_row import WakeTimelineJSONRow
@@ -116,6 +128,10 @@ class AppWakeTimelineResponse:
 
         trigger_histogram = AppWakeTimelineResponseTriggerHistogram.from_dict(d.pop("trigger_histogram"))
 
+        trigger_class_histogram = AppWakeTimelineResponseTriggerClassHistogram.from_dict(
+            d.pop("trigger_class_histogram")
+        )
+
         rows = []
         _rows = d.pop("rows")
         for rows_item_data in _rows:
@@ -132,6 +148,7 @@ class AppWakeTimelineResponse:
             at_capacity_count=at_capacity_count,
             at_capacity_pct=at_capacity_pct,
             trigger_histogram=trigger_histogram,
+            trigger_class_histogram=trigger_class_histogram,
             rows=rows,
             as_of=as_of,
         )

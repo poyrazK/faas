@@ -54,6 +54,7 @@ from .app_error_summary_item import AppErrorSummaryItem
 from .app_error_summary_item_error_class import AppErrorSummaryItemErrorClass
 from .app_errors_summary_response import AppErrorsSummaryResponse
 from .app_manifest import AppManifest
+from .app_manifest_crawler_policy import AppManifestCrawlerPolicy
 from .app_manifest_env import AppManifestEnv
 from .app_manifest_env_secrets import AppManifestEnvSecrets
 from .app_manifest_execution_mode_type_1 import AppManifestExecutionModeType1
@@ -96,6 +97,7 @@ from .app_trusted_signer_list_response import AppTrustedSignerListResponse
 from .app_usage_summary_response import AppUsageSummaryResponse
 from .app_usage_summary_response_source import AppUsageSummaryResponseSource
 from .app_wake_timeline_response import AppWakeTimelineResponse
+from .app_wake_timeline_response_trigger_class_histogram import AppWakeTimelineResponseTriggerClassHistogram
 from .app_wake_timeline_response_trigger_histogram import AppWakeTimelineResponseTriggerHistogram
 from .app_webhook_delivery_list_response import AppWebhookDeliveryListResponse
 from .app_webhook_delivery_response import AppWebhookDeliveryResponse
@@ -169,6 +171,7 @@ from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowS
 from .create_app_request import CreateAppRequest
 from .create_app_request_app_protocol import CreateAppRequestAppProtocol
 from .create_app_request_cpu_millicores import CreateAppRequestCpuMillicores
+from .create_app_request_crawler_policy import CreateAppRequestCrawlerPolicy
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
@@ -180,6 +183,7 @@ from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetr
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deployment_files_body import CreateDeploymentFilesBody
 from .create_deployment_files_body_kind import CreateDeploymentFilesBodyKind
 from .create_deployment_files_body_runtime import CreateDeploymentFilesBodyRuntime
@@ -266,6 +270,9 @@ from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
 from .deploy_dev_source_body import DeployDevSourceBody
 from .deploy_dev_source_body_runtime import DeployDevSourceBodyRuntime
+from .deploy_token_response import DeployTokenResponse
+from .deploy_token_response_scopes_item import DeployTokenResponseScopesItem
+from .deploy_token_response_status import DeployTokenResponseStatus
 from .deployment_audit_response import DeploymentAuditResponse
 from .deployment_audit_response_kind import DeploymentAuditResponseKind
 from .deployment_failed_webhook_payload import DeploymentFailedWebhookPayload
@@ -459,6 +466,7 @@ from .list_audit_log_response import ListAuditLogResponse
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
 from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
 from .list_cron_runs_response import ListCronRunsResponse
+from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -669,6 +677,8 @@ from .rotate_app_webhook_secret_response import RotateAppWebhookSecretResponse
 from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
     RotateAppWebhookSecretResponseWebhookSecretSealedMasked,
 )
+from .rotate_deploy_token_request import RotateDeployTokenRequest
+from .rotate_deploy_token_response import RotateDeployTokenResponse
 from .rotate_key_response import RotateKeyResponse
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
@@ -755,6 +765,9 @@ from .update_app_request_app_protocol import UpdateAppRequestAppProtocol
 from .update_app_request_cpu_millicores_type_1 import UpdateAppRequestCpuMillicoresType1
 from .update_app_request_cpu_millicores_type_2_type_1 import UpdateAppRequestCpuMillicoresType2Type1
 from .update_app_request_cpu_millicores_type_3_type_1 import UpdateAppRequestCpuMillicoresType3Type1
+from .update_app_request_crawler_policy_type_1 import UpdateAppRequestCrawlerPolicyType1
+from .update_app_request_crawler_policy_type_2_type_1 import UpdateAppRequestCrawlerPolicyType2Type1
+from .update_app_request_crawler_policy_type_3_type_1 import UpdateAppRequestCrawlerPolicyType3Type1
 from .update_app_request_eviction_priority_type_1 import UpdateAppRequestEvictionPriorityType1
 from .update_app_request_eviction_priority_type_2_type_1 import UpdateAppRequestEvictionPriorityType2Type1
 from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequestEvictionPriorityType3Type1
@@ -811,6 +824,7 @@ from .wake_timeline_event_data import WakeTimelineEventData
 from .wake_timeline_json_row import WakeTimelineJSONRow
 from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
+from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
 from .wake_timeline_response import WakeTimelineResponse
 from .workflow_retry_spec import WorkflowRetrySpec
 from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
@@ -887,6 +901,7 @@ __all__ = (
     "ApplyResponse",
     "ApplyResponseAppsItem",
     "AppManifest",
+    "AppManifestCrawlerPolicy",
     "AppManifestEnv",
     "AppManifestEnvSecrets",
     "AppManifestExecutionModeType1",
@@ -932,6 +947,7 @@ __all__ = (
     "AppUsageSummaryResponse",
     "AppUsageSummaryResponseSource",
     "AppWakeTimelineResponse",
+    "AppWakeTimelineResponseTriggerClassHistogram",
     "AppWakeTimelineResponseTriggerHistogram",
     "AppWebhookDeliveryListResponse",
     "AppWebhookDeliveryResponse",
@@ -999,6 +1015,7 @@ __all__ = (
     "CreateAppRequest",
     "CreateAppRequestAppProtocol",
     "CreateAppRequestCpuMillicores",
+    "CreateAppRequestCrawlerPolicy",
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestExecutionMode",
     "CreateAppRequestRestartPolicy",
@@ -1021,6 +1038,7 @@ __all__ = (
     "CreateDeploymentRequestTagType1",
     "CreateDeploymentRequestTagType2Type1",
     "CreateDeploymentRequestTagType3Type1",
+    "CreateDeployTokenRequest",
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestValidateMode",
@@ -1115,6 +1133,9 @@ __all__ = (
     "DeploymentResponseRolloutState",
     "DeploymentResponseStageState",
     "DeploymentResponseTag",
+    "DeployTokenResponse",
+    "DeployTokenResponseScopesItem",
+    "DeployTokenResponseStatus",
     "DevSessionResponse",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
@@ -1282,6 +1303,7 @@ __all__ = (
     "ListBucketObjectsResponse200ItemsItem",
     "ListCronRunsResponse",
     "ListDeploymentAuditResponse",
+    "ListDeployTokensResponse",
     "ListInstancesResponse",
     "ListInvocationsResponse",
     "ListJobRunsResponse",
@@ -1487,6 +1509,8 @@ __all__ = (
     "RotateAppSecretResponse",
     "RotateAppWebhookSecretResponse",
     "RotateAppWebhookSecretResponseWebhookSecretSealedMasked",
+    "RotateDeployTokenRequest",
+    "RotateDeployTokenResponse",
     "RotateKeyResponse",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
@@ -1573,6 +1597,9 @@ __all__ = (
     "UpdateAppRequestCpuMillicoresType1",
     "UpdateAppRequestCpuMillicoresType2Type1",
     "UpdateAppRequestCpuMillicoresType3Type1",
+    "UpdateAppRequestCrawlerPolicyType1",
+    "UpdateAppRequestCrawlerPolicyType2Type1",
+    "UpdateAppRequestCrawlerPolicyType3Type1",
     "UpdateAppRequestEvictionPriorityType1",
     "UpdateAppRequestEvictionPriorityType2Type1",
     "UpdateAppRequestEvictionPriorityType3Type1",
@@ -1625,6 +1652,7 @@ __all__ = (
     "WakeTimelineJSONRow",
     "WakeTimelineJSONRowKind",
     "WakeTimelineJSONRowTier",
+    "WakeTimelineJSONRowTriggerClass",
     "WakeTimelineResponse",
     "WorkflowRetrySpec",
     "WorkflowRetrySpecBackoff",

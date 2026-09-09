@@ -101,6 +101,7 @@ export type { CreateCronRequest } from './models/CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './models/CreateCustomDomainRequest.js';
 export type { CreateDeploymentOverrides } from './models/CreateDeploymentOverrides.js';
 export type { CreateDeploymentRequest } from './models/CreateDeploymentRequest.js';
+export type { CreateDeployTokenRequest } from './models/CreateDeployTokenRequest.js';
 export type { CreateEdgeRuleRequest } from './models/CreateEdgeRuleRequest.js';
 export type { CreateJobRequest } from './models/CreateJobRequest.js';
 export type { CreateJobRunRequest } from './models/CreateJobRunRequest.js';
@@ -148,6 +149,7 @@ export type { DeploymentListResponse } from './models/DeploymentListResponse.js'
 export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.js';
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
+export type { DeployTokenResponse } from './models/DeployTokenResponse.js';
 export type { DevSessionResponse } from './models/DevSessionResponse.js';
 export type { DiffAppConfigPatch } from './models/DiffAppConfigPatch.js';
 export type { DiffBreak } from './models/DiffBreak.js';
@@ -220,6 +222,7 @@ export type { ListAuditEventsResponse } from './models/ListAuditEventsResponse.j
 export type { ListAuditLogResponse } from './models/ListAuditLogResponse.js';
 export type { ListCronRunsResponse } from './models/ListCronRunsResponse.js';
 export type { ListDeploymentAuditResponse } from './models/ListDeploymentAuditResponse.js';
+export type { ListDeployTokensResponse } from './models/ListDeployTokensResponse.js';
 export type { ListInstancesResponse } from './models/ListInstancesResponse.js';
 export type { ListInvocationsResponse } from './models/ListInvocationsResponse.js';
 export type { ListJobRunsResponse } from './models/ListJobRunsResponse.js';
@@ -353,6 +356,8 @@ export type { RotateAlertRuleSecretResponse } from './models/RotateAlertRuleSecr
 export type { RotateAppSecretRequest } from './models/RotateAppSecretRequest.js';
 export type { RotateAppSecretResponse } from './models/RotateAppSecretResponse.js';
 export type { RotateAppWebhookSecretResponse } from './models/RotateAppWebhookSecretResponse.js';
+export type { RotateDeployTokenRequest } from './models/RotateDeployTokenRequest.js';
+export type { RotateDeployTokenResponse } from './models/RotateDeployTokenResponse.js';
 export type { RotateKeyResponse } from './models/RotateKeyResponse.js';
 export type { RotateOrgAPIKeyRequest } from './models/RotateOrgAPIKeyRequest.js';
 export type { RotateOrgAPIKeyResponse } from './models/RotateOrgAPIKeyResponse.js';

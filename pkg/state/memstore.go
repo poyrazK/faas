@@ -112,6 +112,8 @@ type MemStore struct {
 	accounts               map[string]Account
 	keys                   map[string]APIKey
 	keyByHash              map[string]APIKey
+	deployTokens           map[string]DeployToken
+	deployTokenByHash      map[string]DeployToken
 	apps                   map[string]App
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
@@ -729,6 +731,8 @@ func NewMemStore() *MemStore {
 		accounts:               map[string]Account{},
 		keys:                   map[string]APIKey{},
 		keyByHash:              map[string]APIKey{},
+		deployTokens:           map[string]DeployToken{},
+		deployTokenByHash:      map[string]DeployToken{},
 		apps:                   map[string]App{},
 		githubDeployBranches:   map[string]map[string]string{},
 		githubBindings:         map[string]GitHubBinding{},
@@ -14480,6 +14484,12 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for kid, k := range m.consumerKeys {
 		if k.AccountID == id {
 			delete(m.consumerKeys, kid)
+		}
+	}
+	for tid, token := range m.deployTokens {
+		if token.AccountID == id {
+			delete(m.deployTokens, tid)
+			delete(m.deployTokenByHash, string(token.Hash))
 		}
 	}
 	for did, d := range m.deployments {

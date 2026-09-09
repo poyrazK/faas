@@ -756,11 +756,15 @@ var methodRouteMap = map[string]string{
 	// org slug; pin them so the gate stays the SDK's source of
 	// truth on verb choice, matching the trusted_signers /
 	// registry-credentials pattern above.
-	"GET /v1/orgs/{slug}/keys":              "ListOrgAPIKeys",
-	"POST /v1/orgs/{slug}/keys":             "CreateOrgAPIKey",
-	"GET /v1/orgs/{slug}/keys/{id}":         "GetOrgAPIKey",
-	"DELETE /v1/orgs/{slug}/keys/{id}":      "RevokeOrgAPIKey",
-	"POST /v1/orgs/{slug}/keys/{id}/rotate": "RotateOrgAPIKey",
+	"GET /v1/orgs/{slug}/keys":                       "ListOrgAPIKeys",
+	"POST /v1/orgs/{slug}/keys":                      "CreateOrgAPIKey",
+	"GET /v1/orgs/{slug}/keys/{id}":                  "GetOrgAPIKey",
+	"DELETE /v1/orgs/{slug}/keys/{id}":               "RevokeOrgAPIKey",
+	"POST /v1/orgs/{slug}/keys/{id}/rotate":          "RotateOrgAPIKey",
+	"GET /v1/apps/{slug}/deploy-tokens":              "ListDeployTokens",
+	"POST /v1/apps/{slug}/deploy-tokens":             "CreateDeployToken",
+	"DELETE /v1/apps/{slug}/deploy-tokens/{id}":      "RevokeDeployToken",
+	"POST /v1/apps/{slug}/deploy-tokens/{id}/rotate": "RotateDeployToken",
 
 	// Issue #757 / ADR-100 — unified Trigger primitive. Pin every
 	// trigger route; auto-derivation reads either "Triggers" or
