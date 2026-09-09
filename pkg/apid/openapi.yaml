@@ -21459,18 +21459,23 @@ components:
 
     OpenAPIContractDiffResponse:
       description: |
-        Read-only OpenAPI contract comparison for the current projected
-        edge-rule surface and the latest captured deployment snapshot.
+        Read-only OpenAPI contract comparison for the authoritative imported
+        app document (or the projected edge-rule fallback) and the latest
+        captured deployment snapshot.
         `blocking` is true when a production promotion would be rejected
         while the contract-diff feature flag is enabled.
       type: object
-      required: [app_id, scope, proposed_sha256, blocking, breaks, additions]
+      required: [app_id, scope, source, proposed_sha256, blocking, breaks, additions]
       properties:
         app_id:
           type: string
           format: uuid
         scope:
           type: string
+        source:
+          type: string
+          enum: [manual_import, edge_rules]
+          description: "Contract source used for the proposed snapshot."
         baseline_deployment_id:
           type: string
           format: uuid

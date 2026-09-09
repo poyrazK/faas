@@ -63,8 +63,56 @@ func TestMemStoreMarkDeploymentLiveCapturesOpenAPISnapshot(t *testing.T) {
 	}
 }
 
+func TestMemStoreMarkDeploymentLiveUsesImportedOpenAPI(t *testing.T) {
+	openapidiff.RegisterStateCapture()
+	defer state.RegisterOpenAPICapture(nil)
+
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "snapshot-import@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "snapshot-import"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := []byte(`openapi: 3.1.0
+info:
+  title: imported
+  version: "1"
+paths:
+  /declared:
+    get:
+      responses:
+        '200':
+          description: ok
+`)
+	if err := store.UpsertAppOpenAPIDoc(ctx, app.ID, account.ID, doc, 1, "3.1.0"); err != nil {
+		t.Fatalf("UpsertAppOpenAPIDoc: %v", err)
+	}
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "prod"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
+	snapshot, err := store.OpenAPISnapshotByDeployment(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("OpenAPISnapshotByDeployment: %v", err)
+	}
+	spec, err := openapidiff.UnmarshalSnapshot(snapshot.Snapshot)
+	if err != nil {
+		t.Fatalf("UnmarshalSnapshot: %v", err)
+	}
+	if _, ok := spec.Paths["/declared"]; !ok {
+		t.Fatalf("captured paths = %v, want imported /declared route", spec.Paths)
+	}
+}
+
 func TestMemStoreMarkDeploymentLiveCaptureFailureIsAtomic(t *testing.T) {
-	state.RegisterOpenAPICapture(func(context.Context, sqlc.DBTX, string, string, string, []api.CreateEdgeRuleRequest) (state.OpenAPISnapshot, error) {
+	state.RegisterOpenAPICapture(func(context.Context, sqlc.DBTX, string, string, string, []api.CreateEdgeRuleRequest, []byte) (state.OpenAPISnapshot, error) {
 		return state.OpenAPISnapshot{}, context.Canceled
 	})
 	defer state.RegisterOpenAPICapture(nil)

@@ -34,7 +34,11 @@ func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(ctx context.Context, d
 		}
 		pending = append(pending, request)
 	}
-	snap, err := getOpenAPICapture()(ctx, nil, d.ID, d.AppID, normalizedDeploymentScope(d.Scope), pending)
+	var importedDoc []byte
+	if imported, ok := m.openAPIImports[d.AppID]; ok {
+		importedDoc = append([]byte(nil), imported.Doc...)
+	}
+	snap, err := getOpenAPICapture()(ctx, nil, d.ID, d.AppID, normalizedDeploymentScope(d.Scope), pending, importedDoc)
 	if err != nil {
 		return OpenAPISnapshot{}, fmt.Errorf("memstore: capture snapshot for %s: %w", d.ID, err)
 	}
