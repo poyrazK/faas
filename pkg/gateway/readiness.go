@@ -438,6 +438,73 @@ func NewPGPingSignal(ctx context.Context, pool pinger, every time.Duration) (*Re
 	return s, stopper
 }
 
+// NewDependencySignal returns a ReadySignal backed by an arbitrary
+// dependency check. The check runs immediately and then every half of
+// `every`, with each invocation bounded by the same half-interval timeout.
+// A failed check keeps the signal false and records the dependency name and
+// error for the operator-facing readiness reason.
+//
+// This is the common shape for readiness dependencies that are not Postgres:
+// a gRPC dial, a routing-cache probe, or a private HTTP health endpoint. The
+// callback must honor its context; the wrapper supplies a deadline so a
+// wedged dependency cannot hold the readiness goroutine indefinitely.
+func NewDependencySignal(ctx context.Context, name string, every time.Duration, check func(context.Context) error) (*ReadySignal, func()) {
+	if every <= 0 {
+		every = 5 * time.Second
+	}
+	if name == "" {
+		name = "dependency"
+	}
+	s := newReadySignal(false, name+" check not yet attempted")
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	cadence := every / 2
+	if cadence < 10*time.Millisecond {
+		cadence = 10 * time.Millisecond
+	}
+	checkTimeout := cadence
+	go func() {
+		defer close(done)
+		checkOnce := func() {
+			if check == nil {
+				s.Set(false, name+" check unavailable")
+				return
+			}
+			checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
+			err := check(checkCtx)
+			cancel()
+			if err != nil {
+				s.Set(false, name+" check failed: "+err.Error())
+				return
+			}
+			s.Set(true, "")
+		}
+		checkOnce()
+		t := time.NewTicker(cadence)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				s.Set(false, name+" context cancelled")
+				return
+			case <-t.C:
+				checkOnce()
+			}
+		}
+	}()
+	var stopOnce sync.Once
+	stopper := func() {
+		stopOnce.Do(func() {
+			close(stop)
+			<-done
+			s.Set(false, name+" check stopped")
+		})
+	}
+	return s, stopper
+}
+
 // pinger is the subset of *pgxpool.Pool we need for NewPGPingSignal.
 // Defining it locally avoids dragging pgxpool into every test
 // import; the production wiring passes *pgxpool.Pool directly.
