@@ -284,7 +284,8 @@ type OpsMetrics struct {
 	// wakeLatency (issue #1059 / ADR-127) — operator-facing per-box
 	// per-phase wake-latency histogram. Labelled by (box, phase).
 	// The closed phase set
-	// {restore_ms, netns_tap_ms, guest_ready_ms} mirrors the
+	// {restore_ms, netns_tap_ms, guest_ready_ms, scan_check_ms,
+	// cold_boot_ms} mirrors the
 	// existing fleet-level vmmd_wake_phase_duration_seconds{phase}
 	// (pkg/fcvm/metrics.go) so the §12 dashboard panel can swap
 	// fleet → per-box without a legend change. The box label is
@@ -2126,10 +2127,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// the existing vmmd_wake_phase_duration_seconds{phase} envelope
 	// (spec §6.3 verbatim, ADR-074 §3.5) so the §12 dashboard panel
 	// can swap fleet → per-box without changing the bucketing.
-	wakeLatencyPhases := []string{"restore_ms", "netns_tap_ms", "guest_ready_ms"}
+	wakeLatencyPhases := []string{"restore_ms", "netns_tap_ms", "guest_ready_ms", "scan_check_ms", "cold_boot_ms"}
 	wakeLatency := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_wake_latency_seconds",
-		Help:    "Wall-clock seconds for each per-box vmmd-side wake phase (issue #1059 / ADR-127). phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms}; box label is admission-bounded (overflow → __other__). Per-box sibling of the fleet <prefix>_wake_phase_duration_seconds{phase} (pkg/fcvm/metrics.go) — same bucket set, same phase vocabulary. wake_id is attached as a prometheus.Exemplar on each observation. Bucket set is spec §6.3 verbatim with the 0.3/0.35 pair (ADR-074 §3.5).",
+		Help:    "Wall-clock seconds for each per-box vmmd-side wake phase (issue #1059 / ADR-127). phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms, scan_check_ms, cold_boot_ms}; box label is admission-bounded (overflow → __other__). Per-box sibling of the fleet <prefix>_wake_phase_duration_seconds{phase} (pkg/fcvm/metrics.go) — same bucket set, same phase vocabulary. wake_id is attached as a prometheus.Exemplar on each observation. Bucket set is spec §6.3 verbatim with the 0.3/0.35 pair (ADR-074 §3.5).",
 		Buckets: []float64{0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1, 1.5, 3, 5, 10},
 	}, []string{"box", "phase"})
 	for _, box := range wakeFailureBoxes {
@@ -5233,7 +5234,8 @@ func (m *OpsMetrics) WakeFailure(box, app, reason string) prometheus.Counter {
 // WakeLatency returns the per-(box, phase) histogram observer the
 // per-box wake-path hook sites call to record wake-phase latency
 // (issue #1059 / ADR-127). phase MUST be one of {restore_ms,
-// netns_tap_ms, guest_ready_ms} — the closed vocabulary mirrors the
+// netns_tap_ms, guest_ready_ms, scan_check_ms, cold_boot_ms} — the closed
+// vocabulary mirrors the
 // existing fleet-level vmmd_wake_phase_duration_seconds{phase}
 // histogram so the §12 dashboard panel can swap fleet → per-box
 // without a legend change. box is resolved through the boxLabelSet

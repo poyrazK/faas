@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // newPhaseLogManager builds a Manager whose logger writes to buf so a
@@ -37,7 +39,8 @@ func TestWakeFailure_LogsPhaseBreakdown(t *testing.T) {
 
 	// Empty plan fails fast, before any I/O — the cheapest failure
 	// path, and still required to report its breakdown.
-	_, err := m.Wake(context.Background(), WakeRequest{
+	ctx := wire.WithContext(context.Background(), wire.CorrelationFields{WakeID: "wake-phase-fail"})
+	_, err := m.Wake(ctx, WakeRequest{
 		Instance: "phase-fail", BaseKey: "/b.ext4", LayerKey: "/l.ext4",
 		VcpuCount: 2, MemSizeMiB: 128, Plan: "",
 	})
@@ -49,7 +52,7 @@ func TestWakeFailure_LogsPhaseBreakdown(t *testing.T) {
 	if !strings.Contains(got, "wake failed; phase breakdown") {
 		t.Fatalf("no phase breakdown logged on failure; a failed wake must say where the time went.\ngot: %s", got)
 	}
-	for _, want := range []string{"instance=phase-fail", "total_ms=", "lease_acquire_ms="} {
+	for _, want := range []string{"wake_id=wake-phase-fail", "instance=phase-fail", "total_ms=", "lease_acquire_ms="} {
 		if !strings.Contains(got, want) {
 			t.Errorf("phase breakdown missing %q\ngot: %s", want, got)
 		}

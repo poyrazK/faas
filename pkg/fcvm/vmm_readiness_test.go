@@ -213,6 +213,56 @@ func TestEmitRestoreBreakdown_WithoutWakeIDDoesNotEmit(t *testing.T) {
 	}
 }
 
+func TestEmitColdBootBreakdown_EmitsPreGuestAttribution(t *testing.T) {
+	store := state.NewMemStore()
+	platform := buildReadinessPlatform(t, store)
+	v := &JailerVMM{events: platform}
+	wakeID := "w-cold-breakdown-001"
+	ctx := wire.WithContext(context.Background(), wire.CorrelationFields{
+		WakeID: wakeID,
+		AppID:  "app-cold-breakdown-001",
+	})
+	v.emitColdBootBreakdown(ctx, Lease{Instance: "inst-cold-breakdown-001"}, time.Now(), coldBootTimingBreakdown{
+		ResolveImagesMs: 20600,
+		WaitReadyMs:     2809,
+		TotalMs:         23474,
+		ResolveArtifacts: []coldBootArtifactTiming{{
+			Artifact: "main", Source: "cache_hit", DurationMs: 20590, Bytes: 1048576,
+		}},
+	})
+
+	var rows []state.Event
+	deadline := time.Now().Add(time.Second)
+	for len(rows) == 0 && time.Now().Before(deadline) {
+		var err error
+		rows, err = store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0)
+		if err != nil {
+			t.Fatalf("ListEventsByWakeID: %v", err)
+		}
+		if len(rows) == 0 {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if len(rows) != 1 || rows[0].Kind != events.WakeColdBootBreakdown {
+		t.Fatalf("rows = %#v, want one %s", rows, events.WakeColdBootBreakdown)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rows[0].Data, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["resolve_images_ms"] != float64(20600) || payload["total_ms"] != float64(23474) {
+		t.Errorf("payload timings = %#v", payload)
+	}
+	artifacts, ok := payload["resolve_artifacts"].([]any)
+	if !ok || len(artifacts) != 1 {
+		t.Fatalf("payload.resolve_artifacts = %#v", payload["resolve_artifacts"])
+	}
+	artifact, ok := artifacts[0].(map[string]any)
+	if !ok || artifact["source"] != "cache_hit" || artifact["bytes"] != float64(1048576) {
+		t.Errorf("payload.resolve_artifacts[0] = %#v", artifacts[0])
+	}
+}
+
 // adr: 168
 func TestEmitColdBootCPU_EmitsTimelineRow(t *testing.T) {
 	store := state.NewMemStore()

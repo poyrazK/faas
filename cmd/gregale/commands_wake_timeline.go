@@ -16,7 +16,7 @@
 //   - human (--all): same per-event rows streamed across pages; if a
 //     follow-up page exists, prints `... more — pass --since <cursor>`.
 //   - human (--verbose): additionally prints vmmd's implementation-level
-//     restore phases below each `wake.restore_breakdown` row.
+//     restore and cold-boot phases below their breakdown rows.
 //
 // The response-side closed enum (`WakeTimelineEvent.Kind`, ≥20 wake.* values
 // from pkg/events/wake.go) is intentionally NOT gated client-side on this
@@ -141,7 +141,7 @@ func cmdWakeTimelineAll(ctx context.Context, client *api.Client, slug, wakeID st
 // customer-facing timing summary. Header row identifies the wake + page
 // boundary; one row per event follows in the order the server returned them
 // (at ASC — forward narrative). Use renderWakeTimelinePageWithOptions with
-// verbose=true to include implementation-level restore phases.
+// verbose=true to include implementation-level restore and cold-boot phases.
 //
 // ADR-123: each wake.boot_started / wake.boot_completed row gains a
 // trailing `trigger=… q=N c=N` context line (only when the fields are
@@ -162,6 +162,9 @@ func renderWakeTimelinePageWithOptions(w io.Writer, p api.WakeTimelineResponse, 
 		}
 		if verbose {
 			if breakdown := renderRestoreBreakdown(ev); breakdown != "" {
+				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
+			}
+			if breakdown := renderColdBootBreakdown(ev); breakdown != "" {
 				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
 			}
 		}
@@ -203,8 +206,13 @@ func renderWakeTimingSummary(w io.Writer, events []api.WakeTimelineEvent) {
 				restoreMs = ms
 				haveRestore = true
 			}
-		case "wake.cold_boot_cpu":
+		case "wake.cold_boot_breakdown":
 			if ms, ok := timelineMillis(ev.Data["total_ms"]); ok {
+				coldBootMs = ms
+				haveColdBoot = true
+			}
+		case "wake.cold_boot_cpu":
+			if ms, ok := timelineMillis(ev.Data["total_ms"]); ok && !haveColdBoot {
 				coldBootMs = ms
 				haveColdBoot = true
 			}
@@ -381,6 +389,71 @@ func renderRestoreArtifacts(value any) string {
 			continue
 		}
 		parts = append(parts, fmt.Sprintf("%s/%s=%dms", name, source, ms))
+	}
+	return strings.Join(parts, ",")
+}
+
+func renderColdBootBreakdown(ev api.WakeTimelineEvent) string {
+	if ev.Kind != "wake.cold_boot_breakdown" {
+		return ""
+	}
+	fields := []struct {
+		label string
+		key   string
+	}{
+		{label: "total", key: "total_ms"},
+		{label: "resolve_images", key: "resolve_images_ms"},
+		{label: "chroot", key: "chroot_ms"},
+		{label: "provision", key: "provision_ms"},
+		{label: "stage_runtime", key: "stage_runtime_ms"},
+		{label: "prepare_config", key: "prepare_config_ms"},
+		{label: "helper", key: "helper_ms"},
+		{label: "start_jailer", key: "start_jailer_ms"},
+		{label: "bind_tun", key: "bind_tun_ms"},
+		{label: "cgroup", key: "cgroup_ms"},
+		{label: "write_config", key: "write_config_ms"},
+		{label: "wait_ready", key: "wait_ready_ms"},
+		{label: "quota_restore", key: "quota_restore_ms"},
+	}
+	parts := make([]string, 0, len(fields)+1)
+	for _, field := range fields {
+		ms, ok := timelineMillis(ev.Data[field.key])
+		if ok {
+			parts = append(parts, fmt.Sprintf("%s=%dms", field.label, ms))
+		}
+	}
+	if artifacts := renderColdBootArtifacts(ev.Data["resolve_artifacts"]); artifacts != "" {
+		parts = append(parts, "artifacts="+artifacts)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "cold_boot " + strings.Join(parts, " ")
+}
+
+func renderColdBootArtifacts(value any) string {
+	rows, ok := value.([]any)
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, len(rows))
+	for _, row := range rows {
+		artifact, ok := row.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := artifact["artifact"].(string)
+		source, _ := artifact["source"].(string)
+		ms, durationOK := timelineMillis(artifact["duration_ms"])
+		bytes, bytesOK := timelineMillis(artifact["bytes"])
+		if name == "" || source == "" || !durationOK {
+			continue
+		}
+		part := fmt.Sprintf("%s/%s=%dms", name, source, ms)
+		if bytesOK {
+			part += fmt.Sprintf("/%dB", bytes)
+		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, ",")
 }

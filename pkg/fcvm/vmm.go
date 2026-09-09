@@ -165,6 +165,34 @@ type restoreArtifactResolution struct {
 	path string
 }
 
+// coldBootTimingBreakdown accounts for the complete JailerVMM cold-boot
+// window. Artifact resolution happens before boot(), so keeping the two sets
+// of timings in one value prevents pre-guest storage work from disappearing
+// behind Manager's aggregate bring_up phase.
+type coldBootTimingBreakdown struct {
+	ResolveImagesMs  int64
+	ChrootMs         int64
+	ProvisionMs      int64
+	StageRuntimeMs   int64
+	PrepareConfigMs  int64
+	HelperMs         int64
+	StartJailerMs    int64
+	BindTunMs        int64
+	CgroupMs         int64
+	WriteConfigMs    int64
+	WaitReadyMs      int64
+	QuotaRestoreMs   int64
+	TotalMs          int64
+	ResolveArtifacts []coldBootArtifactTiming
+}
+
+type coldBootArtifactTiming struct {
+	Artifact   string `json:"artifact"`
+	Source     string `json:"source"`
+	DurationMs int64  `json:"duration_ms"`
+	Bytes      int64  `json:"bytes"`
+}
+
 // instanceRecord tracks one firecracker child + build-specific options so
 // DestroyWithExport can wait for exit, capture the code, and copy artifacts.
 // The exited/exitCode fields are written exactly once by the watchdog goroutine
@@ -460,17 +488,21 @@ func (v *JailerVMM) socketPath(instance string) string {
 // deferred Kill sweeps the tmp files alongside the chroot (which is
 // already on tmpfs, per spec §11).
 func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) (err error) {
+	t0 := time.Now()
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("vmm: cold boot: %w", err)
 	}
-	kernelSrc, err := v.restoreSourceFromStorage(ctx, l.Instance, spec.KernelKey)
+	breakdown := coldBootTimingBreakdown{}
+	kernelSrc, timing, err := v.resolveColdBootArtifact(ctx, l.Instance, "kernel", spec.KernelKey)
 	if err != nil {
 		return fmt.Errorf("vmm: stage kernel: %w", err)
 	}
-	baseSrc, err := v.restoreSourceFromStorage(ctx, l.Instance, spec.BaseKey)
+	breakdown.ResolveArtifacts = append(breakdown.ResolveArtifacts, timing)
+	baseSrc, timing, err := v.resolveColdBootArtifact(ctx, l.Instance, "base", spec.BaseKey)
 	if err != nil {
 		return fmt.Errorf("vmm: stage base: %w", err)
 	}
+	breakdown.ResolveArtifacts = append(breakdown.ResolveArtifacts, timing)
 	// Issue #463 / ADR-069 / PR-B: when Workloads is empty, the
 	// legacy single-workload path resolves spec.LayerKey once.
 	// When Workloads is non-empty, we resolve each workload's
@@ -478,20 +510,27 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// field with the staged tmp path so BuildColdBootConfig's
 	// PathOnHost reads point at the chroot-basename tmp files.
 	if len(spec.Workloads) == 0 {
-		layerSrc, mErr := v.restoreSourceFromStorage(ctx, l.Instance, spec.LayerKey)
+		layerSrc, layerTiming, mErr := v.resolveColdBootArtifact(ctx, l.Instance, "main", spec.LayerKey)
 		if mErr != nil {
 			return fmt.Errorf("vmm: stage layer: %w", mErr)
 		}
+		breakdown.ResolveArtifacts = append(breakdown.ResolveArtifacts, layerTiming)
 		spec.LayerKey = layerSrc
 	} else {
 		for i := range spec.Workloads {
-			resolved, mErr := v.restoreSourceFromStorage(ctx, l.Instance, spec.Workloads[i].StorageKey)
+			artifact := "main"
+			if i > 0 {
+				artifact = fmt.Sprintf("sidecar:%s", spec.Workloads[i].Name)
+			}
+			resolved, workloadTiming, mErr := v.resolveColdBootArtifact(ctx, l.Instance, artifact, spec.Workloads[i].StorageKey)
 			if mErr != nil {
 				return fmt.Errorf("vmm: stage workload %d (%s): %w", i, spec.Workloads[i].Name, mErr)
 			}
+			breakdown.ResolveArtifacts = append(breakdown.ResolveArtifacts, workloadTiming)
 			spec.Workloads[i].StorageKey = resolved
 		}
 	}
+	breakdown.ResolveImagesMs = time.Since(t0).Milliseconds()
 	// Build VMConfig from the resolved paths. Drive paths become the
 	// tmp paths so provision (line ~941) stages them as basenames.
 	// spec.Tap isn't used in the config — the Veth is plumbed by the
@@ -505,11 +544,17 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	if spec.SkipReady {
 		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON)
 	}
-	return v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON)
+	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, &breakdown); err != nil {
+		return err
+	}
+	breakdown.TotalMs = time.Since(t0).Milliseconds()
+	v.emitColdBootBreakdown(ctx, l, time.Now(), breakdown)
+	v.logColdBootBreakdown(ctx, l, breakdown)
+	return nil
 }
 
 func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) error {
-	return v.boot(ctx, l, cfg, true, "", 0, workloads, secretsEnvJSON, apiEnvJSON)
+	return v.boot(ctx, l, cfg, true, "", 0, workloads, secretsEnvJSON, apiEnvJSON, nil)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -531,15 +576,16 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
-	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, nil, nil, nil)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, nil, nil, nil, nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, breakdown *coldBootTimingBreakdown) (err error) {
 	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
 		return err
 	}
+	chrootReadyAt := time.Now()
 	defer func() {
 		if err != nil {
 			_ = v.Kill(context.WithoutCancel(ctx), l)
@@ -551,9 +597,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err != nil {
 		return fmt.Errorf("vmm: provision chroot: %w", err)
 	}
+	provisionedAt := time.Now()
 	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
+	stagedRuntimeAt := time.Now()
 	cfgBytes, err := json.Marshal(jailed)
 	if err != nil {
 		return fmt.Errorf("vmm: marshal config: %w", err)
@@ -562,6 +610,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err = prepareConfigFIFO(cfgPath, l.UID, l.GID); err != nil {
 		return fmt.Errorf("vmm: prepare config: %w", err)
 	}
+	preparedConfigAt := time.Now()
 	if err = v.ownChrootRoot(root, l); err != nil {
 		return err
 	}
@@ -571,12 +620,15 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err = v.bindTunSource(root, l.Instance); err != nil {
 		return err
 	}
+	helperReadyAt := time.Now()
 	if err = v.startJailer(ctx, l, "--config-file", VMConfigName); err != nil {
 		return err
 	}
+	startedJailerAt := time.Now()
 	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
 		return err
 	}
+	boundTunAt := time.Now()
 	var coldBootCPU coldBootCPUProfile
 	trackColdBootCPU := !skipReady && !l.IsBuilder && l.Plan.Valid()
 	if l.IsBuilder || l.Plan.Valid() {
@@ -592,33 +644,53 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			return fmt.Errorf("vmm: apply pre-boot cgroup fence: %w", err)
 		}
 	}
+	cgroupReadyAt := time.Now()
 	if err = writeConfigFIFO(ctx, cfgPath, cfgBytes); err != nil {
 		return fmt.Errorf("vmm: write config: %w", err)
 	}
+	configWrittenAt := time.Now()
 	// Vsock is configured via the config-file (top-level `vsock:` field,
 	// see VMConfig). Firecracker attaches it pre-start; the UDS at
 	// vsockUDSSock is created by the time startJailer returns. No
 	// post-start PUT needed.
+	var readyAt, quotaRestoredAt time.Time
 	if !skipReady {
 		readinessStartedAt := time.Now()
 		if err = v.waitReady(ctx, l, healthcheckPath, startupDeadlineS); err != nil {
 			return fmt.Errorf("vmm: readiness: %w", err)
 		}
-		readyAt := time.Now()
+		readyAt = time.Now()
 		if trackColdBootCPU {
 			quotaRestoreStartedAt := time.Now()
 			if err = v.restoreColdBootCPUFence(l, workloads, coldBootCPU.ConfiguredMillicores); err != nil {
 				return fmt.Errorf("vmm: restore configured CPU fence: %w", err)
 			}
-			completedAt := time.Now()
-			v.emitColdBootCPU(ctx, l, completedAt, events.ColdBootCPU{
+			quotaRestoredAt = time.Now()
+			v.emitColdBootCPU(ctx, l, quotaRestoredAt, events.ColdBootCPU{
 				StartupCPUMillicores:    coldBootCPU.StartupMillicores,
 				ConfiguredCPUMillicores: coldBootCPU.ConfiguredMillicores,
 				PreReadyMs:              readyAt.Sub(bootStartedAt).Milliseconds(),
 				WaitReadyMs:             readyAt.Sub(readinessStartedAt).Milliseconds(),
-				QuotaRestoreMs:          completedAt.Sub(quotaRestoreStartedAt).Milliseconds(),
-				TotalMs:                 completedAt.Sub(bootStartedAt).Milliseconds(),
+				QuotaRestoreMs:          quotaRestoredAt.Sub(quotaRestoreStartedAt).Milliseconds(),
+				TotalMs:                 quotaRestoredAt.Sub(bootStartedAt).Milliseconds(),
 			})
+		}
+	}
+	if breakdown != nil {
+		breakdown.ChrootMs = chrootReadyAt.Sub(bootStartedAt).Milliseconds()
+		breakdown.ProvisionMs = provisionedAt.Sub(chrootReadyAt).Milliseconds()
+		breakdown.StageRuntimeMs = stagedRuntimeAt.Sub(provisionedAt).Milliseconds()
+		breakdown.PrepareConfigMs = preparedConfigAt.Sub(stagedRuntimeAt).Milliseconds()
+		breakdown.HelperMs = helperReadyAt.Sub(preparedConfigAt).Milliseconds()
+		breakdown.StartJailerMs = startedJailerAt.Sub(helperReadyAt).Milliseconds()
+		breakdown.BindTunMs = boundTunAt.Sub(startedJailerAt).Milliseconds()
+		breakdown.CgroupMs = cgroupReadyAt.Sub(boundTunAt).Milliseconds()
+		breakdown.WriteConfigMs = configWrittenAt.Sub(cgroupReadyAt).Milliseconds()
+		if !readyAt.IsZero() {
+			breakdown.WaitReadyMs = readyAt.Sub(configWrittenAt).Milliseconds()
+		}
+		if !quotaRestoredAt.IsZero() {
+			breakdown.QuotaRestoreMs = quotaRestoredAt.Sub(readyAt).Milliseconds()
 		}
 	}
 	return nil
@@ -3555,6 +3627,71 @@ func (v *JailerVMM) emitColdBootCPU(ctx context.Context, l Lease, at time.Time, 
 	v.events.EmitAsync(ctx, event)
 }
 
+// emitColdBootBreakdown writes the complete vmmd-side cold-boot phases to the
+// wake timeline. Calls without a wake envelope remain log-only so the event
+// store never receives a row that cannot be correlated to a customer wake.
+func (v *JailerVMM) emitColdBootBreakdown(ctx context.Context, l Lease, at time.Time, b coldBootTimingBreakdown) {
+	if v.events == nil {
+		return
+	}
+	fields, ok := wire.FromContext(ctx)
+	if !ok || fields.WakeID == "" {
+		return
+	}
+	v.events.EmitAsync(ctx, events.ColdBootBreakdown{
+		EmitAt:           at.UTC(),
+		WakeID:           fields.WakeID,
+		AppID:            fields.AppID,
+		InstanceID:       l.Instance,
+		ResolveImagesMs:  b.ResolveImagesMs,
+		ChrootMs:         b.ChrootMs,
+		ProvisionMs:      b.ProvisionMs,
+		StageRuntimeMs:   b.StageRuntimeMs,
+		PrepareConfigMs:  b.PrepareConfigMs,
+		HelperMs:         b.HelperMs,
+		StartJailerMs:    b.StartJailerMs,
+		BindTunMs:        b.BindTunMs,
+		CgroupMs:         b.CgroupMs,
+		WriteConfigMs:    b.WriteConfigMs,
+		WaitReadyMs:      b.WaitReadyMs,
+		QuotaRestoreMs:   b.QuotaRestoreMs,
+		TotalMs:          b.TotalMs,
+		ResolveArtifacts: eventColdBootArtifactTimings(b.ResolveArtifacts),
+	})
+}
+
+const slowColdBootBreakdownThreshold = 5 * time.Second
+
+func (v *JailerVMM) logColdBootBreakdown(ctx context.Context, l Lease, b coldBootTimingBreakdown) {
+	var wakeID string
+	if fields, ok := wire.FromContext(ctx); ok {
+		wakeID = fields.WakeID
+	}
+	attrs := []any{
+		"wake_id", wakeID,
+		"instance", l.Instance,
+		"resolve_images_ms", b.ResolveImagesMs,
+		"resolve_artifacts", b.ResolveArtifacts,
+		"chroot_ms", b.ChrootMs,
+		"provision_ms", b.ProvisionMs,
+		"stage_runtime_ms", b.StageRuntimeMs,
+		"prepare_config_ms", b.PrepareConfigMs,
+		"helper_ms", b.HelperMs,
+		"start_jailer_ms", b.StartJailerMs,
+		"bind_tun_ms", b.BindTunMs,
+		"cgroup_ms", b.CgroupMs,
+		"write_config_ms", b.WriteConfigMs,
+		"wait_ready_ms", b.WaitReadyMs,
+		"quota_restore_ms", b.QuotaRestoreMs,
+		"total_ms", b.TotalMs,
+	}
+	if time.Duration(b.TotalMs)*time.Millisecond >= slowColdBootBreakdownThreshold {
+		slog.Default().Warn("slow cold boot timing breakdown", attrs...)
+		return
+	}
+	slog.Default().Debug("cold boot timing breakdown", attrs...)
+}
+
 func eventRestoreArtifactTimings(timings []restoreArtifactTiming) []events.RestoreArtifactResolution {
 	resolved := make([]events.RestoreArtifactResolution, len(timings))
 	for i := range timings {
@@ -3562,6 +3699,19 @@ func eventRestoreArtifactTimings(timings []restoreArtifactTiming) []events.Resto
 			Artifact:   timings[i].Artifact,
 			Source:     timings[i].Source,
 			DurationMs: timings[i].DurationMs,
+		}
+	}
+	return resolved
+}
+
+func eventColdBootArtifactTimings(timings []coldBootArtifactTiming) []events.ColdBootArtifactResolution {
+	resolved := make([]events.ColdBootArtifactResolution, len(timings))
+	for i := range timings {
+		resolved[i] = events.ColdBootArtifactResolution{
+			Artifact:   timings[i].Artifact,
+			Source:     timings[i].Source,
+			DurationMs: timings[i].DurationMs,
+			Bytes:      timings[i].Bytes,
 		}
 	}
 	return resolved
@@ -4139,6 +4289,44 @@ func (v *JailerVMM) restoreSourceFromStorage(ctx context.Context, instanceID, ke
 		return path, nil
 	}
 	return v.materializeFromStorage(ctx, instanceID, key)
+}
+
+// resolveColdBootArtifact is the cold-boot sibling of the restore resolver. It
+// preserves the exact local-path/materialization behavior while recording a
+// bounded source value and the resolved file size. A failed stat does not turn
+// an otherwise usable artifact into a boot failure; Bytes remains zero and the
+// actual staging operation retains authority over usability.
+func (v *JailerVMM) resolveColdBootArtifact(ctx context.Context, instanceID, artifact, key string) (string, coldBootArtifactTiming, error) {
+	startedAt := time.Now()
+	timing := coldBootArtifactTiming{Artifact: artifact, Source: "materialized"}
+
+	path, source, local, err := v.probeRestoreLocalPath(key)
+	if err != nil {
+		timing.DurationMs = time.Since(startedAt).Milliseconds()
+		return "", timing, err
+	}
+	if local {
+		timing.Source = string(source)
+		if timing.Source == "" {
+			timing.Source = string(storage.LocalPathSourceBackend)
+		}
+	} else {
+		if key == "" || filepath.IsAbs(key) || v.storage == nil {
+			timing.Source = "direct"
+		}
+		path, err = v.materializeFromStorage(ctx, instanceID, key)
+		if err != nil {
+			timing.DurationMs = time.Since(startedAt).Milliseconds()
+			return "", timing, err
+		}
+	}
+	if path != "" {
+		if info, statErr := os.Stat(path); statErr == nil {
+			timing.Bytes = info.Size()
+		}
+	}
+	timing.DurationMs = time.Since(startedAt).Milliseconds()
+	return path, timing, nil
 }
 
 // probeRestoreLocalPath is a metadata-only check. It never invokes Get, so a
