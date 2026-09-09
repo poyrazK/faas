@@ -1314,6 +1314,16 @@ type Store interface {
 	// time equal — see api.ConstantTimeEqualHash).
 	ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appID, prefix string) (ConsumerKey, error)
 
+	// API consumers (stable customer identities). A consumer is scoped to
+	// one application and identified externally by externalRef. Consumer
+	// credentials should be created with CreateConsumerKeyForConsumer so
+	// key rotation preserves this identity for throttling and billing.
+	CreateAPIConsumer(ctx context.Context, accountID, appID, externalRef, name string) (APIConsumer, error)
+	GetAPIConsumerByID(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
+	ListAPIConsumersForApp(ctx context.Context, accountID, appID string) ([]APIConsumer, error)
+	RevokeAPIConsumer(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
+	CreateConsumerKeyForConsumer(ctx context.Context, accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error)
+
 	// Login tokens (M7.5 magic-link, spec §14 + ADR-011).
 	//
 	// IssueLoginToken persists a freshly-minted token's SHA-256 hash

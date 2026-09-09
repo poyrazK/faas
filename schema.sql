@@ -228,6 +228,20 @@ $$;
 
 
 --
+-- Name: api_consumers_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.api_consumers_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: consumer_keys_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1651,6 +1665,27 @@ COMMENT ON COLUMN public.compute_nodes.generation IS 'monotonic counter bumped b
 
 
 --
+-- Name: api_consumers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    external_ref text NOT NULL,
+    name text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT api_consumers_external_ref_len_chk CHECK ((char_length(external_ref) >= 1) AND (char_length(external_ref) <= 256)),
+    CONSTRAINT api_consumers_name_len_chk CHECK ((char_length(name) >= 1) AND (char_length(name) <= 128)),
+    CONSTRAINT api_consumers_status_chk CHECK (status = ANY (ARRAY['active'::text, 'revoked'::text])),
+    CONSTRAINT api_consumers_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at)))
+);
+
+
+--
 -- Name: consumer_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1658,6 +1693,7 @@ CREATE TABLE public.consumer_keys (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
+    consumer_id uuid,
     name text NOT NULL,
     prefix text NOT NULL,
     hashed_secret bytea NOT NULL,
@@ -4016,6 +4052,14 @@ ALTER TABLE ONLY public.compute_nodes
 
 
 --
+-- Name: api_consumers api_consumers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: consumer_keys consumer_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5289,10 +5333,31 @@ CREATE INDEX compute_nodes_region_zone_idx ON public.compute_nodes USING btree (
 
 
 --
+-- Name: api_consumers_account_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumers_account_app_idx ON public.api_consumers USING btree (account_id, app_id);
+
+
+--
+-- Name: api_consumers_app_external_ref_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumers_app_external_ref_uniq ON public.api_consumers USING btree (app_id, external_ref);
+
+
+--
 -- Name: consumer_keys_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX consumer_keys_app_idx ON public.consumer_keys USING btree (app_id);
+
+
+--
+-- Name: consumer_keys_consumer_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX consumer_keys_consumer_id_idx ON public.consumer_keys USING btree (consumer_id);
 
 
 --
@@ -6771,6 +6836,13 @@ CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON
 
 
 --
+-- Name: api_consumers api_consumers_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER api_consumers_set_updated_at_trg BEFORE UPDATE ON public.api_consumers FOR EACH ROW EXECUTE FUNCTION public.api_consumers_set_updated_at();
+
+
+--
 -- Name: consumer_keys consumer_keys_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7323,6 +7395,22 @@ ALTER TABLE ONLY public.compute_node_keys
 
 
 --
+-- Name: api_consumers api_consumers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumers api_consumers_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: consumer_keys consumer_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7336,6 +7424,14 @@ ALTER TABLE ONLY public.consumer_keys
 
 ALTER TABLE ONLY public.consumer_keys
     ADD CONSTRAINT consumer_keys_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: consumer_keys consumer_keys_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.consumer_keys
+    ADD CONSTRAINT consumer_keys_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --

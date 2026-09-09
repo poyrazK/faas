@@ -23468,11 +23468,13 @@ func (s *PgStore) ListDistinctUpstreamHostHashes(ctx context.Context) ([]DataUps
 func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 	var k ConsumerKey
 	var scopes []string
+	var consumerID *string
 	var expiresAt, lastUsedAt, revokedAt *time.Time
 	if err := row.Scan(
 		&k.ID,
 		&k.AccountID,
 		&k.AppID,
+		&consumerID,
 		&k.Name,
 		&k.Prefix,
 		&k.Hash,
@@ -23484,6 +23486,9 @@ func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 	); err != nil {
 		return ConsumerKey{}, err
 	}
+	if consumerID != nil {
+		k.ConsumerID = *consumerID
+	}
 	k.Scopes = scopes
 	k.ExpiresAt = expiresAt
 	k.LastUsedAt = lastUsedAt
@@ -23494,7 +23499,7 @@ func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 // consumerKeySelectCols is the column list every read uses. Keeping
 // the order stable means scanConsumerKeyRow above is the single scan
 // helper, not five copies.
-const consumerKeySelectCols = `id, account_id, app_id, name, prefix, hashed_secret, scopes, created_at, expires_at, last_used_at, revoked_at`
+const consumerKeySelectCols = `id, account_id, app_id, consumer_id, name, prefix, hashed_secret, scopes, created_at, expires_at, last_used_at, revoked_at`
 
 func (s *PgStore) CreateConsumerKey(ctx context.Context, accountID, appID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error) {
 	if accountID == "" || appID == "" {
