@@ -66,7 +66,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/middleware"
-	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	schedpkg "github.com/onebox-faas/faas/pkg/sched"
@@ -3166,8 +3165,8 @@ func validateServiceProxyListen(addr string) error {
 		return fmt.Errorf("gatewayd: service_proxy_listen must be host:port: %w", err)
 	}
 	port, err := strconv.Atoi(portText)
-	if err != nil || port != netns.ServiceProxyPort {
-		return fmt.Errorf("gatewayd: service_proxy_listen must use reserved port %d", netns.ServiceProxyPort)
+	if err != nil || port != serviceProxyPort {
+		return fmt.Errorf("gatewayd: service_proxy_listen must use reserved port %d", serviceProxyPort)
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() {

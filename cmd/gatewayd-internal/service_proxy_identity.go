@@ -14,7 +14,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const serviceProxyIdentityTTL = 5 * time.Second
+const (
+	serviceProxyIdentityTTL = 5 * time.Second
+	// Keep this value aligned with pkg/netns.ServiceProxyPort. The daemon
+	// owns the listener and cannot import the netns renderer package because
+	// that package is vmmd-owned by the repository's dependency policy.
+	serviceProxyPort = 10080
+)
 
 // serviceProxyCallerResolver maps the source address seen on the tenant
 // bridge to a live instance. HostIP is the post-MASQUERADE identity of a
@@ -63,7 +69,7 @@ func (r *serviceProxyCallerResolver) Resolve(ctx context.Context, remoteAddr str
 	}
 	instances, err := r.list(ctx)
 	if err != nil {
-		return "", fmt.Errorf("%w: list instances: %v", gateway.ErrServiceProxyUnavailable, err)
+		return "", fmt.Errorf("%w: list instances: %w", gateway.ErrServiceProxyUnavailable, err)
 	}
 	byIP := make(map[string]string, len(instances))
 	ambiguous := make(map[string]struct{})
