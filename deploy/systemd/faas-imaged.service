@@ -14,6 +14,7 @@ ExecStart=/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml
 Restart=on-failure
 RestartSec=2s
 RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
+TimeoutStartSec=20min
 Slice=faas-cp.slice
 MemoryMax=4G
 CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner cap_fsetid cap_kill cap_setgid cap_setuid cap_setpcap cap_net_bind_service cap_sys_chroot
