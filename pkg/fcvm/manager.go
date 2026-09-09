@@ -30,8 +30,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Manager is vmmd's core: it owns the whole per-instance resource lifecycle —
@@ -2117,6 +2119,21 @@ func (m *Manager) MarkInstanceFrameworkReady(ctx context.Context, instance strin
 	appID = inst.AppID
 	runtime = inst.Runtime
 	m.mu.Unlock()
+	ctx, readySpan := pkgtrace.StartSpan(ctx, "guest.framework_ready",
+		attribute.String("instance_id", instance),
+		attribute.String("app_id", appID),
+		attribute.String("runtime", runtime),
+		attribute.Int64("warmup_ms", warmupMs),
+	)
+	defer func() {
+		if err != nil {
+			readySpan.SetAttributes(attribute.String("outcome", "error"))
+			readySpan.RecordError(err)
+		} else {
+			readySpan.SetAttributes(attribute.String("outcome", "ready"))
+		}
+		readySpan.End()
+	}()
 	// Publish through the scheduler-owned persistence seam. Surface errors so
 	// the bounded observer can retry instead of losing warm eligibility.
 	if m.frameworkReadyStamper != nil {

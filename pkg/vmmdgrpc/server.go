@@ -34,8 +34,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -454,6 +457,30 @@ func (s *Server) incWakeFailure(_ context.Context, reason string) {
 	s.ops.WakeFailure("", "", reason).Inc()
 }
 
+func newWakeSpan(ctx context.Context, operation string, req fcvm.WakeRequest) (context.Context, oteltrace.Span) {
+	attrs := []attribute.KeyValue{
+		attribute.String("operation", operation),
+		attribute.String("app_id", req.AppID),
+		attribute.String("instance_id", req.Instance),
+		attribute.String("deployment_id", req.DeploymentID),
+		attribute.String("runtime", req.Runtime),
+	}
+	if fields, ok := wire.FromContext(ctx); ok && fields.WakeID != "" {
+		attrs = append(attrs, attribute.String("wake_id", fields.WakeID))
+	}
+	return pkgtrace.StartSpan(ctx, "vmmd.wake", attrs...)
+}
+
+func finishWakeSpan(span oteltrace.Span, err error) {
+	if err != nil {
+		span.SetAttributes(attribute.String("outcome", "error"))
+		span.RecordError(err)
+	} else {
+		span.SetAttributes(attribute.String("outcome", "ok"))
+	}
+	span.End()
+}
+
 // Register binds s to a gRPC server.
 func (s *Server) Register(g *grpc.Server) {
 	vmmdpb.RegisterVmmdServer(g, s)
@@ -492,14 +519,16 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 		s.incWakeFailure(ctx, "snapshot_restore_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wakeCtx, wakeSpan := newWakeSpan(ctx, "restore", wr)
 	// issue #517 / PR-C / ADR-064 — mirror wake.boot_started at
 	// the gRPC server boundary. Schedd is the canonical emit site;
 	// this vmmd-side mirror is a corroborating observation that
 	// the boot RPC actually entered the FC bring-up path. Both
 	// rows share the wake_id from the wire envelope (PR-A) so
 	// the customer-facing timeline endpoint can join them.
-	s.emitBootStartedMirror(ctx, req.GetInstance(), "restore")
-	inst, err := s.wakeWithBridgePrewarm(ctx, wr, req.GetApp().GetAppProtocol())
+	s.emitBootStartedMirror(wakeCtx, req.GetInstance(), "restore")
+	inst, err := s.wakeWithBridgePrewarm(wakeCtx, wr, req.GetApp().GetAppProtocol())
+	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -556,12 +585,14 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 		s.incWakeFailure(ctx, "mem_backend_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wakeCtx, wakeSpan := newWakeSpan(ctx, "cold_boot", wr)
 	// issue #517 / PR-C / ADR-064 — mirror wake.boot_started at
 	// the gRPC server boundary. Same canonical-site pairing as
 	// CreateFromSnapshot: schedd is the source of truth, vmmd's
 	// mirror is a corroborating observation.
-	s.emitBootStartedMirror(ctx, req.GetInstance(), "cold_boot")
-	inst, err := s.vmm.Wake(ctx, wr)
+	s.emitBootStartedMirror(wakeCtx, req.GetInstance(), "cold_boot")
+	inst, err := s.vmm.Wake(wakeCtx, wr)
+	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		s.log.Error("vmmd: cold boot failed", "instance", req.GetInstance(), "err", err.Error())
