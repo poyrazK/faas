@@ -1,12 +1,71 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"filippo.io/age"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+// spec: §11
+type readinessPingerStub struct {
+	mu  sync.RWMutex
+	err error
+}
+
+func (p *readinessPingerStub) Ping(context.Context) error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.err
+}
+
+func (p *readinessPingerStub) setError(err error) {
+	p.mu.Lock()
+	p.err = err
+	p.mu.Unlock()
+}
+
+func waitForReadiness(t *testing.T, probe *wire.ReadyzProbe, want bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if ready, _ := probe.All(); ready == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	ready, reason := probe.All()
+	t.Fatalf("readiness = %v (%q), want %v", ready, reason, want)
+}
+
+func TestBuildReadinessProbeTracksDatabase(t *testing.T) {
+	stub := &readinessPingerStub{}
+	probe := buildReadinessProbe(context.Background(), stub, 20*time.Millisecond)
+	defer probe.Drain("test", nil)
+
+	waitForReadiness(t, probe, true)
+	stub.setError(errors.New("database unavailable"))
+	waitForReadiness(t, probe, false)
+}
+
+func TestBuildReadinessProbeFailsClosedWithoutDatabase(t *testing.T) {
+	probe := buildReadinessProbe(context.Background(), nil, 20*time.Millisecond)
+	defer probe.Drain("test", nil)
+
+	ready, reason := probe.All()
+	if ready {
+		t.Fatal("readiness = true, want false")
+	}
+	if reason != "database pool unavailable" {
+		t.Fatalf("reason = %q, want database pool unavailable", reason)
+	}
+}
 
 func writeTestIdentity(t *testing.T, path string) {
 	t.Helper()

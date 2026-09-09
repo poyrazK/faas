@@ -1739,6 +1739,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 
+	// Issue #571 PR-A2: construct the daemon-level readiness probe
+	// independently of the optional metrics listener. systemd's
+	// Type=notify state must use the same dependency signal as /readyz
+	// even when FAAS_APID_METRICS_ADDR disables the operator listener.
+	var apidProbe wire.ReadyzProbe
+	if deps.pool != nil {
+		pgSig, pgStop := wire.NewPGPingSignal(ctx, deps.pool, 5*time.Second)
+		apidProbe.RegisterSignal(pgSig, pgStop)
+	} else {
+		// Test path: no pool. Keep the pre-split test behaviour while
+		// making the production path fail closed when a pool is absent.
+		s := apidProbe.Register()
+		s.Set(true, "")
+	}
+	apidProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("apid", ready, reason)
+	})
+	defer apidProbe.Drain("apid", log)
+
 	// Optional /metrics listener (this PR). Sits on its own bind
 	// address so a port collision can't take the daemon down. Empty
 	// FAAS_APID_METRICS_ADDR = no listener (the scrape observer is
@@ -1767,26 +1786,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// metrics_addr wired) short-circuits to an always-ready
 		// signal so unit tests don't construct a pgxpool they
 		// don't need.
-		var apidProbe wire.ReadyzProbe
-		if deps.pool != nil {
-			pgSig, pgStop := wire.NewPGPingSignal(ctx, deps.pool, 5*time.Second)
-			apidProbe.RegisterSignal(pgSig, pgStop)
-			// NOTE: pgStop is wired through pkg/wire.ReadyzProbe.Drain
-			// (issue #571 PR-A2 / Finding 4 PR #1091 review). The
-			// earlier `defer pgStop()` is gone — Drain fires the
-			// helper goroutine's stopper synchronously before
-			// flipping the signal to "draining", so a /readyz
-			// scrape that lands during the SIGTERM drain window
-			// sees the helper already stopped (no re-flip race).
-		} else {
-			// Test path: no pool. Always-ready so /readyz returns
-			// 200. Mirrors the pre-split degradation pattern.
-			s := apidProbe.Register()
-			s.Set(true, "")
-		}
-		apidProbe.SetReadyObserver(func(ready bool, reason string) {
-			ops.MarkReady("apid", ready, reason)
-		})
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle("/metrics", promhttp.HandlerFor(
 			prometheus.Gatherers{ops.Registry(), budgetReg},
@@ -2090,7 +2089,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The customer-facing /readyz remains the richer dependency probe;
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
-	notifyStop := daemonunit.NotifyReadyWhen(ctx, func() bool { return true })
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	errc := make(chan error, 1)
 	go func() {
