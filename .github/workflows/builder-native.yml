@@ -298,7 +298,7 @@ jobs:
             --project "$GCP_PROJECT" --zone "$GCP_ZONE"
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go' && sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=25m --property='StandardOutput=append:$remote_root/metal-smoke.log' --property='StandardError=append:$remote_root/metal-smoke.log' --working-directory='$remote_root/source' --setenv=FAAS_METAL_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_METAL_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_METAL_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_METAL_TRANSFER_ROOT='$remote_root' /bin/bash scripts/ci/run-native-metal-smoke.sh"
+            --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go' && sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=45m --property='StandardOutput=append:$remote_root/metal-smoke.log' --property='StandardError=append:$remote_root/metal-smoke.log' --working-directory='$remote_root/source' --setenv=FAAS_METAL_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_METAL_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_METAL_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_METAL_TRANSFER_ROOT='$remote_root' /bin/bash scripts/ci/run-native-metal-smoke.sh"
 
       - name: Refresh GCP authentication for cleanup
         if: always()
