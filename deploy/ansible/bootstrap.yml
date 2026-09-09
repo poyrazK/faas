@@ -87,6 +87,8 @@
       when: not (faas_image_seed | default(false) | bool)
     - role: control_plane_service
     - role: gatewayd_public_service
+    - role: s3_gateway_service
+      when: faas_object_storage_gateway_managed | default(false) | bool
     - role: githubd_service
     - role: log_archive
     # Topology cleanup is safe during image seeding and must also remove

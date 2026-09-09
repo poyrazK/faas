@@ -1,0 +1,18 @@
+---
+# This role is included only when faas_object_storage_gateway_managed=true.
+# Keeping the opt-in at the playbook boundary prevents an unconfigured provider
+# from turning an unrelated control-plane bootstrap into a crash loop.
+faas_object_storage_gateway_enabled: true
+
+# Controller-local, non-secret provider registry. The JSON names credential
+# environment variables; their values belong in provider_env_src below.
+faas_object_storage_config_src: ""
+
+# Optional controller-local EnvironmentFile for S3-compatible providers.
+# GCS deployments using attached ADC normally leave this empty.
+faas_object_storage_provider_env_src: ""
+
+# Caddy owns public TLS. The role appends one isolated site block and validates
+# the complete file before reloading it.
+faas_object_storage_caddyfile: /etc/caddy/Caddyfile
+faas_object_storage_caddy_binary: /usr/bin/caddy
