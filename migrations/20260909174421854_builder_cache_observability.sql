@@ -7,16 +7,33 @@
 -- SHA-256 of the versioned BuildCacheRecipe, so it is safe to expose while
 -- retaining the plan/runtime/base partitioning in the key derivation.
 ALTER TABLE builds
-  ADD COLUMN cache_status text,
-  ADD COLUMN cache_key_sha256 text;
+  ADD COLUMN IF NOT EXISTS cache_status text,
+  ADD COLUMN IF NOT EXISTS cache_key_sha256 text;
 
-ALTER TABLE builds
-  ADD CONSTRAINT builds_cache_status_check
-  CHECK (cache_status IS NULL OR cache_status IN ('hit', 'miss', 'invalidated')),
-  ADD CONSTRAINT builds_cache_key_sha256_check
-  CHECK (cache_key_sha256 IS NULL OR cache_key_sha256 ~ '^[a-f0-9]{64}$');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_constraint
+    WHERE conname = 'builds_cache_status_check'
+      AND conrelid = 'builds'::regclass
+  ) THEN
+    ALTER TABLE builds
+      ADD CONSTRAINT builds_cache_status_check
+      CHECK (cache_status IS NULL OR cache_status IN ('hit', 'miss', 'invalidated'));
+  END IF;
 
-CREATE INDEX builds_cache_outcome_idx
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_constraint
+    WHERE conname = 'builds_cache_key_sha256_check'
+      AND conrelid = 'builds'::regclass
+  ) THEN
+    ALTER TABLE builds
+      ADD CONSTRAINT builds_cache_key_sha256_check
+      CHECK (cache_key_sha256 IS NULL OR cache_key_sha256 ~ '^[a-f0-9]{64}$');
+  END IF;
+END$$;
+
+CREATE INDEX IF NOT EXISTS builds_cache_outcome_idx
   ON builds (deployment_id, finished_at DESC)
   WHERE cache_status IS NOT NULL;
 
