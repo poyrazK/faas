@@ -13,13 +13,14 @@ import (
 // per-instance uniqueness lives entirely on the host side (veth + host IP),
 // never inside the guest. Do not make these per-VM.
 const (
-	GuestIP          = "10.0.0.2"
-	GuestGateway     = "10.0.0.1"
-	GuestPrefix      = "10.0.0.2/30"
-	TapPrefix        = "10.0.0.1/30" // host (tap0) side of the /30 inside the netns
-	AppPort          = 8080          // the :8080 contract (spec §2)
-	ServiceProxyPort = 10080         // guest-to-guest service proxy on HostBridgeIP (ADR-169)
-	TenantBridge     = "br-tenants"  // root-ns bridge the veth host-side enslaves to
+	GuestIP                 = "10.0.0.2"
+	GuestGateway            = "10.0.0.1"
+	GuestPrefix             = "10.0.0.2/30"
+	TapPrefix               = "10.0.0.1/30" // host (tap0) side of the /30 inside the netns
+	AppPort                 = 8080          // the :8080 contract (spec §2)
+	ServiceProxyPort        = 10080         // guest-to-guest service proxy on HostBridgeIP (ADR-169)
+	ServiceDiscoveryDNSPort = 53            // guest service-name resolver on HostBridgeIP (ADR-170)
+	TenantBridge            = "br-tenants"  // root-ns bridge the veth host-side enslaves to
 	// nft chain-policy words (ADR-031). Forwarded as the `policy`
 	// value in the per-netns forward-chain argv, so goconst demands
 	// the literals live in named constants.
@@ -349,6 +350,10 @@ func (c Config) NftCommands() [][]string {
 	if c.HostBridgeIP.IsValid() {
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyPort), "accept")
+		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
+		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
 	}
 	// PR scale-out tier-1 residual (Gap #4): per-netns operator
 	// exception accept rules. Each entry emits

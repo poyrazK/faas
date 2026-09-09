@@ -178,6 +178,51 @@ func TestServiceProxyDoesNotRetryPOST(t *testing.T) {
 	}
 }
 
+func TestServiceProxyRoutesDNSHostName(t *testing.T) {
+	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-orders", Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}}}}
+	var gotPath string
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(_ context.Context, service string) (string, bool, error) {
+			if service != "orders" {
+				t.Fatalf("service = %q, want orders", service)
+			}
+			return "app-orders", true, nil
+		},
+		Authorize:     func(context.Context, string, string) error { return nil },
+		ResolveCaller: func(context.Context, string) (string, error) { return "app-client", nil },
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				if got := r.Host; got != "orders.svc.gregale:10080" {
+					t.Errorf("downstream host = %q, want original host", got)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://orders.svc.gregale:10080/health", nil)
+	req.Host = "orders.svc.gregale:10080"
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || gotPath != "/health" {
+		t.Fatalf("response = %d path=%q, want 204 /health", rec.Code, gotPath)
+	}
+}
+
+func TestParseServiceProxyHostRejectsUnsafeNames(t *testing.T) {
+	for _, host := range []string{"svc.gregale", "orders.other", "orders.api.svc.gregale", "-orders.svc.gregale", "orders-.svc.gregale"} {
+		if service, ok := parseServiceProxyHost(host); ok {
+			t.Errorf("parseServiceProxyHost(%q) = %q, true; want rejection", host, service)
+		}
+	}
+	for _, host := range []string{"orders.svc.gregale", "orders.svc.gregale:10080", "ORDERS.SVC.GREGALE."} {
+		if service, ok := parseServiceProxyHost(host); !ok || service != "orders" {
+			t.Errorf("parseServiceProxyHost(%q) = %q, %v; want orders, true", host, service, ok)
+		}
+	}
+}
+
 func TestServiceProxyRejectsMalformedPathAndEmptyRegistry(t *testing.T) {
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider:  &serviceProxyProvider{},

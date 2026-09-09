@@ -96,6 +96,8 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		},
 
 		NoNewPrivileges:         true,
+		CapabilityBoundingSet:   []string{"CAP_NET_BIND_SERVICE"},
+		AmbientCapabilities:     []string{"CAP_NET_BIND_SERVICE"},
 		ProtectSystem:           "strict",
 		ProtectHome:             true,
 		PrivateTmp:              daemonunit.BoolPtr(true),

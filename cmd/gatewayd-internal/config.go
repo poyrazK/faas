@@ -42,7 +42,8 @@ type Config struct {
 
 	// ServiceProxyListen is the tenant-bridge listener for cross-VM service
 	// discovery. It must bind the host bridge address on the reserved service
-	// proxy port; empty disables the guest-facing listener.
+	// proxy port; the sibling DNS resolver is started on the same address at
+	// port 53. Empty disables the guest-facing listener and resolver.
 	ServiceProxyListen string `toml:"service_proxy_listen"`
 
 	// AppsDomain is the platform wildcard suffix (e.g. "gregale.dev").

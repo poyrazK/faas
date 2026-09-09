@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -537,9 +538,9 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// (pre-PR-D default). Non-empty → waitReady does HTTP GET
 	// <HealthcheckPath> against <HostIP>:8080 and accepts 2xx as ready.
 	if spec.SkipReady {
-		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON)
+		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP)
 	}
-	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, &breakdown); err != nil {
+	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, &breakdown); err != nil {
 		return err
 	}
 	breakdown.TotalMs = time.Since(t0).Milliseconds()
@@ -548,8 +549,8 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	return nil
 }
 
-func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) error {
-	return v.boot(ctx, l, cfg, true, "", 0, workloads, secretsEnvJSON, apiEnvJSON, nil)
+func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string) error {
+	return v.boot(ctx, l, cfg, true, "", 0, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, nil)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -571,10 +572,10 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
-	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, nil, nil, nil, nil)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, nil, nil, nil, "", nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, breakdown *coldBootTimingBreakdown) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, breakdown *coldBootTimingBreakdown) (err error) {
 	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
@@ -593,7 +594,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return fmt.Errorf("vmm: provision chroot: %w", err)
 	}
 	provisionedAt := time.Now()
-	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON); err != nil {
+	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
 	stagedRuntimeAt := time.Now()
@@ -702,7 +703,7 @@ func (v *JailerVMM) preparesWakeStateBeforeBoot() bool { return true }
 // The main drive is available after provision; the Firecracker process has not
 // received its config yet, so this is the last safe point for secrets, API env,
 // per-sidecar env overrides, and the sidecar roster.
-func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte) error {
+func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string) error {
 	if len(secretsEnvJSON) > 0 {
 		if err := v.StageSecretsEnv(instance, secretsEnvJSON); err != nil {
 			return fmt.Errorf("stage secrets.env: %w", err)
@@ -711,6 +712,11 @@ func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec,
 	if len(apiEnvJSON) > 0 {
 		if err := v.StageAPIEnv(instance, apiEnvJSON); err != nil {
 			return fmt.Errorf("stage env.json: %w", err)
+		}
+	}
+	if strings.TrimSpace(serviceDiscoveryIP) != "" {
+		if err := v.stageServiceDiscoveryResolver(instance, serviceDiscoveryIP); err != nil {
+			return fmt.Errorf("stage service resolver: %w", err)
 		}
 	}
 	if len(workloads) > 1 {
@@ -732,6 +738,43 @@ func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec,
 		if err := v.StageWorkloadRoster(instance, workloads[0], workloads[1:]); err != nil {
 			return fmt.Errorf("stage workload roster: %w", err)
 		}
+	}
+	return nil
+}
+
+const serviceDiscoveryResolverPath = "upper/etc/resolv.conf"
+
+func (v *JailerVMM) stageServiceDiscoveryResolver(instance, bridgeIP string) error {
+	ip, err := netip.ParseAddr(strings.TrimSpace(bridgeIP))
+	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() {
+		return fmt.Errorf("invalid private bridge address %q", bridgeIP)
+	}
+	drive1, err := v.resolveDriveImage(instance)
+	if err != nil {
+		return err
+	}
+	mp, err := os.MkdirTemp("", "faas-vmm-resolver-")
+	if err != nil {
+		return fmt.Errorf("mkdir mountpoint: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(mp) }()
+	if out, mountErr := exec.Command("mount", "-o", "loop,rw", drive1, mp).CombinedOutput(); mountErr != nil {
+		return fmt.Errorf("mount loop: %w (%s)", mountErr, bytes.TrimSpace(out))
+	}
+	defer func() { _ = exec.Command("umount", mp).Run() }()
+	target, err := stagedDrivePath(mp, serviceDiscoveryResolverPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("mkdir resolver directory: %w", err)
+	}
+	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove existing resolver file: %w", err)
+	}
+	contents := fmt.Sprintf("# Gregale tenant service resolver\nnameserver %s\noptions timeout:2 attempts:2\n", ip)
+	if err := os.WriteFile(target, []byte(contents), 0o644); err != nil {
+		return fmt.Errorf("write resolver file: %w", err)
 	}
 	return nil
 }
@@ -941,7 +984,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageDrives := time.Now()
-	if err := v.stagePreBootFiles(l.Instance, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON); err != nil {
+	if err := v.stagePreBootFiles(l.Instance, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
 

@@ -3892,6 +3892,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 // when constructing the Instance. timings is optional for tests
 // that wire bringUp directly without a Wake frame.
 func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest, timings *bringUpTimings) (WakeMethod, error) {
+	serviceDiscoveryIP := ""
+	if !lease.IsBuilder && nc.HostBridgeIP.IsValid() {
+		serviceDiscoveryIP = nc.HostBridgeIP.String()
+	}
 	// issue #299: refuse to bring up an instance whose base ext4
 	// staged with a fix-available CRITICAL Grype finding. Runs BEFORE the restore
 	// decision tree because a scan refusal is a policy gate, not a
@@ -3946,9 +3950,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// path. Non-empty → Restore stages one extra drive
 			// per entry (read-only for sidecars, read-write for
 			// the main workload's drive1). Additive per ADR-016.
-			Workloads:      buildWorkloadsForRestore(req),
-			SecretsEnvJSON: req.preparedSecretsEnvJSON,
-			APIEnvJSON:     req.preparedAPIEnvJSON,
+			Workloads:          buildWorkloadsForRestore(req),
+			SecretsEnvJSON:     req.preparedSecretsEnvJSON,
+			APIEnvJSON:         req.preparedAPIEnvJSON,
+			ServiceDiscoveryIP: serviceDiscoveryIP,
 		}
 		// ADR-098 C11: stamp the RestoreMs (issue #470 / PR #543).
 		// vmm.Restore wraps /snapshot/load + waitReady for the
@@ -4031,9 +4036,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// (main + sidecars). buildWorkloadsForColdBoot emits an
 		// empty slice on the legacy single-workload path so
 		// BootColdBoot falls through to the LayerKey branch.
-		Workloads:      buildWorkloadsForColdBoot(req),
-		SecretsEnvJSON: req.preparedSecretsEnvJSON,
-		APIEnvJSON:     req.preparedAPIEnvJSON,
+		Workloads:          buildWorkloadsForColdBoot(req),
+		SecretsEnvJSON:     req.preparedSecretsEnvJSON,
+		APIEnvJSON:         req.preparedAPIEnvJSON,
+		ServiceDiscoveryIP: serviceDiscoveryIP,
 	}
 	coldBootStartedAt := time.Now()
 	coldBootErr := m.vmm.BootColdBoot(ctx, lease, spec)

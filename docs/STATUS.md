@@ -1033,10 +1033,10 @@ explicitly open issues that the doc otherwise implies are closed.
 - **Workload networking** — the gateway exposes a deterministic cross-VM
   service endpoint registry (ADR-167), a trusted node-local service proxy
   (ADR-168), and a tenant-bridge guest listener with HostIP caller binding
-  (ADR-169). Guests can call same-account services through the reserved
-  `HostBridgeIP:10080` path; the netns firewall admits that port before the
-  lateral-movement deny. DNS naming, host ports, and public multi-port routing
-  remain separate follow-ups; loopback discovery within one task remains
+  (ADR-169). ADR-170 adds node-local DNS for `<slug>.svc.gregale`, backed by
+  the same `HostBridgeIP:10080` proxy; the netns firewall admits DNS and proxy
+  traffic before the lateral-movement deny. Host ports and public multi-port
+  routing remain separate follow-ups; loopback discovery within one task remains
   supported (ADR-164 and ADR-165).
 - **Resource and cost isolation** — named RAM/CPU profiles and ephemeral disk
   ceilings are present; per-container CPU/disk enforcement and a combined

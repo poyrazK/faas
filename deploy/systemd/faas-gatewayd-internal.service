@@ -16,6 +16,8 @@ RestartSec=2s
 RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
 Slice=faas-cp.slice
 MemoryMax=512M
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env
 Environment=FAAS_GATEWAY_LISTEN=off
