@@ -231,34 +231,35 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
-	"DELETE /v1/keys/{id}":                        "DeleteKey",
-	"POST /v1/keys/{id}/rotate":                   "RotateKey",
-	"PATCH /v1/account/keys/grace_window_days":    "SetGraceWindow",
-	"GET /v1/account/keys/grace_window_days":      "GetGraceWindow",
-	"DELETE /v1/domains/{domain}":                 "DeleteDomain",
-	"DELETE /v1/crons/{id}":                       "DeleteCron",
-	"DELETE /v1/apps/{slug}":                      "DeleteApp",
-	"POST /v1/apps/{slug}/restore":                "RestoreApp",
-	"DELETE /v1/apps/{slug}/secrets/{key}":        "UnsetSecret",
-	"PUT /v1/apps/{slug}/secrets/{key}":           "SetSecret",
-	"POST /v1/apps/{slug}/secrets/{key}/rotate":   "RotateSecret",
-	"PATCH /v1/apps/{slug}":                       "UpdateApp",
-	"POST /v1/apps/{slug}/rename":                 "RenameApp",
-	"GET /v1/apps/{slug}":                         "GetApp",
-	"GET /v1/apps/{slug}/instances":               "ListInstances",
-	"POST /v1/apps/{slug}/park":                   "Park",
-	"POST /v1/apps/{slug}/wake":                   "Wake",
-	"POST /v1/apps/{slug}/restart":                "RestartApp",
-	"DELETE /v1/apps/{slug}/cache":                "PurgeAppCache",
-	"POST /v1/apps/{slug}/rollback":               "Rollback",
-	"POST /v1/apps/{slug}/rollouts/recover":       "RecoverRollout",
-	"POST /v1/apps/{slug}/deployments":            "Deploy",
-	"GET /v1/apps/{slug}/deployments":             "ListAppDeployments",
-	"GET /v1/apps/{slug}/deployments/latest":      "GetLatestAppDeployment",
-	"POST /v1/apps/{slug}/deployments/dev-source": "DeployDevSource",
-	"POST /v1/apps/{slug}/deployments/source-ref": "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
-	"GET /v1/uploads/{id}":                        "GetUploadSession",    // issue #1182; resumable session discovery after restart
-	"POST /v1/apps/{slug}/diff":                   "Diff",                // PR-1 of deploy-diff cluster; CI gate input
+	"DELETE /v1/keys/{id}":                         "DeleteKey",
+	"POST /v1/keys/{id}/rotate":                    "RotateKey",
+	"PATCH /v1/account/keys/grace_window_days":     "SetGraceWindow",
+	"GET /v1/account/keys/grace_window_days":       "GetGraceWindow",
+	"DELETE /v1/domains/{domain}":                  "DeleteDomain",
+	"DELETE /v1/crons/{id}":                        "DeleteCron",
+	"DELETE /v1/apps/{slug}":                       "DeleteApp",
+	"POST /v1/apps/{slug}/restore":                 "RestoreApp",
+	"DELETE /v1/apps/{slug}/secrets/{key}":         "UnsetSecret",
+	"PUT /v1/apps/{slug}/secrets/{key}":            "SetSecret",
+	"POST /v1/apps/{slug}/secrets/{key}/rotate":    "RotateSecret",
+	"PATCH /v1/apps/{slug}":                        "UpdateApp",
+	"POST /v1/apps/{slug}/rename":                  "RenameApp",
+	"GET /v1/apps/{slug}":                          "GetApp",
+	"GET /v1/apps/{slug}/instances":                "ListInstances",
+	"POST /v1/apps/{slug}/park":                    "Park",
+	"POST /v1/apps/{slug}/wake":                    "Wake",
+	"POST /v1/apps/{slug}/restart":                 "RestartApp",
+	"DELETE /v1/apps/{slug}/cache":                 "PurgeAppCache",
+	"POST /v1/apps/{slug}/rollback":                "Rollback",
+	"POST /v1/apps/{slug}/rollouts/recover":        "RecoverRollout",
+	"POST /v1/apps/{slug}/deployments":             "Deploy",
+	"GET /v1/apps/{slug}/deployments":              "ListAppDeployments",
+	"GET /v1/apps/{slug}/deployments/latest":       "GetLatestAppDeployment",
+	"GET /v1/apps/{slug}/deployments/{id}/summary": "GetAppDeploymentSummary",
+	"POST /v1/apps/{slug}/deployments/dev-source":  "DeployDevSource",
+	"POST /v1/apps/{slug}/deployments/source-ref":  "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
+	"GET /v1/uploads/{id}":                         "GetUploadSession",    // issue #1182; resumable session discovery after restart
+	"POST /v1/apps/{slug}/diff":                    "Diff",                // PR-1 of deploy-diff cluster; CI gate input
 	// Issue #961 / Mega-C PR-1 / leaf 3 — preview-destroy route.
 	// Auto-derivation would produce "PostPreviewSlugDestroy" (the
 	// Swagger-style verb+resource concat), but the SDK convention
