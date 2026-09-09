@@ -40,6 +40,11 @@ type Config struct {
 	// to 127.0.0.1:9090 (loopback only).
 	ControlAddr string `toml:"control_addr"`
 
+	// ServiceProxyListen is the tenant-bridge listener for cross-VM service
+	// discovery. It must bind the host bridge address on the reserved service
+	// proxy port; empty disables the guest-facing listener.
+	ServiceProxyListen string `toml:"service_proxy_listen"`
+
 	// AppsDomain is the platform wildcard suffix (e.g. "gregale.dev").
 	// gatewayd routes <slug>.<apps_domain> to the customer's app and
 	// applies the apps-suffix host guard. Empty disables wildcard routing
@@ -228,11 +233,12 @@ type TOMLTLSConfig struct {
 // path continues to work for the e2e harness).
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		PublicAddr:      defaultPublicListenAddr,
-		ControlAddr:     "127.0.0.1:9090",
-		APIDLoopback:    "http://127.0.0.1:8081",
-		GithubdLoopback: "http://127.0.0.1:8083",
-		TLS:             TOMLTLSConfig{Disabled: true}, // e2e harness default
+		PublicAddr:         defaultPublicListenAddr,
+		ControlAddr:        "127.0.0.1:9090",
+		ServiceProxyListen: "",
+		APIDLoopback:       "http://127.0.0.1:8081",
+		GithubdLoopback:    "http://127.0.0.1:8083",
+		TLS:                TOMLTLSConfig{Disabled: true}, // e2e harness default
 		// ADR-104 amendment 5 / issue #881 Phase 4 C2: default
 		// RateLimit.Mode = "local" so single-box dev reproduces
 		// the pre-Phase-4 in-process bucket byte-for-byte. The

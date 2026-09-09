@@ -1030,13 +1030,14 @@ explicitly open issues that the doc otherwise implies are closed.
   app's sticky-warm hint and choose by current fleet headroom, so a two-node
   fleet can keep desired replicas on separate compute nodes. The scheduler
   coverage lives in `TestConvergeServiceReplicasSpreadsAcrossComputeNodes`.
-- **Workload networking** — the gateway now exposes a deterministic,
-  loopback-only cross-VM service endpoint registry (ADR-167) and a trusted
-  node-local service proxy (ADR-168), both sourced from the same live target
-  cache used for request routing. Guest DNS/proxy binding to instance identity,
-  host ports, and public multi-port routing remain the next networking slices;
-  loopback discovery for workloads within one task remains the current guest
-  contract (ADR-164 and ADR-165).
+- **Workload networking** — the gateway exposes a deterministic cross-VM
+  service endpoint registry (ADR-167), a trusted node-local service proxy
+  (ADR-168), and a tenant-bridge guest listener with HostIP caller binding
+  (ADR-169). Guests can call same-account services through the reserved
+  `HostBridgeIP:10080` path; the netns firewall admits that port before the
+  lateral-movement deny. DNS naming, host ports, and public multi-port routing
+  remain separate follow-ups; loopback discovery within one task remains
+  supported (ADR-164 and ADR-165).
 - **Resource and cost isolation** — named RAM/CPU profiles and ephemeral disk
   ceilings are present; per-container CPU/disk enforcement and a combined
   compute + S3 + managed-PostgreSQL usage/budget view remain follow-up work.

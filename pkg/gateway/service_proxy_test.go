@@ -131,7 +131,7 @@ func TestServiceProxyAuthorizationAndCallerIdentity(t *testing.T) {
 		caller string
 		want   int
 	}{
-		{name: "missing caller", want: http.StatusUnauthorized},
+		{name: "resolved identity without header", want: http.StatusOK},
 		{name: "identity mismatch", caller: "app-foreign", want: http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,8 +146,8 @@ func TestServiceProxyAuthorizationAndCallerIdentity(t *testing.T) {
 			}
 		})
 	}
-	if forwarded.Load() {
-		t.Fatal("denied request reached downstream")
+	if !forwarded.Load() {
+		t.Fatal("resolved caller request did not reach downstream")
 	}
 }
 

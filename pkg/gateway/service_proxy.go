@@ -54,11 +54,11 @@ type ServiceProxyResolver func(ctx context.Context, service string) (appID strin
 // target apps. A nil authorizer is treated as a wiring error and fails closed.
 type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID string) error
 
-// ServiceProxyCallerResolver optionally binds the caller header to the
-// network identity observed by the node-local listener. The loopback control
-// listener does not need this hook because it is already DAC/loopback gated;
-// a future guest-facing listener must provide it from the per-instance host-IP
-// map.
+// ServiceProxyCallerResolver binds the caller header to the network identity
+// observed by the node-local listener. When it is configured, the resolved
+// identity is authoritative and the caller header becomes an optional
+// compatibility assertion. This lets guest requests omit a spoofable
+// platform header while preserving the header contract for trusted callers.
 type ServiceProxyCallerResolver func(ctx context.Context, remoteAddr string) (appID string, err error)
 
 // ServiceProxyConfig wires the narrow seams around ServiceProxy. Forward is
@@ -139,20 +139,25 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	caller := strings.TrimSpace(r.Header.Get(ServiceProxyCallerAppHeader))
-	if caller == "" {
-		serviceProxyProblem(w, http.StatusUnauthorized, "caller identity is required")
-		return
-	}
 	if p.resolveCaller != nil {
 		resolved, err := p.resolveCaller(r.Context(), r.RemoteAddr)
 		if err != nil {
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "caller identity is unavailable")
 			return
 		}
-		if resolved == "" || resolved != caller {
+		if resolved == "" {
+			serviceProxyProblem(w, http.StatusForbidden, "caller identity is unknown")
+			return
+		}
+		if caller != "" && resolved != caller {
 			serviceProxyProblem(w, http.StatusForbidden, "caller identity does not match the node identity")
 			return
 		}
+		caller = resolved
+	}
+	if caller == "" {
+		serviceProxyProblem(w, http.StatusUnauthorized, "caller identity is required")
+		return
 	}
 	targetApp, err := p.resolveTargetApp(r.Context(), service)
 	if err != nil {

@@ -34,6 +34,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -2729,16 +2730,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			internalRoutesHandler(handler, resolve, log).ServeHTTP(w, r)
 		})
 	}
-	// ADR-168: expose the node-local service proxy on the trusted control
-	// listener. This is the first data-plane consumer of ADR-167's endpoint
-	// registry: it resolves a service slug, checks that the caller and target
-	// belong to the same account, and forwards through the existing per-node
-	// vmmd bridge. The listener remains loopback-only; binding the same
-	// contract for guests requires remote-IP instance identity and netns
-	// firewall admission, which is the next networking slice.
+	// ADR-168/169: expose the node-local service proxy on the trusted control
+	// listener and, when configured, on the tenant bridge. Both listeners use
+	// the same endpoint registry, account authorizer, and vmmd transport; the
+	// guest listener adds source-IP instance identity before forwarding.
+	var guestServiceProxy http.Handler
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
-		serviceProxy := gateway.NewServiceProxy(gateway.ServiceProxyConfig{
+		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider: serviceEndpointProvider,
 			Resolve: func(ctx context.Context, service string) (string, bool, error) {
 				app, err := pgStore.AppBySlug(ctx, service)
@@ -2771,14 +2770,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return nil
 			},
 			Forward: deps.nodeCache.Forwarding(),
-		})
-		controlMux.Handle("/v1/internal/services/", serviceProxy)
+		}
+		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
+		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
+			serviceProxyConfig.ResolveCaller = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
+			guestServiceProxy = gateway.NewServiceProxy(serviceProxyConfig)
+		}
 	}
 
 	// Track every *http.Server we spin up so the shutdown path can drain
 	// them in parallel. sslib guidance is "call Shutdown on each" rather
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
-	errc := make(chan error, 4)
+	errc := make(chan error, 5)
 	var servers []*http.Server
 	addSrv := func(s *http.Server) { servers = append(servers, s) }
 
@@ -2938,6 +2941,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if os.Getenv("FAAS_GATEWAY_CONTROL_LISTEN") != "" {
 		if err := assertLoopbackBind(ctrlAddr); err != nil {
 			return fmt.Errorf("gatewayd: FAAS_GATEWAY_CONTROL_LISTEN must bind loopback: %w", err)
+		}
+	}
+	serviceProxyAddr := strings.TrimSpace(cfg.ServiceProxyListen)
+	if serviceProxyAddr != "" {
+		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
+			return err
+		}
+		if guestServiceProxy == nil {
+			log.Warn("gatewayd guest service proxy disabled; dependencies are unavailable", "addr", serviceProxyAddr)
+		} else {
+			srv := deps.newSrv(serviceProxyAddr, guestServiceProxy)
+			srv.Addr = serviceProxyAddr
+			addSrv(srv)
+			l, lerr := deps.listen("tcp", serviceProxyAddr)
+			if lerr != nil {
+				log.Error("gatewayd guest service proxy listen failed", "addr", serviceProxyAddr, "err", lerr)
+				return lerr
+			}
+			go func() {
+				log.Info("gatewayd guest service proxy listening", "addr", serviceProxyAddr)
+				if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
+					errc <- err
+				}
+			}()
 		}
 	}
 	go func() {
@@ -3134,6 +3161,22 @@ func assertLoopbackBind(addr string) error {
 		return nil
 	}
 	return fmt.Errorf("control listener %q is not loopback; bind 127.0.0.1:9090 (or ::1) only", addr)
+}
+
+func validateServiceProxyListen(addr string) error {
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("gatewayd: service_proxy_listen must be host:port: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port != serviceProxyPort {
+		return fmt.Errorf("gatewayd: service_proxy_listen must use reserved port %d", serviceProxyPort)
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() {
+		return fmt.Errorf("gatewayd: service_proxy_listen must bind a private host-bridge address")
+	}
+	return nil
 }
 
 // installComputeMetricsRoute exposes only /metrics on a compute node's
