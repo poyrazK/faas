@@ -29,6 +29,9 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.MetricsAddr != "" {
 		t.Errorf("MetricsAddr = %q, want empty (disabled)", cfg.MetricsAddr)
 	}
+	if cfg.RestoreConcurrency != 3 {
+		t.Errorf("RestoreConcurrency = %d, want default 3", cfg.RestoreConcurrency)
+	}
 	// Issue #95: server-mTLS paths default empty.
 	if cfg.ListenAddr != "" || cfg.TLSCertPath != "" || cfg.TLSKeyPath != "" || cfg.TLSCAPath != "" {
 		t.Errorf("TLS/listen defaults not all empty: %+v", cfg)
@@ -42,6 +45,53 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if got := cfg.ComputeNode.AdmissionCeilingMB; got != api.DefaultComputeNodeCeilingMB() {
 		t.Errorf("ComputeNode.AdmissionCeilingMB = %d, want %d (api.DefaultComputeNodeCeilingMB())",
 			got, api.DefaultComputeNodeCeilingMB())
+	}
+}
+
+func TestLoadConfig_RestoreConcurrencyOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("restore_concurrency = 2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig TOML override: %v", err)
+	}
+	if cfg.RestoreConcurrency != 2 {
+		t.Errorf("RestoreConcurrency = %d, want TOML override 2", cfg.RestoreConcurrency)
+	}
+
+	t.Setenv("FAAS_RESTORE_CONCURRENCY", "4")
+	cfg, err = LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig env override: %v", err)
+	}
+	if cfg.RestoreConcurrency != 4 {
+		t.Errorf("RestoreConcurrency = %d, want env override 4", cfg.RestoreConcurrency)
+	}
+}
+
+func TestLoadConfig_RejectsInvalidRestoreConcurrency(t *testing.T) {
+	for _, value := range []string{"0", "65", "bad"} {
+		t.Run("env_"+value, func(t *testing.T) {
+			t.Setenv("FAAS_RESTORE_CONCURRENCY", value)
+			_, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+			if err == nil || !strings.Contains(err.Error(), "FAAS_RESTORE_CONCURRENCY") {
+				t.Fatalf("LoadConfig env %q error = %v, want named validation error", value, err)
+			}
+		})
+	}
+	for _, value := range []string{"0", "65"} {
+		t.Run("toml_"+value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vmmd.toml")
+			if err := os.WriteFile(path, []byte("restore_concurrency = "+value+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadConfig(path)
+			if err == nil || !strings.Contains(err.Error(), "restore_concurrency") {
+				t.Fatalf("LoadConfig TOML %q error = %v, want named validation error", value, err)
+			}
+		})
 	}
 }
 
