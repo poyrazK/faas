@@ -2,12 +2,202 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
+import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
 import type { Trace } from '../models/Trace.js';
+import type { UpdateAppLogDrainRequest } from '../models/UpdateAppLogDrainRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ObservabilityService {
+  /**
+   * List runtime log destinations for this app.
+   * @returns AppLogDrainResponse The configured log destinations. Authentication headers are always masked.
+   * @throws ApiError
+   */
+  public static listAppLogDrains({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<AppLogDrainResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-drains',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Export runtime logs to an external HTTP or OTLP endpoint.
+   * The platform tails the existing per-instance runtime log ring and
+   * forwards each line through a bounded queue. `http_json` sends a
+   * provider-neutral JSON record; `otlp` sends an OTLP/HTTP JSON logs
+   * envelope suitable for a collector or vendor OTLP endpoint. The URL
+   * is SSRF-checked, and auth_header is sealed at rest and never echoed.
+   *
+   * @returns AppLogDrainResponse Log drain created.
+   * @throws ApiError
+   */
+  public static createAppLogDrain({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateAppLogDrainRequest,
+  }): CancelablePromise<AppLogDrainResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/log-drains',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.`,
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        403: `code: plan_log_drain_quota — per-app or per-account runtime log destination limit reached.`,
+        404: `code: not_found`,
+        409: `code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Fetch one runtime log destination.
+   * @returns AppLogDrainResponse The log destination. Authentication headers are masked.
+   * @throws ApiError
+   */
+  public static getAppLogDrain({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AppLogDrainResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-drains/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Update a runtime log destination.
+   * @returns AppLogDrainResponse The updated log destination.
+   * @throws ApiError
+   */
+  public static updateAppLogDrain({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: UpdateAppLogDrainRequest,
+  }): CancelablePromise<AppLogDrainResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/log-drains/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.`,
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        409: `code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a runtime log destination.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAppLogDrain({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/log-drains/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
   /**
    * List the canonical wake-timeline frames for one wake.
    * Oldest-first (forward narrative). Returns every typed
