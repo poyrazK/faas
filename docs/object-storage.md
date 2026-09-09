@@ -174,6 +174,29 @@ aws --profile gregale --endpoint-url https://s3.gregale.dev \
   s3api list-objects-v2 --bucket assets
 ```
 
+### Bind storage to a compute workload
+
+Use `POST /v1/apps/{slug}/buckets/{bucket-id}/compute-bindings` when the
+workload should use the branded S3 endpoint without carrying credentials in
+deployment manifests. The request accepts the same `permission` values as a
+standalone credential and an optional uppercase `prefix`. Gregale creates one
+bucket-scoped credential and writes six sealed app secrets under that prefix:
+`ENDPOINT`, `REGION`, `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, and
+`ADDRESSING_STYLE`. The workload receives them through the existing secret
+staging path on its next deploy/wake; values are never returned by the binding
+API or stored in plaintext.
+
+List bindings with `GET .../compute-bindings`, rotate in place with
+`POST .../compute-bindings/{binding-id}/rotate`, and revoke with
+`DELETE .../compute-bindings/{binding-id}`. Rotation keeps secret names stable
+and immediately invalidates the previous access key. Revocation invalidates
+the credential first, then removes the managed app secrets. Ordinary secret
+PUT/DELETE calls cannot overwrite or remove a managed binding secret.
+
+Compute remains stateless: this binding supplies S3 SDK configuration, not a
+persistent filesystem mount. The app must still have outbound access to
+`s3.gregale.dev` under its egress policy.
+
 This first endpoint slice supports ListBuckets for the credential's one bucket,
 HeadBucket, GetBucketLocation, ListObjectsV2 without delimiters, and
 GetObject/HeadObject/PutObject/DeleteObject. It validates header-based AWS
@@ -529,10 +552,10 @@ object-storage operations are disabled. The upstream lifecycle rule is still
 required as a defense against control-plane outages.
 
 Key rotation copies bucket grants to the successor so applications can switch
-credentials during the normal grace window. Store the resulting narrowly scoped
-Gregale key through the existing app-secret workflow when a workload needs to
-request signed URLs. Gregale does not inject it automatically and never gives a
-workload the operator's upstream provider credential.
+credentials during the normal grace window. For compute workloads, prefer the
+compute-binding API above so Gregale owns the sealed credential lifecycle;
+standalone credentials remain available for laptops, CI, and external clients.
+Gregale never gives a workload the operator's upstream provider credential.
 
 ## Switch providers without rewriting the product
 

@@ -2950,8 +2950,8 @@ WHERE bucket_id=$1 AND status='active';
 
 -- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
-(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active') RETURNING *;
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING *;
 
 -- name: ObjectS3CredentialList :many
 SELECT * FROM object_storage_s3_credentials
@@ -2961,6 +2961,16 @@ ORDER BY created_at,id;
 -- name: ObjectS3CredentialRevoke :execrows
 UPDATE object_storage_s3_credentials SET status='revoked',revoked_at=now()
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active';
+
+-- name: ObjectS3CredentialGet :one
+SELECT * FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3;
+
+-- name: ObjectS3CredentialRotate :one
+UPDATE object_storage_s3_credentials
+SET access_key_id=$4, secret_sealed=$5, kid=$6, last_used_at=NULL
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+RETURNING *;
 
 -- name: ObjectS3CredentialResolve :one
 SELECT c.*, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,

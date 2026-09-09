@@ -141,6 +141,43 @@ type CreateObjectS3CredentialRequest struct {
 	Permission string `json:"permission"`
 }
 
+// CreateObjectStorageComputeBindingRequest provisions a bucket-scoped S3
+// credential and injects its provider-neutral connection settings into the
+// app's sealed environment. Prefix is optional; when omitted the API derives
+// a stable prefix from the logical bucket name.
+type CreateObjectStorageComputeBindingRequest struct {
+	Label      string `json:"label,omitempty"`
+	Permission string `json:"permission"`
+	Prefix     string `json:"prefix,omitempty"`
+}
+
+// ObjectStorageComputeBindingSecretKeys names the sealed app secrets written
+// for a compute binding. Values are never returned by this API.
+type ObjectStorageComputeBindingSecretKeys struct {
+	Endpoint        string `json:"endpoint"`
+	Region          string `json:"region"`
+	Bucket          string `json:"bucket"`
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+	AddressingStyle string `json:"addressing_style"`
+}
+
+// ObjectStorageComputeBinding is the control-plane view of an app-to-bucket
+// binding. The binding ID is also the managed credential ID, but callers must
+// treat it as opaque.
+type ObjectStorageComputeBinding struct {
+	ID         string                                `json:"id"`
+	BucketID   string                                `json:"bucket_id"`
+	Scope      string                                `json:"scope"`
+	Prefix     string                                `json:"prefix"`
+	Credential ObjectS3Credential                    `json:"credential"`
+	SecretKeys ObjectStorageComputeBindingSecretKeys `json:"secret_keys"`
+}
+
+type ObjectStorageComputeBindingList struct {
+	Items []ObjectStorageComputeBinding `json:"items"`
+}
+
 // ObjectS3CredentialSecret is the one-time creation response. Endpoint and
 // addressing metadata let callers configure an AWS SDK without learning
 // which upstream provider stores the bucket.

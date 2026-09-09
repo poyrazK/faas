@@ -135,9 +135,24 @@ func (s *server) revokeObjectS3Credential(w http.ResponseWriter, r *http.Request
 		bucketProblem(w, state.ErrNotFound)
 		return
 	}
+	managed := false
+	if bindings, ok := store.(state.ObjectS3CredentialBindingStore); ok {
+		credential, err := bindings.GetObjectS3Credential(r.Context(), acct.ID, bucket.ID, credentialID)
+		if err != nil {
+			bucketProblem(w, err)
+			return
+		}
+		managed = credential.ManagedAppID != "" && credential.ManagedPrefix != ""
+	}
 	if err := store.RevokeObjectS3Credential(r.Context(), acct.ID, bucket.ID, credentialID); err != nil {
 		bucketProblem(w, err)
 		return
+	}
+	if managed {
+		if err := s.store.DeleteManagedObjectStorageSecrets(r.Context(), credentialID); err != nil {
+			bucketProblem(w, err)
+			return
+		}
 	}
 	s.audit.Emit(r.Context(), "object_storage.s3_credential_revoked", &acct.ID, map[string]any{
 		"app_id": bucket.AppID, "bucket_id": bucket.ID, "credential_id": credentialID,

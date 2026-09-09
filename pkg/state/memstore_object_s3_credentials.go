@@ -8,6 +8,7 @@ import (
 
 var _ ObjectS3CredentialStore = (*MemStore)(nil)
 var _ ObjectS3CredentialRekeyStore = (*MemStore)(nil)
+var _ ObjectS3CredentialBindingStore = (*MemStore)(nil)
 
 func (m *MemStore) CreateObjectS3Credential(_ context.Context, c ObjectS3Credential, maxPerBucket int) (ObjectS3Credential, error) {
 	m.mu.Lock()
@@ -71,6 +72,37 @@ func (m *MemStore) RevokeObjectS3Credential(_ context.Context, accountID, bucket
 	c.Status, c.RevokedAt = ObjectS3CredentialStatusRevoked, &now
 	m.objectS3Credentials[credentialID] = c
 	return nil
+}
+
+func (m *MemStore) GetObjectS3Credential(_ context.Context, accountID, bucketID, credentialID string) (ObjectS3Credential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.objectS3Credentials[credentialID]
+	if !ok || c.AccountID != accountID || c.BucketID != bucketID {
+		return ObjectS3Credential{}, ErrNotFound
+	}
+	return cloneObjectS3Credential(c), nil
+}
+
+func (m *MemStore) RotateObjectS3Credential(_ context.Context, accountID, bucketID, credentialID, accessKeyID string, sealed []byte, kid string) (ObjectS3Credential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if accessKeyID == "" || len(sealed) == 0 || kid == "" {
+		return ObjectS3Credential{}, ErrInvalidArgument
+	}
+	c, ok := m.objectS3Credentials[credentialID]
+	if !ok || c.AccountID != accountID || c.BucketID != bucketID || c.Status != ObjectS3CredentialStatusActive {
+		return ObjectS3Credential{}, ErrNotFound
+	}
+	for id, existing := range m.objectS3Credentials {
+		if id != credentialID && existing.AccessKeyID == accessKeyID {
+			return ObjectS3Credential{}, ErrConflict
+		}
+	}
+	c.AccessKeyID, c.SecretSealed, c.KID = accessKeyID, append([]byte(nil), sealed...), kid
+	c.LastUsedAt = nil
+	m.objectS3Credentials[credentialID] = c
+	return cloneObjectS3Credential(c), nil
 }
 
 func (m *MemStore) ResolveObjectS3Credential(_ context.Context, accessKeyID string) (ObjectS3Credential, ObjectBucket, error) {

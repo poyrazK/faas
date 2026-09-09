@@ -767,6 +767,7 @@ type Querier interface {
 	ObjectMultipartLockBucket(ctx context.Context, db DBTX, arg ObjectMultipartLockBucketParams) (pgtype.UUID, error)
 	ObjectMultipartRetry(ctx context.Context, db DBTX, arg ObjectMultipartRetryParams) (int64, error)
 	ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error)
+	ObjectS3CredentialGet(ctx context.Context, db DBTX, arg ObjectS3CredentialGetParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg ObjectS3CredentialInsertParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialList(ctx context.Context, db DBTX, arg ObjectS3CredentialListParams) ([]ObjectStorageS3Credential, error)
 	ObjectS3CredentialListForRekey(ctx context.Context, db DBTX, arg ObjectS3CredentialListForRekeyParams) ([]ObjectStorageS3Credential, error)
@@ -774,6 +775,7 @@ type Querier interface {
 	ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg ObjectS3CredentialResealParams) (int64, error)
 	ObjectS3CredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectS3CredentialResolveRow, error)
 	ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg ObjectS3CredentialRevokeParams) (int64, error)
+	ObjectS3CredentialRotate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotateParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
 	ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg ObjectStorageProviderBucketsParams) ([]ObjectBucket, error)
 	ObjectStorageProviderRequestIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestIncrementParams) error

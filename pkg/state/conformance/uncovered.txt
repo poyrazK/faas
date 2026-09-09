@@ -200,6 +200,7 @@ DeleteEdgeRule
 DeleteGithubInstallBinding
 DeleteInstance
 DeleteInvocationsByIDs
+DeleteManagedObjectStorageSecrets
 DeleteManagedPostgresSecret
 DeleteMirrorRule
 DeleteOIDCExchangedToken
@@ -542,6 +543,7 @@ ProjectBySlug
 ProvisionedStaticEgressIPExists
 PruneDataUpstreamProbesOlderThan
 PutIdempotent
+PutManagedObjectStorageSecret
 PutManagedPostgresSecret
 QueueDeadLetter
 QueuePeek

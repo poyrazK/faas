@@ -13776,7 +13776,7 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	if existing.AccountID != accountID {
 		return ErrNotFound
 	}
-	if existing.ManagedPostgresBindingID != "" {
+	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
 	}
 	existing.Ciphertext = ciphertext
@@ -13805,7 +13805,7 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	if existing.AccountID != accountID {
 		return ErrNotFound
 	}
-	if existing.ManagedPostgresBindingID != "" {
+	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
 	}
 	existing.Ciphertext = ciphertext
@@ -13839,7 +13839,7 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 	if existing.AccountID != accountID {
 		return ErrNotFound
 	}
-	if existing.ManagedPostgresBindingID != "" {
+	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
 	}
 	existing.Ciphertext = ciphertext
@@ -13915,6 +13915,43 @@ func (m *MemStore) DeleteManagedPostgresSecret(_ context.Context, credentialRef 
 	return nil
 }
 
+func (m *MemStore) PutManagedObjectStorageSecret(_ context.Context, secret AppSecret) error {
+	if secret.AccountID == "" || secret.AppID == "" || secret.Scope == "" || secret.Key == "" ||
+		len(secret.Ciphertext) == 0 || secret.ManagedObjectStorageCredentialID == "" {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}
+	existing, ok := m.secrets[k]
+	if ok && (existing.AccountID != secret.AccountID || (existing.ManagedObjectStorageCredentialID != "" && existing.ManagedObjectStorageCredentialID != secret.ManagedObjectStorageCredentialID) || existing.ManagedPostgresBindingID != "") {
+		return ErrConflict
+	}
+	now := time.Now()
+	if ok {
+		secret.CreatedAt = existing.CreatedAt
+	} else {
+		secret.CreatedAt = now
+	}
+	secret.UpdatedAt = now
+	m.secrets[k] = secret
+	return nil
+}
+
+func (m *MemStore) DeleteManagedObjectStorageSecrets(_ context.Context, credentialID string) error {
+	if credentialID == "" {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, secret := range m.secrets {
+		if secret.ManagedObjectStorageCredentialID == credentialID {
+			delete(m.secrets, key)
+		}
+	}
+	return nil
+}
+
 // GetAppSecret returns the (account_id, app_id,
 // scope='default', key) row.
 // Returns ErrNotFound when no row matches — same semantics as
@@ -13959,7 +13996,7 @@ func (m *MemStore) DeleteAppSecretInScope(_ context.Context, accountID, appID, s
 	if !ok || row.AccountID != accountID {
 		return ErrNotFound
 	}
-	if row.ManagedPostgresBindingID != "" {
+	if row.ManagedPostgresBindingID != "" || row.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
 	}
 	delete(m.secrets, k)
