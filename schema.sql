@@ -8679,3 +8679,141 @@ ALTER TABLE ONLY public.upload_commit_outcomes
 
 
 --
+-- Name: executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.executions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    runtime text NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    network_mode text DEFAULT 'none'::text NOT NULL,
+    timeout_ms integer NOT NULL,
+    memory_mb integer NOT NULL,
+    cpu_millicores integer NOT NULL,
+    ephemeral_disk_mb integer NOT NULL,
+    max_output_bytes integer NOT NULL,
+    pids_max integer NOT NULL,
+    source_bytes integer NOT NULL,
+    input_bytes integer NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    lease_token uuid,
+    lease_owner text,
+    lease_expires_at timestamp with time zone,
+    cancel_requested_at timestamp with time zone,
+    result jsonb,
+    result_bytes integer DEFAULT 0 NOT NULL,
+    stdout text DEFAULT ''::text NOT NULL,
+    stderr text DEFAULT ''::text NOT NULL,
+    output_truncated boolean DEFAULT false NOT NULL,
+    exit_code integer,
+    failure_code text,
+    failure_message text,
+    wall_time_ms bigint DEFAULT 0 NOT NULL,
+    cpu_time_ms bigint DEFAULT 0 NOT NULL,
+    peak_memory_mb integer DEFAULT 0 NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT executions_cpu_millicores_check CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
+    CONSTRAINT executions_deadline_check CHECK ((deadline_at > created_at)),
+    CONSTRAINT executions_ephemeral_disk_mb_check CHECK ((ephemeral_disk_mb = ANY (ARRAY[64, 128, 256, 512, 1024, 2048]))),
+    CONSTRAINT executions_exit_code_check CHECK (((exit_code IS NULL) OR ((exit_code >= 0) AND (exit_code <= 255)))),
+    CONSTRAINT executions_failure_code_check CHECK (((failure_code IS NULL) OR (((length(failure_code) >= 1) AND (length(failure_code) <= 64)) AND (status = ANY (ARRAY['failed'::text, 'timed_out'::text, 'out_of_memory'::text]))))),
+    CONSTRAINT executions_failure_message_check CHECK (((failure_message IS NULL) OR (octet_length(failure_message) <= 4096))),
+    CONSTRAINT executions_failure_shape_check CHECK (((failure_code IS NULL) = (failure_message IS NULL))),
+    CONSTRAINT executions_input_bytes_check CHECK (((input_bytes >= 0) AND (input_bytes <= 1048576))),
+    CONSTRAINT executions_lease_shape_check CHECK ((((lease_token IS NULL) AND (lease_owner IS NULL) AND (lease_expires_at IS NULL)) OR ((lease_token IS NOT NULL) AND (lease_owner IS NOT NULL) AND (lease_expires_at IS NOT NULL)))),
+    CONSTRAINT executions_lease_status_check CHECK (((status = ANY (ARRAY['restoring'::text, 'running'::text])) = (lease_token IS NOT NULL))),
+    CONSTRAINT executions_lifecycle_order_check CHECK ((((started_at IS NULL) OR (started_at >= created_at)) AND ((finished_at IS NULL) OR (finished_at >= created_at)) AND ((started_at IS NULL) OR (finished_at IS NULL) OR (finished_at >= started_at)) AND ((cancel_requested_at IS NULL) OR (cancel_requested_at >= created_at)) AND ((lease_expires_at IS NULL) OR (lease_expires_at > updated_at)))),
+    CONSTRAINT executions_max_output_bytes_check CHECK (((max_output_bytes >= 1024) AND (max_output_bytes <= 16777216))),
+    CONSTRAINT executions_memory_mb_check CHECK ((memory_mb = ANY (ARRAY[128, 256, 512, 1024]))),
+    CONSTRAINT executions_network_mode_check CHECK ((network_mode = 'none'::text)),
+    CONSTRAINT executions_output_budget_check CHECK ((((octet_length(stdout) + octet_length(stderr)) + result_bytes) <= max_output_bytes)),
+    CONSTRAINT executions_pids_max_check CHECK ((pids_max = 64)),
+    CONSTRAINT executions_result_bytes_check CHECK ((((result IS NULL) AND (result_bytes = 0)) OR ((result IS NOT NULL) AND (result_bytes >= 1) AND (result_bytes <= max_output_bytes)))),
+    CONSTRAINT executions_result_status_check CHECK (((result IS NULL) OR (status = 'succeeded'::text))),
+    CONSTRAINT executions_runtime_check CHECK ((runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text]))),
+    CONSTRAINT executions_source_bytes_check CHECK (((source_bytes >= 1) AND (source_bytes <= 1048576))),
+    CONSTRAINT executions_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'restoring'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text]))),
+    CONSTRAINT executions_timeout_ms_check CHECK (((timeout_ms >= 100) AND (timeout_ms <= 30000))),
+    CONSTRAINT executions_timestamps_check CHECK ((((status = 'queued'::text) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'restoring'::text) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'running'::text) AND (started_at IS NOT NULL) AND (finished_at IS NULL)) OR ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text])) AND (finished_at IS NOT NULL)))),
+    CONSTRAINT executions_updated_at_check CHECK ((updated_at >= created_at)),
+    CONSTRAINT executions_usage_check CHECK (((wall_time_ms >= 0) AND (cpu_time_ms >= 0) AND (peak_memory_mb >= 0)))
+);
+
+
+CREATE TABLE public.execution_payloads (
+    execution_id uuid NOT NULL,
+    sealed_payload bytea NOT NULL,
+    kid text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT execution_payloads_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
+    CONSTRAINT execution_payloads_sealed_payload_check CHECK (((octet_length(sealed_payload) >= 1) AND (octet_length(sealed_payload) <= 3145728)))
+);
+
+
+ALTER TABLE ONLY public.executions
+    ADD CONSTRAINT executions_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.execution_payloads
+    ADD CONSTRAINT execution_payloads_pkey PRIMARY KEY (execution_id);
+
+CREATE INDEX executions_account_active_idx ON public.executions USING btree (account_id, created_at) WHERE (status = ANY (ARRAY['queued'::text, 'restoring'::text, 'running'::text]));
+
+CREATE INDEX executions_account_created_idx ON public.executions USING btree (account_id, created_at DESC, id DESC);
+
+CREATE INDEX executions_claim_idx ON public.executions USING btree (created_at, id) WHERE ((status = 'queued'::text) AND (cancel_requested_at IS NULL));
+
+CREATE INDEX executions_lease_expiry_idx ON public.executions USING btree (lease_expires_at, id) WHERE (status = ANY (ARRAY['restoring'::text, 'running'::text]));
+
+ALTER TABLE ONLY public.executions
+    ADD CONSTRAINT executions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.execution_payloads
+    ADD CONSTRAINT execution_payloads_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: enforce_execution_status_transition(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_execution_status_transition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled') THEN
+        RAISE EXCEPTION 'terminal execution % is immutable', OLD.id USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.status = OLD.status THEN
+        RETURN NEW;
+    END IF;
+
+    IF NOT (
+        (OLD.status = 'queued' AND NEW.status IN ('restoring', 'timed_out', 'cancelled'))
+        OR
+        (OLD.status = 'restoring' AND NEW.status IN ('queued', 'running', 'failed',
+                                                     'timed_out', 'out_of_memory', 'cancelled'))
+        OR
+        (OLD.status = 'running' AND NEW.status IN ('succeeded', 'failed',
+                                                   'timed_out', 'out_of_memory', 'cancelled'))
+    ) THEN
+        RAISE EXCEPTION 'invalid execution % transition from % to %',
+            OLD.id, OLD.status, NEW.status USING ERRCODE = '23514';
+    END IF;
+
+    RETURN NEW;
+END
+$$;
+
+
+--
+-- Name: executions executions_status_transition; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER executions_status_transition BEFORE UPDATE ON public.executions FOR EACH ROW EXECUTE FUNCTION public.enforce_execution_status_transition();
+
+
+--

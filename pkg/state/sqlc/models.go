@@ -884,6 +884,49 @@ type Event struct {
 	TraceID        pgtype.Text
 }
 
+type Execution struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	Runtime           string
+	Status            string
+	NetworkMode       string
+	TimeoutMs         int32
+	MemoryMb          int32
+	CpuMillicores     int32
+	EphemeralDiskMb   int32
+	MaxOutputBytes    int32
+	PidsMax           int32
+	SourceBytes       int32
+	InputBytes        int32
+	DeadlineAt        pgtype.Timestamptz
+	LeaseToken        pgtype.UUID
+	LeaseOwner        pgtype.Text
+	LeaseExpiresAt    pgtype.Timestamptz
+	CancelRequestedAt pgtype.Timestamptz
+	Result            []byte
+	ResultBytes       int32
+	Stdout            string
+	Stderr            string
+	OutputTruncated   bool
+	ExitCode          pgtype.Int4
+	FailureCode       pgtype.Text
+	FailureMessage    pgtype.Text
+	WallTimeMs        int64
+	CpuTimeMs         int64
+	PeakMemoryMb      int32
+	StartedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
+type ExecutionPayload struct {
+	ExecutionID   pgtype.UUID
+	SealedPayload []byte
+	Kid           string
+	CreatedAt     pgtype.Timestamptz
+}
+
 type GdprRequest struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID

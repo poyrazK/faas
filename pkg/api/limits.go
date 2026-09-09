@@ -4258,13 +4258,13 @@ var (
 	// ExecutionOutputMaxBytes is a combined cap across the JSON result,
 	// stdout, and stderr. The guest stops accepting output at this boundary;
 	// the host independently enforces the same cap on the vsock frame stream.
-	ExecutionOutputMaxBytes = [4]int{0, 1 << 20, 4 << 20, 16 << 20}
+	ExecutionOutputMaxBytes = [4]int{0, 1 << 20, 4 << 20, ExecutionOutputHardMaxBytes}
 
 	// ExecutionTimeoutMaxMS is the admission-to-result wall-clock deadline,
 	// including snapshot restore. Remaining time is passed to the guest when
 	// execution starts, so queue/restore delay can never extend caller code
 	// beyond the advertised deadline.
-	ExecutionTimeoutMaxMS = [4]int{0, 10_000, 30_000, 30_000}
+	ExecutionTimeoutMaxMS = [4]int{0, 10_000, ExecutionTimeoutHardMaxMS, ExecutionTimeoutHardMaxMS}
 
 	// Deprecated workflow cap aliases retained for source compatibility with
 	// the original PR-1279 shorthand. New code must read the named fields on
@@ -4280,13 +4280,21 @@ const (
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
 	ExecutionTimeoutDefaultMS       = 5_000
 	ExecutionTimeoutMinMS           = 100
+	ExecutionTimeoutHardMaxMS       = 30_000
 	ExecutionMemoryDefaultMB        = 128
 	ExecutionCPUMillicoresDefault   = 250
 	ExecutionCPUMillicoresMax       = DefaultAppCPUMillicores
 	ExecutionEphemeralDiskDefaultMB = 64
 	ExecutionOutputDefaultBytes     = 256 << 10
 	ExecutionOutputMinBytes         = 1 << 10
+	ExecutionOutputHardMaxBytes     = 16 << 20
+	ExecutionPlaintextFieldMaxBytes = 1 << 20
 	ExecutionPIDsMax                = 64
+	// ExecutionSealedPayloadMaxBytes is the storage-layer ceiling for the
+	// encrypted source+input envelope. It leaves bounded room above the two
+	// admitted 1 MiB plaintext fields for envelope and age-recipient overhead;
+	// it is not a customer-visible allowance.
+	ExecutionSealedPayloadMaxBytes = 3 << 20
 )
 
 // ExecutionPlanLimits is the complete admission envelope for disposable

@@ -357,6 +357,11 @@ type MemStore struct {
 	// through m.mu (MemStore is inherently single-process); per-row
 	// lease_expires_at is in-memory instead of SQL NOW().
 	invocations map[string]Invocation
+	// executions and executionPayloads mirror the ADR-171 durable intent
+	// split. Customer reads only touch executions; a payload is exposed solely
+	// by ClaimExecution after the in-memory lease CAS succeeds.
+	executions        map[string]Execution
+	executionPayloads map[string]executionPayload
 	// accountAsyncQuota is the in-memory mirror of the
 	// account_async_quota table (ADR-134 PR-B). Keyed by account
 	// ID; populated lazily by EnsureAccountAsyncQuota; mutated by
@@ -831,6 +836,8 @@ func NewMemStore() *MemStore {
 		tenantSurfaces:          map[string]TenantSurface{},
 		tenantHostnames:         map[string]TenantHostname{},
 		invocations:             map[string]Invocation{},
+		executions:              map[string]Execution{},
+		executionPayloads:       map[string]executionPayload{},
 		accountAsyncQuota:       map[string]accountAsyncQuotaRow{},
 		instances:               map[string]Instance{},
 		loginTokens:             map[string]LoginToken{},

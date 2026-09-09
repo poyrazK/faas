@@ -3048,6 +3048,12 @@ type Store interface {
 	// JobStore surface without dragging in the whole Store.
 	JobStore
 
+	// Disposable one-shot execution intent (ADR-171). The public HTTP
+	// surface remains disabled until the scheduler and VM protocol land, but
+	// both apid admission and schedd lifecycle ownership meet at this narrow
+	// durable boundary.
+	ExecutionStore
+
 	// Workflows (ADR-081 / issue #669).
 	// Multi-step durable execution workflows land in the timestamped workflow
 	// schema migration.
