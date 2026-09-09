@@ -28,6 +28,55 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DeploymentsService {
   /**
+   * List deployments for an app.
+   * Paged backwards (newest first) for the app identified by `slug`.
+   * `next_before` is an opaque RFC3339Nano cursor from the last row in
+   * the page; pass it as `before` to fetch older deployments. Unknown or
+   * cross-account app slugs return the same IDOR-safe 404 surface as the
+   * other app-scoped endpoints.
+   *
+   * @returns DeploymentListResponse A paginated list of deployments for the app.
+   * @throws ApiError
+   */
+  public static listAppDeployments({
+    slug,
+    limit = 50,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Page size for this app (1–200; default 50).
+     */
+    limit?: number,
+    /**
+     * RFC3339Nano cursor from a previous response's next_before.
+     */
+    before?: string,
+  }): CancelablePromise<DeploymentListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Create a deployment.
    * Two content-types are accepted:
    * - `application/json` (`CreateDeploymentRequest` with an `image` field): prebuilt OCI reference.

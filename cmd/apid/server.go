@@ -1274,6 +1274,10 @@ func (s *server) handler() http.Handler {
 	}
 
 	// Deployments.
+	// App-scoped deployment history read. The slug is resolved through
+	// loadApp so cross-account probes collapse to the same 404 surface as
+	// the latest-deployment endpoint; pagination stays on the app's index.
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.listAppDeployments))))
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createDeployment))))))
 	// App-scoped latest-deployment read. This is the public counterpart to
 	// Store.LatestDeployment already used by the dashboard and deploy pipeline;

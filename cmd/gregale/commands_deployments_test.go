@@ -59,6 +59,29 @@ func TestCmdDeployments_NonEmpty(t *testing.T) {
 	}
 }
 
+func TestCmdDeployments_AppScoped(t *testing.T) {
+	var seenPath, seenQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath, seenQuery = r.URL.Path, r.URL.RawQuery
+		_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{
+			Items: []api.DeploymentResponse{{ID: "d1", AppID: "a1", Status: "live", Kind: "app"}},
+		})
+	}))
+	defer srv.Close()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	if code := cmdDeployments([]string{"--app", "history-app", "--limit", "2"}); code != 0 {
+		t.Fatalf("cmdDeployments --app = %d, want 0", code)
+	}
+	if seenPath != "/v1/apps/history-app/deployments" {
+		t.Errorf("path = %q, want app-scoped route", seenPath)
+	}
+	if seenQuery != "limit=2" {
+		t.Errorf("query = %q, want limit=2", seenQuery)
+	}
+}
+
 func TestCmdDeployments_NextBeforeHint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{
