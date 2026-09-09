@@ -36,6 +36,8 @@ ARG MISE_SHA256_ARM64=926914f938c55e86e48875f1c9253573ddf6d5efb5abb6e8721ea061fe
 ARG BUILDKIT_VERSION=0.32.2
 ARG BUILDKIT_SOURCE_SHA256=b19deba3f8cf3eb05407aa85c246e22839770c437439a04d880ef3d645aed0aa
 ARG GO_ARCHIVE_VERSION=0.3.0
+ARG BUILDKIT_GRPC_VERSION=1.83.2
+ARG RUNC_EBPF_VERSION=0.22.0
 
 # The latest upstream runc release still embeds golang.org/x/net v0.50.0 and
 # Go 1.25.12, which leaves this image exposed to fixed HIGH advisories. Build
@@ -95,6 +97,7 @@ FROM --platform=$TARGETPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d
 WORKDIR /src/runc
 ARG RUNC_VERSION
 ARG RUNC_SOURCE_SHA256
+ARG RUNC_EBPF_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl libseccomp-dev && \
       rm -rf /var/lib/apt/lists/* && \
@@ -103,6 +106,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       echo "${RUNC_SOURCE_SHA256}  /tmp/runc-source.tgz" | sha256sum -c - && \
       tar -xzf /tmp/runc-source.tgz --strip-components=1 -C /src/runc && \
       rm /tmp/runc-source.tgz && \
+      go mod edit -require=github.com/cilium/ebpf@v${RUNC_EBPF_VERSION} && \
       go mod edit -require=golang.org/x/net@v0.57.0 && \
       go mod download && \
       CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH} \
@@ -111,6 +115,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
           -ldflags "-linkmode external -extldflags -static-pie -X main.gitCommit=v${RUNC_VERSION}" \
           -o /out/runc . && \
       go version -m /out/runc | tee /tmp/runc-build-info && \
+      grep -q "github.com/cilium/ebpf.*v${RUNC_EBPF_VERSION}" /tmp/runc-build-info && \
       grep -q 'golang.org/x/net.*v0.57.0' /tmp/runc-build-info && \
       ! grep -Eq 'v0.50.0|go1.25.12' /tmp/runc-build-info
 
@@ -126,6 +131,7 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG BUILDKIT_SOURCE_SHA256
 ARG GO_ARCHIVE_VERSION
+ARG BUILDKIT_GRPC_VERSION
 COPY images/buildkit-session-health.patch /tmp/buildkit-session-health.patch
 COPY images/buildkit-frontend-startup.patch /tmp/buildkit-frontend-startup.patch
 # BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0 and gRPC
@@ -146,10 +152,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       go mod edit -require=github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} && \
       go mod edit -require=golang.org/x/net@v0.57.0 && \
       go mod edit -require=golang.org/x/crypto@v0.56.0 && \
-      go mod edit -require=google.golang.org/grpc@v1.83.1 && \
-      go mod download github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} google.golang.org/grpc@v1.83.1 golang.org/x/crypto@v0.56.0 && \
+      go mod edit -require=google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION} && \
+      go mod download github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION} golang.org/x/crypto@v0.56.0 && \
       archive_module="$(go env GOMODCACHE)/github.com/moby/go-archive@v${GO_ARCHIVE_VERSION}" && \
-      grpc_module="$(go env GOMODCACHE)/google.golang.org/grpc@v1.83.1" && \
+      grpc_module="$(go env GOMODCACHE)/google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION}" && \
       crypto_module="$(go env GOMODCACHE)/golang.org/x/crypto@v0.56.0" && \
       rm -rf vendor/github.com/moby/go-archive && \
       rm -rf vendor/google.golang.org/grpc && \
@@ -160,7 +166,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       sed -i \
         -e "s#github.com/moby/go-archive v0.2.0#github.com/moby/go-archive v${GO_ARCHIVE_VERSION}#" \
         -e "s#golang.org/x/crypto v0.54.0#golang.org/x/crypto v0.56.0#" \
-        -e "s#google.golang.org/grpc v1.82.1#google.golang.org/grpc v1.83.1#" \
+        -e "s#google.golang.org/grpc v1.82.1#google.golang.org/grpc v${BUILDKIT_GRPC_VERSION}#" \
         vendor/modules.txt && \
       go test -mod=vendor ./frontend/gateway -run '^TestServeWaitsForColdFrontend$' -count=1 && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
