@@ -305,7 +305,9 @@ jobs:
 
           validation_dir="$(mktemp -d)"
           trap 'rm -r "$validation_dir"' EXIT
-          cp "$source_dir"/*.yml "$validation_dir/"
+          for file in "${files[@]}"; do
+            cp "$source_dir/$file" "$validation_dir/$file"
+          done
           sed "s#/etc/prometheus/#${validation_dir}/#g" \
             "$source_dir/prometheus.yml" > "$validation_dir/prometheus.checked.yml"
           promtool check config "$validation_dir/prometheus.checked.yml"
