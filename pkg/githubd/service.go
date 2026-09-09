@@ -931,7 +931,7 @@ func previewHostnameForSlug(slug string) string {
 		return ""
 	}
 	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" {
+	if domain == "" || domain == "apps.gregale.dev" {
 		domain = "gregale.dev"
 	}
 	return slug + "." + domain
@@ -953,7 +953,7 @@ func dashboardDestroyPreviewURL(parentSlug, previewSlug string) string {
 		return ""
 	}
 	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" {
+	if domain == "" || domain == "apps.gregale.dev" {
 		domain = "gregale.dev"
 	}
 	return "https://" + domain + "/dashboard/apps/" + parentSlug + "/preview/" + previewSlug + "/destroy"

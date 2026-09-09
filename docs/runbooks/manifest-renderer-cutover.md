@@ -247,7 +247,7 @@ it found it.
 
 ```
 gregale deploy --app hello-faas
-curl http://hello-faas.apps.gregale.dev/
+curl http://hello-faas.gregale.dev/
 ```
 
 expect: HTTP 200 with the cluster-shipped `hello-faas` response.

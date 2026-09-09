@@ -981,7 +981,7 @@ explicitly open issues that the doc otherwise implies are closed.
 
 ### M8
 
-- **CertMagic TLS** for `gatewayd-public` (`*.apps.gregale.dev` via DNS-01;
+- **CertMagic TLS** for `gatewayd-public` (`*.gregale.dev` via DNS-01;
   on-demand HTTP-01 gated by `custom_domains` allowlist). Plumbing
   landed across `pkg/gateway/tls*.go`, `dns01_hetzner.go`,
   `allowlist.go`, `acme.go`, `cmd/gatewayd-public/{main,config,secrets}.go`,

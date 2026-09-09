@@ -4009,7 +4009,7 @@ func terminalExitForBuild(b api.BuildResponse, appID string) int {
 // `*.gregale.dev` contract, while operators can point a CLI at another fleet.
 func deployedAppURL(appID string) string {
 	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" {
+	if domain == "" || domain == "apps.gregale.dev" {
 		domain = "gregale.dev"
 	}
 	return "https://" + appID + "." + domain

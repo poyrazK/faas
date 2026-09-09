@@ -416,17 +416,24 @@ func (s *server) appListItem(ctx context.Context, app state.App, latest map[stri
 	return item
 }
 
-// appURLForDomain joins an app or preview slug to the configured public
-// suffix. The suffix is intentionally opaque: `apps.gregale.dev` remains a
-// valid backwards-compatible value, while `gregale.dev` yields the current
-// wildcard contract (`<slug>.gregale.dev`) without hard-coding an extra
-// `.apps` label into the application.
-func appURLForDomain(slug, domain string) string {
+// appHostForDomain joins an app or preview slug to the configured public
+// suffix. The hosted Gregale contract is <slug>.gregale.dev. Normalize the
+// retired apps.gregale.dev setting as a safety net so stale configuration
+// cannot put a legacy hostname back into customer-facing URLs.
+func appHostForDomain(slug, domain string) string {
 	domain = strings.Trim(strings.TrimSpace(domain), ".")
-	if domain == "" {
-		return "https://" + slug
+	if domain == domainUnset || domain == "apps.gregale.dev" {
+		domain = "gregale.dev"
 	}
-	return "https://" + slug + "." + domain
+	if domain == "" {
+		return slug
+	}
+	return slug + "." + domain
+}
+
+// appURLForDomain returns the HTTPS customer URL for an app or preview slug.
+func appURLForDomain(slug, domain string) string {
+	return "https://" + appHostForDomain(slug, domain)
 }
 
 // renderAppsList renders /dashboard/apps — every deployed app + a
@@ -3065,7 +3072,7 @@ func repoFullNameFromSourceURL(sourceURL string) string {
 
 // projectPreviewItems (ADR-095 PR-C / issue #272) materialises a
 // dashboard.PreviewItem slice from the raw state.App preview rows.
-// The preview-host label ("pr-{N}.{parent-slug}") is derived from
+// The preview-host label ("pr-{N}-{parent-slug}") is derived from
 // PreviewOfSlug + PreviewPrNumber rather than parsed from any
 // stored field because the column is the canonical input — the
 // dashboard never round-trips a host header to mint URLs.
