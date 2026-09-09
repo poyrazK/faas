@@ -55,6 +55,13 @@ func UnitImaged() daemonunit.Unit {
 		Restart:            "on-failure",
 		RestartSec:         "2s",
 		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		// imaged reconciles every runtime base assigned to the node before
+		// sd_notify(READY=1). A new generation can require OCI downloads,
+		// extraction, content validation and vulnerability scans. The
+		// dependency-aware verifier already allows twenty minutes for this
+		// bounded work; keep systemd from killing a healthy reconciliation
+		// at its 90-second default before that verifier can observe it.
+		TimeoutStartSec: "20min",
 
 		Slice: "faas-cp.slice",
 		// Base-image conversion invokes mkfs.ext4 over the OCI layer
