@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1180px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: .85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: .9rem; margin: 1rem 0; }
+    .muted { color: #6b7280; }
+    .flash { padding: .55rem .75rem; border-radius: 4px; margin: .75rem 0; }
+    .flash.ok { background: #d1fae5; color: #065f46; }
+    .flash.error { background: #fee2e2; color: #991b1b; }
+    .badge { display: inline-block; padding: .1rem .45rem; border-radius: 4px; font-size: .8rem; }
+    .badge.enabled { background: #d1fae5; color: #065f46; }
+    .badge.disabled { background: #fee2e2; color: #991b1b; }
+    table { width: 100%; border-collapse: collapse; margin: .7rem 0 1rem; }
+    th, td { text-align: left; padding: .4rem .55rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code, input, select, textarea { font-family: ui-monospace, Menlo, monospace; }
+    input, select, textarea { box-sizing: border-box; max-width: 100%; padding: .35rem; }
+    label { display: block; margin: .5rem 0; }
+    button { padding: .3rem .65rem; border: 1px solid #9ca3af; border-radius: 4px; background: #fff; cursor: pointer; }
+    form.inline { display: inline; margin-right: .35rem; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .45rem; margin: .7rem 0; }
+    .summary div { background: #f8fafc; border-radius: 4px; padding: .45rem; }
+    .summary strong { display: block; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <header><strong>onebox faas</strong><nav><a href="/dashboard/">Overview</a><a href="/dashboard/apps">Apps</a><a href="/dashboard/jobs">Jobs &amp; queues</a><a href="/dashboard/account">Account</a></nav></header>
+  <main>
+    {{template "email-verification-banner" .}}
+    {{$slug := .Data.App.Slug}}
+    <p><a href="/dashboard/apps/{{$slug}}">← Back to {{$slug}}</a> · <a href="/dashboard/apps/{{$slug}}/tenant-surfaces">Tenant surfaces →</a></p>
+    <h1>Traffic mirrors for <code>{{$slug}}</code></h1>
+    <p class="muted">Mirror rules duplicate a percentage of source traffic asynchronously. Counters below are aggregates for the last hour.</p>
+    {{if eq .Data.Action "created"}}<div class="flash ok" role="status">Mirror rule created.</div>{{end}}
+    {{if eq .Data.Action "toggled"}}<div class="flash ok" role="status">Mirror rule status updated.</div>{{end}}
+    {{if eq .Data.Action "deleted"}}<div class="flash ok" role="status">Mirror rule deleted.</div>{{end}}
+    {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The mirror action could not be completed. Refresh and try again.</div>{{end}}
+    {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
+    {{if not .Data.PlanAllowed}}
+      <section class="card" role="status"><h2>Traffic mirrors require a Pro plan</h2><p class="muted">Upgrade this account to compare source and mirror responses.</p><a href="/dashboard/upgrade">View upgrade options →</a></section>
+    {{else}}
+      {{if .Data.Rules}}
+        {{range .Data.Rules}}
+          <section class="card" aria-labelledby="mirror-{{.ID}}">
+            <h2 id="mirror-{{.ID}}"><code>{{.SourceDeploymentID}}</code> → <code>{{.MirrorDeploymentID}}</code> <span class="badge {{if .Enabled}}enabled{{else}}disabled{{end}}">{{if .Enabled}}enabled{{else}}disabled{{end}}</span></h2>
+            <p class="muted">{{.Percent}}% traffic · body comparison {{if .IncludeBody}}enabled{{else}}disabled{{end}} · created {{.CreatedAt}} · updated {{.UpdatedAt}}</p>
+            <div class="summary" aria-label="Mirror summary counters"><div><span class="muted">Invocations</span><strong>{{.Summary.TotalInvocations}}</strong></div><div><span class="muted">Status diffs</span><strong>{{.Summary.StatusDiffCount}}</strong></div><div><span class="muted">Schema diffs</span><strong>{{.Summary.SchemaDiffCount}}</strong></div><div><span class="muted">Body diffs</span><strong>{{.Summary.BodyDiffCount}}</strong></div><div><span class="muted">Mean latency Δ</span><strong>{{.Summary.MeanLatencyDiffMs}} ms</strong></div><div><span class="muted">P99 latency Δ</span><strong>{{.Summary.P99LatencyDiffMs}} ms</strong></div><div><span class="muted">Crashes</span><strong>{{.Summary.CrashCount}}</strong></div></div>
+            <p class="muted">Summary window: {{.Summary.WindowLabel}} · always stripped: <code>{{range .AlwaysStrippedHeaders}}{{.}} {{end}}</code>{{if .RedactHeaders}} · additional redaction: <code>{{range .RedactHeaders}}{{.}} {{end}}</code>{{end}}</p>
+            <form class="inline" method="POST" action="/dashboard/apps/{{$slug}}/mirrors/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">{{if .Enabled}}Disable{{else}}Enable{{end}}</button></form>
+            <form class="inline" method="POST" action="/dashboard/apps/{{$slug}}/mirrors/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Delete</button></form>
+          </section>
+        {{end}}
+      {{else}}<p class="muted">No mirror rules configured for this app.</p>{{end}}
+      <section class="card"><h2>Create a mirror rule</h2><form method="POST" action="/dashboard/apps/{{$slug}}/mirrors"><input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}"><label>Source deployment ID <input name="source_deployment_id" required size="40"></label><label>Mirror deployment ID <input name="mirror_deployment_id" required size="40"></label><label>Percent <input name="percent" type="number" min="0" max="100" value="100" required></label><label><input type="checkbox" name="include_body" value="true"> Include bodies in comparisons</label><label>Additional redacted headers <input name="redact_headers" placeholder="X-Customer-Token, X-Trace-ID" size="44"></label><button type="submit">Create mirror rule</button></form></section>
+    {{end}}
+  </main>
+  <footer>onebox faas · traffic mirrors</footer>
+</body>
+</html>

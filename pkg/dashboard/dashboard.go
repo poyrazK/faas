@@ -510,6 +510,85 @@ type AppWebhooksData struct {
 	ErrorMessage  string
 }
 
+// TenantSurfacesData is the customer-facing projection for the per-app
+// tenant-surface page (issue #1397 / G9). Hostname verification and durable
+// certificate state are kept as display fields so the template never needs
+// to know about pkg/state enums or timestamps.
+type TenantSurfacesData struct {
+	App            AppListItem
+	PlanAllowed    bool
+	FeatureEnabled bool
+	Surfaces       []TenantSurfacePageItem
+	ActionCSRF     string
+	Action         string
+	ErrorMessage   string
+}
+
+// TenantSurfacePageItem is one managed hostname surface and its bounded
+// hostname list.
+type TenantSurfacePageItem struct {
+	ID            string
+	Name          string
+	CertKind      string
+	Status        string
+	CertState     string
+	CertNotAfter  string
+	CertLastError string
+	CreatedAt     string
+	UpdatedAt     string
+	Hostnames     []TenantHostnamePageItem
+}
+
+// TenantHostnamePageItem is the safe dashboard projection of a hostname.
+// Challenge tokens are deliberately omitted from the page.
+type TenantHostnamePageItem struct {
+	Hostname   string
+	Verified   bool
+	VerifiedAt string
+	LastError  string
+	TXTRecord  string
+}
+
+// MirrorsData is the customer-facing projection for the per-app traffic
+// mirror page (issue #1397 / G9). Each rule carries the server-side aggregate
+// counters for the last-hour summary window.
+type MirrorsData struct {
+	App          AppListItem
+	PlanAllowed  bool
+	Rules        []MirrorPageItem
+	ActionCSRF   string
+	Action       string
+	ErrorMessage string
+}
+
+// MirrorPageItem is one mirror rule plus its comparison summary.
+type MirrorPageItem struct {
+	ID                    string
+	SourceDeploymentID    string
+	MirrorDeploymentID    string
+	Percent               int
+	Enabled               bool
+	IncludeBody           bool
+	RedactHeaders         []string
+	AlwaysStrippedHeaders []string
+	CreatedAt             string
+	UpdatedAt             string
+	Summary               MirrorSummaryPageItem
+}
+
+// MirrorSummaryPageItem mirrors api.MirrorSummaryResponse without exposing
+// API package types to dashboard templates.
+type MirrorSummaryPageItem struct {
+	TotalInvocations  int64
+	StatusDiffCount   int64
+	SchemaDiffCount   int64
+	BodyDiffCount     int64
+	MeanLatencyDiffMs int64
+	P99LatencyDiffMs  int64
+	CrashCount        int64
+	WindowLabel       string
+}
+
 // WebhookPageItem is one outbound webhook subscription plus a bounded slice
 // of recent deliveries. Payloads are deliberately omitted from the dashboard
 // projection because they may contain arbitrary customer data.
