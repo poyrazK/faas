@@ -13,11 +13,12 @@
 # detailed row-count, migration, promotion, and cleanup evidence lives in the
 # auto-captured step log.
 #
-# Run as root on the EX44. The script refuses non-Linux hosts.
+# Run as root on the control-plane host. Pass --preflight-only to validate the
+# live inputs and recovery probe without stopping services or changing files.
 
 set -euo pipefail
 
-PG_DATA="${FAAS_PG_DATA:-/var/lib/pgsql/data}"
+PG_DATA="${FAAS_PG_DATA:-}"
 PG_ARCHIVE="${FAAS_PG_ARCHIVE:-/var/lib/pgsql/archive}"
 PG_BASEBACKUP_DIR="${FAAS_PG_BASEBACKUP_DIR:-/var/lib/pgsql/basebackup}"
 PG_MAJOR="${PG_MAJOR:-$(find /etc/postgresql -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort | tail -1 || true)}"
@@ -37,7 +38,15 @@ HOST_PUB="${FAAS_HOST_AGE_PUB:-/etc/faas/secrets/host.age.pub}"
 RECORD_DIR="${FAAS_DRILL_RECORD_DIR:-docs/drills}"
 DRILL_APP_HOST="${FAAS_DRILL_APP_HOST:-10.100.0.1}"
 DRILL_APP_PORT="${FAAS_DRILL_APP_PORT:-8080}"
+DRILL_APP_URL="${FAAS_DRILL_APP_URL:-http://${DRILL_APP_HOST}:${DRILL_APP_PORT}/}"
 SCHEDD_METRICS="${FAAS_SCHEDD_METRICS:-http://127.0.0.1:9091/metrics}"
+PREFLIGHT_ONLY=0
+
+case "${1:-}" in
+  "") ;;
+  --preflight-only) PREFLIGHT_ONLY=1 ;;
+  *) printf 'usage: %s [--preflight-only]\n' "$0" >&2; exit 2 ;;
+esac
 
 # State used by the cleanup trap. Defaults are deliberately populated so a
 # pre-flight failure can never trip `set -u` while the trap is running.
@@ -69,6 +78,7 @@ RESTORE_APPS="-"
 RESTORE_HEALTHY_INSTANCES="-"
 ROW_COUNT_DIFFS="not-run"
 SHA_PRE="-"
+HOST_IDENTITY_STATUS="not-present-on-this-role"
 BASE_SHA="-"
 RECOVERY_STATUS="not-started"
 RESULT="FAIL"
@@ -192,7 +202,7 @@ write_record() {
 | Wall-clock total | $(( total / 60 )) min $(( total % 60 )) s |
 | RPO via basebackup | ${rpo_base_min} min ${rpo_base_sec} s |
 | RPO via WAL | ${rpo_wal_min} min ${rpo_wal_sec} s |
-| Wake latency | ${WAKE_LATENCY}s |
+| Wake latency | ${WAKE_LATENCY}s (end-to-end recovery probe; outside the <350 ms platform snapshot-restore SLO) |
 | Basebackup used | ${LATEST_BB} |
 | Basebackup SHA-256 | ${BASE_SHA} |
 | Recovery stanza status | ${RECOVERY_STATUS} |
@@ -217,7 +227,7 @@ FIELDS
     echo "row-count-diffs: ${ROW_COUNT_DIFFS}"
     echo "host.age:    ${SHA_PRE} (preserved)"
     echo "wipe:        ${PG_DATA}"
-    echo "wake:        ${WAKE_LATENCY}s to ${DRILL_APP_HOST}:${DRILL_APP_PORT}"
+    echo "recovery-app-probe: ${WAKE_LATENCY}s to ${DRILL_APP_URL} (end-to-end; outside the <350 ms platform snapshot-restore SLO)"
     echo "verdict:     ${RESULT}"
     [[ "$FAILURE_REASON" == "-" ]] || echo "failure:     ${FAILURE_REASON}"
     echo '```'
@@ -227,7 +237,7 @@ FIELDS
     echo "- Postgres role wired and converged (wal_level=replica, archive_mode=on, archive_command replays the local WAL archive)."
     echo "- Postgres_backup role wired and converged (faas-pg-basebackup.timer enabled)."
     echo "- The newest backup was restored from base.tar.gz (plus pg_wal.tar.gz when present); archived WAL promotion was verified with pg_is_in_recovery()."
-    echo "- The host.age SHA-256 was stamped before the wipe and verified again before restoring the identity."
+    echo "- Host identity handling: ${HOST_IDENTITY_STATUS}. Compute roles preserve host.age; split control-plane roles do not require it."
     echo
     echo "## Anomalies / observations"
     echo
@@ -260,12 +270,12 @@ cleanup() {
       systemctl reload postgresql 2>/dev/null || warn "could not reload postgresql after restoring $PG_CONF"
     fi
   fi
-  [[ -d "$PG_DATA" ]] && rm -f "$PG_DATA/recovery.signal"
+  [[ -n "$PG_DATA" && -d "$PG_DATA" ]] && rm -f "$PG_DATA/recovery.signal"
 
   # A failure during the wipe/extract phase can leave PGDATA unusable. Keep the
   # service down in that case; starting the daemons against an empty directory
   # would compound the incident. The operator-facing FAIL record explains why.
-  if (( rc != 0 && DRILL_COMPLETED == 0 )); then
+  if (( rc != 0 && DRILL_ACTIVE == 1 && DRILL_COMPLETED == 0 )); then
     if (( POSTGRES_WAS_ACTIVE == 0 )) && systemctl is-active --quiet postgresql; then
       systemctl stop postgresql 2>/dev/null || warn "could not stop postgresql started by the failed drill"
     fi
@@ -298,10 +308,12 @@ cleanup() {
 trap 'cleanup "$?"' EXIT
 
 heading "0/7 Pre-flight"
-[[ "$(uname -s)" == "Linux" ]] || fail "drill must run on the EX44 (Linux)"
-[[ $EUID -eq 0 ]] || fail "must run as root (stops daemons, writes ${PG_DATA})"
+[[ "$(uname -s)" == "Linux" ]] || fail "drill must run on a Linux control-plane host"
+[[ $EUID -eq 0 ]] || fail "must run as root (stops daemons and restores the live PostgreSQL data directory)"
 command -v runuser >/dev/null 2>&1 || fail "runuser is required to query PostgreSQL as the postgres OS user"
 command -v psql >/dev/null 2>&1 || fail "psql is required on PATH"
+command -v curl >/dev/null 2>&1 || fail "curl is required to probe the recovery app"
+command -v tar >/dev/null 2>&1 || fail "tar is required to validate and restore the basebackup"
 [[ -x "$PG_ISREADY" ]] || fail "pg_isready missing at ${PG_ISREADY}"
 [[ -d "$PG_ARCHIVE" ]] || fail "${PG_ARCHIVE} missing — run the M8 postgres role first"
 [[ -d "$PG_BASEBACKUP_DIR" ]] || fail "${PG_BASEBACKUP_DIR} missing — basebackup is the restore source"
@@ -310,6 +322,8 @@ command -v psql >/dev/null 2>&1 || fail "psql is required on PATH"
 LATEST_BB="$(ls -1dt "$PG_BASEBACKUP_DIR"/basebackup-* 2>/dev/null | head -1 || true)"
 [[ -n "$LATEST_BB" && -d "$LATEST_BB" ]] || fail "no basebackup-*/ under ${PG_BASEBACKUP_DIR}"
 [[ -f "$LATEST_BB/base.tar.gz" ]] || fail "${LATEST_BB}/base.tar.gz missing — backup is not a tar-format pg_basebackup"
+tar -tzf "$LATEST_BB/base.tar.gz" PG_VERSION >/dev/null 2>&1 \
+  || fail "${LATEST_BB}/base.tar.gz is unreadable or does not contain PG_VERSION"
 LATEST_BB_TS=$(stat -c %Y "$LATEST_BB")
 RPO_BASE=$(( DRILL_START - LATEST_BB_TS ))
 (( RPO_BASE >= 0 )) || RPO_BASE=0
@@ -328,44 +342,93 @@ else
   warn "no archived WAL found — drill will replay from the basebackup (RPO = basebackup age)"
 fi
 
-heading "0.5/7 Stamp host.age into basebackup (preserves sealed secrets)"
-[[ -f "$HOST_KEY" ]] || fail "$HOST_KEY missing — refusing to drill before vmmd initializes the host key"
-[[ -f "$HOST_PUB" ]] || fail "$HOST_PUB missing — run the host bootstrap first"
-SHA_PRE="$(sha256sum "$HOST_KEY" | awk '{print $1}')"
-install -m 0400 "$HOST_KEY" "$LATEST_BB/host.age"
-install -m 0444 "$HOST_PUB" "$LATEST_BB/host.age.pub"
-printf '%s\n' "$SHA_PRE" > "$LATEST_BB/host.age.sha256"
-ok "host.age SHA-256: $SHA_PRE (stamped at $LATEST_BB/host.age)"
+if [[ -f "$HOST_KEY" && -f "$HOST_PUB" ]]; then
+  HOST_IDENTITY_STATUS="present-and-preserved"
+  SHA_PRE="$(sha256sum "$HOST_KEY" | awk '{print $1}')"
+  ok "compute host identity pair is present (SHA-256 ${SHA_PRE})"
+elif [[ -e "$HOST_KEY" || -e "$HOST_PUB" ]]; then
+  fail "incomplete host identity: ${HOST_KEY} and ${HOST_PUB} must either both exist or both be absent"
+else
+  ok "host identity is absent on this role (expected for a split control plane)"
+fi
 
-heading "0.75/7 Capture database invariants"
-capture_row_counts || fail "could not capture accounts/apps/healthy-instance counts before the crash"
+systemctl is-active --quiet postgresql || fail "postgresql must be active before the drill"
+POSTGRES_WAS_ACTIVE=1
+LIVE_PG_DATA="$(psql_query 'SHOW data_directory' | tr -d '[:space:]')"
+[[ "$LIVE_PG_DATA" == /* && -f "$LIVE_PG_DATA/PG_VERSION" ]] \
+  || fail "PostgreSQL returned an invalid live data_directory: ${LIVE_PG_DATA}"
+if [[ -n "$PG_DATA" ]]; then
+  [[ "$(readlink -f "$PG_DATA")" == "$(readlink -f "$LIVE_PG_DATA")" ]] \
+    || fail "FAAS_PG_DATA=${PG_DATA} does not match PostgreSQL data_directory=${LIVE_PG_DATA}"
+else
+  PG_DATA="$LIVE_PG_DATA"
+fi
+ok "live PostgreSQL data directory: ${PG_DATA}"
+for unit in "${DAEMONS[@]}"; do
+  if systemctl is-active --quiet "faas-${unit}.service"; then
+    ACTIVE_DAEMONS+=("$unit")
+  fi
+done
+(( ${#ACTIVE_DAEMONS[@]} > 0 )) || fail "no active FaaS daemons found on this host"
+ok "active services to restore: ${ACTIVE_DAEMONS[*]}"
+
 MIGRATION_VERSION_BEFORE="$(migration_version)"
-[[ -n "$MIGRATION_VERSION_BEFORE" ]] || MIGRATION_VERSION_BEFORE="-"
-ok "rows before: accounts=${LIVE_ACCOUNTS} apps=${LIVE_APPS} instances_states.healthy=${LIVE_HEALTHY_INSTANCES}"
+[[ "$MIGRATION_VERSION_BEFORE" =~ ^[1-9][0-9]*$ ]] \
+  || fail "database migration ledger is missing or empty"
 ok "migration version before: ${MIGRATION_VERSION_BEFORE}"
+
+read -r PREFLIGHT_HTTP PREFLIGHT_TIME < <(curl -sS -o /dev/null -w '%{http_code} %{time_total}\n' --max-time 60 "$DRILL_APP_URL" || printf '000 -\n')
+[[ "$PREFLIGHT_HTTP" =~ ^2 ]] \
+  || fail "recovery app pre-flight responded ${PREFLIGHT_HTTP} at ${DRILL_APP_URL} (expected 2xx)"
+ok "recovery app pre-flight responded ${PREFLIGHT_HTTP} in ${PREFLIGHT_TIME}s"
+
+if (( PREFLIGHT_ONLY == 1 )); then
+  ok "pre-flight passed; no services were stopped and no files were changed"
+  trap - EXIT
+  exit 0
+fi
 
 # From this point onward an operator-visible FAIL record is useful, and the
 # cleanup trap owns service/config recovery.
 DRILL_ACTIVE=1
 
-heading "1/7 Stop daemons + Postgres (deliberate crash)"
-for unit in "${DAEMONS[@]}"; do
-  if systemctl is-active --quiet "faas-${unit}.service"; then
-    ACTIVE_DAEMONS+=("$unit")
-    systemctl stop "faas-${unit}.service"
-    ok "stopped faas-${unit}.service"
-  else
-    warn "faas-${unit}.service was not active"
-  fi
+heading "0.5/7 Quiesce writes and capture database invariants"
+for unit in "${ACTIVE_DAEMONS[@]}"; do
+  systemctl stop "faas-${unit}.service"
+  ok "stopped faas-${unit}.service"
 done
 DAEMONS_WERE_STOPPED=1
-if systemctl is-active --quiet postgresql; then
-  POSTGRES_WAS_ACTIVE=1
-  systemctl stop postgresql
-  ok "stopped postgresql"
+capture_row_counts || fail "could not capture quiesced accounts/apps/healthy-instance counts"
+ok "quiesced rows: accounts=${LIVE_ACCOUNTS} apps=${LIVE_APPS} instances_states.healthy=${LIVE_HEALTHY_INSTANCES}"
+
+FORCED_WAL="$(psql_query 'SELECT pg_walfile_name(pg_switch_wal())' | tr -d '[:space:]')"
+[[ "$FORCED_WAL" =~ ^[0-9A-F]{24}$ ]] || fail "pg_switch_wal returned an invalid segment name: ${FORCED_WAL}"
+WAL_ARCHIVED=0
+for _ in $(seq 1 60); do
+  if [[ -f "$PG_ARCHIVE/$FORCED_WAL" ]]; then
+    WAL_ARCHIVED=1
+    break
+  fi
+  sleep 1
+done
+(( WAL_ARCHIVED == 1 )) || fail "forced WAL ${FORCED_WAL} was not archived within 60s"
+LATEST_WAL="$PG_ARCHIVE/$FORCED_WAL"
+RPO_SECONDS=0
+ok "forced and archived quiesced WAL segment ${FORCED_WAL} (RPO 0s)"
+
+heading "0.75/7 Stamp host.age into basebackup when this role owns it"
+if [[ "$HOST_IDENTITY_STATUS" == "present-and-preserved" ]]; then
+  install -m 0400 "$HOST_KEY" "$LATEST_BB/host.age"
+  install -m 0444 "$HOST_PUB" "$LATEST_BB/host.age.pub"
+  printf '%s\n' "$SHA_PRE" > "$LATEST_BB/host.age.sha256"
+  ok "host.age SHA-256 stamped at $LATEST_BB/host.age"
 else
-  warn "postgresql was not active"
+  ok "host.age stamp skipped on split control-plane role"
 fi
+
+heading "1/7 Stop Postgres (deliberate crash)"
+systemctl stop postgresql
+ok "stopped postgresql"
 
 heading "2/7 Wipe ${PG_DATA} (disaster simulation)"
 rm -rf "$PG_DATA"
@@ -403,7 +466,7 @@ systemctl start postgresql
 ok "postgresql started"
 wait_for_promotion || fail "Postgres never promoted — inspect journalctl -u postgresql"
 
-for unit in "${DAEMONS[@]}"; do
+for unit in "${ACTIVE_DAEMONS[@]}"; do
   systemctl start "faas-${unit}.service"
   ok "started faas-${unit}.service"
 done
@@ -414,11 +477,11 @@ done
 # completed.
 MIGRATION_READY=0
 for i in $(seq 1 60); do
-  if systemctl is-active --quiet faas-apid.service && migration_ready; then
+  if migration_ready && { ! daemon_was_active apid || systemctl is-active --quiet faas-apid.service; }; then
     MIGRATION_READY=1
     MIGRATION_UPTIME="$(( $(date +%s) - MIGRATION_START ))s"
     MIGRATION_VERSION_AFTER="$(migration_version)"
-    SCHEMA_CHECK="goose ledger present; apid active"
+    SCHEMA_CHECK="goose ledger present; restored role services active"
     ok "schema migrations current after ${MIGRATION_UPTIME}"
     break
   fi
@@ -426,15 +489,21 @@ for i in $(seq 1 60); do
 done
 (( MIGRATION_READY == 1 )) || fail "schema migrations did not become ready after 120s"
 
-heading "5.5/7 Restore host.age into /etc/faas/secrets"
-SHA_STORED="$(cat "$LATEST_BB/host.age.sha256")"
-SHA_LIVE="$(sha256sum "$LATEST_BB/host.age" | awk '{print $1}')"
-[[ "$SHA_STORED" == "$SHA_LIVE" ]] || fail "host.age SHA changed between backup and restore — refusing to overwrite"
-install -d -m 0700 -o root -g root /etc/faas/secrets
-install -m 0400 "$LATEST_BB/host.age" "$HOST_KEY"
-install -m 0444 "$LATEST_BB/host.age.pub" "$HOST_PUB"
-systemctl restart faas-vmmd.service
-ok "host.age restored and vmmd restarted"
+heading "5.5/7 Restore host.age into /etc/faas/secrets when this role owns it"
+if [[ "$HOST_IDENTITY_STATUS" == "present-and-preserved" ]]; then
+  SHA_STORED="$(cat "$LATEST_BB/host.age.sha256")"
+  SHA_LIVE="$(sha256sum "$LATEST_BB/host.age" | awk '{print $1}')"
+  [[ "$SHA_STORED" == "$SHA_LIVE" ]] || fail "host.age SHA changed between backup and restore — refusing to overwrite"
+  install -d -m 0700 -o root -g root /etc/faas/secrets
+  install -m 0400 "$LATEST_BB/host.age" "$HOST_KEY"
+  install -m 0444 "$LATEST_BB/host.age.pub" "$HOST_PUB"
+  if daemon_was_active vmmd; then
+    systemctl restart faas-vmmd.service
+  fi
+  ok "host.age restored and verified"
+else
+  ok "host.age restore skipped on split control-plane role"
+fi
 
 heading "6/7 Verify row counts, schedd admission, and test app"
 RESTORE_ACCOUNTS="$(psql_count 'SELECT count(*) FROM accounts')" || fail "could not query restored accounts count"
@@ -451,24 +520,25 @@ for table in accounts apps instances_states.healthy; do
 done
 ok "row-count invariants passed (${ROW_COUNT_DIFFS})"
 
-READY=0
-for i in $(seq 1 60); do
-  if curl -fsS "$SCHEDD_METRICS" 2>/dev/null | grep -q "fcvm_resident_ram_pct"; then
-    READY=1
-    ok "schedd admission up (after $((i * 2))s)"
-    break
-  fi
-  sleep 2
-done
-(( READY == 1 )) || fail "schedd admission never came up after 120s — see journalctl -u faas-schedd"
+if daemon_was_active schedd; then
+  READY=0
+  for i in $(seq 1 60); do
+    if curl -fsS "$SCHEDD_METRICS" 2>/dev/null | grep -q "fcvm_resident_ram_pct"; then
+      READY=1
+      ok "schedd admission up (after $((i * 2))s)"
+      break
+    fi
+    sleep 2
+  done
+  (( READY == 1 )) || fail "schedd admission never came up after 120s — see journalctl -u faas-schedd"
+else
+  ok "schedd admission check skipped on role without an active schedd"
+fi
 
-WAKE_START=$(date +%s)
-HTTP_CODE=$(curl -sS -o /tmp/faas-drill-body -w '%{http_code}' --max-time 60 \
-  "http://${DRILL_APP_HOST}:${DRILL_APP_PORT}/" || printf '000')
-WAKE_END=$(date +%s)
-WAKE_LATENCY=$(( WAKE_END - WAKE_START ))
+read -r HTTP_CODE WAKE_LATENCY < <(curl -sS -o /tmp/faas-drill-body -w '%{http_code} %{time_total}\n' --max-time 60 \
+  "$DRILL_APP_URL" || printf '000 -\n')
 [[ "$HTTP_CODE" =~ ^2 ]] || fail "test app responded ${HTTP_CODE} (expected 2xx); body in /tmp/faas-drill-body"
-ok "test app responded ${HTTP_CODE} in ${WAKE_LATENCY}s"
+ok "test app responded ${HTTP_CODE} in ${WAKE_LATENCY}s (end-to-end recovery probe; outside platform snapshot-restore SLO)"
 
 heading "7/7 Summary"
 DRILL_END=$(date +%s)

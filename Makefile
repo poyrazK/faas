@@ -426,8 +426,12 @@ backup-pg: ## Take a Postgres base backup into /var/lib/pgsql/basebackup/basebac
 	@sudo -u postgres pg_basebackup -Ft -z -D /var/lib/pgsql/basebackup/basebackup-$$(date -u +%Y-%m-%dT%H%M%SZ) -P -X fetch --checkpoint=fast --label=faas-m8-nightly
 
 .PHONY: backup-restore-drill
-backup-restore-drill: ## Run the M8 restore drill end-to-end (must run on EX44 as root)
+backup-restore-drill: ## Run the destructive M8 restore drill on the control plane as root
 	sudo bash "$(CURDIR)/deploy/scripts/faas-m8-restore-drill.sh"
+
+.PHONY: backup-restore-drill-preflight
+backup-restore-drill-preflight: ## Validate the M8 restore drill without stopping services or changing files
+	sudo bash "$(CURDIR)/deploy/scripts/faas-m8-restore-drill.sh" --preflight-only
 
 .PHONY: lint-drill
 lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts

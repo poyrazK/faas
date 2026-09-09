@@ -17,11 +17,11 @@
 | Wall-clock total | <min> min <sec> s |
 | RPO via basebackup | <min> min <sec> s |
 | RPO via WAL | <min> min <sec> s |
-| Wake latency | <sec>s |
+| Wake latency | <sec>s (end-to-end recovery probe; outside the <350 ms platform snapshot-restore SLO) |
 | Basebackup used | <path under /var/lib/pgsql/basebackup/> |
 | Basebackup SHA-256 | <sha256sum of base.tar.gz> |
 | Recovery stanza status | promoted at <ISO-8601> |
-| host.age SHA-256 (preserved) | <sha256sum of host.age at backup> |
+| host.age SHA-256 (preserved) | <sha256sum on a compute role, or not-present-on-this-role> |
 | Verdict | **PASS** / **FAIL** (bar = 30 min) |
 | Operator / commit | <$USER> @ <git rev-parse HEAD> |
 
@@ -32,9 +32,9 @@ drill-start: <ISO-8601>
 basebackup:  <path> (<sha256>)
 rpo-base:    <min> min <sec> s
 rpo-wal:     <min> min <sec> s
-host.age:    <sha256> (preserved)
+host.age:    <sha256, or not-present-on-this-role>
 wipe:        /var/lib/pgsql/data
-wake:        <sec>s to 10.100.0.1:8080
+recovery-app-probe: <sec>s to <FAAS_DRILL_APP_URL> (end-to-end; outside the <350 ms platform snapshot-restore SLO)
 verdict:     PASS
 ```
 
@@ -49,9 +49,11 @@ verdict:     PASS
   shipping; most-recent WAL recorded above.
 - Basebackup taken via `pg_basebackup -Ft -z -D <dir>` during the nightly
   cron at <ISO-8601>, or via `make backup-pg` for an immediate run.
-- All nine faas units (`apid`, `gatewayd-public`, `gatewayd-internal`,
-  `githubd`, `schedd`, `vmmd`, `imaged`, `builderd`, `meterd`) were healthy
-  at drill start.
+- The script records the FaaS units active on the current role and restarts
+  only that set. A split control plane therefore does not start compute units.
+- `host.age` and `host.age.pub` must either both exist or both be absent. The
+  key pair is preserved on compute roles and is not required on a split
+  control-plane-only host.
 
 ## Anomalies / observations
 

@@ -73,17 +73,26 @@ cluster within 5%.
 ### Local round-trip (M8 baseline — still required)
 
 ```bash
+sudo make backup-restore-drill-preflight
 sudo make backup-restore-drill
 ```
 
-This is destructive: it deliberately stops the FaaS daemons, wipes the live
+The preflight validates the latest backup archive, PostgreSQL, the database
+migration ledger, the role's active FaaS services, host-identity consistency,
+and a configurable recovery app URL. It does not stop services or modify files.
+
+The full command is destructive: it deliberately stops the FaaS daemons that
+were active on this role, captures exact row counts, forces and waits for a
+quiesced WAL archive boundary, stops PostgreSQL, and wipes the live
 PostgreSQL data directory, extracts tar-format `base.tar.gz` and the optional
 `pg_wal.tar.gz` member, replays archived WAL, checks promotion and schema
 migrations, compares the `accounts`, `apps`, and healthy-instance row counts
-with the pre-crash values, and wakes the fixture app. The script writes a
-dated PASS or FAIL record under `docs/drills/`; an M8 sign-off PR must carry
-the `m8-done` label only when that record is a committed PASS from the last 30
-days.
+with the quiesced pre-crash values, and probes the recovery app. Set
+`FAAS_DRILL_APP_URL=https://<healthy-app>.gregale.dev/` for split deployments.
+This public probe measures full recovery only; it is outside the platform-only
+snapshot restore SLO of p95 below 350 ms. The script writes a dated PASS or
+FAIL record under `docs/drills/`; an M8 sign-off PR must carry the `m8-done`
+label only when that record is a committed PASS from the last 30 days.
 
 ## Validation matrix
 
