@@ -413,6 +413,10 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_WEBHOOK_SECRET", Owners: []string{"gatewayd-internal", "githubd"}, Source: EnvSourceSecretsEnv, Note: "deprecated fallback delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env"},
 	{Name: "FAAS_WORKFLOWS_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceUnit, Note: "explicit 0 in faas-schedd.service; set to 1 to activate durable workflow dispatch"},
 	{Name: "FAAS_WORKLOAD_", Owners: []string{"guest"}, Source: EnvSourceGuest, Note: "guest-init injects per-task loopback endpoint metadata for the main workload and declared sidecars"},
+	{Name: "FAAS_WORKLOAD_IDENTITY_ISSUER", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional vmmd workload-identity issuer override; config TOML is the primary deployment setting"},
+	{Name: "FAAS_WORKLOAD_IDENTITY_KEY_ID", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional vmmd workload-identity key ID override; config TOML is the primary deployment setting"},
+	{Name: "FAAS_WORKLOAD_IDENTITY_KEY_PATH", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional vmmd workload-identity signing-key path override; an empty path leaves issuance disabled"},
+	{Name: "FAAS_WORKLOAD_IDENTITY_TTL_SECONDS", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional vmmd workload-identity token lifetime override (30..3600 seconds)"},
 }
 
 // EnvContractByName indexes EnvContract by variable name.
