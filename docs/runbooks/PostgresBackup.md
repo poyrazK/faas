@@ -89,6 +89,9 @@ PostgreSQL data directory, extracts tar-format `base.tar.gz` and the optional
 migrations, compares the `accounts`, `apps`, and healthy-instance row counts
 with the quiesced pre-crash values, and probes the recovery app. Set
 `FAAS_DRILL_APP_URL=https://<healthy-app>.gregale.dev/` for split deployments.
+When the script is staged outside a Git checkout, also set
+`FAAS_DRILL_COMMIT=<40-character-source-commit>` so the evidence identifies
+the exact reviewed script.
 This public probe measures full recovery only; it is outside the platform-only
 snapshot restore SLO of p95 below 350 ms. The script writes a dated PASS or
 FAIL record under `docs/drills/`; an M8 sign-off PR must carry the `m8-done`

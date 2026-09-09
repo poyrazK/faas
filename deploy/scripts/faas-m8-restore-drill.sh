@@ -36,6 +36,7 @@ HOST_KEY="${FAAS_HOST_AGE_KEY:-/etc/faas/secrets/host.age}"
 HOST_PUB="${FAAS_HOST_AGE_PUB:-/etc/faas/secrets/host.age.pub}"
 
 RECORD_DIR="${FAAS_DRILL_RECORD_DIR:-docs/drills}"
+DRILL_COMMIT="${FAAS_DRILL_COMMIT:-}"
 DRILL_APP_HOST="${FAAS_DRILL_APP_HOST:-10.100.0.1}"
 DRILL_APP_PORT="${FAAS_DRILL_APP_PORT:-8080}"
 DRILL_APP_URL="${FAAS_DRILL_APP_URL:-http://${DRILL_APP_HOST}:${DRILL_APP_PORT}/}"
@@ -181,7 +182,7 @@ write_record() {
   rpo_wal_sec=$(( RPO_SECONDS % 60 ))
   operator="${SUDO_USER:-${USER:-$(id -un)}}"
   box="$(hostname -f 2>/dev/null || hostname)"
-  commit_ref="$(git rev-parse HEAD 2>/dev/null || printf 'no-git')"
+  commit_ref="${DRILL_COMMIT:-$(git rev-parse HEAD 2>/dev/null || printf 'no-git')}"
 
   {
     echo "# Restore drill — ${record_date} (M8 acceptance, spec §14)"
@@ -322,6 +323,8 @@ command -v tar >/dev/null 2>&1 || fail "tar is required to validate and restore 
 [[ -d "$PG_ARCHIVE" ]] || fail "${PG_ARCHIVE} missing — run the M8 postgres role first"
 [[ -d "$PG_BASEBACKUP_DIR" ]] || fail "${PG_BASEBACKUP_DIR} missing — basebackup is the restore source"
 [[ -f "$PG_CONF" ]] || fail "${PG_CONF} missing — PostgreSQL cluster config is not converged"
+[[ -z "$DRILL_COMMIT" || "$DRILL_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "FAAS_DRILL_COMMIT must be the 40-character commit that supplied this script"
 
 LATEST_BB="$(ls -1dt "$PG_BASEBACKUP_DIR"/basebackup-* 2>/dev/null | head -1 || true)"
 [[ -n "$LATEST_BB" && -d "$LATEST_BB" ]] || fail "no basebackup-*/ under ${PG_BASEBACKUP_DIR}"

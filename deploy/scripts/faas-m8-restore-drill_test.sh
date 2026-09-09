@@ -126,6 +126,8 @@ grep -q 'FAAS_PG_DATA=.*does not match PostgreSQL data_directory' "$SCRIPT" \
   || { echo "FAIL: explicit PGDATA mismatch is not rejected"; exit 1; }
 grep -q 'FAAS_DRILL_APP_URL' "$SCRIPT" \
   || { echo "FAIL: configurable public recovery app URL missing"; exit 1; }
+grep -q 'FAAS_DRILL_COMMIT' "$SCRIPT" \
+  || { echo "FAIL: staged scripts cannot record an explicit source commit"; exit 1; }
 grep -q 'outside the <350 ms platform snapshot-restore SLO' "$SCRIPT" \
   || { echo "FAIL: recovery probe is not distinguished from platform restore latency"; exit 1; }
 echo "OK: split-role, quiesced-WAL, preflight, and latency-scope contracts present"
