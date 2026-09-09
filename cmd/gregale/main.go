@@ -403,9 +403,9 @@ func run(args []string) (status int) {
 		// ADR-081: durable execution workflows (list|run|status|steps|cancel|events).
 		return cmdWorkflows(args[1:])
 	case "debug":
-		// ADR-127 PR-B: production debugger (regression banner,
-		// compare panel, replay stub). Mirrors `invocations` for
-		// dispatcher shape.
+		// ADR-127: production debugger (request evidence, regression
+		// watch, deployment compare, safe replay, and incident bundles).
+		// Mirrors `invocations` for dispatcher shape.
 		return cmdDebug(args[1:])
 	case "billing":
 		// Issue #253: dashboard's "Open Stripe billing portal"
