@@ -37,7 +37,7 @@ export class TenantSurfacesService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
         404: `code: not_found`,
       },
     });
@@ -83,10 +83,10 @@ export class TenantSurfacesService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
+        403: `code: tenant_surface_quota | tenant_hostname_quota | forbidden — the account or seed-hostname cap is exhausted, or the caller lacks scope.`,
         404: `code: not_found`,
-        409: `code: conflict`,
+        409: `code: tenant_hostname_already_claimed | conflict — a seed hostname or surface name is already claimed.`,
       },
     });
   }
@@ -117,7 +117,7 @@ export class TenantSurfacesService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
         404: `code: not_found`,
       },
     });
@@ -149,7 +149,7 @@ export class TenantSurfacesService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
         404: `code: not_found`,
       },
     });
@@ -196,10 +196,10 @@ export class TenantSurfacesService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
+        403: `code: tenant_hostname_quota | forbidden — the surface hostname cap is exhausted or the caller lacks scope.`,
         404: `code: not_found`,
-        409: `code: conflict`,
+        409: `code: tenant_hostname_already_claimed | conflict — the hostname belongs to another tenant surface.`,
       },
     });
   }
@@ -236,7 +236,7 @@ export class TenantSurfacesService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
         404: `code: not_found`,
       },
     });

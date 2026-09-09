@@ -777,6 +777,14 @@ export class DeploymentsService {
       },
       body: requestBody,
       mediaType: 'application/json',
+      errors: {
+        402: `code: plan_reorder_disabled — this plan does not include deployment queue controls.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
     });
   }
   /**

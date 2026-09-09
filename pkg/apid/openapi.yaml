@@ -150,6 +150,8 @@ tags:
       the exit code, and reports back. Lifecycle (created → running →
       succeeded | failed | timeout | oom | cancelled), per-task retry
       with backoff, dead-letter accounting on exhaustion.
+  - name: workflows
+    description: Durable multi-step workflow runs and external events (ADR-081).
   - name: queues
     description: Per-app FIFO queues (send / receive / ack).
   - name: delayed_tasks
@@ -5310,7 +5312,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ListTenantSurfacesResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [tenant-surfaces]
@@ -5336,10 +5338,18 @@ paths:
               schema: { $ref: '#/components/schemas/TenantSurfaceResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
+        '403':
+          description: "code: tenant_surface_quota | tenant_hostname_quota | forbidden — the account or seed-hostname cap is exhausted, or the caller lacks scope."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409':
+          description: "code: tenant_hostname_already_claimed | conflict — a seed hostname or surface name is already claimed."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/tenant-surfaces/{id}:
     parameters:
@@ -5360,7 +5370,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TenantSurfaceResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [tenant-surfaces]
@@ -5369,7 +5379,7 @@ paths:
       responses:
         '204': { description: Surface and hostnames removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/tenant-surfaces/{id}/hostnames:
@@ -5399,10 +5409,18 @@ paths:
               schema: { $ref: '#/components/schemas/TenantHostnameResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
+        '403':
+          description: "code: tenant_hostname_quota | forbidden — the surface hostname cap is exhausted or the caller lacks scope."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409':
+          description: "code: tenant_hostname_already_claimed | conflict — the hostname belongs to another tenant surface."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/tenant-surfaces/{id}/hostnames/{hostname}:
     parameters:
@@ -5424,7 +5442,7 @@ paths:
       responses:
         '204': { description: Hostname removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ADR-117 PR-C: env-diff matrix endpoint. The response is
@@ -5977,6 +5995,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClearObsoleteReport'
+        '402':
+          description: "code: plan_reorder_disabled — this plan does not include deployment queue controls."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/deployments/{id}/traffic:
     parameters:
@@ -7075,6 +7100,194 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # ─── Durable workflows (ADR-081) ────────────────────────────
+
+  /v1/apps/{slug}/workflows/{name}/runs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, minLength: 1 }
+        description: Workflow name from the app's current live deployment.
+    post:
+      tags: [workflows]
+      operationId: createWorkflowRun
+      summary: Start a durable workflow run.
+      description: |
+        Snapshots the named workflow definition from the app's current live
+        deployment and creates a pending run. The optional request body is
+        retained as the workflow input and may be any valid JSON value.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '201':
+          description: The new pending workflow run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: "code: plan_workflows_not_allowed — this plan does not include durable workflows."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: "code: plan_workflows_quota | forbidden — the concurrent-run cap is exhausted or the caller lacks scope."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: "code: workflow_definition_not_found | app_not_found — the app or named live workflow definition does not exist."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/workflows/runs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [workflows]
+      operationId: listWorkflowRuns
+      summary: List durable workflow runs for an app.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, running, awaiting_event, succeeded, failed, dead]
+          description: Optional exact status filter.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Maximum runs to return in this page.
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of runs to skip before returning results.
+      responses:
+        '200':
+          description: A page of workflow runs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowRunsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier to retrieve.
+    get:
+      tags: [workflows]
+      operationId: getWorkflowRun
+      summary: Get a durable workflow run.
+      responses:
+        '200':
+          description: The workflow run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/steps:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier whose step attempts are returned.
+    get:
+      tags: [workflows]
+      operationId: listWorkflowSteps
+      summary: List the step attempts for a workflow run.
+      responses:
+        '200':
+          description: Ordered workflow step attempts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowStepsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/events:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier that receives the event.
+    post:
+      tags: [workflows]
+      operationId: injectWorkflowEvent
+      summary: Deliver an external event to a waiting workflow run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InjectWorkflowEventRequest' }
+      responses:
+        '200':
+          description: The event was recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InjectWorkflowEventResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '409':
+          description: "code: workflow_not_running — only running or awaiting_event runs accept events."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier to cancel.
+    post:
+      tags: [workflows]
+      operationId: cancelWorkflowRun
+      summary: Cancel a durable workflow run.
+      description: |
+        Marks a non-terminal run failed with an operator-cancelled error and
+        skips its pending, running, and waiting steps. Repeating the request on
+        a terminal run returns the existing run.
+      responses:
+        '200':
+          description: The terminal workflow run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
 
   # ─── Jobs (issue #1184 Workstream A / ADR-099) ─────────────
   # Run-to-completion jobs. 11 endpoints mirroring the cron
@@ -23387,6 +23600,18 @@ components:
 
 
   responses:
+
+    TenantSurfacesNotAllowed:
+      description: "code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces."
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    WorkflowRunNotFound:
+      description: "code: workflow_run_not_found — the run is absent or belongs to another account."
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
 
     Unauthorized:
       description: 'code: unauthorized'
