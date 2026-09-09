@@ -47,6 +47,10 @@ The expected state is one healthy target per discovered target and coverage of
 `1` for each enabled job. A target with `up == 0` is a downstream scrape
 failure. If coverage is below `1` but no `up == 0` series exists, all or part
 of the target list disappeared before Prometheus created a scrape series.
+The rendered control-plane jobs have a hard `target_limit` of 1,000, and apid
+rejects a larger configured registry snapshot with an explicit discovery
+failure. This prevents a fleet expansion from silently creating an unbounded
+scrape set.
 
 Check the Prometheus target view for the node-level error:
 
@@ -86,6 +90,12 @@ ORDER BY name;
 Fix the registry row through the compute-node registration/reconciliation
 path. Do not hand-edit `prometheus.yml` or add provider IPs as a workaround;
 the next HTTP-SD refresh should replace the target automatically.
+
+New or updated compute-node registrations reject loopback and wildcard
+`gateway_target_url` values up front. If registration returns
+`Invalid gateway_target_url`, provide the node's stable private hostname or
+address reachable from the control plane on port 8080; do not retry with a
+loopback alias such as `localhost`.
 
 If the registry is healthy but apid's endpoint remains stale, recover apid's
 database connectivity first. Restart apid only after the underlying pool,

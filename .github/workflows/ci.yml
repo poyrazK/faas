@@ -1092,6 +1092,7 @@ jobs:
             -a "src=$(pwd)/roles/prometheus/templates/prometheus.service.j2 dest=$RUNNER_TEMP/prometheus.service"
           grep -q 'job_name: "gatewayd-internal"' "$RUNNER_TEMP/prometheus.yml"
           grep -q 'http://127.0.0.1:8081/v1/internal/metrics/targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'target_limit: 1000' "$RUNNER_TEMP/prometheus.yml"
           grep -q -- '--web.listen-address=127.0.0.1:9095' "$RUNNER_TEMP/prometheus.service"
           if grep -q '{{' "$RUNNER_TEMP/prometheus.service"; then
             echo 'rendered Prometheus systemd unit contains an unresolved template placeholder' >&2

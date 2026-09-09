@@ -3,14 +3,13 @@ package main
 import (
 	"net"
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 )
 
 const (
 	computeMetricsDiscoveryPath  = "/v1/internal/metrics/targets"
 	promtailMetricsDiscoveryPath = "/v1/internal/metrics/promtail-targets"
+	maxMetricsDiscoveryTargets   = 1000
 )
 
 // prometheusTargetGroup is the HTTP service-discovery wire shape described by
@@ -60,6 +59,23 @@ func (s *server) metricsDiscovery(w http.ResponseWriter, r *http.Request, job st
 			s.log.Warn("compute metrics discovery failed", "err", err)
 		}
 		http.Error(w, "metrics discovery is temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	configuredNodes := 0
+	for _, node := range nodes {
+		if node.Active && node.GatewayTargetURL != nil {
+			configuredNodes++
+		}
+	}
+	if configuredNodes > maxMetricsDiscoveryTargets {
+		s.metricsDiscoveryMetrics.request(job, "error")
+		if s.log != nil {
+			s.log.Error("compute metrics discovery target limit exceeded",
+				"job", job,
+				"configured_nodes", configuredNodes,
+				"target_limit", maxMetricsDiscoveryTargets)
+		}
+		http.Error(w, "compute metrics discovery target limit exceeded", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -119,19 +135,8 @@ func (s *server) metricsDiscovery(w http.ResponseWriter, r *http.Request, job st
 // control-plane self-scrape; the gateway's own endpoint validation remains
 // provider-neutral and may still accept private IPs.
 func computeMetricsTarget(raw string) (string, bool) {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme != "tcp" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", false
-	}
-	host, port, err := net.SplitHostPort(u.Host)
-	if err != nil || host == "" || port == "" {
-		return "", false
-	}
-	portNumber, err := strconv.Atoi(port)
-	if err != nil || portNumber < 1 || portNumber > 65535 {
-		return "", false
-	}
-	if ip := net.ParseIP(host); ip != nil && (ip.IsUnspecified() || ip.IsLoopback()) {
+	host, port, err := parseGatewayTargetURL(raw)
+	if err != nil {
 		return "", false
 	}
 	return net.JoinHostPort(host, port), true
