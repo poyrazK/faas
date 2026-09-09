@@ -3478,6 +3478,8 @@ func (m *MemStore) MarkInstanceMigrating(_ context.Context, instanceID, currentN
 	}
 	ins.State = string(StateMigrating)
 	ins.LeaseToken = leaseToken
+	now := time.Now().UTC()
+	ins.MigrationStartedAt = &now
 	m.instances[instanceID] = ins
 	return nil
 }
@@ -3509,6 +3511,7 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	ins.MigratedFromNodeID = &migFrom
 	ins.MigratedAt = &now
 	ins.LeaseToken = leaseToken
+	ins.MigrationStartedAt = nil
 	ins.State = string(StateRunning)
 	m.instances[instanceID] = ins
 	// Stamp apps.migrated_at to match the SQL transaction's
@@ -3542,29 +3545,52 @@ func (m *MemStore) CancelInstanceMigration(_ context.Context, instanceID, origin
 	}
 	ins.State = "parked"
 	ins.LeaseToken = ""
+	ins.MigrationStartedAt = nil
 	m.instances[instanceID] = ins
 	return nil
 }
 
 // ListExpiredMigrations mirrors pkg/state/pgstore.go::
-// ListExpiredMigrations. Returns every instance in
-// state='migrating' with a non-empty lease_token, in
-// instance-id order, capped at maxPerTick. Returns nil
-// (not ErrNotFound) when empty.
-func (m *MemStore) ListExpiredMigrations(_ context.Context, maxPerTick int) ([]Instance, error) {
+// ListExpiredMigrations. With an age argument it returns only instances in
+// state='migrating' whose durable migration start is older than the lease;
+// without one it keeps the legacy inspection view. Returns nil (not
+// ErrNotFound) when empty.
+func (m *MemStore) ListExpiredMigrations(_ context.Context, maxPerTick int, olderThan ...time.Duration) ([]Instance, error) {
 	if maxPerTick < 1 {
 		return nil, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var cutoff time.Time
+	if len(olderThan) > 0 && olderThan[0] > 0 {
+		cutoff = time.Now().UTC().Add(-olderThan[0])
+	}
 	var out []Instance
 	for _, ins := range m.instances {
 		if ins.State != string(StateMigrating) || ins.LeaseToken == "" {
 			continue
 		}
+		if !cutoff.IsZero() && (ins.MigrationStartedAt == nil || ins.MigrationStartedAt.After(cutoff)) {
+			continue
+		}
 		out = append(out, ins)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if cutoff.IsZero() {
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	} else {
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].MigrationStartedAt != nil && out[j].MigrationStartedAt != nil && !out[i].MigrationStartedAt.Equal(*out[j].MigrationStartedAt) {
+				return out[i].MigrationStartedAt.Before(*out[j].MigrationStartedAt)
+			}
+			if out[i].MigrationStartedAt == nil && out[j].MigrationStartedAt != nil {
+				return true
+			}
+			if out[i].MigrationStartedAt != nil && out[j].MigrationStartedAt == nil {
+				return false
+			}
+			return out[i].ID < out[j].ID
+		})
+	}
 	if len(out) > maxPerTick {
 		out = out[:maxPerTick]
 	}
@@ -3595,6 +3621,7 @@ func (m *MemStore) ReinviteMigratingInstance(_ context.Context, instanceID, leas
 	now := time.Now().UTC()
 	ins.MigratedAt = &now
 	ins.LeaseToken = ""
+	ins.MigrationStartedAt = nil
 	m.instances[instanceID] = ins
 	return nil
 }
@@ -3625,6 +3652,7 @@ func (m *MemStore) AbortMigratingInstance(_ context.Context, instanceID, leaseTo
 	}
 	ins.State = string(StateParked)
 	ins.LeaseToken = ""
+	ins.MigrationStartedAt = nil
 	m.instances[instanceID] = ins
 	return nil
 }
@@ -7243,6 +7271,20 @@ func (m *MemStore) SetInstanceMigratedFromForTest(instanceID, nodeID string) {
 	}
 	copy := nodeID
 	ins.MigratedFromNodeID = &copy
+	m.instances[instanceID] = ins
+}
+
+// SetInstanceMigrationStartedAtForTest is a test-only hook for exercising
+// watchdog age cutoffs without sleeping through a production lease window.
+func (m *MemStore) SetInstanceMigrationStartedAtForTest(instanceID string, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[instanceID]
+	if !ok {
+		return
+	}
+	copyAt := at
+	ins.MigrationStartedAt = &copyAt
 	m.instances[instanceID] = ins
 }
 

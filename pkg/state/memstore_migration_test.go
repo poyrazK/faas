@@ -31,6 +31,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -130,6 +131,35 @@ func TestMemStore_ListExpiredMigrations(t *testing.T) {
 		if r.ID == leaseLessIns.ID {
 			t.Errorf("lease-less row %s leaked into input set", r.ID)
 		}
+	}
+}
+
+func TestMemStore_ListExpiredMigrationsHonorsLeaseAge(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	nodeID := "recon-age-" + uuid.NewString()
+	oldID, _ := seedReconcileMemStore(t, m, nodeID)
+	freshID, _ := seedReconcileMemStore(t, m, nodeID)
+	now := time.Now().UTC()
+	m.SetInstanceMigrationStartedAtForTest(oldID, now.Add(-2*time.Minute))
+	m.SetInstanceMigrationStartedAtForTest(freshID, now.Add(-5*time.Second))
+
+	rows, err := m.ListExpiredMigrations(ctx, 100, time.Minute)
+	if err != nil {
+		t.Fatalf("ListExpiredMigrations with age: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != oldID {
+		t.Fatalf("aged rows = %+v, want only %s", rows, oldID)
+	}
+
+	// The compatibility form remains an unfiltered view for tooling that
+	// needs to inspect every leased migrating row.
+	rows, err = m.ListExpiredMigrations(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListExpiredMigrations legacy view: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("legacy rows = %d, want 2", len(rows))
 	}
 }
 

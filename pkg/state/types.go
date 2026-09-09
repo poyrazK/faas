@@ -3177,6 +3177,10 @@ type Instance struct {
 	// expiry. Mirrors the A4 `apps.reassigned_at` schema
 	// discipline. Nullable forever.
 	LeaseToken string
+	// MigrationStartedAt is stamped when Phase 2 moves the instance into
+	// state='migrating'. It is the durable watchdog age anchor; MigratedAt
+	// is intentionally reserved for the successful Phase-3 commit.
+	MigrationStartedAt *time.Time
 	// FrameworkReadyAt is the wall-clock stamp the vmmd records
 	// when the guest-init signals "framework ready" via vsock DGRAM
 	// port 1027 (msg=4). Two-tier snapshot (issue #470, PR
