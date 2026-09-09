@@ -17,6 +17,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Required checks must also run on the queue's temporary merge ref,
+  # otherwise the queue waits forever for a status that never arrives.
+  merge_group:
   workflow_dispatch:
 
 # Cancel in-progress runs when a PR ref updates (push to the same branch)
@@ -24,7 +27,9 @@ on:
 # "did my fix actually run?" confusion.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a merge-queue run: the queue reads a cancelled check as a
+  # failure and evicts the pull request.
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 permissions:
   contents: read
@@ -664,7 +669,7 @@ jobs:
           # everything and shuffle test order to surface order dependence.
           # (Expression shape matters: an empty string is falsy in GitHub
           # expressions, so `cond && '' || X` always yields X.)
-          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}
+          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
@@ -733,7 +738,7 @@ jobs:
       - name: unit tests (pure Go shard 2)
         env:
           # See pure shard 1: PRs use Go's test cache; main re-runs + shuffles.
-          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}
+          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
@@ -1432,7 +1437,10 @@ jobs:
         id: newmig
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "merge_group" ]]; then
+            # merge_group sets base_ref to the target branch too, and the
+            # queue's merge ref already contains main, so merge-base is the
+            # right anchor for both.
             git fetch -q origin "${{ github.base_ref }}"
             base="$(git merge-base HEAD "origin/${{ github.base_ref }}")"
           else
