@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -2573,6 +2574,33 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 		if appErr != nil {
 			return fmt.Errorf("imaged: load app for hosting receipt: %w", appErr)
 		}
+	}
+
+	// ADR-121: evaluate the proposed customer-facing OpenAPI surface before
+	// the deployment becomes routable. The gate is dark-launched by default;
+	// when enabled, a production breaking change is a normal deployment
+	// failure with a stable error code and an audit record.
+	if contractErr := h.checkAPIContract(ctx, dep); contractErr != nil {
+		var gateErr *openapidiff.GateError
+		code := api.CodeCapacity
+		if errors.As(contractErr, &gateErr) {
+			code = api.CodeAPIContractBreakingChange
+		}
+		detail := contractErr.Error()
+		_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
+		if markErr != nil {
+			h.log.Warn("api contract gate: mark deployment failed", "deployment_id", dep.ID, "err", markErr)
+		}
+		if _, stageErr := h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), detail); stageErr != nil {
+			h.log.Warn("api contract gate: mark stage failed", "deployment_id", dep.ID, "err", stageErr)
+		}
+		if h.audit != nil {
+			h.audit.Emit(ctx, "deployment.api_contract_blocked", &app.AccountID, map[string]any{
+				"app_id": app.ID, "deployment_id": dep.ID, "scope": dep.Scope,
+				"code": code, "detail": detail,
+			})
+		}
+		return fmt.Errorf("imaged: api contract gate: %w", contractErr)
 	}
 
 	if err := h.store.MarkDeploymentLive(ctx, dep.ID); err != nil {

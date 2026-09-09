@@ -4463,6 +4463,36 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/openapi/diff:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [openapi_import]
+      operationId: diffAppOpenAPIContract
+      summary: Preview the production OpenAPI contract gate.
+      description: |
+        Read-only ADR-121 contract diff. Compares the current projected
+        OpenAPI surface against the latest captured live snapshot in the
+        requested scope (default `prod`). `blocking=true` means a production
+        promotion would be rejected while `FAAS_API_CONTRACT_DIFF_ENABLED`
+        is enabled. The route remains registered while the flag is off and
+        returns 503 `api_contract_diff_disabled`.
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$' }
+          description: Deployment scope to compare; defaults to `prod`.
+      responses:
+        '200':
+          description: Contract diff result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAPIContractDiffResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: "code: api_contract_diff_disabled." }
+
   /v1/apps/{slug}/diff:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -21426,6 +21456,70 @@ components:
           description: "Number of operations in the dry-run doc."
           x-since: "2026-08"
           x-issue: "975"
+
+    OpenAPIContractDiffResponse:
+      description: |
+        Read-only OpenAPI contract comparison for the current projected
+        edge-rule surface and the latest captured deployment snapshot.
+        `blocking` is true when a production promotion would be rejected
+        while the contract-diff feature flag is enabled.
+      type: object
+      required: [app_id, scope, proposed_sha256, blocking, breaks, additions]
+      properties:
+        app_id:
+          type: string
+          format: uuid
+        scope:
+          type: string
+        baseline_deployment_id:
+          type: string
+          format: uuid
+        baseline_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        proposed_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        baseline_captured_at:
+          type: string
+          format: date-time
+        blocking:
+          type: boolean
+        breaks:
+          type: array
+          items: { $ref: '#/components/schemas/OpenAPIContractBreak' }
+        additions:
+          type: array
+          items: { $ref: '#/components/schemas/OpenAPIContractAddition' }
+
+    OpenAPIContractBreak:
+      description: "One structural breaking change in an API response schema."
+      type: object
+      required: [path, method, kind]
+      properties:
+        path: { type: string }
+        method:
+          type: string
+          enum: [get, put, post, delete, options, head, patch, trace]
+        status: { type: string }
+        kind:
+          type: string
+          enum: [type_change, field_removed, required_added, nullability_change]
+        path_in_schema: { type: string }
+        before: {}
+        after: {}
+
+    OpenAPIContractAddition:
+      description: "One additive, non-blocking schema change."
+      type: object
+      required: [kind, path, method]
+      properties:
+        kind: { type: string }
+        path: { type: string }
+        method: { type: string }
+        status: { type: string }
+        path_in_schema: { type: string }
+        field: { type: string }
 
     AppOpenAPIPolicyPreviewResponse:
       description: |

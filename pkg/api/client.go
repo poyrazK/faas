@@ -4300,6 +4300,23 @@ func (c *Client) PreviewAppOpenAPIPolicy(ctx context.Context, slug string) (AppO
 	return out, err
 }
 
+// DiffAppOpenAPIContract returns the production contract diff that the
+// feature-flagged promotion gate would evaluate. It is read-only and uses
+// apps:read; scope defaults to prod when empty.
+func (c *Client) DiffAppOpenAPIContract(ctx context.Context, slug, scope string) (OpenAPIContractDiffResponse, error) {
+	q := url.Values{}
+	if scope != "" {
+		q.Set("scope", scope)
+	}
+	u := "/v1/apps/" + slug + "/openapi/diff"
+	if encoded := q.Encode(); encoded != "" {
+		u += "?" + encoded
+	}
+	var out OpenAPIContractDiffResponse
+	err := c.do(ctx, "GET", u, nil, &out)
+	return out, err
+}
+
 // ImportAppOpenAPI uploads (or overwrites) the customer's OpenAPI
 // document for an app. Body is the raw OpenAPI document; the
 // server validates shape (Draft 2020-12 + OpenAPI 3.1 schema) +

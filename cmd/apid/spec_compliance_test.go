@@ -58,6 +58,7 @@ const (
 	corsPresetsFile       = "cors_preset_dto.go" // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
 	uploadSessionFile     = "upload_session.go"  // issue #1182 §P1 PR-1 — resumable upload session DTOs
 	managedPostgresFile   = "managed_postgres.go"
+	openapiContractFile   = "openapi_contract.go"
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -871,6 +872,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
+		filepath.Join(root, "pkg", "api", openapiContractFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
