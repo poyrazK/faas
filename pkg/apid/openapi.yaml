@@ -12705,20 +12705,6 @@ paths:
             text/html:
               schema: { type: string }
 
-  /docs/:
-    get:
-      tags: [meta]
-      operationId: getDocsSlash
-      summary: Human-readable API reference (slash form).
-      description: The slash form serves the same anonymous Swagger UI page.
-      security: []
-      responses:
-        '200':
-          description: Swagger UI HTML.
-          content:
-            text/html:
-              schema: { type: string }
-
   /v1/traces/{trace_id}:
     get:
       tags: [observability]
