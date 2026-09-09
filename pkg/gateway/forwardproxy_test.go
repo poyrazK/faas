@@ -1,3 +1,4 @@
+// spec: §4.1
 // Tests for pkg/gateway/forwardproxy.go (issue #98 / ADR-028 / ADR-047).
 // The gateway-side bridge is HTTP-in / gRPC-out. We can't exercise the
 // real vmmd end (that requires //go:build metal on Linux), so the

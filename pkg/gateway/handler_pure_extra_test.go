@@ -1,3 +1,4 @@
+// spec: §4.1
 // handler_pure_extra_test.go — fill pkg/gateway/handler.go coverage
 // of the tiny pure / no-store helpers beyond what handler_test.go
 // touches. Targets statusClass/statusClassBucket (counter vs.
