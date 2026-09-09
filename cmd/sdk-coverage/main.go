@@ -96,21 +96,22 @@ var routeExclude = map[string]bool{
 	// Mirror the exclusion across BOTH this list AND
 	// cmd/apid/spec_compliance_test.go::routeExclude; the two
 	// lists must move together.
-	"POST /v1/admin/instances/{id}/force-park":         true, // PR #1099 P2a — operator-only recovery primitive
-	"POST /v1/admin/apps/{slug}/force-cold-boot":       true, // PR #1099 P2b — operator-only recovery primitive
-	"POST /v1/admin/instances/{id}/force-restart":      true, // PR #1105 P2d — operator-only recovery primitive
-	"POST /v1/admin/builds/sweep-stuck":                true, // PR #1099 P2c — operator-only recovery primitive
-	"POST /v1/admin/ops/accounts/{id}/suspend":         true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/restore":         true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/revoke-sessions": true, // operator-only tenant security control
-	"POST /v1/admin/ops/nodes/{name}/drain":            true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/force-drain":      true, // operator-only destructive node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/activate":         true, // operator-only node lifecycle control
-	"GET /v1/admin/operator-intents/{id}":              true, // PR #1099 P2.3 — operator-only intent polling endpoint
-	"GET /v1/admin/config":                             true, // operator-only runtime configuration catalog
-	"PATCH /v1/admin/config/{key}":                     true, // operator-only runtime configuration write
-	"GET /v1/admin/config-operations/{id}":             true, // operator-only runtime configuration operation polling
-	"GET /v1/admin/config/{key}/revisions":             true, // operator-only runtime configuration history
+	"POST /v1/admin/instances/{id}/force-park":          true, // PR #1099 P2a — operator-only recovery primitive
+	"POST /v1/admin/apps/{slug}/force-cold-boot":        true, // PR #1099 P2b — operator-only recovery primitive
+	"POST /v1/admin/instances/{id}/force-restart":       true, // PR #1105 P2d — operator-only recovery primitive
+	"POST /v1/admin/builds/sweep-stuck":                 true, // PR #1099 P2c — operator-only recovery primitive
+	"POST /v1/admin/ops/accounts/{id}/suspend":          true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/restore":          true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":  true, // operator-only tenant security control
+	"POST /v1/admin/ops/nodes/{name}/drain":             true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/force-drain":       true, // operator-only destructive node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/activate":          true, // operator-only node lifecycle control
+	"GET /v1/admin/operator-intents/{id}":               true, // PR #1099 P2.3 — operator-only intent polling endpoint
+	"GET /v1/admin/config":                              true, // operator-only runtime configuration catalog
+	"PATCH /v1/admin/config/{key}":                      true, // operator-only runtime configuration write
+	"GET /v1/admin/config-operations/{id}":              true, // operator-only runtime configuration operation polling
+	"GET /v1/admin/config/{key}/revisions":              true, // operator-only runtime configuration history
+	"GET /v1/admin/managed-postgres/usage/{account_id}": true, // operator-only COGS/capacity view; public SDK is customer-scoped
 
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the
 	// device-code flow for programmatic auth; the dashboard cookie
@@ -279,6 +280,7 @@ var methodRouteMap = map[string]string{
 	// method names.
 	"GET /v1/account/egress_allowlist_extra":                  "GetEgressAllowlistExtra",
 	"PATCH /v1/account/egress_allowlist_extra":                "SetEgressAllowlistExtra",
+	"GET /v1/account/managed-postgres-usage":                  "GetManagedPostgresUsage",
 	"GET /v1/postgres/databases":                              "ListManagedPostgresDatabases",
 	"POST /v1/postgres/databases":                             "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                         "GetManagedPostgresDatabase",
