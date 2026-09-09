@@ -16,7 +16,7 @@ import (
 
 const (
 	openAPISnapshotRepairPrevious int64 = 20260909192647123
-	openAPISnapshotRepairVersion  int64 = 20260909224000000
+	openAPISnapshotRepairVersion  int64 = 20260909223446365
 )
 
 func TestMigrations_DeploymentOpenAPISnapshotRepair(t *testing.T) {
