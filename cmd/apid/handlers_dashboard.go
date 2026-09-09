@@ -68,6 +68,7 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/domains → custom domains + TLS/doctor status
 //	GET /dashboard/apps/{slug}/instances → instance fleet + lifecycle actions
 //	GET /dashboard/apps/{slug}/edge-rules → edge rules + CORS presets
+//	GET /dashboard/apps/{slug}/webhooks → outbound webhooks + deliveries
 //	GET /dashboard/apps/{slug}/jobs → jobs and queue view (app filter)
 //	GET /dashboard/apps/{slug}/queues → queue state + samples (alias)
 //	GET /dashboard/jobs             → jobs, runs, and all application queues
@@ -112,6 +113,12 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G8 / issue #1397 — outbound webhook subscriptions,
+			// recent deliveries, secret rotation, and dead-letter retry.
+			if wslug, ok := parseAppWebhooksPath(slug); ok {
+				s.renderAppWebhooks(w, r, log, acct, wslug)
+				return
+			}
 			// G4 / issue #1397 — edge rules and reusable CORS presets.
 			// The form adapters below delegate to the existing JSON API
 			// handlers so the dashboard cannot drift from API validation.
