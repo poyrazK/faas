@@ -53,6 +53,7 @@ type artifactReport struct {
 	Backend        string `json:"backend"`
 	Bytes          int64  `json:"bytes"`
 	SHA256         string `json:"sha256"`
+	CachePinned    bool   `json:"cache_pinned,omitempty"`
 	AlreadyPresent bool   `json:"already_present,omitempty"`
 }
 
@@ -90,7 +91,7 @@ Flags:
   --manifest-file PATH  signed production manifest (required)
   --file PATH           release vmlinux file (publish only)
   --no-cache            bypass the local read-through cache
-  --refresh              fetch from shared storage and replace the local cache (verify only)
+  --refresh             fetch from shared storage, replace and pin the local cache (verify only)
   --json                emit a machine-readable report
 
 Examples:
@@ -227,6 +228,12 @@ func cmdArtifactVerify(args []string) int {
 	if err != nil {
 		return printErr("gregalectl artifact verify", err)
 	}
+	if opts.refresh {
+		if err := pinVerifiedArtifact(be, contract.key, contract.digest); err != nil {
+			return printErr("gregalectl artifact verify", err)
+		}
+		report.CachePinned = true
+	}
 	report.Backend = os.Getenv("FAAS_STORAGE_BACKEND")
 	if jsonEnabled() {
 		jsonEmit(os.Stdout, report)
@@ -338,6 +345,41 @@ func verifyArtifact(ctx context.Context, be storage.StorageBackend, key, expecte
 		return artifactReport{}, fmt.Errorf("artifact digest mismatch: key=%s got=%s manifest=%s", key, got, expectedDigest)
 	}
 	return artifactReport{Operation: "verify", Key: key, Bytes: size, SHA256: got}, nil
+}
+
+// pinVerifiedArtifact turns an explicit release prewarm into a durable cache
+// residency contract. A plain Get is not enough: the cache's byte-budget pass
+// may evict the kernel after a rollout when large snapshot blobs arrive. The
+// digest marker uses the same generation mechanism that protects verified
+// runtime bases, so normal cache pressure cannot move the first customer wake
+// back onto the remote-registry path.
+func pinVerifiedArtifact(be storage.StorageBackend, key, digest string) error {
+	cache, cacheKey, err := storage.CacheBackendForKey(be, key)
+	if err != nil {
+		return fmt.Errorf("resolve cache for %s: %w", key, err)
+	}
+	if cache == nil {
+		return fmt.Errorf("prewarm %s: shared storage has no local cache", key)
+	}
+	generation := "sha256:" + digest
+	if err := cache.MarkGeneration(cacheKey, generation); err != nil {
+		return fmt.Errorf("pin prewarmed %s: %w", key, err)
+	}
+	got, ok, err := cache.CachedGeneration(cacheKey)
+	if err != nil {
+		return fmt.Errorf("verify pinned %s: %w", key, err)
+	}
+	if !ok || got != generation {
+		return fmt.Errorf("verify pinned %s: generation=%q, want %q", key, got, generation)
+	}
+	path, source, local, err := cache.LocalPathWithSource(cacheKey)
+	if err != nil {
+		return fmt.Errorf("verify resident %s: %w", key, err)
+	}
+	if !local || path == "" || source != storage.LocalPathSourceCache {
+		return fmt.Errorf("verify resident %s: source=%q local=%t", key, source, local)
+	}
+	return nil
 }
 
 func hashArtifactFile(path string) (string, int64, error) {
