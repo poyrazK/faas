@@ -131,6 +131,38 @@ func TestEgressWatcher_Reload_HappyPath(t *testing.T) {
 	}
 }
 
+// Production starts with no /tmp/vmmd-egress-staging directory. Reload owns
+// that process-local path and must recreate it after boot or tmpfiles cleanup.
+func TestEgressWatcher_Reload_CreatesMissingStagingDirectory(t *testing.T) {
+	nft := &stubNftExec{}
+	tmp := t.TempDir()
+	stagingDir := filepath.Join(tmp, "missing", "staging")
+	livePath := filepath.Join(tmp, "etc", "nftables.conf")
+	if err := os.MkdirAll(filepath.Dir(livePath), 0o755); err != nil {
+		t.Fatalf("mkdir live parent: %v", err)
+	}
+	w := &egressWatcher{
+		log:        newDiscardLogger(),
+		nft:        nft,
+		render:     func() string { return "flush ruleset\n" },
+		stagingDir: stagingDir,
+		livePath:   livePath,
+	}
+
+	if _, err := os.Stat(stagingDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staging directory exists before Reload: %v", err)
+	}
+	if err := w.Reload(context.Background()); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if info, err := os.Stat(stagingDir); err != nil || !info.IsDir() {
+		t.Fatalf("staging directory was not created: info=%v err=%v", info, err)
+	}
+	if got, err := os.ReadFile(livePath); err != nil || string(got) != "flush ruleset\n" {
+		t.Fatalf("live ruleset = %q, err=%v", got, err)
+	}
+}
+
 // TestEgressWatcher_Reload_SyntaxCheckFailureLeavesStagingOnDisk
 // pins the load-bearing "do NOT atomic-replace on validation
 // failure" invariant. The staging file MUST exist after a

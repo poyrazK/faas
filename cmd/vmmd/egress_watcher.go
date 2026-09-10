@@ -249,6 +249,13 @@ func (w *egressWatcher) Reload(ctx context.Context) error {
 	// 1. Render.
 	body := w.render()
 
+	// The production staging path lives under /tmp and is not provisioned by
+	// Ansible. Create it on every reload so a fresh boot or tmpfiles cleanup
+	// cannot strand egress and SMTP allowlist updates.
+	if err := os.MkdirAll(w.stagingDir, 0o755); err != nil {
+		return fmt.Errorf("create staging directory %s: %w", w.stagingDir, err)
+	}
+
 	// 2. Write to staging file. Mode 0644 matches the ansible
 	// role's policy_nftables.conf copy (so nft -c -f sees the
 	// same content the operator would see when running nft
