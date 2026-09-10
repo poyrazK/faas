@@ -55,9 +55,10 @@ import (
 )
 
 // TestE2E_AsyncInvoke_PostEnqueuesRowAndDrainCompletesIt is the headline
-// M7 gate. It boots apid + schedd + gatewayd (gatewayd only so the
-// per-test synth unix socket exists; schedd's drain goroutine otherwise
-// logs an error and is silently disabled per cmd/schedd/main.go:319-345).
+// M7 gate. It boots apid + schedd and a successful synth stub. The stub
+// represents a 2xx customer handler at the gateway boundary, so the test
+// covers completion without requiring KVM while preserving real 5xx retry
+// semantics.
 //
 // The fast-path trick that keeps this KVM-free: schedd's engine.Wake
 // Phase-1 (pkg/sched/engine.go:268-281) is a pure DB read — if there's a
@@ -79,7 +80,7 @@ func TestE2E_AsyncInvoke_PostEnqueuesRowAndDrainCompletesIt(t *testing.T) {
 	}
 
 	h := e2etest.Start(t, pool,
-		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
+		e2etest.APID|e2etest.Schedd|e2etest.GatewaySynthStub)
 
 	key := h.SeedAccount(ctx, api.PlanHobby, "async-headline")
 	store := state.NewPgStore(h.Pool)
