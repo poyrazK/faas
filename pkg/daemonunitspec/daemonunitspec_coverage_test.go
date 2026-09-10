@@ -222,6 +222,9 @@ func TestUnitGatewaydPublic_Shape(t *testing.T) {
 	if u.Slice != FaasCPSlice {
 		t.Errorf("gatewayd-public: Slice = %q, want %q", u.Slice, FaasCPSlice)
 	}
+	if !hasEnvironment(u, "FAAS_TRUSTED_INGRESS_CIDRS", "127.0.0.0/8,::1/128") {
+		t.Error("gatewayd-public: missing loopback TLS terminator trust boundary")
+	}
 }
 
 func TestUnitGithubd_Shape(t *testing.T) {

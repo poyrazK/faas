@@ -19,12 +19,11 @@
 // internal daemon reads X-Forwarded-For to enforce per-IP rate
 // limits (ADR-070). If we APPENDED the customer's XFF header
 // we would trust every customer to write their own per-IP key — a
-// trivial bypass. We therefore STRIP the inbound XFF and re-add
-// only the public daemon's own RemoteAddr. The chain is
-// `customer-=public-remote-addr` going in; the internal daemon
-// trusts exactly one hop. X-Forwarded-Proto is preserved (the
-// public hop is the only TLS terminator; downstream hops are
-// plaintext unix).
+// trivial bypass. We therefore accept forwarding context only from
+// explicitly configured ingress proxy CIDRs. Direct callers have
+// their forwarding headers replaced with RemoteAddr and the observed
+// TLS state. The internal daemon always receives exactly one trusted
+// client address and one canonical scheme.
 //
 // Hop-by-hop headers (RFC 7230 §6.1) are stripped on both request
 // and response — match the forwardproxy.go list so the test suite
@@ -40,6 +39,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -118,11 +118,12 @@ func (d *tcpDialer) DialContext(ctx context.Context, _ string) (net.Conn, error)
 //
 // The zero value is unusable; construct via NewInternalReverseProxy.
 type InternalReverseProxy struct {
-	Dialer      InternalDialer
-	Target      *url.URL
-	Transport   http.RoundTripper
-	Logger      *slog.Logger
-	DialTimeout time.Duration
+	Dialer              InternalDialer
+	Target              *url.URL
+	Transport           http.RoundTripper
+	Logger              *slog.Logger
+	DialTimeout         time.Duration
+	TrustedIngressCIDRs []netip.Prefix
 	// Drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker shared with Handler + TraceHandler + the
 	// control mux. nil = drain disabled. Wired via WithInFlightTracker
@@ -131,6 +132,32 @@ type InternalReverseProxy struct {
 	// a request that's already handed off to the proxy but is
 	// still piping bytes upstream would be invisible to the drain.
 	Drain *drain.Tracker
+}
+
+// WithTrustedIngressCIDRs configures the network peers allowed to supply the
+// canonical X-Forwarded-For and X-Forwarded-Proto values. The slice is copied
+// so callers cannot mutate the trust boundary after startup.
+func (p *InternalReverseProxy) WithTrustedIngressCIDRs(prefixes []netip.Prefix) *InternalReverseProxy {
+	p.TrustedIngressCIDRs = append([]netip.Prefix(nil), prefixes...)
+	return p
+}
+
+// ParseTrustedIngressCIDRs parses a comma-separated list of canonical CIDR
+// prefixes. Empty input disables proxy-header trust.
+func ParseTrustedIngressCIDRs(value string) ([]netip.Prefix, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	prefixes := make([]netip.Prefix, 0, len(parts))
+	for _, part := range parts {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(part))
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted ingress CIDR %q: %w", strings.TrimSpace(part), err)
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	return prefixes, nil
 }
 
 // WithInFlightTracker installs the per-request drain tracker (see
@@ -383,11 +410,11 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	if !isUpgradeRequest(r) {
 		stripHopByHopInPlace(outReq.Header)
 	}
-	// XFF trust: strip the inbound chain (the customer could
-	// forge any IP) and re-add only the public daemon's RemoteAddr.
-	// The internal daemon sees exactly one trusted hop.
+	// Forwarding trust is peer-scoped. A configured TLS terminator may
+	// provide one canonical client IP and scheme; direct callers cannot.
+	clientIP, proto := p.forwardingContext(r)
 	outReq.Header.Del("X-Forwarded-For")
-	if clientIP, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+	if clientIP != "" {
 		outReq.Header.Set("X-Forwarded-For", clientIP)
 	}
 	// ADR-119 round-2 (peer-review #1): do NOT strip inbound
@@ -426,12 +453,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// JWT (see pkg/sched/configure_internal_svc.go) and the
 	// gate verifies it. There is no scenario where a customer
 	// header survives the public hop AND leaks into the gate.
-	_ = r // suppress unused-name if the comment is removed
-	if r.TLS != nil {
-		outReq.Header.Set("X-Forwarded-Proto", "https")
-	} else {
-		outReq.Header.Set("X-Forwarded-Proto", "http")
-	}
+	outReq.Header.Set("X-Forwarded-Proto", proto)
 	if outReq.Body != nil {
 		outReq.Body = &activityReadCloser{ReadCloser: outReq.Body, activity: touch}
 	}
@@ -717,4 +739,59 @@ func (p *InternalReverseProxy) logger() *slog.Logger {
 		return p.Logger
 	}
 	return slog.Default()
+}
+
+func (p *InternalReverseProxy) forwardingContext(r *http.Request) (string, string) {
+	peer := remoteAddrIP(r.RemoteAddr)
+	peerText := ""
+	if peer.IsValid() {
+		peerText = peer.String()
+	}
+	proto := "http"
+	if r.TLS != nil {
+		proto = "https"
+	}
+	if !p.trustsIngressPeer(peer) {
+		return peerText, proto
+	}
+
+	clientIP := peer
+	if values := r.Header.Values("X-Forwarded-For"); len(values) == 1 && !strings.Contains(values[0], ",") {
+		if candidate, err := netip.ParseAddr(strings.TrimSpace(values[0])); err == nil {
+			clientIP = candidate.Unmap()
+		}
+	}
+	if values := r.Header.Values("X-Forwarded-Proto"); len(values) == 1 {
+		switch strings.ToLower(strings.TrimSpace(values[0])) {
+		case "http":
+			proto = "http"
+		case "https":
+			proto = "https"
+		}
+	}
+	return clientIP.String(), proto
+}
+
+func (p *InternalReverseProxy) trustsIngressPeer(peer netip.Addr) bool {
+	if !peer.IsValid() {
+		return false
+	}
+	for _, prefix := range p.TrustedIngressCIDRs {
+		if prefix.Contains(peer) {
+			return true
+		}
+	}
+	return false
+}
+
+func remoteAddrIP(remoteAddr string) netip.Addr {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return netip.Addr{}
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}
+	}
+	return addr.Unmap()
 }

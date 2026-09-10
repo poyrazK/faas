@@ -211,8 +211,10 @@ func TestInternalReverseProxy_StripsResponseHopByHop(t *testing.T) {
 // exactly one hop.
 func TestInternalReverseProxy_StripsAndRebuildsXFF(t *testing.T) {
 	var got []string
+	var gotProto string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Values("X-Forwarded-For")
+		gotProto = r.Header.Get("X-Forwarded-Proto")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
@@ -222,6 +224,7 @@ func TestInternalReverseProxy_StripsAndRebuildsXFF(t *testing.T) {
 	req.RemoteAddr = "10.0.0.5:12345"
 	// Forged XFF — must be stripped, not forwarded.
 	req.Header.Set("X-Forwarded-For", "127.0.0.1")
+	req.Header.Set("X-Forwarded-Proto", "https")
 	rr := httptest.NewRecorder()
 	p.ServeHTTP(rr, req)
 	if len(got) != 1 {
@@ -229,6 +232,71 @@ func TestInternalReverseProxy_StripsAndRebuildsXFF(t *testing.T) {
 	}
 	if got[0] != "10.0.0.5" {
 		t.Errorf("XFF = %q, want 10.0.0.5 (the public daemon's RemoteAddr, not the forged value)", got[0])
+	}
+	if gotProto != "http" {
+		t.Errorf("X-Forwarded-Proto = %q, want http from direct connection TLS state", gotProto)
+	}
+}
+
+func TestInternalReverseProxy_TrustsConfiguredTLSIngress(t *testing.T) {
+	var gotIP, gotProto string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIP = r.Header.Get("X-Forwarded-For")
+		gotProto = r.Header.Get("X-Forwarded-Proto")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	dialer := &stubDialer{server: upstream}
+	prefixes, err := ParseTrustedIngressCIDRs("127.0.0.0/8, ::1/128")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewInternalReverseProxy(dialer, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false).
+		WithTrustedIngressCIDRs(prefixes)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:43210"
+	req.Header.Set("X-Forwarded-For", "203.0.113.42")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	p.ServeHTTP(httptest.NewRecorder(), req)
+	if gotIP != "203.0.113.42" {
+		t.Errorf("X-Forwarded-For = %q, want validated ingress value", gotIP)
+	}
+	if gotProto != "https" {
+		t.Errorf("X-Forwarded-Proto = %q, want validated ingress value", gotProto)
+	}
+}
+
+func TestInternalReverseProxy_RejectsAmbiguousTrustedIngressHeaders(t *testing.T) {
+	var gotIP, gotProto string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIP = r.Header.Get("X-Forwarded-For")
+		gotProto = r.Header.Get("X-Forwarded-Proto")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	dialer := &stubDialer{server: upstream}
+	prefixes, err := ParseTrustedIngressCIDRs("127.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewInternalReverseProxy(dialer, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false).
+		WithTrustedIngressCIDRs(prefixes)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:43210"
+	req.Header.Set("X-Forwarded-For", "203.0.113.42, 198.51.100.7")
+	req.Header.Set("X-Forwarded-Proto", "javascript")
+	p.ServeHTTP(httptest.NewRecorder(), req)
+	if gotIP != "127.0.0.1" {
+		t.Errorf("X-Forwarded-For = %q, want trusted peer fallback", gotIP)
+	}
+	if gotProto != "http" {
+		t.Errorf("X-Forwarded-Proto = %q, want connection fallback", gotProto)
+	}
+}
+
+func TestParseTrustedIngressCIDRsRejectsInvalidValue(t *testing.T) {
+	if _, err := ParseTrustedIngressCIDRs("127.0.0.0/8,not-a-cidr"); err == nil {
+		t.Fatal("expected invalid trusted ingress CIDR error")
 	}
 }
 
