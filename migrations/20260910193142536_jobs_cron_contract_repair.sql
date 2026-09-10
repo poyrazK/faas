@@ -1,4 +1,4 @@
--- filename: 20260910193000000_jobs_cron_contract_repair.sql
+-- filename: 20260910193142536_jobs_cron_contract_repair.sql
 -- +goose Up
 -- +goose StatementBegin
 

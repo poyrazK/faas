@@ -1,3 +1,4 @@
+// spec: §4.10
 package sched
 
 import (
