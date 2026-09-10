@@ -510,17 +510,6 @@ func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Accoun
 	// first hop (submitted); later hops land in cmd/apid/deploy_steps.go.
 	_ = s.notif.Notify(ctxr, db.NotifyDeploymentChanged,
 		fmt.Sprintf(`{"kind":"image","status":"pending","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, d.ID, d.ID))
-	// PR-B: if a prior row was just superseded inside the same tx,
-	// fire a second NotifyDeploymentChanged so imaged's F5 cleanup
-	// handler (handleDeploymentChanged) can drop the prior snapshot.
-	// The notify carries status="superseded" + to=prev.ID; if no prev
-	// existed (first deploy on this app), skip the second notify. A
-	// canary deliberately keeps its prior live revision as the
-	// residual traffic bucket, so it must not emit this cleanup signal.
-	if prev.ID != "" && d.CanaryTotalSteps <= 0 && !state.IsServiceRollout(d) {
-		_ = s.notif.Notify(ctxr, db.NotifyDeploymentChanged,
-			fmt.Sprintf(`{"kind":"image","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, prev.ID, prev.ID))
-	}
 	// Sanitize req.Image at the log sink — CodeQL go/log-injection
 	// (CWE-117). isDigestPinned already rejects malformed refs with
 	// 400 before this line, but a future field/wrapper change would
@@ -552,12 +541,9 @@ func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Accoun
 	// without a schema migration. Omit-when-zero rule matches
 	// the PR #984 annotation-merge helper.
 	resolvedActor := resolvedActorString(d.DeployedVia, d.DeployedByUserID, d.PusherLogin)
+	// This records the intended predecessor. The row remains live until the
+	// replacement passes readiness and MarkDeploymentLive performs cutover.
 	supersedes := prev.ID
-	if d.CanaryTotalSteps > 0 || state.IsServiceRollout(d) {
-		// The prior revision remains live until the terminal canary
-		// transition; it is not superseded at deployment creation.
-		supersedes = ""
-	}
 	appDeployedData := map[string]any{
 		"app_id":        app.ID,
 		"deployment_id": d.ID,

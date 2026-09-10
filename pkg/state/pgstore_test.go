@@ -2507,13 +2507,10 @@ func TestPg_ClaimQueuedBuild(t *testing.T) {
 	}
 }
 
-// TestPg_CreateDeployment_SupersedesPriorLive pins the at-rest happy
-// path: a second deploy against an app that already has a `live`
-// deployment row gets the prior row flipped to `superseded` inside the
-// same tx, and the new row is inserted with `pending`. The returned
-// new row carries the just-created identity; the prior is read back
-// via DeploymentByID to assert (2-return CreateDeployment shape).
-func TestPg_CreateDeployment_SupersedesPriorLive(t *testing.T) {
+// TestPg_CreateDeployment_CutsOverOnlyOnPromotion pins the stable promotion
+// boundary: creating a replacement leaves the serving row live, and promoting
+// the ready replacement supersedes the old row atomically.
+func TestPg_CreateDeployment_CutsOverOnlyOnPromotion(t *testing.T) {
 	s, ctx := pgStore(t)
 
 	_, appID, priorDepID := seedLiveDeploy(t, s, ctx)
@@ -2530,13 +2527,22 @@ func TestPg_CreateDeployment_SupersedesPriorLive(t *testing.T) {
 		t.Errorf("created.Status = %q, want pending", created.Status)
 	}
 
-	// The DB must agree: the prior row is superseded.
 	got, err := s.DeploymentByID(ctx, priorDepID)
 	if err != nil {
 		t.Fatalf("DeploymentByID(prior): %v", err)
 	}
-	if got.Status != state.DeploySuperseded {
-		t.Errorf("DB prior.Status = %q, want superseded", got.Status)
+	if got.Status != state.DeployLive {
+		t.Errorf("prior status after replacement creation = %q, want live", got.Status)
+	}
+	if err := s.MarkDeploymentLive(ctx, created.ID); err != nil {
+		t.Fatalf("promote replacement: %v", err)
+	}
+	got, err = s.DeploymentByID(ctx, priorDepID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(prior after promotion): %v", err)
+	}
+	if got.Status != state.DeploySuperseded || got.TrafficPercent != 0 {
+		t.Errorf("prior after replacement promotion = %+v, want superseded/0", got)
 	}
 }
 
@@ -3011,16 +3017,23 @@ func TestPg_CreateDeployment_SupersedeZeroesPriorTrafficPercent(t *testing.T) {
 		t.Errorf("created.TrafficPercent = %d, want 100", created.TrafficPercent)
 	}
 
-	// Prior row was zeroed by the supersede branch.
+	// Creation leaves the prior row serving until the replacement is ready.
 	prior, err := s.DeploymentByID(ctx, priorID)
 	if err != nil {
 		t.Fatalf("DeploymentByID(prior): %v", err)
 	}
-	if prior.TrafficPercent != 0 {
-		t.Errorf("prior.TrafficPercent = %d, want 0 (supersede zeroes it)", prior.TrafficPercent)
+	if prior.TrafficPercent != 100 || prior.Status != state.DeployLive {
+		t.Errorf("prior before promotion = %+v, want live/100", prior)
 	}
-	if prior.Status != state.DeploySuperseded {
-		t.Errorf("prior.Status = %q, want superseded", prior.Status)
+	if err := s.MarkDeploymentLive(ctx, created.ID); err != nil {
+		t.Fatalf("promote replacement: %v", err)
+	}
+	prior, err = s.DeploymentByID(ctx, priorID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(prior after promotion): %v", err)
+	}
+	if prior.TrafficPercent != 0 || prior.Status != state.DeploySuperseded {
+		t.Errorf("prior after promotion = %+v, want superseded/0", prior)
 	}
 }
 

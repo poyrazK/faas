@@ -367,6 +367,7 @@ const (
 	CodePlanLimitRAM           = "plan_limit_ram"
 	CodePlanLimitConcur        = "plan_limit_concurrency"
 	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidAppRAM          = "invalid_ram_mb"
 	CodeInvalidResourceProfile = "invalid_resource_profile"
 	CodeSourceTooLarge         = "source_too_large"
 	CodeSourceInvalid          = "source_invalid"
@@ -1682,7 +1683,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -2083,6 +2084,14 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		fmt.Sprintf("%s plan caps %d MB/app; requested %d MB.", l.Plan, l.RAMMB, requestedMB)).
 		WithLimit(int64(l.RAMMB), int64(requestedMB)).
 		WithDocs(docsBase + "/plans#ram")
+}
+
+// ErrInvalidAppRAM rejects an explicit update that cannot satisfy the
+// database and Firecracker memory contracts. Creation may omit ram_mb (zero)
+// to select the plan default; an update pointer is always explicit.
+func ErrInvalidAppRAM(requestedMB int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppRAM,
+		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB))
 }
 
 // ErrAppLayerTooLarge is returned when the built app layer (deps + code) would

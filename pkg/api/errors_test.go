@@ -288,7 +288,7 @@ func TestErrSourceTooLarge(t *testing.T) {
 // clients branch on these strings so they must not drift silently.
 func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 	codes := []string{
-		CodePlanLimitApps, CodePlanLimitRAM, CodePlanLimitConcur, CodeInvalidAppCPU,
+		CodePlanLimitApps, CodePlanLimitRAM, CodePlanLimitConcur, CodeInvalidAppCPU, CodeInvalidAppRAM,
 		CodeSourceTooLarge, CodeAppLayerTooBig,
 		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout,
 		CodeQuotaExhausted, CodeBillingPastDue, CodeCapacity,

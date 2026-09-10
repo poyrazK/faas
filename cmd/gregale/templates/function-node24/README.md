@@ -6,8 +6,9 @@ Functions differ from apps in two ways:
 
 1. No HTTP server — the runner invokes `handler(event, ctx)` directly
    for each request.
-2. CLI forces `--runtime node24 --handler handler.handler` so the
-   wiring is automatic. You don't need to know those flags. The
+2. `gregale.yaml` records `runtime: node24` and `handler: handler.handler`,
+   so both direct template deploys and a later plain `gregale deploy --path`
+   keep the function shape. You don't need to know those flags. The
    underlying handler filename in the microVM is `/app/node24.js`
    (versioned, mirroring the `node22` convention).
 

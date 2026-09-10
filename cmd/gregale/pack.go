@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
@@ -804,6 +805,9 @@ func (e *NestedMarkerHintError) Unwrap() error { return e.Err }
 // vendor) are NOT app markers — the framework detector only counts the
 // "primary" files, and so does shape.
 func detectShape(srcDir string) shape {
+	if manifest, ok, err := gregalemanifest.Load(srcDir); err == nil && ok && manifest.Function != nil {
+		return shapeFunction
+	}
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		return shapeUnknown
@@ -877,6 +881,11 @@ func detectShape(srcDir string) shape {
 // same wire shape they would have got via
 // `gregale --template function-node --tarball ...`.
 func inferFunctionRuntime(srcDir string) (runtime, handler string, ok bool) {
+	if manifest, found, err := gregalemanifest.Load(srcDir); err == nil && found && manifest.Function != nil {
+		if err := manifest.Validate(); err == nil {
+			return strings.TrimSpace(manifest.Function.Runtime), strings.TrimSpace(manifest.Function.Handler), true
+		}
+	}
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		return "", "", false

@@ -623,6 +623,9 @@ func cmdAppScale(slug string, args []string) int {
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	var req api.UpdateAppRequest
 	if explicit["ram"] {
+		if *ram <= 0 {
+			return printErr("Invalid --ram", fmt.Errorf("must be greater than zero; got %d", *ram))
+		}
 		v := *ram
 		req.RAMMB = &v
 	}

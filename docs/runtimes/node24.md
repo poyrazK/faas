@@ -38,6 +38,19 @@ includes `waitUntil()` for Workers-compatible handler code.
 The runner shim sets `FAAS_RUNTIME=node24` in the handler's environment
 so customers can branch on runtime if they want.
 
+### Handler failures and retries
+
+An uncaught handler exception is converted into a bounded HTTP 500 result with
+`error: "handler_error"`, the exception message, and the invocation ID. It is a
+terminal application failure for both synchronous and asynchronous invocation:
+Gregale does not retry it on another instance or replay it after a rollback. The
+persistent worker stays alive and can process the next invocation.
+
+Wake, transport, and ordinary 5xx failures remain retryable under the durable
+invocation policy. A retry resolves the deployment that is live at that later
+attempt, so an infrastructure retry that spans a deploy or rollback can run on
+the newly live revision. Returning a 4xx is terminal.
+
 ### Minimal handler
 
 ```js

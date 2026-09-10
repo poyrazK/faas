@@ -71,6 +71,14 @@ type PromQL interface {
 	QueryScalar(ctx context.Context, query string) (float64, error)
 }
 
+// PercentRatioQuery builds a ratio that treats an absent numerator as zero
+// when the denominator proves traffic exists. A missing or zero denominator
+// still returns no series, preserving the distinction between a healthy 0%
+// signal and no telemetry.
+func PercentRatioQuery(numerator, denominator string) string {
+	return fmt.Sprintf(`(((%s) or vector(0)) / (%s) * 100) and ((%s) > 0)`, numerator, denominator, denominator)
+}
+
 // Fetch runs the per-app PromQL queries and assembles an
 // AppMetricsResponse. Returns the response and a Source string
 // ("prometheus" on success, "degraded: <reason>" on failure). Safe
@@ -151,9 +159,9 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	}
 
 	// 5. Error rate %.
-	errQ := fmt.Sprintf(
-		`sum(rate(gateway_requests_total{app=%q,code=~"[45].."}[%s])) / sum(rate(gateway_requests_total{app=%q}[%s])) * 100`,
-		appID, rng, appID, rng)
+	errQ := PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q,code=~"[45].."}[%s]))`, appID, rng),
+		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, appID, rng))
 	if v, err := fetcher.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = SafePercent(v)
 	} else {
@@ -161,9 +169,9 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	}
 
 	// 6. Cold start %.
-	coldQ := fmt.Sprintf(
-		`sum(rate(gateway_cold_boot_total{app=%q}[%s])) / sum(rate(gateway_requests_total{app=%q}[%s])) * 100`,
-		appID, rng, appID, rng)
+	coldQ := PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
+		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, appID, rng))
 	if v, err := fetcher.QueryScalar(ctx, coldQ); err == nil {
 		resp.ColdStartPct = SafePercent(v)
 	} else {

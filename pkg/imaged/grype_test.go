@@ -283,6 +283,9 @@ func TestParseGrypeOutput_EmptyMatches(t *testing.T) {
 	if bytes.Contains(blob, []byte(`"vulnerabilities":null`)) {
 		t.Errorf("wire JSON emitted \"vulnerabilities\":null (must be [] for OpenAPI 3.1 strict clients); got: %s", string(blob))
 	}
+	if !bytes.Contains(blob, []byte(`"severity_counts":{"critical":0,"high":0,"medium":0,"low":0,"unknown":0}`)) {
+		t.Errorf("wire JSON missing canonical nested severity_counts; got: %s", string(blob))
+	}
 }
 
 // TestParseGrypeOutput_MalformedJSON pins the fail-closed

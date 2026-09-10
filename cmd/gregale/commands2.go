@@ -368,6 +368,9 @@ func cmdApp(args []string) int {
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	var req api.UpdateAppRequest
 	if explicit["ram"] {
+		if *ram <= 0 {
+			return printErr("Invalid --ram", fmt.Errorf("must be greater than zero; got %d", *ram))
+		}
 		v := *ram
 		req.RAMMB = &v
 	}
@@ -1888,10 +1891,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
 	// happen. --diff and --dry-run never ship a deploy.
 	if *diff {
-		if *profile != "" {
-			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --diff"))
-		}
-		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr)
+		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
 		opts.Strict = !*diffLenient

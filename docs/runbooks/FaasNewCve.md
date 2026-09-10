@@ -61,3 +61,6 @@ keeps the workflow red and opens one deduplicated scanner-failure issue.
   bug + consider a temporary fork pin.
 - Add a regression test that pins the dep bump (closes the
   issue + prevents re-introduction).
+
+The public-beta runtime/image review from 2026-09-10 is recorded in
+[`docs/ops/runtime-scan-triage-20260910.md`](../ops/runtime-scan-triage-20260910.md).

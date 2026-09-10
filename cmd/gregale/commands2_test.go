@@ -85,13 +85,6 @@ func TestCmdAppFlagSentinels(t *testing.T) {
 			wantMethod: http.MethodGet,
 		},
 		{
-			name:       "--ram 0 is explicit zero (must NOT be dropped)",
-			args:       []string{constSlug, "--ram", "0"},
-			wantMethod: http.MethodPatch,
-			wantRAMSet: true,
-			wantRAMVal: 0,
-		},
-		{
 			name:       "--ram 256 is positive",
 			args:       []string{constSlug, "--ram", "256"},
 			wantMethod: http.MethodPatch,

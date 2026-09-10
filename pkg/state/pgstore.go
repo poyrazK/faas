@@ -4685,16 +4685,10 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // already-deleted rows anyway, so the invariant "an app either accepts
 // deploys OR is deleted" is one-directional here.
 //
-// PR-B folds the prior-deployment supersede INTO this transaction so
-// the apid → state boundary can never leave a live deployment as
-// 'superseded' with no replacement. The previous "supersede then
-// create" two-step bug (only on the image: branch — the tarball
-// branch never superseded at all) is closed by reading the latest
-// non-superseded-non-failed row under FOR UPDATE, marking it
-// 'superseded', and inserting the new row, all in the same tx. A
-// concurrent CreateDeployment against the same app serialises behind
-// the row lock (Step 2.5 below); if our subsequent INSERT fails the
-// defer tx.Rollback reverts both writes together.
+// A stable create supersedes only an older pending candidate in this
+// transaction. The serving row stays live throughout the build; the eventual
+// MarkDeploymentLive call retires it and promotes the ready replacement in one
+// transaction. Concurrent creates serialize on the parent app row.
 //
 // A non-empty d.ID is inserted verbatim. GitHub delivery dispatch uses this
 // to supply a deterministic UUID; all other callers keep the database-generated
@@ -4728,38 +4722,15 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		}
 		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
-	if d.CanaryTotalSteps <= 0 && !serviceRollout {
-		// Stable creation may end an active canary, so lock the whole
-		// live set in deterministic id order before the prior-row
-		// lookup. This preserves the lock ordering used by traffic
-		// updates and avoids a create-vs-rebalance deadlock.
-		rows, err := tx.Query(ctx,
-			`select id from deployments
-			  where app_id = $1 and status = 'live'
-			  order by id for update`, d.AppID)
-		if err != nil {
-			return Deployment{}, fmt.Errorf("state: lock live deployments: %w", err)
-		}
-		for rows.Next() {
-			var ignored string
-			if err := rows.Scan(&ignored); err != nil {
-				rows.Close()
-				return Deployment{}, fmt.Errorf("state: scan live deployment lock: %w", err)
-			}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return Deployment{}, fmt.Errorf("state: iterate live deployment locks: %w", err)
-		}
-		rows.Close()
-	}
-
-	// 2. Lock + supersede the prior live/pending row, if any. PR-B: the
-	//    supersede is in-tx so a failed INSERT below rolls it back too.
+	// 2. Supersede an older pending row, if any. A live deployment remains
+	//    routable until MarkDeploymentLive atomically promotes its healthy
+	//    replacement. Moving the live cutover to promotion prevents a stable
+	//    redeploy from creating a customer-visible no-live window while the
+	//    replacement is pending, building, or snapshotting.
 	//    The (app_id, created_at desc) index from migration 00007 covers
 	//    the search.
 	//
-	//    The status set is NARROW ('pending' | 'live') on purpose. A
+	//    The status set is NARROW ('pending') on purpose. A
 	//    row in 'building' / 'imaging' / 'snapshotting' represents a
 	//    build pipeline already in flight — the prior vmmd VM is
 	//    running, builderd is mid-build, imaged is rendering an ext4.
@@ -4775,59 +4746,32 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	//    We exclude 'failed' explicitly per PR-A's
 	//    LatestSupersededDeployment: failure history stays observable.
 	//
-	//    Callers that need the just-superseded row (apid's
-	//    NotifyDeploymentChanged fan-out) read it BEFORE the call via
-	//    LatestDeploymentForScope(ctx, appID, scope) — by the time this tx commits,
-	//    that row is already visible as 'superseded' to the next read.
-	//    The 2-return shape keeps the signature backward-compatible
-	//    with pre-PR-B call sites (the slice-3 cascade test on main
-	//    relies on `dep, err :=` form).
+	//    Callers capture the current same-scope row before this call when they
+	//    need to record the intended predecessor in audit metadata.
 	//
-	//    Stable deployments supersede the prior row here. Canary
-	//    deployments intentionally leave it live as the residual traffic
-	//    bucket until the canary reaches its terminal stage.
+	//    Canary and service-rollout deployments leave pending siblings alone;
+	//    their rollout coordinators own overlap and cancellation semantics.
 	var priorID string
-	if err := tx.QueryRow(ctx,
-		`select id from deployments
+	if d.CanaryTotalSteps <= 0 && !serviceRollout {
+		if err := tx.QueryRow(ctx,
+			`select id from deployments
 		  where app_id = $1
 		    and scope = $2
-		    and status in ('pending','live')
+		    and status = 'pending'
 		  order by created_at desc
 		  limit 1
 		  for update`,
-		d.AppID, normalizedDeploymentScope(d.Scope)).Scan(&priorID); err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return Deployment{}, fmt.Errorf("state: lock prior deployment: %w", err)
-		}
-		// pgx.ErrNoRows → no prior; that's fine. Move on.
-	} else if d.CanaryTotalSteps <= 0 && !serviceRollout {
-		// Issue #556 PR-A: zero the prior row's traffic_percent in
-		// the same tx so Σ over live rows remains 100 by construction
-		// (the new INSERT defaults traffic_percent to 100 below).
-		// Two-write update is intentional: the first write flips
-		// status to 'superseded' (the pre-#556 contract); the second
-		// zeroes the new column. Combining them into one UPDATE SET
-		// list would also work but makes the diff against #556's
-		// "minimal blast radius" intent harder to review.
-		if _, err := tx.Exec(ctx,
-			`update deployments
-			    set status = 'superseded', traffic_percent = 0
-			  where id = $1`,
-			priorID); err != nil {
-			return Deployment{}, fmt.Errorf("state: supersede prior %s: %w", priorID, err)
-		}
-	}
-	if d.CanaryTotalSteps <= 0 && !serviceRollout {
-		// A stable deployment terminates any active canary overlap as
-		// well as the newest prior row. The app-level partial unique
-		// index requires every other live revision to be gone before
-		// this deployment is activated.
-		if _, err := tx.Exec(ctx,
-			`update deployments
-			    set status = 'superseded', traffic_percent = 0
-			  where app_id = $1 and scope = $2 and status = 'live'`,
-			d.AppID, normalizedDeploymentScope(d.Scope)); err != nil {
-			return Deployment{}, fmt.Errorf("state: supersede live canary siblings: %w", err)
+			d.AppID, normalizedDeploymentScope(d.Scope)).Scan(&priorID); err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return Deployment{}, fmt.Errorf("state: lock prior pending deployment: %w", err)
+			}
+		} else {
+			if _, err := tx.Exec(ctx,
+				`update deployments
+				    set status = 'superseded', traffic_percent = 0
+				  where id = $1`, priorID); err != nil {
+				return Deployment{}, fmt.Errorf("state: supersede prior pending %s: %w", priorID, err)
+			}
 		}
 	}
 
@@ -6346,6 +6290,24 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	// CreateDeployment takes the app lock before touching deployment rows.
+	// Use the same order here so two ready candidates cannot race through
+	// stable cutover and so create-versus-promote cannot deadlock.
+	var appID string
+	if err := tx.QueryRow(ctx, `select app_id from deployments where id = $1`, id).Scan(&appID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: mark deployment live resolve app: %w", err)
+	}
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: mark deployment live lock app: %w", err)
+	}
+
 	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
 		   from deployments where id = $1 for update`, id))
@@ -6355,7 +6317,7 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
 	}
-	if dep.Status == DeployLive || dep.CanaryTotalSteps <= 0 {
+	if dep.Status == DeployLive || (dep.CanaryTotalSteps <= 0 && IsServiceRollout(dep)) {
 		if _, err := tx.Exec(ctx,
 			`update deployments set status = $2, error = '' where id = $1`, id, string(DeployLive)); err != nil {
 			return fmt.Errorf("state: mark deployment live update: %w", err)
@@ -6371,6 +6333,36 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("state: mark deployment live commit: %w", err)
+		}
+		return nil
+	}
+	if dep.CanaryTotalSteps <= 0 {
+		// The replacement has completed its build/readiness pipeline. Retire
+		// every live revision in this scope and activate the replacement in
+		// one transaction, so readers observe either the old or the new live
+		// row and never an empty routing set.
+		if _, err := tx.Exec(ctx,
+			`update deployments
+			    set status = 'superseded', traffic_percent = 0
+			  where app_id = $1 and scope = $2 and status = 'live' and id <> $3`,
+			dep.AppID, normalizedDeploymentScope(dep.Scope), id); err != nil {
+			return fmt.Errorf("state: mark stable live supersede siblings: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`update deployments set status = 'live', error = '', traffic_percent = 100 where id = $1`, id); err != nil {
+			return fmt.Errorf("state: mark stable deployment live: %w", err)
+		}
+		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+		if err != nil {
+			return err
+		}
+		if snap.DeploymentID != "" {
+			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
+				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("state: mark stable deployment live commit: %w", err)
 		}
 		return nil
 	}

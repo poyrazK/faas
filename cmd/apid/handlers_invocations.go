@@ -200,6 +200,7 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		ID:     final.ID,
 		Status: string(final.State),
 		Result: final.Result,
+		Error:  final.LastError,
 	})
 }
 

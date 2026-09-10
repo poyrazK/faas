@@ -5,6 +5,8 @@
 // parseBatchFailures, containsString, jsonOrEmpty, base64Decode,
 // and the JSON-shape round-trips of batchDispatchRequest +
 // batchDispatchResponse + batchDispatchResult.
+// adr: 080
+
 package gateway
 
 import (
@@ -175,11 +177,20 @@ type fakeSynthDispatcher struct {
 
 type statusAwareSynthDispatcher struct{ fakeSynthDispatcher }
 
+type targetStatusAwareSynthDispatcher struct{ fakeSynthDispatcher }
+
 func (f *statusAwareSynthDispatcher) InvokeWithStatus(_ context.Context, _ string, inv state.Invocation) (state.Invocation, int, error) {
 	f.invs = append(f.invs, inv)
 	inv.State = state.InvocationDispatching
 	inv.Result = json.RawMessage(`{"ok":true}`)
 	return inv, http.StatusCreated, nil
+}
+
+func (f *targetStatusAwareSynthDispatcher) InvokeWithTargetStatus(_ context.Context, _ string, inv state.Invocation, target Target) (state.Invocation, int, error) {
+	f.targets = append(f.targets, target)
+	inv.State = state.InvocationFailed
+	inv.Result = json.RawMessage(`{"error":"handler_error"}`)
+	return inv, http.StatusInternalServerError, nil
 }
 
 func (f *fakeSynthDispatcher) Wake(_ context.Context, appID string) error {
@@ -338,6 +349,28 @@ func TestHandleInvocationDispatch_UsesOptionalDownstreamStatus(t *testing.T) {
 	}
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("status_code = %d, want 201", response.StatusCode)
+	}
+}
+
+func TestHandleInvocationDispatch_PreservesPrewokenDownstreamStatus(t *testing.T) {
+	d := &targetStatusAwareSynthDispatcher{}
+	srv := NewSynthServer("/tmp/faas-synth-target-status-test.sock", d, nil)
+	w := httptest.NewRecorder()
+	body := `{"invocation_id":"inv-status","app_id":"app-status","instance_id":"instance-1","node_id":"node-1"}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/invocations:dispatch", strings.NewReader(body))
+	srv.handleInvocationDispatch(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 transport response", w.Code)
+	}
+	var response struct {
+		State      string `json:"state"`
+		StatusCode int    `json:"status_code"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.StatusCode != http.StatusInternalServerError || response.State != string(state.InvocationFailed) {
+		t.Fatalf("status/state = %d/%q, want 500/failed", response.StatusCode, response.State)
 	}
 }
 
