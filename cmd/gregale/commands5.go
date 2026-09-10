@@ -1039,7 +1039,7 @@ func cmdQueueDispatch(args []string) int {
 		return cmdQueueSend(args[1:])
 	case "receive":
 		return cmdQueueReceive(args[1:])
-	case "state":
+	case "state", statusLiteral:
 		return cmdQueueState(args[1:])
 	case "peek":
 		return cmdQueuePeek(args[1:])
