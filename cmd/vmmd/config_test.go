@@ -300,6 +300,53 @@ vcpu_budget = 40
 	}
 }
 
+func TestLoadConfig_ComputeCapacityEnvOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	body := `
+[compute_node]
+vpcpus = 160
+mem_mb = 56000
+max_concurrency = 200
+admission_ceiling_mb = 47600
+vcpu_budget = 160
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAAS_COMPUTE_VCPUS", "4")
+	t.Setenv("FAAS_COMPUTE_MEM_MB", "15985")
+	t.Setenv("FAAS_COMPUTE_MAX_CONCURRENCY", "20")
+	t.Setenv("FAAS_COMPUTE_ADMISSION_CEILING_MB", "13587")
+	t.Setenv("FAAS_VCPU_BUDGET", "32")
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	got := cfg.ComputeNode
+	if got.VPCPUs != 4 || got.MemMB != 15985 || got.MaxConcurrency != 20 ||
+		got.AdmissionCeilingMB != 13587 || got.VCPUBudget != 32 {
+		t.Fatalf("ComputeNode capacity = %+v, want host-derived 4/15985/20/13587/32", got)
+	}
+}
+
+func TestLoadConfig_ComputeCapacityEnvRejectsNonPositive(t *testing.T) {
+	for _, name := range []string{
+		"FAAS_COMPUTE_VCPUS",
+		"FAAS_COMPUTE_MEM_MB",
+		"FAAS_COMPUTE_MAX_CONCURRENCY",
+		"FAAS_COMPUTE_ADMISSION_CEILING_MB",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "0")
+			_, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("LoadConfig error = %v, want named positive-integer validation", err)
+			}
+		})
+	}
+}
+
 // TestLoadConfig_FAASVCPUBudgetRejectsNonPositive pins the env-overlay
 // validator (issue #938 / PR-A): non-positive FAAS_VCPU_BUDGET fails
 // at LoadConfig rather than at the upsert.
