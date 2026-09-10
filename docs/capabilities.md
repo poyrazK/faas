@@ -12,10 +12,11 @@ This matrix is generated from [`pkg/productcap/catalog.json`](../pkg/productcap/
 | [GitHub deployments](https://gregale.dev/docs/deploy-from-github) | delivery | `beta` | `free`, `hobby`, `pro`, `scale` | Deploy an API from a connected GitHub repository and ref. | `pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath` |
 | [Managed PostgreSQL](../docs/managed-postgres) | data | `internal` | — | Provision and bind a managed PostgreSQL database to an API. | `pkg/managedpostgres/service_test.go::TestCreateIsIdempotentAndPersistsPlacement` |
 | [Private object storage](../docs/object-storage) | data | `preview` | `hobby`, `pro`, `scale` | Use private managed object buckets and signed URLs from an API. | `pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification` |
+| [OpenAPI contract preview](../docs/api-hosting-openapi) | edge | `preview` | `free`, `hobby`, `pro`, `scale` | Compare declared routes with observed routes and matching edge policy before deployment. | `pkg/openapidiff/preview_test.go::TestBuildRoutePolicyPreview` |
 | [Pull-request previews](../docs/preview-environments) | delivery | `beta` | `free`, `hobby`, `pro`, `scale` | Create an isolated, reviewable API URL for a pull request. | `pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape` |
 | [Scale to zero](https://gregale.dev/docs/scale-to-zero) | runtime | `beta` | `free`, `hobby`, `pro`, `scale` | Park idle APIs and wake them on the next request. | `pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader` |
 | [Source deploys](https://gregale.dev/docs/deploy-from-source) | delivery | `beta` | `free`, `hobby`, `pro`, `scale` | Deploy an API from a local source tree, tarball, Dockerfile, or OCI image. | `cmd/e2e/apply_project_e2e_test.go::TestApplyProject_DeploymentKindTarball` |
-| [Streaming and gRPC](https://gregale.dev/docs/runtime-node) | edge | `beta` | `hobby`, `pro`, `scale` | Serve streaming HTTP responses, SSE, and gRPC APIs. | `pkg/gateway/handler_test.go::TestRawStreamReverseProxy_RemoteWakeNode` |
+| [Streaming and gRPC](https://gregale.dev/docs/runtime-node) | edge | `beta` | `hobby`, `pro`, `scale` | Serve streaming HTTP responses, SSE, and gRPC APIs. | `pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode` |
 | [Jobs and workflows](../docs/faas_openapi_spec) | async | `preview` | `hobby`, `pro`, `scale` | Run asynchronous jobs and durable workflows alongside an API. | `cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle` |
 
 ## Promotion rule

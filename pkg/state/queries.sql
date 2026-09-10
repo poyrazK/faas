@@ -129,6 +129,13 @@ select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        status, coalesce(error, ''), created_at
 from deployments where app_id = $1 order by created_at desc limit $2 offset $3;
 
+-- name: ListLatestDeploymentPerApp :many
+select distinct on (d.app_id) d.*
+from deployments d
+join apps a on a.id = d.app_id
+where a.account_id = $1 and a.status <> 'deleted'
+order by d.app_id, d.created_at desc, d.id desc;
+
 -- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -1553,19 +1560,19 @@ delete from oidc_exchanged_tokens where id = $1;
 --
 -- PR-B (ADR-127 §PR-B): the publisher collapse in
 -- pkg/gateway/request_telemetry_publisher.go coalesces requests with
--- the same (app, deployment, route, method, status, minute_bucket) into
--- one row with `count` = the number of originals. count is INT NOT NULL
--- DEFAULT 1 (00440) so pre-PR-B clients keep working — the DEFAULT
--- fires for any INSERT that omits the column. PR-B's publisher always
--- passes it explicitly.
+-- the same (app, deployment, route, method, status, dimensions,
+-- minute_bucket, latency_bucket) into one row with `count` = the number
+-- of originals. count is INT NOT NULL DEFAULT 1 (00440) so pre-PR-B
+-- clients keep working — the DEFAULT fires for any INSERT that omits
+-- the column. PR-B's publisher always passes it explicitly.
 INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
-    ua_family, referrer_host, country
+    ua_family, referrer_host, country, wake_id, instance_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14
+    $12, $13, $14, $15, $16
 );
 
 -- name: ListRequestTelemetryByApp :many
@@ -1575,7 +1582,7 @@ INSERT INTO request_telemetry (
 -- timestamptz; handler-side date parsing is at cmd/apid/
 -- handlers_debug_telemetry.go (parseDebugTelemetryWindow).
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at
+       cold_boot, trace_id, received_at, wake_id, instance_id
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
@@ -1589,7 +1596,7 @@ LIMIT $4;
 -- predicate is the database-side tenant boundary; the handler has
 -- already resolved the slug through the caller's account.
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, spans_summary
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id
 FROM request_telemetry
 WHERE app_id = $1
   AND id = $2
@@ -1617,11 +1624,12 @@ LIMIT $5;
 -- cron + PR Debugger UX v1 compare handler). Single index scan
 -- over the existing request_telemetry_app_dep_received_idx
 -- (PR-A migration 00427) so the four aggregates share one
--- window. The recorder collapses burst traffic into rows with a
--- `count` weight; expand that weight mathematically instead of
--- treating each aggregate row as one request. The rank/floor
--- formulation below is equivalent to percentile_cont over the
--- expanded multiset, without materializing one row per request.
+-- window. The recorder collapses burst traffic into bounded
+-- latency-bucket rows with a `count` weight; expand that weight
+-- mathematically instead of treating each aggregate row as one
+-- request. The rank/floor formulation below is equivalent to
+-- percentile_cont over the expanded multiset of bucket
+-- representatives, without materializing one row per request.
 WITH weighted AS (
     SELECT route,
            latency_ms,
@@ -1690,9 +1698,11 @@ FROM values_at_rank;
 
 -- name: RequestTelemetryAnalyticsSummary :one
 -- Customer-facing request analytics over a bounded retention window.
--- The recorder collapses identical requests into rows with `count`, so
--- all request/error/cold-boot totals and percentiles must expand that
--- weight rather than treating each stored row as one request.
+-- The recorder collapses identical requests into bounded latency-bucket
+-- rows with `count`, so all request/error/cold-boot totals and percentiles
+-- must expand that weight rather than treating each stored row as one
+-- request. Latency representatives are conservative within the bucket
+-- width documented by requestTelemetryLatencyBucketUpperBound.
 WITH filtered AS (
     SELECT latency_ms, cold_boot, status, count::bigint AS request_count
     FROM request_telemetry
@@ -2805,6 +2815,26 @@ SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_s
 INSERT INTO object_storage_authorizations (account_id, period_start, count) VALUES ($1,$2,1)
 ON CONFLICT (account_id,period_start) DO UPDATE SET count = object_storage_authorizations.count + 1;
 
+-- name: ObjectStorageProviderRequestIncrement :exec
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, request_count)
+VALUES ($1, $2, 1)
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET request_count = object_storage_request_metrics.request_count + 1;
+
+-- name: ObjectStorageProviderRequestMetrics :many
+SELECT b.id, b.account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
+       sqlc.arg(period_start)::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count
+FROM object_buckets b
+LEFT JOIN object_storage_request_metrics m
+  ON m.bucket_id = b.id AND m.period_start = sqlc.arg(period_start)
+WHERE b.backend_id = $1 AND b.backend_fingerprint = $2
+ORDER BY b.physical_name, b.id;
+
+-- name: ObjectStorageProviderBuckets :many
+SELECT * FROM object_buckets
+WHERE backend_id = $1 AND backend_fingerprint = $2
+ORDER BY physical_name, id;
+
 -- name: ObjectUsageReports :many
 SELECT r.* FROM object_storage_usage_heads h JOIN object_storage_usage_reports r
 USING (account_id,backend_id,period_start,observed_at)
@@ -2927,8 +2957,8 @@ WHERE bucket_id=$1 AND status='active';
 
 -- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
-(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active') RETURNING *;
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING *;
 
 -- name: ObjectS3CredentialList :many
 SELECT * FROM object_storage_s3_credentials
@@ -2938,6 +2968,16 @@ ORDER BY created_at,id;
 -- name: ObjectS3CredentialRevoke :execrows
 UPDATE object_storage_s3_credentials SET status='revoked',revoked_at=now()
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active';
+
+-- name: ObjectS3CredentialGet :one
+SELECT * FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3;
+
+-- name: ObjectS3CredentialRotate :one
+UPDATE object_storage_s3_credentials
+SET access_key_id=$4, secret_sealed=$5, kid=$6, last_used_at=NULL
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+RETURNING *;
 
 -- name: ObjectS3CredentialResolve :one
 SELECT c.*, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,

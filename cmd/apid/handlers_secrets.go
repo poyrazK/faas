@@ -353,7 +353,7 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 	// row is usable by the diff surface immediately.
 	if err := s.store.UpsertAppSecretWithKidAndValueHashInScope(c, acct.ID, app.ID, scope, key, kid, valueHash, ciphertext); err != nil {
 		if errors.Is(err, state.ErrConflict) {
-			return api.ErrManagedSecretConflict()
+			return s.managedSecretConflictProblem(c, acct.ID, app.ID, scope, key)
 		}
 		return api.ErrCapacity("could not persist secret")
 	}
@@ -421,7 +421,7 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.ErrManagedSecretConflict())
+			api.WriteProblem(w, s.managedSecretConflictProblem(r.Context(), acct.ID, app.ID, scope, key))
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not delete secret"))
@@ -441,6 +441,14 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 		"scope":  scope,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) managedSecretConflictProblem(ctx stdctx, accountID, appID, scope, key string) *api.Problem {
+	row, err := s.store.GetAppSecretInScope(ctx, accountID, appID, scope, key)
+	if err == nil && row != nil && row.ManagedObjectStorageCredentialID != "" {
+		return api.ErrManagedObjectStorageSecretConflict()
+	}
+	return api.ErrManagedSecretConflict()
 }
 
 // secretExistsInScope checks if a (app_id, scope, key) row exists for

@@ -68,6 +68,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Required checks must also run on the queue's temporary merge ref,
+  # otherwise the queue waits forever for a status that never arrives.
+  merge_group:
   workflow_dispatch:
 
 # On a branch, only the newest push is interesting, so runs cancel each
@@ -87,7 +90,8 @@ on:
 # its own lane; branches keep the cheap cancel-the-stale-run behaviour.
 concurrency:
   group: images-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-  cancel-in-progress: true
+  # See ci.yml: a cancelled check evicts the pull request from the queue.
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 permissions:
   contents: read

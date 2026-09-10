@@ -134,6 +134,26 @@ func TestComputeNodes_AllowlistHitUpsertsAndLists(t *testing.T) {
 	}
 }
 
+func TestComputeNodes_RejectsUnreachableGatewayMetricsTarget(t *testing.T) {
+	ts, tok := newComputeNodeTestServer(t, "ops@example.com", "ops@example.com")
+
+	for _, target := range []string{
+		"tcp://127.0.0.1:8080",
+		"tcp://localhost:8080",
+		"tcp://0.0.0.0:8080",
+		"tcp://[::]:8080",
+	} {
+		body := `{"name":"bad-metrics-target","target_url":"tcp://100.64.0.1:50051","gateway_target_url":"` + target + `","vpcpus":8,"mem_mb":8192,"max_concurrency":16,"admission_ceiling_mb":4096}`
+		resp := doJSON(t, "POST", "/v1/compute-nodes", body, tok, ts)
+		if resp.StatusCode != http.StatusBadRequest {
+			resp.Body.Close()
+			t.Errorf("target %q: status=%d, want 400", target, resp.StatusCode)
+			continue
+		}
+		resp.Body.Close()
+	}
+}
+
 func TestComputeNodes_HardDeleteRefusesDefaultLocal(t *testing.T) {
 	ts, tok := newComputeNodeTestServer(t, "ops@example.com", "ops@example.com")
 	resp := doJSON(t, "DELETE", "/v1/compute-nodes/default-local?hard=1", "", tok, ts)

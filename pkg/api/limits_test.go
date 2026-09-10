@@ -50,6 +50,23 @@ func TestLimitsEphemeralDiskMaxAliasesAppLayerCap(t *testing.T) {
 	}
 }
 
+func TestPlanMaxRequestBodyBytes(t *testing.T) {
+	want := map[Plan]int64{
+		PlanFree:  10 * 1024 * 1024,
+		PlanHobby: 25 * 1024 * 1024,
+		PlanPro:   100 * 1024 * 1024,
+		PlanScale: 250 * 1024 * 1024,
+	}
+	for plan, expected := range want {
+		if got := plan.MaxRequestBodyBytes(); got != expected {
+			t.Errorf("%s.MaxRequestBodyBytes() = %d, want %d", plan, got, expected)
+		}
+	}
+	if got := Plan("unknown").MaxRequestBodyBytes(); got != MaxRequestBodyBytes {
+		t.Fatalf("unknown.MaxRequestBodyBytes() = %d, want %d", got, MaxRequestBodyBytes)
+	}
+}
+
 func TestRequestBudgetForTypeDefaultsAndOverrides(t *testing.T) {
 	cases := []struct {
 		name string
@@ -174,15 +191,14 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			DataPlacementHintsPerApp: 0,
 			// ADR-076 (#476): outbound webhooks — Free gated to 402
 			// (CodePlanWebhooksNotAllowed), same fail-closed shape.
-			WebhookPerApp: 0, WebhookPerAccount: 0,
+			WebhookPerApp: 0, WebhookPerAccount: 0, LogDrainPerApp: 0, LogDrainPerAccount: 0,
 			// ADR-0NN (#757): Free is gated off the Trigger primitive
 			// entirely. Handler returns 402 CodePlanTriggersNotAllowed
 			// before the store is touched; the 0/0/0/0/0/0/0 tuple
 			// here is the defence-in-depth value the store still reads.
 			TriggersAllowed: false, TriggerLimitPerApp: 0, TriggerLimitPerAccount: 0, TriggerBatchSizeMax: 0, TriggerBatchWindowMaxSec: 0, TriggerMaxAttemptsMax: 0, TriggerRecordsPerSecondPerApp: 0, TriggerPayloadMaxBytes: 0, MaxESMSourcesPerApp: 0, MaxESMRecordsPerSecond: 0, BrokerEgressMbit: 0, TLSSkipVerifyAllowed: false,
-			// ADR-040: Free gets 50/min — covers the 1-concurrency plan's
-			// traffic envelope with a 50× burst ceiling.
-			RateLimitPerAccountRPM: 50,
+			// ADR-040 / #1680: one Free app can sustain its advertised 5 rps.
+			RateLimitPerAccountRPM: 300,
 			// ADR-104: Free gets 100 — small slice of per-key
 			// cardinality, enough to size 1-2 per-key limits.
 			ThrottleMaxKeysPerRule: 100,
@@ -196,7 +212,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// seen before the streaming patch landed. MaxResponseBodyBytes
 			// (25 MiB) and ResponseWriteTimeoutSeconds (300 s) are the
 			// pre-#471 spec §4.1 caps PR-A inherits.
-			StreamingEnabled: false, MaxResponseBodyBytes: 26_214_400, ResponseWriteTimeoutSeconds: 300,
+			StreamingEnabled: false, MaxResponseBodyBytes: 26_214_400, RequestBodyMaxBytes: 10 * 1024 * 1024, ResponseWriteTimeoutSeconds: 300,
 			// Issue #676 / ADR-080: Free is the abuse-floor tier — a
 			// long-lived WS would pin a wake past the 30 s Free idle
 			// timeout. Default off; apid PATCH rejects with 403
@@ -332,16 +348,14 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			OrgMembersMax: 10, OrgPendingInvitationsMax: 5,
 			// ADR-076 (#476): Hobby gets 3 per-app and 10 per-account
 			// — mirrors the alert-rule ratio.
-			WebhookPerApp: 3, WebhookPerAccount: 10,
+			WebhookPerApp: 3, WebhookPerAccount: 10, LogDrainPerApp: 3, LogDrainPerAccount: 10,
 			// ADR-0NN (#757): Hobby unlocks the in-platform queue +
 			// sqs_compat kinds. Tight caps (50/30s/3) so a Hobby
 			// customer's fan-out can't saturate schedd's per-app
 			// WakeRateLimiter bucket.
 			TriggersAllowed: true, TriggerLimitPerApp: 2, TriggerLimitPerAccount: 10, TriggerBatchSizeMax: 50, TriggerBatchWindowMaxSec: 30, TriggerMaxAttemptsMax: 3, TriggerRecordsPerSecondPerApp: 100, TriggerPayloadMaxBytes: 1048576, MaxESMSourcesPerApp: 2, MaxESMRecordsPerSecond: 100, BrokerEgressMbit: 10, TLSSkipVerifyAllowed: false,
-			// ADR-040: Hobby gets 200/min — ~10× the per-app rps (20),
-			// so the per-app limit trips first on a single hot app and
-			// the account limit catches the cross-app botnet signature.
-			RateLimitPerAccountRPM: 200,
+			// ADR-040 / #1680: one Hobby app can sustain its advertised 20 rps.
+			RateLimitPerAccountRPM: 1200,
 			// ADR-104: Hobby gets 1000 — meaningful per-key
 			// cardinality on a small/medium deployment.
 			ThrottleMaxKeysPerRule: 1000,
@@ -351,7 +365,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #471 / ADR-047 (PR-A): Hobby unlocks streaming
 			// (100 MiB / 900 s) — the first paid tier. PR-A wires
 			// the flag + accessor; PR-B activates the Flusher path.
-			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, ResponseWriteTimeoutSeconds: 900,
+			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, RequestBodyMaxBytes: 25 * 1024 * 1024, ResponseWriteTimeoutSeconds: 900,
 			// Issue #676 / ADR-080: Hobby unlocks the raw-bytes
 			// Upgrade bridge — many agent / LLM SDKs speak WS over a
 			// thin HTTP boundary, and Hobby is the tier where those
@@ -482,14 +496,14 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			OrgMembersMax: 50, OrgPendingInvitationsMax: 25,
 			// ADR-076 (#476): Pro gets 10 per-app and 30 per-account
 			// — mirrors the alert-rule ratio.
-			WebhookPerApp: 10, WebhookPerAccount: 30,
+			WebhookPerApp: 10, WebhookPerAccount: 30, LogDrainPerApp: 10, LogDrainPerAccount: 30,
 			// ADR-0NN (#757): Pro is the first tier where external
 			// broker kinds unlock (Kafka/NATS/Redis-streams). Caps jump
 			// to 10/50 + 500/5min/10 attempts so a Pro customer's
 			// 1k-msg/s Kafka consumer can be drained with one trigger.
 			TriggersAllowed: true, TriggerLimitPerApp: 10, TriggerLimitPerAccount: 50, TriggerBatchSizeMax: 500, TriggerBatchWindowMaxSec: 300, TriggerMaxAttemptsMax: 10, TriggerRecordsPerSecondPerApp: 1000, TriggerPayloadMaxBytes: 6291456, MaxESMSourcesPerApp: 10, MaxESMRecordsPerSecond: 1000, BrokerEgressMbit: 50, TLSSkipVerifyAllowed: true,
-			// ADR-040: Pro gets 1000/min — ~10× the per-app rps (100).
-			RateLimitPerAccountRPM: 1000,
+			// ADR-040 / #1680: one Pro app can sustain its advertised 100 rps.
+			RateLimitPerAccountRPM: 6000,
 			// ADR-104: Pro gets 5000 — meaningful per-tenant
 			// cardinality on a multi-tenant deployment.
 			ThrottleMaxKeysPerRule: 5000,
@@ -499,7 +513,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #471 / ADR-047 (PR-A): Pro keeps the same streaming
 			// envelope as Hobby. The cap is the same; the per-app
 			// streaming path is gatewayd-internal-edged, not per-tier.
-			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, ResponseWriteTimeoutSeconds: 900,
+			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, RequestBodyMaxBytes: 100 * 1024 * 1024, ResponseWriteTimeoutSeconds: 900,
 			// Issue #676 / ADR-080: Pro unlocks the raw-bytes
 			// Upgrade bridge for the same reason as Hobby — production
 			// workloads at this tier run agent / WS-backed services.
@@ -642,7 +656,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			OrgMembersMax: 200, OrgPendingInvitationsMax: 100,
 			// ADR-076 (#476): Scale gets 25 per-app and 100 per-account
 			// — mirrors the alert-rule ratio.
-			WebhookPerApp: 25, WebhookPerAccount: 100,
+			WebhookPerApp: 25, WebhookPerAccount: 100, LogDrainPerApp: 25, LogDrainPerAccount: 100,
 			// ADR-0NN (#757): Scale is the upper tier — caps align with
 			// the SQL CHECK ceilings (5000 records / 5 min window /
 			// 25 attempts) so a Scale customer's SQS-compatible or
@@ -655,10 +669,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// picker cache refresh path can validate inside the
 			// deployment_changed pg_notify fanout window.
 			MirrorRuleAllowed: true, MirrorTargetsPerApp: 3,
-			// ADR-040: Scale gets 5000/min — ~10× the per-app rps (500).
-			// The fleet-summed alert at 100/min/5m (FaasPerAccountRateLimitSpike)
-			// triggers well before any single paid customer's bucket fills.
-			RateLimitPerAccountRPM: 5000,
+			// ADR-040 / #1680: one Scale app can sustain its advertised 500 rps.
+			RateLimitPerAccountRPM: 30000,
 			// ADR-104: Scale gets 10000 — full per-tenant
 			// cardinality on a multi-tenant SaaS deployment.
 			ThrottleMaxKeysPerRule: 10000,
@@ -669,7 +681,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// as Hobby/Pro. The streaming cap is uniform across paid
 			// tiers — the spec's paid-only unlock is the boolean, not
 			// the byte/time ceiling.
-			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, ResponseWriteTimeoutSeconds: 900,
+			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, RequestBodyMaxBytes: 250 * 1024 * 1024, ResponseWriteTimeoutSeconds: 900,
 			// Issue #676 / ADR-080: Scale unlocks the raw-bytes
 			// Upgrade bridge — production WS-backed services sit at
 			// this tier.
@@ -1914,8 +1926,8 @@ func TestPlanEvictionPriorityAccessorsMatchTable(t *testing.T) {
 }
 
 // TestPlanRateLimitPerAccount pins the per-account requests/minute cap
-// per plan (ADR-040 / issue #292). Free 50/min, Hobby 200/min, Pro
-// 1000/min, Scale 5000/min. Unknown plans must fail closed (return 0)
+// per plan (ADR-040 / issues #292 and #1680). Free 300/min, Hobby
+// 1200/min, Pro 6000/min, Scale 30000/min. Unknown plans must fail closed (return 0)
 // so a missing row never silently unlocks cross-app botnets — same
 // contract as CronLimitPerAccount above.
 func TestPlanRateLimitPerAccount(t *testing.T) {
@@ -1923,15 +1935,28 @@ func TestPlanRateLimitPerAccount(t *testing.T) {
 		plan    Plan
 		wantRPM int
 	}{
-		{PlanFree, 50},
-		{PlanHobby, 200},
-		{PlanPro, 1000},
-		{PlanScale, 5000},
+		{PlanFree, 300},
+		{PlanHobby, 1200},
+		{PlanPro, 6000},
+		{PlanScale, 30000},
 		{Plan("unknown"), 0},
 	}
 	for _, c := range cases {
 		if got := c.plan.RateLimitPerAccountRPM(); got != c.wantRPM {
 			t.Errorf("%s.RateLimitPerAccountRPM() = %d, want %d", c.plan, got, c.wantRPM)
+		}
+	}
+}
+
+// TestPlanAccountRateSupportsOneAdvertisedApp prevents the account-wide
+// abuse boundary from silently undercutting the advertised per-app rate.
+func TestPlanAccountRateSupportsOneAdvertisedApp(t *testing.T) {
+	for _, plan := range Plans {
+		limits := MustLimitsFor(plan)
+		minimumRPM := limits.RateLimitRPS * 60
+		if limits.RateLimitPerAccountRPM < minimumRPM {
+			t.Errorf("%s account rate = %d RPM; need at least %d RPM for one app at %d RPS",
+				plan, limits.RateLimitPerAccountRPM, minimumRPM, limits.RateLimitRPS)
 		}
 	}
 }
@@ -2496,6 +2521,22 @@ func TestPlanWebSocketEnabled_UnknownFailsClosed(t *testing.T) {
 	}
 	if got := unknown.WebSocketResponseAllowed(); got {
 		t.Errorf("Plan(nonexistent).WebSocketResponseAllowed() = true, want false (fail-closed)")
+	}
+}
+
+func TestPlanHealthPathWakesAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		plan Plan
+		want bool
+	}{
+		{PlanFree, false}, {PlanHobby, false}, {PlanPro, true}, {PlanScale, true},
+	} {
+		if got := tc.plan.HealthPathWakesAllowed(); got != tc.want {
+			t.Errorf("%s.HealthPathWakesAllowed() = %v, want %v", tc.plan, got, tc.want)
+		}
+	}
+	if Plan("unknown").HealthPathWakesAllowed() {
+		t.Fatal("unknown plan must fail closed")
 	}
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/cosign"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -1827,6 +1828,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			webhookLoopErr <- nil
 		}
 	}()
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, scheddProbe.ReadyFunc())
+	defer notifyStop()
 
 	select {
 	case <-ctx.Done():

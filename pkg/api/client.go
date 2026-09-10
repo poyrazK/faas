@@ -606,6 +606,14 @@ func (c *Client) GetLatestAppDeployment(ctx context.Context, slug string) (Deplo
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/latest", nil, &out)
 }
 
+// GetAppDeploymentSummary returns the release cockpit for one deployment:
+// the deployment detail, its immediate predecessor, stable field-level
+// changes, and the currently eligible rollback target.
+func (c *Client) GetAppDeploymentSummary(ctx context.Context, slug, id string) (DeploymentSummaryResponse, error) {
+	var out DeploymentSummaryResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/"+id+"/summary", nil, &out)
+}
+
 // GetDeploymentScan returns the per-deploy grype CVE scan
 // payload for one deployment (issue #464 / ADR-055). Returns
 // the typed api.ScanResult envelope (status, severity counts,
@@ -3323,6 +3331,20 @@ func (c *Client) UsageSummary(ctx context.Context, month string) (UsageSummaryRe
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// AccountUsage returns the account-level usage projection. It combines the
+// compute summary with optional object-storage and managed-PostgreSQL views;
+// an empty month asks the server for the current UTC month.
+func (c *Client) AccountUsage(ctx context.Context, month string) (AccountUsageResponse, error) {
+	var out AccountUsageResponse
+	path := "/v1/account/usage"
+	if month != "" {
+		q := url.Values{}
+		q.Set("month", month)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // UsageDaily returns the per-(app, day) rollup rows the meterd rollup
 // loop populated into usage_daily (ADR-048 §5). day is "YYYY-MM-DD"
 // and is required; the server 400s on empty so callers don't get
@@ -3357,6 +3379,31 @@ func (c *Client) ListDeployments(ctx context.Context, before string, limit int) 
 		q.Set("limit", strconv.Itoa(limit))
 	}
 	path := "/v1/deployments"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListLatestDeploymentsByApp returns at most one newest deployment for every
+// non-deleted app owned by the authenticated account.
+func (c *Client) ListLatestDeploymentsByApp(ctx context.Context) (LatestDeploymentsByAppResponse, error) {
+	var out LatestDeploymentsByAppResponse
+	return out, c.do(ctx, "GET", "/v1/deployments/latest-by-app", nil, &out)
+}
+
+// ListAppDeployments returns one cursor page of deployments for slug. The
+// app-scoped route avoids making app-centric callers scan account-wide pages.
+func (c *Client) ListAppDeployments(ctx context.Context, slug, before string, limit int) (DeploymentListResponse, error) {
+	var out DeploymentListResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/deployments"
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -3907,6 +3954,32 @@ func (c *Client) RetryAppWebhookDelivery(ctx context.Context, slug, id, delivery
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
 }
 
+// --- Customer runtime log drains (issue #1398 O4) -------------------------
+
+func (c *Client) ListAppLogDrains(ctx context.Context, slug string) ([]AppLogDrainResponse, error) {
+	var out []AppLogDrainResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains", nil, &out)
+}
+
+func (c *Client) CreateAppLogDrain(ctx context.Context, slug string, req CreateAppLogDrainRequest) (AppLogDrainResponse, error) {
+	var out AppLogDrainResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/log-drains", req, &out)
+}
+
+func (c *Client) GetAppLogDrain(ctx context.Context, slug, id string) (AppLogDrainResponse, error) {
+	var out AppLogDrainResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains/"+id, nil, &out)
+}
+
+func (c *Client) UpdateAppLogDrain(ctx context.Context, slug, id string, req UpdateAppLogDrainRequest) (AppLogDrainResponse, error) {
+	var out AppLogDrainResponse
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/log-drains/"+id, req, &out)
+}
+
+func (c *Client) DeleteAppLogDrain(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/log-drains/"+id, nil, nil)
+}
+
 // --- /v1/account/dpa (spec §17 G6) ----------------------------------------
 //
 // DPA = Data Processing Addendum. Public, no-auth endpoint that
@@ -4222,6 +4295,33 @@ func (c *Client) GetAppOpenAPI(ctx context.Context, slug, source string) ([]byte
 		return nil, err
 	}
 	return body, nil
+}
+
+// PreviewAppOpenAPIPolicy returns the read-only declared-vs-observed route
+// diff for an app, including the edge rules matching each route. It never
+// mutates the imported document or policy state; ObservedAvailable is false
+// when the gatewayd route bridge is unavailable.
+func (c *Client) PreviewAppOpenAPIPolicy(ctx context.Context, slug string) (AppOpenAPIPolicyPreviewResponse, error) {
+	var out AppOpenAPIPolicyPreviewResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+slug+"/openapi/preview", nil, &out)
+	return out, err
+}
+
+// DiffAppOpenAPIContract returns the production contract diff that the
+// feature-flagged promotion gate would evaluate. It is read-only and uses
+// apps:read; scope defaults to prod when empty.
+func (c *Client) DiffAppOpenAPIContract(ctx context.Context, slug, scope string) (OpenAPIContractDiffResponse, error) {
+	q := url.Values{}
+	if scope != "" {
+		q.Set("scope", scope)
+	}
+	u := "/v1/apps/" + slug + "/openapi/diff"
+	if encoded := q.Encode(); encoded != "" {
+		u += "?" + encoded
+	}
+	var out OpenAPIContractDiffResponse
+	err := c.do(ctx, "GET", u, nil, &out)
+	return out, err
 }
 
 // ImportAppOpenAPI uploads (or overwrites) the customer's OpenAPI

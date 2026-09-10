@@ -39,6 +39,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchComputeNodes": "compute-nodes", // PR-911 image rollout (PR #929; ADR-110 + ADR-111)
 		"dispatchDeploy":       "deploy",        // PR-B (multi-host scale-out gap #2)
 		"dispatchInstances":    "instances",     // P2 of operator-obs mega-PR (Commit 5b)
+		"dispatchAccounts":     "accounts",      // authenticated tenant support + lifecycle controls
 		"dispatchBuilds":       "builds",        // P2c of operator-obs mega-PR (Commit 5c)
 		"dispatchObs":          "obs",           // Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side meta-obs health snapshot
 		"dispatchDebug":        "debug",         // ADR-127 PR-D — operator-side OTel spans writer smoke harness

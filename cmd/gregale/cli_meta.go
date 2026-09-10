@@ -116,7 +116,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "crons", "delayed-task", "invocations", "jobs", "triggers", "webhooks", "workflows", "cache":
+	case "crons", "delayed-task", "invocations", "jobs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
 		return "Delivery"
@@ -505,8 +505,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployment,
 		DocSlug: "deployment",
-		Short:   "Get or wait for one deployment (<id> | wait <id> | set-min-instances <id>)",
+		Short:   "Get, summarize, or wait for one deployment (<id> | summary <id> | wait <id> | set-min-instances <id>)",
 		Subcommands: []cliSub{
+			{Name: "summary", Short: "Show the release diff and rollback target", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
+			}},
 			{Name: "wait", Short: "Wait until a deployment is live", Flags: []cliFlag{
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
 			}},
@@ -720,6 +723,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "import", Short: "Import an app OpenAPI document from a JSON file or stdin"},
 			{Name: "dry-run", Short: "Preview uncovered routes without importing the document"},
+			{Name: "preview", Short: "Preview declared routes, observed routes, and matching edge policies"},
 			{Name: "rm", Short: "Remove the imported app OpenAPI document"},
 		},
 	},
@@ -791,9 +795,10 @@ var cliCommands = []cliCommand{
 		DocSlug: "debug",
 		Short:   "Production debugger (ADR-127)",
 		Subcommands: []cliSub{
-			{Name: "requests", Short: "Per-request telemetry (list|get|evidence|replay)"},
-			{Name: "regressions", Short: "Active regression observations"},
+			{Name: "requests", Short: "Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])"},
+			{Name: "regressions", Short: "Active regression observations (list|watch [--interval D] [--once])"},
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
+			{Name: "bundle", Short: "Export a redacted incident investigation bundle (bundle <slug> <req_id> [--output PATH])"},
 		},
 		Positionals: []string{"<slug>"},
 	},
@@ -926,6 +931,31 @@ var cliCommands = []cliCommand{
 		DocSlug:   "plan",
 		Short:     "Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout",
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
+	},
+	{
+		Name:    "postgres",
+		DocSlug: "postgres",
+		Short:   "Manage managed PostgreSQL (postgres list|usage|create|get|delete|restore|bindings ...)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List managed PostgreSQL databases"},
+			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
+			{Name: "create", Short: "Create a managed PostgreSQL database", Flags: []cliFlag{
+				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
+				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
+				{Name: "class", Short: "service class", Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},
+				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
+				{Name: "scale-to-zero", Short: "suspend compute when idle"},
+				{Name: "storage-bytes", Short: "storage limit in bytes", Value: "N"},
+				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
+			}},
+			{Name: "get", Short: "Show one managed PostgreSQL database"},
+			{Name: "delete", Short: "Delete a managed PostgreSQL database"},
+			{Name: "restore", Short: "Restore a database to a new database", Flags: []cliFlag{
+				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
+				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
+			}},
+			{Name: "bindings", Short: "Manage app database bindings"},
+		},
 	},
 	{
 		Name:    "ps",

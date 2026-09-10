@@ -48,8 +48,8 @@ and per-sidecar gateway portnorm.
   the legacy single-`LayerKey` field).
 - `pkg/fcvm.RestoreSpec.Workloads []WorkloadSpec` (snapshot path
   mirror).
-- Per-workload cgroup scopes under the per-instance scope
-  (host-side defense-in-depth).
+- Per-workload cgroup scopes inside the guest, with one aggregate
+  per-VM host fence.
 - Per-workload ext4 manifest stamping at `/etc/faas/workload.json`
   on every drive (operator visibility + reverse-compat seam).
 - Deployment-level roster at `/etc/faas/workloads.json` on drive1
@@ -58,8 +58,8 @@ and per-sidecar gateway portnorm.
   sequentially, then main + `type=="sidecar"` workloads in
   parallel under per-workload `Supervisor`s. Returns when every
   supervisor exits.
-- `guest/init` `assembleOverlay` updated for N+1 drives
-  (`lowerdir=/:<sidecar-N>:...`).
+- `guest/init` mounts each N+1 sidecar drive read-only after pivot and
+  chroots that workload into the artifact's `/upper` image tree.
 - `guest/init` characterize probe filters AppPID() to main
   workload only.
 - `pkg/events.WakeSidecarInitExit` + `WakeSidecarRestart` event
@@ -163,8 +163,8 @@ and per-sidecar gateway portnorm.
   `len(Workloads) == 0` branch.
 - `pkg/fcvm/manager.go` — `WakeRequest`/`ColdBootRequest` carry
   `[]WorkloadSpec`. `bringUp` builds `ColdBootSpec.Workloads`
-  from the request. Per-workload cgroup scopes materialized
-  after `writePlanCgroup`. `StageWorkloadManifest` called per
+  from the request. The host applies one aggregate per-VM cgroup fence;
+  guest-init creates the per-workload leaves. `StageWorkloadManifest` called per
   workload + `StageWorkloadRoster` called once on drive1.
 - `pkg/fcvm/vmm.go::BootColdBoot` — resolves each workload's
   StorageBackend key through `materializeFromStorage` in turn.
@@ -189,9 +189,9 @@ and per-sidecar gateway portnorm.
 - `guest/init/main_linux.go::boot` — `discoverRoster(os.DirFS("/"))`
   routes through `runWorkloads` when `roster.Sidecars` is
   non-empty; legacy path otherwise.
-- `guest/init/main_linux.go::assembleOverlay` — N+1 drives;
-  `discoverSidecarDevices` reads the roster on drive1 (already
-  mounted at `/overlay`) and stacks each sidecar as a RO lower.
+- `guest/init/main_linux.go` — `discoverSidecarDevices` reads the
+  roster after the main pivot, mounts each sidecar drive read-only below
+  `/run/faas/sidecars/<name>`, and supplies isolated runtime mounts.
 - `guest/init/workload_linux.go` (new) — `workloadSpec`,
   `workloadRoster`, `discoverRoster`, `runWorkloads`,
   `newSupervisorForMain`, `newSupervisorFor`, `runSidecar`.
@@ -243,7 +243,7 @@ and per-sidecar gateway portnorm.
 
 | ADR §                                    | Commit(s)                                                                 |
 | ---------------------------------------- | ------------------------------------------------------------------------- |
-| Decision 7 (no shared writable layer)    | step 6 (`BuildColdBootConfig` RO sidecars); step 7 (`assembleOverlay`)    |
+| Decision 7 (no shared writable layer)    | step 6 (`BuildColdBootConfig` RO sidecars); step 7 (isolated sidecar roots) |
 | §"Downstream" (ColdBootSpec.Workloads)   | step 6                                                                     |
 | §"Downstream" (guest-init orchestrator)  | step 7                                                                     |
 | §"Downstream" (imaged buildSidecarLayer) | step 4                                                                     |
@@ -253,8 +253,8 @@ and per-sidecar gateway portnorm.
 - `make test` — green across `pkg/`, `cmd/`, `guest/`.
 - `make test-metal` (reference control-plane node only) — gates TestMetalSidecarBoot +
   TestMetalSidecarPortReachable + TestMetalTwoSidecarsColdBoot.
-- `make leakcheck` — child-first cgroup scope removal pattern
-  keeps the per-instance scope clean after Destroy.
+- `make leakcheck` — the aggregate per-instance host scope is clean after
+  Destroy; guest-init owns per-workload leaf cleanup inside the VM.
 - `make lint` — golangci-lint v2.4.0 + custom checks (per CLAUDE.md).
 
 Specific AC coverage (the verification matrix from the plan):
@@ -293,12 +293,11 @@ for that PR to wire.
    regress boot-class inference. The probe's `AppPID()` /
    `WaitForExit` / `RingBufferTail` callbacks all read from
    `mainSup`, never from sidecar supervisors.
-4. **OOM isolation correctness.** Per-workload cgroup scopes
-   are the host-side defense-in-depth; the in-guest cgroup
-   partition is a separate concern and is intentionally NOT
-   wired in PR-B (the guest's cgroup namespace is isolated
-   from the host's hierarchy). PR-C's metal-suite stress-loop
-   test gates the customer-visible isolation property.
+4. **OOM isolation correctness.** The host cgroup contains the Firecracker
+   process and enforces the aggregate VM limit. Per-workload leaves live in
+   the guest cgroup hierarchy because cgroup v2 cannot delegate controller
+   children beneath a host scope that already contains Firecracker. PR-C's
+   metal-suite stress-loop test gates the customer-visible isolation property.
 
 ## References
 

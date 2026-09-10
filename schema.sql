@@ -228,6 +228,20 @@ $$;
 
 
 --
+-- Name: api_consumers_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.api_consumers_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: consumer_keys_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1165,6 +1179,7 @@ CREATE TABLE public.app_secrets (
     kid text,
     scope text DEFAULT 'default'::text NOT NULL,
     value_hash text,
+    managed_object_storage_credential_id uuid,
     CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
     CONSTRAINT app_secrets_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT app_secrets_value_hash_shape CHECK (((value_hash IS NULL) OR (length(value_hash) <= 16)))
@@ -1229,6 +1244,25 @@ CREATE TABLE public.app_webhooks (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
     CONSTRAINT app_webhooks_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
+);
+
+
+--
+-- Name: app_log_drains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_log_drains (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    target_url text NOT NULL,
+    auth_header_sealed bytea,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_log_drains_kind_chk CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text]))),
+    CONSTRAINT app_log_drains_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
 );
 
 
@@ -1404,6 +1438,23 @@ COMMENT ON TABLE public.builder_usage IS 'Per-build wall-clock seconds, one row 
 --
 
 COMMENT ON COLUMN public.builder_usage.kind IS 'build kind (railpack|dockerfile|tarball). Mirrors builds.kind. ADR-048.';
+
+
+--
+-- Name: builder_vm_cleanup; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.builder_vm_cleanup (
+    build_id uuid NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_at timestamp with time zone,
+    claim_token uuid,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT builder_vm_cleanup_attempts_check CHECK ((attempts >= 0))
+);
 
 
 --
@@ -1614,6 +1665,27 @@ COMMENT ON COLUMN public.compute_nodes.generation IS 'monotonic counter bumped b
 
 
 --
+-- Name: api_consumers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    external_ref text NOT NULL,
+    name text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT api_consumers_external_ref_len_chk CHECK ((char_length(external_ref) >= 1) AND (char_length(external_ref) <= 256)),
+    CONSTRAINT api_consumers_name_len_chk CHECK ((char_length(name) >= 1) AND (char_length(name) <= 128)),
+    CONSTRAINT api_consumers_status_chk CHECK (status = ANY (ARRAY['active'::text, 'revoked'::text])),
+    CONSTRAINT api_consumers_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at)))
+);
+
+
+--
 -- Name: consumer_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1621,6 +1693,7 @@ CREATE TABLE public.consumer_keys (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
+    consumer_id uuid,
     name text NOT NULL,
     prefix text NOT NULL,
     hashed_secret bytea NOT NULL,
@@ -2883,6 +2956,8 @@ CREATE TABLE public.request_telemetry (
     ua_family text DEFAULT '__unknown__'::text NOT NULL,
     referrer_host text DEFAULT '__none__'::text NOT NULL,
     country text DEFAULT '__unknown__'::text NOT NULL,
+    wake_id text,
+    instance_id text,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
@@ -3905,6 +3980,14 @@ ALTER TABLE ONLY public.builder_usage
 
 
 --
+-- Name: builder_vm_cleanup builder_vm_cleanup_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.builder_vm_cleanup
+    ADD CONSTRAINT builder_vm_cleanup_pkey PRIMARY KEY (build_id);
+
+
+--
 -- Name: builds builds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3966,6 +4049,14 @@ ALTER TABLE ONLY public.compute_nodes
 
 ALTER TABLE ONLY public.compute_nodes
     ADD CONSTRAINT compute_nodes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumers api_consumers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_pkey PRIMARY KEY (id);
 
 
 --
@@ -4971,6 +5062,20 @@ CREATE INDEX app_webhooks_account_idx ON public.app_webhooks USING btree (accoun
 
 
 --
+-- Name: app_log_drains_enabled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_log_drains_enabled_idx ON public.app_log_drains USING btree (enabled, app_id);
+
+
+--
+-- Name: app_log_drains_app_target_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_log_drains_app_target_uniq ON public.app_log_drains USING btree (app_id, target_url);
+
+
+--
 -- Name: app_webhooks_app_target_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5151,6 +5256,20 @@ CREATE INDEX builder_usage_org_id_idx ON public.builder_usage USING btree (org_i
 
 
 --
+-- Name: builder_vm_cleanup_claimed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX builder_vm_cleanup_claimed_idx ON public.builder_vm_cleanup USING btree (claimed_at) WHERE (claimed_at IS NOT NULL);
+
+
+--
+-- Name: builder_vm_cleanup_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX builder_vm_cleanup_due_idx ON public.builder_vm_cleanup USING btree (next_attempt_at, build_id) WHERE (claimed_at IS NULL);
+
+
+--
 -- Name: builds_deployment_started_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5214,10 +5333,31 @@ CREATE INDEX compute_nodes_region_zone_idx ON public.compute_nodes USING btree (
 
 
 --
+-- Name: api_consumers_account_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumers_account_app_idx ON public.api_consumers USING btree (account_id, app_id);
+
+
+--
+-- Name: api_consumers_app_external_ref_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumers_app_external_ref_uniq ON public.api_consumers USING btree (app_id, external_ref);
+
+
+--
 -- Name: consumer_keys_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX consumer_keys_app_idx ON public.consumer_keys USING btree (app_id);
+
+
+--
+-- Name: consumer_keys_consumer_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX consumer_keys_consumer_id_idx ON public.consumer_keys USING btree (consumer_id);
 
 
 --
@@ -6696,6 +6836,13 @@ CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON
 
 
 --
+-- Name: api_consumers api_consumers_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER api_consumers_set_updated_at_trg BEFORE UPDATE ON public.api_consumers FOR EACH ROW EXECUTE FUNCTION public.api_consumers_set_updated_at();
+
+
+--
 -- Name: consumer_keys consumer_keys_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7128,6 +7275,22 @@ ALTER TABLE ONLY public.app_webhooks
 
 
 --
+-- Name: app_log_drains app_log_drains_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_log_drains
+    ADD CONSTRAINT app_log_drains_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_log_drains app_log_drains_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_log_drains
+    ADD CONSTRAINT app_log_drains_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: apps apps_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7192,6 +7355,14 @@ ALTER TABLE ONLY public.builder_usage
 
 
 --
+-- Name: builder_vm_cleanup builder_vm_cleanup_build_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.builder_vm_cleanup
+    ADD CONSTRAINT builder_vm_cleanup_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.builds(id) ON DELETE CASCADE;
+
+
+--
 -- Name: builds builds_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7224,6 +7395,22 @@ ALTER TABLE ONLY public.compute_node_keys
 
 
 --
+-- Name: api_consumers api_consumers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumers api_consumers_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: consumer_keys consumer_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7237,6 +7424,14 @@ ALTER TABLE ONLY public.consumer_keys
 
 ALTER TABLE ONLY public.consumer_keys
     ADD CONSTRAINT consumer_keys_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: consumer_keys consumer_keys_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.consumer_keys
+    ADD CONSTRAINT consumer_keys_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --
@@ -8150,13 +8345,17 @@ CREATE TABLE public.object_storage_s3_credentials (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
+    managed_app_id uuid,
+    managed_scope text,
+    managed_prefix text,
     CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
     CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
     CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
     CONSTRAINT object_storage_s3_credentials_label_check CHECK (((length(label) >= 1) AND (length(label) <= 64))),
     CONSTRAINT object_storage_s3_credentials_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
     CONSTRAINT object_storage_s3_credentials_secret_sealed_check CHECK ((length(secret_sealed) > 0)),
-    CONSTRAINT object_storage_s3_credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text])))
+    CONSTRAINT object_storage_s3_credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text]))),
+    CONSTRAINT object_storage_s3_credentials_managed_shape_check CHECK ((managed_app_id IS NULL AND managed_scope IS NULL AND managed_prefix IS NULL) OR (managed_app_id IS NOT NULL AND managed_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text AND managed_prefix ~ '^[A-Z][A-Z0-9_]{0,47}$'::text))
 );
 
 CREATE INDEX object_storage_access_grants_key_idx ON public.object_storage_access_grants USING btree (account_id, api_key_id, bucket_id);
@@ -8168,6 +8367,9 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
     ADD CONSTRAINT object_storage_s3_credentials_pkey PRIMARY KEY (id);
 
 CREATE INDEX object_storage_s3_credentials_bucket_active_idx ON public.object_storage_s3_credentials USING btree (account_id, bucket_id, created_at, id) WHERE (status = 'active'::text);
+CREATE UNIQUE INDEX object_storage_s3_credentials_managed_binding_idx ON public.object_storage_s3_credentials USING btree (bucket_id, managed_app_id, managed_scope, managed_prefix) WHERE ((status = 'active'::text) AND (managed_app_id IS NOT NULL));
+
+CREATE INDEX app_secrets_managed_object_storage_idx ON public.app_secrets USING btree (managed_object_storage_credential_id) WHERE (managed_object_storage_credential_id IS NOT NULL);
 
 
 --
@@ -8295,6 +8497,14 @@ CREATE TABLE IF NOT EXISTS object_storage_authorizations (
     count bigint NOT NULL CHECK (count > 0),
     PRIMARY KEY (account_id, period_start)
 );
+CREATE TABLE IF NOT EXISTS object_storage_request_metrics (
+    bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
+    period_start timestamptz NOT NULL CHECK (period_start = date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),
+    request_count bigint NOT NULL DEFAULT 0 CHECK (request_count BETWEEN 0 AND 1152921504606846976),
+    PRIMARY KEY (bucket_id, period_start)
+);
+CREATE INDEX IF NOT EXISTS object_storage_request_metrics_period_idx
+    ON object_storage_request_metrics (period_start, bucket_id);
 CREATE TABLE IF NOT EXISTS object_storage_inventory_samples (
     token text PRIMARY KEY CHECK (token <> ''),
     bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,

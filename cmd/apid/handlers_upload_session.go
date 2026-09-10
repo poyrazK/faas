@@ -643,6 +643,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
 		HostingObserver:  s.ops,
 		HostingFlow:      "first_deploy",
+		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))

@@ -144,6 +144,11 @@ const (
 	// `gregale deployments` to list; pagination flags live on the handler.
 	dispatchDeployments = "deployments"
 
+	// Managed PostgreSQL is a customer-facing resource backed by the
+	// provider-neutral API. Keep the noun in one place so the dispatcher,
+	// completion metadata, and tests cannot drift.
+	dispatchPostgres = "postgres"
+
 	// Singular deployment-get. Lifted so the dispatch literal stays
 	// constant-named (goconst); the constant does NOT route through
 	// appSlugFallback — the dispatch table places it before the
@@ -196,7 +201,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -259,6 +264,9 @@ func cmdApp(args []string) int {
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL unless --public-auth is also set")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
+	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
+	healthPathWakes := fs.Bool("health-path-wakes", false, "allow health probes to wake the app (Pro/Scale only)")
+	noHealthPathWakes := fs.Bool("no-health-path-wakes", false, "answer health probes at the edge without waking")
 	// ADR-124: per-app wire-protocol selector. Single string
 	// flag (closed set {http1, http2, grpc}) — empty value
 	// means "use the per-plan default" (http1 universal). The
@@ -453,6 +461,21 @@ func cmdApp(args []string) int {
 		}
 		req.CrawlerPolicy = &v
 	}
+	if *healthPathWakes && *noHealthPathWakes {
+		return printErr("Invalid flags", fmt.Errorf("--health-path-wakes and --no-health-path-wakes are mutually exclusive"))
+	}
+	if explicit["health-path"] {
+		v := *healthPath
+		req.HealthPath = &v
+	}
+	if explicit["health-path-wakes"] {
+		v := true
+		req.HealthPathWakes = &v
+	}
+	if explicit["no-health-path-wakes"] {
+		v := false
+		req.HealthPathWakes = &v
+	}
 	// ADR-124: per-app wire-protocol selector. Validate the
 	// closed set locally so a typo surfaces as a usage error
 	// before the round-trip (the apid side returns the same
@@ -517,7 +540,7 @@ func cmdApp(args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil {
+		req.OverflowNode == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -564,6 +587,9 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %d rpm across apps\n", "account request rate:", l.AccountRequestRateRPM)
 			fmt.Printf("%-30s %dms default, %dms max\n", "request budget:", l.RequestBudgetMS, l.RequestBudgetMaxMS)
 			fmt.Printf("%-30s %ds\n", "response write timeout:", l.ResponseWriteTimeoutS)
+			if l.RequestBodyMaxBytes > 0 {
+				fmt.Printf("%-30s %d bytes (%d MiB)\n", "request body cap:", l.RequestBodyMaxBytes, l.RequestBodyMaxBytes/(1024*1024))
+			}
 		}
 		// ADR-031 + ADR-032: surface the per-app outbound CIDR
 		// allowlist in the text-mode `gregale app <slug>` output so a
@@ -621,6 +647,8 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %s\n", "require authn:", "disabled")
 		}
 		fmt.Printf("%-30s %s\n", "crawler policy:", a.Manifest.EffectiveCrawlerPolicy())
+		fmt.Printf("%-30s %s\n", "health path:", a.Manifest.HealthPath)
+		fmt.Printf("%-30s %t\n", "health path wakes:", a.Manifest.HealthPathWakes)
 		// Tier A10 / ADR-088: surface the resolved overflow_node
 		// preference (the UUID apid returns) so the customer can
 		// verify their PATCH round-tripped. nil on the wire means
@@ -978,6 +1006,11 @@ func cmdDeployTarball(args []string) int {
 // behavior below.
 type deployExecution struct {
 	onQueued            func(api.DeploymentResponse)
+	onSourceSync        func(time.Duration, error)
+	onStage             func(string, string, int64, string)
+	onTerminal          func(api.DeploymentResponse) int
+	prefixBuildLogs     bool
+	streamLogsOnJSON    bool
 	developerSource     *devSourceSyncState
 	extraSourceExcludes []string
 }
@@ -1287,6 +1320,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if explicit["no-wait"] && *noWaitDeploy {
 		waitForDeploy = false
 	}
+	// Preserve the historical queued JSON response unless the operator
+	// explicitly asks for the terminal receipt with --json --wait.
+	jsonWait := jsonOutput && explicit["wait"] && waitForDeploy
+	// `gregale dev --json` needs to observe the real stage stream so it can
+	// emit the edit-to-live receipt. Ordinary deploys retain their historical
+	// queued JSON response unless the caller explicitly asks for --wait.
+	streamLogsOnJSON := jsonOutput && execution.streamLogsOnJSON
+	if streamLogsOnJSON {
+		waitForDeploy = true
+		jsonWait = false
+	}
 	var requireAuthnPtr *bool
 	var publicAuthPtr *api.PublicAuthBlock
 	switch {
@@ -1378,12 +1422,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintFail(os.Stderr, "--repo cannot be combined with --only or --project-slug")
 			return 1
 		}
-		return cmdDeployRepoSourceRefContextWithWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
+		return cmdDeployRepoSourceRefContextWithJSONWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
 			Reason:     *reason,
 			Tag:        *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy),
 			PRNumber:   *prNumber,
-		}, waitForDeploy)
+		}, waitForDeploy, jsonWait)
 	}
 
 	// --template materializes an embedded starter project. For function
@@ -1999,7 +2043,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		)
 		if developerSync != nil {
 			var deployErr error
+			sourceSyncStarted := time.Now()
 			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann, developerSync)
+			if execution.onSourceSync != nil {
+				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
+			}
 			if deployErr != nil {
 				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
 					return 130
@@ -2046,7 +2094,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 		execution.notifyQueued(dep)
-		if jsonOutput {
+		if jsonOutput && !streamLogsOnJSON {
 			// Legacy multipart uploads do not calculate the digest while
 			// streaming, so preserve the stable receipt field there by
 			// hashing after the request completes.
@@ -2057,13 +2105,23 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					sourceSHA256 = sha
 				}
 			}
-			return jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
+			if !jsonWait {
+				return jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
+			}
 		}
 		if !waitForDeploy {
 			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 			return 0
 		}
-		return streamDeployLogsContext(ctx, client, dep, slug)
+		if jsonWait {
+			return writeWaitedDeploymentReceipt(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256)
+		}
+		return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
+			onStage:         execution.onStage,
+			onTerminal:      execution.onTerminal,
+			prefixBuildLogs: execution.prefixBuildLogs,
+			quiet:           streamLogsOnJSON,
+		})
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
 	// (CreateDeploymentRequest), so the annotation fields ride on the
@@ -2094,7 +2152,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Deploy failed", err)
 	}
 	execution.notifyQueued(dep)
-	if jsonOutput {
+	if jsonOutput && !jsonWait && !streamLogsOnJSON {
 		// Image deploy path: no source tarball bytes (the digest
 		// rides on dep.ImageDigest), no git detection (prov is
 		// nil from the function-scope hoist), so commit_sha /
@@ -2109,7 +2167,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 		return 0
 	}
-	return streamDeployLogsContext(ctx, client, dep, slug)
+	if jsonWait {
+		return writeWaitedDeploymentReceipt(ctx, client, dep, nil, deployedAppURL(slug), "")
+	}
+	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
+		onStage:         execution.onStage,
+		onTerminal:      execution.onTerminal,
+		prefixBuildLogs: execution.prefixBuildLogs,
+		quiet:           streamLogsOnJSON,
+	})
 }
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
@@ -3630,8 +3696,37 @@ func topPatterns(patterns map[string]int, n int) []string {
 // short-circuits the constructor when the customer piped the
 // output (`gregale deploy … | tee /tmp/log`) — the static fallback
 // in renderStageSummary is the path that fires instead.
+type streamDeployOptions struct {
+	onStage         func(string, string, int64, string)
+	onTerminal      func(api.DeploymentResponse) int
+	prefixBuildLogs bool
+	quiet           bool
+}
+
 func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string) int {
-	PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
+	return streamDeployLogsContextWithOptions(ctx, c, dep, appSlug, streamDeployOptions{})
+}
+
+func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) int {
+	if !opts.quiet {
+		PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
+	}
+	terminalDeployment := func(d api.DeploymentResponse) int {
+		if opts.onTerminal != nil {
+			return opts.onTerminal(d)
+		}
+		return terminalExitForDeploymentContext(ctx, c, d, appSlug)
+	}
+	terminalBuild := func(b api.BuildResponse) int {
+		if opts.onTerminal != nil {
+			status := statusLive
+			if b.Status == buildStatusFailed {
+				status = deploymentStatusFailed
+			}
+			return opts.onTerminal(api.DeploymentResponse{ID: b.DeploymentID, Status: status, Error: b.FailureClass})
+		}
+		return terminalExitForBuildContext(ctx, c, b, appSlug)
+	}
 	body, err := c.StreamDeploymentLogs(ctx, dep.ID, nil, 0, true)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -3645,10 +3740,10 @@ func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentR
 		// is the canonical case where the stream never opened and
 		// the build row is already terminal.
 		if b, ok := pollBuildStatusContext(ctx, c, dep, 5*time.Second); ok {
-			return terminalExitForBuild(b, appSlug)
+			return terminalBuild(b)
 		}
 		if final, ok := pollDeploymentFinalContext(ctx, c, dep); ok {
-			return terminalExitForDeploymentAs(final, appSlug)
+			return terminalDeployment(final)
 		}
 		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs --deployment %s", dep.ID)
 		return 3
@@ -3659,7 +3754,11 @@ func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentR
 	defer func() { _ = dec.Close() }()
 	// ADR-117 §3: ticker construction happens AFTER the decoder so
 	// a decoder init failure doesn't draw a half-rendered block.
-	ticker := renderStageTicker(osStdout)
+	tickerWriter := io.Writer(osStdout)
+	if opts.quiet {
+		tickerWriter = io.Discard
+	}
+	ticker := renderStageTicker(tickerWriter)
 	defer ticker.Close()
 streamLoop:
 	for {
@@ -3679,8 +3778,12 @@ streamLoop:
 				var entry struct {
 					Line string `json:"line"`
 				}
-				if json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
-					fmt.Println(entry.Line)
+				if !opts.quiet && json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
+					if opts.prefixBuildLogs {
+						fmt.Printf("build | %s\n", entry.Line)
+					} else {
+						fmt.Println(entry.Line)
+					}
 				}
 			case "stage":
 				// ADR-117 §3: server-side stage diff — drive the
@@ -3701,6 +3804,9 @@ streamLoop:
 				}
 				if json.Unmarshal([]byte(e.Data), &stage) == nil && stage.Name != "" {
 					ticker.HandleStageFrame(stage.Name, stage.Status, stage.DurationMs, stage.Reason)
+					if opts.onStage != nil {
+						opts.onStage(stage.Name, stage.Status, stage.DurationMs, stage.Reason)
+					}
 				}
 			case statusLiteral:
 				var status struct {
@@ -3708,12 +3814,15 @@ streamLoop:
 				}
 				if json.Unmarshal([]byte(e.Data), &status) == nil &&
 					(status.Status == statusLive || status.Status == deploymentStatusFailed) {
+					terminal := dep
+					terminal.Status = status.Status
 					if status.Status == statusLive {
-						PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
-						printDeployColdWakeSentence()
-						return 0
+						return terminalDeployment(terminal)
 					}
-					return renderDeployFailure(dep)
+					if opts.onTerminal != nil {
+						return opts.onTerminal(terminal)
+					}
+					return renderDeployFailure(terminal)
 				}
 			case "end":
 				var end struct {
@@ -3729,7 +3838,13 @@ streamLoop:
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
 				if e.Data != "" {
-					fmt.Println(e.Data)
+					if !opts.quiet {
+						if opts.prefixBuildLogs {
+							fmt.Printf("build | %s\n", e.Data)
+						} else {
+							fmt.Println(e.Data)
+						}
+					}
 				}
 			}
 		case err := <-dec.Errors():
@@ -3753,7 +3868,7 @@ streamLoop:
 	// fall back to pollDeploymentFinal when the new poll reports
 	// the build is still queued or running.
 	if b, ok := pollBuildStatusContext(ctx, c, dep, 60*time.Second); ok {
-		return terminalExitForBuild(b, appSlug)
+		return terminalBuild(b)
 	}
 	// Tarball/function deployments created by older API paths may not carry
 	// BuildID.  In that case the build poll above is intentionally skipped,
@@ -3762,7 +3877,7 @@ streamLoop:
 	// the deployment row through that recovery window so a healthy deployment
 	// is not reported as exit 3 merely because the SSE stream ended first.
 	if final, ok := pollDeploymentFinalUntilContext(ctx, c, dep, 5*time.Minute); ok {
-		return terminalExitForDeploymentAs(final, appSlug)
+		return terminalDeployment(final)
 	}
 	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs --deployment %s", dep.ID)
 	return 3
@@ -3912,11 +4027,9 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 	return api.BuildResponse{}, false
 }
 
-func terminalExitForDeploymentAs(d api.DeploymentResponse, appSlug string) int {
+func terminalExitForDeploymentContext(ctx context.Context, c *Client, d api.DeploymentResponse, appSlug string) int {
 	if d.Status == statusLive {
-		PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
-		printDeployColdWakeSentence()
-		return 0
+		return renderSuccessfulDeployment(ctx, c, d, appSlug)
 	}
 	return renderDeployFailure(d)
 }
@@ -3929,10 +4042,13 @@ func terminalExitForDeploymentAs(d api.DeploymentResponse, appSlug string) int {
 // failure_class=…" block and exit 2 (same exit-code convention as
 // terminalExitForDeployment's renderDeployFailure path).
 func terminalExitForBuild(b api.BuildResponse, appID string) int {
+	return terminalExitForBuildContext(context.Background(), nil, b, appID)
+}
+
+func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appID string) int {
 	if b.Status == buildStatusSucceeded {
-		PrintOK(osStdout, "Deployed. %s", deployedAppURL(appID))
-		printDeployColdWakeSentence()
-		return 0
+		dep := api.DeploymentResponse{ID: b.DeploymentID, Status: statusLive}
+		return renderSuccessfulDeployment(ctx, c, dep, appID)
 	}
 	// Failed build — surface the lifecycle info. End users hitting
 	// this path are CI scripts that lost their SSE; the canonical
@@ -3948,7 +4064,7 @@ func terminalExitForBuild(b api.BuildResponse, appID string) int {
 // `*.gregale.dev` contract, while operators can point a CLI at another fleet.
 func deployedAppURL(appID string) string {
 	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" {
+	if domain == "" || domain == "apps.gregale.dev" {
 		domain = "gregale.dev"
 	}
 	return "https://" + appID + "." + domain

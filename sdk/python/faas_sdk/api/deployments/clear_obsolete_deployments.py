@@ -8,6 +8,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from ...models.clear_obsolete_report import ClearObsoleteReport
+from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
 
@@ -34,11 +35,28 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ClearObsoleteReport | None:
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ClearObsoleteReport | Problem | None:
     if response.status_code == 200:
         response_200 = ClearObsoleteReport.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 402:
+        response_402 = Problem.from_dict(response.json())
+
+        return response_402
+
+    if response.status_code == 404:
+        response_404 = Problem.from_dict(response.json())
+
+        return response_404
+
+    if response.status_code == 429:
+        response_429 = Problem.from_dict(response.json())
+
+        return response_429
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -46,7 +64,9 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[ClearObsoleteReport]:
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ClearObsoleteReport | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -60,12 +80,13 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> Response[ClearObsoleteReport]:
+) -> Response[ClearObsoleteReport | Problem]:
     """Bulk soft-delete terminal-but-not-current deployments.
 
      ADR-124 deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
+    (default 168h). Plan-gated (Free returns 402
+    `plan_reorder_disabled`). Retention
     cap enforced inside the store so INV 3 stays satisfied.
 
     Args:
@@ -77,7 +98,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ClearObsoleteReport]
+        Response[ClearObsoleteReport | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -97,12 +118,13 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> ClearObsoleteReport | None:
+) -> ClearObsoleteReport | Problem | None:
     """Bulk soft-delete terminal-but-not-current deployments.
 
      ADR-124 deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
+    (default 168h). Plan-gated (Free returns 402
+    `plan_reorder_disabled`). Retention
     cap enforced inside the store so INV 3 stays satisfied.
 
     Args:
@@ -114,7 +136,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ClearObsoleteReport
+        ClearObsoleteReport | Problem
     """
 
     return sync_detailed(
@@ -129,12 +151,13 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> Response[ClearObsoleteReport]:
+) -> Response[ClearObsoleteReport | Problem]:
     """Bulk soft-delete terminal-but-not-current deployments.
 
      ADR-124 deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
+    (default 168h). Plan-gated (Free returns 402
+    `plan_reorder_disabled`). Retention
     cap enforced inside the store so INV 3 stays satisfied.
 
     Args:
@@ -146,7 +169,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ClearObsoleteReport]
+        Response[ClearObsoleteReport | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -164,12 +187,13 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ClearObsoleteDeploymentsBody | Unset = UNSET,
-) -> ClearObsoleteReport | None:
+) -> ClearObsoleteReport | Problem | None:
     """Bulk soft-delete terminal-but-not-current deployments.
 
      ADR-124 deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
-    (default 168h). Plan-gated (Free returns 402). Retention
+    (default 168h). Plan-gated (Free returns 402
+    `plan_reorder_disabled`). Retention
     cap enforced inside the store so INV 3 stays satisfied.
 
     Args:
@@ -181,7 +205,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ClearObsoleteReport
+        ClearObsoleteReport | Problem
     """
 
     return (

@@ -214,6 +214,8 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		UaFamily:     uaFamily,
 		ReferrerHost: referrerHost,
 		Country:      country,
+		WakeID:       pgtype.Text{String: req.GetWakeId(), Valid: req.GetWakeId() != ""},
+		InstanceID:   pgtype.Text{String: req.GetInstanceId(), Valid: req.GetInstanceId() != ""},
 	})
 	if insertErr != nil {
 		if isConstraintViolation(insertErr) {

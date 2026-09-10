@@ -179,7 +179,7 @@ proto-normalize: proto
 	done
 
 # DEPLOY-2 (issue #649 / ADR-078): pkg/daemonunit + pkg/daemonunitspec
-# generate the systemd unit files for the 8 production daemons +
+# generate the systemd unit files for the production daemons +
 # faas-cp.slice + deploy/etc/daemons.json. The CI gate runs
 # `make generate-check` on every PR; modifications to
 # pkg/daemonunitspec/<daemon>.go require running `make generate`
@@ -189,7 +189,7 @@ generate: ## (re)generate systemd unit files + daemons.json from pkg/daemonunits
 	$(GO) run ./cmd/deployctl/ generate
 
 .PHONY: generate-check
-generate-check: ## CI gate: assert generated == committed for every deploy tree (legacy + 7 ansible roles) + daemons.json
+generate-check: ## CI gate: assert generated == committed for every deploy tree (legacy + 8 ansible roles) + daemons.json
 	$(GO) run ./cmd/deployctl/ check
 
 .PHONY: generate-diff
@@ -253,6 +253,14 @@ spec-cited-tests-check: ## Require changed core-path tests to cite a spec sectio
 .PHONY: spec-cited-tests-check-test
 spec-cited-tests-check-test: ## Exercise the spec-cited-tests CI gate with synthetic pull request events
 	bash scripts/ci/check_spec_cited_tests_test.sh
+
+.PHONY: migration-version-hygiene-check
+migration-version-hygiene-check: ## Reject hand-typed migration versions and versions already claimed by an open PR
+	bash scripts/ci/check_migration_version_hygiene.sh
+
+.PHONY: migration-version-hygiene-check-test
+migration-version-hygiene-check-test: ## Exercise the migration-version gate with synthetic pull request events
+	bash scripts/ci/check_migration_version_hygiene_test.sh
 
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live in the `floors` dict inside the python heredoc below
@@ -426,13 +434,20 @@ backup-pg: ## Take a Postgres base backup into /var/lib/pgsql/basebackup/basebac
 	@sudo -u postgres pg_basebackup -Ft -z -D /var/lib/pgsql/basebackup/basebackup-$$(date -u +%Y-%m-%dT%H%M%SZ) -P -X fetch --checkpoint=fast --label=faas-m8-nightly
 
 .PHONY: backup-restore-drill
-backup-restore-drill: ## Run the M8 restore drill end-to-end (must run on EX44 as root)
+backup-restore-drill: ## Run the destructive M8 restore drill on the control plane as root
 	sudo bash "$(CURDIR)/deploy/scripts/faas-m8-restore-drill.sh"
 
+.PHONY: backup-restore-drill-preflight
+backup-restore-drill-preflight: ## Validate the M8 restore drill without stopping services or changing files
+	sudo bash "$(CURDIR)/deploy/scripts/faas-m8-restore-drill.sh" --preflight-only
+
 .PHONY: lint-drill
-lint-drill: ## Static lint of the M8 restore and TLS cutover drill scripts
+lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-m8-restore-drill_test.sh
 	bash deploy/scripts/faas-tls-cutover-drill_test.sh
+	bash deploy/scripts/pg-restore-verify_test.sh
+	bash deploy/scripts/faas-pg-basebackup-push_test.sh
+	bash deploy/scripts/faas-pg-wal-prune_test.sh
 
 .PHONY: m8-evidence-check
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
@@ -451,12 +466,12 @@ tls-cutover-drill: ## Issue #252: current-edge TLS cutover drill (dry-run by def
 	bash deploy/scripts/faas-tls-cutover-drill.sh --$(TLS_CUTOVER_MODE)
 
 .PHONY: backup-push-pg
-backup-push-pg: ## Push the latest basebackup to Hetzner Storage Box (issue #250)
+backup-push-pg: ## Push and verify completed basebackups off-host (issue #250)
 	@sudo systemctl start faas-pg-basebackup-push.service
 	@sudo journalctl -u faas-pg-basebackup-push.service -n 50 --no-pager
 
 .PHONY: backup-restore-verify
-backup-restore-verify: ## T-7 throwaway restore verify on Hetzner Storage Box basebackup (issue #250)
+backup-restore-verify: ## T-7 throwaway restore verify from off-host storage (issue #250)
 	sudo bash deploy/scripts/pg-restore-verify.sh
 
 .PHONY: lint-pg-restore-verify
@@ -474,9 +489,9 @@ metal-lima-m5: ## Run the M5 §14 deploy-to-park cold-boot acceptance on Lima (s
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo env RUN_TARGET=./cmd/e2e/ ./deploy/lima/run-metal.sh -run 'TestDeployWakeMetal/deploy-then-parked'
 
 .PHONY: metal-lima-api-hosting
-metal-lima-api-hosting: ## Run the API-hosting reference-node receipt + public smoke + park/wake acceptance
+metal-lima-api-hosting: ## Run API-hosting receipt, runtime-matrix, public-smoke, and park/wake acceptance (set FAAS_E2E_API_HOSTING_CATALOG=full for all catalog fixtures)
 	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false
-	limactl shell --workdir "$(CURDIR)" faas-metal sudo env RUN_TARGET=./cmd/e2e/ ./deploy/lima/run-metal.sh -run '^Test(BuildMetal|SourceDeployWakeMetal)$$'
+	limactl shell --workdir "$(CURDIR)" faas-metal sudo env RUN_TARGET=./cmd/e2e/ ./deploy/lima/run-metal.sh -run '^Test(BuildMetal|CatalogRuntimeParityMetal|SourceDeployWakeMetal)$$'
 
 .PHONY: metal-soak
 metal-soak: ## Issue #587 PR-A.8: 30-min mixed WS/HTTP/Upgrade drain soak on Lima (1-node). Verifies gateway_drain_wait_seconds histogram + gateway_inflight_requests gauge end-to-end. Pre-req: make metal-lima green.
@@ -588,6 +603,20 @@ lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check 
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
 	@python3 scripts/ci/check_runbook_mutating_sql.py
 
+.PHONY: postmortem
+postmortem: ## Create docs/postmortems/YYYY-MM-DD-NAME.md from the post-mortem template (NAME required)
+	@test -n "$(NAME)" || (echo "NAME is required, e.g. make postmortem NAME=api-outage" >&2; exit 2)
+	@slug=$$(printf '%s' "$(NAME)" | LC_ALL=C tr -cs 'A-Za-z0-9' '-' | sed -e 's/^-//' -e 's/-$$//'); \
+	test -n "$$slug" || { echo "NAME must contain at least one letter or number" >&2; exit 2; }; \
+	path="docs/postmortems/$$(date -u +%F)-$$slug.md"; \
+	test ! -e "$$path" || { echo "postmortem already exists: $$path" >&2; exit 1; }; \
+	sed "s/YYYY-MM-DD/$$(date -u +%F)/g; s/short-name/$$slug/g" docs/postmortems/TEMPLATE.md > "$$path"; \
+	echo "created $$path; fill it in, then add it to docs/postmortems/INDEX.md"
+
+.PHONY: test-postmortems
+test-postmortems: ## Validate completed post-mortems and INDEX links
+	bash scripts/ci/check_postmortems.sh $(CURDIR)
+
 # ADR-111: packer-builder syntax gate. Delegates to deploy/packer/Makefile:image-validate,
 # which loops `packer validate -syntax-only` over every *.pkr.hcl. Works
 # without cloud creds; gates PR #928. install-packer.sh is the deterministic
@@ -622,7 +651,7 @@ scan-images: ## Scan concrete locally-loaded OCI refs (IMAGE_REFS="ref1 ref2 ...
 
 .PHONY: public-endpoint-check
 public-endpoint-check: ## Validate the public HTTPS/Caddy endpoint (PUBLIC_ENDPOINT_URL required)
-	@test -n "$(PUBLIC_ENDPOINT_URL)" || { echo "PUBLIC_ENDPOINT_URL is required (example: https://apps.example.com)" >&2; exit 2; }
+	@test -n "$(PUBLIC_ENDPOINT_URL)" || { echo "PUBLIC_ENDPOINT_URL is required (example: https://my-api.gregale.dev)" >&2; exit 2; }
 	@PUBLIC_ENDPOINT_URL="$(PUBLIC_ENDPOINT_URL)" PUBLIC_HTTP_URL="$(PUBLIC_HTTP_URL)" PUBLIC_ENDPOINT_PATH="$(PUBLIC_ENDPOINT_PATH)" bash scripts/ci/check_public_endpoint.sh
 
 .PHONY: systemd-hardening-check
@@ -1028,6 +1057,10 @@ capabilities-check: ## Verify the product capability registry and generated matr
 api-hosting-contract-check: ## Run the metal-free API framework fixture contract
 	@$(GO) run ./cmd/api-hosting-contract
 
+.PHONY: api-hosting-scorecard-check
+api-hosting-scorecard-check: ## Validate API-hosting release targets and evidence locators
+	@$(GO) run ./cmd/api-hosting-scorecard
+
 .PHONY: sdk-check
 sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Client
 	# Pure-read AST/YAML diff (no I/O, no goroutines), so the recipe
@@ -1041,9 +1074,21 @@ sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Cli
 object-storage-qualify: ## Operator-only: run the opt-in live object-storage provider qualification
 	@FAAS_OBJECT_STORAGE_LIVE_TEST=1 $(GO) test ./pkg/objectstorage -run '^TestLiveProviderQualification$$' -count=1 -v
 
+.PHONY: object-storage-gateway-smoke
+object-storage-gateway-smoke: ## Operator-only: exercise s3.gregale.dev and delete all temporary data
+	@deploy/scripts/s3-gateway-smoke.sh
+
+.PHONY: object-storage-release-preflight
+object-storage-release-preflight: ## Read-only gate for object-storage config and compute-binding routes
+	@deploy/scripts/object-storage-release-preflight.sh
+
 .PHONY: managed-postgres-qualify
 managed-postgres-qualify: ## Operator-only: run the explicit staging managed PostgreSQL provider qualification
 	@$(GO) run ./cmd/managed-postgres-qualify
+
+.PHONY: managed-postgres-qualify-verify
+managed-postgres-qualify-verify: ## Operator-only: verify a saved staging managed PostgreSQL qualification approval
+	@$(GO) run ./cmd/managed-postgres-qualify --verify
 
 .PHONY: sdk-gen-node
 sdk-gen-node: ## Regenerate sdk/node/src/generated from api/openapi.yaml
@@ -1115,6 +1160,8 @@ pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@$(MAKE) capabilities-check
 	@echo "==> pre-pr: api-hosting-contract-check (metal-free fixture matrix)"
 	@$(MAKE) api-hosting-contract-check
+	@echo "==> pre-pr: api-hosting-scorecard-check (release evidence contract)"
+	@$(MAKE) api-hosting-scorecard-check
 	@echo "==> pre-pr: spec-check (api/openapi.yaml ↔ pkg/apid/openapi.yaml)"
 	@$(MAKE) spec-check
 	@echo "==> pre-pr: proto-check (checked-in *.pb.go matches protoc)"

@@ -48,7 +48,7 @@ func UnitVmmd() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type: "simple",
+		Type: "notify",
 		// No User=/Group=: vmmd is root by design.
 		ExecStart: `/opt/faas/current/bin/vmmd --config /etc/faas/vmmd.toml`,
 		ExecStartPre: []string{

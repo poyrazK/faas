@@ -65,7 +65,7 @@ Start: uvicorn app:app --host 0.0.0.0 --port $PORT
 Health: GET /healthz
 Build: cached dependencies restored
 
-✓ Live:     https://my-api.apps.gregale.dev
+✓ Live:     https://my-api.gregale.dev
 ✓ Verified: GET /healthz → 200 in 42 ms
   Logs:     gregale logs my-api --follow
   Inspect:  gregale open my-api
@@ -95,7 +95,7 @@ by framework and source shape so one fast happy path cannot hide a broken one.
 | Cached edit to live dev URL | p50 <= 5 s; p95 <= 15 s | `gregale dev` telemetry, split by framework |
 | Platform-caused deploy success | >= 99.5% | builds excluding customer-code failures |
 | Actionable failures | 100% of catalogued failures name cause, relevant evidence, and one next action | error-contract tests |
-| Snapshot wake | p50 <= 350 ms; p95 <= 800 ms | reference-node and production histograms |
+| Platform snapshot wake | p95 < 350 ms | `wake.boot_started` to `wake.boot_completed` on the reference SSD node; excludes proxy, public edge, app response, and client distance |
 | Warm gateway overhead | p95 <= 20 ms inside the serving region | gateway minus guest timing |
 | Preview readiness | p95 <= 3 min from GitHub event | webhook-to-verified-URL trace |
 | Rollback recovery | p95 <= 60 s from command to healthy traffic | production-shaped drill |
@@ -205,6 +205,12 @@ plan, and whether it works today.
 2. Run every fixture through detect, build, boot, readiness, public request,
    idle park, snapshot wake, logs, and teardown. Keep the quick subset in CI and
    the Firecracker subset on the reference-node gate.
+
+   The reference-node target runs catalog fixtures tagged `runtime` and
+   `quick` by default; set `FAAS_E2E_API_HOSTING_CATALOG=full` to exercise the
+   complete runtime-tagged matrix. Each selected fixture must leave a durable
+   hosting receipt, pass the public smoke, survive park/wake, and leave no
+   resident instance behind.
 3. Create one machine-readable capability registry containing maturity,
    entitlement, documentation URL, operator flag, and acceptance test. Generate
    the public feature matrix and dashboard capability response from it. Keep

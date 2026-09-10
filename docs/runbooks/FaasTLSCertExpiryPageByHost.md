@@ -15,6 +15,10 @@ Severity: page.
 > migration window. PR-C sweeps the certmagic packages and
 > this runbook will be archived alongside them.
 >
+> Any `*.apps.<zone>` wildcard examples below describe the legacy
+> daemon's former hostname shape. Current release checks use
+> `*.<zone>` and a representative `<slug>.gregale.dev` endpoint.
+>
 > The certmagic surface lives on `gatewayd-public` post-ADR-070;
 > the legacy `gatewayd.toml` config file is retained as the
 > historical reference, with the current config at

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apihostingcontract"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -50,4 +51,44 @@ func TestPersistedProfileFrameworkFallsBackForUnknownVersion(t *testing.T) {
 	if _, _, used := persistedProfileFramework(state.Deployment{InferredProfile: raw}); used {
 		t.Fatal("newer profile version must use detector fallback")
 	}
+}
+
+func TestCatalogRuntimeProfilesMapToBuilderPipelines(t *testing.T) {
+	t.Parallel()
+	catalog, err := apihostingcontract.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range catalog.Fixtures {
+		fixture := fixture
+		if !hasProfileTag(fixture, "runtime") {
+			continue
+		}
+		t.Run(fixture.ID, func(t *testing.T) {
+			want, ok := frameworkFromProfile(fixture.Expected.Framework)
+			if !ok {
+				t.Fatalf("catalog framework %q has no builder pipeline", fixture.Expected.Framework)
+			}
+			raw, err := json.Marshal(frameworkprofile.Profile{
+				Version:   frameworkprofile.Version,
+				Framework: fixture.Expected.Framework,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _, used := persistedProfileFramework(state.Deployment{InferredProfile: raw})
+			if !used || got != want {
+				t.Fatalf("catalog framework %q mapped to (%q, used=%t), want (%q, used=true)", fixture.Expected.Framework, got, used, want)
+			}
+		})
+	}
+}
+
+func hasProfileTag(fixture apihostingcontract.Fixture, want string) bool {
+	for _, tag := range fixture.Tags {
+		if tag == want {
+			return true
+		}
+	}
+	return false
 }

@@ -1107,6 +1107,20 @@ func (c *Client) UsageSummary(ctx context.Context, month string) (UsageSummaryRe
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// AccountUsage returns the account-level usage projection. It combines the
+// compute summary with optional object-storage and managed-PostgreSQL views;
+// an empty month asks the server for the current UTC month.
+func (c *Client) AccountUsage(ctx context.Context, month string) (AccountUsageResponse, error) {
+	var out AccountUsageResponse
+	path := "/v1/account/usage"
+	if month != "" {
+		q := url.Values{}
+		q.Set("month", month)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppSLO returns the per-app SLO panel for slug over the
 // named SLO window. window is one of "1h", "24h", "7d"
 // (strict subset of the /metrics vocabulary) — empty
@@ -1146,6 +1160,30 @@ func (c *Client) ListDeployments(ctx context.Context, before string, limit int) 
 	}
 	if limit > 0 {
 		path += "limit=" + fmt.Sprintf("%d", limit)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListLatestDeploymentsByApp returns at most one newest deployment for every
+// non-deleted app owned by the authenticated account.
+func (c *Client) ListLatestDeploymentsByApp(ctx context.Context) (LatestDeploymentsByAppResponse, error) {
+	var out LatestDeploymentsByAppResponse
+	return out, c.do(ctx, "GET", "/v1/deployments/latest-by-app", nil, &out)
+}
+
+// ListAppDeployments returns one cursor page of deployments for an app slug.
+func (c *Client) ListAppDeployments(ctx context.Context, slug, before string, limit int) (DeploymentListResponse, error) {
+	var out DeploymentListResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	path := "/v1/apps/" + slug + "/deployments"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }

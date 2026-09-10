@@ -115,7 +115,11 @@
   failed_when:
     - not am_dev_mode | bool
     - item | length > 0
-    - not am_secret_stat.stat.exists
+    - >-
+      (not am_secret_stat.stat.exists) or
+      ((am_secret_stat.stat.mode | default('')) != '0400') or
+      ((am_secret_stat.stat.pw_name | default('')) != 'alertmanager') or
+      ((am_secret_stat.stat.gr_name | default('')) != 'alertmanager')
   loop_control:
     label: "{{ item | basename | default('(unset)') }}"
   when:

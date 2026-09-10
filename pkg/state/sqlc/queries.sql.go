@@ -2041,7 +2041,7 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 
 const getRequestTelemetryByAppAndID = `-- name: GetRequestTelemetryByAppAndID :one
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, spans_summary
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id
 FROM request_telemetry
 WHERE app_id = $1
   AND id = $2
@@ -2069,6 +2069,8 @@ type GetRequestTelemetryByAppAndIDRow struct {
 	TraceID      pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
 	SpansSummary []byte
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 // Direct request drill-down for the customer debugger. The app_id
@@ -2094,6 +2096,8 @@ func (q *Queries) GetRequestTelemetryByAppAndID(ctx context.Context, db DBTX, ar
 		&i.TraceID,
 		&i.ReceivedAt,
 		&i.SpansSummary,
+		&i.WakeID,
+		&i.InstanceID,
 	)
 	return i, err
 }
@@ -2553,11 +2557,11 @@ const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec
 INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
-    ua_family, referrer_host, country
+    ua_family, referrer_host, country, wake_id, instance_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14
+    $12, $13, $14, $15, $16
 )
 `
 
@@ -2576,6 +2580,8 @@ type InsertRequestTelemetryParams struct {
 	UaFamily     string
 	ReferrerHost string
 	Country      string
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 // ---------------------------------------------------------------------------
@@ -2607,11 +2613,11 @@ type InsertRequestTelemetryParams struct {
 //
 // PR-B (ADR-127 §PR-B): the publisher collapse in
 // pkg/gateway/request_telemetry_publisher.go coalesces requests with
-// the same (app, deployment, route, method, status, minute_bucket) into
-// one row with `count` = the number of originals. count is INT NOT NULL
-// DEFAULT 1 (00440) so pre-PR-B clients keep working — the DEFAULT
-// fires for any INSERT that omits the column. PR-B's publisher always
-// passes it explicitly.
+// the same (app, deployment, route, method, status, dimensions,
+// minute_bucket, latency_bucket) into one row with `count` = the number
+// of originals. count is INT NOT NULL DEFAULT 1 (00440) so pre-PR-B
+// clients keep working — the DEFAULT fires for any INSERT that omits
+// the column. PR-B's publisher always passes it explicitly.
 func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg InsertRequestTelemetryParams) error {
 	_, err := db.Exec(ctx, insertRequestTelemetry,
 		arg.AccountID,
@@ -2628,6 +2634,8 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.UaFamily,
 		arg.ReferrerHost,
 		arg.Country,
+		arg.WakeID,
+		arg.InstanceID,
 	)
 	return err
 }
@@ -4168,6 +4176,116 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 	return items, nil
 }
 
+const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_root, d.source_bytes, d.source_sha256, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.api_hosting_receipt, d.inferred_profile
+from deployments d
+join apps a on a.id = d.app_id
+where a.account_id = $1 and a.status <> 'deleted'
+order by d.app_id, d.created_at desc, d.id desc
+`
+
+func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error) {
+	rows, err := db.Query(ctx, listLatestDeploymentPerApp, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Deployment{}
+	for rows.Next() {
+		var i Deployment
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.BuildID,
+			&i.ImageDigest,
+			&i.RootfsPath,
+			&i.RootfsBytes,
+			&i.Status,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Kind,
+			&i.SourcePath,
+			&i.SourceRoot,
+			&i.SourceBytes,
+			&i.SourceSha256,
+			&i.Handler,
+			&i.LogPath,
+			&i.ErrorCode,
+			&i.RootfsKey,
+			&i.SourceUrl,
+			&i.CommitSha,
+			&i.OverrideEntrypoint,
+			&i.OverrideCmd,
+			&i.OverrideEnv,
+			&i.OverrideEnvSecrets,
+			&i.OverridePort,
+			&i.OverrideHealthcheck,
+			&i.Sidecars,
+			&i.MinInstances,
+			&i.ScanResult,
+			&i.ScanStatus,
+			&i.ScannedAt,
+			&i.OverrideLivenessProbe,
+			&i.ParkedReason,
+			&i.ParkedAt,
+			&i.TrafficPercent,
+			&i.Scope,
+			&i.SecretFindings,
+			&i.SecretScannedAt,
+			&i.ErrorHint,
+			&i.ErrorWhy,
+			&i.ErrorFix,
+			&i.ErrorRelevantLogs,
+			&i.StageState,
+			&i.DeployedByUserID,
+			&i.DeployedVia,
+			&i.DeployedFromIp,
+			&i.PusherLogin,
+			&i.Reason,
+			&i.Tag,
+			&i.DeployedBy,
+			&i.PrNumber,
+			&i.RollbackOn5xx,
+			&i.FirstWakeAt,
+			&i.First5xxWindowEndsAt,
+			&i.First5xxCount,
+			&i.LastAutoRollbackAt,
+			&i.LastAutoRollbackReason,
+			&i.LivenessRestartCount,
+			&i.CanaryPreset,
+			&i.CanaryStep,
+			&i.CanaryTotalSteps,
+			&i.CanaryStepStartedAt,
+			&i.RolloutState,
+			&i.RolloutStartedAt,
+			&i.RolloutCompletedAt,
+			&i.RolloutAbortedAt,
+			&i.RolloutAbortedReason,
+			&i.CancelledAt,
+			&i.CancelledByPrincipal,
+			&i.CancelReason,
+			&i.DeletedAt,
+			&i.DeletedByPrincipal,
+			&i.Priority,
+			&i.ReorderedAt,
+			&i.ReorderedByPrincipal,
+			&i.CanaryStages,
+			&i.SnapshotMissCount,
+			&i.SnapshotMissLastAt,
+			&i.SnapshotMissBackoffUntil,
+			&i.ApiHostingReceipt,
+			&i.InferredProfile,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOIDCTrustPoliciesForAccount = `-- name: ListOIDCTrustPoliciesForAccount :many
 select account_id, issuer_url, jwks_url, audience,
        coalesce(subject_pattern, '') as subject_pattern,
@@ -4467,7 +4585,7 @@ func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg L
 
 const listRequestTelemetryByApp = `-- name: ListRequestTelemetryByApp :many
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at
+       cold_boot, trace_id, received_at, wake_id, instance_id
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
@@ -4496,6 +4614,8 @@ type ListRequestTelemetryByAppRow struct {
 	ColdBoot     bool
 	TraceID      pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
+	WakeID       pgtype.Text
+	InstanceID   pgtype.Text
 }
 
 // Canonical read pattern: "give me the last N requests for this app".
@@ -4529,6 +4649,8 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 			&i.ColdBoot,
 			&i.TraceID,
 			&i.ReceivedAt,
+			&i.WakeID,
+			&i.InstanceID,
 		); err != nil {
 			return nil, err
 		}
@@ -6638,10 +6760,44 @@ func (q *Queries) ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID
 	return count, err
 }
 
+const objectS3CredentialGet = `-- name: ObjectS3CredentialGet :one
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+`
+
+type ObjectS3CredentialGetParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3CredentialGet(ctx context.Context, db DBTX, arg ObjectS3CredentialGetParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectS3CredentialGet, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+	)
+	return i, err
+}
+
 const objectS3CredentialInsert = `-- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
-(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active') RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix
 `
 
 type ObjectS3CredentialInsertParams struct {
@@ -6653,6 +6809,9 @@ type ObjectS3CredentialInsertParams struct {
 	Kid          string
 	Label        string
 	Permission   string
+	Column9      string
+	Column10     interface{}
+	Column11     interface{}
 }
 
 func (q *Queries) ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg ObjectS3CredentialInsertParams) (ObjectStorageS3Credential, error) {
@@ -6665,6 +6824,9 @@ func (q *Queries) ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg Obj
 		arg.Kid,
 		arg.Label,
 		arg.Permission,
+		arg.Column9,
+		arg.Column10,
+		arg.Column11,
 	)
 	var i ObjectStorageS3Credential
 	err := row.Scan(
@@ -6680,12 +6842,15 @@ func (q *Queries) ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg Obj
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
 	)
 	return i, err
 }
 
 const objectS3CredentialList = `-- name: ObjectS3CredentialList :many
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at FROM object_storage_s3_credentials
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix FROM object_storage_s3_credentials
 WHERE account_id=$1 AND bucket_id=$2 AND status='active'
 ORDER BY created_at,id
 `
@@ -6717,6 +6882,9 @@ func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg Objec
 			&i.CreatedAt,
 			&i.LastUsedAt,
 			&i.RevokedAt,
+			&i.ManagedAppID,
+			&i.ManagedScope,
+			&i.ManagedPrefix,
 		); err != nil {
 			return nil, err
 		}
@@ -6729,7 +6897,7 @@ func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg Objec
 }
 
 const objectS3CredentialListForRekey = `-- name: ObjectS3CredentialListForRekey :many
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at FROM object_storage_s3_credentials
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix FROM object_storage_s3_credentials
 WHERE status='active' AND id > $1
 ORDER BY id LIMIT $2::int
 `
@@ -6761,6 +6929,9 @@ func (q *Queries) ObjectS3CredentialListForRekey(ctx context.Context, db DBTX, a
 			&i.CreatedAt,
 			&i.LastUsedAt,
 			&i.RevokedAt,
+			&i.ManagedAppID,
+			&i.ManagedScope,
+			&i.ManagedPrefix,
 		); err != nil {
 			return nil, err
 		}
@@ -6815,7 +6986,7 @@ func (q *Queries) ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg Obj
 }
 
 const objectS3CredentialResolve = `-- name: ObjectS3CredentialResolve :one
-SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
+SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
        b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
        b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
        b.updated_at AS bucket_updated_at
@@ -6837,6 +7008,9 @@ type ObjectS3CredentialResolveRow struct {
 	CreatedAt          pgtype.Timestamptz
 	LastUsedAt         pgtype.Timestamptz
 	RevokedAt          pgtype.Timestamptz
+	ManagedAppID       pgtype.UUID
+	ManagedScope       pgtype.Text
+	ManagedPrefix      pgtype.Text
 	AppID              pgtype.UUID
 	BucketName         string
 	BucketScope        string
@@ -6865,6 +7039,9 @@ func (q *Queries) ObjectS3CredentialResolve(ctx context.Context, db DBTX, access
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
 		&i.AppID,
 		&i.BucketName,
 		&i.BucketScope,
@@ -6898,6 +7075,52 @@ func (q *Queries) ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg Obj
 	return result.RowsAffected(), nil
 }
 
+const objectS3CredentialRotate = `-- name: ObjectS3CredentialRotate :one
+UPDATE object_storage_s3_credentials
+SET access_key_id=$4, secret_sealed=$5, kid=$6, last_used_at=NULL
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
+RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix
+`
+
+type ObjectS3CredentialRotateParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+}
+
+func (q *Queries) ObjectS3CredentialRotate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotateParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectS3CredentialRotate,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.AccessKeyID,
+		arg.SecretSealed,
+		arg.Kid,
+	)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+	)
+	return i, err
+}
+
 const objectS3CredentialTouch = `-- name: ObjectS3CredentialTouch :execrows
 UPDATE object_storage_s3_credentials
 SET last_used_at=$1::timestamptz
@@ -6916,6 +7139,126 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const objectStorageProviderBuckets = `-- name: ObjectStorageProviderBuckets :many
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets
+WHERE backend_id = $1 AND backend_fingerprint = $2
+ORDER BY physical_name, id
+`
+
+type ObjectStorageProviderBucketsParams struct {
+	BackendID          string
+	BackendFingerprint string
+}
+
+func (q *Queries) ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg ObjectStorageProviderBucketsParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectStorageProviderBuckets, arg.BackendID, arg.BackendFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectStorageProviderRequestIncrement = `-- name: ObjectStorageProviderRequestIncrement :exec
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, request_count)
+VALUES ($1, $2, 1)
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET request_count = object_storage_request_metrics.request_count + 1
+`
+
+type ObjectStorageProviderRequestIncrementParams struct {
+	BucketID    pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectStorageProviderRequestIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestIncrementParams) error {
+	_, err := db.Exec(ctx, objectStorageProviderRequestIncrement, arg.BucketID, arg.PeriodStart)
+	return err
+}
+
+const objectStorageProviderRequestMetrics = `-- name: ObjectStorageProviderRequestMetrics :many
+SELECT b.id, b.account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
+       $3::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count
+FROM object_buckets b
+LEFT JOIN object_storage_request_metrics m
+  ON m.bucket_id = b.id AND m.period_start = $3
+WHERE b.backend_id = $1 AND b.backend_fingerprint = $2
+ORDER BY b.physical_name, b.id
+`
+
+type ObjectStorageProviderRequestMetricsParams struct {
+	BackendID          string
+	BackendFingerprint string
+	PeriodStart        pgtype.Timestamptz
+}
+
+type ObjectStorageProviderRequestMetricsRow struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	PeriodStart        pgtype.Timestamptz
+	RequestCount       int64
+}
+
+func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestMetricsParams) ([]ObjectStorageProviderRequestMetricsRow, error) {
+	rows, err := db.Query(ctx, objectStorageProviderRequestMetrics, arg.BackendID, arg.BackendFingerprint, arg.PeriodStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageProviderRequestMetricsRow{}
+	for rows.Next() {
+		var i ObjectStorageProviderRequestMetricsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.PeriodStart,
+			&i.RequestCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
@@ -8047,9 +8390,11 @@ type RequestTelemetryAnalyticsSummaryRow struct {
 }
 
 // Customer-facing request analytics over a bounded retention window.
-// The recorder collapses identical requests into rows with `count`, so
-// all request/error/cold-boot totals and percentiles must expand that
-// weight rather than treating each stored row as one request.
+// The recorder collapses identical requests into bounded latency-bucket
+// rows with `count`, so all request/error/cold-boot totals and percentiles
+// must expand that weight rather than treating each stored row as one
+// request. Latency representatives are conservative within the bucket
+// width documented by requestTelemetryLatencyBucketUpperBound.
 func (q *Queries) RequestTelemetryAnalyticsSummary(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsSummaryParams) (RequestTelemetryAnalyticsSummaryRow, error) {
 	row := db.QueryRow(ctx, requestTelemetryAnalyticsSummary,
 		arg.AppID,
@@ -8455,11 +8800,12 @@ type RequestTelemetryBaselineP95ByRouteRow struct {
 // cron + PR Debugger UX v1 compare handler). Single index scan
 // over the existing request_telemetry_app_dep_received_idx
 // (PR-A migration 00427) so the four aggregates share one
-// window. The recorder collapses burst traffic into rows with a
-// `count` weight; expand that weight mathematically instead of
-// treating each aggregate row as one request. The rank/floor
-// formulation below is equivalent to percentile_cont over the
-// expanded multiset, without materializing one row per request.
+// window. The recorder collapses burst traffic into bounded
+// latency-bucket rows with a `count` weight; expand that weight
+// mathematically instead of treating each aggregate row as one
+// request. The rank/floor formulation below is equivalent to
+// percentile_cont over the expanded multiset of bucket
+// representatives, without materializing one row per request.
 func (q *Queries) RequestTelemetryBaselineP95ByRoute(ctx context.Context, db DBTX, arg RequestTelemetryBaselineP95ByRouteParams) ([]RequestTelemetryBaselineP95ByRouteRow, error) {
 	rows, err := db.Query(ctx, requestTelemetryBaselineP95ByRoute,
 		arg.AppID,

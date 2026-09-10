@@ -60,7 +60,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "simple",
+		Type:               "notify",
 		User:               "faas",
 		Group:              "faas",
 		ExecStart:          `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
@@ -96,6 +96,8 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		},
 
 		NoNewPrivileges:         true,
+		CapabilityBoundingSet:   []string{"CAP_NET_BIND_SERVICE"},
+		AmbientCapabilities:     []string{"CAP_NET_BIND_SERVICE"},
 		ProtectSystem:           "strict",
 		ProtectHome:             true,
 		PrivateTmp:              daemonunit.BoolPtr(true),

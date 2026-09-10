@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1180px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    h2 { border-top: 1px solid #eee; padding-top: 1rem; margin-top: 1.5rem; }
+    .muted { color: #6b7280; }
+    .notice { padding: 0.6rem 0.8rem; border-radius: 5px; background: #fef3c7; color: #92400e; }
+    .error { padding: 0.6rem 0.8rem; border-radius: 5px; background: #fee2e2; color: #991b1b; }
+    .toolbar { display: flex; gap: 0.65rem; align-items: center; flex-wrap: wrap; padding: 0.75rem; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 6px; }
+    .toolbar input { max-width: 14rem; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.8rem; background: #e5e7eb; color: #374151; }
+    .badge.regressed { background: #fee2e2; color: #991b1b; font-weight: 600; }
+    .badge.ok { background: #d1fae5; color: #065f46; }
+    .badge.cold { background: #dbeafe; color: #1e40af; }
+    .regression { border: 1px solid #fecaca; border-left: 4px solid #dc2626; border-radius: 6px; padding: 0.7rem 0.85rem; margin: 0.5rem 0; }
+    .regression strong { color: #991b1b; }
+    .detail { padding: 0.8rem; border: 1px solid #e5e7eb; border-radius: 6px; }
+    .compare { padding: 0.8rem; border: 1px solid #bfdbfe; border-left: 4px solid #2563eb; border-radius: 6px; }
+    .compare select { min-width: 14rem; }
+    .compare-table td:nth-child(n+2) { white-space: nowrap; }
+    .explanation { padding: 0.65rem 0.8rem; background: #eff6ff; border-left: 4px solid #2563eb; border-radius: 4px; }
+    .span-table { font-size: 0.9rem; }
+    .span-table td:nth-child(3) { white-space: nowrap; }
+    .empty { padding: 1rem 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p class="muted"><a href="/dashboard/apps/{{.Data.AppSlug}}">Apps / {{.Data.AppSlug}}</a></p>
+    <h1>Production debugger: <code>{{.Data.AppSlug}}</code></h1>
+    <p>Investigate slow or failed requests using bounded request telemetry and redacted OpenTelemetry evidence. Request bodies and credentials are never stored.</p>
+
+    {{if not .Data.PlanAllowed}}
+      <p class="notice">{{.Data.ErrorMessage}} <a href="/dashboard/pricing">View plans →</a></p>
+    {{else}}
+      <form class="toolbar" method="get" action="/dashboard/apps/{{.Data.AppSlug}}/debug">
+        <strong>Window</strong>
+        <label>Since <input name="since" value="{{.Data.Since}}" placeholder="24h"></label>
+        <label>Route <input name="route" value="{{.Data.Route}}" placeholder="/api/example"></label>
+        <button type="submit">Refresh</button>
+        <span class="muted">{{.Data.WindowStart}} → {{.Data.WindowEnd}}</span>
+        {{if .Data.WindowClamped}}<span class="notice">Window reduced to your plan's telemetry retention.</span>{{end}}
+      </form>
+      {{if .Data.ErrorMessage}}<p class="error">{{.Data.ErrorMessage}}</p>{{end}}
+      {{if .Data.ActionMessage}}<p class="{{if .Data.ActionError}}error{{else}}notice{{end}}">{{.Data.ActionMessage}}</p>{{end}}
+
+      <h2 id="regressions">Detected regressions</h2>
+      {{if .Data.Regressions}}
+        <p class="muted">The detector compares route latency across deployments. Open a request below to inspect the slowest recorded spans.</p>
+        {{range .Data.Regressions}}
+          <article class="regression">
+            <strong>{{.Factor}}× slower</strong> on <code>{{.Route}}</code>
+            <span class="muted">· p95 {{.P95MS}} ms vs {{.P95BaseMS}} ms baseline · {{.AffectedCount}} affected requests</span>
+            <br><small class="muted">deployment <code>{{.DeploymentID}}</code> · first {{.FirstDetectedAt}} · last {{.LastDetectedAt}} · <a href="{{.RequestsURL}}">inspect requests →</a>{{if .CompareURL}} · <a href="{{.CompareURL}}">compare deployments →</a>{{end}}</small>
+          </article>
+        {{end}}
+      {{else}}
+        <p class="empty muted">No active regression observations in this window.</p>
+      {{end}}
+
+      {{if ge (len .Data.Deployments) 2}}
+        <h2 id="compare">Deployment comparison</h2>
+        <div class="compare">
+          <p class="muted">Compare the observed latency distribution for two deployments in the current retention window. The source is the newer deployment by default.</p>
+          <form class="toolbar" method="get" action="/dashboard/apps/{{.Data.AppSlug}}/debug">
+            <input type="hidden" name="since" value="{{.Data.Since}}">
+            <input type="hidden" name="route" value="{{.Data.Route}}">
+            <input type="hidden" name="compare" value="1">
+            <label>Source
+              <select name="compare_source">
+                {{range .Data.Deployments}}<option value="{{.ID}}"{{if and $.Data.Compare (eq .ID $.Data.Compare.SourceID)}} selected{{end}}>{{.Label}} · {{.RowCount}} rows · last {{.LastSeenAt}}</option>{{end}}
+              </select>
+            </label>
+            <label>Mirror
+              <select name="compare_mirror">
+                {{range .Data.Deployments}}<option value="{{.ID}}"{{if and $.Data.Compare (eq .ID $.Data.Compare.MirrorID)}} selected{{end}}>{{.Label}} · {{.RowCount}} rows · last {{.LastSeenAt}}</option>{{end}}
+              </select>
+            </label>
+            <label>Route <input name="compare_route" value="{{if .Data.Compare}}{{.Data.Compare.Route}}{{end}}" placeholder="all routes"></label>
+            <button type="submit">Compare</button>
+          </form>
+          {{if not .Data.Compare.Compared}}
+            <p class="empty muted">Choose deployments and select Compare to see p50, p95, and p99 latency side by side.</p>
+          {{else if .Data.Compare.ErrorMessage}}
+            <p class="error">{{.Data.Compare.ErrorMessage}}</p>
+          {{else if .Data.Compare.Rows}}
+            <table class="compare-table" aria-label="Deployment latency comparison">
+              <thead><tr><th>Route</th><th>Source p50 / p95 / p99</th><th>Mirror p50 / p95 / p99</th><th>Requests</th><th>p95 change</th></tr></thead>
+              <tbody>
+              {{range .Data.Compare.Rows}}
+                <tr>
+                  <td><code>{{.Route}}</code></td>
+                  <td>{{.SourceP50MS}} / {{.SourceP95MS}} / {{.SourceP99MS}} ms</td>
+                  <td>{{.MirrorP50MS}} / {{.MirrorP95MS}} / {{.MirrorP99MS}} ms</td>
+                  <td>{{.SourceN}} / {{.MirrorN}}</td>
+                  <td>{{if .Factor}}<span class="badge {{if gt .DeltaP95MS 0}}regressed{{else}}ok{{end}}">{{.Factor}} ({{.DeltaP95MS}} ms)</span>{{else}}<span class="muted">insufficient traffic</span>{{end}}</td>
+                </tr>
+              {{end}}
+              </tbody>
+            </table>
+            <p class="muted">Rows are count-weighted percentiles. A missing side is shown as zero rather than inferred from the other deployment.</p>
+          {{else}}
+            <p class="empty muted">No route had retained telemetry in both deployments for this window.</p>
+          {{end}}
+        </div>
+      {{end}}
+
+      <h2 id="requests">Recent requests</h2>
+      {{if .Data.Requests}}
+        <table aria-label="Recent debugger requests">
+          <thead><tr><th>Received</th><th>Route</th><th>Status</th><th>Latency</th><th>Count</th><th>Deployment</th><th>Signals</th></tr></thead>
+          <tbody>
+          {{range .Data.Requests}}
+            <tr>
+              <td><a href="{{.DetailURL}}">{{.ReceivedAt}}</a><br><small><code>{{.ID}}</code></small></td>
+              <td><code>{{.Method}} {{.Route}}</code></td>
+              <td>{{.Status}}</td>
+              <td><strong>{{.LatencyMS}} ms</strong></td>
+              <td>{{.Count}}</td>
+              <td><code>{{.DeploymentID}}</code></td>
+              <td>{{if .ColdBoot}}<span class="badge cold">cold boot</span>{{end}}{{if .TraceID}} <span class="badge ok">trace linked</span>{{end}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+        <p class="muted">Showing up to 50 newest telemetry rows. Collapsed rows retain their represented request count.</p>
+      {{else}}
+        <p class="empty muted">No request telemetry in this window. Send traffic to the app, then refresh.</p>
+      {{end}}
+
+      {{if .Data.Selected}}
+        <h2 id="request-detail">Request evidence</h2>
+        <div class="detail">
+          <p><a href="/dashboard/apps/{{.Data.AppSlug}}/debug?since={{.Data.Since}}&amp;route={{.Data.Route}}#requests">← Back to requests</a></p>
+          <p><code>{{.Data.Selected.Request.Method}} {{.Data.Selected.Request.Route}}</code> · HTTP {{.Data.Selected.Request.Status}} · <strong>{{.Data.Selected.Request.LatencyMS}} ms</strong> · {{.Data.Selected.Request.ReceivedAt}}</p>
+          <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.InstanceID}} · instance <code>{{.Data.Selected.Request.InstanceID}}</code>{{end}}{{if .Data.Selected.Request.WakeID}} · wake <code>{{.Data.Selected.Request.WakeID}}</code>{{end}}{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
+          <div class="explanation"><strong>{{.Data.Selected.EvidenceStatus}}</strong>: {{.Data.Selected.Explanation}}</div>
+          {{if $.Data.ReplayCSRF}}
+            <form method="post" action="/dashboard/apps/{{.Data.AppSlug}}/debug/requests/{{.Data.Selected.Request.ID}}/replay">
+              <input type="hidden" name="csrf_token" value="{{$.Data.ReplayCSRF}}">
+              <input type="hidden" name="since" value="{{.Data.Since}}">
+              <input type="hidden" name="route" value="{{.Data.Route}}">
+              <button type="submit">Replay against mirror</button>
+              <span class="muted">Metadata only; no request body or credentials are replayed.</span>
+            </form>
+          {{end}}
+          {{if .Data.Replay}}
+            <div class="replay-result" data-debug-replay-state="{{.Data.Replay.State}}">
+              <h3>Replay status</h3>
+              <p><strong>{{.Data.Replay.State}}</strong> · invocation <code>{{.Data.Replay.ID}}</code> · queued {{.Data.Replay.CreatedAt}}{{if .Data.Replay.CompletedAt}} · completed {{.Data.Replay.CompletedAt}}{{end}}</p>
+              {{if .Data.Replay.LastError}}<p class="error">{{.Data.Replay.LastError}}</p>{{end}}
+              {{if .Data.Replay.HasResult}}
+                <p>Source: <strong>HTTP {{.Data.Replay.SourceStatusCode}}</strong>, {{.Data.Replay.SourceLatencyMS}} ms · Mirror: <strong>HTTP {{.Data.Replay.MirrorStatusCode}}</strong>, {{.Data.Replay.MirrorLatencyMS}} ms</p>
+                {{if .Data.Replay.StatusDiff}}<p class="error">The mirror returned a different HTTP status.</p>{{else if .Data.Replay.Crashed}}<p class="error">The mirror failed before producing an HTTP response.</p>{{else}}<p class="notice">The mirror returned the same HTTP status.</p>{{end}}
+              {{else if eq .Data.Replay.State "queued"}}
+                {{if $.Data.ReplayPollExhausted}}<p class="muted">Automatic polling stopped after one minute. Refresh to check the final status.</p>{{else}}<p class="muted">Waiting for the scheduler. Checking again in a few seconds…</p>{{end}}
+              {{else if eq .Data.Replay.State "running"}}
+                {{if $.Data.ReplayPollExhausted}}<p class="muted">Automatic polling stopped after one minute. Refresh to check the final status.</p>{{else}}<p class="muted">The mirror invocation is running. Checking again in a few seconds…</p>{{end}}
+              {{end}}
+            </div>
+          {{end}}
+          {{if .Data.Selected.Regression}}
+            <p class="muted">This request matches the active regression on <code>{{.Data.Selected.Regression.Route}}</code> ({{.Data.Selected.Regression.Factor}}× baseline).{{if .Data.Selected.Regression.CompareURL}} <a href="{{.Data.Selected.Regression.CompareURL}}">Compare deployments →</a>{{end}}</p>
+          {{end}}
+          <h3>Request timeline</h3>
+          {{if .Data.Selected.Timeline}}
+            <table class="span-table" aria-label="Request timeline">
+              <thead><tr><th>At</th><th>Phase</th><th>Event</th><th>Details</th></tr></thead>
+              <tbody>
+              {{range .Data.Selected.Timeline}}
+                <tr><td><code>{{if .Approximate}}~{{end}}{{.At}}</code></td><td><span class="badge">{{.Phase}}</span></td><td><code>{{.Kind}}</code>{{if .Actor}}<br><small class="muted">{{.Actor}}</small>{{end}}</td><td>{{.Summary}}{{if .DurationMS}} · {{.DurationMS}} ms{{end}}{{if .Status}} · HTTP {{.Status}}{{end}}</td></tr>
+              {{end}}
+              </tbody>
+            </table>
+          {{else}}
+            <p class="muted">No timeline markers were retained for this request.</p>
+          {{end}}
+          <h3>Span evidence</h3>
+          {{if .Data.Selected.Spans}}
+            <table class="span-table" aria-label="Redacted span evidence">
+              <thead><tr><th>Span</th><th>Kind</th><th>Duration</th><th>Status</th><th>DB fingerprint</th></tr></thead>
+              <tbody>
+              {{range .Data.Selected.Spans}}
+                <tr><td><code>{{.Name}}</code><br><small class="muted"><code>{{.SpanID}}</code></small></td><td>{{.Kind}}</td><td>{{.DurationMS}} ms</td><td>{{if .Status}}{{.Status}}{{else}}—{{end}}</td><td>{{if .DBStatement}}<code>{{.DBStatement}}</code>{{else}}—{{end}}</td></tr>
+              {{end}}
+              </tbody>
+            </table>
+            {{if .Data.Selected.SpansTruncated}}<p class="muted">Evidence was truncated to the 100 slowest spans.</p>{{end}}
+          {{else}}
+            <p class="muted">No linked OTel spans were captured for this request.</p>
+          {{end}}
+          <small class="muted">Evidence generated {{.Data.Selected.GeneratedAt}}. Values are bounded and redacted before rendering.</small>
+        </div>
+      {{end}}
+    {{end}}
+  </main>
+  {{if .Data.ReplayPollActive}}
+    <script nonce="{{.Nonce}}">
+      (() => {
+        const next = new URL(window.location.href);
+        const parsedPoll = Number.parseInt(next.searchParams.get("replay_poll") || "0", 10);
+        const poll = Number.isFinite(parsedPoll) && parsedPoll >= 0 ? parsedPoll : 0;
+        next.searchParams.set("replay_poll", String(Math.min(poll + 1, 20)));
+        next.searchParams.delete("action");
+        next.searchParams.delete("error");
+        window.setTimeout(() => window.location.replace(next.toString()), 3000);
+      })();
+    </script>
+  {{end}}
+  <footer>onebox faas · production debugger · server-rendered with safe replay</footer>
+</body>
+</html>

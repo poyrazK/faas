@@ -1,0 +1,13 @@
+[Unit]
+Description=Hourly verified local PostgreSQL WAL prune
+Documentation=https://github.com/poyrazK/faas/issues/1695
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=300
+AccuracySec=60s
+Unit=faas-pg-wal-prune.service
+
+[Install]
+WantedBy=timers.target

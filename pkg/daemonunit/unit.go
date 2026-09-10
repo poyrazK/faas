@@ -92,6 +92,7 @@ type Unit struct {
 	Restart            string
 	RestartSec         string
 	RestartCountExport string // systemd 254+; e.g. "SYSTEMD_RESTARTS_ON_FAILURE"
+	TimeoutStartSec    string // bounded allowance for Type=notify startup work
 	Slice              string
 	// MemoryHigh is the soft limit: systemd applies reclaim pressure and
 	// throttles the cgroup past this point instead of killing it. Set it
@@ -144,7 +145,8 @@ func BoolPtr(b bool) *bool { return &b }
 // Render emits the unit file as bytes. Section ordering: [Unit] first,
 // then [Service], then [Install] — matching every shipped faas unit.
 // Inside [Service], field ordering is fixed (Type → User → Group →
-// ExecStartPre → ExecStart → Restart → RestartSec → Slice → MemoryHigh → MemoryMax → Delegate →
+// ExecStartPre → ExecStart → Restart → RestartSec → RestartCountExport →
+// TimeoutStartSec → Slice → MemoryHigh → MemoryMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
@@ -194,6 +196,7 @@ func (u Unit) Render() []byte {
 	writeStringKV(&buf, "Restart", u.Restart)
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
 	writeStringKV(&buf, "RestartCountExport", u.RestartCountExport)
+	writeStringKV(&buf, "TimeoutStartSec", u.TimeoutStartSec)
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
 	writeStringKV(&buf, "MemoryMax", u.MemoryMax)
@@ -492,6 +495,8 @@ func apply(u *Unit, section, key, val string) error {
 		u.RestartSec = val
 	case "[Service]/RestartCountExport":
 		u.RestartCountExport = val
+	case "[Service]/TimeoutStartSec":
+		u.TimeoutStartSec = val
 	case "[Service]/Slice":
 		u.Slice = val
 	case "[Service]/MemoryHigh":
@@ -672,6 +677,7 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "Restart", a.Restart, b.Restart)
 	add("[Service]", "RestartSec", a.RestartSec, b.RestartSec)
 	add("[Service]", "RestartCountExport", a.RestartCountExport, b.RestartCountExport)
+	add("[Service]", "TimeoutStartSec", a.TimeoutStartSec, b.TimeoutStartSec)
 	add("[Service]", "Slice", a.Slice, b.Slice)
 	add("[Service]", "MemoryHigh", a.MemoryHigh, b.MemoryHigh)
 	add("[Service]", "MemoryMax", a.MemoryMax, b.MemoryMax)

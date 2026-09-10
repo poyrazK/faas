@@ -35,4 +35,18 @@ export class MetaService {
       url: '/v1/openapi.json',
     });
   }
+  /**
+   * Human-readable API reference.
+   * Anonymous Swagger UI page backed by the exact JSON document served
+   * at `/v1/openapi.json`. The page does not persist bearer tokens.
+   *
+   * @returns string Swagger UI HTML.
+   * @throws ApiError
+   */
+  public static getDocs(): CancelablePromise<string> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/docs',
+    });
+  }
 }

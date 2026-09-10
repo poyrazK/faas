@@ -76,12 +76,9 @@ const (
 	// entirely (the allowlist's deploymentLookup branch, and the
 	// C.2 wire endpoint's Host field).
 	//
-	// Distinct from AppsWildcardSuffix because the two audiences
-	// don't overlap: PR previews live under *.apps.gregale.dev
-	// (GitHub-Checks-driven ephemeral); deployment previews live
-	// under *.gregale.dev (customer-facing, shareable with a
-	// teammate). The cert issuer would mint one wildcard cert
-	// per suffix, so the constant is per-suffix.
+	// PR previews and deployment previews both use the current
+	// *.gregale.dev contract; their closed-set labels (pr- vs
+	// deploy-) keep the routing and allowlist audiences separate.
 	DeployWildcardSuffix = ".gregale.dev"
 	// DeployPreviewURIScheme is the URI scheme stamped on the
 	// GET /v1/deployments/{id}/url response's URL field

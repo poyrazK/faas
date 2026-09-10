@@ -28,9 +28,10 @@ type (
 	ResourceProfileSpec    = api.ResourceProfileSpec
 
 	// Deployments.
-	CreateDeploymentRequest = api.CreateDeploymentRequest
-	DeploymentResponse      = api.DeploymentResponse
-	DeploymentListResponse  = api.DeploymentListResponse
+	CreateDeploymentRequest        = api.CreateDeploymentRequest
+	DeploymentResponse             = api.DeploymentResponse
+	DeploymentListResponse         = api.DeploymentListResponse
+	LatestDeploymentsByAppResponse = api.LatestDeploymentsByAppResponse
 
 	// Account.
 	AccountResponse         = api.AccountResponse
@@ -61,8 +62,11 @@ type (
 	InstanceResponse = api.InstanceResponse
 
 	// Usage.
-	UsageResponse        = api.UsageResponse
-	UsageSummaryResponse = api.UsageSummaryResponse
+	UsageResponse                = api.UsageResponse
+	UsageSummaryResponse         = api.UsageSummaryResponse
+	AccountUsageResponse         = api.AccountUsageResponse
+	ObjectStorageUsageResponse   = api.ObjectStorageUsageResponse
+	ManagedPostgresUsageResponse = api.ManagedPostgresUsageResponse
 
 	// Auth (password).
 	PasswordLoginRequest  = api.PasswordLoginRequest

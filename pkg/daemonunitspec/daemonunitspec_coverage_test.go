@@ -43,8 +43,8 @@ func assertBasicShape(t *testing.T, name string, u daemonunit.Unit) {
 	if u.WantedBy != "multi-user.target" {
 		t.Errorf("%s: WantedBy = %q, want multi-user.target", name, u.WantedBy)
 	}
-	if u.Type != "simple" {
-		t.Errorf("%s: Type = %q, want simple", name, u.Type)
+	if u.Type != "notify" {
+		t.Errorf("%s: Type = %q, want notify", name, u.Type)
 	}
 	if u.Restart == "" {
 		t.Errorf("%s: Restart empty", name)
@@ -276,6 +276,40 @@ func TestUnitMeterd_Shape(t *testing.T) {
 	}
 	if !hasReadWrite(u, "/var/log/faas") {
 		t.Errorf("meterd: missing ReadWritePaths=/var/log/faas")
+	}
+}
+
+func TestUnitS3Gateway_OptionalShape(t *testing.T) {
+	u := UnitS3Gateway()
+	assertBasicShape(t, "s3-gatewayd", u)
+	if u.User != "faas" {
+		t.Errorf("s3-gatewayd: User = %q, want faas", u.User)
+	}
+	if u.Slice != FaasCPSlice {
+		t.Errorf("s3-gatewayd: Slice = %q, want %q", u.Slice, FaasCPSlice)
+	}
+	if !hasReadWrite(u, "/var/spool/faas/s3-gatewayd") {
+		t.Error("s3-gatewayd: missing bounded upload spool ReadWritePaths entry")
+	}
+	if !hasEnvironment(u, "FAAS_OBJECT_STORAGE_CONFIG", "/etc/faas/object-storage.json") {
+		t.Error("s3-gatewayd: provider registry path is not pinned in the unit")
+	}
+	if !hasLoadCredential(u, "faas_host_age_identity", "/etc/faas/secrets/host.age") {
+		t.Error("s3-gatewayd: current host age identity is not a systemd credential")
+	}
+	if !hasOptionalLoadCredential(u, "faas_host_age_identity_previous", "/etc/faas/secrets/host.age.previous") {
+		t.Error("s3-gatewayd: previous host age identity is not an optional systemd credential")
+	}
+}
+
+func TestOptionalRegistry_OnlyContainsS3Gateway(t *testing.T) {
+	if len(OptionalRegistry) != 1 || OptionalRegistry[0].Name != "s3-gatewayd" {
+		t.Fatalf("optional registry = %+v, want [s3-gatewayd]", OptionalRegistry)
+	}
+	for _, core := range Registry {
+		if core.Name == "s3-gatewayd" {
+			t.Fatal("s3-gatewayd must stay out of the always-on registry until provider configuration is mandatory")
+		}
 	}
 }
 

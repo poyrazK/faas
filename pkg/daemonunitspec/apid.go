@@ -48,7 +48,7 @@ func UnitApid() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "simple",
+		Type:               "notify",
 		User:               "faas-apid",
 		Group:              "faas",
 		ExecStart:          `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,

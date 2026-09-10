@@ -151,6 +151,35 @@ func TestComputeMetricsDiscoveryScalesTo1000Nodes(t *testing.T) {
 	}
 }
 
+func TestComputeMetricsDiscoveryRejectsMoreThan1000ConfiguredNodes(t *testing.T) {
+	store := state.NewMemStore()
+	for i := 0; i < maxMetricsDiscoveryTargets+1; i++ {
+		name := fmt.Sprintf("compute-%04d.faas", i)
+		vmmdTarget := fmt.Sprintf("tcp://vmmd-%04d.faas:50051", i)
+		target := fmt.Sprintf("tcp://%s:8080", name)
+		if _, err := store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+			Name:               name,
+			TargetURL:          vmmdTarget,
+			GatewayTargetURL:   &target,
+			VPCPUs:             4,
+			MemMB:              8192,
+			MaxConcurrency:     16,
+			AdmissionCeilingMB: 4096,
+		}); err != nil {
+			t.Fatalf("upsert node %d: %v", i, err)
+		}
+	}
+
+	srv := newServer(store, nil, "gregale.dev", nil)
+	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	req.RemoteAddr = "127.0.0.1:9099"
+	rec := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s, want 503", rec.Code, rec.Body.String())
+	}
+}
+
 func TestComputeMetricsTargetValidation(t *testing.T) {
 	tests := []struct {
 		name string
@@ -161,8 +190,13 @@ func TestComputeMetricsTargetValidation(t *testing.T) {
 		{name: "ipv6", raw: "tcp://[fd00::2]:8080", want: true},
 		{name: "wildcard", raw: "tcp://0.0.0.0:8080", want: false},
 		{name: "loopback", raw: "tcp://127.0.0.1:8080", want: false},
+		{name: "ipv6-wildcard", raw: "tcp://[::]:8080", want: false},
+		{name: "localhost", raw: "tcp://localhost:8080", want: false},
+		{name: "localhost-subdomain", raw: "tcp://metrics.localhost:8080", want: false},
+		{name: "localhost-trailing-dot", raw: "tcp://LOCALHOST.:8080", want: false},
 		{name: "path", raw: "tcp://fsn-2.gregale.dev:8080/metrics", want: false},
 		{name: "bad-port", raw: "tcp://fsn-2.gregale.dev:0", want: false},
+		{name: "port-too-large", raw: "tcp://fsn-2.gregale.dev:65536", want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,6 +250,56 @@ func TestPromtailMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 	}
 	if got[0].Labels["job"] != "promtail-compute" {
 		t.Fatalf("job label=%q, want promtail-compute", got[0].Labels["job"])
+	}
+}
+
+func TestComputeDaemonMetricsDiscoveryUsesCanonicalPorts(t *testing.T) {
+	store := state.NewMemStore()
+	target := "tcp://192.0.2.2:8080"
+	if _, err := store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name:               "compute-a.faas",
+		TargetURL:          "tcp://192.0.2.2:50051",
+		GatewayTargetURL:   &target,
+		VPCPUs:             4,
+		MemMB:              8192,
+		MaxConcurrency:     16,
+		AdmissionCeilingMB: 4096,
+	}); err != nil {
+		t.Fatalf("upsert active node: %v", err)
+	}
+
+	srv := newServer(store, nil, "gregale.dev", nil)
+	tests := []struct {
+		name    string
+		path    string
+		handler http.HandlerFunc
+		want    string
+		job     string
+	}{
+		{name: "vmmd", path: vmmdMetricsDiscoveryPath, handler: srv.vmmdMetricsDiscovery, want: "192.0.2.2:9104", job: "vmmd"},
+		{name: "imaged", path: imagedMetricsDiscoveryPath, handler: srv.imagedMetricsDiscovery, want: "192.0.2.2:9102", job: "imaged"},
+		{name: "builderd", path: builderdMetricsDiscoveryPath, handler: srv.builderdMetricsDiscovery, want: "192.0.2.2:9105", job: "builderd"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.RemoteAddr = "127.0.0.1:9099"
+			rec := httptest.NewRecorder()
+			tc.handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var got []prometheusTargetGroup
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode discovery response: %v", err)
+			}
+			if len(got) != 1 || got[0].Targets[0] != tc.want {
+				t.Fatalf("targets=%v, want %s", got, tc.want)
+			}
+			if got[0].Labels["job"] != tc.job {
+				t.Fatalf("job label=%q, want %q", got[0].Labels["job"], tc.job)
+			}
+		})
 	}
 }
 

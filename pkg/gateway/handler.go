@@ -28,7 +28,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sched"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -263,6 +265,11 @@ type App struct {
 	// CrawlerPolicy controls known monitor/crawler requests. Empty is the
 	// backwards-compatible wake policy.
 	CrawlerPolicy string
+	// HealthPath is the monitor-facing health endpoint. Empty defaults to
+	// /healthz. HealthPathWakes is plan-gated by apid and lets the endpoint
+	// fall through to the normal wake path for real probes.
+	HealthPath      string
+	HealthPathWakes bool
 }
 
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
@@ -683,6 +690,10 @@ type Handler struct {
 	// headWakes is the process-wide opt-in for legacy HEAD wake behaviour;
 	// an App.HeadWakes value can enable it for one app.
 	headWakes bool
+	// healthState stores the last known wake outcome per app. It is deliberately
+	// process-local: a restarted gateway fails closed until it observes a live
+	// target or a successful wake.
+	healthState sync.Map
 	// mirrorRoundTripper (issue #72 / ADR-124 PR-A3) is the
 	// per-request HTTP forwarder the dispatch goroutine uses
 	// to reach the mirror VM. Defaults to
@@ -2844,8 +2855,9 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	// MaxBytesReader so a rule with MaxBodyBytes=2KiB
 	// short-circuits before the global cap fires.
 	cap := rule.MaxBodyBytes
-	if cap <= 0 || cap > api.MaxRequestBodyBytes {
-		cap = api.MaxRequestBodyBytes
+	planCap := app.Plan.MaxRequestBodyBytes()
+	if cap <= 0 || int64(cap) > planCap {
+		cap = int(planCap)
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, int64(cap))
 	body, err := io.ReadAll(r.Body)
@@ -2853,9 +2865,13 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge,
-				api.CodeRequestTooLarge, "Request body too large",
-				fmt.Sprintf("rule %s caps body at %d bytes", rule.ID, cap)))
+			observed := int64(cap) + 1
+			if r.ContentLength > observed {
+				observed = r.ContentLength
+			}
+			prob := api.ErrRequestBodyTooLarge(int64(cap), observed)
+			prob.Detail = fmt.Sprintf("rule %s caps body at %d bytes", rule.ID, cap)
+			api.WriteProblem(w, prob)
 		} else {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest,
 				api.CodeBadRequest, "Could not read request body", err.Error()))
@@ -3382,13 +3398,18 @@ func (h *Handler) applyEdgeRuleLimit(w http.ResponseWriter, r *http.Request, str
 		cap = rule.MaxBodyBytesStreaming
 		capKind = "streaming"
 	}
+	planCap := app.Plan.MaxRequestBodyBytes()
 	if capKind == "buffered" {
-		if cap <= 0 || cap > api.MaxRequestBodyBytes {
-			cap = api.MaxRequestBodyBytes
+		if cap <= 0 || int64(cap) > planCap {
+			cap = int(planCap)
 		}
 	} else {
-		if cap <= 0 || int64(cap) > api.RawStreamMaxRequestBytes {
-			cap = int(api.RawStreamMaxRequestBytes)
+		streamCap := planCap
+		if streamCap > api.RawStreamMaxRequestBytes {
+			streamCap = api.RawStreamMaxRequestBytes
+		}
+		if cap <= 0 || int64(cap) > streamCap {
+			cap = int(streamCap)
 		}
 	}
 	// Content-Length fast path: deny before reading a single
@@ -3405,9 +3426,13 @@ func (h *Handler) applyEdgeRuleLimit(w http.ResponseWriter, r *http.Request, str
 	// fired so a customer can see whether they tripped the
 	// streaming opt-in or the buffered default.
 	if r.ContentLength > 0 && r.ContentLength > int64(cap) {
-		api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge,
-			api.CodeRequestTooLarge, "Request body too large",
-			fmt.Sprintf("rule %s caps body at %d bytes (%s cap)", rule.ID, cap, capKind)))
+		observed := int64(cap) + 1
+		if r.ContentLength > observed {
+			observed = r.ContentLength
+		}
+		prob := api.ErrRequestBodyTooLarge(int64(cap), observed)
+		prob.Detail = fmt.Sprintf("rule %s caps body at %d bytes (%s cap)", rule.ID, cap, capKind)
+		api.WriteProblem(w, prob)
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.limit_rejected", nil, map[string]any{
 				"rule_id":        rule.ID,
@@ -3454,6 +3479,21 @@ func (h *Handler) applyEdgeRuleLimit(w http.ResponseWriter, r *http.Request, str
 		// Mirrors applyEdgeRuleIP / applyEdgeRuleValidate.
 		h.metrics.ObserveEdgeRuleApply("limit", "success")
 	}
+	return false
+}
+
+// applyPlanRequestBodyLimit installs the plan-wide inbound body cap after
+// route-specific gates have had a chance to apply a lower limit. The
+// Content-Length fast path rejects oversized requests before a reader can
+// consume or buffer any body bytes; chunked bodies remain bounded by the
+// MaxBytesReader wrapper.
+func applyPlanRequestBodyLimit(w http.ResponseWriter, r *http.Request, app App) bool {
+	cap := app.Plan.MaxRequestBodyBytes()
+	if r.ContentLength > 0 && r.ContentLength > cap {
+		api.WriteProblem(w, api.ErrRequestBodyTooLarge(cap, r.ContentLength))
+		return true
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, cap)
 	return false
 }
 
@@ -3891,6 +3931,21 @@ func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
 		return nil, false
 	}
 	return ip, true
+}
+
+// stampTrustedClientIP replaces the customer-controlled value of
+// x-faas-client-ip with the one address established by the public listener's
+// single trusted X-Forwarded-For hop. Invalid or ambiguous forwarding chains
+// fail closed by removing the header entirely; the existing IP allowlist and
+// geo paths retain their own deny/unknown handling.
+func stampTrustedClientIP(r *http.Request) {
+	if r == nil {
+		return
+	}
+	r.Header.Del(wire.ClientIPHeader)
+	if ip, ok := clientIPFromTrustedXFF(r); ok {
+		r.Header.Set(wire.ClientIPHeader, ip.String())
+	}
 }
 
 // singleSlash collapses a path to the canonical slash form (no
@@ -4811,6 +4866,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// or alter the headers — strictly observability.
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
 	w = rec
+	// Semantic request span. The public listener already creates an inbound
+	// otelhttp span, but gatewayd-internal also serves the handler directly in
+	// split-node and test paths. This child gives the routing, wake, and
+	// forwarding work one stable span regardless of how the request arrived.
+	requestCtx, requestSpan := pkgtrace.StartSpan(r.Context(), "gateway.request",
+		attribute.String("http.method", r.Method))
+	r = r.WithContext(requestCtx)
+	defer func() {
+		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
+		requestSpan.End()
+	}()
 
 	// Stamp the request-received timestamp onto the context so every exit
 	// path can measure the SAME elapsed interval (was previously always
@@ -4887,6 +4953,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	requestSpan.SetAttributes(
+		attribute.String("app_id", app.ID),
+		attribute.String("app_plan", string(app.Plan)),
+	)
 	triggerClass := ClassifyWakeTrigger(r)
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
@@ -5084,6 +5154,14 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// The plan-wide cap follows the route-specific cap so edge rules can
+	// tighten it, but it runs before throttling and validation. Oversized
+	// requests therefore cannot consume route tokens or schema-buffering
+	// work, and the Content-Length fast path remains allocation-free.
+	if applyPlanRequestBodyLimit(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 
 	// ADR-091 D20.5 amendment / kind=throttle (issue #881). Runs
 	// AFTER applyEdgeRuleLimit (which short-circuits with `return
@@ -5109,12 +5187,6 @@ haveApp:
 	// applier buffers r.Body, restores it for the proxy leg, and
 	// returns 422 + RFC 7807 problem+json on schema mismatch.
 	//
-	// Body-cap placement: the global MaxBytesReader cap (spec
-	// §4.1) is installed HERE rather than further down so the
-	// validate read is bounded. Moved from the post-rate-limit
-	// block — same cap, same value, just earlier so this
-	// applier sees the bounded body.
-	r.Body = http.MaxBytesReader(w, r.Body, api.MaxRequestBodyBytes)
 	if h.applyEdgeRuleValidate(w, r, app, rec) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -5399,8 +5471,25 @@ haveApp:
 			wakeCtx, cancelWakePage = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
 			defer cancelWakePage()
 		}
+		// The semantic span encloses admission and boot coordination only. The
+		// later gateway.forward span is separate, so a slow guest response does
+		// not make wake latency look worse than it is.
+		wakeCtx, wakeSpan := pkgtrace.StartSpan(wakeCtx, "gateway.wake",
+			attribute.String("app_id", app.ID),
+			attribute.String("app_plan", string(app.Plan)),
+			attribute.Int("desired_instances", maxInstances),
+		)
 		//nolint:contextcheck // request ctx at handler boundary.
 		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS)
+		wakeSpan.SetAttributes(
+			attribute.Bool("cold", cold),
+			attribute.String("wake_id", wakeID),
+			attribute.String("wake_method", wakeMethod.String()),
+		)
+		if err != nil {
+			wakeSpan.RecordError(err)
+		}
+		wakeSpan.End()
 		if err != nil {
 			if showWakePage && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
@@ -5427,6 +5516,7 @@ haveApp:
 			// body is recent enough that the customer experience
 			// stays smooth, and the alternative (503) loses both
 			// the request AND the wake budget for nothing.
+			h.markHealthFailure(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
 			}
@@ -5468,8 +5558,20 @@ haveApp:
 	// hits are recovered via the next deployment_changed notify
 	// that re-seeds the cache.
 	if !pick.OK && pick.ColdBucket != "" {
+		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(r.Context(), "gateway.wake_fanout",
+			attribute.String("app_id", app.ID),
+			attribute.String("deployment_id", pick.ColdBucket),
+		)
 		//nolint:contextcheck // request ctx at handler boundary; this is the wake-fan-out retry branch.
-		bucketWakeID, bucketMethod, _, bucketErr := h.backend.Admit(r.Context(), app.ID, pick.ColdBucket, app.Scope, sched.TriggerGateway, limits.MaxConcurrency)
+		bucketWakeID, bucketMethod, _, bucketErr := h.backend.Admit(fanoutCtx, app.ID, pick.ColdBucket, app.Scope, sched.TriggerGateway, limits.MaxConcurrency)
+		fanoutSpan.SetAttributes(
+			attribute.String("wake_id", bucketWakeID),
+			attribute.String("wake_method", bucketMethod.String()),
+		)
+		if bucketErr != nil {
+			fanoutSpan.RecordError(bucketErr)
+		}
+		fanoutSpan.End()
 		if bucketErr != nil {
 			// Log-and-continue: the existing "warmest bucket"
 			// fallback inside Pick already handled the
@@ -5487,7 +5589,9 @@ haveApp:
 		// ensureCapacity returning and our Pick. Surface the observed
 		// (current) HealthyCount so the operator's metrics panel
 		// shows 0 vs the cap (was 1+ microseconds ago).
-		writeWakeError(w, api.ErrAppConcurrencyReached(limits, h.backend.HealthyCount(app.ID)))
+		wakeErr := api.ErrAppConcurrencyReached(limits, h.backend.HealthyCount(app.ID))
+		h.markHealthFailure(app.ID, wakeErr)
+		writeWakeError(w, wakeErr)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -5511,6 +5615,9 @@ haveApp:
 	}
 	defer vmRelease()
 	target := pick.Target
+	// A selected target proves the app is live, including a newly completed
+	// wake. Health probes can reuse this state while the app later parks.
+	h.markHealthReady(app.ID)
 	// A coalesced wake can return several VMs. Correlate this newly woken
 	// request with the selected VM, while keeping ordinary warm responses
 	// free of cached historical wake IDs.
@@ -5521,6 +5628,24 @@ haveApp:
 	// request's admission belongs in a wake timeline; warm traffic must not
 	// append synchronous wake events for the rest of the VM's lifetime.
 	target.WakeID = wakeID
+
+	// Semantic bridge span. The request context is passed through the existing
+	// otelgrpc client instrumentation, so vmmd's forwarding server span and
+	// the guest-side bridge remain children of this span. Stable identifiers
+	// are used here; request paths and headers are intentionally excluded.
+	forwardCtx, forwardSpan := pkgtrace.StartSpan(r.Context(), "gateway.forward",
+		attribute.String("app_id", app.ID),
+		attribute.String("instance_id", target.InstanceID),
+		attribute.String("deployment_id", target.DeploymentID),
+		attribute.String("node_id", target.NodeID),
+		attribute.String("protocol", decideProtocol(app)),
+		attribute.Bool("cold", cold),
+	)
+	r = r.WithContext(forwardCtx)
+	defer func() {
+		forwardSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
+		forwardSpan.End()
+	}()
 
 	// Mirror fan-out (issue #72 / ADR-124 / ADR-125 PR-A3). After
 	// the customer request has been routed, fan out one goroutine
@@ -5582,6 +5707,10 @@ haveApp:
 	// arbitrary instance by setting the header (issue #168 trust model).
 	r.Header.Set("x-faas-instance", target.InstanceID)
 	r.Header.Set("x-faas-app", app.ID)
+	// Customer workloads get one unambiguous client address. The inbound
+	// x-faas-client-ip value is never trusted; stampTrustedClientIP derives
+	// it from the already-sanitized public-to-internal X-Forwarded-For hop.
+	stampTrustedClientIP(r)
 
 	// Per-request wake-timing recorder (spec §6.3) installed AFTER
 	// upstream stamping so the trace sees only the proxy hop, not the
@@ -5949,7 +6078,7 @@ haveApp:
 				"app", app.ID, "node", target.NodeID, "instance", target.InstanceID)
 			firstByteAt = time.Now()
 		}
-		h.metrics.ObserveColdBoot(app.ID, firstByteAt.Sub(wakeStart), target.NodeID)
+		h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceIDFromContext(r.Context()))
 		// Wake-locality classifier (PR scale-out readiness). Increment
 		// AFTER the existing first-byte observation so the 350 ms
 		// measurement path is unchanged. Only fires on a real admit
@@ -6022,7 +6151,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		// ObserveRequestDuration call; that helper is retained for
 		// test paths that don't carry a deployment id.
 		deploymentLabel := h.metrics.deploymentLabels.admit(appID, api.Plan(plan), target.DeploymentID)
-		h.metrics.ObserveRequestDurationByDeployment(appID, statusClassBucket(status), deploymentLabel, elapsed)
+		h.metrics.ObserveRequestDurationByDeploymentWithTrace(appID, statusClassBucket(status), deploymentLabel, elapsed, traceIDFromContext(r.Context()))
 		// ADR-093: per-route emission. Gated on a non-empty
 		// routeLabel (the routeLabelSet always returns a non-empty
 		// label for an opted-in app — the empty string is the
@@ -6104,12 +6233,26 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				ColdBoot:     cold,
 				TraceID:      telemetryTraceID(requestID),
 				ReceivedAt:   time.Now(),
+				WakeID:       target.WakeID,
+				InstanceID:   target.InstanceID,
 				UAFamily:     uaFamily,
 				ReferrerHost: referrerHost,
 				Country:      country,
 			})
 		}
 	}
+}
+
+// traceIDFromContext returns only sampled trace IDs. Unsampled spans are not
+// exported by the SDK, so linking their IDs from a metric would create a
+// misleading dead-end in Grafana. Empty/invalid contexts preserve the normal
+// metrics-only behavior when tracing is disabled.
+func traceIDFromContext(ctx context.Context) string {
+	sc := pkgtrace.SpanFromContext(ctx).SpanContext()
+	if !sc.IsValid() || !sc.IsSampled() {
+		return ""
+	}
+	return sc.TraceID().String()
 }
 
 // statusClass turns an HTTP status into a 3-digit label ("200", "404", "503").

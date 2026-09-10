@@ -25,7 +25,7 @@ die() {
   die "/etc/faas/builder-acceptance-host is missing; this node is not designated for disruptive acceptance tests"
 
 for tool in busybox e2fsck file firecracker flock gcc install ip iptables jailer \
-  make mkfs.ext4 nft readlink systemctl systemd-run tc truncate; do
+  make mkfs.ext4 nft readlink systemctl systemd-run tc truncate unshare; do
   command -v "${tool}" >/dev/null || die "required host tool is missing: ${tool}"
 done
 
@@ -56,6 +56,7 @@ guest_init="${base_skeleton}/sbin/init"
 active_services="${stage_root}/active-services"
 cache_root="/var/cache/faas-metal-smoke"
 services=(faas-vmmd faas-builderd faas-imaged faas-gatewayd-internal)
+base_mountpoints=(dev overlay proc run sys sys/fs/cgroup tmp)
 
 mkdir -p /var/lock
 exec 9>/var/lock/faas-builder-acceptance.lock
@@ -63,10 +64,12 @@ flock -w "${FAAS_METAL_LOCK_TIMEOUT_SECONDS:-900}" 9 ||
   die "another native acceptance run holds the host lock"
 
 mkdir -p "${base_skeleton}/bin" "${base_skeleton}/sbin" \
-  "${base_skeleton}/dev" "${base_skeleton}/sys" "${base_skeleton}/proc" \
-  "${base_skeleton}/etc/faas" "${base_skeleton}/tmp" \
-  "${layer_skeleton}/etc/faas" "${layer_skeleton}/tmp" \
+  "${base_skeleton}/etc/faas" \
+  "${layer_skeleton}/upper/etc/faas" "${layer_skeleton}/upper/tmp" \
   "${cache_root}/go-build" "${cache_root}/go-mod" "${cache_root}/home"
+for mountpoint in "${base_mountpoints[@]}"; do
+  mkdir -p "${base_skeleton}/${mountpoint}"
+done
 : > "${active_services}"
 
 cleanup() {
@@ -138,9 +141,12 @@ install -m 0755 "${busybox_path}" "${base_skeleton}/bin/busybox"
 for name in bin/sh bin/ash bin/cat; do
   ln -s /bin/busybox "${base_skeleton}/${name}"
 done
+# Production app artifacts live beneath drive1's /upper directory. The M0 app
+# runs as UID 1000 and only needs to listen; platform-owned /etc/faas stays
+# read-only to it after guest-init assembles the overlay.
 printf '%s\n' \
-  '{"entrypoint":["/bin/sh","-c","cat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt && exec /bin/busybox httpd -f -p 8080 -h /"],"port":8080}' \
-  > "${base_skeleton}/etc/faas/app.json"
+  '{"entrypoint":["/bin/busybox","httpd","-f","-p","8080","-h","/"],"port":8080}' \
+  > "${layer_skeleton}/upper/etc/faas/app.json"
 
 truncate -s 64M "${base_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${base_skeleton}" -L faas-metal-smoke -F "${base_path}"
@@ -166,7 +172,88 @@ export FAAS_TEST_KERNEL="${kernel}"
 export FAAS_TEST_BASE_ROOTFS="${base_path}"
 export FAAS_TEST_LAYER_ROOTFS="${layer_path}"
 export FAAS_TEST_FC_VERSION="${fc_version}"
+# This workflow targets the HDD acceptance node. It exercises restore
+# correctness and reports latency, but it must never enforce or contribute to
+# the reference-SSD p95 cohort.
+export FAAS_TEST_REFERENCE_SSD=0
 
-echo "native metal smoke: run TestMetalHelloBoot"
+# Run the whole pkg/fcvm metal package, not a single boot.
+#
+# TestMetalHelloBoot proved the path works; it is one of 142 metal-tagged
+# tests in this package, and the rest had never executed anywhere — the old
+# self-hosted `metal` job in ci.yml required a runner label no runner
+# carried, so every dispatch of it was cancelled or failed.
+#
+# Tests whose specialized fixtures this script does not stage skip themselves
+# with a concrete reason, so the package is safe to run whole. The tally below
+# reports how many actually ran so the remaining gap stays visible instead of
+# being implied by a green check.
+#
+# -run is deliberately absent. Adding one here is how a suite quietly
+# shrinks back to a single test.
+echo "native metal smoke: run the pkg/fcvm metal package"
+metal_log="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal.log"
+set +e
 make GO="${FAAS_METAL_GO}" PKGS=./pkg/fcvm \
-  RUN_ARGS='-run=^TestMetalHelloBoot$$ -timeout=5m -v' test-metal
+  RUN_ARGS='-timeout=30m -v' test-metal 2>&1 | tee "${metal_log}"
+metal_rc="${PIPESTATUS[0]}"
+set -e
+
+passed="$(grep -cE '^--- PASS: ' "${metal_log}" || true)"
+skipped="$(grep -cE '^--- SKIP: ' "${metal_log}" || true)"
+failed="$(grep -cE '^--- FAIL: ' "${metal_log}" || true)"
+echo "native metal smoke: pkg/fcvm metal — ${passed} passed, ${skipped} skipped, ${failed} failed"
+if [[ "${skipped}" -gt 0 ]]; then
+  echo "native metal smoke: skipped tests (each names the fixture it wants):"
+  grep -E '^--- SKIP: ' "${metal_log}" | sed 's/^/  /'
+fi
+if [[ "${passed}" -eq 0 ]]; then
+  echo "native metal smoke: no metal test executed; the fixtures or the build tag are wrong" >&2
+  metal_rc=1
+fi
+# Second pass: the six tests that need private mount + network namespaces.
+#
+# They gate on FAAS_TEST_NETWORK_BATCH and skipped in the pass above because
+# this host runs it in the host namespace — they manipulate /run/netns,
+# bridge MACs and neighbour entries, which is not safe there and would fight
+# the node's real networking. network_batch_metal_test.go documents the
+# invocation; this is that command, wired up.
+#
+# The binary is compiled OUTSIDE the namespace (go build wants a working
+# module cache) and executed inside it. `unshare --net` yields an empty
+# namespace, so loopback is brought up first — several of these tests dial
+# 127.0.0.1.
+batch_tests='^(TestMetalImageBindMount|TestMetalIPSetupBatch|TestMetalFreshNetworkPolicy|TestMetalReusedLeaseNeighbor|TestMetalPreparedBridgeMAC|TestMetalPreparedNetworkOwnership)$'
+batch_bin="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal.test"
+batch_log="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal-batch.log"
+
+echo "native metal smoke: compile the namespace-batch test binary"
+"${FAAS_METAL_GO}" test -c -tags metal -race -o "${batch_bin}" ./pkg/fcvm
+
+echo "native metal smoke: run the namespace batch under unshare"
+set +e
+FAAS_TEST_NETWORK_BATCH=1 \
+  unshare --mount --net --propagation private -- \
+  sh -c 'ip link set lo up 2>/dev/null; mount -t tmpfs tmpfs /run/netns && exec "$0" -test.run "$1" -test.timeout=10m -test.v' \
+  "${batch_bin}" "${batch_tests}" 2>&1 | tee "${batch_log}"
+batch_rc="${PIPESTATUS[0]}"
+set -e
+
+batch_passed="$(grep -cE '^--- PASS: ' "${batch_log}" || true)"
+batch_skipped="$(grep -cE '^--- SKIP: ' "${batch_log}" || true)"
+batch_failed="$(grep -cE '^--- FAIL: ' "${batch_log}" || true)"
+echo "native metal smoke: namespace batch — ${batch_passed} passed, ${batch_skipped} skipped, ${batch_failed} failed"
+if [[ "${batch_skipped}" -gt 0 ]]; then
+  echo "native metal smoke: namespace batch still skipping:"
+  grep -E '^--- SKIP: ' "${batch_log}" | sed 's/^/  /'
+fi
+# The whole point of this pass. If it executes nothing, the unshare or the
+# tmpfs failed and the six tests are silently back to not running.
+if [[ "${batch_passed}" -eq 0 ]]; then
+  echo "native metal smoke: namespace batch executed no test; unshare or /run/netns setup failed" >&2
+  batch_rc=1
+fi
+
+echo "native metal smoke: total — $((passed + batch_passed)) passed, $((skipped + batch_skipped)) skipped, $((failed + batch_failed)) failed"
+[[ "${metal_rc}" -eq 0 ]] || exit "${metal_rc}"
+[[ "${batch_rc}" -eq 0 ]] || exit "${batch_rc}"

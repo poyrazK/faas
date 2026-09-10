@@ -98,7 +98,7 @@ credential.
 
 The route is a form POST authenticated by the `faas_sid` cookie, which
 is `SameSite=Lax`. Customer functions are served from
-`*.apps.gregale.dev`, which is *same-site* with `api.gregale.dev`, so a
+`*.gregale.dev`, which is *same-site* with `api.gregale.dev`, so a
 form auto-submitted by a customer-hosted page still carries the
 victim's session cookie. The blanket step-up gate incidentally blocked
 that; the `session` row above would not. So every branch — including

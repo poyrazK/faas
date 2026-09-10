@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -84,8 +83,12 @@ type Config struct {
 	// CacheDir is where built app layers are content-addressed for cache hits.
 	// Empty => /var/cache/faas/builds.
 	CacheDir string `toml:"cache_dir"`
-	// SourceSpoolDir mirrors apid's source spool; builderd reads from here.
+	// SourceSpoolDir mirrors apid's source and build-log spool. When set,
+	// persisted source/log paths must remain below this root.
 	SourceSpoolDir string `toml:"source_spool_dir"`
+	// BuildLogMaxBytes bounds each persisted build log. Zero uses the safe
+	// default; values above the hard ceiling are clamped in New.
+	BuildLogMaxBytes int64 `toml:"build_log_max_bytes"`
 	// SourceWaitTimeout is how long a claimed build waits for its
 	// source tarball to appear in the spool before requeueing.
 	// The LISTEN/NOTIFY claim races the box-to-box spool sync
@@ -188,6 +191,12 @@ func New(store state.Store, notif Notifier, vm VM, cache *Cache, det *Detector, 
 	}
 	if cfg.SourceWaitTimeout == 0 {
 		cfg.SourceWaitTimeout = 10 * time.Second
+	}
+	if cfg.BuildLogMaxBytes <= 0 {
+		cfg.BuildLogMaxBytes = DefaultBuildLogMaxBytes
+	}
+	if cfg.BuildLogMaxBytes > maxBuildLogMaxBytes {
+		cfg.BuildLogMaxBytes = maxBuildLogMaxBytes
 	}
 	return &Builderd{
 		store:         store,
@@ -466,6 +475,37 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if b.stopIfBuildCancelled(ctx, build.ID) {
 		return BuildResult{}, nil
 	}
+	lim, known := api.LimitsFor(acct.Plan)
+	if !known {
+		b.markFailed(ctx, build, state.FailureInfra, "unknown plan: "+string(acct.Plan), time.Now())
+		return BuildResult{}, errors.New("builderd: unknown plan")
+	}
+	sourceBytes := dep.SourceBytes
+	if sourceBytes == 0 {
+		sourceBytes = build.SourceBytes
+	}
+	if sourceBytes < 0 || build.SourceBytes < 0 {
+		msg := fmt.Sprintf("invalid declared source size: deployment=%d build=%d", dep.SourceBytes, build.SourceBytes)
+		b.markFailed(ctx, build, state.FailureInfra, msg, time.Now())
+		return BuildResult{}, errors.New("builderd: " + msg)
+	}
+	maxSourceBytes := int64(lim.SourceTarballMaxMB) * 1024 * 1024
+	if sourceBytes > maxSourceBytes {
+		msg := fmt.Sprintf("source archive %d bytes exceeds %s plan cap of %d bytes", sourceBytes, acct.Plan, maxSourceBytes)
+		b.markFailed(ctx, build, state.FailureUserError, msg, time.Now())
+		return BuildResult{}, errors.New("builderd: " + msg)
+	}
+	if err := validateSourcePath(dep.SourcePath, b.cfg.SourceSpoolDir); err != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "source path: "+err.Error(), time.Now())
+		return BuildResult{}, err
+	}
+	// Zero-config Builderd instances are the historical in-process test seam;
+	// their fixtures use synthetic SourceBytes values. Production always has a
+	// configured spool root, so it retains exact size validation.
+	validationBytes := sourceBytes
+	if b.cfg.SourceSpoolDir == "" && b.sourceStorage == nil {
+		validationBytes = 0
+	}
 
 	// B2.2 (issue #196): record the claim so the next
 	// ClaimNextQueuedBuildWithFairness round excludes this account
@@ -518,7 +558,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// source to appear; if it still hasn't by the deadline, requeue
 	// (same contract as ErrNoSlot: the row stays queued, the durable
 	// worker re-claims it on the next tick).
-	if err := b.materializeSource(ctx, build.ID, dep.SourcePath); err != nil {
+	if err := b.materializeSourceBounded(ctx, build.ID, dep.SourcePath, validationBytes, maxSourceBytes); err != nil {
+		if errors.Is(err, ErrSourceBoundary) {
+			b.markFailed(ctx, build, state.FailureInfra, "source boundary: "+err.Error(), buildStart)
+			return BuildResult{}, err
+		}
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source storage unavailable — requeued (%v)\n", err))
 		if rerr := b.store.RequeueBuild(ctx, build.ID); rerr != nil {
 			b.log.Warn("builderd: requeue on source-storage failure", "build", build.ID, "err", rerr)
@@ -526,7 +570,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, err
 	}
 	if b.cfg.SourceWaitTimeout > 0 {
-		if err := b.waitForSource(ctx, build.ID, dep.SourcePath, b.cfg.SourceWaitTimeout); err != nil {
+		if err := b.waitForSourceBounded(ctx, build.ID, dep.SourcePath, b.cfg.SourceWaitTimeout, validationBytes, maxSourceBytes); err != nil {
+			if errors.Is(err, ErrSourceBoundary) {
+				b.markFailed(ctx, build, state.FailureInfra, "source boundary: "+err.Error(), buildStart)
+				return BuildResult{}, err
+			}
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source spool lag — requeued (%v)\n", err))
 			if rerr := b.store.RequeueBuild(ctx, build.ID); rerr != nil {
 				b.log.Warn("builderd: requeue on source-lag", "build", build.ID, "err", rerr)
@@ -536,6 +584,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	if b.stopIfBuildCancelled(ctx, build.ID) {
 		return BuildResult{}, nil
+	}
+	if _, err := validateSourceFile(dep.SourcePath, b.cfg.SourceSpoolDir, validationBytes, maxSourceBytes); err != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "source validation: "+err.Error(), buildStart)
+		return BuildResult{}, err
 	}
 	srcHash, err := hashAndVerifySource(dep.SourcePath, dep.SourceSHA256)
 	if err != nil {
@@ -793,11 +845,6 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if statErr != nil {
 		b.markFailed(ctx, build, state.FailureInfra, "validate produced layer: "+statErr.Error(), buildStart)
 		return BuildResult{}, statErr
-	}
-	lim, known := api.LimitsFor(acct.Plan)
-	if !known {
-		b.markFailed(ctx, build, state.FailureInfra, "unknown plan: "+string(acct.Plan), buildStart)
-		return BuildResult{}, errors.New("builderd: unknown plan")
 	}
 	if sizeMB := (artifactBytes + (1 << 20) - 1) >> 20; sizeMB > int64(lim.AppLayerMaxMB) {
 		msg := fmt.Sprintf("app layer %d MB exceeds plan cap %d MB", sizeMB, lim.AppLayerMaxMB)
@@ -1214,7 +1261,7 @@ func retryStateMutation(ctx context.Context, op func() error) error {
 // out a build_log notification so any SSE subscriber sees it (UX spec §2.4).
 // Best-effort: a failure here is logged but never blocks the build.
 func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
-	if err := appendLog(ctx, b.store, buildID, line); err != nil {
+	if err := appendLogBounded(ctx, b.store, buildID, line, b.cfg.SourceSpoolDir, b.cfg.BuildLogMaxBytes); err != nil {
 		b.log.Warn("builderd: append log", "build", buildID, "err", err)
 	}
 	if b.notif == nil {
@@ -1226,16 +1273,26 @@ func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
 	}
 }
 
-// materializeSource downloads a split-box source archive into the local
-// source spool when the apid-created path is not present. A missing remote
-// object is intentionally not an error here: waitForSource retries the
-// remote lookup within the existing bounded source-lag policy, while
-// registry failures are returned so the caller can requeue immediately.
+// materializeSource preserves the package-local helper used by older tests;
+// production passes account-derived bounds through materializeSourceBounded.
 func (b *Builderd) materializeSource(ctx context.Context, buildID, path string) error {
-	if _, err := os.Stat(path); err == nil {
+	return b.materializeSourceBounded(ctx, buildID, path, 0, 0)
+}
+
+// materializeSourceBounded downloads a split-box source archive into the
+// local source spool when the apid-created path is not present. A missing
+// remote object is intentionally not an error here: waitForSource retries the
+// remote lookup within the existing bounded source-lag policy. The stream is
+// capped before it reaches disk and the final install never replaces a file
+// another producer won the race to create.
+func (b *Builderd) materializeSourceBounded(ctx context.Context, buildID, path string, expectedBytes, maxBytes int64) error {
+	if err := validateSourcePath(path, b.cfg.SourceSpoolDir); err != nil {
+		return err
+	}
+	if _, err := validateSourceFile(path, b.cfg.SourceSpoolDir, expectedBytes, maxBytes); err == nil {
 		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("builderd: stat source: %w", err)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("builderd: validate source: %w", err)
 	}
 	if b.sourceStorage == nil {
 		return nil
@@ -1253,40 +1310,77 @@ func (b *Builderd) materializeSource(ctx context.Context, buildID, path string) 
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("builderd: create source spool: %w", err)
 	}
+	if err := validateSourcePath(path, b.cfg.SourceSpoolDir); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(dir, ".source-download-*")
 	if err != nil {
 		return fmt.Errorf("builderd: create source temp: %w", err)
 	}
 	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if _, err := io.Copy(tmp, rc); err != nil {
-		_ = tmp.Close()
+	tmpClosed := false
+	defer func() {
+		if !tmpClosed {
+			_ = tmp.Close()
+		}
+		_ = os.Remove(tmpPath)
+	}()
+	if _, err := copySourceBounded(tmp, rc, expectedBytes, maxBytes); err != nil {
 		return fmt.Errorf("builderd: download source archive: %w", err)
 	}
 	if err := tmp.Chmod(0o640); err != nil {
-		_ = tmp.Close()
 		return fmt.Errorf("builderd: chmod source archive: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("builderd: sync source archive: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("builderd: close source archive: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	tmpClosed = true
+	if err := os.Link(tmpPath, path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			if _, validateErr := validateSourceFile(path, b.cfg.SourceSpoolDir, expectedBytes, maxBytes); validateErr == nil {
+				return nil
+			} else {
+				return fmt.Errorf("builderd: source target already exists: %w", validateErr)
+			}
+		}
 		return fmt.Errorf("builderd: install source archive: %w", err)
+	}
+	if _, err := validateSourceFile(path, b.cfg.SourceSpoolDir, expectedBytes, maxBytes); err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("builderd: validate installed source: %w", err)
 	}
 	return nil
 }
 
-// waitForSource blocks until the source tarball at path exists or the
-// timeout expires. It is the split-box spool-sync guard: the
-// notify-driven claim can beat both the rsync to the compute node and
-// eventual visibility of the OCI manifest. Local spool checks run at
-// 100ms; remote not-found checks run at 500ms so a transient registry
-// visibility delay is absorbed without a tight registry polling loop.
+// waitForSource preserves the package-local helper used by older tests;
+// production passes account-derived bounds through waitForSourceBounded.
 func (b *Builderd) waitForSource(ctx context.Context, buildID, path string, timeout time.Duration) error {
-	if _, err := os.Stat(path); err == nil {
+	return b.waitForSourceBounded(ctx, buildID, path, timeout, 0, 0)
+}
+
+// waitForSourceBounded blocks until the source tarball at path exists and
+// passes the same path/type/size checks used during materialization or until
+// the timeout expires. It is the split-box spool-sync guard: pg_notify lands
+// on builderd in ~ms, while the apid→compute-node rsync of the source tarball
+// needs ~1s.
+func (b *Builderd) waitForSourceBounded(ctx context.Context, buildID, path string, timeout time.Duration, expectedBytes, maxBytes int64) error {
+	check := func() (bool, error) {
+		_, err := validateSourceFile(path, b.cfg.SourceSpoolDir, expectedBytes, maxBytes)
+		if err == nil {
+			return true, nil
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if present, err := check(); err != nil {
+		return err
+	} else if present {
 		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("builderd: stat source: %w", err)
 	}
 	deadline := time.Now().Add(timeout)
 	localPoll := time.NewTicker(100 * time.Millisecond)
@@ -1303,22 +1397,22 @@ func (b *Builderd) waitForSource(ctx context.Context, buildID, path string, time
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-localPoll.C:
-			if _, err := os.Stat(path); err == nil {
+			if present, err := check(); err != nil {
+				return err
+			} else if present {
 				return nil
-			} else if !os.IsNotExist(err) {
-				return fmt.Errorf("builderd: stat source: %w", err)
 			}
 			if time.Now().After(deadline) {
 				return fmt.Errorf("builderd: source %s did not appear within %s", path, timeout)
 			}
 		case <-remoteC:
-			if err := b.materializeSource(ctx, buildID, path); err != nil {
+			if err := b.materializeSourceBounded(ctx, buildID, path, expectedBytes, maxBytes); err != nil {
 				return err
 			}
-			if _, err := os.Stat(path); err == nil {
+			if present, err := check(); err != nil {
+				return err
+			} else if present {
 				return nil
-			} else if !os.IsNotExist(err) {
-				return fmt.Errorf("builderd: stat source: %w", err)
 			}
 			if time.Now().After(deadline) {
 				return fmt.Errorf("builderd: source %s did not appear within %s", path, timeout)

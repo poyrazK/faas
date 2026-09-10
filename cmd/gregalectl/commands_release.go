@@ -111,6 +111,8 @@ Flags (bundle):
 Flags (install):
   --git-sha SHA         40-char lowercase hex git SHA to install (required).
   --releases-root PATH  Releases root (default: /opt/faas/releases).
+  --tarball-path PATH   Canonical release.tar.gz. Expects
+                        release.cosign.bundle and release.sbom.json beside it.
   --node NAME           compute_nodes.name to stamp (default:
                         FAAS_NODE_NAME, then hostname; compute-only
                         installs use NAME.faas).

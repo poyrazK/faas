@@ -989,6 +989,11 @@ type Limits struct {
 	// N-apps-times-cap-per-app bypass. Both enforced in
 	// pkg/state.CreateAppWebhookIfUnderQuota.
 	WebhookPerAccount int
+	// LogDrainPerApp caps the number of customer runtime log destinations
+	// on one app. It follows the same plan gate as outbound webhooks.
+	LogDrainPerApp int
+	// LogDrainPerAccount caps destinations across all apps in an account.
+	LogDrainPerAccount int
 
 	// TriggersAllowed (issue #757 / ADR-0NN) gates the unified Trigger
 	// primitive (cron + kafka + nats + redis_streams + sqs_compat +
@@ -1279,6 +1284,10 @@ type Limits struct {
 	// this number; PR-A leaves the writer unused on the buffered
 	// path and PR-B activates it on the streaming path.
 	MaxResponseBodyBytes int64
+	// RequestBodyMaxBytes is the per-plan inbound request body cap. Edge
+	// rules may lower this value for a route, but never raise it. A zero
+	// value fails closed to MaxRequestBodyBytes for unknown/legacy rows.
+	RequestBodyMaxBytes int64
 	// ResponseWriteTimeoutSeconds is the total-response-write window
 	// for streaming responses (spec §4.1: 300 s; issue #471 raises
 	// it to 900 s for Hobby+ so 30 s LLM streams + slow client reads
@@ -1770,8 +1779,10 @@ var planLimits = map[Plan]Limits{
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Free has no webhooks — the handler returns 402
 		// CodePlanWebhooksNotAllowed before the store is touched.
-		WebhookPerApp:     0,
-		WebhookPerAccount: 0,
+		WebhookPerApp:      0,
+		WebhookPerAccount:  0,
+		LogDrainPerApp:     0,
+		LogDrainPerAccount: 0,
 		// Trigger primitive (issue #757 / ADR-0NN): Free is the
 		// abuse-floor tier — TriggersAllowed=false so a POST on a
 		// Free account gets 402 CodePlanTriggersNotAllowed before the
@@ -1792,9 +1803,9 @@ var planLimits = map[Plan]Limits{
 		MaxESMRecordsPerSecond: 0,
 		BrokerEgressMbit:       0,
 		TLSSkipVerifyAllowed:   false,
-		// Per-account rate limit (ADR-040): Free gets 50/min — enough for
-		// the 1-concurrency plan's traffic envelope.
-		RateLimitPerAccountRPM: 50,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Free app at its advertised 5 rps.
+		RateLimitPerAccountRPM: 300,
 		// Wake-side admission throttle (ADR-099 PR-0). Free caps
 		// wake admissions at 1/min per app + 1/min per account — the
 		// abuse-floor tier should never burst-wake. The apid-side
@@ -1821,6 +1832,7 @@ var planLimits = map[Plan]Limits{
 		// cap lift (spec §4.1 baseline 25 MB / 300 s).
 		StreamingEnabled:            false,
 		MaxResponseBodyBytes:        MaxResponseBodyBytesDefault,
+		RequestBodyMaxBytes:         10 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: ResponseWriteTimeoutDefault,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Free
 		// is the abuse-floor tier — a long-lived WS would pin a
@@ -2125,8 +2137,10 @@ var planLimits = map[Plan]Limits{
 		DataPlacementHintsPerApp: 3,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Hobby gets 3/app, 10/account — mirrors the alert-rule ratio.
-		WebhookPerApp:     3,
-		WebhookPerAccount: 10,
+		WebhookPerApp:      3,
+		WebhookPerAccount:  10,
+		LogDrainPerApp:     3,
+		LogDrainPerAccount: 10,
 		// Trigger primitive (issue #757 / ADR-0NN): Hobby is the
 		// entry paid tier — unlocks the in-platform queue kind and
 		// the sqs_compat kind (the two no-external-broker shapes).
@@ -2155,10 +2169,9 @@ var planLimits = map[Plan]Limits{
 		// The migration-00274 SQL ceiling is 64 MiB so there's
 		// headroom for Pro+ below the hard limit.
 		TriggerPayloadMaxBytes: 1048576,
-		// Per-account rate limit (ADR-040): Hobby gets 200/min — ~10× the
-		// Hobby per-app rps (20) so per-app trips first on a single hot
-		// app, and the account limit catches the cross-app botnet.
-		RateLimitPerAccountRPM: 200,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Hobby app at its advertised 20 rps.
+		RateLimitPerAccountRPM: 1200,
 		// Wake-side admission throttle (ADR-099 PR-0). Hobby
 		// permits a small wake burst — a cron tick on a Hobby
 		// customer's job can legitimately want 5 wakes/min across
@@ -2184,6 +2197,7 @@ var planLimits = map[Plan]Limits{
 		// to cover a 30–120 s chat completion plus headroom.
 		StreamingEnabled:            true,
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
+		RequestBodyMaxBytes:         25 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Hobby
 		// is the first paid tier — opt-in by default (the LLM/agent
@@ -2485,8 +2499,10 @@ var planLimits = map[Plan]Limits{
 		DataPlacementHintsPerApp: 10,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Pro gets 10/app, 30/account — mirrors the alert-rule ratio.
-		WebhookPerApp:     10,
-		WebhookPerAccount: 30,
+		WebhookPerApp:      10,
+		WebhookPerAccount:  30,
+		LogDrainPerApp:     10,
+		LogDrainPerAccount: 30,
 		// Trigger primitive (issue #757 / ADR-0NN): Pro is the first
 		// tier where the external-broker kinds unlock (Kafka, NATS,
 		// Redis-streams) — the egress-allowlist tier (ADR-031) is
@@ -2509,9 +2525,9 @@ var planLimits = map[Plan]Limits{
 		// hardcoded closeBatch byte cap so Pro customers behave
 		// identically pre/post migration 00274.
 		TriggerPayloadMaxBytes: 6291456,
-		// Per-account rate limit (ADR-040): Pro gets 1000/min — ~10× the
-		// Pro per-app rps (100), same rationale as Hobby.
-		RateLimitPerAccountRPM: 1000,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Pro app at its advertised 100 rps.
+		RateLimitPerAccountRPM: 6000,
 		// Wake-side admission throttle (ADR-099 PR-0). Pro is the
 		// production tier — the per-app burst ceiling of 20/min is
 		// calibrated against a customer running a cron fleet
@@ -2540,6 +2556,7 @@ var planLimits = map[Plan]Limits{
 		// constraint long before 100 MB matters.
 		StreamingEnabled:            true,
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
+		RequestBodyMaxBytes:         100 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Pro is
 		// the first tier where production workloads sit — opt-in by
@@ -2849,8 +2866,10 @@ var planLimits = map[Plan]Limits{
 		DataPlacementHintsPerApp: 50,
 		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Scale gets 25/app, 100/account — mirrors the alert-rule ratio.
-		WebhookPerApp:     25,
-		WebhookPerAccount: 100,
+		WebhookPerApp:      25,
+		WebhookPerAccount:  100,
+		LogDrainPerApp:     25,
+		LogDrainPerAccount: 100,
 		// Trigger primitive (issue #757 / ADR-0NN): Scale is the upper
 		// tier — caps align with the SQL CHECK ceilings (5000 records
 		// / 5 min window / 25 attempts) so a Scale customer's
@@ -2878,12 +2897,9 @@ var planLimits = map[Plan]Limits{
 		// column CHECK remains a safety net, not a binding
 		// constraint.
 		TriggerPayloadMaxBytes: 16777216,
-		// Per-account rate limit (ADR-040): Scale gets 5000/min — ~10× the
-		// Scale per-app rps (500). The fleet-summed alert at 100/min/5m
-		// (FaasPerAccountRateLimitSpike) triggers well before any single
-		// paid customer's bucket fills, which is the intended signal:
-		// coordinated abuse, not baseline load.
-		RateLimitPerAccountRPM: 5000,
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
+		// account can sustain one Scale app at its advertised 500 rps.
+		RateLimitPerAccountRPM: 30000,
 		// Wake-side admission throttle (ADR-099 PR-0). Scale is
 		// the upper tier — 100 wakes/min per app is enough to drain
 		// a 1000-task parallel job run in 10 min wall-clock, which
@@ -2915,6 +2931,7 @@ var planLimits = map[Plan]Limits{
 		// tripping the cap.
 		StreamingEnabled:            true,
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
+		RequestBodyMaxBytes:         250 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Scale
 		// stays on by default — production workloads at this tier
@@ -4232,6 +4249,23 @@ var (
 	// JobBackoffMaxSeconds) defined in the const block above.
 	JobMaxRetries = [4]int{0, 3, 5, 10}
 
+	// ExecutionConcurrentPerAccount caps one-shot executions that have not
+	// reached a terminal state. A restored execution VM is never parked or
+	// reused after caller code runs, so every admitted execution occupies one
+	// slot until teardown is acknowledged.
+	ExecutionConcurrentPerAccount = [4]int{0, 1, 5, 20}
+
+	// ExecutionOutputMaxBytes is a combined cap across the JSON result,
+	// stdout, and stderr. The guest stops accepting output at this boundary;
+	// the host independently enforces the same cap on the vsock frame stream.
+	ExecutionOutputMaxBytes = [4]int{0, 1 << 20, 4 << 20, 16 << 20}
+
+	// ExecutionTimeoutMaxMS is the admission-to-result wall-clock deadline,
+	// including snapshot restore. Remaining time is passed to the guest when
+	// execution starts, so queue/restore delay can never extend caller code
+	// beyond the advertised deadline.
+	ExecutionTimeoutMaxMS = [4]int{0, 10_000, 30_000, 30_000}
+
 	// Deprecated workflow cap aliases retained for source compatibility with
 	// the original PR-1279 shorthand. New code must read the named fields on
 	// Limits through the Plan accessors below.
@@ -4240,6 +4274,41 @@ var (
 	WorkflowStepMaxTimeoutSec = [4]int{0, 600, 1800, 7200}
 	WorkflowMaxWaitDays       = 7
 )
+
+const (
+	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
+	// arrays above or reuse the plan's existing RAM/disk source of truth.
+	ExecutionTimeoutDefaultMS       = 5_000
+	ExecutionTimeoutMinMS           = 100
+	ExecutionMemoryDefaultMB        = 128
+	ExecutionCPUMillicoresDefault   = 250
+	ExecutionCPUMillicoresMax       = DefaultAppCPUMillicores
+	ExecutionEphemeralDiskDefaultMB = 64
+	ExecutionOutputDefaultBytes     = 256 << 10
+	ExecutionOutputMinBytes         = 1 << 10
+	ExecutionPIDsMax                = 64
+)
+
+// ExecutionPlanLimits is the complete admission envelope for disposable
+// one-shot executions. It is returned as a value so callers cannot mutate the
+// package-level plan tables.
+type ExecutionPlanLimits struct {
+	Allowed                bool
+	MaxConcurrent          int
+	MaxSourceBytes         int
+	MaxInputBytes          int
+	DefaultOutputBytes     int
+	MaxOutputBytes         int
+	DefaultTimeoutMS       int
+	MaxTimeoutMS           int
+	DefaultMemoryMB        int
+	MaxMemoryMB            int
+	DefaultCPUMillicores   int
+	MaxCPUMillicores       int
+	DefaultEphemeralDiskMB int
+	MaxEphemeralDiskMB     int
+	PIDsMax                int
+}
 
 // DefaultComputeNodeCeilingMB is the per-compute-node admission ceiling
 // schedd hands out when no operator override is present. It mirrors
@@ -4521,6 +4590,72 @@ func (p Plan) EgressAllowlistMaxSize() int {
 		return 0
 	}
 	return l.EgressAllowlistMaxSize
+}
+
+// ExecutionLimits returns the complete one-shot execution envelope for this
+// plan. Free is a known plan with a zero, disabled envelope; unknown plans
+// return ok=false. Memory and scratch-disk maxima deliberately reuse the
+// existing plan limits instead of introducing a second quota source.
+func (p Plan) ExecutionLimits() (limits ExecutionPlanLimits, ok bool) {
+	planLimits, ok := LimitsFor(p)
+	if !ok {
+		return ExecutionPlanLimits{}, false
+	}
+	if !p.IsPaid() {
+		return ExecutionPlanLimits{}, true
+	}
+
+	idx := p.PlanIndex()
+	return ExecutionPlanLimits{
+		Allowed:       true,
+		MaxConcurrent: ExecutionConcurrentPerAccount[idx],
+		// Source and JSON input each reuse the existing event-payload
+		// ladder. Keeping one stored value prevents the invocation and
+		// execution request caps from drifting independently.
+		MaxSourceBytes:         planLimits.MaxSourceBytesPerInvocation,
+		MaxInputBytes:          planLimits.MaxSourceBytesPerInvocation,
+		DefaultOutputBytes:     ExecutionOutputDefaultBytes,
+		MaxOutputBytes:         ExecutionOutputMaxBytes[idx],
+		DefaultTimeoutMS:       ExecutionTimeoutDefaultMS,
+		MaxTimeoutMS:           ExecutionTimeoutMaxMS[idx],
+		DefaultMemoryMB:        ExecutionMemoryDefaultMB,
+		MaxMemoryMB:            planLimits.RAMMB,
+		DefaultCPUMillicores:   ExecutionCPUMillicoresDefault,
+		MaxCPUMillicores:       ExecutionCPUMillicoresMax,
+		DefaultEphemeralDiskMB: ExecutionEphemeralDiskDefaultMB,
+		MaxEphemeralDiskMB:     planLimits.EphemeralDiskMaxMB(),
+		PIDsMax:                ExecutionPIDsMax,
+	}, true
+}
+
+// ExecutionsAllowed reports whether a plan can create disposable one-shot
+// executions. Unknown plans fail closed.
+func (p Plan) ExecutionsAllowed() bool {
+	limits, ok := p.ExecutionLimits()
+	return ok && limits.Allowed
+}
+
+// ValidExecutionMemoryMB reports whether memoryMB is a runtime-snapshot
+// shape. Firecracker restore requires a compatible machine configuration, so
+// arbitrary memory sizes cannot be rounded silently after admission.
+func ValidExecutionMemoryMB(memoryMB int) bool {
+	switch memoryMB {
+	case 128, 256, 512, 1024:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidExecutionEphemeralDiskMB reports whether diskMB is a scratch-drive
+// shape provisioned by the runtime-snapshot builder.
+func ValidExecutionEphemeralDiskMB(diskMB int) bool {
+	switch diskMB {
+	case 64, 128, 256, 512, 1024, 2048:
+		return true
+	default:
+		return false
+	}
 }
 
 // JobsAllowed (issue #1184 / ADR-099 supplement) reports whether the
@@ -5046,6 +5181,13 @@ func (p Plan) RouteMetricsResponseAllowed() bool {
 	return l.RouteMetricsEnabled
 }
 
+// HealthPathWakesAllowed reports whether the plan may opt a health endpoint
+// into real probes. Health probes are edge-answered by default; only Pro and
+// Scale can pay for the opt-in wake behaviour.
+func (p Plan) HealthPathWakesAllowed() bool {
+	return p == PlanPro || p == PlanScale
+}
+
 // RouteMetricsPerAppCap is the per-app hard cap on the number of
 // distinct routes admitted into the routeLabelSet (ADR-093 D2). When
 // exceeded, all new routes collapse into the reserved __route_other__
@@ -5257,6 +5399,17 @@ func (p Plan) MaxResponseBodyBytes() int64 {
 		return MaxResponseBodyBytesDefault
 	}
 	return l.MaxResponseBodyBytes
+}
+
+// MaxRequestBodyBytes returns the per-plan inbound request body cap in bytes.
+// Unknown plans and legacy rows fail closed to the historical 25 MiB platform
+// cap. Edge-rule caps are applied as a further lower bound at the gateway.
+func (p Plan) MaxRequestBodyBytes() int64 {
+	l, ok := LimitsFor(p)
+	if !ok || l.RequestBodyMaxBytes <= 0 {
+		return MaxRequestBodyBytes
+	}
+	return l.RequestBodyMaxBytes
 }
 
 // ResponseWriteTimeout returns the per-response write timeout for this
@@ -5695,6 +5848,25 @@ func (p Plan) WebhookPerAccount() int {
 		return 0
 	}
 	return l.WebhookPerAccount
+}
+
+// LogDrainPerApp returns the per-app customer runtime log destination cap.
+func (p Plan) LogDrainPerApp() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogDrainPerApp
+}
+
+// LogDrainPerAccount returns the per-account customer runtime log
+// destination cap.
+func (p Plan) LogDrainPerAccount() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogDrainPerAccount
 }
 
 // TriggersAllowed (issue #757 / ADR-0NN) returns true if the plan

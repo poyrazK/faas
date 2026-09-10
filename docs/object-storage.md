@@ -33,6 +33,49 @@ Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
    require a restart; the enable flag does not.
 5. Run the qualification checks below before admitting customers.
 
+### Deploy the branded gateway
+
+The production Ansible path keeps this optional until a backend is qualified.
+Set the following inventory values on the control-plane host:
+
+```yaml
+faas_object_storage_gateway_managed: true
+faas_object_storage_gateway_enabled: true
+faas_object_storage_config_src: /operator/config/object-storage.json
+# S3/R2/OVH only; GCS with attached ADC does not need this file.
+faas_object_storage_provider_env_src: /operator/secrets/object-storage.env
+```
+
+The `s3_gateway_service` role installs the hardened systemd unit, bounded spool
+directory, provider registry, optional root-only provider environment file,
+the matching apid drop-in, and an isolated Caddy site for `s3.gregale.dev`.
+It validates that the public endpoint and signing region remain
+`https://s3.gregale.dev` and `us-east-1`, starts the daemon, and requires its
+database-aware readiness endpoint on `127.0.0.1:9096` to pass. Prometheus
+scrapes `/metrics` only when this role is enabled. Normal releases restart and
+health-gate an enabled gateway after switching `/opt/faas/current`.
+
+Before running the role, create a **DNS-only** Cloudflare A/AAAA record for
+`s3.gregale.dev` pointing at the public Caddy edge. Do not enable the orange-
+cloud proxy for this hostname: Cloudflare request-size and duration ceilings
+must not become undocumented Gregale storage limits.
+
+The daemon being healthy does not enable customer storage. Keep the global
+`s3_enabled` runtime configuration false until provider qualification passes,
+then enable it and run the cleanup-safe branded smoke:
+
+```sh
+FAAS_TOKEN=... \
+GREGALE_APP_SLUG=storage-smoke \
+make object-storage-gateway-smoke
+```
+
+The smoke creates a uniquely named bucket and credential, exercises HEAD,
+PUT, GET, LIST and DELETE through `s3.gregale.dev`, verifies revocation, then
+deletes the credential and bucket. Its exit trap repeats cleanup after a
+failure and prints the exact bucket name if provider cleanup still needs
+operator attention.
+
 ### Run the live provider qualification
 
 The repository includes an opt-in qualification test that exercises the
@@ -131,6 +174,60 @@ aws --profile gregale --endpoint-url https://s3.gregale.dev \
   s3api list-objects-v2 --bucket assets
 ```
 
+### Bind storage to a compute workload
+
+Use `POST /v1/apps/{slug}/buckets/{bucket-id}/compute-bindings` when the
+workload should use the branded S3 endpoint without carrying credentials in
+deployment manifests. The request accepts the same `permission` values as a
+standalone credential and an optional uppercase `prefix`. Gregale creates one
+bucket-scoped credential and writes six sealed app secrets under that prefix:
+`ENDPOINT`, `REGION`, `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, and
+`ADDRESSING_STYLE`. The workload receives them through the existing secret
+staging path on its next deploy/wake; values are never returned by the binding
+API or stored in plaintext.
+
+List bindings with `GET .../compute-bindings`, rotate in place with
+`POST .../compute-bindings/{binding-id}/rotate`, and revoke with
+`DELETE .../compute-bindings/{binding-id}`. Rotation keeps secret names stable
+and immediately invalidates the previous access key. Revocation invalidates
+the credential first, then removes the managed app secrets. Ordinary secret
+PUT/DELETE calls cannot overwrite or remove a managed binding secret.
+
+Compute remains stateless: this binding supplies S3 SDK configuration, not a
+persistent filesystem mount. The app must still have outbound access to
+`s3.gregale.dev` under its egress policy.
+
+### Release gates and staging smoke
+
+Run the read-only release preflight before promoting a release. It checks that
+the provider registry is loaded and enabled, limits/regions are non-zero, and
+the compute-binding routes are present in the deployed binary:
+
+```sh
+FAAS_TOKEN=... \
+GREGALE_APP_SLUG=disposable-storage-smoke \
+GREGALE_API_URL=https://api.gregale.dev \
+make object-storage-release-preflight
+```
+
+After the preflight passes, run the mutating qualification against the same
+disposable app. It creates a uniquely named bucket, exercises direct S3
+object I/O, creates and rotates a compute binding, verifies that the managed
+secret names remain stable while the access key changes, revokes both
+credentials, and deletes the bucket on every exit path:
+
+```sh
+FAAS_TOKEN=... \
+GREGALE_APP_SLUG=disposable-storage-smoke \
+GREGALE_API_URL=https://api.gregale.dev \
+make object-storage-gateway-smoke
+```
+
+The smoke test requires `aws`, `curl`, and `jq`. It never prints credential
+material or signed URLs. Use a disposable app and do not run it against a
+customer bucket; the cleanup trap removes the temporary object, bindings,
+credential, and bucket even when a check fails.
+
 This first endpoint slice supports ListBuckets for the credential's one bucket,
 HeadBucket, GetBucketLocation, ListObjectsV2 without delimiters, and
 GetObject/HeadObject/PutObject/DeleteObject. It validates header-based AWS
@@ -222,14 +319,16 @@ Example safety values **only**, not approved pricing or plan allowances:
   "max_monthly_requests": 1000000,
   "max_monthly_egress_bytes": 10737418240,
   "max_monthly_authorizations": 100000,
-  "max_report_age_seconds": 3600
+  "max_report_age_seconds": 7200
 }
 ```
 
 Costs use EUR millicents: 1000 millicents = 1 cent. These are ceilings on
 reported upstream cost, not customer invoice rates. Every limit must be
 positive; zero is not an unlimited setting. Report freshness must be 60–86400
-seconds and the key ceiling at most one million.
+seconds and the key ceiling at most one million. OVH access-log-backed
+reporting requires at least 7200 seconds to allow for the provider's normal
+one-hour delivery lag and the five-minute export interval.
 
 An optional `pricing` object can add a provider-neutral customer rate card
 without changing the safety policy:
@@ -292,9 +391,23 @@ physical bucket/account mapping. The source must cover storage, requests,
 egress, and applicable provider charges in the declared EUR cost convention;
 do not import an account-total into each tenant or treat delayed/missing data
 as zero. Neither Gregale's compute MB-seconds nor inventory samples substitute
-for these billing quantities. **No GCS/OVH/AWS/R2 billing exporter is bundled yet**;
-the normalized import contract is provider-neutral, and a real exporter is
-still a deployment prerequisite.
+for these billing quantities.
+
+The repository includes an OVH Public Cloud adapter in
+`pkg/objectstorage/ovh_usage.go`. It reads the provider's signed usage-history
+API and normalizes bucket storage byte-hours, outgoing bandwidth, and provider
+costs when the provider response is denominated in EUR. A non-EUR project is
+rejected until an explicit operator FX/conversion policy exists. OVH's public
+usage response does not currently include a request count, so the branded
+gateway records every outbound provider request attempt in the durable
+`object_storage_request_metrics` ledger. For GA, the OVH runner reads OVH
+Server Access Logging from the configured operator bucket per physical bucket
+and month, which also covers direct provider URLs; it fails closed when a log
+object is missing, malformed, partial, or unknown. It never substitutes
+signed-URL issuance counts or an explicit zero for unavailable data. The
+catalog and request source are injected through narrow interfaces so a
+qualified R2, AWS, GCS, or storage-node adapter can replace OVH without
+changing this report contract.
 
 Provider adapters may implement the `objectstorage.UsageReportExporter` seam
 and publish through `objectstorage.ExportUsageReports`. The helper validates
@@ -304,6 +417,23 @@ permissions. This keeps provider credentials, billing APIs, and attribution
 logic outside the data drivers; the adapter remains responsible for
 obtaining authoritative data and mapping each physical Gregale bucket to one
 account.
+
+For an OVH backend, set `usage.driver` to `ovh`, provide the three OVH API
+credential environment-variable names, and configure `request_log_bucket` (and
+optionally `request_log_prefix`) for a dedicated same-region bucket receiving
+[OVH Server Access Logging](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-server-access-logging)
+from every managed physical bucket. Keep
+`usage_reports_path` in the operator-owned registry. `s3-gatewayd` runs the
+exporter immediately and every five minutes, atomically replaces that file, and
+exposes `s3_gateway_usage_exports_total` plus the last-success timestamp on its
+control-plane metrics endpoint. OVH access logs are delivered asynchronously
+(normally about one hour later), so the report's `observed_at` is intentionally
+one hour behind the wall clock. Missing credentials, an unreadable/malformed
+log object, or a failed export does not publish a partial report; `apid`
+therefore continues to enforce the configured freshness window and fails closed
+when the previous report ages out. The durable request ledger remains useful
+for gateway diagnostics, but access logs are authoritative because API-issued
+direct S3 URLs bypass the gateway.
 
 All fields are required, including explicit zero measurements. Reports must
 match catalogued backend placement. Identical repeats are harmless;
@@ -453,10 +583,10 @@ object-storage operations are disabled. The upstream lifecycle rule is still
 required as a defense against control-plane outages.
 
 Key rotation copies bucket grants to the successor so applications can switch
-credentials during the normal grace window. Store the resulting narrowly scoped
-Gregale key through the existing app-secret workflow when a workload needs to
-request signed URLs. Gregale does not inject it automatically and never gives a
-workload the operator's upstream provider credential.
+credentials during the normal grace window. For compute workloads, prefer the
+compute-binding API above so Gregale owns the sealed credential lifecycle;
+standalone credentials remain available for laptops, CI, and external clients.
+Gregale never gives a workload the operator's upstream provider credential.
 
 ## Switch providers without rewriting the product
 

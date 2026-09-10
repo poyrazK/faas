@@ -39,6 +39,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      node-started: ${{ steps.compute-node.outputs.started }}
     steps:
       - name: Resolve published builder commit
         id: source
@@ -147,6 +149,46 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v3
         if: steps.source.outputs.run == 'true'
 
+      - name: Start compute node 2 when CI owns its lifecycle
+        id: compute-node
+        if: steps.source.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          status="$(
+            gcloud compute instances describe "$GCP_INSTANCE" \
+              --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+              --format='value(status)'
+          )"
+          case "$status" in
+            RUNNING)
+              echo "Compute node 2 was already running; this workflow will leave it running."
+              echo "started=false" >> "$GITHUB_OUTPUT"
+              ;;
+            TERMINATED)
+              echo "started=true" >> "$GITHUB_OUTPUT"
+              gcloud compute instances start "$GCP_INSTANCE" --quiet \
+                --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+              ;;
+            *)
+              echo "::error::compute node 2 is in unexpected state: ${status:-missing}" >&2
+              exit 1
+              ;;
+          esac
+
+          # RUNNING precedes sshd readiness. Bound the wait so a broken boot
+          # fails this job instead of consuming credits until its timeout.
+          for attempt in {1..24}; do
+            if gcloud compute ssh "$GCP_INSTANCE" --quiet \
+              --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+              --command true >/dev/null 2>&1; then
+              exit 0
+            fi
+            echo "Waiting for compute node 2 SSH readiness (${attempt}/24)."
+            sleep 5
+          done
+          echo "::error::compute node 2 did not become SSH-ready within 120 seconds" >&2
+          exit 1
+
       - name: Run native builder acceptance on compute node 2
         if: steps.source.outputs.run == 'true'
         env:
@@ -200,11 +242,12 @@ jobs:
     name: metal smoke (Firecracker amd64, nightly)
     needs: acceptance
     if: >-
-      always() &&
+      needs.acceptance.result == 'success' &&
       (github.event_name == 'schedule' ||
        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 60 min: the whole pkg/fcvm metal package now runs here, not one boot.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -240,7 +283,7 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v3
 
-      - name: Run one native fcvm cold boot on compute node 2
+      - name: Run native fcvm package on compute node 2
         env:
           SOURCE_SHA: ${{ github.sha }}
         run: |
@@ -255,7 +298,7 @@ jobs:
             --project "$GCP_PROJECT" --zone "$GCP_ZONE"
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go' && sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=25m --property='StandardOutput=append:$remote_root/metal-smoke.log' --property='StandardError=append:$remote_root/metal-smoke.log' --working-directory='$remote_root/source' --setenv=FAAS_METAL_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_METAL_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_METAL_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_METAL_TRANSFER_ROOT='$remote_root' /bin/bash scripts/ci/run-native-metal-smoke.sh"
+            --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go' && sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=45m --property='StandardOutput=append:$remote_root/metal-smoke.log' --property='StandardError=append:$remote_root/metal-smoke.log' --working-directory='$remote_root/source' --setenv=FAAS_METAL_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_METAL_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_METAL_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_METAL_TRANSFER_ROOT='$remote_root' /bin/bash scripts/ci/run-native-metal-smoke.sh"
 
       - name: Refresh GCP authentication for cleanup
         if: always()
@@ -287,3 +330,27 @@ jobs:
           path: ${{ runner.temp }}/native-metal-smoke.log
           if-no-files-found: warn
           retention-days: 14
+
+  stop-compute-node:
+    name: stop compute node 2 after native CI
+    needs: [acceptance, metal-smoke]
+    if: >-
+      always() &&
+      needs.acceptance.outputs.node-started == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Authenticate to GCP with GitHub OIDC
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Stop compute node 2
+        run: |
+          set -euo pipefail
+          gcloud compute instances stop "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE"

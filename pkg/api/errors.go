@@ -78,6 +78,11 @@ type Problem struct {
 	// Limit and Observed are set on quota/limit errors (spec §Conventions).
 	Limit    *int64 `json:"limit,omitempty"`
 	Observed *int64 `json:"observed,omitempty"`
+	// LimitBytes and ObservedBytes are explicit byte-oriented aliases used by
+	// request-body cap errors. The generic fields remain populated for older
+	// clients that only understand limit/observed.
+	LimitBytes    *int64 `json:"limit_bytes,omitempty"`
+	ObservedBytes *int64 `json:"observed_bytes,omitempty"`
 	// DocsURL points the user at the single next action.
 	DocsURL string `json:"docs_url,omitempty"`
 	// CheckoutURL is the provider-neutral hosted checkout URL for a paid
@@ -264,6 +269,15 @@ func NewProblem(status int, code, title, detail string) *Problem {
 func (p *Problem) WithLimit(limit, observed int64) *Problem {
 	p.Limit = &limit
 	p.Observed = &observed
+	return p
+}
+
+// WithByteLimit annotates a byte-oriented limit error with both the explicit
+// byte keys and the legacy generic limit/observed keys.
+func (p *Problem) WithByteLimit(limit, observed int64) *Problem {
+	p = p.WithLimit(limit, observed)
+	p.LimitBytes = &limit
+	p.ObservedBytes = &observed
 	return p
 }
 
@@ -489,6 +503,10 @@ const (
 	// Retry-After BEFORE auth, BEFORE wake. Distinct from
 	// CodeEdgeRuleMaintenance (the per-route fine-grained kind).
 	CodeAppMaintenance = "app_maintenance_mode"
+	// CodeAppHealthUnavailable is the edge-only 503 returned when the last
+	// known wake did not leave a live instance. The health endpoint never
+	// wakes an app unless the per-app opt-in is enabled.
+	CodeAppHealthUnavailable = "app_health_unavailable"
 	// CodeAdmissionRefused marks a wake that schedd refused because
 	// the account's current-month overage cents met/exceeded
 	// accounts.overage_cap_cents (issue #561 / PR-XXX). Distinct
@@ -551,7 +569,7 @@ const (
 	CodeUnsupportedMediaType = "unsupported_media_type"
 	// CodeRequestTooLarge is returned when the inbound body
 	// exceeds the per-rule cap (kind=validate MaxBodyBytes) or
-	// the plan's outer cap (api.MaxRequestBodyBytes). Distinct
+	// the plan's outer cap (Plan.MaxRequestBodyBytes()). Distinct
 	// from CodeBadRequest so the dashboard pivots the message
 	// to "send a smaller body" — the customer's app's UI can
 	// chunk on receipt.
@@ -1149,6 +1167,10 @@ const (
 	// override path).
 	CodePlanRouteMetricsNotAllowed = "plan_route_metrics_not_allowed"
 
+	// M2 monitor-aware health path: real health probes may wake only Pro/Scale
+	// apps. The default edge answer is available on every plan.
+	CodePlanHealthPathWakesNotAllowed = "plan_health_path_wakes_not_allowed"
+
 	// Issue #470 / ADR-055: out-of-range warm-snapshot threshold
 	// values from a PATCH (warm_snapshot_min_requests outside [1,
 	// 100] or warm_snapshot_min_ms outside [100, 60000]). 422 with
@@ -1343,6 +1365,12 @@ const (
 	// failures so operators can tell serving-path regressions from image
 	// startup regressions.
 	CodeDeploymentSmokeFailed = "deployment_smoke_failed"
+	// CodeAPIContractDiffDisabled is returned by the read-only contract
+	// endpoint while the operator keeps the dark-launch flag off.
+	CodeAPIContractDiffDisabled = "api_contract_diff_disabled"
+	// CodeAPIContractBreakingChange is stamped on deployments rejected by
+	// the production OpenAPI contract gate.
+	CodeAPIContractBreakingChange = "api_contract_breaking_change"
 
 	// CLI auth (spec §2.2 device-code flow). Pending is the "user has
 	// not yet approved" signal the CLI's poll loop keys off; the CLI
@@ -1482,6 +1510,16 @@ const (
 	// create that would subsume an existing tenant-surface hostname.
 	CodeWildcardDomainTenantSurfaceOverlap = "wildcard_domain_tenant_surface_overlap"
 
+	// Disposable one-shot executions (ADR-171).
+	CodeExecutionsNotAllowed     = "executions_not_allowed"
+	CodeExecutionRuntimeInvalid  = "execution_runtime_invalid"
+	CodeExecutionSourceInvalid   = "execution_source_invalid"
+	CodeExecutionPayloadInvalid  = "execution_payload_invalid"
+	CodeExecutionPayloadTooLarge = "execution_payload_too_large"
+	CodeExecutionLimitInvalid    = "execution_limit_invalid"
+	CodeExecutionLimitExceeded   = "execution_limit_exceeded"
+	CodeExecutionNetworkInvalid  = "execution_network_invalid"
+
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement).
 	//
 	// CodeJobsNotAllowed is the Free-plan gate for all /v1/jobs
@@ -1581,14 +1619,14 @@ const MaxOrgSlugLen = 32
 func StatusForCode(code string) int {
 	switch code {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
-		CodePlanPublicAuthIPAllowlistNotAllowed:
+		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
-		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeHandlerMissing, CodeImageRequired,
+		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist:
 		return http.StatusBadRequest
@@ -1598,7 +1636,9 @@ func StatusForCode(code string) int {
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
 	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
-		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeMirrorSlotAtCapacity:
+		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity:
+		return http.StatusServiceUnavailable
+	case CodeAPIContractDiffDisabled:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -1642,7 +1682,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
+	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -1887,6 +1927,10 @@ func StatusForCode(code string) int {
 		return http.StatusPaymentRequired
 	case CodePlanWebhookQuota:
 		return http.StatusForbidden
+	case CodePlanLogDrainsNotAllowed:
+		return http.StatusPaymentRequired
+	case CodePlanLogDrainQuota:
+		return http.StatusForbidden
 	// Issue #462 / ADR-058 — scaling policy gate. PR-A History
 	// (2026-07-31): Hobby+ tier-up for max_instances. 403 mirrors
 	// CodePlanMinInstancesNotAllowed.
@@ -1952,6 +1996,17 @@ func StatusForCode(code string) int {
 	case CodeUnsupportedMediaType:
 		return http.StatusUnsupportedMediaType
 	case CodeRequestTooLarge:
+		return http.StatusRequestEntityTooLarge
+	// Disposable one-shot executions (ADR-171). Shape errors are 422;
+	// byte caps use 413; paid-plan resource ceilings are 403 because the
+	// same request can become admissible on a larger plan.
+	case CodeExecutionsNotAllowed, CodeExecutionLimitExceeded:
+		return http.StatusForbidden
+	case CodeExecutionRuntimeInvalid, CodeExecutionSourceInvalid,
+		CodeExecutionPayloadInvalid, CodeExecutionLimitInvalid,
+		CodeExecutionNetworkInvalid:
+		return http.StatusUnprocessableEntity
+	case CodeExecutionPayloadTooLarge:
 		return http.StatusRequestEntityTooLarge
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Eight
 	// codes that ship with Mega-1 (CR-8 / code-review #8 — the
@@ -2249,6 +2304,19 @@ func ErrSourceTooLarge(l Limits, observedBytes int64) *Problem {
 		fmt.Sprintf("%s plan caps source at %d MB.", l.Plan, l.SourceTarballMaxMB)).
 		WithLimit(capBytes, observedBytes).
 		WithDocs(docsBase + "/build/limits")
+}
+
+// ErrRequestBodyTooLarge is the stable 413 envelope for an inbound request
+// body that exceeds the plan or route cap. The docs and hint point customers
+// at bucket signed-URL uploads, which avoid sending large objects through the
+// request path entirely.
+func ErrRequestBodyTooLarge(limit, observed int64) *Problem {
+	return NewProblem(http.StatusRequestEntityTooLarge, CodeRequestTooLarge,
+		"Request body too large",
+		fmt.Sprintf("request body is %d bytes, above the %d-byte cap", observed, limit)).
+		WithByteLimit(limit, observed).
+		WithDocs(docsBase + "/storage#signed-uploads").
+		WithHint("For larger uploads, use a bucket signed URL (gregale storage ... signed-url).")
 }
 
 // ErrSourceInvalid is returned when a tarball fails shape validation
@@ -2571,6 +2639,23 @@ func ErrDoctorUnavailable(domain, reason string) *Problem {
 		WithDocs(docsBase + "/domains/doctor")
 }
 
+// ErrAPIContractDiffDisabled is the deterministic dark-launch response for
+// the OpenAPI contract preview endpoint.
+func ErrAPIContractDiffDisabled() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeAPIContractDiffDisabled,
+		"API contract diff is disabled",
+		"the FAAS_API_CONTRACT_DIFF_ENABLED flag is not enabled on this cluster; ask the operator to enable it").
+		WithDocs(docsBase + "/api-hosting/contract-diff")
+}
+
+// ErrAPIContractBreakingChange is used by a promotion API caller when the
+// proposed OpenAPI surface removes or tightens a previously-live contract.
+func ErrAPIContractBreakingChange(detail string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractBreakingChange,
+		"API contract breaking change", detail).
+		WithDocs(docsBase + "/api-hosting/contract-diff")
+}
+
 // ErrCronInvalid is returned for malformed cron expressions.
 func ErrCronInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeCronInvalid,
@@ -2819,6 +2904,14 @@ const CodePlanWebhooksNotAllowed = "plan_webhooks_not_allowed"
 // can branch on upsell-vs-delete copy without parsing the body.
 const CodePlanWebhookQuota = "plan_webhook_quota"
 
+// CodePlanLogDrainsNotAllowed is the 402 returned when the plan does not
+// include customer-configurable runtime log destinations.
+const CodePlanLogDrainsNotAllowed = "plan_log_drains_not_allowed"
+
+// CodePlanLogDrainQuota is the 403 returned when an unlocked plan reaches a
+// per-app or per-account destination cap.
+const CodePlanLogDrainQuota = "plan_log_drain_quota"
+
 // CodePlanTriggersNotAllowed is the 402 the customer sees when
 // the plan doesn't unlock the unified Trigger primitive at all
 // (Free today, issue #757 / ADR-0NN). Mirrors CodePlanCronsNotAllowed
@@ -2959,6 +3052,10 @@ func ErrPlanAppErrorsNotAllowed(p Plan) *Problem {
 // malformed webhook body — missing target_url, invalid retry_policy,
 // out-of-vocabulary event, oversize webhook_secret, etc.
 const CodeAppWebhookInvalid = "app_webhook_invalid"
+
+// CodeAppLogDrainInvalid is the 400 returned for an invalid drain kind, URL,
+// or authentication header.
+const CodeAppLogDrainInvalid = "app_log_drain_invalid"
 
 // Edge rules (ADR-089). Each code maps to one wire-level failure
 // mode so the CLI can surface a stable, machine-readable error.
@@ -3540,6 +3637,28 @@ func ErrAppWebhookInvalid(reason string) *Problem {
 		"Invalid webhook", reason)
 }
 
+func ErrPlanLogDrainsNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanLogDrainsNotAllowed,
+		"Log drains unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include customer log drains; upgrade to Hobby or above to export runtime logs.", p)).
+		WithDocs(docsBase + "/plans#observability")
+}
+
+func ErrPlanLogDrainQuota(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodePlanLogDrainQuota,
+		"Log drain limit reached",
+		fmt.Sprintf("%s plan caps log drains at %d for %s; you have %d. Delete one to add another.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#observability")
+}
+
+func ErrAppLogDrainInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeAppLogDrainInvalid,
+		"Invalid log drain", reason)
+}
+
 // ErrTenantSurfacesNotAllowed is returned by apid's createTenantSurface
 // handler when the account's plan does not enable surfaces (Free today,
 // ADR-100 / issue #879). Fires BEFORE the store is touched so a Free
@@ -3841,6 +3960,15 @@ func ErrManagedSecretConflict() *Problem {
 		"Secret is managed",
 		"This environment key is controlled by an active managed PostgreSQL binding. Delete the binding before changing the secret.").
 		WithDocs(docsBase + "/postgres#bindings")
+}
+
+// ErrManagedObjectStorageSecretConflict protects an environment key owned by
+// an active object-storage compute binding.
+func ErrManagedObjectStorageSecretConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict,
+		"Secret is managed",
+		"This environment key is controlled by an active object-storage compute binding. Delete the binding before changing the secret.").
+		WithDocs(docsBase + "/object-storage")
 }
 
 // ErrPlanLimitEnvVars is returned when an env PUT would exceed the plan's

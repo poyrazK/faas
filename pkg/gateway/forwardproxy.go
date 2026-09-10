@@ -42,6 +42,8 @@ import (
 	evts "github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -343,10 +345,24 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		Stream:      true,
 		AppProtocol: protocol,
 	}
-	for name, vals := range stripHopByHop(r.Header) {
+	// The gRPC client handler propagates the current span to vmmd, but
+	// the guest request is a new HTTP carrier assembled from this init
+	// frame. Inject the W3C context here so customer OTel SDKs can join
+	// the platform trace. Use TraceContext directly rather than the
+	// process-wide composite propagator: baggage is customer-controlled
+	// and must not be copied into the guest bridge implicitly.
+	guestHeaders := stripHopByHop(r.Header)
+	propagation.TraceContext{}.Inject(r.Context(), propagation.HeaderCarrier(guestHeaders))
+	for name, vals := range guestHeaders {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
 			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, "x-faas-invocation-id")) {
-			continue
+			// x-faas-client-ip is the one customer-facing platform
+			// header. Handler.ServeHTTP overwrites it from the trusted
+			// XFF hop immediately before dispatch; every other x-faas-*
+			// header remains internal metadata.
+			if !strings.EqualFold(name, wire.ClientIPHeader) {
+				continue
+			}
 		}
 		for _, v := range vals {
 			init.Headers = append(init.Headers, &vmmdpb.Header{Name: name, Value: v})

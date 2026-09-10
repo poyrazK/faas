@@ -145,6 +145,10 @@
       # one-box FaaS security baseline (spec §11): unix-socket only.
       # Production clients connect via the local socket in /var/run/postgresql.
       local   all             postgres                                peer
+      # pg_basebackup uses PostgreSQL's replication pseudo-database. The
+      # `all` rule above does not match it, so authorize only the local
+      # postgres OS user through peer authentication.
+      local   replication     postgres                                peer
       # Control-plane services run as dedicated OS users but connect as the
       # single faas database role. The ident map keeps peer auth local and
       # avoids placing the database password in sealed.env on the control box.
@@ -220,16 +224,15 @@
 # The local copy is authoritative for PostgreSQL: a remote outage or a
 # missing optional credential must never prevent WAL recycling.
 #
-# The systemd drop-in exports the staged credential path and the stable
-# remote alias (`offhostbox`) to the PostgreSQL cluster process. `%d` is a
-# systemd specifier and is intentionally not embedded in this PostgreSQL
-# setting; PostgreSQL invokes archive_command through a shell after it has
-# already substituted `%p` and `%f`.
+# Ubuntu's pg_ctlcluster sanitizes the systemd launcher environment before
+# it starts the postmaster. Render the provider-neutral remote/path into the
+# command and use the postgres-readable runtime copy of rclone.conf instead
+# of depending on environment variables that never reach archive_command.
 - name: postgres — set archive_command (reload-only) — issue # 250
   ansible.builtin.lineinfile:
     path: "{{ postgres_config_dir }}/postgresql.conf"
     regexp: "^#?archive_command\\s*="
-    line: "archive_command = 'if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r \"$FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG\" && grep -q '^\\[offhostbox\\]$' \"$FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG\"; then rclone copyto /var/lib/pgsql/archive/%f \"$OFF_HOST_BACKUP_REMOTE:$OFF_HOST_BACKUP_WAL_PATH/%f\" --config=\"$FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG\" --stats=0 --quiet || echo \"off-host WAL push failed for %f\" >&2; fi; exit 0'"
+    line: "archive_command = 'if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx ''[{{ off_host_backup_remote | default('offhostbox', true) }}]'' /var/lib/pgsql/backup-rclone.conf; then rclone copyto /var/lib/pgsql/archive/%f \"{{ off_host_backup_remote | default('offhostbox', true) }}:{{ off_host_backup_wal_path | default('faas-pg-wal', true) }}/%f\" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet || echo \"off-host WAL push failed for %f\" >&2; fi; exit 0'"
     create: false
   register: pg_archive_cmd
   failed_when: false
@@ -254,41 +257,13 @@
     mode: "0750"
   failed_when: false  # chroot/CI may not have the user
 
-# Issue #250 — drop the off-host backup LoadCredential + env override on
-# the Ubuntu-supplied postgresql@.service template. The aggregate
-# postgresql.service target does not own the cluster process, so a drop-in
-# there cannot provide archive_command's environment and makes the target
-# report failed when an optional credential is absent.
-- name: postgres — install off-host backup drop-in dir (issue # 250)
+- name: postgres — remove ineffective off-host backup drop-ins (issue # 1695)
   ansible.builtin.file:
-    path: /etc/systemd/system/postgresql@.service.d
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  failed_when: false  # chroot/CI may not have systemd
-
-- name: postgres — drop off-host backup drop-in (issue # 250)
-  ansible.builtin.template:
-    src: postgresql@.service.d/99-faas-off-host-backup.conf
-    dest: /etc/systemd/system/postgresql@.service.d/99-faas-off-host-backup.conf
-    owner: root
-    group: root
-    mode: "0644"
-  register: pg_off_host_backup_dropin
-  failed_when: false
-  notify: daemon-reload postgres
-
-- name: postgres — remove legacy aggregate-unit backup drop-in (issue # 250)
-  ansible.builtin.file:
-    path: /etc/systemd/system/postgresql.service.d/99-faas-off-host-backup.conf
+    path: "{{ item }}"
     state: absent
-  register: pg_legacy_off_host_backup_dropin
+  loop:
+    - /etc/systemd/system/postgresql.service.d/99-faas-off-host-backup.conf
+    - /etc/systemd/system/postgresql@.service.d/99-faas-off-host-backup.conf
+    - "/etc/systemd/system/postgresql@{{ postgres_major_version }}-main.service.d/99-faas-off-host-backup.conf"
   failed_when: false
   notify: daemon-reload postgres
-
-- name: postgres — reload systemd to pick up the off-host backup drop-in  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: pg_off_host_backup_dropin is changed
-  failed_when: false  # chroot/CI may not have systemd

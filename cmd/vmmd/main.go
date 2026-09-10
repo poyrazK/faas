@@ -16,6 +16,7 @@ import (
 	"crypto/elliptic"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -38,6 +39,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -806,6 +808,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
 		WithStorage(storageBackend).
+		WithRestoreConcurrency(cfg.RestoreConcurrency).
 		// Issue #309 / tier-2 DX: install the per-VMM
 		// slow-subscriber callback that every ring
 		// registerRing creates will fire on a full
@@ -823,6 +826,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithSlowSubscriberCallback(func() {
 			ops.IncLogDropped("slow_subscriber")
 		})
+	log.Info("vmmd: snapshot restore concurrency configured", "limit", cfg.RestoreConcurrency)
 	if deps.prepareJailHelper != nil {
 		if err := deps.prepareJailHelper(jailer); err != nil {
 			return fmt.Errorf("vmmd: prepare jail helper: %w", err)
@@ -1106,6 +1110,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		})
 		defer recv.Close()
 	}
+	// Workload identity (issue #14 from the companion report): guests
+	// request a short-lived RS256 assertion over a host-CID vsock stream.
+	// The key is optional during rollout; a configured guest endpoint returns
+	// identity_not_configured until FAAS_WORKLOAD_IDENTITY_KEY_PATH is set.
+	identitySigner, identityErr := loadWorkloadIdentitySigner(cfg)
+	if identityErr != nil {
+		log.Warn("vmmd: workload identity signer unavailable", "err", identityErr)
+	}
+	identityRecv, identityRecvErr := StartWorkloadIdentityReceiver(ctx, log, mgr, identitySigner)
+	if identityRecvErr != nil {
+		log.Warn("vmmd: workload identity receiver unavailable", "err", identityRecvErr, "goos", runtime.GOOS)
+	} else {
+		defer identityRecv.Close()
+	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
 		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax,
 		"host_key_path", keyPath, "recipient_path", pubPath,
@@ -1279,6 +1297,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var httpSrv *http.Server
 	if cfg.MetricsAddr != "" {
 		mux := newMetricsMux(ops, cbm, frm, wpm, dsm)
+		if identitySigner != nil {
+			mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "public, max-age=300")
+				_ = json.NewEncoder(w).Encode(identitySigner.JWKS())
+			})
+		}
 		// Issue #571 PR-A2: /healthz + /readyz on the metrics mux
 		// (operator-side, loopback-only) for the LB scrape and
 		// on-box monitoring. Source of truth is the same
@@ -1363,6 +1388,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// 200 ms cadence; meterd's sampler appends to
 	// usage_minutes.net_tx_bytes additively per minute.
 	go runNetworkEgressPoll(ctx, mgr, netCache, ops, nil, nil, nil, 0, log)
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, vmmdProbe.ReadyFunc())
+	defer notifyStop()
 
 	// Tier A5 (ADR-066) live-migration lease sweeper. Drops
 	// tracker entries whose lease has expired so a dead vmmd's

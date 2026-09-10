@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 	"unicode/utf8"
@@ -39,6 +40,14 @@ type Provider interface {
 	ListMultipartParts(context.Context, string, MultipartListPartsRequest) (MultipartPartsPage, error)
 	CompleteMultipartUpload(context.Context, string, MultipartCompleteRequest) error
 	AbortMultipartUpload(context.Context, string, MultipartAbortRequest) error
+}
+
+// ObjectReader is an optional provider capability used by operator-owned
+// access-log collectors. It is deliberately separate from Provider so a
+// storage driver does not have to expose raw object bodies to customer API
+// code merely to support usage accounting.
+type ObjectReader interface {
+	ReadObject(context.Context, string, string) (io.ReadCloser, error)
 }
 
 type Object struct {
@@ -153,10 +162,13 @@ func ValidateContentType(contentType string) error {
 }
 
 type Backend struct {
-	ID          string
-	Region      string
-	Fingerprint string
-	Provider    Provider
+	ID               string
+	Region           string
+	Namespace        string
+	Fingerprint      string
+	Provider         Provider
+	UsageReportsPath string
+	Usage            UsageConfig
 }
 
 func fingerprint(c BackendConfig) string {

@@ -109,6 +109,72 @@ func TestWriteAppCgroupUsesConfiguredCPU(t *testing.T) {
 	}
 }
 
+// adr: 168
+func TestColdBootCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	inst := "cold-boot-cpu"
+	lease := Lease{
+		Instance:      inst,
+		Plan:          api.PlanFree,
+		MemoryMaxMiB:  128,
+		CPUMillicores: 250,
+	}
+	parent := filepath.Join(dir, ParentCgroupFor(lease.Plan), PerInstanceScope(inst))
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	profile, err := resolveColdBootCPUProfile(lease.Plan, lease.CPUMillicores)
+	if err != nil {
+		t.Fatalf("resolveColdBootCPUProfile: %v", err)
+	}
+	if profile.StartupMillicores != 1000 || profile.ConfiguredMillicores != 250 {
+		t.Fatalf("profile = %+v, want startup=1000 configured=250", profile)
+	}
+
+	v := &JailerVMM{}
+	startupLease := lease
+	startupLease.CPUMillicores = profile.StartupMillicores
+	workloads := []WorkloadSpec{
+		{Name: WorkloadNameMain, RamMB: 128, CPUMillicores: 250},
+		{Name: "metrics", RamMB: 32, CPUMillicores: 500},
+	}
+	if err := v.applyPreBootCgroupFence(startupLease, workloads); err != nil {
+		t.Fatalf("apply startup fence: %v", err)
+	}
+	assertCPU := func(path, want string) {
+		t.Helper()
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", path, readErr)
+		}
+		if got := string(body); got != want {
+			t.Fatalf("%s = %q, want %q", path, got, want)
+		}
+	}
+	assertCPU(filepath.Join(parent, "cpu.max"), "100000 100000\n")
+	if _, err := os.Stat(filepath.Join(parent, WorkloadNameMain)); !os.IsNotExist(err) {
+		t.Fatalf("host workload leaf must not be created; guest-init owns per-workload cgroups, err=%v", err)
+	}
+
+	if err := v.restoreColdBootCPUFence(lease, workloads, profile.ConfiguredMillicores); err != nil {
+		t.Fatalf("restore configured fence: %v", err)
+	}
+	assertCPU(filepath.Join(parent, "cpu.max"), "25000 100000\n")
+}
+
+func TestColdBootCPUProfileResolvesLegacyZeroToPlanCeiling(t *testing.T) {
+	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		profile, err := resolveColdBootCPUProfile(plan, 0)
+		if err != nil {
+			t.Fatalf("plan %s: %v", plan, err)
+		}
+		if profile.StartupMillicores != 1000 || profile.ConfiguredMillicores != 1000 {
+			t.Errorf("plan %s profile = %+v, want 1000/1000", plan, profile)
+		}
+	}
+}
+
 func TestWidenSnapshotMemoryCgroupRestoresOrdinaryFence(t *testing.T) {
 	dir := withFakeCgroupRoot(t)
 	inst := "snapshot-headroom"

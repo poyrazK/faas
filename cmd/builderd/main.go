@@ -28,6 +28,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -237,6 +238,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	)
 	b := builderdpkg.New(store, notif, driver, cache, nil, resid, builderdpkg.Config{
 		CacheDir:            cfg.CacheDir,
+		SourceSpoolDir:      cfg.SourceSpoolDir,
+		BuildLogMaxBytes:    cfg.BuildLogMaxBytes,
 		MetricsAddr:         cfg.MetricsAddr,
 		BuildTimeoutSeconds: cfg.BuildTimeoutSeconds,
 		FairnessWindow:      cfg.FairnessWindow,
@@ -295,8 +298,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// LISTEN/NOTIFY is the low-latency hint path, not the durable queue. Keep
 	// both build processing and cancellation work bounded so a notification
 	// burst cannot create an unbounded number of goroutines. Dropped build
-	// notifications are recovered by workerLoop; cancellation remains fenced by
-	// the durable deployment/build status and can be retried by a later event.
+	// notifications are recovered by workerLoop; running-build cancellation
+	// teardown is also persisted for the reaper to retry.
 	runCtx, stopRun := context.WithCancel(ctx)
 	defer stopRun()
 	notificationCtx, stopNotificationWorkers := context.WithCancel(runCtx)
@@ -338,7 +341,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if reapThreshold <= 0 {
 		reapThreshold = 15 * time.Minute
 	}
-	go builderdpkg.ReaperLoop(runCtx, store, reapInterval, reapThreshold, log)
+	go builderdpkg.ReaperLoopWithVM(runCtx, store, driver, reapInterval, reapThreshold, log)
 
 	// Build cache GC (issue #196 B2.1). Content-addressed cache at
 	// cfg.CacheDir grows forever as builds accumulate; a daily sweep
@@ -398,6 +401,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		})
 	}
 
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, builderdProbe.ReadyFunc())
+	defer notifyStop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -447,9 +453,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 // cancelBuild is the bounded ADR-124 build-cancel worker. The deployment row
 // flip already happened inside CancelDeploymentTx; this function asks the VM
-// driver to drop the in-flight VM. A cancellation error is logged and the
-// orphan remains visible to ReaperLoop, while a later notification can retry
-// the same build ID without creating another goroutine.
+// driver to drop the in-flight VM. A cancellation error is logged; the
+// transaction has already persisted a cleanup obligation that ReaperLoop can
+// retry after notification loss or a daemon restart.
 func cancelBuild(ctx context.Context, driver any, buildID string, log *slog.Logger) {
 	vm, ok := driver.(builderdpkg.VM)
 	if !ok || vm == nil {

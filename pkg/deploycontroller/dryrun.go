@@ -76,7 +76,7 @@ func DryRun(config Config, releaseID string) (MigrationReport, error) {
 	}
 	if report.CurrentTarget != "" && report.CurrentTarget != root {
 		if previousManifest, err := releasebundle.Read(report.CurrentTarget); err == nil {
-			if err := releasebundle.Verify(report.CurrentTarget, previousManifest); err == nil {
+			if err := verifyInstalledRelease(report.CurrentTarget, previousManifest); err == nil {
 				report.HasPreviousRelease = true
 			}
 		}
@@ -90,7 +90,7 @@ func DryRun(config Config, releaseID string) (MigrationReport, error) {
 				}
 				candidate := filepath.Join(config.ReleasesRoot, entry.Name())
 				if previousManifest, err := releasebundle.Read(candidate); err == nil {
-					if err := releasebundle.Verify(candidate, previousManifest); err == nil {
+					if err := verifyInstalledRelease(candidate, previousManifest); err == nil {
 						report.HasPreviousRelease = true
 						break
 					}

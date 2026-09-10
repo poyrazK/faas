@@ -221,6 +221,7 @@ func TestDo_GETCallsDoNotCarryIdempotencyKey(t *testing.T) {
 		{"GetStatusSLO", func(c *Client) error { _, err := c.GetStatusSLO(context.Background()); return err }},
 		{"GetDeployment", func(c *Client) error { _, err := c.GetDeployment(context.Background(), "d1"); return err }},
 		{"UsageSummary", func(c *Client) error { _, err := c.UsageSummary(context.Background(), ""); return err }},
+		{"AccountUsage", func(c *Client) error { _, err := c.AccountUsage(context.Background(), ""); return err }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -490,6 +491,26 @@ func TestListDeployments_EncodesCursor(t *testing.T) {
 	want := "before=" + url.QueryEscape(cursor) + "&limit=25"
 	if gotQuery != want {
 		t.Errorf("RawQuery = %q, want %q", gotQuery, want)
+	}
+}
+
+func TestListAppDeployments_UsesAppScopedRoute(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	cursor := "2026-08-30T12:34:56.123456789Z"
+	if _, err := c.ListAppDeployments(context.Background(), "history-app", cursor, 25); err != nil {
+		t.Fatalf("ListAppDeployments: %v", err)
+	}
+	want := "/v1/apps/history-app/deployments?before=" + url.QueryEscape(cursor) + "&limit=25"
+	if gotRequestURI != want {
+		t.Errorf("RequestURI = %q, want %q", gotRequestURI, want)
 	}
 }
 

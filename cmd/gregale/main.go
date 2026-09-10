@@ -226,13 +226,15 @@ func run(args []string) (status int) {
 		}
 		return cmdApps()
 	case dispatchDeployments:
-		// `gregale deployments [--limit N|--before C|--all]` — list.
+		// `gregale deployments [--app SLUG] [--limit N|--before C|--all]` — list.
 		// Place before appSlugFallback so the singular never shadows it.
 		return cmdDeployments(args[1:])
 	case dispatchDeployment:
 		// `gregale deployment <id>` — get one. Must come before appSlugFallback
 		// so the singular is never misread as an app slug.
 		return cmdDeployment(args[1:])
+	case dispatchPostgres:
+		return cmdPostgres(args[1:])
 	case dispatchDeploys:
 		// ADR-117 companion read surface (post-stream stage
 		// summary). Routes to cmdDeploys in deploys_show.go,
@@ -401,9 +403,9 @@ func run(args []string) (status int) {
 		// ADR-081: durable execution workflows (list|run|status|steps|cancel|events).
 		return cmdWorkflows(args[1:])
 	case "debug":
-		// ADR-127 PR-B: production debugger (regression banner,
-		// compare panel, replay stub). Mirrors `invocations` for
-		// dispatcher shape.
+		// ADR-127: production debugger (request evidence, regression
+		// watch, deployment compare, safe replay, and incident bundles).
+		// Mirrors `invocations` for dispatcher shape.
 		return cmdDebug(args[1:])
 	case "billing":
 		// Issue #253: dashboard's "Open Stripe billing portal"

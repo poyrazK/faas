@@ -912,7 +912,10 @@ export class AppsService {
    * Per-app request telemetry (ADR-127 / PR-A).
    * Recent request telemetry rows for an app — status, latency_ms, route,
    * method, deployment_id, cold_boot, trace_id, received_at, and the
-   * number of original requests represented by each collapsed row.
+   * number of original requests represented by each collapsed row. Rows
+   * are split by bounded latency bucket so aggregate percentiles retain
+   * distribution signal; `latency_ms` is that bucket's inclusive upper
+   * bound (and can therefore be slightly conservative).
    * PR-A ships the read endpoint only; the write-side (publisher
    * → gRPC IncrementRequestTelemetry → apid receiver → sqlc
    * INSERT) lands in PR-B. The endpoint is plan-gated by
@@ -1019,9 +1022,9 @@ export class AppsService {
   }
   /**
    * Get request evidence and explanation (ADR-127).
-   * Returns bounded, redacted span evidence for one request and
-   * links it to a matching active regression observation when one
-   * exists. Database statements are sanitized fingerprints; raw
+   * Returns a deterministic request/wake timeline plus bounded,
+   * redacted span evidence for one request and links it to a matching
+   * active regression observation when one exists. Database statements are sanitized fingerprints; raw
    * attributes, status messages, request bodies, and headers are
    * never returned. The explanation is deterministic and suitable
    * as input to a future asynchronous synthesis layer. Plan-gated

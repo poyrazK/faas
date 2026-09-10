@@ -48,6 +48,8 @@ class AppEffectiveLimits:
     """Maximum end-to-end request budget allowed through route overrides, in milliseconds."""
     response_write_timeout_s: int
     """Maximum response write window for the plan, in seconds."""
+    request_body_max_bytes: int
+    """Maximum inbound request body accepted for this app's plan, in bytes."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +83,8 @@ class AppEffectiveLimits:
 
         response_write_timeout_s = self.response_write_timeout_s
 
+        request_body_max_bytes = self.request_body_max_bytes
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -100,6 +104,7 @@ class AppEffectiveLimits:
                 "request_budget_ms": request_budget_ms,
                 "request_budget_max_ms": request_budget_max_ms,
                 "response_write_timeout_s": response_write_timeout_s,
+                "request_body_max_bytes": request_body_max_bytes,
             }
         )
 
@@ -138,6 +143,8 @@ class AppEffectiveLimits:
 
         response_write_timeout_s = d.pop("response_write_timeout_s")
 
+        request_body_max_bytes = d.pop("request_body_max_bytes")
+
         app_effective_limits = cls(
             memory_limit_mb=memory_limit_mb,
             plan_memory_max_mb=plan_memory_max_mb,
@@ -154,6 +161,7 @@ class AppEffectiveLimits:
             request_budget_ms=request_budget_ms,
             request_budget_max_ms=request_budget_max_ms,
             response_write_timeout_s=response_write_timeout_s,
+            request_body_max_bytes=request_body_max_bytes,
         )
 
         app_effective_limits.additional_properties = d

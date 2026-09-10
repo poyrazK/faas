@@ -43,6 +43,7 @@ import (
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -577,6 +578,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(os.Getenv))
 
 	deps.store = func() state.Store { return state.NewPgStore(pool) }
+	// Wire the canonical OpenAPI projector before any deployment can be
+	// promoted. state.MarkDeploymentLive invokes it inside the same Postgres
+	// transaction as the status flip and snapshot UPSERT.
+	openapidiff.RegisterStateCapture()
 	deps.config = cfg
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): boot log carrying the
 	// multi-box identity so an operator reading the systemd journal
@@ -777,11 +782,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// the daemon's lifetime; stops cleanly on ctx cancel.
 		topNSampler := newTopNSampler(srv.ops, log)
 		go topNSampler.run(ctx)
-		// Issue #250: pgBackupPushedSampler drives the
-		// apid_pg_backup_last_pushed_seconds gauge from the mtime
-		// of the newest tarball in /var/lib/pgsql/basebackup/.
-		// 60s tick (matches the PgBackupStale alert's `for: 5m`
-		// window — at least 5 fresh ticks per evaluation).
+		// Issues #250/#1695: publish verified off-host backup and bounded
+		// local WAL state from root-written, API-readable marker files.
 		pgBackupPushedSampler := newPgBackupPushedSampler(srv.ops, log)
 		go pgBackupPushedSampler.run(ctx)
 		// Webhook replay-dedupe sweep (issue #294). The
@@ -1273,7 +1275,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
 	srv.WithObjectStorage(objectRegistry)
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log)
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
@@ -1737,6 +1739,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 
+	// Issue #571 PR-A2: construct the daemon-level readiness probe
+	// independently of the optional metrics listener. systemd's
+	// Type=notify state must use the same dependency signal as /readyz
+	// even when FAAS_APID_METRICS_ADDR disables the operator listener.
+	var apidProbe wire.ReadyzProbe
+	if deps.pool != nil {
+		pgSig, pgStop := wire.NewPGPingSignal(ctx, deps.pool, 5*time.Second)
+		apidProbe.RegisterSignal(pgSig, pgStop)
+	} else {
+		// Test path: no pool. Keep the pre-split test behaviour while
+		// making the production path fail closed when a pool is absent.
+		s := apidProbe.Register()
+		s.Set(true, "")
+	}
+	apidProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("apid", ready, reason)
+	})
+	defer apidProbe.Drain("apid", log)
+
 	// Optional /metrics listener (this PR). Sits on its own bind
 	// address so a port collision can't take the daemon down. Empty
 	// FAAS_APID_METRICS_ADDR = no listener (the scrape observer is
@@ -1765,26 +1786,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// metrics_addr wired) short-circuits to an always-ready
 		// signal so unit tests don't construct a pgxpool they
 		// don't need.
-		var apidProbe wire.ReadyzProbe
-		if deps.pool != nil {
-			pgSig, pgStop := wire.NewPGPingSignal(ctx, deps.pool, 5*time.Second)
-			apidProbe.RegisterSignal(pgSig, pgStop)
-			// NOTE: pgStop is wired through pkg/wire.ReadyzProbe.Drain
-			// (issue #571 PR-A2 / Finding 4 PR #1091 review). The
-			// earlier `defer pgStop()` is gone — Drain fires the
-			// helper goroutine's stopper synchronously before
-			// flipping the signal to "draining", so a /readyz
-			// scrape that lands during the SIGTERM drain window
-			// sees the helper already stopped (no re-flip race).
-		} else {
-			// Test path: no pool. Always-ready so /readyz returns
-			// 200. Mirrors the pre-split degradation pattern.
-			s := apidProbe.Register()
-			s.Set(true, "")
-		}
-		apidProbe.SetReadyObserver(func(ready bool, reason string) {
-			ops.MarkReady("apid", ready, reason)
-		})
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle("/metrics", promhttp.HandlerFor(
 			prometheus.Gatherers{ops.Registry(), budgetReg},
@@ -2083,6 +2084,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 
+	// systemd Type=notify must not promote apid until all startup work
+	// (including migrations, listeners, and provider wiring) completed.
+	// The customer-facing /readyz remains the richer dependency probe;
+	// reaching this point means the HTTP listener and its dependencies are
+	// fully constructed.
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
+	defer notifyStop()
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenBind)

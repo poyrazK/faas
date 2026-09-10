@@ -266,6 +266,16 @@ type DeploymentHostingReceiptStore interface {
 	UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error)
 }
 
+// OpenAPISnapshotStore is the optional persistence seam for the API contract
+// gate (ADR-121). It is intentionally separate from Store so narrow test
+// doubles and daemon-specific stores remain source-compatible. Production
+// PgStore and MemStore implement all three methods.
+type OpenAPISnapshotStore interface {
+	UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap OpenAPISnapshot) error
+	LatestOpenAPISnapshotForScope(ctx context.Context, appID, scope string) (OpenAPISnapshot, error)
+	OpenAPISnapshotByDeployment(ctx context.Context, deploymentID string) (OpenAPISnapshot, error)
+}
+
 // RecoverRolloutStuckAfter (issue #976 / ADR-122 / SAFE-RELEASES-R +
 // production-leveling Stream C) is the canned stuck-detection
 // window the RecoverRollout method uses to gate action="advance".
@@ -856,6 +866,11 @@ type Store interface {
 	// the GDPR export bundle's audit slice so the customer sees their
 	// own actions reflected in the same JSON.
 	ListGdprRequestsForAccount(ctx context.Context, accountID string, limit int) ([]GdprRequest, error)
+	// ListGdprRequestsForAccountPage is the stable keyset-paginated form used
+	// by account export. Rows are ordered by (requested_at, id) descending;
+	// beforeAt/beforeID identify the last row from the previous page. A zero
+	// beforeAt starts from the newest row.
+	ListGdprRequestsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]GdprRequest, error)
 	// CompleteGdprRequest stamps completed_at on the most recent
 	// un-completed row of (account_id, action). Called by pkg/grace
 	// after DeleteAccount succeeds so the delete row in the ledger
@@ -1308,6 +1323,16 @@ type Store interface {
 	// apps. The hash compare happens at the call site (constant-
 	// time equal — see api.ConstantTimeEqualHash).
 	ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appID, prefix string) (ConsumerKey, error)
+
+	// API consumers (stable customer identities). A consumer is scoped to
+	// one application and identified externally by externalRef. Consumer
+	// credentials should be created with CreateConsumerKeyForConsumer so
+	// key rotation preserves this identity for throttling and billing.
+	CreateAPIConsumer(ctx context.Context, accountID, appID, externalRef, name string) (APIConsumer, error)
+	GetAPIConsumerByID(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
+	ListAPIConsumersForApp(ctx context.Context, accountID, appID string) ([]APIConsumer, error)
+	RevokeAPIConsumer(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
+	CreateConsumerKeyForConsumer(ctx context.Context, accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error)
 
 	// Login tokens (M7.5 magic-link, spec §14 + ADR-011).
 	//
@@ -1794,17 +1819,21 @@ type Store interface {
 	// so a future re-attempt at migration mints a fresh one.
 	CancelInstanceMigration(ctx context.Context, instanceID, originalNodeID, leaseToken string) error
 
-	// ListExpiredMigrations returns every instance row in
-	// state='migrating' (Tier A6 / ADR-067). The watchdog is
-	// the only writer that can move a row out of 'migrating'
-	// without a peer commit, so the unresolved row is the
-	// input set. Sorted by instance id ASC for determinism.
+	// ListExpiredMigrations returns instance rows in state='migrating'
+	// whose durable migration lease has expired (Tier A6 / ADR-067). The
+	// watchdog is the only writer that can move a row out of 'migrating'
+	// without a peer commit, so the unresolved row is the input set. Sorted
+	// by migration start time and instance id for deterministic draining.
+	// The optional olderThan argument is the lease age. Omitting it keeps the
+	// legacy all-migrating view used by compatibility tooling; production
+	// callers must pass the lease duration so an in-flight handoff is never
+	// reconciled early.
 	// maxPerTick caps the result set (the caller passes
 	// api.MigratingWatchdogTickLimit via pkg/api/limits.go).
 	// Returns an empty slice (not ErrNotFound) when no rows
 	// match; callers treat that as "nothing to reconcile this
 	// tick".
-	ListExpiredMigrations(ctx context.Context, maxPerTick int) ([]Instance, error)
+	ListExpiredMigrations(ctx context.Context, maxPerTick int, olderThan ...time.Duration) ([]Instance, error)
 	// ReinviteMigratingInstance is the active-owner ack gate of
 	// the Tier A6 / ADR-067 watchdog. Conditional UPDATE that
 	// flips state='migrating' → 'running', stamps
@@ -2423,6 +2452,14 @@ type Store interface {
 	// bound). MemStore sorts in memory; PgStore uses a LIMIT/OFFSET or
 	// keyset pagination (deferred — LIMIT/OFFSET is fine at one-box scale).
 	ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error)
+	// ListLatestDeploymentPerApp returns at most one deployment for each
+	// non-deleted app the account owns. Newness is ordered by created_at and
+	// then deployment ID so equal timestamps have a stable winner.
+	ListLatestDeploymentPerApp(ctx context.Context, accountID string) (map[string]Deployment, error)
+	// ListDeploymentsForAccountPage is the stable keyset-paginated form used
+	// by account export. The ID tie-breaker prevents rows with identical
+	// created_at values from being skipped at a page boundary.
+	ListDeploymentsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error)
 
 	// Deployment logs (M7.5 slice 5).
 	//
@@ -4385,6 +4422,10 @@ type Store interface {
 	// without an inbound trace_id keep that shape.
 	AppendEventWithTrace(ctx context.Context, actor, kind string, subject *string, data []byte, traceID *string) error
 	ListEvents(ctx context.Context, subject string, limit int) ([]Event, error)
+	// ListEventsPage returns subject events ordered by (at, id) descending.
+	// beforeAt/beforeID identify the last row from the previous page; a zero
+	// beforeAt starts from the newest row.
+	ListEventsPage(ctx context.Context, subject string, beforeAt time.Time, beforeID int64, limit int) ([]Event, error)
 	// ListEventsByWakeID (issue #517 / PR-C, ADR-064) is the
 	// wake-timeline read-side query. Filters on the jsonb
 	// expression index events_wake_id_idx
@@ -5000,6 +5041,13 @@ type Store interface {
 	// a deletion reconciler can safely resume after a crash.
 	PutManagedPostgresSecret(ctx context.Context, secret AppSecret) error
 	DeleteManagedPostgresSecret(ctx context.Context, credentialRef string) error
+	// PutManagedObjectStorageSecret writes a sealed compute-binding secret and
+	// marks the row as owned by the bucket-scoped credential. Customer writes
+	// and deletes cannot replace an owned row.
+	PutManagedObjectStorageSecret(ctx context.Context, secret AppSecret) error
+	// DeleteManagedObjectStorageSecrets is idempotent so a revoke reconciler
+	// can safely retry after a crash.
+	DeleteManagedObjectStorageSecrets(ctx context.Context, credentialID string) error
 	// GetAppSecretInScope is the scope-aware sibling of
 	// GetAppSecret (ADR-092 PR-A). Returns ErrNotFound when no
 	// row exists at (account_id, app_id, scope, key).
@@ -5414,6 +5462,16 @@ type Store interface {
 	// ListAppWebhooksForAccount backs the per-account GET endpoint
 	// and the operator's "all webhooks for an account" view.
 	ListAppWebhooksForAccount(ctx context.Context, accountID string) ([]AppWebhook, error)
+
+	// Customer log drains (issue #1398 O4). Drains tail the existing runtime
+	// log stream and forward records to an HTTP JSON or OTLP endpoint.
+	CreateAppLogDrain(ctx context.Context, d AppLogDrain) (AppLogDrain, error)
+	CreateAppLogDrainIfUnderQuota(ctx context.Context, d AppLogDrain, limits api.Limits) (AppLogDrain, error)
+	AppLogDrainByID(ctx context.Context, id string) (AppLogDrain, error)
+	UpdateAppLogDrain(ctx context.Context, id string, params UpdateAppLogDrainParams) (AppLogDrain, error)
+	DeleteAppLogDrain(ctx context.Context, id string) error
+	ListAppLogDrainsForApp(ctx context.Context, appID string) ([]AppLogDrain, error)
+	ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, error)
 
 	// RecordAppWebhookDelivery is the apid-side enqueue. Called by
 	// the event emitters (cron dispatcher, app lifecycle handlers)

@@ -17,6 +17,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Required checks must also run on the queue's temporary merge ref,
+  # otherwise the queue waits forever for a status that never arrives.
+  merge_group:
   workflow_dispatch:
 
 # Cancel in-progress runs when a PR ref updates (push to the same branch)
@@ -24,7 +27,9 @@ on:
 # "did my fix actually run?" confusion.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a merge-queue run: the queue reads a cancelled check as a
+  # failure and evicts the pull request.
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 permissions:
   contents: read
@@ -207,6 +212,8 @@ jobs:
         run: make lint-drill
       - name: forbid mutating SQL in normal runbooks
         run: make runbook-sql-check
+      - name: post-mortem artifact check
+        run: make test-postmortems
       - name: restore-drill evidence freshness (M8 claim)
         if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'm8-done') }}
         run: make m8-evidence-check
@@ -267,7 +274,15 @@ jobs:
       # still run in both cases). On macOS dev the kernel sub-step
       # self-skips; bridge-name guard + Go cross-check still run.
       - name: install nftables
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq nftables
+        run: |
+          set -euo pipefail
+          # Hosted images can carry stale third-party apt indexes. They are
+          # not needed by this job and can abort apt before nftables installs.
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo apt-get install -y -qq nftables
       - name: egress check (Go renderer ↔ Jinja2 + nft syntax + bridge-name guard)
         run: make egress-check
 
@@ -664,7 +679,7 @@ jobs:
           # everything and shuffle test order to surface order dependence.
           # (Expression shape matters: an empty string is falsy in GitHub
           # expressions, so `cond && '' || X` always yields X.)
-          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}
+          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
@@ -733,7 +748,7 @@ jobs:
       - name: unit tests (pure Go shard 2)
         env:
           # See pure shard 1: PRs use Go's test cache; main re-runs + shuffles.
-          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}
+          GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
@@ -801,6 +816,8 @@ jobs:
         run: make spec-cited-tests-check
       - name: spec-cited-tests checker tests
         run: make spec-cited-tests-check-test
+      - name: migration-version gate checker tests
+        run: make migration-version-hygiene-check-test
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -839,6 +856,11 @@ jobs:
       # ---- former job `api-hosting-contract-check`: framework fixture matrix ----
       - name: framework fixture matrix
         run: make api-hosting-contract-check
+      # The scorecard is the release evidence contract. It checks that every
+      # public capability has measurable targets and live evidence locators;
+      # runtime measurements are produced by the referenced acceptance jobs.
+      - name: API-hosting scorecard evidence
+        run: make api-hosting-scorecard-check
       # ---- former job `daemonunit-check`: daemonunit generated drift ----
       - name: generate-check
         run: make generate-check
@@ -1081,10 +1103,30 @@ jobs:
           ansible control_plane -i inventory/hosts.ini -c local \
             -e @roles/prometheus/defaults/main.yml \
             -e ansible_hostname=ci-control-plane \
+            -e prom_promtail_enabled=true \
+            -m ansible.builtin.template \
+            -a "src=$(pwd)/roles/prometheus/templates/prometheus.yml.j2 dest=$RUNNER_TEMP/prometheus-with-promtail.yml"
+          ansible control_plane -i inventory/hosts.ini -c local \
+            -e @roles/prometheus/defaults/main.yml \
+            -e ansible_hostname=ci-control-plane \
             -m ansible.builtin.template \
             -a "src=$(pwd)/roles/prometheus/templates/prometheus.service.j2 dest=$RUNNER_TEMP/prometheus.service"
           grep -q 'job_name: "gatewayd-internal"' "$RUNNER_TEMP/prometheus.yml"
           grep -q 'http://127.0.0.1:8081/v1/internal/metrics/targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'job_name: "vmmd"' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/vmmd-targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'job_name: "imaged"' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/imaged-targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'job_name: "builderd"' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/builderd-targets' "$RUNNER_TEMP/prometheus.yml"
+          if grep -q 'job_name: "promtail' "$RUNNER_TEMP/prometheus.yml"; then
+            echo 'default Prometheus config scrapes Promtail without an enabled Loki transport' >&2
+            exit 1
+          fi
+          grep -q 'job_name: "promtail"' "$RUNNER_TEMP/prometheus-with-promtail.yml"
+          grep -q 'job_name: "promtail-compute"' "$RUNNER_TEMP/prometheus-with-promtail.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/promtail-targets' "$RUNNER_TEMP/prometheus-with-promtail.yml"
+          grep -q 'target_limit: 1000' "$RUNNER_TEMP/prometheus.yml"
           grep -q -- '--web.listen-address=127.0.0.1:9095' "$RUNNER_TEMP/prometheus.service"
           if grep -q '{{' "$RUNNER_TEMP/prometheus.service"; then
             echo 'rendered Prometheus systemd unit contains an unresolved template placeholder' >&2
@@ -1408,6 +1450,16 @@ jobs:
           grep -q "FAAS_BILLING_PROVIDER=polar" deploy/scripts/verify-secrets.sh
           grep -q "FAAS_POLAR_METER_ID" deploy/scripts/verify-secrets.sh
 
+      # Collision prevention, not collision reporting. The slot gate compares
+      # against main as it is right now, so two pull requests can each pass
+      # and still break main when the second merges — five times this week.
+      # GitHub's merge queue would fix the class but needs an org-owned repo;
+      # this one is user-owned.
+      - name: migration version hygiene
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make migration-version-hygiene-check
+
       - name: migrations check (static)
         run: make migrations-check
       # No `-tags no_pg` here on purpose: apply_walk_test.go carries
@@ -1432,7 +1484,10 @@ jobs:
         id: newmig
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "merge_group" ]]; then
+            # merge_group sets base_ref to the target branch too, and the
+            # queue's merge ref already contains main, so merge-base is the
+            # right anchor for both.
             git fetch -q origin "${{ github.base_ref }}"
             base="$(git merge-base HEAD "origin/${{ github.base_ref }}")"
           else
@@ -1607,7 +1662,13 @@ jobs:
             go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - name: install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
       - name: e2e tests (shard 1 — 18 tests)
@@ -1686,7 +1747,13 @@ jobs:
             go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - name: install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
       - name: e2e tests (shard 2 — 15 tests)
@@ -1755,7 +1822,13 @@ jobs:
             go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - name: install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
       - name: e2e tests (shard 3 — 24 tests)
@@ -1824,7 +1897,13 @@ jobs:
             go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - name: install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
       - name: e2e tests (shard 4 — 22 tests)

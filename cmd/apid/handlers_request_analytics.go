@@ -471,6 +471,9 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		trendQuery := url.Values{}
 		trendQuery.Set("analytics_route", route.Route)
 		trendQuery.Set("analytics_method", route.Method)
+		debugQuery := url.Values{}
+		debugQuery.Set("since", response.Since)
+		debugQuery.Set("route", route.Route)
 		routes = append(routes, dashboard.RequestAnalyticsRouteView{
 			Route:         route.Route,
 			Method:        route.Method,
@@ -482,6 +485,7 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 			P95MS:         route.P95MS,
 			P99MS:         route.P99MS,
 			TrendURL:      "/dashboard/apps/" + app.Slug + "?" + trendQuery.Encode(),
+			DebugURL:      "/dashboard/apps/" + app.Slug + "/debug?" + debugQuery.Encode(),
 		})
 	}
 	selectedQuery := url.Values{}

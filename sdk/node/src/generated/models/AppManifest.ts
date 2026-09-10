@@ -65,5 +65,13 @@ export type AppManifest = {
    * Effective policy for known monitor/crawler requests.
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
+  /**
+   * Monitor-facing health path.
+   */
+  health_path?: string;
+  /**
+   * Whether health probes may wake this app.
+   */
+  health_path_wakes?: boolean;
 };
 

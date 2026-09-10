@@ -53,4 +53,6 @@
   protection, current policy, startup recovery and resource removal. Real
   restore tests must retain entropy/clock/UUID checks, quotas, cold-boot
   fallback and leak checks. Full gateway acceptance counts failures and
-  delayed backend fallbacks and requires p95 below 350 ms on the SSD node.
+  delayed backend fallbacks and requires platform-only snapshot wake p95 below
+  350 ms on the SSD node. Proxy first byte, Cloudflare, client network, and
+  physical distance are excluded.

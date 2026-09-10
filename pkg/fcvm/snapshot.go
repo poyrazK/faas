@@ -161,6 +161,9 @@ type RestoreSpec struct {
 	// sees the same container contract as a cold boot.
 	SecretsEnvJSON []byte
 	APIEnvJSON     []byte
+	// ServiceDiscoveryIP refreshes the guest resolver before snapshot load so
+	// a VM restored on another compute node uses that node's bridge address.
+	ServiceDiscoveryIP string
 	// StorageKey is the prefix-matched key under which the mem blob lives
 	// (e.g. "snap/<deploymentID>/mem"). Restore resolves it via
 	// Storage.Get into a tmp file used as the FC restore source.

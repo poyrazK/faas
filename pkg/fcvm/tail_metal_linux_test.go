@@ -1,5 +1,7 @@
 //go:build metal && linux
 
+// adr: 078
+
 // tail_metal_linux_test.go — issue #667 / ADR-078 metal acceptance tests.
 //
 // _linux suffix: the metal acceptance suite only runs on Linux
@@ -148,8 +150,10 @@ func TestMetal_TailEndToEnd(t *testing.T) {
 	defer cancel()
 
 	const instance = "metal-tail-e2e-1"
-	if _, err := m.ColdBoot(ctx, ColdBootRequest{
+	if _, err := m.Wake(ctx, WakeRequest{
 		Instance:   instance,
+		AppID:      "metal-tail-e2e-app",
+		Plan:       "hobby",
 		BaseKey:    base,
 		LayerKey:   layer,
 		VcpuCount:  2,
@@ -243,8 +247,10 @@ func TestMetalTail_KeepsWakeRunning(t *testing.T) {
 	defer cancel()
 
 	const instance = "metal-tail-keep-1"
-	if _, err := m.ColdBoot(ctx, ColdBootRequest{
+	if _, err := m.Wake(ctx, WakeRequest{
 		Instance:   instance,
+		AppID:      "metal-tail-keep-app",
+		Plan:       "hobby",
 		BaseKey:    base,
 		LayerKey:   layer,
 		VcpuCount:  2,
@@ -415,7 +421,8 @@ func TestMetal_TailFullEndToEnd(t *testing.T) {
 		// ENETDOWN/EPROTO is the kernel telling us vsock isn't
 		// loaded. Skip rather than fail — the wire format is
 		// already pinned by the encoding assertions above.
-		if errors.Is(err, unix.ENETDOWN) || errors.Is(err, unix.EAFNOSUPPORT) {
+		if errors.Is(err, unix.ENETDOWN) || errors.Is(err, unix.ENETUNREACH) ||
+			errors.Is(err, unix.EHOSTUNREACH) || errors.Is(err, unix.EAFNOSUPPORT) {
 			t.Skipf("vsock transport unavailable: %v", err)
 		}
 		t.Fatalf("SendmsgN: %v", err)

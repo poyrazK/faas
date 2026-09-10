@@ -145,7 +145,7 @@ var ErrNotFound = errors.New("gateway: domain not found in allowlist")
 //
 // appsSuffix is the leading-dot suffix of the platform zone
 // (".gregale.dev"). The custom-domain path ignores it; the preview
-// path uses it to peel pr-{N}.{parent-slug}.{suffix} via
+// path uses it to peel pr-{N}-{parent-slug}.{suffix} via
 // PreviewScopeFromHost. Empty appsSuffix disables the preview branch.
 //
 // surfaceLookup is the tenant-surface branch (PR-D commit 4):
@@ -303,10 +303,10 @@ func newPGAllowlist(
 		// deploymentLookup==nil OR empty deploySuffix disables the branch
 		// entirely (e.g. tests + staging paths that don't mint
 		// deployment-preview certs). Sits BEFORE the PR-preview branch
-		// because the deployment-preview suffix (".gregale.dev") does
-		// not collide with the PR-preview suffix (".apps.gregale.dev"),
-		// but the parsers fail closed on the wrong-suffix input so
-		// the order is purely a code-readability choice.
+		// deployment-preview and PR-preview suffixes are both
+		// ".gregale.dev"; their closed-set labels keep the parsers
+		// from accepting the wrong shape, so the order is purely a
+		// code-readability choice.
 		if deploymentLookup == nil || deploySuffix == "" {
 			// fall through to the PR-preview branch below
 		} else {
@@ -347,7 +347,7 @@ func newPGAllowlist(
 		}
 
 		// Preview-host path (PR-B). Only fires for hostnames whose shape
-		// matches pr-{N}.{slug}.{appsSuffix} — anything else (custom
+		// matches pr-{N}-{slug}.{appsSuffix} — anything else (custom
 		// domains, prod, malformed scans) is refused. previewLookup==nil
 		// disables the branch entirely (e.g. tests).
 		if previewLookup == nil || appsSuffix == "" {

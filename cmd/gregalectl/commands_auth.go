@@ -275,6 +275,10 @@ func (c *operatorHTTPClient) verifyMFA(ctx context.Context, totp string) error {
 }
 
 func (c *operatorHTTPClient) doJSON(ctx context.Context, method, path string, input, output any, idempotent bool, extraCookies []*http.Cookie) error {
+	return c.doJSONWithHeaders(ctx, method, path, input, output, idempotent, extraCookies, nil)
+}
+
+func (c *operatorHTTPClient) doJSONWithHeaders(ctx context.Context, method, path string, input, output any, idempotent bool, extraCookies []*http.Cookie, extraHeaders http.Header) error {
 	var body io.Reader
 	if input != nil {
 		encoded, err := json.Marshal(input)
@@ -294,6 +298,11 @@ func (c *operatorHTTPClient) doJSON(ctx context.Context, method, path string, in
 	}
 	if idempotent {
 		req.Header.Set("Idempotency-Key", uuid.NewString())
+	}
+	for name, values := range extraHeaders {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
 	}
 	if c.session != nil && c.session.Cookie != "" {
 		req.AddCookie(&http.Cookie{Name: "faas_sid", Value: c.session.Cookie})

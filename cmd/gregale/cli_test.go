@@ -466,6 +466,102 @@ func TestCmdDeploy_HappyPath_PrintsColdWakeSentence(t *testing.T) {
 	}
 }
 
+// TestCmdDeploy_HappyPath_PrintsHostingReceipt pins the zero-config success
+// handoff: once the readiness stream says live, the CLI reads the durable
+// receipt and shows both the inferred profile and smoke verification.
+func TestCmdDeploy_HappyPath_PrintsHostingReceipt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/apps":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
+		case r.URL.Path == "/v1/apps/my-app/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "event: status\ndata: {\"status\":\"live\"}\n\n")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-r.Context().Done()
+		case r.URL.Path == "/v1/deployments/d1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID: "d1", AppID: "a1", Status: "live",
+				APIHostingReceipt: json.RawMessage(`{
+					"schema_version":1,"deployment_id":"d1","app_id":"a1",
+					"profile":{"version":"v1","framework":"fastapi","package_manager":"pip","start_command":"uvicorn app:app","port":8000,"health_path":"/healthz","inferred":true},
+					"artifact":{},"smoke":{"status":"verified","path":"/healthz","status_code":200,"latency_ms":42}
+				}`),
+			})
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+		t.Fatalf("cmdDeploy exit = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{"profile:", "fastapi (port 8000)", "package_manager:", "pip", "start_command:", "uvicorn app:app", "hosting_status:", "verified", "health_status:", "200", "health_latency:", "42ms"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout missing %q\nfull: %s", want, out)
+		}
+	}
+}
+
+// TestCmdDeploy_JSONWait_ReturnsHostingReceipt pins the explicit machine
+// readable wait contract. Plain --json remains the historical queued receipt;
+// --json --wait returns the terminal deployment with hosting_receipt intact.
+func TestCmdDeploy_JSONWait_ReturnsHostingReceipt(t *testing.T) {
+	resetJSONOutput()
+	defer resetJSONOutput()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
+		case "/v1/apps/my-app/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: "live", APIHostingReceipt: json.RawMessage(`{"schema_version":1,"deployment_id":"d1","app_id":"a1","profile":{"version":"v1","framework":"express","port":3000,"health_path":"/healthz"},"artifact":{},"smoke":{"status":"verified","path":"/healthz","status_code":200}}`)})
+		case "/v1/deployments/d1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: "live", APIHostingReceipt: json.RawMessage(`{"schema_version":1,"deployment_id":"d1","app_id":"a1","profile":{"version":"v1","framework":"express","port":3000,"health_path":"/healthz"},"artifact":{},"smoke":{"status":"verified","path":"/healthz","status_code":200}}`)})
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	jsonOutput = true
+
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app", "--wait"}); code != 0 {
+		t.Fatalf("cmdDeploy --json --wait exit = %d, want 0", code)
+	}
+	var receipt struct {
+		Status         string          `json:"status"`
+		HostingReceipt json.RawMessage `json:"hosting_receipt"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if receipt.Status != "live" {
+		t.Errorf("status = %q, want live", receipt.Status)
+	}
+	if len(receipt.HostingReceipt) == 0 {
+		t.Fatalf("hosting_receipt missing from waited JSON: %s", stdout.String())
+	}
+}
+
 func TestCmdDeploy_AppAlreadyExists(t *testing.T) {
 	// 409 on CreateApp should be treated as "exists", then Deploy proceeds.
 	// Issue #1182: after the 409, the CLI issues a GetApp(slug) probe to

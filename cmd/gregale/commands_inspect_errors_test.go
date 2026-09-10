@@ -50,11 +50,20 @@ func TestRenderInspectErrorsHuman_LiftedFields(t *testing.T) {
 		ErrorRelevantLogs: []api.LogExcerpt{
 			{Timestamp: "10:00:00", Level: "error", Message: "exec format error"},
 		},
+		BuildPlan: &api.BuildPlan{
+			Framework:  "node",
+			Runtime:    "node22",
+			Version:    "22.11.0",
+			Entrypoint: "npm run start",
+			Port:       3000,
+			HealthPath: "/healthz",
+			Class:      "app",
+		},
 	}
 	var buf bytes.Buffer
 	renderInspectErrorsHuman(&buf, "test-app", dep)
 	out := buf.String()
-	for _, want := range []string{"app_arch_mismatch", "ENOEXEC", "hint:", "why:", "fix:", "GOOS=linux", "exec format error", "app: test-app", "failed_at: 2026-08-18T10:00:00Z", "→"} {
+	for _, want := range []string{"app_arch_mismatch", "ENOEXEC", "detected: node 22.11.0 (runtime node22) [app]", "start: npm run start", "port: 3000", "health: /healthz", "hint:", "why:", "fix:", "GOOS=linux", "exec format error", "app: test-app", "failed_at: 2026-08-18T10:00:00Z", "→"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}

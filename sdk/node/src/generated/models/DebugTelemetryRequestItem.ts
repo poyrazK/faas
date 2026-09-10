@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One row per gateway-served request, persisted by the recorder (PR-A).
+ * One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher.
  */
 export type DebugTelemetryRequestItem = {
   id: string;
@@ -14,6 +14,9 @@ export type DebugTelemetryRequestItem = {
   route: string;
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
   status: number;
+  /**
+   * Inclusive upper bound of the bounded latency bucket represented by this row.
+   */
   latency_ms: number;
   /**
    * Number of original requests represented by this collapsed telemetry row.
@@ -25,5 +28,13 @@ export type DebugTelemetryRequestItem = {
    */
   trace_id?: string | null;
   received_at: string;
+  /**
+   * Opaque wake identifier when this request admitted a wake; omitted for warm requests.
+   */
+  wake_id?: string;
+  /**
+   * Opaque instance identifier that served the request; omitted when no target was reached.
+   */
+  instance_id?: string;
 };
 

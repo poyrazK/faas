@@ -11,99 +11,99 @@
     {
       "id": "docker-oci",
       "description": "Arbitrary OCI application with an explicit exposed port.",
-      "tags": ["oci"],
-      "files": {"Dockerfile": "FROM node:22\nEXPOSE 9000\nCMD [\"node\",\"server.js\"]\n"},
+      "tags": ["oci", "runtime", "quick"],
+      "files": {"Dockerfile": "FROM busybox:1.36\nRUN mkdir -p /www && printf 'catalog oci\\n' > /www/index.html && printf 'ready\\n' > /www/healthz\nEXPOSE 9000\nCMD [\"busybox\",\"httpd\",\"-f\",\"-p\",\"9000\",\"-h\",\"/www\"]\n"},
       "expected": {"framework": "oci", "package_manager": "container", "port": 9000, "health_path": "/healthz", "start_command": "", "inferred": false}
     },
     {
       "id": "express",
       "description": "Express API with an npm start script.",
-      "tags": ["node"],
-      "files": {"package.json": "{\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "app.listen(process.env.PORT);\n"},
+      "tags": ["node", "runtime", "quick"],
+      "files": {"package.json": "{\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "const express = require('express');\nconst app = express();\napp.get('/healthz', (_req, res) => res.send('ready\\n'));\napp.get('/', (_req, res) => res.send('catalog express\\n'));\napp.listen(process.env.PORT || 3000);\n"},
       "expected": {"framework": "express", "package_manager": "npm", "port": 3000, "health_path": "/healthz", "start_command": "npm run start", "inferred": true}
     },
     {
       "id": "fastapi",
       "description": "FastAPI application with a conventional app module.",
-      "tags": ["python"],
-      "files": {"requirements.txt": "fastapi==0.116.0\nuvicorn\n", "app.py": "from fastapi import FastAPI\napp=FastAPI()\n"},
+      "tags": ["python", "runtime"],
+      "files": {"requirements.txt": "fastapi==0.116.0\nuvicorn\n", "app.py": "from fastapi import FastAPI\napp=FastAPI()\n\n@app.get('/healthz')\ndef healthz():\n    return {'status': 'ready'}\n\n@app.get('/')\ndef root():\n    return {'service': 'catalog-fastapi'}\n"},
       "expected": {"framework": "fastapi", "package_manager": "pip", "port": 8000, "health_path": "/healthz", "start_command": "uvicorn app:app --host 0.0.0.0 --port $PORT", "inferred": true}
     },
     {
       "id": "fastify",
       "description": "Fastify API with a readiness route and npm start script.",
-      "tags": ["node"],
-      "files": {"package.json": "{\"dependencies\":{\"fastify\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "app.get(\"/readyz\", async () => ({ok:true}));\n"},
+      "tags": ["node", "runtime"],
+      "files": {"package.json": "{\"dependencies\":{\"fastify\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "const fastify = require('fastify')();\nfastify.get('/readyz', async () => ({ok:true}));\nfastify.get('/', async () => ({service:'catalog-fastify'}));\nfastify.listen({host:'0.0.0.0', port:Number(process.env.PORT || 3000)});\n"},
       "expected": {"framework": "fastify", "package_manager": "npm", "port": 3000, "health_path": "/readyz", "start_command": "npm run start", "inferred": true}
     },
     {
       "id": "flask",
       "description": "Flask API with a conventional app module.",
-      "tags": ["python"],
-      "files": {"requirements.txt": "Flask==3.1\ngunicorn\n", "app.py": "from flask import Flask\napp=Flask(__name__)\n"},
+      "tags": ["python", "runtime"],
+      "files": {"requirements.txt": "Flask==3.1\ngunicorn\n", "app.py": "from flask import Flask\napp=Flask(__name__)\n\n@app.get('/healthz')\ndef healthz():\n    return 'ready\\n'\n\n@app.get('/')\ndef root():\n    return 'catalog flask\\n'\n"},
       "expected": {"framework": "flask", "package_manager": "pip", "port": 8000, "health_path": "/healthz", "start_command": "gunicorn app:app --bind 0.0.0.0:$PORT", "inferred": true}
     },
     {
       "id": "go-gin",
       "description": "Go API importing Gin.",
-      "tags": ["go"],
-      "files": {"go.mod": "module example.com/api\ngo 1.24\nrequire github.com/gin-gonic/gin v1.10.0\n", "main.go": "package main\nimport _ \"github.com/gin-gonic/gin\"\n"},
+      "tags": ["go", "runtime"],
+      "files": {"go.mod": "module example.com/api\ngo 1.24\nrequire github.com/gin-gonic/gin v1.10.0\n", "main.go": "package main\n\nimport (\n  \"net/http\"\n  \"github.com/gin-gonic/gin\"\n)\n\nfunc main() {\n  r := gin.New()\n  r.GET(\"/healthz\", func(c *gin.Context) { c.String(http.StatusOK, \"ready\\n\") })\n  r.GET(\"/\", func(c *gin.Context) { c.String(http.StatusOK, \"catalog gin\\n\") })\n  _ = r.Run(\":8080\")\n}\n"},
       "expected": {"framework": "gin", "package_manager": "go", "port": 8080, "health_path": "/healthz", "start_command": "go run .", "inferred": true}
     },
     {
       "id": "go-net-http",
       "description": "Standard-library Go HTTP API.",
-      "tags": ["go"],
-      "files": {"go.mod": "module example.com/api\ngo 1.24\n", "main.go": "package main\nimport \"net/http\"\nfunc main(){ http.ListenAndServe(\":8080\", nil) }\n"},
+      "tags": ["go", "runtime", "quick"],
+      "files": {"go.mod": "module example.com/api\ngo 1.24\n", "main.go": "package main\n\nimport (\n  \"fmt\"\n  \"net/http\"\n)\n\nfunc main() {\n  mux := http.NewServeMux()\n  mux.HandleFunc(\"/healthz\", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, \"ready\\n\") })\n  mux.HandleFunc(\"/\", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, \"catalog go\\n\") })\n  _ = http.ListenAndServe(\":8080\", mux)\n}\n"},
       "expected": {"framework": "go-net-http", "package_manager": "go", "port": 8080, "health_path": "/healthz", "start_command": "go run .", "inferred": true}
     },
     {
       "id": "go-workspace",
       "description": "Go API rooted in a Go workspace.",
-      "tags": ["go", "workspace"],
-      "files": {"go.mod": "module example.com/api\ngo 1.24\n", "go.work": "go 1.24\n\nuse .\n", "main.go": "package main\nimport \"net/http\"\nfunc main(){ http.ListenAndServe(\":8080\", nil) }\n"},
+      "tags": ["go", "runtime", "workspace"],
+      "files": {"go.mod": "module example.com/api\ngo 1.24\n", "go.work": "go 1.24\n\nuse .\n", "main.go": "package main\n\nimport (\n  \"fmt\"\n  \"net/http\"\n)\n\nfunc main() {\n  mux := http.NewServeMux()\n  mux.HandleFunc(\"/healthz\", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, \"ready\\n\") })\n  mux.HandleFunc(\"/\", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, \"catalog go workspace\\n\") })\n  _ = http.ListenAndServe(\":8080\", mux)\n}\n"},
       "expected": {"framework": "go-net-http", "package_manager": "go", "port": 8080, "health_path": "/healthz", "start_command": "go run .", "inferred": true}
     },
     {
       "id": "hono",
       "description": "Hono API with an npm start script.",
-      "tags": ["node"],
-      "files": {"package.json": "{\"dependencies\":{\"hono\":\"^4\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "export default { fetch(){ return new Response('ok') } }\n"},
+      "tags": ["node", "runtime"],
+      "files": {"package.json": "{\"dependencies\":{\"@hono/node-server\":\"^1\",\"hono\":\"^4\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "const { serve } = require('@hono/node-server');\nconst { Hono } = require('hono');\nconst app = new Hono();\napp.get('/healthz', (c) => c.text('ready\\n'));\napp.get('/', (c) => c.text('catalog hono\\n'));\nserve({ fetch: app.fetch, port: Number(process.env.PORT || 3000) });\n"},
       "expected": {"framework": "hono", "package_manager": "npm", "port": 3000, "health_path": "/healthz", "start_command": "npm run start", "inferred": true}
     },
     {
       "id": "hosting-override",
       "description": "Node API with an explicit gregale.yaml hosting contract.",
-      "tags": ["node", "override"],
-      "files": {"package.json": "{\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "app.get(\"/healthz\", () => ({ok:true}));\napp.listen(process.env.PORT);\n", "gregale.yaml": "hosting:\n  start: npm run serve\n  port: 8787\n  health: /ready\n"},
+      "tags": ["node", "override", "runtime"],
+      "files": {"package.json": "{\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\",\"serve\":\"node server.js\"}}", "server.js": "const express = require('express');\nconst app = express();\napp.get('/healthz', (_req, res) => res.send('ready\\n'));\napp.get('/ready', (_req, res) => res.send('ready\\n'));\napp.get('/', (_req, res) => res.send('catalog override\\n'));\napp.listen(process.env.PORT || 8787);\n", "gregale.yaml": "hosting:\n  start: npm run serve\n  port: 8787\n  health: /ready\n"},
       "expected": {"framework": "express", "package_manager": "npm", "port": 8787, "health_path": "/ready", "start_command": "npm run serve", "config_file": "gregale.yaml", "inferred": true}
     },
     {
       "id": "nestjs",
       "description": "NestJS API using its production start script.",
-      "tags": ["node"],
-      "files": {"package.json": "{\"dependencies\":{\"@nestjs/core\":\"^11\"},\"scripts\":{\"start:prod\":\"node dist/main.js\"}}", "src/main.ts": "import { NestFactory } from '@nestjs/core';\n"},
+      "tags": ["node", "runtime"],
+      "files": {"package.json": "{\"dependencies\":{\"@nestjs/core\":\"^11\"},\"scripts\":{\"start:prod\":\"node server.js\"}}", "src/main.ts": "import { NestFactory } from '@nestjs/core';\n", "server.js": "const http = require('http');\nhttp.createServer((req, res) => {\n  res.writeHead(200, {'content-type':'text/plain'});\n  res.end(req.url === '/healthz' ? 'ready\\n' : 'catalog nestjs\\n');\n}).listen(process.env.PORT || 3000);\n"},
       "expected": {"framework": "nestjs", "package_manager": "npm", "port": 3000, "health_path": "/healthz", "start_command": "npm run start:prod", "inferred": true}
     },
     {
       "id": "pnpm-workspace",
       "description": "Express API declaring pnpm in a workspace repository.",
-      "tags": ["node", "workspace"],
-      "files": {"package.json": "{\"packageManager\":\"pnpm@9.12.0\",\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "pnpm-workspace.yaml": "packages:\n  - apps/*\n", "server.js": "app.get(\"/healthz\", () => ({ok:true}));\n"},
+      "tags": ["node", "runtime", "workspace"],
+      "files": {"package.json": "{\"packageManager\":\"pnpm@9.12.0\",\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "pnpm-workspace.yaml": "packages:\n  - apps/*\n", "server.js": "const express = require('express');\nconst app = express();\napp.get('/healthz', (_req, res) => res.send('ready\\n'));\napp.get('/', (_req, res) => res.send('catalog pnpm\\n'));\napp.listen(process.env.PORT || 3000);\n"},
       "expected": {"framework": "express", "package_manager": "pnpm", "port": 3000, "health_path": "/healthz", "start_command": "pnpm run start", "inferred": true}
     },
     {
       "id": "sse",
       "description": "Express API exposing a server-sent events endpoint.",
-      "tags": ["node", "sse"],
-      "files": {"package.json": "{\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "app.get(\"/healthz\", (_req, res) => res.send(\"ok\"));\napp.get(\"/sse\", (_req, res) => res.end());\n"},
+      "tags": ["node", "runtime", "sse"],
+      "files": {"package.json": "{\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "const express = require('express');\nconst app = express();\napp.get('/healthz', (_req, res) => res.send('ready\\n'));\napp.get('/sse', (_req, res) => { res.setHeader('content-type', 'text/event-stream'); res.write('data: catalog\\n\\n'); });\napp.get('/', (_req, res) => res.send('catalog sse\\n'));\napp.listen(process.env.PORT || 3000);\n"},
       "expected": {"framework": "express", "package_manager": "npm", "port": 3000, "health_path": "/healthz", "start_command": "npm run start", "inferred": true}
     },
     {
       "id": "uv-fastapi",
       "description": "FastAPI application using uv and a src layout.",
       "tags": ["python", "workspace"],
-      "files": {"pyproject.toml": "[project]\ndependencies = [\"fastapi\", \"uvicorn\"]\n", "uv.lock": "version = 1\n", "src/api.py": "from fastapi import FastAPI\napp = FastAPI()\n"},
+      "files": {"pyproject.toml": "[project]\ndependencies = [\"fastapi\", \"uvicorn\"]\n", "uv.lock": "version = 1\n", "src/api.py": "from fastapi import FastAPI\napp = FastAPI()\n\n@app.get('/healthz')\ndef healthz():\n    return {'status': 'ready'}\n\n@app.get('/')\ndef root():\n    return {'service': 'catalog-uv'}\n"},
       "expected": {"framework": "fastapi", "package_manager": "uv", "port": 8000, "health_path": "/healthz", "start_command": "uvicorn src.api:app --host 0.0.0.0 --port $PORT", "inferred": true}
     }
   ]

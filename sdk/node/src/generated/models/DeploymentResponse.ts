@@ -42,6 +42,14 @@ export type DeploymentResponse = {
   error_relevant_logs?: Array<LogExcerpt>;
   created_at: string;
   /**
+   * Upstream repository or registry reference that produced this deployment, when known.
+   */
+  source_url?: string | null;
+  /**
+   * Upstream commit SHA that produced this deployment, when known.
+   */
+  commit_sha?: string | null;
+  /**
    * Repository-relative build root used by a workspace context upload; omitted when the archive root is built.
    */
   source_root?: string;

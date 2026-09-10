@@ -11,11 +11,15 @@
 package apid
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 
+	"github.com/onebox-faas/faas/pkg/httpsec"
 	"gopkg.in/yaml.v3"
 )
 
@@ -42,6 +46,12 @@ var (
 	openapiJSON     []byte
 )
 
+const (
+	swaggerUIDistVersion = "5.17.14"
+	swaggerUIBundleSRI   = "sha384-wmyclcVGX/WhUkdkATwhaK1X1JtiNrr2EoYJ+diV3vj4v6OC5yCeSu+yW13SYJep"
+	swaggerUICSSSRI      = "sha384-wxLW6kwyHktdDGr6Pv1zgm/VGJh99lfUbzSn6HNHBENZlCN7W602k9VkGdxuFvPn"
+)
+
 func mustMarshalJSON(yamlBytes []byte) []byte {
 	var doc any
 	if err := yaml.Unmarshal(yamlBytes, &doc); err != nil {
@@ -56,6 +66,21 @@ func mustMarshalJSON(yamlBytes []byte) []byte {
 		return []byte(`{"error":"openapi spec is malformed at build time"}`)
 	}
 	return body
+}
+
+func openAPIJSONBytes() []byte {
+	openapiJSONOnce.Do(func() {
+		openapiJSON = mustMarshalJSON(openapiYAML)
+	})
+	return openapiJSON
+}
+
+// OpenAPIJSONSHA256 returns the hex SHA-256 checksum of the exact bytes served
+// by GET /v1/openapi.json. The docs page publishes this value so clients and
+// CI can verify that Swagger UI is rendering the deployed document.
+func OpenAPIJSONSHA256() string {
+	sum := sha256.Sum256(openAPIJSONBytes())
+	return hex.EncodeToString(sum[:])
 }
 
 // ServeOpenAPISpec handles GET /v1/openapi.yaml. Anonymous; emits
@@ -79,11 +104,58 @@ func ServeOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
 // equivalent JSON. See openapi_handler_test.go for the locked-in
 // round-trip property.
 func ServeOpenAPISpecJSON(w http.ResponseWriter, _ *http.Request) {
-	openapiJSONOnce.Do(func() {
-		openapiJSON = mustMarshalJSON(openapiYAML)
-	})
+	body := openAPIJSONBytes()
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(openapiJSON)
+	_, _ = w.Write(body)
+}
+
+// ServeDocs handles the anonymous human-readable API reference. Swagger UI is
+// loaded from a pinned, SRI-protected CDN asset and renders the same JSON bytes
+// served by ServeOpenAPISpecJSON. Authorization is intentionally in-memory in
+// Swagger UI (persistAuthorization=false); the server never receives or logs
+// a token from this page.
+func ServeDocs(w http.ResponseWriter, r *http.Request) {
+	nonce := httpsec.NonceFromContext(r.Context())
+	checksum := OpenAPIJSONSHA256()
+	inlineScript := `window.addEventListener("load", function () {
+  window.ui = SwaggerUIBundle({
+    url: "/v1/openapi.json",
+    dom_id: "#swagger-ui",
+    deepLinking: true,
+    displayRequestDuration: true,
+    persistAuthorization: false,
+    tryItOutEnabled: false
+  });
+});`
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="gregale-openapi-sha256" content="%s">
+  <title>Gregale API reference</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@%s/swagger-ui.css"
+    integrity="%s" crossorigin="anonymous">
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@%s/swagger-ui-bundle.js"
+    integrity="%s" crossorigin="anonymous" defer></script>
+  <script%s>%s</script>
+</body>
+</html>
+`, checksum, swaggerUIDistVersion, swaggerUICSSSRI, swaggerUIDistVersion, swaggerUIBundleSRI, nonceAttribute(nonce), inlineScript)
+}
+
+func nonceAttribute(nonce string) string {
+	if nonce == "" {
+		return ""
+	}
+	return ` nonce="` + nonce + `"`
 }

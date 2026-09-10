@@ -9,6 +9,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -16,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, error) {
+func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, error) {
 	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, err
@@ -26,14 +27,37 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, err
 	}
 	accountStore := state.NewPgStore(pool)
-	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, managedpostgres.UsageCollectorOptions{Logger: log})
+	var metrics *managedpostgres.Metrics
+	if len(registerers) > 0 {
+		metrics, err = managedpostgres.NewMetrics(registerers[0], "apid", registry.UsagePolicy().Enabled)
+		if err != nil {
+			return nil, nil, nil, nil, nil, err
+		}
+	}
+	usageOptions := managedpostgres.UsageCollectorOptions{Logger: log}
+	if metrics != nil {
+		usageOptions.Observe = metrics.ObserveUsage
+		usageOptions.ObserveSweep = metrics.ObserveUsageSweep
+	}
+	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
-	provisioningGate := managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now)
+	baseProvisioningGate := managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now)
+	provisioningGate := func() bool {
+		enabled := baseProvisioningGate()
+		if metrics != nil {
+			metrics.SetProvisioningEnabled(enabled)
+		}
+		return enabled
+	}
 	canaryAccountGate := managedpostgres.NewStagingCanaryAccountGate(getenv)
 	provisioningAllowed := func(ctx context.Context, accountID string) bool {
-		return canaryAccountGate(accountID)
+		allowed := canaryAccountGate(accountID)
+		if metrics != nil {
+			metrics.ObserveCanary(allowed)
+		}
+		return allowed
 	}
 	service, err := managedpostgres.NewService(registry, store, managedpostgres.ServiceOptions{
 		ProvisioningEnabled: provisioningGate,
@@ -57,15 +81,26 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			if !registry.UsagePolicy().Enabled {
 				return nil
 			}
-			account, err := accountStore.AccountByID(ctx, accountID)
-			if err != nil {
-				return err
+			account, lookupErr := accountStore.AccountByID(ctx, accountID)
+			if lookupErr != nil {
+				if metrics != nil {
+					metrics.ObserveAdmission(lookupErr)
+				}
+				return lookupErr
 			}
 			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
 			if !ok || limits.DatabasesMax <= 0 {
-				return managedpostgres.ErrQuotaExceeded
+				admitErr := managedpostgres.ErrQuotaExceeded
+				if metrics != nil {
+					metrics.ObserveAdmission(admitErr)
+				}
+				return admitErr
 			}
-			return registry.UsagePolicy().AdmitWithCeilings(ctx, store, accountID, time.Now().UTC(), managedPostgresUsageCeilings(limits))
+			admitErr := registry.UsagePolicy().AdmitWithCeilings(ctx, store, accountID, time.Now().UTC(), managedPostgresUsageCeilings(limits))
+			if metrics != nil {
+				metrics.ObserveAdmission(admitErr)
+			}
+			return admitErr
 		},
 	})
 	if err != nil {
@@ -73,7 +108,12 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
 		IncludeProvisioning: provisioningGate,
-		Logger:              log,
+		Observe: func(ob managedpostgres.ReconcileObservation) {
+			if metrics != nil {
+				metrics.ObserveReconcile(ob)
+			}
+		},
+		Logger: log,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
@@ -105,7 +145,12 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
 		IncludeProvisioning: provisioningGate,
-		Logger:              log,
+		Observe: func(ob managedpostgres.BindingReconcileObservation) {
+			if metrics != nil {
+				metrics.ObserveBindingReconcile(ob)
+			}
+		},
+		Logger: log,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, err

@@ -3,4 +3,6 @@ Contact: https://github.com/poyrazK/faas/security/advisories/new
 Expires: 2027-12-31T23:59:59z
 Preferred-Languages: en
 Canonical: https://docs.gregale.dev/.well-known/security.txt
+Encryption: https://docs.gregale.dev/security/pgp.asc
+Acknowledgments: https://docs.gregale.dev/security/acknowledgments
 Policy: https://docs.gregale.dev/security

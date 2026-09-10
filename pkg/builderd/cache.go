@@ -20,6 +20,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/buildcache"
+	"golang.org/x/sys/unix"
 )
 
 // CacheEntry points to a cached OCI tarball and its size. Build handoffs use a
@@ -729,7 +730,7 @@ func dirSize(root string) (int64, error) {
 //
 //nolint:forbidigo // path is a vetted-id cache file under c.root joined from sourceHash + framework — no customer input reaches the open. Symlink-attack impossible because c.root is apid-owned and populated only by builderd.
 func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := openNoFollow(path, unix.O_RDONLY, 0)
 	if err != nil {
 		return "", fmt.Errorf("hash: open: %w", err)
 	}

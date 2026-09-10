@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gateway"
 )
 
 // TestEnvOr_EmptyFallback pins the envOr semantics (empty env
@@ -68,6 +72,63 @@ func TestBuildServers_PinsMaxHeaderBytes(t *testing.T) {
 	}
 	if ctrl.MaxHeaderBytes != api.DefaultMaxHeaderBytes {
 		t.Errorf("control MaxHeaderBytes = %d, want %d", ctrl.MaxHeaderBytes, api.DefaultMaxHeaderBytes)
+	}
+}
+
+func TestInstallPublicStaticRoutes_SecurityTxt(t *testing.T) {
+	mux := http.NewServeMux()
+	installPublicStaticRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/security.txt", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want text/plain; charset=utf-8", got)
+	}
+	if got := rec.Body.String(); !strings.Contains(got, "Contact: mailto:security@gregale.dev") {
+		t.Fatalf("security.txt missing security contact: %q", got)
+	}
+}
+
+func TestCheckInternalGateway_UsesHealthz(t *testing.T) {
+	seen := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/healthz" {
+			t.Errorf("probe request = %s %s, want GET /healthz", r.Method, r.URL.Path)
+		}
+		seen <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	target, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	if err := checkInternalGateway(context.Background(), gateway.NewTCPDialer(target.Host), target); err != nil {
+		t.Fatalf("checkInternalGateway() error = %v", err)
+	}
+	select {
+	case <-seen:
+	default:
+		t.Fatal("healthz handler was not called")
+	}
+}
+
+func TestCheckInternalGateway_RejectsUnhealthyResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	target, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	err = checkInternalGateway(context.Background(), gateway.NewTCPDialer(target.Host), target)
+	if err == nil || !strings.Contains(err.Error(), "healthz returned 503") {
+		t.Fatalf("checkInternalGateway() error = %v, want unhealthy status", err)
 	}
 }
 

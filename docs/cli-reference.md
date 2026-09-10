@@ -23,7 +23,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
 | [`deployments`](#deployments) | List deployments (--limit N \| --before C \| --all) |
-| [`deployment`](#deployment) | Get or wait for one deployment (&lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
+| [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete) |
 | [`deploy`](#deploy) | Deploy (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
@@ -53,6 +53,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
+| [`postgres`](#postgres) | Manage managed PostgreSQL (postgres list\|usage\|create\|get\|delete\|restore\|bindings ...) |
 | [`ps`](#ps) | Show live instances + state for an app |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
@@ -649,7 +650,7 @@ List deployments (--limit N | --before C | --all)
 
 ## deployment
 
-Get or wait for one deployment (&lt;id&gt; | wait &lt;id&gt; | set-min-instances &lt;id&gt;)
+Get, summarize, or wait for one deployment (&lt;id&gt; | summary &lt;id&gt; | wait &lt;id&gt; | set-min-instances &lt;id&gt;)
 
 `gregale deployment [<subcommand>] <id> [--show-scan] [--min <N>]`
 
@@ -657,6 +658,14 @@ Get or wait for one deployment (&lt;id&gt; | wait &lt;id&gt; | set-min-instances
 |---|---|---|
 | `--show-scan` | include the per-deploy grype scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
+
+### deployment summary
+
+Show the release diff and rollback target
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
 
 ### deployment wait
 
@@ -903,6 +912,10 @@ Import an app OpenAPI document from a JSON file or stdin
 
 Preview uncovered routes without importing the document
 
+### openapi preview
+
+Preview declared routes, observed routes, and matching edge policies
+
 ### openapi rm
 
 Remove the imported app OpenAPI document
@@ -998,15 +1011,19 @@ Production debugger (ADR-127)
 
 ### debug requests
 
-Per-request telemetry (list|get|evidence|replay)
+Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])
 
 ### debug regressions
 
-Active regression observations
+Active regression observations (list|watch [--interval D] [--once])
 
 ### debug compare
 
 Per-route deployment-vs-deployment compare
+
+### debug bundle
+
+Export a redacted incident investigation bundle (bundle &lt;slug&gt; &lt;req_id&gt; [--output PATH])
 
 
 ## invitations
@@ -1236,6 +1253,56 @@ Park an app cold (kill all live instances)
 Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 
 `gregale plan`
+
+
+## postgres
+
+Manage managed PostgreSQL (postgres list|usage|create|get|delete|restore|bindings ...)
+
+`gregale postgres [<subcommand>]`
+
+### postgres list
+
+List managed PostgreSQL databases
+
+### postgres usage
+
+Show monthly managed PostgreSQL usage and guardrail state
+
+### postgres create
+
+Create a managed PostgreSQL database
+
+| Flag | Meaning | |
+|---|---|---|
+| `--region <REGION>` | provider-neutral region | required |
+| `--postgres-major <N>` | PostgreSQL major version |  |
+| `--class <CLASS>` | service class | one of `development` · `burstable` · `production` |
+| `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
+| `--scale-to-zero` | suspend compute when idle |  |
+| `--storage-bytes <N>` | storage limit in bytes |  |
+| `--restore-window-seconds <N>` | point-in-time restore window |  |
+
+### postgres get
+
+Show one managed PostgreSQL database
+
+### postgres delete
+
+Delete a managed PostgreSQL database
+
+### postgres restore
+
+Restore a database to a new database
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | name for the restored database | required |
+| `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
+
+### postgres bindings
+
+Manage app database bindings
 
 
 ## ps

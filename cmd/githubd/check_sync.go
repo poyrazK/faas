@@ -20,11 +20,15 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return fmt.Errorf("githubd: deployment check: empty deployment id")
 	}
 	var commitSHA, kind, status, failure, repo, appSlug, previewOf, scope string
+	var rolloutState, rolloutAbortedReason string
+	var canaryStep, canaryTotalSteps, trafficPercent int
 	var reason, tag, deployedBy string
 	var previewPRNumber, prNumber int
 	var installationID int64
 	err := pool.QueryRow(ctx, `
 		select coalesce(d.commit_sha, ''), d.kind, d.status, coalesce(d.error, ''), coalesce(d.scope, 'default'),
+		       coalesce(d.rollout_state, ''), coalesce(d.rollout_aborted_reason, ''),
+		       coalesce(d.canary_step, 0), coalesce(d.canary_total_steps, 0), coalesce(d.traffic_percent, 0),
 		       coalesce(d.reason, ''), coalesce(d.tag, ''), coalesce(nullif(d.deployed_by, ''), d.pusher_login, ''), coalesce(d.pr_number, 0),
 		       coalesce(parent.github_repo_full_name, a.github_repo_full_name, p.repo_full_name, ''),
 		       a.slug, coalesce(a.preview_of_slug, ''), coalesce(a.preview_pr_number, 0),
@@ -37,7 +41,8 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		 and parent.slug = a.preview_of_slug
 		 and parent.deleted_at is null
 		where d.id = $1`, deploymentID).Scan(
-		&commitSHA, &kind, &status, &failure, &scope, &reason, &tag, &deployedBy, &prNumber,
+		&commitSHA, &kind, &status, &failure, &scope, &rolloutState, &rolloutAbortedReason,
+		&canaryStep, &canaryTotalSteps, &trafficPercent, &reason, &tag, &deployedBy, &prNumber,
 		&repo, &appSlug, &previewOf, &previewPRNumber, &installationID)
 	if err != nil {
 		return fmt.Errorf("githubd: deployment check lookup %s: %w", deploymentID, err)
@@ -47,18 +52,19 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	if prNumber <= 0 && previewPRNumber > 0 {
 		prNumber = previewPRNumber
 	}
-	if commitSHA == "" || repo == "" || installationID <= 0 {
-		return fmt.Errorf("githubd: deployment check %s missing commit, repo, or installation", deploymentID)
+	project, err := validateDeploymentCheckTarget(deploymentID, kind, commitSHA, repo, installationID)
+	if err != nil {
+		return err
 	}
-	if kind != string(state.DeploymentKindGitHub) && kind != string(state.DeploymentKindPreview) {
+	if !project {
 		return nil
 	}
-	phase, ok := checkPhaseForDeploymentStatus(status)
+	phase, ok := checkPhaseForDeploymentStatusForRollout(status, rolloutState, canaryTotalSteps)
 	if !ok {
 		return nil
 	}
 	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" {
+	if domain == "" || domain == "apps.gregale.dev" {
 		domain = "gregale.dev"
 	}
 	// Annotation fields are customer-controlled text. Keep the Check Run
@@ -78,6 +84,11 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		Ref:                   commitSHA,
 		Environment:           environment,
 		Status:                status,
+		RolloutState:          rolloutState,
+		CanaryStep:            canaryStep,
+		CanaryTotalSteps:      canaryTotalSteps,
+		TrafficPercent:        trafficPercent,
+		RolloutAbortedReason:  rolloutAbortedReason,
 		Description:           fmt.Sprintf("Gregale deployment %s for %s", deploymentID, appSlug),
 		DeployedBy:            deployedBy,
 		PRNumber:              prNumber,
@@ -92,6 +103,16 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return err
 	}
 	summary := fmt.Sprintf("Gregale deployment %s is %s.", deploymentID, status)
+	if canaryTotalSteps > 0 && (rolloutState == "pending" || rolloutState == "rolling_out") {
+		summary += fmt.Sprintf(" Canary rollout is in progress at stage %d/%d (%d%% traffic); safety gates must pass before promotion.", canaryStep, canaryTotalSteps, trafficPercent)
+	} else if canaryTotalSteps > 0 && rolloutState == "aborted" {
+		summary += " Canary rollout was aborted."
+		if rolloutAbortedReason != "" {
+			summary += " Reason: " + strings.Join(strings.Fields(rolloutAbortedReason), " ") + "."
+		}
+	} else if rolloutState == "complete" && canaryTotalSteps > 0 {
+		summary += fmt.Sprintf(" Canary rollout completed at %d/%d (100%% traffic).", canaryStep, canaryTotalSteps)
+	}
 	if deployedByText != "" {
 		summary += " Deployed by " + deployedByText + "."
 	}
@@ -133,6 +154,24 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	return checks.WriteScopedAppCheck(ctx, installationID, repo, commitSHA, appSlug, scope, phase, "", summary)
 }
 
+func validateDeploymentCheckTarget(deploymentID, kind, commitSHA, repo string, installationID int64) (bool, error) {
+	if kind != string(state.DeploymentKindGitHub) && kind != string(state.DeploymentKindPreview) {
+		return false, nil
+	}
+	if commitSHA == "" {
+		return false, fmt.Errorf("githubd: deployment check %s missing commit", deploymentID)
+	}
+	// Disconnecting a repository clears its repo and installation metadata.
+	// Historical deployment transitions can still leave a coalesced outbox row,
+	// but there is no external Check Run target to update. Completing that row as
+	// a no-op prevents a permanent retry/dead-letter loop after an intentional
+	// disconnect. A missing commit remains an invalid deployment record above.
+	if repo == "" || installationID <= 0 {
+		return false, nil
+	}
+	return true, nil
+}
+
 func githubDeploymentEnvironment(kind, scope, appSlug string) string {
 	prefix := "production"
 	if kind == string(state.DeploymentKindPreview) {
@@ -143,13 +182,22 @@ func githubDeploymentEnvironment(kind, scope, appSlug string) string {
 	return prefix + "/" + appSlug
 }
 
-func checkPhaseForDeploymentStatus(status string) (githubdgrpc.CheckPhase, bool) {
+func checkPhaseForDeploymentStatusForRollout(status, rolloutState string, canaryTotalSteps int) (githubdgrpc.CheckPhase, bool) {
 	switch state.DeploymentStatus(status) {
 	case state.DeployPending:
 		return githubdgrpc.CheckPhaseQueued, true
 	case state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting:
 		return githubdgrpc.CheckPhaseBuilding, true
 	case state.DeployLive:
+		if canaryTotalSteps <= 0 {
+			return githubdgrpc.CheckPhaseLive, true
+		}
+		switch rolloutState {
+		case "pending", "rolling_out":
+			return githubdgrpc.CheckPhaseBuilding, true
+		case "aborted":
+			return githubdgrpc.CheckPhaseFailed, true
+		}
 		return githubdgrpc.CheckPhaseLive, true
 	case state.DeployFailed, state.DeployCancelled, state.DeploySuperseded:
 		return githubdgrpc.CheckPhaseFailed, true

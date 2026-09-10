@@ -4,6 +4,8 @@
 /* eslint-disable */
 import type { AppOpenAPIImportDryRunResponse } from '../models/AppOpenAPIImportDryRunResponse.js';
 import type { AppOpenAPIImportResponse } from '../models/AppOpenAPIImportResponse.js';
+import type { AppOpenAPIPolicyPreviewResponse } from '../models/AppOpenAPIPolicyPreviewResponse.js';
+import type { OpenAPIContractDiffResponse } from '../models/OpenAPIContractDiffResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -190,6 +192,82 @@ export class OpenapiImportService {
         401: `code: unauthorized`,
         413: `code: openapi_import_too_large. Body exceeds state.OpenAPIImportMaxDocBytes (256 KiB) on the dry-run endpoint.`,
         422: `code: openapi_import_invalid or openapi_import_too_many_endpoints. Doc fails the structural-minimum validator or declares more than state.OpenAPIImportMaxEndpoints (50) endpoints on the dry-run endpoint.`,
+      },
+    });
+  }
+  /**
+   * Preview declared routes, observed routes, and matching edge policies.
+   * Read-only route-policy preview for API-hosting roadmap item 11.
+   * Joins the persisted OpenAPI declaration with gatewayd's observed
+   * route labels and the app's edge rules. Each route is classified as
+   * `matched`, `declared_only`, or `observed_only`; `covered` is true
+   * when at least one enabled edge rule matches the path and method.
+   * When the gateway bridge is unavailable the response remains useful,
+   * sets `observed_available` to false, and reports
+   * `source=degraded: routes_unavailable`. No policy or document writes
+   * occur on this endpoint.
+   *
+   * @returns AppOpenAPIPolicyPreviewResponse Declared-vs-observed route and policy preview.
+   * @throws ApiError
+   */
+  public static previewAppOpenApiPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppOpenAPIPolicyPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/openapi/preview',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Preview the production OpenAPI contract gate.
+   * Read-only ADR-121 contract diff. Compares the current projected
+   * OpenAPI surface against the latest captured live snapshot in the
+   * requested scope (default `prod`). `blocking=true` means a production
+   * promotion would be rejected while `FAAS_API_CONTRACT_DIFF_ENABLED`
+   * is enabled. The route remains registered while the flag is off and
+   * returns 503 `api_contract_diff_disabled`.
+   *
+   * @returns OpenAPIContractDiffResponse Contract diff result.
+   * @throws ApiError
+   */
+  public static diffAppOpenApiContract({
+    slug,
+    scope,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment scope to compare; defaults to `prod`.
+     */
+    scope?: string,
+  }): CancelablePromise<OpenAPIContractDiffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/openapi/diff',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `code: api_contract_diff_disabled.`,
       },
     });
   }

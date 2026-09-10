@@ -1,3 +1,4 @@
+// adr: 169
 package netns
 
 import (
@@ -5,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -1094,7 +1096,7 @@ func TestNftCommandsAllowlistRuleRunsAfterDenies(t *testing.T) {
 				v4SmtpDrop = i
 			case v4DaddrDrop < 0 && strings.Contains(line, "ip daddr") && strings.Contains(line, "drop"):
 				v4DaddrDrop = i
-			case v4Allowlist < 0 && strings.Contains(line, "ip daddr") && strings.Contains(line, "accept"):
+			case v4Allowlist < 0 && strings.Contains(line, "ip daddr") && strings.Contains(line, "accept") && !strings.Contains(line, "dport "+strconv.Itoa(ServiceProxyPort)) && !strings.Contains(line, "dport "+strconv.Itoa(ServiceDiscoveryDNSPort)):
 				v4Allowlist = i
 			}
 		// v6 chain (no SMTP drop; ADR-023).

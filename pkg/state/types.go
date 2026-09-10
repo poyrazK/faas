@@ -566,7 +566,37 @@ const (
 	APIKeyStatusRevoked APIKeyStatus = "revoked"
 )
 
-// ConsumerKey is a hashed, per-(account, app) credential for the
+// APIConsumerStatus is the lifecycle state for an application's API
+// consumer. Revocation is terminal in v1; credentials can be rotated
+// without changing the consumer's stable identity.
+type APIConsumerStatus string
+
+const (
+	APIConsumerStatusActive  APIConsumerStatus = "active"
+	APIConsumerStatusRevoked APIConsumerStatus = "revoked"
+)
+
+// APIConsumer is the stable identity of one customer of an application.
+// Credentials (ConsumerKey) are attached to this row so key rotation does
+// not change the identity used for throttling, usage attribution, or billing.
+type APIConsumer struct {
+	ID          string
+	AccountID   string
+	AppID       string
+	ExternalRef string
+	Name        string
+	Status      APIConsumerStatus
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	RevokedAt   *time.Time
+}
+
+// Active reports whether the consumer can authenticate requests.
+func (c APIConsumer) Active() bool {
+	return c.Status == APIConsumerStatusActive && c.RevokedAt == nil
+}
+
+// ConsumerKey is a hashed, per-consumer credential for the
 // application's customers (ADR-120 / issue #975 item #5). Distinct
 // from APIKey because it is scoped to a single (AccountID, AppID)
 // pair (a leaked key affects only one app) and exposed to the
@@ -585,9 +615,12 @@ const (
 // TouchConsumerKeyLastUsed with a 60s debouncer — never a billing
 // signal.
 type ConsumerKey struct {
-	ID         string
-	AccountID  string
-	AppID      string
+	ID        string
+	AccountID string
+	AppID     string
+	// ConsumerID is the stable APIConsumer identity. It is nullable for
+	// legacy rows created before consumer identities were introduced.
+	ConsumerID string
 	Name       string
 	Prefix     string
 	Hash       []byte
@@ -1189,6 +1222,8 @@ type AppManifest struct {
 	RobotsTxt        string            `json:"robots_txt,omitempty"`
 	HeadWakes        bool              `json:"head_wakes,omitempty"`
 	CrawlerPolicy    string            `json:"crawler_policy,omitempty"`
+	HealthPath       string            `json:"health_path,omitempty"`
+	HealthPathWakes  bool              `json:"health_path_wakes,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1211,7 +1246,8 @@ func (m AppManifest) IsZero() bool {
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
-		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == ""
+		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
+		m.HealthPath == "" && !m.HealthPathWakes
 }
 
 // ScalingPolicy is the per-app autoscaling configuration (issue #462 /
@@ -3174,6 +3210,10 @@ type Instance struct {
 	// expiry. Mirrors the A4 `apps.reassigned_at` schema
 	// discipline. Nullable forever.
 	LeaseToken string
+	// MigrationStartedAt is stamped when Phase 2 moves the instance into
+	// state='migrating'. It is the durable watchdog age anchor; MigratedAt
+	// is intentionally reserved for the successful Phase-3 commit.
+	MigrationStartedAt *time.Time
 	// FrameworkReadyAt is the wall-clock stamp the vmmd records
 	// when the guest-init signals "framework ready" via vsock DGRAM
 	// port 1027 (msg=4). Two-tier snapshot (issue #470, PR
@@ -4741,8 +4781,12 @@ type AppSecret struct {
 	ManagedPostgresBindingID    string
 	ManagedCredentialRef        string
 	ManagedCredentialGeneration int64
-	CreatedAt                   time.Time
-	UpdatedAt                   time.Time
+	// ManagedObjectStorageCredentialID is populated only by a compute
+	// object-storage binding. Customer secret mutations reject rows carrying
+	// this ownership marker until the binding is revoked and cleaned up.
+	ManagedObjectStorageCredentialID string
+	CreatedAt                        time.Time
+	UpdatedAt                        time.Time
 }
 
 // AccountAppSecret is the per-row shape returned by
@@ -6434,4 +6478,54 @@ type DeploymentScopeExclusion struct {
 	CreatedBy string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// AppLogDrainKind names the provider-neutral customer log encodings.
+type AppLogDrainKind string
+
+const (
+	AppLogDrainKindHTTPJSON AppLogDrainKind = "http_json"
+	AppLogDrainKindOTLP     AppLogDrainKind = "otlp"
+)
+
+// AppLogDrain is one customer-owned runtime log destination. AuthHeaderSealed
+// is age/X25519 ciphertext and is never returned by the API.
+type AppLogDrain struct {
+	ID               string
+	AppID            string
+	AccountID        string
+	Kind             AppLogDrainKind
+	TargetURL        string
+	AuthHeaderSealed []byte
+	Enabled          bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// UpdateAppLogDrainParams carries the optional fields of UpdateAppLogDrain.
+// A nil pointer means the existing value remains unchanged.
+type UpdateAppLogDrainParams struct {
+	Kind             *AppLogDrainKind
+	TargetURL        *string
+	AuthHeaderSealed *[]byte
+	Enabled          *bool
+}
+
+// AppLogDrainQuotaError is returned when either the per-app or per-account
+// drain cap is reached.
+type AppLogDrainQuotaError struct {
+	Scope    AppLogDrainQuotaScope
+	Limit    int
+	Observed int
+}
+
+type AppLogDrainQuotaScope string
+
+const (
+	AppLogDrainQuotaScopeApp     AppLogDrainQuotaScope = "app"
+	AppLogDrainQuotaScopeAccount AppLogDrainQuotaScope = "account"
+)
+
+func (e *AppLogDrainQuotaError) Error() string {
+	return fmt.Sprintf("state: app log drain quota exceeded (scope=%s, limit=%d, observed=%d)", e.Scope, e.Limit, e.Observed)
 }

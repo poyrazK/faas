@@ -519,7 +519,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(gateway_requests_total{code=~\"2..\"}[5m])) / sum(rate(gateway_requests_total[5m])) * 100",
+          "expr": "sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..\"}[5m])) / sum(rate(gateway_requests_total{app!=\"-\"}[5m])) * 100",
           "refId": "A"
         }
       ],
@@ -2195,6 +2195,140 @@
         "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
         "tooltip": {"mode": "multi", "sort": "desc"}
       }
+    },
+    {
+      "id": 413,
+      "type": "timeseries",
+      "title": "Per-account gateway throttling (top 20)",
+      "description": "Rejected requests per second by account and plan. Use this with the advertised app/account limits to distinguish customer bursts from a plan-contract regression.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 238},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "topk(20, sum by (account_id, plan) (rate(gateway_per_account_rate_limited_total{account_id!=\"__other__\"}[5m])))",
+          "legendFormat": "{{account_id}} / {{plan}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
+    },
+    {
+      "id": 414,
+      "type": "timeseries",
+      "title": "Wake phase latency (p99 / p999)",
+      "description": "Tail wake latency by phase (issue #1051). p99 must remain below 500 ms and p999 below 800 ms on the reference SSD acceptance cohort; the phase label makes queue, scheduler, vmmd, and guest-readiness regressions distinguishable.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 246},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, phase) (rate(gateway_wake_phase_duration_seconds_bucket{phase=~\"queue_wait|coordinator_wait|schedd_admit|vmmd_wake|guest_ready|cold_fallback_reason\"}[5m])))",
+          "legendFormat": "p99 {{phase}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.999, sum by (le, phase) (rate(gateway_wake_phase_duration_seconds_bucket{phase=~\"queue_wait|coordinator_wait|schedd_admit|vmmd_wake|guest_ready|cold_fallback_reason\"}[5m])))",
+          "legendFormat": "p999 {{phase}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "red", "value": 0.8}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
+    },
+    {
+      "id": 415,
+      "type": "heatmap",
+      "title": "Request latency distribution (trace exemplars)",
+      "description": "Raw request-duration buckets retain trace_id exemplars. Hover an exemplar marker to open the configured Grafana trace destination; if no destination is configured, use the displayed trace_id with the observer endpoint.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 254},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (le) (rate(gateway_request_duration_seconds_bucket[$__rate_interval]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "exemplars": {"color": "rgba(255,0,255,0.7)"},
+        "filterValues": {"le": 1e-9},
+        "legend": {"show": true},
+        "rowsFrame": {"layout": "auto"},
+        "tooltip": {"show": true, "yHistogram": false},
+        "yAxis": {"axisPlacement": "left", "reverse": false, "unit": "s"}
+      }
+    },
+    {
+      "id": 416,
+      "type": "heatmap",
+      "title": "Wake latency distribution (trace exemplars)",
+      "description": "Raw wake-latency buckets retain trace_id exemplars. Hover an exemplar marker to open the configured Grafana trace destination; if no destination is configured, use the displayed trace_id with the observer endpoint.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 254},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (le) (rate(gateway_wake_latency_seconds_bucket[$__rate_interval]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "exemplars": {"color": "rgba(255,0,255,0.7)"},
+        "filterValues": {"le": 1e-9},
+        "legend": {"show": true},
+        "rowsFrame": {"layout": "auto"},
+        "tooltip": {"show": true, "yHistogram": false},
+        "yAxis": {"axisPlacement": "left", "reverse": false, "unit": "s"}
+      }
     }
   ],
   "refresh": "30s",
@@ -2215,6 +2349,6 @@
   "timezone": "",
   "title": "faas fleet (M8 \u00a712)",
   "uid": "faas-fleet-m8",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

@@ -46,6 +46,7 @@ const (
 	orgsFile              = "orgs.go"            // issue #190 / IAM-6 / ADR-061 PR 5
 	scanFile              = "dto_scan.go"        // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
 	webhooksFile          = "webhooks.go"        // issue #476 / ADR-076
+	logDrainsFile         = "logdrains.go"       // issue #1398 O4 — customer runtime log destinations
 	billingFile           = "billing.go"         // PR-P3 — admin reconcile + future billing DTOs
 	diffFile              = "diff.go"            // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
 	upstreamsFile         = "upstreams.go"       // ADR-098 §9.A PR-B
@@ -57,6 +58,7 @@ const (
 	corsPresetsFile       = "cors_preset_dto.go" // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
 	uploadSessionFile     = "upload_session.go"  // issue #1182 §P1 PR-1 — resumable upload session DTOs
 	managedPostgresFile   = "managed_postgres.go"
+	openapiContractFile   = "openapi_contract.go"
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -79,6 +81,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/compute-nodes/{name}/heartbeats":   true, // CP-1: operator-only (heartbeat history; schedd-owned)
 	"GET /v1/compute-nodes/events":              true, // CP-1: operator-only SSE on compute_node_changed
 	"GET /v1/internal/metrics/targets":          true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/vmmd-targets":     true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/imaged-targets":   true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/builderd-targets": true, // compute daemon metrics use the active node registry
 	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
@@ -161,6 +166,11 @@ var routeExclude = map[string]bool{
 	// route — both lists must move together (session-cookie auth
 	// surface, no SDK wrapper, no programmatic bearer-key entrypoint).
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/test": true,
+	// Dashboard debugger replay is a session-cookie form post protected by
+	// CSRF. The public SDK exposes the JSON sibling at
+	// POST /v1/apps/{slug}/debug/requests/{req_id}/replay instead.
+	// Mirror cmd/sdk-coverage/main.go::routeExclude.
+	"POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay": true,
 	// ADR-124 affected-workloads preview. Dashboard HTML form endpoints
 	// parallel to the cron fire-now + retry entries. The /preview POST
 	// re-renders the preview; /preview/apply commits. Both share the
@@ -171,6 +181,8 @@ var routeExclude = map[string]bool{
 	"POST /v1/cli-auth/exchange":                    true, // CLI device-code exchange
 	"GET /cli-auth":                                 true, // dashboard claim form
 	"POST /cli-auth":                                true, // dashboard claim form submit
+	"GET /docs":                                     true, // anonymous Swagger UI metadata page; no SDK method
+	"GET /docs/":                                    true, // slash alias of the documented /docs route
 	"GET /status":                                   true, // public HTML status page
 	"GET /status/slo.json":                          true, // public status JSON
 	"GET /healthz":                                  true, // loopback infra probe
@@ -178,13 +190,6 @@ var routeExclude = map[string]bool{
 	"GET /v1/orgs/me":                               true, // PR-4 LoadOrg seam (issue #190 / IAM-6 / ADR-061); documented in PR 5 alongside the rest of /v1/orgs/{slug}
 	"GET /v1/traces/{trace_id}":                     true, // issue #555: gatewayd-public trace endpoint (mounted via bare /v1/traces/ prefix; the scanner doesn't match it)
 
-	// ADR-081 Durable Execution Workflows (Step Functions)
-	"GET /v1/apps/{slug}/workflows/runs":         true,
-	"GET /v1/workflows/runs/{id}":                true,
-	"GET /v1/workflows/runs/{id}/steps":          true,
-	"POST /v1/apps/{slug}/workflows/{name}/runs": true,
-	"POST /v1/workflows/runs/{id}/cancel":        true,
-	"POST /v1/workflows/runs/{id}/events":        true,
 	// Issue #961 / Mega-B PR-3 / ADR-116. The dashboard's
 	// /dashboard/apps/new wizard renders GET /v1/templates as the
 	// "Starting template" dropdown. Cookie-session-authenticated
@@ -201,6 +206,43 @@ var routeExclude = map[string]bool{
 	// cmd/sdk-coverage/main.go::routeExclude; the two lists must
 	// move together.
 	"POST /v1/otel/v1/traces": true,
+}
+
+func init() {
+	// Issue #1397 G9: dashboard form routes are session-cookie surfaces,
+	// intentionally absent from the public OpenAPI document.
+	for _, route := range []string{
+		"POST /dashboard/apps/{slug}/tenant-surfaces",
+		"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/delete",
+		"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames",
+		"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames/{hostname}/delete",
+		"POST /dashboard/apps/{slug}/mirrors",
+		"POST /dashboard/apps/{slug}/mirrors/{id}/toggle",
+		"POST /dashboard/apps/{slug}/mirrors/{id}/delete",
+	} {
+		routeExclude[route] = true
+	}
+	// Issue #1397 G10: dashboard storage forms are session-cookie
+	// surfaces, intentionally absent from the public OpenAPI document.
+	for _, route := range []string{
+		"POST /dashboard/apps/{slug}/storage/buckets",
+		"POST /dashboard/apps/{slug}/storage/buckets/{bucket}/delete",
+		"POST /dashboard/apps/{slug}/storage/objects/delete",
+		"POST /dashboard/apps/{slug}/storage/signed-url",
+	} {
+		routeExclude[route] = true
+	}
+	// Issue #1397 G8: dashboard form routes are session-cookie surfaces,
+	// intentionally absent from the public OpenAPI document.
+	for _, route := range []string{
+		"POST /dashboard/apps/{slug}/webhooks",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/toggle",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/delete",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/rotate-secret",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/deliveries/{did}/retry",
+	} {
+		routeExclude[route] = true
+	}
 }
 
 // dtoExclude lists pkg/api exported DTOs that are intentionally not in the
@@ -236,6 +278,7 @@ var dtoExclude = map[string]bool{
 	"AppWebhookDeliveryRow":           true,
 	"ListAppWebhookDeliveriesOptions": true,
 	"RotateAppWebhookSecretRequest":   true,
+	"AppLogDrainRow":                  true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
 	// a per-plan ceiling argument bag (RateLimitRPS / RateLimitBurst)
@@ -819,6 +862,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", orgsFile),
 		filepath.Join(root, "pkg", "api", scanFile),
 		filepath.Join(root, "pkg", "api", webhooksFile),
+		filepath.Join(root, "pkg", "api", logDrainsFile),
 		filepath.Join(root, "pkg", "api", billingFile),
 		filepath.Join(root, "pkg", "api", diffFile),
 		filepath.Join(root, "pkg", "api", upstreamsFile),
@@ -831,6 +875,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
+		filepath.Join(root, "pkg", "api", openapiContractFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

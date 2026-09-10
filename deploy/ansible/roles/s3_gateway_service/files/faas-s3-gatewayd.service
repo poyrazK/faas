@@ -1,0 +1,51 @@
+[Unit]
+Description=Gregale S3-compatible object-storage gateway
+Documentation=https://docs.gregale.dev/object-storage
+After=network-online.target postgresql.service faas-apid.service faas-cp.slice
+Wants=faas-cp.slice faas-apid.service
+Requires=postgresql.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=notify
+User=faas
+Group=faas
+ExecStart=/opt/faas/current/bin/s3-gatewayd
+Restart=on-failure
+RestartSec=2s
+RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
+Slice=faas-cp.slice
+MemoryMax=512M
+EnvironmentFile=-/etc/faas/compute-db.env
+EnvironmentFile=-/etc/faas/secrets/object-storage/provider.env
+Environment=FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json
+Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_host_age_identity
+Environment=FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH=%d/faas_host_age_identity_previous
+Environment=FAAS_S3_GATEWAY_LISTEN_ADDR=127.0.0.1:8084
+Environment=FAAS_S3_GATEWAY_CONTROL_ADDR=127.0.0.1:9096
+Environment=FAAS_S3_GATEWAY_SPOOL_DIR=/var/spool/faas/s3-gatewayd
+LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
+LoadCredential=faas_host_age_identity_previous:-/etc/faas/secrets/host.age.previous
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/var/spool/faas/s3-gatewayd
+
+[Install]
+WantedBy=multi-user.target

@@ -5,12 +5,14 @@
 -- ADR-127 §PR-B — collapse (dedupe) support on request_telemetry.
 --
 -- PR-A shipped every request as a row. PR-B collapses by
--- (app_id, deployment_id, route, method, status, minute_bucket)
+-- (app_id, deployment_id, route, method, status, minute_bucket,
+-- latency_bucket)
 -- in pkg/gateway/request_telemetry_publisher.go::collapseRequestTelemetry
 -- (the function that the no-op pass-through at :264-267 in PR-A
--- replaced with a real aggregate). The collapse writes ONE row
--- per bucket with count = the number of original requests that
--- folded into it.
+-- replaced with a real aggregate). The collapse writes one row per
+-- bounded latency bucket with count = the number of original requests
+-- that folded into it. Keeping latency buckets separate preserves
+-- percentile signal without allowing one row per request.
 --
 -- Column semantics:
 --   * count — INT NOT NULL DEFAULT 1. Default of 1 preserves

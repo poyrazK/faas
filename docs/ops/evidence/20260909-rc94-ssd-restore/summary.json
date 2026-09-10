@@ -1,0 +1,48 @@
+{
+  "release_tag": "v0.1.18-rc.94",
+  "release_commit": "86968d3d8d39670cc553f397358b70938bed49bc",
+  "project": "project-5ae37259-04cf-4070-bef",
+  "node": "faas-compute-node-1",
+  "node_id_counts": {
+    "cc461882-cba6-4182-8f26-e67c314361dc": 100
+  },
+  "disk": {
+    "device": "sdb",
+    "rotational": 0,
+    "class": "pd-ssd"
+  },
+  "app": "public-val-go-persistent-0906",
+  "load_shape": "100 sequential public requests; normal idle reaper parked the sole instance before each request",
+  "slo_interval": "schedd wake.boot_started.at -> schedd wake.boot_completed.at",
+  "n": 100,
+  "unique_wake_ids": 100,
+  "platform_ms": {
+    "min": 73.09400000000001,
+    "avg": 99.01064000000001,
+    "p50": 94.795,
+    "p90": 131.502,
+    "p95": 137.756,
+    "p99": 148.229,
+    "max": 149.067
+  },
+  "public_ms_context_only": {
+    "min": 244.76999999999998,
+    "avg": 433.52886,
+    "p50": 424.506,
+    "p90": 475.346,
+    "p95": 502.17999999999995,
+    "p99": 555.937,
+    "max": 811.678
+  },
+  "methods": [
+    "restore"
+  ],
+  "over_or_equal_350_ms": 0,
+  "artifact_source_counts": {
+    "base:cache_hit": 100,
+    "kernel:cache_hit": 100,
+    "main:cache_hit": 100
+  },
+  "max_concurrency_at_admit": 0,
+  "max_queued_count": 0
+}

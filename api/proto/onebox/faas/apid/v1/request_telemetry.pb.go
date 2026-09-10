@@ -73,12 +73,12 @@ type IncrementRequestTelemetryRequest struct {
 	// customer. Must be 100..599 (the migration CHECK rejects
 	// anything else).
 	HttpStatus int32 `protobuf:"varint,6,opt,name=http_status,json=httpStatus,proto3" json:"http_status,omitempty"`
-	// latency_ms — the bucket's representative latency (max within
-	// the minute, mirrors what the regression detector compares
-	// against baseline). Wall-clock from Handler.ServeHTTP entry
-	// to observe exit for the FIRST row that populated the bucket;
-	// subsequent rows fold in via the publisher's collapse
-	// aggregate.
+	// latency_ms — the inclusive upper bound of the bounded latency
+	// bucket represented by this row. The publisher includes the
+	// bucket in its collapse key so percentile queries retain the
+	// latency distribution rather than collapsing to one minute-level
+	// maximum. Wall-clock from Handler.ServeHTTP entry to observe exit
+	// for the original requests represented by count.
 	LatencyMs int32 `protobuf:"varint,7,opt,name=latency_ms,json=latencyMs,proto3" json:"latency_ms,omitempty"`
 	// cold_boot — true when ANY of the rows that folded into this
 	// bucket was a cold-boot wake. The publisher's collapse
@@ -107,7 +107,14 @@ type IncrementRequestTelemetryRequest struct {
 	ReferrerHost string `protobuf:"bytes,13,opt,name=referrer_host,json=referrerHost,proto3" json:"referrer_host,omitempty"`
 	// country — ISO 3166-1 alpha-2 uppercase country code from the existing
 	// trusted edge geo resolver, or __unknown__. The source IP is not retained.
-	Country       string `protobuf:"bytes,14,opt,name=country,proto3" json:"country,omitempty"`
+	Country string `protobuf:"bytes,14,opt,name=country,proto3" json:"country,omitempty"`
+	// wake_id — the newly admitted wake that served this request. Empty for
+	// warm requests; retained only as an opaque correlation identifier so the
+	// debugger can join the row to the wake event timeline.
+	WakeId string `protobuf:"bytes,15,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
+	// instance_id — the selected VM instance that served this request. Empty
+	// when the request never reached a routable target.
+	InstanceId    string `protobuf:"bytes,16,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -240,6 +247,20 @@ func (x *IncrementRequestTelemetryRequest) GetCountry() string {
 	return ""
 }
 
+func (x *IncrementRequestTelemetryRequest) GetWakeId() string {
+	if x != nil {
+		return x.WakeId
+	}
+	return ""
+}
+
+func (x *IncrementRequestTelemetryRequest) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
 // IncrementRequestTelemetryResponse is the per-record outcome the
 // server returns. outcome ∈ {inserted, rate_limited, db_error}.
 // `inserted` is a successful INSERT; `rate_limited` means the
@@ -307,7 +328,7 @@ var File_onebox_faas_apid_v1_request_telemetry_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
-	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xd5\x03\n" +
+	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\x8f\x04\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -326,7 +347,10 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x05count\x18\v \x01(\x05R\x05count\x12\x1b\n" +
 	"\tua_family\x18\f \x01(\tR\buaFamily\x12#\n" +
 	"\rreferrer_host\x18\r \x01(\tR\freferrerHost\x12\x18\n" +
-	"\acountry\x18\x0e \x01(\tR\acountry\"c\n" +
+	"\acountry\x18\x0e \x01(\tR\acountry\x12\x17\n" +
+	"\awake_id\x18\x0f \x01(\tR\x06wakeId\x12\x1f\n" +
+	"\vinstance_id\x18\x10 \x01(\tR\n" +
+	"instanceId\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs2\xa3\x01\n" +

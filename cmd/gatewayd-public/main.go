@@ -37,6 +37,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
@@ -68,6 +70,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/securitytxt"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -211,12 +214,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 	}()
 
-	// Readiness probe. Single signal: PG ping. (certsync/internal-proxy
-	// signals are gone in plain-HTTP mode — once both listeners are
-	// bound, /readyz=200.)
-	probe, pgProbeSig, pgStop := setupReadiness(ctx, pool, log)
-	defer pgStop()
-
 	// Tier A8 / ADR-083 wiring (code-review fix #2 + #3 + #5).
 	// Built BEFORE the public listener so the in-flight tracker
 	// can be hung off the listener's ConnState callback. The DNS
@@ -320,6 +317,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// instead of a hard wall-clock.
 	drainTracker := drain.NewTracker()
 	proxy.WithInFlightTracker(drainTracker)
+	// Readiness follows both control-plane Postgres and the upstream path
+	// that carries customer traffic. The dependency check uses the same
+	// dialer as the reverse proxy and asks gatewayd-internal's lightweight
+	// /healthz endpoint, so a listening-but-unresponsive socket stays
+	// out of service.
+	probe, pgProbeSig, pgStop := setupReadiness(ctx, pool, internalDialer, internalURL, log)
+	defer pgStop()
 	// gatewayMetrics is the gateway.Metrics bundle local to the
 	// public daemon. The public daemon also owns wire.OpsMetrics;
 	// both registries are mounted on the control mux below so the
@@ -415,6 +419,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: control-plane API proxy: %w", err)
 	}
 	traceMux := http.NewServeMux()
+	installPublicStaticRoutes(traceMux)
 	traceMux.Handle("/v1/traces/", traceSetup.Handler)
 	// ADR-127 PR-D: OTLP spans writer handler. Mounted on the
 	// same traceMux so it shares the same drain tracker as
@@ -552,6 +557,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := startHAComponents(ctx, log, pool, pgStore, inflight, envOr("FAAS_NODE_NAME", ""), envOr("FAAS_NODE_PUBLIC_IP", listenAddr), opsMetrics); err != nil {
 		return err
 	}
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, probe.ReadyFunc())
+	defer notifyStop()
 
 	// Drain orchestration.
 	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics); err != nil {
@@ -560,43 +567,78 @@ func run(ctx context.Context, log *slog.Logger) error {
 	return nil
 }
 
-// setupReadiness builds the probe + the PG-ping signal whose bit is
-// mirrored onto the probe's registered signal. The mirror is the
-// bug-fixed bridge — the previous version read pgSig.Report() and
-// discarded the values, so PG outages never flipped /readyz. Now
-// the goroutine pushes the bit into the registered signal.
-func setupReadiness(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) (*gateway.ReadyzProbe, *gateway.ReadySignal, func()) {
+// installPublicStaticRoutes mounts anonymous edge metadata before the
+// catch-all control-plane proxy. These paths are platform-owned and must not
+// be interpreted as customer application routes.
+func installPublicStaticRoutes(mux *http.ServeMux) {
+	mux.Handle("/.well-known/security.txt", securitytxt.Handler())
+}
+
+// setupReadiness builds the probe with checks for Postgres and the
+// gatewayd-internal upstream. The returned stopper is idempotent and
+// stops every background check used by the probe.
+func setupReadiness(ctx context.Context, pool *pgxpool.Pool, internalDialer gateway.InternalDialer, internalTarget *url.URL, log *slog.Logger) (*gateway.ReadyzProbe, *gateway.ReadySignal, func()) {
 	probe := &gateway.ReadyzProbe{}
-	pgSig, pgStop := gateway.NewPGPingSignal(ctx, pool, 5*time.Second)
-	// Register a dedicated signal that is NOT pre-armed true (the
-	// bridge below is the only writer; it flips it to the PG
-	// liveness on the first tick).
-	pgProbeSig := probe.Register()
-	// Initial state: PG not yet checked. The bridge will flip it
-	// within pgSig's first ping (synchronous, NewPGPingSignal
-	// immediate-ping path).
-	pgProbeSig.Set(false, "pg ping not yet sampled")
-	go func() {
-		t := time.NewTicker(2 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				ready, reason := pgSig.Report()
-				if ready {
-					pgProbeSig.Set(true, "")
-				} else {
-					pgProbeSig.Set(false, reason)
-				}
-			}
-		}
-	}()
-	// Single readiness signal: PG ping. /readyz=200 once PG is
-	// reachable; 503 (with the PG-ping reason) otherwise.
+	var pgSig *gateway.ReadySignal
+	var pgStop func()
+	if pool != nil {
+		pgSig, pgStop = gateway.NewPGPingSignal(ctx, pool, 5*time.Second)
+		probe.RegisterSignal(pgSig)
+	} else {
+		pgSig = probe.Register()
+		pgSig.Set(false, "pg pool unavailable")
+		pgStop = func() {}
+	}
+	internalSig, internalStop := gateway.NewDependencySignal(ctx, "gatewayd-internal", 5*time.Second, func(checkCtx context.Context) error {
+		return checkInternalGateway(checkCtx, internalDialer, internalTarget)
+	})
+	probe.RegisterSignal(internalSig)
 	_ = log
-	return probe, pgProbeSig, pgStop
+	return probe, pgSig, func() {
+		internalStop()
+		pgStop()
+	}
+}
+
+// checkInternalGateway performs a bounded HTTP/1.1 health request over the
+// exact InternalDialer used by the reverse proxy. Internal listeners support
+// HTTP/1.1 alongside H2C, so this probe works for unix sockets, static TCP
+// targets, and the database-backed compute gateway pool alike.
+func checkInternalGateway(ctx context.Context, dialer gateway.InternalDialer, target *url.URL) error {
+	if dialer == nil {
+		return errors.New("internal dialer unavailable")
+	}
+	if target == nil {
+		return errors.New("internal target unavailable")
+	}
+	conn, err := dialer.DialContext(ctx, target.String())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	probeURL := *target
+	probeURL.Path = "/healthz"
+	probeURL.RawPath = ""
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL.String(), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Connection", "close")
+	if err := req.Write(conn); err != nil {
+		return err
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthz returned %s", resp.Status)
+	}
+	return nil
 }
 
 // buildServers constructs the plain-HTTP public + loopback control

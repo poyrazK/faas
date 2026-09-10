@@ -1,8 +1,10 @@
 # CLAUDE.md — agent guide for the Gregale platform
 
 Scale-to-zero FaaS on Firecracker microVMs, deployable on any bare-metal x86_64
-control-plane node. Customer apps park as snapshots on disk and wake on request
-in <350 ms. Gregale runs a single control-plane node today; the architecture
+control-plane node. Customer apps park as snapshots on disk. The <350 ms p95
+target covers the platform snapshot restore interval on the reference SSD node;
+it excludes Cloudflare, public-network distance, proxying, and app execution.
+Gregale runs a single control-plane node today; the architecture
 targets a multi-host control plane (see `docs/scale_out_and_workload_classes.md`
 and the Tier A ADRs). The original Hetzner EX44 is one such deployment — not a
 hard requirement.

@@ -30,8 +30,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Manager is vmmd's core: it owns the whole per-instance resource lifecycle —
@@ -297,6 +299,8 @@ type StaticEgressIPEntry struct {
 type bringUpTimings struct {
 	restoreMs    int64
 	netnsTapMs   int64
+	scanCheckMs  int64
+	coldBootMs   int64
 	restoreError string
 }
 
@@ -2115,6 +2119,21 @@ func (m *Manager) MarkInstanceFrameworkReady(ctx context.Context, instance strin
 	appID = inst.AppID
 	runtime = inst.Runtime
 	m.mu.Unlock()
+	ctx, readySpan := pkgtrace.StartSpan(ctx, "guest.framework_ready",
+		attribute.String("instance_id", instance),
+		attribute.String("app_id", appID),
+		attribute.String("runtime", runtime),
+		attribute.Int64("warmup_ms", warmupMs),
+	)
+	defer func() {
+		if err != nil {
+			readySpan.SetAttributes(attribute.String("outcome", "error"))
+			readySpan.RecordError(err)
+		} else {
+			readySpan.SetAttributes(attribute.String("outcome", "ready"))
+		}
+		readySpan.End()
+	}()
 	// Publish through the scheduler-owned persistence seam. Surface errors so
 	// the bounded observer can retry instead of losing warm eligibility.
 	if m.frameworkReadyStamper != nil {
@@ -2337,6 +2356,38 @@ func (m *Manager) InstanceAppID(instance string) (string, error) {
 		return "", fmt.Errorf("fcvm: InstanceAppID %s: not live", instance)
 	}
 	return inst.AppID, nil
+}
+
+// InstanceIdentity returns the app and account principals attached to a live
+// instance. The workload-identity vsock receiver uses the single lock-held
+// lookup to avoid minting a token from a stale app/account pair while an
+// instance is being parked or destroyed.
+func (m *Manager) InstanceIdentity(instance string) (appID, accountID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok {
+		return "", "", fmt.Errorf("fcvm: InstanceIdentity %s: not live", instance)
+	}
+	return inst.AppID, inst.AccountID, nil
+}
+
+// InstanceIdentityByCID resolves the peer CID and its app/account principal
+// under one lock. This is the host-vsock token boundary: a park/reuse racing a
+// request can therefore only produce a complete old tuple or a not-live error,
+// never a mixed identity.
+func (m *Manager) InstanceIdentityByCID(cid uint32) (instance, appID, accountID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	instance, ok := m.cidToID[cid]
+	if !ok {
+		return "", "", "", fmt.Errorf("fcvm: InstanceIdentityByCID %d: not live", cid)
+	}
+	inst, ok := m.live[instance]
+	if !ok {
+		return "", "", "", fmt.Errorf("fcvm: InstanceIdentityByCID %d: instance %s not live", cid, instance)
+	}
+	return instance, inst.AppID, inst.AccountID, nil
 }
 
 // InstanceDeploymentIDAndAppID (issue #463 / ADR-069 / PR-B AC #1)
@@ -3264,6 +3315,10 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	var wakeID string
+	if fields, ok := wire.FromContext(ctx); ok {
+		wakeID = fields.WakeID
+	}
 	// Phase timing (see wakePhases). Reported on EVERY failure and on
 	// successes slower than SlowWakeLogThreshold. The named `err`
 	// return is what lets this defer distinguish the two.
@@ -3272,10 +3327,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		switch {
 		case err != nil:
 			m.log.Warn("fcvm: wake failed; phase breakdown",
-				append([]any{"instance", req.Instance, "err", err}, phases.attrs()...)...)
+				append([]any{"wake_id", wakeID, "instance", req.Instance, "err", err}, phases.attrs()...)...)
 		case time.Since(phases.start) >= SlowWakeLogThreshold:
 			m.log.Warn("fcvm: slow wake; phase breakdown",
-				append([]any{"instance", req.Instance,
+				append([]any{"wake_id", wakeID, "instance", req.Instance,
 					"threshold_ms", SlowWakeLogThreshold.Milliseconds()}, phases.attrs()...)...)
 		}
 	}()
@@ -3751,6 +3806,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.wakePhaseMetrics.ObserveWakePhase("restore_ms", timings.restoreMs)
 		m.wakePhaseMetrics.ObserveWakePhase("netns_tap_ms", timings.netnsTapMs)
 		m.wakePhaseMetrics.ObserveWakePhase("guest_ready_ms", guestReadyMs)
+		m.wakePhaseMetrics.ObserveWakePhase("scan_check_ms", timings.scanCheckMs)
+		if method == WakeColdBoot {
+			m.wakePhaseMetrics.ObserveWakePhase("cold_boot_ms", timings.coldBootMs)
+		}
 	}
 	// Issue #1059 / ADR-127: per-box phase observe on the new
 	// *_wake_latency_seconds{box, phase} histogram. The fleet
@@ -3769,6 +3828,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.wakeFailureMetrics.WakeLatency("local", "restore_ms").Observe(float64(timings.restoreMs) / 1000.0)
 		m.wakeFailureMetrics.WakeLatency("local", "netns_tap_ms").Observe(float64(timings.netnsTapMs) / 1000.0)
 		m.wakeFailureMetrics.WakeLatency("local", "guest_ready_ms").Observe(float64(guestReadyMs) / 1000.0)
+		m.wakeFailureMetrics.WakeLatency("local", "scan_check_ms").Observe(float64(timings.scanCheckMs) / 1000.0)
+		if method == WakeColdBoot {
+			m.wakeFailureMetrics.WakeLatency("local", "cold_boot_ms").Observe(float64(timings.coldBootMs) / 1000.0)
+		}
 	}
 	// tailSecondsAccum (issue #667 / ADR-078) starts at 0 on
 	// every Wake; MarkInstanceTailTerminal accumulates into it
@@ -3816,9 +3879,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	m.mu.Unlock()
 	m.rebuildHostSMTPAllowlistRules(ctx)
-	m.log.Info("wake ok", "instance", req.Instance, "method", method.String(),
+	m.log.Info("wake ok", "wake_id", wakeID, "instance", req.Instance, "method", method.String(),
 		"uid", lease.UID, "host_ip", lease.HostIP.String(),
-		"setup_network_ms", timings.netnsTapMs, "restore_ms", timings.restoreMs,
+		"setup_network_ms", timings.netnsTapMs, "scan_check_ms", timings.scanCheckMs,
+		"restore_ms", timings.restoreMs, "cold_boot_ms", timings.coldBootMs,
 		"total_ms", time.Since(phases.start).Milliseconds())
 	// Issue #554 / ADR-078 / PR review fix: start the per-instance
 	// liveness probe loop after the live map insert so the cmd/vmmd
@@ -3845,6 +3909,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 // when constructing the Instance. timings is optional for tests
 // that wire bringUp directly without a Wake frame.
 func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest, timings *bringUpTimings) (WakeMethod, error) {
+	serviceDiscoveryIP := ""
+	if !lease.IsBuilder && nc.HostBridgeIP.IsValid() {
+		serviceDiscoveryIP = nc.HostBridgeIP.String()
+	}
 	// issue #299: refuse to bring up an instance whose base ext4
 	// staged with a fix-available CRITICAL Grype finding. Runs BEFORE the restore
 	// decision tree because a scan refusal is a policy gate, not a
@@ -3855,8 +3923,13 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	// why the function returns the Problem shape rather than a bare
 	// error — the wake-error channel expects it). No-op when storage
 	// is nil (unit tests that don't wire WithStorage continue to pass).
-	if err := m.bringUpScanCheck(ctx, req.BaseKey); err != nil {
-		return WakeColdBoot, err
+	scanCheckStartedAt := time.Now()
+	scanErr := m.bringUpScanCheck(ctx, req.BaseKey)
+	if timings != nil {
+		timings.scanCheckMs = time.Since(scanCheckStartedAt).Milliseconds()
+	}
+	if scanErr != nil {
+		return WakeColdBoot, scanErr
 	}
 	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore {
 		rs := RestoreSpec{
@@ -3894,9 +3967,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// path. Non-empty → Restore stages one extra drive
 			// per entry (read-only for sidecars, read-write for
 			// the main workload's drive1). Additive per ADR-016.
-			Workloads:      buildWorkloadsForRestore(req),
-			SecretsEnvJSON: req.preparedSecretsEnvJSON,
-			APIEnvJSON:     req.preparedAPIEnvJSON,
+			Workloads:          buildWorkloadsForRestore(req),
+			SecretsEnvJSON:     req.preparedSecretsEnvJSON,
+			APIEnvJSON:         req.preparedAPIEnvJSON,
+			ServiceDiscoveryIP: serviceDiscoveryIP,
 		}
 		// ADR-098 C11: stamp the RestoreMs (issue #470 / PR #543).
 		// vmm.Restore wraps /snapshot/load + waitReady for the
@@ -3979,11 +4053,17 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// (main + sidecars). buildWorkloadsForColdBoot emits an
 		// empty slice on the legacy single-workload path so
 		// BootColdBoot falls through to the LayerKey branch.
-		Workloads:      buildWorkloadsForColdBoot(req),
-		SecretsEnvJSON: req.preparedSecretsEnvJSON,
-		APIEnvJSON:     req.preparedAPIEnvJSON,
+		Workloads:          buildWorkloadsForColdBoot(req),
+		SecretsEnvJSON:     req.preparedSecretsEnvJSON,
+		APIEnvJSON:         req.preparedAPIEnvJSON,
+		ServiceDiscoveryIP: serviceDiscoveryIP,
 	}
-	if err := m.vmm.BootColdBoot(ctx, lease, spec); err != nil {
+	coldBootStartedAt := time.Now()
+	coldBootErr := m.vmm.BootColdBoot(ctx, lease, spec)
+	if timings != nil {
+		timings.coldBootMs = time.Since(coldBootStartedAt).Milliseconds()
+	}
+	if coldBootErr != nil {
 		// Issue #1059 / ADR-127: terminal cold-boot failure
 		// counter. Distinct from the restore-fallback
 		// IncrementAbove because BootColdBoot is reached only
@@ -3995,10 +4075,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// not once per restore-fallback. The classifier gets
 		// the same call shape (Snapshot may be nil here).
 		if m.wakeFailureMetrics != nil {
-			reason := ClassifyWakeError(err, WakeContext{FCVersion: m.fcVersion})
+			reason := ClassifyWakeError(coldBootErr, WakeContext{FCVersion: m.fcVersion})
 			m.wakeFailureMetrics.WakeFailure("", req.AppID, reason).Inc()
 		}
-		return WakeColdBoot, fmt.Errorf("wake %s: cold boot: %w", req.Instance, err)
+		return WakeColdBoot, fmt.Errorf("wake %s: cold boot: %w", req.Instance, coldBootErr)
 	}
 	return WakeColdBoot, nil
 }

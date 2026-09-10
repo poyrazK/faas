@@ -13,8 +13,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,11 +133,12 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 		}
 	}
 	include := r.URL.Query().Get("include_secrets") != includeSecretsFalse
-	bundle, err := gatherExport(r.Context(), s, acct, include)
+	spool, byteCount, err := prepareAccountExport(r.Context(), s, acct, include)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not assemble export"))
 		return
 	}
+	defer cleanupAccountExportSpool(s, spool)
 	// GDPR audit ledger — record that an export was served. Best-
 	// effort; the ledger survives DeleteAccount so a future DPO can
 	// see the request even after the account row is gone. PR #83
@@ -159,18 +162,6 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 	w.Header().Set("Content-Disposition",
 		`attachment; filename="faas-account-`+acct.ID+`-`+
 			time.Now().UTC().Format("20060102")+`.json"`)
-	// Encode the bundle to a buffer first so we can stamp the
-	// byte_count on the audit row before the bytes leave the
-	// process. Streaming Encode directly to w would skip the count
-	// (and any bytes-after-the-emit would not be covered by the
-	// audit). The buffer doubles as a temporary copy — fine for
-	// the bundle sizes the platform exports today (low MB) and
-	// avoids a json.Encoder.Snapshot API we don't have.
-	encoded, err := json.Marshal(bundle)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not marshal export"))
-		return
-	}
 	// Audit row for the customer-facing export action (issue #755
 	// / PR-5.4). Distinct from the gdpr_requests ledger row above:
 	// the audit row is the events-table side of the same action,
@@ -186,11 +177,13 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 	acctID := acct.ID
 	s.audit.Emit(r.Context(), "account.export_requested", &acctID, map[string]any{
 		"request_id": middleware.RequestIDFrom(r),
-		"byte_count": len(encoded),
+		"byte_count": byteCount,
 		"replay":     isIdempotentRetry,
 	})
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(encoded)
+	if _, err := io.Copy(w, spool); err != nil {
+		s.log.Warn("apid: stream account export failed", "account", acct.ID, "err", err)
+	}
 }
 
 // deleteAccount schedules the account for hard delete in 30 days.
@@ -396,87 +389,328 @@ func writeDeletionEnvelope(w http.ResponseWriter, acct state.Account) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// gatherExport walks every per-resource list inside one sequence of
-// store calls. The slice order is the order the bundle serializes —
-// top-level fields first so reviewers can see the envelope shape at
-// a glance.
-//
-// A failure in any per-resource list is collected and surfaced via
-// errors.Join; the handler converts that into a 500 capacity
-// envelope. Silent omission is the bug this function used to have:
-// a partial export that returned 200 left a customer thinking their
-// bundle was complete when it was not.
-func gatherExport(ctx context.Context, s *server, acct state.Account, includeSecrets bool) (api.AccountExportResponse, error) {
+const accountExportPageSize = 250
+
+// accountExportJSON writes one valid JSON object incrementally. Each resource
+// section is released before the next one is loaded, and large history tables
+// use keyset pages. The caller writes to an unlinked private spool first so a
+// late store failure never exposes a partial bundle with a 200 response.
+type accountExportJSON struct {
+	w      io.Writer
+	enc    *json.Encoder
+	fields int
+}
+
+func newAccountExportJSON(w io.Writer) *accountExportJSON {
+	return &accountExportJSON{w: w, enc: json.NewEncoder(w)}
+}
+
+func (j *accountExportJSON) beginField(name string) error {
+	prefix := "{"
+	if j.fields > 0 {
+		prefix = ","
+	}
+	j.fields++
+	_, err := io.WriteString(j.w, prefix+strconv.Quote(name)+":")
+	return err
+}
+
+func (j *accountExportJSON) value(name string, value any) error {
+	if err := j.beginField(name); err != nil {
+		return err
+	}
+	return j.enc.Encode(value)
+}
+
+func (j *accountExportJSON) array(name string, produce func(emit func(any) error) error) error {
+	if err := j.beginField(name); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(j.w, "["); err != nil {
+		return err
+	}
+	first := true
+	emit := func(value any) error {
+		if !first {
+			if _, err := io.WriteString(j.w, ","); err != nil {
+				return err
+			}
+		}
+		first = false
+		return j.enc.Encode(value)
+	}
+	if err := produce(emit); err != nil {
+		return err
+	}
+	_, err := io.WriteString(j.w, "]")
+	return err
+}
+
+func (j *accountExportJSON) close() error {
+	if j.fields == 0 {
+		_, err := io.WriteString(j.w, "{}")
+		return err
+	}
+	_, err := io.WriteString(j.w, "}\n")
+	return err
+}
+
+func prepareAccountExport(ctx context.Context, s *server, acct state.Account, includeSecrets bool) (*os.File, int64, error) {
+	spool, err := os.CreateTemp("", "gregale-account-export-*.json")
+	if err != nil {
+		return nil, 0, err
+	}
+	// Linux and macOS keep the descriptor readable after unlink. Removing the
+	// directory entry immediately means an apid crash cannot leave a customer
+	// export behind in the host temporary directory.
+	if err := os.Remove(spool.Name()); err != nil {
+		_ = spool.Close()
+		return nil, 0, err
+	}
+	fail := func(cause error) (*os.File, int64, error) {
+		_ = spool.Close()
+		_ = os.Remove(spool.Name())
+		return nil, 0, cause
+	}
+	if err := writeAccountExportJSON(ctx, s, acct, includeSecrets, spool); err != nil {
+		return fail(err)
+	}
+	info, err := spool.Stat()
+	if err != nil {
+		return fail(err)
+	}
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		return fail(err)
+	}
+	return spool, info.Size(), nil
+}
+
+func cleanupAccountExportSpool(s *server, spool *os.File) {
+	name := spool.Name()
+	if err := spool.Close(); err != nil {
+		s.log.Warn("apid: close account export spool failed", "err", err)
+	}
+	if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.log.Warn("apid: remove account export spool failed", "err", err)
+	}
+}
+
+func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, includeSecrets bool, dst io.Writer) error {
 	apps, err := s.store.ListApps(ctx, acct.ID)
 	if err != nil {
-		return api.AccountExportResponse{}, err
+		return fmt.Errorf("list apps: %w", err)
 	}
-	appOut := make([]api.AppResponse, 0, len(apps))
-	for _, a := range apps {
-		appOut = append(appOut, s.appResponse(a, acct.Plan))
+	out := newAccountExportJSON(dst)
+	if err := out.value("exported_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	//nolint:contextcheck // nil store skips the response's derived lookups.
+	if err := out.value("account", s.accountResponse(context.Background(), acct, nil)); err != nil {
+		return err
+	}
+	if err := out.array("apps", func(emit func(any) error) error {
+		for _, app := range apps {
+			if err := emit(s.appResponse(app, acct.Plan)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
-	// Deployments are read once and shared: buildDeploymentsForExport
-	// emits the DTO list, and listBuildsForAccountExport uses the same
-	// slice to map each build's DeploymentID back to its AppID
-	// (BuildExportResponse.AppID was previously zeroed because builds
-	// have no AppID column of their own).
-	// FIXME: pagination — 1000 is a placeholder. A real customer with
-	// > 1000 deployments gets a truncated bundle. Plan is: switch this
-	// to a windowed loop keyed on CreatedAt + ID once the export spans
-	// pages, and surface a "truncated: bool" in the bundle envelope so
-	// the dashboard can show a notice.
-	depRows, err := s.store.ListDeploymentsForAccount(ctx, acct.ID, time.Time{}, 1000)
+	depByID := make(map[string]string)
+	if err := out.array("deployments", func(emit func(any) error) error {
+		var beforeAt time.Time
+		var beforeID string
+		for {
+			rows, err := s.store.ListDeploymentsForAccountPage(ctx, acct.ID, beforeAt, beforeID, accountExportPageSize)
+			if err != nil {
+				return fmt.Errorf("list deployments: %w", err)
+			}
+			shaped, err := buildDeploymentsForExport(rows)
+			if err != nil {
+				return err
+			}
+			for i, deployment := range shaped {
+				depByID[rows[i].ID] = rows[i].AppID
+				if err := emit(deployment); err != nil {
+					return err
+				}
+			}
+			if len(rows) < accountExportPageSize {
+				return nil
+			}
+			last := rows[len(rows)-1]
+			if last.CreatedAt.Equal(beforeAt) && last.ID == beforeID {
+				return errors.New("deployment export cursor did not advance")
+			}
+			beforeAt, beforeID = last.CreatedAt, last.ID
+		}
+	}); err != nil {
+		return err
+	}
+
+	sections := []struct {
+		name string
+		load func() (any, error)
+	}{
+		{"builds", func() (any, error) { return listBuildsForAccountExport(ctx, s.store, acct.ID, depByID) }},
+		{"instances", func() (any, error) { return listInstancesForAccountExport(ctx, s.store, acct.ID) }},
+		{"usage", func() (any, error) { return listUsageForAccountExport(ctx, s.store, acct.ID) }},
+		{"domains", func() (any, error) { return listDomainsForAccountExport(ctx, s.store, acct.ID) }},
+		{"crons", func() (any, error) { return listCronsForAccountExport(ctx, s.store, acct.ID) }},
+		{"api_keys", func() (any, error) { return listKeysForAccountExport(ctx, s.store, acct.ID) }},
+	}
+	for _, section := range sections {
+		value, err := section.load()
+		if err != nil {
+			return fmt.Errorf("load %s: %w", section.name, err)
+		}
+		if err := out.value(section.name, value); err != nil {
+			return err
+		}
+	}
+
+	if err := out.array("app_secrets", func(emit func(any) error) error {
+		if !includeSecrets {
+			return nil
+		}
+		for _, app := range apps {
+			rows, err := s.store.ListAllAppSecrets(ctx, acct.ID, app.ID)
+			if err != nil {
+				return fmt.Errorf("list secrets app=%s: %w", app.ID, err)
+			}
+			for _, sec := range rows {
+				if err := emit(api.AppSecretExportResponse{
+					AppID: sec.AppID, Scope: sec.Scope, Key: sec.Key,
+					Ciphertext: base64.RawURLEncoding.EncodeToString(sec.Ciphertext),
+					CreatedAt:  sec.CreatedAt.UTC().Format(time.RFC3339),
+					UpdatedAt:  sec.UpdatedAt.UTC().Format(time.RFC3339),
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := writeAccountAuditTrail(ctx, s.store, acct.ID, out); err != nil {
+		return err
+	}
+	return out.close()
+}
+
+type auditExportItem struct {
+	at  time.Time
+	dto api.GdprAuditExportResponse
+}
+
+type gdprExportPager struct {
+	store     state.Store
+	accountID string
+	beforeAt  time.Time
+	beforeID  string
+	rows      []state.GdprRequest
+	pos       int
+	exhausted bool
+}
+
+func (p *gdprExportPager) next(ctx context.Context) (auditExportItem, bool, error) {
+	if p.pos >= len(p.rows) {
+		if p.exhausted {
+			return auditExportItem{}, false, nil
+		}
+		rows, err := p.store.ListGdprRequestsForAccountPage(ctx, p.accountID, p.beforeAt, p.beforeID, accountExportPageSize)
+		if err != nil {
+			return auditExportItem{}, false, err
+		}
+		p.rows, p.pos = rows, 0
+		p.exhausted = len(rows) < accountExportPageSize
+		if len(rows) == 0 {
+			return auditExportItem{}, false, nil
+		}
+		last := rows[len(rows)-1]
+		p.beforeAt, p.beforeID = last.RequestedAt, last.ID
+	}
+	row := p.rows[p.pos]
+	p.pos++
+	return auditExportItem{at: row.RequestedAt, dto: api.GdprAuditExportResponse{
+		Source: "gdpr", Action: string(row.Action),
+		RequestedAt: row.RequestedAt.UTC().Format(time.RFC3339),
+		CompletedAt: formatTimeOrEmpty(row.CompletedAt),
+	}}, true, nil
+}
+
+type eventExportPager struct {
+	store     state.Store
+	accountID string
+	beforeAt  time.Time
+	beforeID  int64
+	rows      []state.Event
+	pos       int
+	exhausted bool
+}
+
+func (p *eventExportPager) next(ctx context.Context) (auditExportItem, bool, error) {
+	if p.pos >= len(p.rows) {
+		if p.exhausted {
+			return auditExportItem{}, false, nil
+		}
+		rows, err := p.store.ListEventsPage(ctx, p.accountID, p.beforeAt, p.beforeID, accountExportPageSize)
+		if err != nil {
+			return auditExportItem{}, false, err
+		}
+		p.rows, p.pos = rows, 0
+		p.exhausted = len(rows) < accountExportPageSize
+		if len(rows) == 0 {
+			return auditExportItem{}, false, nil
+		}
+		last := rows[len(rows)-1]
+		p.beforeAt, p.beforeID = last.At, last.ID
+	}
+	row := p.rows[p.pos]
+	p.pos++
+	return auditExportItem{at: row.At, dto: api.GdprAuditExportResponse{
+		Source: "event", RequestedAt: row.At.UTC().Format(time.RFC3339),
+		Kind: row.Kind, Data: row.Data,
+	}}, true, nil
+}
+
+func writeAccountAuditTrail(ctx context.Context, store state.Store, accountID string, out *accountExportJSON) error {
+	gdpr := &gdprExportPager{store: store, accountID: accountID}
+	events := &eventExportPager{store: store, accountID: accountID}
+	g, hasG, err := gdpr.next(ctx)
 	if err != nil {
-		return api.AccountExportResponse{}, err
+		return fmt.Errorf("list GDPR audit: %w", err)
 	}
-	depByID := make(map[string]string, len(depRows))
-	for _, d := range depRows {
-		depByID[d.ID] = d.AppID
+	e, hasE, err := events.next(ctx)
+	if err != nil {
+		return fmt.Errorf("list account events: %w", err)
 	}
-
-	deployments, depErr := buildDeploymentsForExport(depRows)
-	instances, insErr := listInstancesForAccountExport(ctx, s.store, acct.ID)
-	usage, useErr := listUsageForAccountExport(ctx, s.store, acct.ID)
-	domains, domErr := listDomainsForAccountExport(ctx, s.store, acct.ID)
-	crons, crnErr := listCronsForAccountExport(ctx, s.store, acct.ID)
-	keys, keyErr := listKeysForAccountExport(ctx, s.store, acct.ID)
-	builds, bldErr := listBuildsForAccountExport(ctx, s.store, acct.ID, depByID)
-	secrets, secErr := listSecretsForAccountExport(ctx, s.store, acct.ID, apps, includeSecrets)
-	auditGdpr, audErr := listGdprRequestsForAccountExport(ctx, s.store, acct.ID)
-	auditEvents, evtErr := listEventsForAccountExport(ctx, s.store, acct.ID)
-	// IAM-4 (ADR-035): union the two audit sources into one ordered
-	// timeline so a reviewer sees a single chronological feed.
-	audit := mergeAuditTrail(auditGdpr, auditEvents)
-
-	if err := errors.Join(depErr, insErr, useErr, domErr, crnErr, keyErr, bldErr, secErr, audErr, evtErr); err != nil {
-		// Log per-resource failures so an operator can correlate a
-		// customer-reported "export is missing X" with the actual DB
-		// failure. The handler returns 500; the customer retries.
-		s.log.Warn("apid: gatherExport partial failure", "account", acct.ID, "err", err)
-		return api.AccountExportResponse{}, err
+	if !hasG && !hasE {
+		return nil
 	}
-
-	return api.AccountExportResponse{
-		ExportedAt: time.Now().UTC().Format(time.RFC3339),
-		// No incoming request context here — the export is built
-		// outside any handler scope (the inner per-resource helpers
-		// already carry the request ctx); accountResponse's third
-		// argument is nil so the "skip AppCount/Usage lookups" branch
-		// fires regardless.
-		//nolint:contextcheck
-		Account:     s.accountResponse(context.Background(), acct, nil),
-		Apps:        appOut,
-		Deployments: deployments,
-		Builds:      builds,
-		Instances:   instances,
-		Usage:       usage,
-		Domains:     domains,
-		Crons:       crons,
-		APIKeys:     keys,
-		AppSecrets:  secrets,
-		AuditTrail:  audit,
-	}, nil
+	return out.array("audit_trail", func(emit func(any) error) error {
+		for hasG || hasE {
+			if hasG && (!hasE || !g.at.Before(e.at)) {
+				if err := emit(g.dto); err != nil {
+					return err
+				}
+				g, hasG, err = gdpr.next(ctx)
+			} else {
+				if err := emit(e.dto); err != nil {
+					return err
+				}
+				e, hasE, err = events.next(ctx)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // getGraceWindow returns the current per-account grace override
@@ -786,134 +1020,6 @@ func listKeysForAccountExport(ctx context.Context, st state.Store, accountID str
 		})
 	}
 	return out, nil
-}
-
-// listGdprRequestsForAccountExport surfaces the customer's own GDPR
-// audit ledger slice in the export bundle. Bounded to 1000 rows so
-// the bundle stays < ~300 KB even for power customers; pagination is
-// the right fix here, deferred per the FIXME in gatherExport.
-//
-// Each row carries source="gdpr" so the union with events rows
-// (IAM-4, ADR-035) carries a single discriminator field per row.
-func listGdprRequestsForAccountExport(ctx context.Context, st state.Store, accountID string) ([]api.GdprAuditExportResponse, error) {
-	rows, err := st.ListGdprRequestsForAccount(ctx, accountID, 1000)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]api.GdprAuditExportResponse, 0, len(rows))
-	for _, g := range rows {
-		out = append(out, api.GdprAuditExportResponse{
-			Source:      "gdpr",
-			Action:      string(g.Action),
-			RequestedAt: g.RequestedAt.UTC().Format(time.RFC3339),
-			CompletedAt: formatTimeOrEmpty(g.CompletedAt),
-		})
-	}
-	return out, nil
-}
-
-// mergeAuditTrail interleaves the GDPR-action rows (gdpr_requests)
-// with the security event rows (events table) by timestamp descending
-// so the bundle surfaces one ordered timeline. Stable sort so two rows
-// at the same instant preserve the order they were fetched (gdpr
-// first, then events).
-//
-// The merge itself is unbounded w.r.t. its inputs; the bound lives on
-// the upstream list helpers (listGdprRequestsForAccountExport and
-// listEventsForAccountExport both cap at 1000 rows), so the merged
-// result is ≤ 2000 rows for any account. Same posture as
-// listGdprRequestsForAccountExport.
-func mergeAuditTrail(gdpr, events []api.GdprAuditExportResponse) []api.GdprAuditExportResponse {
-	out := make([]api.GdprAuditExportResponse, 0, len(gdpr)+len(events))
-	i, j := 0, 0
-	for i < len(gdpr) && j < len(events) {
-		if gdpr[i].RequestedAt >= events[j].RequestedAt {
-			out = append(out, gdpr[i])
-			i++
-		} else {
-			out = append(out, events[j])
-			j++
-		}
-	}
-	for ; i < len(gdpr); i++ {
-		out = append(out, gdpr[i])
-	}
-	for ; j < len(events); j++ {
-		out = append(out, events[j])
-	}
-	return out
-}
-
-// listEventsForAccountExport surfaces the customer's security event
-// rows in the export bundle, interleaved with the GDPR-action rows by
-// gatherExport. Same 1000-row cap as listGdprRequestsForAccountExport;
-// pagination lives behind the same FIXME.
-//
-// Each row carries source="event" so the union is a single, ordered
-// timeline. The Data field is the verbatim jsonb the auditor wrote at
-// emit time — the kind-specific schema is documented in
-// docs/adr/035-auth-audit-events.md.
-func listEventsForAccountExport(ctx context.Context, st state.Store, accountID string) ([]api.GdprAuditExportResponse, error) {
-	rows, err := st.ListEvents(ctx, accountID, 1000)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]api.GdprAuditExportResponse, 0, len(rows))
-	for _, e := range rows {
-		out = append(out, api.GdprAuditExportResponse{
-			Source:      "event",
-			RequestedAt: e.At.UTC().Format(time.RFC3339),
-			Kind:        e.Kind,
-			Data:        e.Data,
-		})
-	}
-	return out, nil
-}
-
-// listSecretsForAccountExport walks every app on the account and
-// aggregates the per-app ciphertext rows. When include is false (the
-// caller passed ?include_secrets=false) we drop the slice entirely
-// so the customer can fetch an export without revealing ciphertext
-// to a backup they don't control.
-//
-// A per-app list failure is collected into the returned error so
-// gatherExport can convert any partial failure into a 500; we don't
-// want a backup trusted to be complete when a per-app SELECT failed.
-//
-// ADR-092 PR-B: the export walks every scope per app (PR-A's
-// ListAllAppSecrets), not just the default-scope ListAppSecrets.
-// Pre-PR-B the call used ListAppSecrets, which delegated to
-// ListAppSecretsInScope(DefaultEnvScope) and silently dropped
-// prod/staging rows — a customer with multi-scope secrets got a
-// silently-incomplete export. Each row's Scope is echoed on the
-// wire so the destination import can re-bind every (app, scope,
-// key) triple.
-func listSecretsForAccountExport(ctx context.Context, st state.Store, accountID string, apps []state.App, include bool) ([]api.AppSecretExportResponse, error) {
-	if !include {
-		return nil, nil
-	}
-	var (
-		out     []api.AppSecretExportResponse
-		failure error
-	)
-	for _, a := range apps {
-		rows, err := st.ListAllAppSecrets(ctx, accountID, a.ID)
-		if err != nil {
-			failure = errors.Join(failure, fmt.Errorf("list secrets app=%s: %w", a.ID, err))
-			continue
-		}
-		for _, sec := range rows {
-			out = append(out, api.AppSecretExportResponse{
-				AppID:      sec.AppID,
-				Scope:      sec.Scope,
-				Key:        sec.Key,
-				Ciphertext: base64.RawURLEncoding.EncodeToString(sec.Ciphertext),
-				CreatedAt:  sec.CreatedAt.UTC().Format(time.RFC3339),
-				UpdatedAt:  sec.UpdatedAt.UTC().Format(time.RFC3339),
-			})
-		}
-	}
-	return out, failure
 }
 
 // formatTimeOrEmpty renders t as RFC 3339 in UTC, or "" if zero. Used

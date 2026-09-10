@@ -973,6 +973,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/s3-credentials", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.listObjectS3Credentials))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/s3-credentials", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.createObjectS3Credential))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.revokeObjectS3Credential))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/compute-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.listObjectStorageComputeBindings))))
+	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/compute-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.createObjectStorageComputeBinding))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.deleteObjectStorageComputeBinding))))
+	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.rotateObjectStorageComputeBinding))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageReadSurface...)(s.listBucketObjects))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.deleteBucketObject))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/signed-url", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeStorageRead, api.ScopeStorageWrite)(s.signBucketObject))))
@@ -999,7 +1003,9 @@ func (s *server) handler() http.Handler {
 	// whole account, so it requires the admin scope; the read-only
 	// /v1/account carries the method default (read or admin).
 	mux.HandleFunc("GET /v1/account", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.whoami))))
+	mux.HandleFunc("GET /v1/account/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.accountUsage))))
 	mux.HandleFunc("GET /v1/account/object-storage-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getObjectStorageUsage))))
+	mux.HandleFunc("GET /v1/account/managed-postgres-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getManagedPostgresUsage))))
 	mux.HandleFunc("POST /v1/admin/object-storage/usage-reports", s.authLimited(s.requireAdminMutation(s.recordObjectStorageUsage)))
 	// IAM-6 (issue #190 / ADR-061, PR 4): active-org whoami. The
 	// route is undocumented in api/openapi.yaml for PR 4 — PR 5
@@ -1115,6 +1121,9 @@ func (s *server) handler() http.Handler {
 	// active control-plane registry. This internal route is loopback-only;
 	// gatewayd-internal rejects the same path before its public /v1 proxy.
 	mux.HandleFunc("GET /v1/internal/metrics/targets", s.computeMetricsDiscovery)
+	mux.HandleFunc("GET /v1/internal/metrics/vmmd-targets", s.vmmdMetricsDiscovery)
+	mux.HandleFunc("GET /v1/internal/metrics/imaged-targets", s.imagedMetricsDiscovery)
+	mux.HandleFunc("GET /v1/internal/metrics/builderd-targets", s.builderdMetricsDiscovery)
 	// Issue #274: Promtail metrics are discovered from the same active
 	// compute-node registry, but use a separate HTTP-SD endpoint so the
 	// gateway and shipper jobs never scrape each other's ports.
@@ -1274,6 +1283,13 @@ func (s *server) handler() http.Handler {
 	}
 
 	// Deployments.
+	// App-scoped deployment history read. The slug is resolved through
+	// loadApp so cross-account probes collapse to the same 404 surface as
+	// the latest-deployment endpoint; pagination stays on the app's index.
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.listAppDeployments))))
+	// App-scoped release cockpit: current deployment, predecessor, field-level
+	// diff, and the eligible rollback target in one read.
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{id}/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getAppDeploymentSummary))))
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createDeployment))))))
 	// App-scoped latest-deployment read. This is the public counterpart to
 	// Store.LatestDeployment already used by the dashboard and deploy pipeline;
@@ -1332,7 +1348,7 @@ func (s *server) handler() http.Handler {
 	// handlers_diff.go:diffApp.
 	mux.HandleFunc("POST /v1/apps/{slug}/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.diffApp)))
 	// ADR-126 / issue #975 item #2 — OpenAPI Import + Auto-Generation.
-	// Four app-scoped routes keyed on {slug}, distinct from the
+	// Five app-scoped routes keyed on {slug}, distinct from the
 	// deployment-keyed getOpenAPIDoc / patchOpenAPIDoc / openAPIDocDelete
 	// family above (item #1, lines 1025-1027). The GET accepts
 	// ?source=manual_import|auto so the dashboard can fetch either
@@ -1343,6 +1359,13 @@ func (s *server) handler() http.Handler {
 	// rides the read-scope chain with no requireMFA (same posture
 	// as /v1/apps/{slug}/diff just above).
 	mux.HandleFunc("GET /v1/apps/{slug}/openapi", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPI)))
+	// Read-only route-policy preview: declared OpenAPI operations joined with
+	// gatewayd-observed routes and matching edge rules. It deliberately stays
+	// on the read-scope chain with no MFA because it performs no writes.
+	mux.HandleFunc("GET /v1/apps/{slug}/openapi/preview", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPIPolicyPreview)))
+	// ADR-121: read-only declared contract diff. The endpoint is registered
+	// even while dark-launched so clients receive the stable 503 feature code.
+	mux.HandleFunc("GET /v1/apps/{slug}/openapi/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPIContractDiff)))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.postAppOpenAPIImport))))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi/dry-run", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postAppOpenAPIImportDryRun)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppOpenAPIImport))))
@@ -1412,9 +1435,9 @@ func (s *server) handler() http.Handler {
 	// derives the next stage from persisted state and the store commits
 	// traffic, canary state, rollout completion, and audit atomically.
 	mux.HandleFunc("POST /v1/deployments/{id}/canary/advance", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.advanceCanary)))))
-	// ADR-124 deployment queue controls. Four routes; cancel +
-	// clear-obsolete (Free-allowed); reorder + clear-obsolete's
-	// plan-gated path use ScopeDeployWrite + Plan.QueueControlsAllowed.
+	// ADR-124 deployment queue controls. Four routes; cancel is
+	// Free-allowed. Reorder and clear-obsolete use ScopeDeployWrite
+	// plus Plan.QueueControlsAllowed.
 	// The {slug} form on cancel lets us honour the same loadApp
 	// IDOR gate that POST /v1/apps/{slug}/deployments uses; the
 	// id-only form on the other three mirrors the existing PATCH
@@ -1740,6 +1763,16 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
 
+	// Customer runtime log drains (issue #1398 O4). Each destination is
+	// provider-neutral: HTTP JSON covers compatible intake endpoints, while
+	// OTLP targets a collector or any vendor's OTLP/HTTP endpoint (including
+	// Datadog through its OTLP-compatible collector path).
+	mux.HandleFunc("GET /v1/apps/{slug}/log-drains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppLogDrains))))
+	mux.HandleFunc("POST /v1/apps/{slug}/log-drains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppLogDrain)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrain))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppLogDrain))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppLogDrain))))
+
 	// Move 2: event-driven surface (handlers_invocations.go).
 	// Charged routes take idempotent so retries are safe; the long-poll
 	// ones take authLimited (no idempotent — a network jitter on a
@@ -1786,11 +1819,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/delayed-tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.delayedTaskGet))))
 	mux.HandleFunc("DELETE /v1/delayed-tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.delayedTaskCancel))))
 
-	// ADR-127 production debugger — read-only slice in PR-A. The
-	// write-side (publisher → gRPC IncrementRequestTelemetry → apid
-	// receiver → sqlc INSERT) lands in PR-B; this GET exists so
-	// customers can already hit the endpoint and see rows once a
-	// row source is configured. Plan-gated by DebugTelemetryEnabled.
+	// ADR-127 production debugger — request telemetry, evidence, compare,
+	// and replay. The browser dashboard has a separate CSRF-protected form;
+	// API writes remain Bearer-key + MFA + deploy-scope gated below.
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
@@ -1885,6 +1916,8 @@ func (s *server) handler() http.Handler {
 	// (matches /v1/compute-nodes read precedent).
 	mux.HandleFunc("GET /v1/admin/obs/overview",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsOverview))))
+	mux.HandleFunc("GET /v1/admin/managed-postgres/usage/{account_id}",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getManagedPostgresUsageOperator))))
 	mux.HandleFunc("GET /v1/admin/obs/tenants",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsListTenants))))
 	mux.HandleFunc("GET /v1/admin/obs/capacity",
@@ -1984,14 +2017,15 @@ func (s *server) handler() http.Handler {
 	// in-flight builds.
 	mux.HandleFunc("POST /v1/admin/builds/sweep-stuck",
 		s.authLimited(s.requireAdminMutation(s.postSweepStuckBuilds)))
-	// Compute-node lifecycle controls. They are deliberately separate from
-	// the read-only /obs namespace and require both MFA and confirm=true.
-	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/suspend",
-		s.authLimited(s.requireAdminMutation(s.postObsAccountSuspend)))
-	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/restore",
-		s.authLimited(s.requireAdminMutation(s.postObsAccountRestore)))
-	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
-		s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions)))
+	// Account and compute-node lifecycle controls. They are deliberately
+	// separate from the read-only /obs namespace and require strict admin
+	// mutation authentication plus confirm=true.
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/suspend",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountSuspend))))
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/restore",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRestore))))
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/drain",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeDrain))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/force-drain",
@@ -2175,6 +2209,7 @@ func (s *server) handler() http.Handler {
 
 	// Account-scoped deployments list (M7.5 dashboard).
 	mux.HandleFunc("GET /v1/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeployments))))
+	mux.HandleFunc("GET /v1/deployments/latest-by-app", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listLatestDeploymentsByApp))))
 
 	// MFA (IAM-2, issue #186). Five POST endpoints; all on the
 	// admin-only scope set because the dashboard never exposes
@@ -2459,6 +2494,34 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/secrets", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetSecret))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteSecret))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/rotate", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRotateSecret))))
+	// G8 / issue #1397 — outbound webhook forms. All mutations use the
+	// existing JSON handlers through a named dashboard CSRF envelope, so
+	// validation, ownership, plan gates, audit rows, and RFC 7807 errors
+	// stay identical to the API/CLI paths.
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateAppWebhook))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/toggle", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardToggleAppWebhook))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteAppWebhook))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/rotate-secret", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRotateAppWebhookSecret))))
+	mux.Handle("POST /dashboard/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRetryAppWebhookDelivery))))
+	// G9 / issue #1397 — tenant-surface and hostname form adapters. The
+	// page uses the same JSON handlers as the CLI/API and a named CSRF
+	// envelope for every state-changing form.
+	mux.Handle("POST /dashboard/apps/{slug}/tenant-surfaces", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateTenantSurface))))
+	mux.Handle("POST /dashboard/apps/{slug}/tenant-surfaces/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteTenantSurface))))
+	mux.Handle("POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardAddTenantHostname))))
+	mux.Handle("POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames/{hostname}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRemoveTenantHostname))))
+	// G9 / issue #1397 — traffic mirror form adapters.
+	mux.Handle("POST /dashboard/apps/{slug}/mirrors", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateMirrorRule))))
+	mux.Handle("POST /dashboard/apps/{slug}/mirrors/{id}/toggle", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardToggleMirrorRule))))
+	mux.Handle("POST /dashboard/apps/{slug}/mirrors/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteMirrorRule))))
+	// G10 / issue #1397 — object-storage forms. These adapters use the
+	// existing bucket/object/signed-URL handlers and a named CSRF envelope;
+	// the signed URL is rendered only in the immediate response, never in a
+	// redirect query or persisted dashboard state.
+	mux.Handle("POST /dashboard/apps/{slug}/storage/buckets", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateStorageBucket))))
+	mux.Handle("POST /dashboard/apps/{slug}/storage/buckets/{bucket}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteStorageBucket))))
+	mux.Handle("POST /dashboard/apps/{slug}/storage/objects/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteStorageObject))))
+	mux.Handle("POST /dashboard/apps/{slug}/storage/signed-url", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSignStorageObject))))
 	// G6 / issue #1397 — app instance lifecycle controls. The GET page
 	// mints a named CSRF envelope; this form adapter verifies it before
 	// applying the same app-scoped park/wake/restart transitions as the
@@ -2476,6 +2539,10 @@ func (s *server) handler() http.Handler {
 	// the dashboard's named CSRF envelope before delegating to the same
 	// account-scoped store transition as the JSON API endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardQueueDeadLetterReplay))))
+	// ADR-127 — debugger replay. The form uses a dedicated named CSRF
+	// envelope and redirects back to the selected request so the customer can
+	// inspect the durable mirror invocation status without leaving the page.
+	mux.Handle("POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDebugReplay))))
 	// Issue #248 slice C: app-detail rollback form. It uses a dedicated
 	// named CSRF cookie and the same rollback core as the REST endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/rollback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRollback))))
@@ -2601,6 +2668,8 @@ func (s *server) handler() http.Handler {
 	// keeps the code aligned to.
 	mux.HandleFunc("GET /v1/openapi.yaml", apid.ServeOpenAPISpec)
 	mux.HandleFunc("GET /v1/openapi.json", apid.ServeOpenAPISpecJSON)
+	mux.HandleFunc("GET /docs", apid.ServeDocs)
+	mux.HandleFunc("GET /docs/", apid.ServeDocs)
 
 	// observeWrap (the outermost layer) feeds apid_ops_total +
 	// apid_op_duration_seconds. It's last so it sees the final

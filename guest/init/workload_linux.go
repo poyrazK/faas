@@ -37,10 +37,9 @@
 //     deployment-specific overrides are written to the main workload's
 //     instance-scoped upper at wake time under the sidecar's name.
 //
-// Per-workload cgroups (host side):
-//   - vmmd creates nested cgroup scopes under the per-instance
-//     scope (writeWorkloadCgroup). These are host-side
-//     defense-in-depth scopes.
+// Host cgroup fence:
+//   - vmmd places Firecracker in one aggregate per-instance scope. The host
+//     fence caps the VM as a whole; workload-specific limits live in the guest.
 //
 // Per-workload cgroups (in-guest, issue #463 / ADR-069 / PR-B
 // AC #4): guest-init mounts cgroup2 at /sys/fs/cgroup (see
@@ -595,6 +594,7 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	if port > 0 {
 		env = StampOverridePortEnv(env, port)
 	}
+	env = StampWorkloadIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	if directRoot != "" {
 		// exec.Command resolves bare names against the guest-init process's
@@ -696,12 +696,46 @@ func firstWorkloadEnv(options []map[string]string) map[string]string {
 	return options[0]
 }
 
-// fullRootfsSidecarRoot returns the mounted root for a sidecar when the main
-// guest boot selected the full-rootfs path. An absent mount is the optimized
-// shared-base path and returns an empty string so existing overlay behavior is
-// unchanged.
+// fullRootfsSidecarRoot returns the independently mounted root for a sidecar.
+// The historical name remains wire-internal; optimized and full-rootfs main
+// images now use the same isolated sidecar mount path.
 func fullRootfsSidecarRoot(name string) (string, error) {
 	return fullRootfsSidecarRootAt("/", name)
+}
+
+const (
+	sidecarMountMarkerPath  = "/run/faas/.sidecars-mounted"
+	sidecarMountMarkerValue = "gregale-sidecars-mounted-v1\n"
+)
+
+func writeSidecarMountMarker(root string) error {
+	path := filepath.Join(root, strings.TrimPrefix(sidecarMountMarkerPath, "/"))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(sidecarMountMarkerValue), 0o400)
+}
+
+func sidecarMountMarkerPresent(root string) (bool, error) {
+	path := filepath.Join(root, strings.TrimPrefix(sidecarMountMarkerPath, "/"))
+	info, err := os.Lstat(path)
+	if err != nil {
+		if isNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, fmt.Errorf("sidecar mount marker is not a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	if string(data) != sidecarMountMarkerValue {
+		return false, fmt.Errorf("invalid sidecar mount marker payload")
+	}
+	return true, nil
 }
 
 func fullRootfsMarkerPresent(root string) (bool, error) {
@@ -736,11 +770,11 @@ func fullRootfsSidecarRootAt(root, name string) (string, error) {
 	if root == "" {
 		root = "/"
 	}
-	fullRootfs, err := fullRootfsMarkerPresent(root)
+	mounted, err := sidecarMountMarkerPresent(root)
 	if err != nil {
-		return "", fmt.Errorf("inspect full-rootfs marker: %w", err)
+		return "", fmt.Errorf("inspect sidecar mount marker: %w", err)
 	}
-	if !fullRootfs {
+	if !mounted {
 		return "", nil
 	}
 	path := filepath.Join(root, strings.TrimPrefix(api.FullRootfsSidecarMountPath, "/"), name, "upper")

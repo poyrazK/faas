@@ -50,7 +50,8 @@ import (
 // sees a precise backoff hint instead of a bare 503.
 //
 // jsonOutput true → single JSON-encoded DeploymentResponse on
-// osStdout (matches the existing Deploy/DeployTarball wire shape).
+// osStdout (matches the existing Deploy/DeployTarball wire shape);
+// explicit --json --wait returns the terminal row with hosting_receipt.
 // jsonOutput false → streamDeployLogs tail the SSE build log.
 // cmdDeployRepoSourceRef posts {repo, ref, format:"tarball", annotations...}
 // to the PR-A endpoint and streams the build log. The annotation
@@ -72,8 +73,15 @@ func cmdDeployRepoSourceRefContext(ctx context.Context, slug, repo, ref string, 
 
 // cmdDeployRepoSourceRefContextWithWait keeps source-ref deploys aligned with
 // local and image deploys: non-blocking mode returns after the API accepts the
-// deployment, while JSON mode always emits its receipt immediately.
+// deployment, while plain JSON mode emits its receipt immediately.
 func cmdDeployRepoSourceRefContextWithWait(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy bool) int {
+	return cmdDeployRepoSourceRefContextWithJSONWait(ctx, slug, repo, ref, ann, waitForDeploy, false)
+}
+
+// cmdDeployRepoSourceRefContextWithJSONWait is the source-ref equivalent of
+// the local/image deploy paths: --json remains an immediate queued receipt,
+// while explicit --json --wait returns the terminal deployment receipt.
+func cmdDeployRepoSourceRefContextWithJSONWait(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -106,7 +114,7 @@ func cmdDeployRepoSourceRefContextWithWait(ctx context.Context, slug, repo, ref 
 		}
 		return printErr("Deploy failed", err)
 	}
-	if jsonOutput {
+	if jsonOutput && !jsonWait {
 		// Issue #1182 §P1 follow-up: source-ref path has no
 		// client-side tarball bytes (server pulls the codeload
 		// tarball via the GitHub App install token) and no git
@@ -122,6 +130,9 @@ func cmdDeployRepoSourceRefContextWithWait(ctx context.Context, slug, repo, ref 
 	if !waitForDeploy {
 		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 		return 0
+	}
+	if jsonWait {
+		return writeWaitedDeploymentReceipt(ctx, client, dep, nil, deployedAppURL(slug), "")
 	}
 	return streamDeployLogsContext(ctx, client, dep, slug)
 }

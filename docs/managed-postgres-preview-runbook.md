@@ -4,6 +4,27 @@ This runbook covers the dark/isolated preview. Customer provisioning remains
 disabled until the staging qualification evidence is reviewed and the exact
 backend fingerprint is approved.
 
+## Qualification approval
+
+Run the provider qualification with
+`FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` and save its JSON output in an
+operator-owned path. The output includes a versioned approval envelope and the
+exact `approval_env` values for the staging gate. Verify the saved artifact
+before applying those values:
+
+```sh
+FAAS_ENVIRONMENT=staging \
+FAAS_MANAGED_POSTGRES_CONFIG=/etc/faas/managed-postgres.json \
+FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH=/var/lib/faas/managed-postgres-qualification.json \
+go run ./cmd/managed-postgres-qualify --verify
+```
+
+Verification is read-only: it checks the report digest, expiry, lifecycle
+checks, provider-neutral spec, exact configured backend fingerprint, and
+canary allowlist without contacting Neon. A non-zero exit or any readiness
+reason blocks rollout. Treat the artifact as expired when its `expires_at`
+passes; rerun qualification instead of extending it by hand.
+
 ## Staging canary rollout
 
 Keep the global qualification gates enabled only in the isolated staging
@@ -55,3 +76,13 @@ Monthly COGS evidence is the usage ledger plus the stable line-item mapping:
 
 The line-item helper is deterministic and idempotent for a complete monthly
 snapshot. Provider adapters may change without changing these codes.
+
+## Observability
+
+The apid metrics listener exposes low-cardinality lifecycle, binding, usage,
+canary, and admission signals. Alerting for the preview is defined in the
+Prometheus `managed_postgres` rule group. Use the
+[`FaasManagedPostgresDegraded`](runbooks/FaasManagedPostgresDegraded.md)
+runbook for reconciliation failures, deferred work, stale usage, and recovery
+validation. The provisioning gate metric is informational: it is expected to
+be zero outside an approved staging canary.

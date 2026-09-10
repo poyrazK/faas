@@ -62,6 +62,25 @@ type LocalPathResolver interface {
 	LocalPath(key string) (path string, ok bool, err error)
 }
 
+// LocalPathSource describes why a backend can expose an artifact as a local
+// file. The values are stable telemetry vocabulary for snapshot restore
+// diagnostics; callers must treat unknown future values as local hits.
+type LocalPathSource string
+
+const (
+	LocalPathSourceBackend LocalPathSource = "backend_local"
+	LocalPathSourceCache   LocalPathSource = "cache_hit"
+)
+
+// LocalPathSourceResolver extends LocalPathResolver with the source of the
+// local file. Wrappers implement this optional capability so latency-sensitive
+// callers can distinguish a cache hit from a backend-local artifact without a
+// remote existence check.
+type LocalPathSourceResolver interface {
+	LocalPathResolver
+	LocalPathWithSource(key string) (path string, source LocalPathSource, ok bool, err error)
+}
+
 // LocalArtifactLister is an OPTIONAL capability LocalStorageBackend
 // implements. Remote drivers (future) are NOT required to implement it.
 // Callers that need list semantics (e.g. imaged's nightly GC) type-

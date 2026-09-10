@@ -17,6 +17,15 @@
       "path_style": true,
       "access_key_env": "GREGALE_OBJECT_STORAGE_ACCESS_KEY",
       "secret_key_env": "GREGALE_OBJECT_STORAGE_SECRET_KEY",
+      "usage_reports_path": "/var/spool/faas/s3-gatewayd/managed-virginia-v1-usage.json",
+      "usage": {
+        "driver": "ovh",
+        "application_key_env": "GREGALE_OVH_APPLICATION_KEY",
+        "application_secret_env": "GREGALE_OVH_APPLICATION_SECRET",
+        "consumer_key_env": "GREGALE_OVH_CONSUMER_KEY",
+        "request_log_bucket": "replace-with-dedicated-ovh-access-log-bucket",
+        "request_log_prefix": "gregale/"
+      },
       "allowed_origins": ["https://gregale.dev"]
     }
   ]

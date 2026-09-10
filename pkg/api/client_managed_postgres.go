@@ -6,6 +6,12 @@ import (
 	"net/url"
 )
 
+func (c *Client) GetManagedPostgresUsage(ctx context.Context) (ManagedPostgresUsageResponse, error) {
+	var out ManagedPostgresUsageResponse
+	err := c.do(ctx, http.MethodGet, "/v1/account/managed-postgres-usage", nil, &out)
+	return out, err
+}
+
 func (c *Client) ListManagedPostgresDatabases(ctx context.Context) (ManagedPostgresDatabaseList, error) {
 	var out ManagedPostgresDatabaseList
 	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases", nil, &out)

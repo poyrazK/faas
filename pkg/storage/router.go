@@ -185,15 +185,26 @@ func (r *PrefixRouter) dispatch(key string) (StorageBackend, string, string, err
 // It only succeeds when the selected backend can expose a local file; remote
 // routes deliberately return ok=false so callers fall back to Get.
 func (r *PrefixRouter) LocalPath(key string) (string, bool, error) {
+	path, _, ok, err := r.LocalPathWithSource(key)
+	return path, ok, err
+}
+
+// LocalPathWithSource preserves the selected backend's local-path
+// classification through prefix routing.
+func (r *PrefixRouter) LocalPathWithSource(key string) (string, LocalPathSource, bool, error) {
 	b, rem, _, err := r.dispatch(key)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	resolver, ok := b.(LocalPathResolver)
 	if !ok {
-		return "", false, nil
+		return "", "", false, nil
 	}
-	return resolver.LocalPath(rem)
+	path, local, err := resolver.LocalPath(rem)
+	if err != nil || !local {
+		return path, "", local, err
+	}
+	return path, LocalPathSourceBackend, true, nil
 }
 
 // Put dispatches via dispatch and forwards to the matching backend.

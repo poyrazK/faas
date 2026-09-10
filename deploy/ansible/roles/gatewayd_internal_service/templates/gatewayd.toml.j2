@@ -12,6 +12,11 @@
 # control-plane gatewayd-public forwards the request.
 apps_domain = "{{ gatewayd_apps_domain }}"
 
+# ADR-169: tenant-bridge service discovery. Empty disables the guest-facing
+# listener; production binds the host bridge address on the reserved port so
+# the netns firewall can keep the path tenant-only.
+service_proxy_listen = "{{ gatewayd_service_proxy_listen | default('') }}"
+
 # ADR-093 operator kill-switch. Default-on (true) so the rollout
 # reaches Hobby/Pro/Scale customers who didn't flip the per-app
 # apps.route_metrics_enabled flag at create time. Operators

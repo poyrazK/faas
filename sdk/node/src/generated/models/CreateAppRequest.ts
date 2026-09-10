@@ -56,6 +56,14 @@ export type CreateAppRequest = {
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
   /**
+   * Monitor-facing health path. Empty/omitted uses /healthz.
+   */
+  health_path?: string;
+  /**
+   * Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer.
+   */
+  health_path_wakes?: boolean;
+  /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */
   streaming_enabled?: boolean;

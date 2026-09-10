@@ -5,8 +5,8 @@
 The control-plane Prometheus HTTP service-discovery producer is stale, is
 returning fewer compute targets than the active registry expects, or is
 returning healthy targets that Prometheus cannot scrape. Prometheus itself may
-still be up while remote `gatewayd-internal` or Promtail metrics are frozen,
-incomplete, or absent.
+still be up while remote `gatewayd-internal`, vmmd, imaged, builderd or
+Promtail metrics are frozen, incomplete, or absent.
 
 The producer is apid's loopback-only endpoint. It reads active
 `compute_nodes` rows with a configured `gateway_target_url`; it does not read
@@ -26,7 +26,8 @@ time() - apid_metrics_discovery_last_success_timestamp_seconds{job="gatewayd-int
 rate(apid_metrics_discovery_requests_total{outcome=~"error|unavailable"}[10m])
 ```
 
-Repeat with `job="promtail-compute"` when the Promtail scrape is affected.
+Repeat with `job="vmmd"`, `job="imaged"`, `job="builderd"`, or
+`job="promtail-compute"` for the affected compute scrape.
 The expected state is:
 
 - `last_success` age below 120 seconds;
@@ -47,6 +48,10 @@ The expected state is one healthy target per discovered target and coverage of
 `1` for each enabled job. A target with `up == 0` is a downstream scrape
 failure. If coverage is below `1` but no `up == 0` series exists, all or part
 of the target list disappeared before Prometheus created a scrape series.
+The rendered control-plane jobs have a hard `target_limit` of 1,000, and apid
+rejects a larger configured registry snapshot with an explicit discovery
+failure. This prevents a fleet expansion from silently creating an unbounded
+scrape set.
 
 Check the Prometheus target view for the node-level error:
 
@@ -60,6 +65,9 @@ from the Prometheus user. The endpoint is deliberately loopback-only:
 
 ```sh
 curl -fsS http://127.0.0.1:8081/v1/internal/metrics/targets
+curl -fsS http://127.0.0.1:8081/v1/internal/metrics/vmmd-targets
+curl -fsS http://127.0.0.1:8081/v1/internal/metrics/imaged-targets
+curl -fsS http://127.0.0.1:8081/v1/internal/metrics/builderd-targets
 curl -fsS http://127.0.0.1:8081/v1/internal/metrics/promtail-targets
 ```
 
@@ -86,6 +94,12 @@ ORDER BY name;
 Fix the registry row through the compute-node registration/reconciliation
 path. Do not hand-edit `prometheus.yml` or add provider IPs as a workaround;
 the next HTTP-SD refresh should replace the target automatically.
+
+New or updated compute-node registrations reject loopback and wildcard
+`gateway_target_url` values up front. If registration returns
+`Invalid gateway_target_url`, provide the node's stable private hostname or
+address reachable from the control plane on port 8080; do not retry with a
+loopback alias such as `localhost`.
 
 If the registry is healthy but apid's endpoint remains stale, recover apid's
 database connectivity first. Restart apid only after the underlying pool,

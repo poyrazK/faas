@@ -76,6 +76,32 @@ func (c *Client) RevokeObjectS3Credential(ctx context.Context, slug, bucket, cre
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
+func (c *Client) ListObjectStorageComputeBindings(ctx context.Context, slug, bucket string) (ObjectStorageComputeBindingList, error) {
+	var out ObjectStorageComputeBindingList
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/compute-bindings"
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) CreateObjectStorageComputeBinding(ctx context.Context, slug, bucket string, req CreateObjectStorageComputeBindingRequest) (ObjectStorageComputeBinding, error) {
+	var out ObjectStorageComputeBinding
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/compute-bindings"
+	err := c.do(ctx, http.MethodPost, path, req, &out)
+	return out, err
+}
+
+func (c *Client) DeleteObjectStorageComputeBinding(ctx context.Context, slug, bucket, binding string) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/compute-bindings/" + url.PathEscape(binding)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+func (c *Client) RotateObjectStorageComputeBinding(ctx context.Context, slug, bucket, binding string) (ObjectStorageComputeBinding, error) {
+	var out ObjectStorageComputeBinding
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/compute-bindings/" + url.PathEscape(binding) + "/rotate"
+	err := c.do(ctx, http.MethodPost, path, struct{}{}, &out)
+	return out, err
+}
+
 func (c *Client) ListObjectBucketAccessGrants(ctx context.Context, slug, bucket string) (ObjectBucketAccessGrantList, error) {
 	var out ObjectBucketAccessGrantList
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/access-grants", nil, &out)

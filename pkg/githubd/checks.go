@@ -84,7 +84,15 @@ type GitHubDeploymentUpdate struct {
 	Ref               string
 	Environment       string
 	Status            string
-	Description       string
+	// RolloutState is the safe-release state layered on top of the
+	// deployment build state. A live deployment can still be rolling
+	// out; GitHub must not report success until the ladder is complete.
+	RolloutState         string
+	CanaryStep           int
+	CanaryTotalSteps     int
+	TrafficPercent       int
+	RolloutAbortedReason string
+	Description          string
 	// Provenance is copied from the durable Gregale deployment row so
 	// GitHub's deployment timeline answers who/why/which PR without a
 	// second Gregale API lookup.
@@ -269,7 +277,7 @@ func (c *ChecksAPI) writeCheckRunWithToken(ctx context.Context, token, repoFullN
 // create path closes the retry window where GitHub accepted a create request
 // but the response was lost before the local identity could be persisted.
 func (c *ChecksAPI) WriteGitHubDeploymentStatus(ctx context.Context, update GitHubDeploymentUpdate) error {
-	state, ok := githubDeploymentState(update.Status)
+	state, ok := githubDeploymentStateForRollout(update.Status, update.RolloutState, update.CanaryTotalSteps)
 	if !ok {
 		return nil
 	}
@@ -452,7 +460,7 @@ func githubDeploymentMarker(localDeploymentID string) string {
 // durable deployment row remains authoritative; this is a compact projection
 // that is safe to update on every lifecycle status retry.
 func githubDeploymentDescription(update GitHubDeploymentUpdate) string {
-	parts := make([]string, 0, 5)
+	parts := make([]string, 0, 7)
 	if base := compactDeploymentValue(update.Description); base != "" {
 		parts = append(parts, base)
 	}
@@ -468,6 +476,15 @@ func githubDeploymentDescription(update GitHubDeploymentUpdate) string {
 	if reason := compactDeploymentValue(update.Reason); reason != "" {
 		parts = append(parts, "reason: "+reason)
 	}
+	if rollout := compactDeploymentValue(update.RolloutState); rollout != "" && update.CanaryTotalSteps > 0 {
+		if update.CanaryTotalSteps > 0 && update.CanaryStep < update.CanaryTotalSteps {
+			parts = append(parts, fmt.Sprintf("canary %d/%d (%d%%)", update.CanaryStep, update.CanaryTotalSteps, update.TrafficPercent))
+		}
+		parts = append(parts, "rollout "+rollout)
+	}
+	if aborted := compactDeploymentValue(update.RolloutAbortedReason); aborted != "" {
+		parts = append(parts, "abort reason: "+aborted)
+	}
 	return strings.Join(parts, " · ")
 }
 
@@ -479,6 +496,22 @@ func compactDeploymentValue(value string) string {
 }
 
 func githubDeploymentState(status string) (string, bool) {
+	return githubDeploymentStateForRollout(status, "", 0)
+}
+
+// githubDeploymentStateForRollout maps both the build state and the safe
+// release state to GitHub's deployment vocabulary. The durable deployment
+// row remains `live` while a canary is being observed, so looking only at
+// status would incorrectly publish a successful deployment too early.
+func githubDeploymentStateForRollout(status, rolloutState string, canaryTotalSteps int) (string, bool) {
+	if status == "live" && canaryTotalSteps > 0 {
+		switch rolloutState {
+		case "pending", "rolling_out":
+			return "in_progress", true
+		case "aborted":
+			return "failure", true
+		}
+	}
 	switch status {
 	case "pending":
 		return "queued", true

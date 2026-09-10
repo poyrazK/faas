@@ -29,6 +29,10 @@ type Config struct {
 	// PreparedNetworks bounds the optional cache of unused namespaces.
 	// Zero disables it; FAAS_PREPARED_NETWORKS overrides TOML for canaries.
 	PreparedNetworks int `toml:"prepared_networks"`
+	// RestoreConcurrency bounds simultaneous Firecracker snapshot restores.
+	// Three stays below the measured contention knee on four-vCPU hosts while
+	// still sustaining a high restore rate. Operators can tune 1..64.
+	RestoreConcurrency int `toml:"restore_concurrency"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
 	// ADR-015 dictates mode 0660 group `faas`.
@@ -172,6 +176,15 @@ type Config struct {
 	// SIGHUP watcher; /etc/faas/egress/static_egress_ips.toml
 	// for the on-disk shape.
 	StaticEgressIPBundlePath string `toml:"static_egress_ip_bundle"`
+
+	// Workload identity signing material. When KeyPath is empty the guest
+	// endpoint remains installed but returns identity_not_configured. The
+	// issuer and key id are copied into every assertion; TTL is bounded to
+	// 30..3600 seconds by loadWorkloadIdentitySigner.
+	WorkloadIdentityKeyPath string        `toml:"workload_identity_key_path"`
+	WorkloadIdentityIssuer  string        `toml:"workload_identity_issuer"`
+	WorkloadIdentityKeyID   string        `toml:"workload_identity_key_id"`
+	WorkloadIdentityTTL     time.Duration `toml:"workload_identity_ttl"`
 
 	// NodeKeyPath is the on-disk path to the slice-3 per-node
 	// ECDSA P-256 signing key vmmd uses to sign CapacityReport
@@ -378,7 +391,8 @@ func (c *Config) MetricsListener() (read, write, idle time.Duration, maxHeaderBy
 // in that case an empty config is returned.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		SocketPath: "/run/faas/vmmd.sock",
+		SocketPath:         "/run/faas/vmmd.sock",
+		RestoreConcurrency: 3,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from sched.KernelKey(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
@@ -482,20 +496,30 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_OVERLAY_INTERFACE"); v != "" {
 		c.ComputeNode.OverlayInterface = v
 	}
-	// Issue #938 / PR-A: env-var overlay for [compute_node].vcpu_budget
-	// so heterogeneous fleets can dial the per-host vCPU ceiling via the
-	// systemd drop-in without editing vmmd.toml on every box. Mirrors
-	// the FAAS_NODE_NAME / FAAS_HOST_BRIDGE_CIDR / FAAS_OVERLAY_INTERFACE
-	// pattern. Non-positive values are rejected at LoadConfig so the
-	// migration 00123 CHECK constraint (vcpu_budget > 0) can't trip the
-	// self-registration upsert later. Empty keeps the TOML value (or
-	// api.VCPUSlots when both are empty).
-	if v := os.Getenv("FAAS_VCPU_BUDGET"); v != "" {
-		n, perr := strconv.Atoi(v)
-		if perr != nil || n <= 0 {
-			return nil, fmt.Errorf("vmmd: FAAS_VCPU_BUDGET %q must be a positive integer", v)
+	// Production capacity is host-specific. The manifest renderer cannot own
+	// these values because one fleet can contain different machine sizes, so
+	// node_join derives them from Ansible facts and publishes this drop-in
+	// contract. Apply the whole set after TOML parsing so vmmd registration and
+	// the operator's pre-registration use the same physical host limits instead
+	// of falling back to the legacy 160-vCPU / 56-GB single-box defaults.
+	capacityOverlays := []struct {
+		name string
+		dst  *int
+	}{
+		{name: "FAAS_COMPUTE_VCPUS", dst: &c.ComputeNode.VPCPUs},
+		{name: "FAAS_COMPUTE_MEM_MB", dst: &c.ComputeNode.MemMB},
+		{name: "FAAS_COMPUTE_MAX_CONCURRENCY", dst: &c.ComputeNode.MaxConcurrency},
+		{name: "FAAS_COMPUTE_ADMISSION_CEILING_MB", dst: &c.ComputeNode.AdmissionCeilingMB},
+		{name: "FAAS_VCPU_BUDGET", dst: &c.ComputeNode.VCPUBudget},
+	}
+	for _, overlay := range capacityOverlays {
+		if v := os.Getenv(overlay.name); v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil || n <= 0 {
+				return nil, fmt.Errorf("vmmd: %s %q must be a positive integer", overlay.name, v)
+			}
+			*overlay.dst = n
 		}
-		c.ComputeNode.VCPUBudget = n
 	}
 	if v := os.Getenv("FAAS_PREPARED_NETWORKS"); v != "" {
 		n, perr := strconv.Atoi(v)
@@ -503,6 +527,16 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_PREPARED_NETWORKS must be between 0 and %d", api.MaxPreparedNetworkCacheSize)
 		}
 		c.PreparedNetworks = n
+	}
+	if v := os.Getenv("FAAS_RESTORE_CONCURRENCY"); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 1 || n > 64 {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_CONCURRENCY must be between 1 and 64")
+		}
+		c.RestoreConcurrency = n
+	}
+	if c.RestoreConcurrency < 1 || c.RestoreConcurrency > 64 {
+		return nil, fmt.Errorf("vmmd: restore_concurrency must be between 1 and 64 (got %d)", c.RestoreConcurrency)
 	}
 	// Issue #938 / PR-A: reject non-positive TOML values for
 	// [compute_node].vcpu_budget at LoadConfig rather than letting them

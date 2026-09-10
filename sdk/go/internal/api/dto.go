@@ -49,6 +49,8 @@ type CreateAppRequest struct {
 	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int              `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	HealthPath       string           `json:"health_path,omitempty"`
+	HealthPathWakes  bool             `json:"health_path_wakes,omitempty"`
 	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name (the operator-supplied human-readable
@@ -77,6 +79,8 @@ type UpdateAppRequest struct {
 	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int             `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	HealthPath       *string          `json:"health_path,omitempty"`
+	HealthPathWakes  *bool            `json:"health_path_wakes,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -175,6 +179,7 @@ type AppEffectiveLimits struct {
 	RequestBudgetMS        int64 `json:"request_budget_ms"`
 	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
+	RequestBodyMaxBytes    int64 `json:"request_body_max_bytes"`
 }
 
 type AppConfiguredResources struct {
@@ -537,6 +542,12 @@ type DeploymentListResponse struct {
 	NextBefore string               `json:"next_before,omitempty"`
 }
 
+// LatestDeploymentsByAppResponse is the account-scoped batch shape returned
+// by GET /v1/deployments/latest-by-app.
+type LatestDeploymentsByAppResponse struct {
+	Items []DeploymentResponse `json:"items"`
+}
+
 // --- Dashboard auth (issue #165, ADR-032 PR #2) ----------------------------
 
 // OAuthProvider is the issuer name used by the dashboard OAuth flows
@@ -660,6 +671,70 @@ type UsageSummaryResponse struct {
 	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
 	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
 	OverageCents    int64   `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
+}
+
+// AccountUsageResponse is the account-level usage projection. Optional
+// service views are omitted when the corresponding service is not enabled.
+type AccountUsageResponse struct {
+	Month           string                        `json:"month"`
+	Compute         UsageSummaryResponse          `json:"compute"`
+	ObjectStorage   *ObjectStorageUsageResponse   `json:"object_storage,omitempty"`
+	ManagedPostgres *ManagedPostgresUsageResponse `json:"managed_postgres,omitempty"`
+}
+
+type ObjectStoragePolicy struct {
+	MaxAccountBytes          int64 `json:"max_account_bytes"`
+	MaxBucketBytes           int64 `json:"max_bucket_bytes"`
+	MaxAccountKeys           int64 `json:"max_account_keys"`
+	MaxMonthlyCostMillicents int64 `json:"max_monthly_cost_millicents"`
+	MaxMonthlyRequests       int64 `json:"max_monthly_requests"`
+	MaxMonthlyEgressBytes    int64 `json:"max_monthly_egress_bytes"`
+	MaxMonthlyAuthorizations int64 `json:"max_monthly_authorizations"`
+	MaxReportAgeSeconds      int64 `json:"max_report_age_seconds"`
+}
+
+type ObjectStorageUsage struct {
+	ObservedBytes   int64     `json:"observed_bytes"`
+	CapacityBytes   int64     `json:"capacity_bytes"`
+	CapacityKeys    int64     `json:"capacity_keys"`
+	StoredByteHours int64     `json:"stored_byte_hours"`
+	RequestCount    int64     `json:"request_count"`
+	EgressBytes     int64     `json:"egress_bytes"`
+	CostMillicents  int64     `json:"cost_millicents"`
+	Authorizations  int64     `json:"authorizations"`
+	Fresh           bool      `json:"fresh"`
+	PeriodStart     time.Time `json:"period_start"`
+}
+
+type ObjectStorageCharge struct {
+	Currency           string `json:"currency"`
+	StorageMillicents  int64  `json:"storage_millicents"`
+	RequestsMillicents int64  `json:"requests_millicents"`
+	EgressMillicents   int64  `json:"egress_millicents"`
+	TotalMillicents    int64  `json:"total_millicents"`
+}
+
+type ObjectStorageUsageResponse struct {
+	Usage   ObjectStorageUsage   `json:"usage"`
+	Policy  ObjectStoragePolicy  `json:"policy"`
+	Charges *ObjectStorageCharge `json:"charges,omitempty"`
+}
+
+type ManagedPostgresUsageResponse struct {
+	PeriodStart                 time.Time  `json:"period_start"`
+	ObservedAt                  *time.Time `json:"observed_at,omitempty"`
+	PolicyEnabled               bool       `json:"policy_enabled"`
+	Fresh                       bool       `json:"fresh"`
+	GuardrailState              string     `json:"guardrail_state"`
+	ReadyDatabases              int        `json:"ready_databases"`
+	DatabaseLimit               int        `json:"database_limit"`
+	StorageLimitBytes           int64      `json:"storage_limit_bytes"`
+	ComputeUnitSeconds          int64      `json:"compute_unit_seconds"`
+	StorageByteSeconds          int64      `json:"storage_byte_seconds"`
+	StorageByteSecondsLimit     int64      `json:"storage_byte_seconds_limit"`
+	StorageByteSecondsRemaining int64      `json:"storage_byte_seconds_remaining"`
+	HistoryByteSeconds          int64      `json:"history_byte_seconds"`
+	EgressBytes                 int64      `json:"egress_bytes"`
 }
 
 // ValidateAppConfig checks a requested app config against its plan caps (spec

@@ -35,6 +35,9 @@ func TestIsApidPath(t *testing.T) {
 		{"/status", true},
 		{"/healthz", true},
 		{"/cli-auth", true},
+		{"/docs", true},
+		{"/docs/", true},
+		{"/docs/assets/swagger-ui.css", true},
 		// ─── positive: /oauth/* subtree only ────────────────────────
 		{"/oauth/google/cb", true},
 		{"/oauth/github/cb", true},
@@ -50,6 +53,7 @@ func TestIsApidPath(t *testing.T) {
 		{"/statusfoo", false},
 		{"/healthzfoo", false},
 		{"/cli-authfoo", false},
+		{"/docsfoo", false},
 		{"/auth/verifyfoo", false},
 		{"/auth/resetfoo", false},
 		// ─── negative: customer-app paths (must fall through) ──────

@@ -9,6 +9,10 @@
 > operator audit. Do not follow this runbook on a current
 > deployment.
 
+> Hostnames using `*.apps.gregale.dev` below are part of that
+> historical procedure. The current customer hostname contract is
+> `*.gregale.dev`.
+
 One-time operator procedure for minting the production wildcard cert
 `*.gregale.dev` on a reference control-plane node via DNS-01 against the Hetzner DNS API, and
 for replacing the placeholder `apps.example.com` configuration the box

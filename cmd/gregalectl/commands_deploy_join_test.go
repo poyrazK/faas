@@ -4,16 +4,79 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestResolveJoinPrivateAddressesSeedsSkippedPreflightFacts(t *testing.T) {
+	m, err := manifest.Load(splitboxJoinManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(_ context.Context, network, host string) ([]net.IP, error) {
+		if network != "ip4" {
+			t.Fatalf("lookup network = %q, want ip4", network)
+		}
+		switch host {
+		case "fsn-1.gregale.dev":
+			return []net.IP{net.ParseIP("10.42.0.1")}, nil
+		case "fsn-2.gregale.dev":
+			return []net.IP{net.ParseIP("10.42.0.2"), net.ParseIP("10.42.0.2")}, nil
+		default:
+			return nil, fmt.Errorf("unexpected host %s", host)
+		}
+	}
+
+	addresses, err := resolveJoinPrivateAddresses(t.Context(), m, lookup)
+	if err != nil {
+		t.Fatalf("resolveJoinPrivateAddresses: %v", err)
+	}
+	if got := addresses["fsn-1"]; got != "10.42.0.1" {
+		t.Fatalf("fsn-1 address = %q, want 10.42.0.1", got)
+	}
+	if got := addresses["fsn-2"]; got != "10.42.0.2" {
+		t.Fatalf("fsn-2 address = %q, want 10.42.0.2", got)
+	}
+
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedJoinPrivateAddressFacts(files, addresses)
+	for _, file := range files {
+		host := strings.TrimSuffix(filepath.Base(file.Path), ".yml")
+		address := addresses[host]
+		if address == "" {
+			continue
+		}
+		if !strings.Contains(string(file.Body), `faas_private_address: "`+address+`"`) {
+			t.Fatalf("%s host vars do not contain resolved private address %s:\n%s", host, address, file.Body)
+		}
+	}
+}
+
+func TestResolveJoinPrivateAddressesRejectsPublicAnswer(t *testing.T) {
+	m, err := manifest.Load(splitboxJoinManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(_ context.Context, _, _ string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("203.0.113.10")}, nil
+	}
+	_, err = resolveJoinPrivateAddresses(t.Context(), m, lookup)
+	if err == nil || !strings.Contains(err.Error(), "outside overlay") {
+		t.Fatalf("resolveJoinPrivateAddresses error = %v, want outside-overlay rejection", err)
+	}
+}
 
 func TestNodeJoinLeaseRefreshInterval(t *testing.T) {
 	tests := []struct {
@@ -88,6 +151,31 @@ func TestNodeJoinFullBootstrapPreservesPlayLevelRoleSemantics(t *testing.T) {
 	}
 	if !strings.Contains(block, "faas_join_bootstrap_contract_current") {
 		t.Fatalf("full bootstrap convergence must remain conditional on the managed-host contract")
+	}
+}
+
+func TestNodeJoinPublishesHardwareCapacityBeforeVMMDStarts(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	capacity := strings.Index(playbook, "Install the hardware-derived vmmd capacity contract")
+	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
+	if capacity < 0 || restart < 0 || capacity >= restart {
+		t.Fatal("node_join must install the vmmd capacity drop-in before restarting vmmd")
+	}
+	block := playbook[capacity:restart]
+	for _, token := range []string{
+		"FAAS_COMPUTE_VCPUS={{ ansible_processor_vcpus }}",
+		"FAAS_COMPUTE_MEM_MB={{ ansible_memtotal_mb }}",
+		"FAAS_COMPUTE_MAX_CONCURRENCY=",
+		"FAAS_COMPUTE_ADMISSION_CEILING_MB=",
+		"FAAS_VCPU_BUDGET=",
+	} {
+		if !strings.Contains(block, token) {
+			t.Errorf("capacity contract missing %q", token)
+		}
 	}
 }
 
@@ -674,13 +762,25 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	oldRunner := ansiblePlaybookRunner
 	oldVerifier := joinControlPlaneVerifier
 	oldRegistrar := joinReleaseBundleRegistrar
+	oldLookup := joinPrivateAddressLookup
 	t.Cleanup(func() {
 		ansiblePlaybookRunner = oldRunner
 		joinControlPlaneVerifier = oldVerifier
 		joinReleaseBundleRegistrar = oldRegistrar
+		joinPrivateAddressLookup = oldLookup
 	})
 	joinControlPlaneVerifier = func(context.Context, *deployJoinReport, string) error { return nil }
 	joinReleaseBundleRegistrar = func(context.Context, string, string, string) error { return nil }
+	joinPrivateAddressLookup = func(_ context.Context, _, host string) ([]net.IP, error) {
+		switch host {
+		case "fsn-1.gregale.dev":
+			return []net.IP{net.ParseIP("10.42.0.1")}, nil
+		case "fsn-2.gregale.dev":
+			return []net.IP{net.ParseIP("10.42.0.2")}, nil
+		default:
+			return nil, fmt.Errorf("unexpected private host %s", host)
+		}
+	}
 	var calls [][]string
 	ansiblePlaybookRunner = func(_ context.Context, _ string, args []string) error {
 		calls = append(calls, append([]string(nil), args...))

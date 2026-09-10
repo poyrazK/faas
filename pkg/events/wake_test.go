@@ -23,6 +23,8 @@ func TestWakeEvent_AllKindsImplementInterface(t *testing.T) {
 	var _ WakeEvent = Admitted{EmitAt: now, WakeID: "w", AppID: "a", RequestID: "r", AccountID: "acct-1", Plan: "hobby"}
 	var _ WakeEvent = BootStarted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Trigger: "gateway", QueuedCount: 2, ConcurrencyAtAdmit: 3, AtCapacity: true}
 	var _ WakeEvent = RestoreBreakdown{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", TotalMs: 596}
+	var _ WakeEvent = ColdBootBreakdown{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", TotalMs: 23474}
+	var _ WakeEvent = ColdBootCPU{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", StartupCPUMillicores: 1000, ConfiguredCPUMillicores: 250}
 	var _ WakeEvent = BootCompleted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Trigger: "gateway", QueuedCount: 2, ConcurrencyAtAdmit: 3}
 	var _ WakeEvent = BootFailed{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Reason: "stub"}
 	var _ WakeEvent = Readiness200{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", HealthcheckPath: "/healthz", ProbeCount: 1, ElapsedMs: 50}
@@ -66,24 +68,82 @@ func TestQueueAccepted_Shape(t *testing.T) {
 func TestRestoreBreakdown_Shape(t *testing.T) {
 	ev := RestoreBreakdown{
 		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-restore", AppID: "a-restore",
-		InstanceID: "i-restore", ChrootMs: 2, MaterializeMemMs: 3,
+		InstanceID: "i-restore", RestoreGateWaitMs: 12, ChrootMs: 2, MaterializeMemMs: 3,
 		MaterializeVMStateMs: 4, ResolveImagesMs: 5, StageDrivesMs: 6,
 		StageSnapshotMs: 7, HelperMs: 8, StartJailerMs: 9, BindTunMs: 10,
 		LoadSnapshotMs: 400, ResumeHookMs: 11, WaitReadyMs: 131, TotalMs: 596,
+		ResolveArtifacts: []RestoreArtifactResolution{{Artifact: "kernel", Source: "cache_hit", DurationMs: 2}},
 	}
 	if got := ev.Kind(); got != WakeRestoreBreakdown {
 		t.Errorf("Kind = %q, want %q", got, WakeRestoreBreakdown)
 	}
 	p := ev.Payload()
 	for key, want := range map[string]any{
-		"wake_id":            "w-restore",
-		"materialize_mem_ms": int64(3),
-		"load_snapshot_ms":   int64(400),
-		"total_ms":           int64(596),
+		"wake_id":              "w-restore",
+		"restore_gate_wait_ms": int64(12),
+		"materialize_mem_ms":   int64(3),
+		"load_snapshot_ms":     int64(400),
+		"total_ms":             int64(596),
 	} {
 		if got := p[key]; got != want {
 			t.Errorf("payload[%q] = %v, want %v", key, got, want)
 		}
+	}
+	artifacts, ok := p["resolve_artifacts"].([]RestoreArtifactResolution)
+	if !ok || len(artifacts) != 1 || artifacts[0].Source != "cache_hit" {
+		t.Errorf("payload.resolve_artifacts = %#v, want one cache_hit", p["resolve_artifacts"])
+	}
+}
+
+func TestColdBootCPU_Shape(t *testing.T) {
+	ev := ColdBootCPU{
+		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-cold", AppID: "a-cold", InstanceID: "i-cold",
+		StartupCPUMillicores: 1000, ConfiguredCPUMillicores: 250,
+		PreReadyMs: 2400, WaitReadyMs: 2200, QuotaRestoreMs: 1, TotalMs: 2401,
+	}
+	if got := ev.Kind(); got != WakeColdBootCPU {
+		t.Errorf("Kind = %q, want %q", got, WakeColdBootCPU)
+	}
+	p := ev.Payload()
+	for key, want := range map[string]any{
+		"wake_id":                   "w-cold",
+		"startup_cpu_millicores":    1000,
+		"configured_cpu_millicores": 250,
+		"pre_ready_ms":              int64(2400),
+		"quota_restore_ms":          int64(1),
+		"total_ms":                  int64(2401),
+	} {
+		if got := p[key]; got != want {
+			t.Errorf("payload[%q] = %v, want %v", key, got, want)
+		}
+	}
+}
+
+func TestColdBootBreakdown_Shape(t *testing.T) {
+	ev := ColdBootBreakdown{
+		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-cold", AppID: "a-cold", InstanceID: "i-cold",
+		ResolveImagesMs: 20600, ChrootMs: 2, ProvisionMs: 30, WaitReadyMs: 2809, TotalMs: 23474,
+		ResolveArtifacts: []ColdBootArtifactResolution{{
+			Artifact: "main", Source: "cache_hit", DurationMs: 20590, Bytes: 1048576,
+		}},
+	}
+	if got := ev.Kind(); got != WakeColdBootBreakdown {
+		t.Errorf("Kind = %q, want %q", got, WakeColdBootBreakdown)
+	}
+	p := ev.Payload()
+	for key, want := range map[string]any{
+		"wake_id":           "w-cold",
+		"resolve_images_ms": int64(20600),
+		"wait_ready_ms":     int64(2809),
+		"total_ms":          int64(23474),
+	} {
+		if got := p[key]; got != want {
+			t.Errorf("payload[%q] = %v, want %v", key, got, want)
+		}
+	}
+	artifacts, ok := p["resolve_artifacts"].([]ColdBootArtifactResolution)
+	if !ok || len(artifacts) != 1 || artifacts[0].Bytes != 1048576 {
+		t.Errorf("payload.resolve_artifacts = %#v", p["resolve_artifacts"])
 	}
 }
 
