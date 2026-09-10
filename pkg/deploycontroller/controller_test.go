@@ -68,10 +68,35 @@ func TestDeployActivatesVerifiedRelease(t *testing.T) {
 	}
 }
 
+func TestDeployAcceptsSBOMBaselineInCurrentRelease(t *testing.T) {
+	root := t.TempDir()
+	newRelease := makeRelease(t, root, "new")
+	old := makeRelease(t, root, "old")
+	if err := os.WriteFile(filepath.Join(old, "sbom-baseline.json"), []byte(`{"counts":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(root, "current")
+	if err := os.Symlink(old, current); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeRuntime{}
+	controller := newController(t, root, current, runtime)
+
+	if err := controller.Deploy(context.Background(), "new"); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if got, err := os.Readlink(current); err != nil || got != newRelease {
+		t.Fatalf("current = %q, %v; want %q", got, err, newRelease)
+	}
+}
+
 func TestDeployRollsBackOnHealthFailure(t *testing.T) {
 	root := t.TempDir()
 	makeRelease(t, root, "new")
 	old := makeRelease(t, root, "old")
+	if err := os.WriteFile(filepath.Join(old, "sbom-baseline.json"), []byte(`{"counts":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	current := filepath.Join(root, "current")
 	if err := os.Symlink(old, current); err != nil {
 		t.Fatal(err)

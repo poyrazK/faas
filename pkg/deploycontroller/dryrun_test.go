@@ -33,6 +33,9 @@ func TestDryRunReportsLegacyHost(t *testing.T) {
 func TestDryRunReportsVerifiedPreviousRelease(t *testing.T) {
 	root := t.TempDir()
 	old := makeDryRunRelease(t, root, "old")
+	if err := os.WriteFile(filepath.Join(old, "sbom-baseline.json"), []byte(`{"counts":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	makeDryRunRelease(t, root, "candidate")
 	current := filepath.Join(root, "current")
 	if err := os.Symlink(old, current); err != nil {

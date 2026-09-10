@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/onebox-faas/faas/pkg/releasebundle"
+	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/releaseretention"
 )
 
@@ -78,7 +79,7 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 			if readErr != nil {
 				return fmt.Errorf("deploycontroller: current release is not rollback-capable: %w", readErr)
 			}
-			if verifyErr := releasebundle.Verify(previous, previousManifest); verifyErr != nil {
+			if verifyErr := verifyInstalledRelease(previous, previousManifest); verifyErr != nil {
 				return fmt.Errorf("deploycontroller: current release is not rollback-capable: %w", verifyErr)
 			}
 		} else if !os.IsNotExist(statErr) {
@@ -134,7 +135,7 @@ func (c *Controller) rollback(ctx context.Context, releaseID, previous string, c
 	if err != nil {
 		return fmt.Errorf("deploycontroller: release %q failed; read rollback release: %w: %w", releaseID, err, cause)
 	}
-	if err := releasebundle.Verify(previous, previousManifest); err != nil {
+	if err := verifyInstalledRelease(previous, previousManifest); err != nil {
 		return fmt.Errorf("deploycontroller: release %q failed; verify rollback release: %w: %w", releaseID, err, cause)
 	}
 	if err := c.runtime.Activate(ctx, previous); err != nil {
@@ -150,6 +151,13 @@ func (c *Controller) rollback(ctx context.Context, releaseID, previous string, c
 		return fmt.Errorf("deploycontroller: release %q failed; rollback unhealthy: %w: %w", releaseID, err, cause)
 	}
 	return fmt.Errorf("deploycontroller: release %q rolled back: %w", releaseID, cause)
+}
+
+// verifyInstalledRelease permits the mutable CVE baseline that the installer
+// records after activating an otherwise immutable release. Candidate releases
+// still use strict releasebundle.Verify before activation.
+func verifyInstalledRelease(root string, manifest releasebundle.Manifest) error {
+	return releasebundle.VerifyWithAllowedFiles(root, manifest, releaseinstall.SBOMBaselineName)
 }
 
 type fileLock struct {
