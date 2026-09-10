@@ -50,15 +50,26 @@ func TestMemStoreListLatestDeploymentPerApp(t *testing.T) {
 
 	appB := createApp(account.ID, "latest-store-b")
 	wantB := createDeployment(appB.ID, "00000000-0000-0000-0000-000000000003", stamp.Add(time.Minute))
+	clearedB, err := store.CreateDeployment(ctx, Deployment{
+		ID: "00000000-0000-0000-0000-000000000006", AppID: appB.ID,
+		ImageDigest: "sha256:cleared", Kind: DeploymentKindImage,
+		Status: DeployFailed, CreatedAt: stamp.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClearDeployment(ctx, clearedB.ID, "operator:test"); err != nil {
+		t.Fatal(err)
+	}
 
 	deleted := createApp(account.ID, "latest-store-deleted")
-	createDeployment(deleted.ID, "00000000-0000-0000-0000-000000000004", stamp.Add(2*time.Minute))
+	createDeployment(deleted.ID, "00000000-0000-0000-0000-000000000004", stamp.Add(3*time.Minute))
 	if err := store.DeleteApp(ctx, deleted.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	foreignApp := createApp(foreign.ID, "latest-store-foreign")
-	createDeployment(foreignApp.ID, "00000000-0000-0000-0000-000000000005", stamp.Add(3*time.Minute))
+	createDeployment(foreignApp.ID, "00000000-0000-0000-0000-000000000005", stamp.Add(4*time.Minute))
 
 	got, err := store.ListLatestDeploymentPerApp(ctx, account.ID)
 	if err != nil {
@@ -71,7 +82,7 @@ func TestMemStoreListLatestDeploymentPerApp(t *testing.T) {
 		t.Errorf("app A latest = %q, want tie-break winner %q", got[appA.ID].ID, wantA.ID)
 	}
 	if got[appB.ID].ID != wantB.ID {
-		t.Errorf("app B latest = %q, want %q", got[appB.ID].ID, wantB.ID)
+		t.Errorf("app B latest = %q, want previous visible deployment %q", got[appB.ID].ID, wantB.ID)
 	}
 	if _, ok := got[deleted.ID]; ok {
 		t.Error("soft-deleted app leaked into result")
