@@ -1426,10 +1426,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 1
 		}
 		return cmdDeployRepoSourceRefContextWithJSONWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
-			Reason:     *reason,
-			Tag:        *tag,
-			DeployedBy: resolveDeployedBy(*deployedBy),
-			PRNumber:   *prNumber,
+			Reason:         *reason,
+			Tag:            *tag,
+			DeployedBy:     resolveDeployedBy(*deployedBy),
+			PRNumber:       *prNumber,
+			TrafficPercent: optTrafficPercent(*trafficPercent),
+			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
 		}, waitForDeploy, jsonWait)
 	}
 
@@ -2034,11 +2036,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if *tarball != "" {
 		ann := api.DeployAnnotations{
-			Reason:     *reason,
-			Tag:        *tag,
-			DeployedBy: resolveDeployedBy(*deployedBy),
-			PRNumber:   *prNumber,
-			Workflows:  workflowDefs,
+			Reason:         *reason,
+			Tag:            *tag,
+			DeployedBy:     resolveDeployedBy(*deployedBy),
+			PRNumber:       *prNumber,
+			Workflows:      workflowDefs,
+			TrafficPercent: optTrafficPercent(*trafficPercent),
+			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
 		}
 		var (
 			dep           api.DeploymentResponse

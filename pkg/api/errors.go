@@ -920,6 +920,9 @@ const (
 	// this code on out-of-range input as a defence-in-depth
 	// backstop.
 	CodeInvalidTrafficPercent = "invalid_traffic_percent"
+	// CodeDeploymentNotLive is a 409 for a legal traffic mutation whose
+	// target has moved out of the live lifecycle state.
+	CodeDeploymentNotLive = "deployment_not_live"
 	// CodeInvalidCanaryPreset (issue #976 / ADR-122 /
 	// SAFE-RELEASES-A) is a 422 for an out-of-catalog canary
 	// preset name. The pkg/api/canary closed-set is the source
@@ -1678,7 +1681,7 @@ func StatusForCode(code string) int {
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict:
+	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict, CodeDeploymentNotLive:
 		// 409 — issue #556. Σ(traffic_percent WHERE status='live')
 		// != 100 after UpdateDeploymentTraffic. Defensive backstop;
 		// unreachable in practice. Sits next to CodeConflict /
@@ -4304,6 +4307,19 @@ func ErrInvalidTrafficPercent(got int) *Problem {
 		"Invalid traffic_percent",
 		fmt.Sprintf("traffic_percent must be in [0, %d]; got %d.", cap, got)).
 		WithLimit(int64(cap), int64(got)).
+		WithDocs("https://docs.gregale.dev/deployments#traffic-percent")
+}
+
+// ErrDeploymentNotLive distinguishes lifecycle conflict from percentage
+// validation. The submitted percentage may be valid, but it cannot make a
+// superseded, failed, or pending deployment routable.
+func ErrDeploymentNotLive(status string) *Problem {
+	if status == "" {
+		status = "non-live"
+	}
+	return NewProblem(http.StatusConflict, CodeDeploymentNotLive,
+		"Deployment is not live",
+		fmt.Sprintf("traffic can only be changed on a live deployment; current state is %s. Select the current live deployment, roll back, or redeploy.", status)).
 		WithDocs("https://docs.gregale.dev/deployments#traffic-percent")
 }
 

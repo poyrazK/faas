@@ -141,6 +141,12 @@ var ErrCorsWildcardWithCredentials = errors.New("state: cors action cannot combi
 // HTTP response uses the canonical RFC 7807 code.
 var ErrInvalidTrafficPercent = errors.New("state: invalid traffic_percent")
 
+// ErrDeploymentNotLive is returned when a traffic mutation targets a
+// deployment whose lifecycle state no longer accepts public traffic. It is
+// separate from ErrInvalidTrafficPercent because a legal percentage cannot
+// repair a superseded, failed, or pending target.
+var ErrDeploymentNotLive = errors.New("state: deployment is not live")
+
 // ErrCanaryStepConflict is returned by AdvanceCanary when the deployment's
 // current step differs from the caller's expected step. The compare-and-swap
 // is checked while the deployment row is locked, so this is the safe race
@@ -4026,9 +4032,12 @@ type Store interface {
 	// calls this between a successful vmmd boot and the RUNNING transition so the
 	// gateway can route to host_ip:8080 (spec §7).
 	SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error
-	// RunningInstanceForApp returns the newest RUNNING instance for an app, or
-	// ErrNotFound when none is live. schedd uses it to make Wake idempotent and
-	// the gateway to seed its route target on startup.
+	// RunningInstanceForApp returns the newest RUNNING instance attached to a
+	// currently live deployment with positive traffic, or ErrNotFound when none
+	// is routable. A VM on a superseded or zero-weight generation must not make
+	// a replacement wake look satisfied.
+	// schedd uses it to make Wake idempotent and the gateway to seed its route
+	// target on startup.
 	RunningInstanceForApp(ctx context.Context, appID string) (Instance, error)
 	// TouchInstancesLastSeen batches last_request_at updates the gateway flushes
 	// every 15 s (spec §4.1). schedd is the sole writer to instances, so the

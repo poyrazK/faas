@@ -1633,6 +1633,12 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			// not 'live' at the moment of stamp). Translate to
 			// the canonical 422 shape.
 			api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
+		case errors.Is(err, state.ErrDeploymentNotLive):
+			status := string(d.Status)
+			if current, readErr := s.store.DeploymentByID(r.Context(), id); readErr == nil {
+				status = string(current.Status)
+			}
+			api.WriteProblem(w, api.ErrDeploymentNotLive(status))
 		case errors.Is(err, state.ErrTrafficPercentSumInvalid):
 			// Defensive 409 — unreachable in the live-siblings case
 			// (largest-remainder redistribution is Σ=100 by

@@ -4808,7 +4808,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	// stage, and the APID handler has already copied that stage onto the
 	// row. Mirrors memstore.CreateDeployment while preserving the schema
 	// NOT NULL DEFAULT 100 contract for non-canary rows.
-	if d.TrafficPercent == 0 && d.CanaryTotalSteps <= 0 && !serviceRollout {
+	if d.TrafficPercent == 0 && !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !serviceRollout {
 		d.TrafficPercent = 100
 	}
 	row := tx.QueryRow(ctx,
@@ -4824,10 +4824,11 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          scope,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number, workflows,
-		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile)
+		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
+		                          traffic_percent_explicit)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
-		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37)
+		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -4867,7 +4868,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		// deployments_pr_number_positive_chk CHECK (which rejects 0).
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
-		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile))
+		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -5362,7 +5363,7 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 	if status != string(DeployLive) {
 		return Deployment{}, fmt.Errorf("state: deployment %s status=%s: %w",
-			id, status, ErrInvalidTrafficPercent)
+			id, status, ErrDeploymentNotLive)
 	}
 
 	// (3) Lock sibling live rows in the same app so a concurrent
@@ -6336,6 +6337,68 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		}
 		return nil
 	}
+	if dep.CanaryTotalSteps <= 0 && dep.TrafficPercentExplicit {
+		rows, err := tx.Query(ctx,
+			`select id, traffic_percent
+			   from deployments
+			  where app_id = $1 and scope = $2 and status = 'live' and id <> $3
+			  order by id
+			  for update`, dep.AppID, normalizedDeploymentScope(dep.Scope), id)
+		if err != nil {
+			return fmt.Errorf("state: mark manual split live lock siblings: %w", err)
+		}
+		var siblings []struct {
+			ID    string
+			Prior int
+		}
+		for rows.Next() {
+			var sibling struct {
+				ID    string
+				Prior int
+			}
+			if err := rows.Scan(&sibling.ID, &sibling.Prior); err != nil {
+				rows.Close()
+				return fmt.Errorf("state: mark manual split live scan sibling: %w", err)
+			}
+			siblings = append(siblings, sibling)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("state: mark manual split live iterate siblings: %w", err)
+		}
+		if len(siblings) == 0 && dep.TrafficPercent != 100 {
+			return fmt.Errorf("state: manual split has no live base deployment: %w", ErrTrafficPercentSumInvalid)
+		}
+
+		now := time.Now().UTC()
+		if _, err := tx.Exec(ctx,
+			`update deployments set
+				status = 'live', error = '', rollout_state = 'complete', rollout_completed_at = $2
+			 where id = $1`, id, now); err != nil {
+			return fmt.Errorf("state: mark manual split live: %w", err)
+		}
+		newWeights := RedistributeTraffic(siblings, 100-dep.TrafficPercent)
+		for i, sibling := range siblings {
+			if _, err := tx.Exec(ctx,
+				`update deployments set traffic_percent = $2 where id = $1`,
+				sibling.ID, newWeights[i]); err != nil {
+				return fmt.Errorf("state: mark manual split sibling %s: %w", sibling.ID, err)
+			}
+		}
+		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+		if err != nil {
+			return err
+		}
+		if snap.DeploymentID != "" {
+			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
+				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("state: mark manual split live commit: %w", err)
+		}
+		return nil
+	}
 	if dep.CanaryTotalSteps <= 0 {
 		// The replacement has completed its build/readiness pipeline. Retire
 		// every live revision in this scope and activate the replacement in
@@ -7234,7 +7297,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number,
 		                          priority,
-		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile)
+		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
+		                          traffic_percent_explicit)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -7243,7 +7307,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44)
+		         $40, $41, $42, $43, $44, $45)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -7270,7 +7334,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		newDep.DeployedByUserID, newDep.DeployedVia, newDep.DeployedFromIP, newDep.PusherLogin,
 		nullString(newDep.Reason), nullString(newDep.Tag), nullString(newDep.DeployedBy), newDep.PRNumber,
 		newDep.Priority,
-		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile))
+		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile),
+		newDep.TrafficPercentExplicit)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -12496,10 +12561,12 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
-		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
-		 from instances where app_id = $1 and state = 'running'
-		 order by started_at desc nulls last limit 1`, appID)
+		`select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		           coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
+		 from instances i
+		 join deployments d on d.id = i.deployment_id and d.status = 'live' and d.traffic_percent > 0
+		 where i.app_id = $1 and i.state = 'running'
+		 order by i.started_at desc nulls last limit 1`, appID)
 	return scanInstance(row)
 }
 
@@ -17989,7 +18056,7 @@ const deploymentSelectColumnsWithRootfs = `
 	secret_findings, secret_scanned_at,
 	liveness_restart_count,
 	coalesce(parked_reason,''), parked_at,
-	traffic_percent,
+	traffic_percent, traffic_percent_explicit,
 	scope,
 	stage_state,
 	coalesce(deployed_by_user_id::text,''), deployed_via, coalesce(host(deployed_from_ip),''), coalesce(pusher_login,''),
@@ -18046,7 +18113,7 @@ const deploymentSelectColumnsQualified = `
 	d.secret_findings, d.secret_scanned_at,
 	d.liveness_restart_count,
 	coalesce(d.parked_reason,''), d.parked_at,
-	d.traffic_percent,
+	d.traffic_percent, d.traffic_percent_explicit,
 	d.scope,
 	d.stage_state,
 	coalesce(d.deployed_by_user_id::text,''), d.deployed_via, coalesce(host(d.deployed_from_ip),''), coalesce(d.pusher_login,''),
@@ -18151,7 +18218,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.ScanResult, &scanStatus, &scannedAt,
 		&d.SecretFindings, &d.SecretScannedAt,
 		&d.LivenessRestartCount,
-		&d.ParkedReason, &parkedAt, &d.TrafficPercent,
+		&d.ParkedReason, &parkedAt, &d.TrafficPercent, &d.TrafficPercentExplicit,
 		&d.Scope,
 		&d.StageState,
 		&d.DeployedByUserID, &d.DeployedVia, &d.DeployedFromIP, &d.PusherLogin,

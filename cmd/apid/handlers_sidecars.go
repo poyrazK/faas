@@ -314,6 +314,21 @@ func applyOverridesToDeployment(dep *state.Deployment, o *api.CreateDeploymentOv
 //
 // Extracted from createDeployment (handlers.go) so the handler stays
 // under the CLAUDE.md 50-line cap.
+func validateDeploymentTrafficOptions(req *api.CreateDeploymentRequest, plan api.Plan) *api.Problem {
+	if req.TrafficPercent != nil && (*req.TrafficPercent < 0 || *req.TrafficPercent > 100) {
+		return api.ErrInvalidTrafficPercent(*req.TrafficPercent)
+	}
+	if req.TrafficPercent != nil && req.Canary != nil {
+		return api.ErrValidation("traffic_percent and canary are mutually exclusive rollout policies")
+	}
+	usesSplit := req.TrafficPercent != nil && *req.TrafficPercent != 100
+	usesCanary := req.Canary != nil && req.Canary.Preset != "" && req.Canary.Preset != "none"
+	if (usesSplit || usesCanary) && !plan.TrafficSplitAllowed() {
+		return api.ErrPlanTrafficSplitNotAllowed(plan)
+	}
+	return nil
+}
+
 func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, overrides *api.CreateDeploymentOverrides, limits api.Limits, planOpt ...api.Plan) (state.Deployment, *api.Problem) {
 	plan := api.PlanFree
 	if len(planOpt) > 0 {
@@ -334,6 +349,7 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	// the account's plan allows traffic splitting.
 	if req.TrafficPercent != nil {
 		dep.TrafficPercent = *req.TrafficPercent
+		dep.TrafficPercentExplicit = true
 	}
 	// Issue #976 / ADR-122 / SAFE-RELEASES-A: stamp the canary
 	// ladder at deploy time. nil req.Canary → fast-default zero

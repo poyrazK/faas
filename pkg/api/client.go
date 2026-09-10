@@ -957,7 +957,8 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	}
 	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
 	// (the server treats missing sidecar as zero provenance).
-	if sidecar.Repo != "" || sidecar.Ref != "" {
+	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
+		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil {
 		sidecarJSON, err := json.Marshal(sidecar)
 		if err != nil {
 			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)

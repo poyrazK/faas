@@ -328,6 +328,9 @@ func seedLiveDeployment(t *testing.T, ctx context.Context, store *state.PgStore,
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
 	if _, err := store.CreateInstance(ctx, appID, dep.ID, string(state.StateRunning), 256, nodeID, ""); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

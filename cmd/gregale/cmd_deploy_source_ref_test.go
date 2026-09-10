@@ -144,7 +144,11 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 					Kind: "github", Status: "queued",
 				}
 			},
-			invoke: cmdDeployRepoSourceRef,
+			invoke: func(slug, repo, ref string, ann api.DeployAnnotations) int {
+				zero := 0
+				ann.TrafficPercent = &zero
+				return cmdDeployRepoSourceRef(slug, repo, ref, ann)
+			},
 			expect: expect{
 				exitCode:       0,
 				stdoutJSONID:   "dep_2",
@@ -171,6 +175,9 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 					}
 					if got.Format != "tarball" {
 						t.Errorf("body.format = %q, want tarball (PR-A only supports tarball)", got.Format)
+					}
+					if got.TrafficPercent == nil || *got.TrafficPercent != 0 {
+						t.Errorf("body.traffic_percent = %v, want explicit 0", got.TrafficPercent)
 					}
 				},
 			},
