@@ -5,6 +5,8 @@
 // parseBatchFailures, containsString, jsonOrEmpty, base64Decode,
 // and the JSON-shape round-trips of batchDispatchRequest +
 // batchDispatchResponse + batchDispatchResult.
+// adr: 080
+
 package gateway
 
 import (

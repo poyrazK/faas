@@ -1,3 +1,4 @@
+// adr: 156
 // issue #517 / PR-B (AC3 + AC4) whitebox tests for Engine.StreamAppLogs.
 // The handler fan-out has two new PR-B behaviours that warrant direct
 // coverage at the engine seam (the gRPC handler is covered by the
