@@ -1,3 +1,4 @@
+// spec: §4.1
 // pgbackend_deployment_split_test.go — PR-B (issue #556) pinned tests
 // for the per-deployment weighted picker.
 //
@@ -512,5 +513,34 @@ func TestPGBackend_RefreshDeploymentWeights_PrunesStaleSets(t *testing.T) {
 		if res.Target.DeploymentID != "dep-A" {
 			t.Errorf("Pick #%d = DeploymentID %q, want dep-A", i, res.Target.DeploymentID)
 		}
+	}
+}
+
+func TestPGBackend_PromotionDoesNotCountSupersededWarmTarget(t *testing.T) {
+	sched := gateway.NewFakeScheduler("node-A").WithDeploymentID("dep-old")
+	store := &fakeWeightsStore{rows: map[string][]gateway.DeploymentWeightsRow{
+		"app-1": {{ID: "dep-old", TrafficPercent: 100}},
+	}}
+	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, sched, nil).WithStore(store)
+	if err := b.RefreshDeploymentWeights(context.Background(), "app-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := b.Admit(context.Background(), "app-1", "", "", "", 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.HealthyCount("app-1"); got != 1 {
+		t.Fatalf("pre-promotion HealthyCount = %d, want 1", got)
+	}
+
+	store.rows["app-1"] = []gateway.DeploymentWeightsRow{{ID: "dep-new", TrafficPercent: 100}}
+	if err := b.RefreshDeploymentWeights(context.Background(), "app-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.HealthyCount("app-1"); got != 0 {
+		t.Fatalf("post-promotion HealthyCount = %d, want 0; superseded target was counted", got)
+	}
+	pick := b.Pick("app-1")
+	if pick.OK || pick.Picked != "dep-new" || pick.ColdBucket != "dep-new" {
+		t.Fatalf("post-promotion pick = %+v, want cold dep-new", pick)
 	}
 }

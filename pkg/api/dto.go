@@ -4464,10 +4464,12 @@ type SourceRefDeployRequest struct {
 	// defaults to ${{ github.event.pull_request.number }} on the
 	// Action side. All four are optional; the apid handler stamps
 	// them onto the deployment row + the audit data{} payload.
-	Reason     string `json:"reason,omitempty"`
-	Tag        string `json:"tag,omitempty"`
-	DeployedBy string `json:"deployed_by,omitempty"`
-	PRNumber   int    `json:"pr_number,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Tag            string            `json:"tag,omitempty"`
+	DeployedBy     string            `json:"deployed_by,omitempty"`
+	PRNumber       int               `json:"pr_number,omitempty"`
+	TrafficPercent *int              `json:"traffic_percent,omitempty"`
+	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -4486,10 +4488,12 @@ type SourceTarballDeployRequest struct {
 	// come from --reason / --tag; PRNumber is not normally
 	// supplied on a tarball deploy (it would be inferred from
 	// a paired GitHub Action, not the tarball CLI).
-	Reason     string `json:"reason,omitempty"`
-	Tag        string `json:"tag,omitempty"`
-	DeployedBy string `json:"deployed_by,omitempty"`
-	PRNumber   int    `json:"pr_number,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Tag            string            `json:"tag,omitempty"`
+	DeployedBy     string            `json:"deployed_by,omitempty"`
+	PRNumber       int               `json:"pr_number,omitempty"`
+	TrafficPercent *int              `json:"traffic_percent,omitempty"`
+	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).

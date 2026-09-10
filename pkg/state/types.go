@@ -1620,6 +1620,10 @@ type Deployment struct {
 	// UpdateDeploymentTraffic transaction live in pgstore.go, not
 	// here — this struct just carries the field.
 	TrafficPercent int `json:"traffic_percent,omitempty"`
+	// TrafficPercentExplicit distinguishes an omitted traffic policy from an
+	// explicitly requested zero. It is persisted for activation semantics but
+	// remains internal; TrafficPercent is the customer-visible value.
+	TrafficPercentExplicit bool `json:"-"`
 	// Scan columns (issue #464 / ADR-055 / PR-3). Per-deploy grype
 	// scan result, status, and scanned_at. Mirror the deployments
 	// table columns added by migrations/00135. The pgstore reads

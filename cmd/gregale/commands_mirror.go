@@ -218,33 +218,40 @@ func cmdMirrorUpdate(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	req := api.UpdateMirrorRuleRequest{}
-	percentSet := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "percent":
-			percentSet = true
 			v := *percent
 			req.Percent = &v
 		case "enable":
-			t := true
-			req.Enabled = &t
+			if *enable {
+				t := true
+				req.Enabled = &t
+			}
 		case "disable":
-			f := false
-			req.Enabled = &f
+			if *disable {
+				f := false
+				req.Enabled = &f
+			}
 		case "include-body":
-			t := true
-			req.IncludeBody = &t
+			// This is also a direct boolean setting:
+			// --include-body=false disables capture.
+			v := *includeBody
+			req.IncludeBody = &v
 		case "no-include-body":
-			f := false
-			req.IncludeBody = &f
+			if *noIncludeBody {
+				f := false
+				req.IncludeBody = &f
+			}
 		case "redact-header":
 			// collected below into req.RedactHeaders
 		case "clear-redact":
-			empty := []string{}
-			req.RedactHeaders = &empty
+			if clearRedact {
+				empty := []string{}
+				req.RedactHeaders = &empty
+			}
 		}
 	})
-	_ = percentSet
 	// If --redact-header was passed at least once AND --clear-redact
 	// wasn't, push the collected list into the request. The
 	// multiFlag slice is nil when the flag is absent. The slice
@@ -252,6 +259,9 @@ func cmdMirrorUpdate(args []string) int {
 	if fs.Lookup("redact-header").Value.String() != "" && !clearRedact {
 		headers := []string(redactHeaders)
 		req.RedactHeaders = &headers
+	}
+	if req.Percent == nil && req.Enabled == nil && req.IncludeBody == nil && req.RedactHeaders == nil {
+		return printErr("No mirror changes requested", fmt.Errorf("set at least one mirror update value"))
 	}
 	resp, err := client.PatchAppsSlugMirrorsId(context.Background(), *slug, *id, req)
 	if err != nil {

@@ -3123,7 +3123,7 @@ func (m *MemStore) UpdateDeploymentTraffic(_ context.Context, id string, newPerc
 		return Deployment{}, ErrNotFound
 	}
 	if d.Status != DeployLive {
-		return Deployment{}, ErrInvalidTrafficPercent
+		return Deployment{}, ErrDeploymentNotLive
 	}
 
 	// Stamp target first; sibling weights collected for redistribution.
@@ -4796,7 +4796,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	// deployment when the caller supplies zero. A canary's zero is
 	// meaningful (a valid custom first stage), and the APID handler
 	// has already copied the selected first stage onto the row.
-	if d.TrafficPercent == 0 && d.CanaryTotalSteps <= 0 && !serviceRollout {
+	if d.TrafficPercent == 0 && !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !serviceRollout {
 		d.TrafficPercent = 100
 	}
 	m.deployments[d.ID] = d
@@ -5678,6 +5678,45 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		}
 		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
 			return err
+		}
+		m.deployments[id] = d
+		return nil
+	}
+	if d.CanaryTotalSteps <= 0 && d.TrafficPercentExplicit {
+		siblings := make([]siblingRow, 0)
+		for otherID, other := range m.deployments {
+			if otherID == id || other.AppID != d.AppID ||
+				normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(d.Scope) ||
+				other.Status != DeployLive {
+				continue
+			}
+			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
+		}
+		sort.SliceStable(siblings, func(i, j int) bool { return siblings[i].ID < siblings[j].ID })
+		if len(siblings) == 0 && d.TrafficPercent != 100 {
+			return ErrTrafficPercentSumInvalid
+		}
+		d.Status = DeployLive
+		d.Error = ""
+		d.RolloutState = "complete"
+		now := time.Now().UTC()
+		d.RolloutCompletedAt = &now
+		newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100-d.TrafficPercent)
+		updatedSiblings := make(map[string]Deployment, len(siblings))
+		for i, sibling := range siblings {
+			other := m.deployments[sibling.ID]
+			other.TrafficPercent = newWeights[i]
+			updatedSiblings[sibling.ID] = other
+		}
+		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
+		if err != nil {
+			return err
+		}
+		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+			return err
+		}
+		for siblingID, other := range updatedSiblings {
+			m.deployments[siblingID] = other
 		}
 		m.deployments[id] = d
 		return nil
@@ -10017,6 +10056,10 @@ func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Insta
 	found := false
 	for _, ins := range m.instances {
 		if ins.AppID != appID || ins.State != "running" {
+			continue
+		}
+		dep, ok := m.deployments[ins.DeploymentID]
+		if !ok || dep.Status != DeployLive || dep.TrafficPercent <= 0 {
 			continue
 		}
 		if !found || ins.StartedAt.After(newest.StartedAt) {

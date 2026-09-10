@@ -74,6 +74,20 @@ func testSidecarLimits() api.Limits {
 	return l
 }
 
+func TestBuildDeploymentForInsert_PreservesExplicitZeroTraffic(t *testing.T) {
+	zero := 0
+	app := state.App{ID: "app", Manifest: state.AppManifest{}}
+	dep, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{
+		Image: "sha256:test", TrafficPercent: &zero,
+	}, nil, testSidecarLimits(), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	if dep.TrafficPercent != 0 || !dep.TrafficPercentExplicit {
+		t.Fatalf("traffic policy = %d explicit=%t, want 0/true", dep.TrafficPercent, dep.TrafficPercentExplicit)
+	}
+}
+
 // TestValidateAndPlanSidecars_ThreeSidecarsRejected pins
 // AC #3 of issue #463 / ADR-069 / PR-B at the apid
 // handler level: a CreateDeploymentRequest carrying a

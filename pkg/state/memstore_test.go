@@ -4984,6 +4984,69 @@ func memstoreSeedLiveSibling(t *testing.T, m *MemStore, ctx context.Context, pri
 	return priorDepID, newDep.ID
 }
 
+func TestMemStore_ExplicitZeroTrafficPreservesStableRevision(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	_, appID, stableID := memstoreSeedAppLive(t, m, ctx, "explicit-zero")
+	candidate, err := m.CreateDeployment(ctx, Deployment{
+		AppID: appID, Kind: DeploymentKindImage, ImageDigest: "sha256:candidate",
+		Status: DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(candidate): %v", err)
+	}
+	if candidate.TrafficPercent != 0 || !candidate.TrafficPercentExplicit {
+		t.Fatalf("candidate policy = %d explicit=%t, want 0/true", candidate.TrafficPercent, candidate.TrafficPercentExplicit)
+	}
+	if err := m.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(candidate): %v", err)
+	}
+	stable, _ := m.DeploymentByID(ctx, stableID)
+	candidate, _ = m.DeploymentByID(ctx, candidate.ID)
+	if stable.Status != DeployLive || stable.TrafficPercent != 100 {
+		t.Fatalf("stable = %s/%d, want live/100", stable.Status, stable.TrafficPercent)
+	}
+	if candidate.Status != DeployLive || candidate.TrafficPercent != 0 {
+		t.Fatalf("candidate = %s/%d, want live/0", candidate.Status, candidate.TrafficPercent)
+	}
+}
+
+func TestMemStore_RunningInstanceForAppIgnoresSupersededGeneration(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	_, appID, oldID := memstoreSeedAppLive(t, m, ctx, "running-current")
+	if _, err := m.CreateInstance(ctx, appID, oldID, string(StateRunning), 128, DefaultLocalNodeName, "old-wake"); err != nil {
+		t.Fatal(err)
+	}
+	newDep, err := m.CreateDeployment(ctx, Deployment{AppID: appID, Kind: DeploymentKindImage, ImageDigest: "sha256:new", Status: DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkDeploymentLive(ctx, newDep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.RunningInstanceForApp(ctx, appID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RunningInstanceForApp returned superseded generation: %v", err)
+	}
+}
+
+func TestMemStore_RunningInstanceForAppIgnoresZeroTrafficGeneration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMemStore()
+	appID := uuid.NewString()
+	zeroID := uuid.NewString()
+	liveID := uuid.NewString()
+	m.apps[appID] = App{ID: appID}
+	m.deployments[zeroID] = Deployment{ID: zeroID, AppID: appID, Status: DeployLive, TrafficPercent: 0}
+	m.deployments[liveID] = Deployment{ID: liveID, AppID: appID, Status: DeployLive, TrafficPercent: 100}
+	m.instances[uuid.NewString()] = Instance{ID: uuid.NewString(), AppID: appID, DeploymentID: zeroID, State: "running", StartedAt: time.Now()}
+
+	if _, err := m.RunningInstanceForApp(ctx, appID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RunningInstanceForApp returned zero-traffic generation: %v", err)
+	}
+}
+
 // TestMem_UpdateDeploymentTraffic_ProportionalRedistribution
 // mirrors pgstore: a 100/0 split → set canary to 25 → prior drops
 // to 75, Σ=100. PR-A's zero-siblings made this impossible;

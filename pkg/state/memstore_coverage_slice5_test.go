@@ -174,6 +174,9 @@ func (m *MemStore) stampInvocationRowForTest(inv Invocation) error {
 func TestMemStoreCoverageInstances(t *testing.T) {
 	m, ctx, account, app, deployment := memCoverageFixture(t)
 	now := time.Now()
+	if err := m.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatalf("mark fixture deployment live: %v", err)
+	}
 
 	// CreateInstance + InstanceByID (hit/miss).
 	ins, err := m.CreateInstance(ctx, app.ID, deployment.ID, string(StateRunning), 512, DefaultLocalNodeName, "")

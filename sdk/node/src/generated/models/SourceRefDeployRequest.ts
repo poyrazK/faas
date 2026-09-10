@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 /**
  * JSON body for POST /v1/apps/{slug}/deployments/source-ref
  * (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
@@ -45,5 +46,13 @@ export type SourceRefDeployRequest = {
    * Pull-request number when the wire offers it (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR.
    */
   pr_number?: number;
+  /**
+   * Explicit initial traffic weight for this source-ref deployment. Omitted uses the normal stable rollout; zero stages a dark live revision.
+   */
+  traffic_percent?: number | null;
+  /**
+   * Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent.
+   */
+  canary?: (CanaryPresetSpec | null);
 };
 

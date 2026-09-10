@@ -16093,6 +16093,16 @@ components:
           type: integer
           minimum: 1
           description: "Pull-request number that drove this tarball deploy request (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."
+        traffic_percent:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: "Explicit initial traffic weight for this source-tarball deployment. Omitted uses the normal stable rollout; zero stages a dark live revision."
+        canary:
+          oneOf:
+            - $ref: '#/components/schemas/CanaryPresetSpec'
+            - type: 'null'
+          description: "Canary rollout policy for this source-tarball deployment. Mutually exclusive with traffic_percent."
 
     UpdateDeploymentRequest:
 
@@ -18495,6 +18505,16 @@ components:
           type: integer
           minimum: 1
           description: "Pull-request number when the wire offers it (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."
+        traffic_percent:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: "Explicit initial traffic weight for this source-ref deployment. Omitted uses the normal stable rollout; zero stages a dark live revision."
+        canary:
+          oneOf:
+            - $ref: '#/components/schemas/CanaryPresetSpec'
+            - type: 'null'
+          description: "Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent."
 
     DiffRequest:
       description: |
