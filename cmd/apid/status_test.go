@@ -44,7 +44,8 @@ func TestStatusJSONHandlerIdleHistogramEmitsJSON(t *testing.T) {
 		case strings.Contains(query, "gateway_wake_latency_seconds_bucket"):
 			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"NaN"]}]}}`))
 		case strings.Contains(query, "builderd_ops_total"):
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+			// Prometheus evaluates the query's idle fallback, vector(100).
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
 		case strings.Contains(query, "ALERTS"):
 			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"0"]}]}}`))
 		default:
@@ -66,8 +67,8 @@ func TestStatusJSONHandlerIdleHistogramEmitsJSON(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
 		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
 	}
-	if snap.APIAvailabilityPct != 100 || snap.WakeP95MS != 0 || snap.BuildSuccessPct != 0 {
-		t.Fatalf("snapshot = %+v, want finite API=100 and idle wake/build=0", snap)
+	if snap.APIAvailabilityPct != 100 || snap.WakeP95MS != 0 || snap.BuildSuccessPct != 100 {
+		t.Fatalf("snapshot = %+v, want finite idle API/build=100 and wake=0", snap)
 	}
 }
 
@@ -93,7 +94,7 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 		{
 			name:     "build success",
 			query:    statusBuildSuccessQuery,
-			fallback: "or vector(0)",
+			fallback: "or vector(100)",
 			guard:    "sum(rate(builderd_ops_total{op=\"build\",code!=\"user_error\"}[5m])) > 0",
 		},
 	}
