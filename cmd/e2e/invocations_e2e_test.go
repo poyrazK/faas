@@ -222,7 +222,8 @@ func TestE2E_QueueSend_PlanCap_QueueDepth(t *testing.T) {
 // TestE2E_QueueSend_DrainLongPoll — bonus coverage: send a row, then
 // long-poll receive. Pairs the queue send with the drain's
 // invocation_done notify so the receive handler unblocks. The seeded
-// RUNNING instance keeps the Wake fast-path off vmmd (same trick as the
+// RUNNING instance keeps the Wake fast-path off vmmd, and the successful
+// synth stub gives the drain a real terminal delivery (same shape as the
 // headline test).
 func TestE2E_QueueSend_DrainLongPoll(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
@@ -238,7 +239,7 @@ func TestE2E_QueueSend_DrainLongPoll(t *testing.T) {
 	}
 
 	h := e2etest.Start(t, pool,
-		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
+		e2etest.APID|e2etest.Schedd|e2etest.GatewaySynthStub)
 	key := h.SeedAccount(ctx, api.PlanHobby, "queue-longpoll")
 	store := state.NewPgStore(h.Pool)
 	nodeID := defaultLocalComputeNodeID(t, ctx, store)
