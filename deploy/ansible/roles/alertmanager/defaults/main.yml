@@ -41,13 +41,20 @@ am_rules_dir: /etc/prometheus
 am_smtp_password_file: ""
 am_smtp_auth_username: "alertmanager"          # SMTP AUTH identity, not a secret
 am_smtp_require_tls: false                     # operator sets true when relay advertises STARTTLS
-am_smtp_smarthost: ""                          # e.g. "smtp.sendgrid.net:587"; empty → use local 127.0.0.1:25
+am_smtp_smarthost: ""                          # e.g. "smtp.resend.com:587"; empty → email disabled
 am_pushover_token_file: ""
 am_pushover_user_key_file: ""
 
 am_email_from: "alertmanager@{{ ansible_domain | default('onebox.local') }}"
 am_email_to_warn: "ops-tickets@{{ ansible_domain | default('onebox.local') }}"
 am_email_to_page: "ops-pager@{{ ansible_domain | default('onebox.local') }}"
+
+# Customer alert presets already deliver through meterd's per-customer signed
+# webhook path. Their Prometheus mirrors are useful in Grafana, but emailing the
+# platform inbox duplicates customer delivery and can turn idle test apps into a
+# large notification batch. Operators can opt in when they deliberately want
+# those mirrors in the shared inbox.
+am_email_customer_alert_presets: false
 
 # URL embedded in Pushover notifications. Default points at the local
 # Prometheus alerts UI on the management bridge (10.0.0.1) or loopback;
