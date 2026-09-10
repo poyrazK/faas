@@ -458,6 +458,7 @@ func (s pgStore) GetComputeNode(ctx context.Context, name string) (ComputeNodeRo
 	`, name).Scan(
 		&row.ID, &row.Name, &releaseID, &manifestHash,
 		&row.HostCertificate, &row.CertFingerprint, &row.Role, &row.Generation,
+		&row.Lifecycle, &row.Active,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -477,13 +478,14 @@ func (s pgStore) GetComputeNode(ctx context.Context, name string) (ComputeNodeRo
 // ListComputeNodes implements Store. Returns every row in
 // compute_nodes ordered by name (PQ-stable). PR-4 doctor walks
 // the result to detect per-node drift against the on-disk
-// bundle + the release_bundles table. The widening to eight
+// bundle + the release_bundles table. The widening to ten
 // columns mirrors GetComputeNode — nullable pointers stay nil
 // on NULL.
 func (s pgStore) ListComputeNodes(ctx context.Context) ([]ComputeNodeRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		select id, name, release_id, manifest_hash,
-		       host_certificate, cert_fingerprint, role, generation
+		       host_certificate, cert_fingerprint, role, generation,
+		       lifecycle::text, active
 		  from compute_nodes
 		 order by name
 	`)
