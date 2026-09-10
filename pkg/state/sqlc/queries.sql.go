@@ -4124,6 +4124,46 @@ func (q *Queries) ListEventsByWakeID(ctx context.Context, db DBTX, arg ListEvent
 	return items, nil
 }
 
+const listFirstSuccessfulRequestsForAccountsCreatedSince = `-- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
+select a.account_id, min(i.last_request_at)::timestamptz as first_success_at
+from instances i
+join apps a on a.id = i.app_id
+join accounts acct on acct.id = a.account_id
+where acct.created_at >= $1
+  and i.last_request_at is not null
+group by a.account_id
+order by a.account_id
+`
+
+type ListFirstSuccessfulRequestsForAccountsCreatedSinceRow struct {
+	AccountID      pgtype.UUID
+	FirstSuccessAt pgtype.Timestamptz
+}
+
+// Operator beta funnel: one bounded aggregate read replaces an N+1
+// ListInstancesForAccount loop. last_request_at is stamped only after a
+// successful public request and terminal instances remain for 30 days, which
+// fully covers the 14-day beta cohort window.
+func (q *Queries) ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, db DBTX, createdAt pgtype.Timestamptz) ([]ListFirstSuccessfulRequestsForAccountsCreatedSinceRow, error) {
+	rows, err := db.Query(ctx, listFirstSuccessfulRequestsForAccountsCreatedSince, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFirstSuccessfulRequestsForAccountsCreatedSinceRow{}
+	for rows.Next() {
+		var i ListFirstSuccessfulRequestsForAccountsCreatedSinceRow
+		if err := rows.Scan(&i.AccountID, &i.FirstSuccessAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInstancesForApp = `-- name: ListInstancesForApp :many
 select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid, 0),
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at

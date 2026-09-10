@@ -119,6 +119,8 @@ groups:
       - alert: FaasUpstreamProbeOutcomeSilent
         expr: |
           rate(meterd_data_upstream_probes_total{outcome="ok"}[30m]) == 0
+          and on ()
+          sum(meterd_data_upstream_probes_total) > 0
         for: 30m
         labels:
           severity: info
@@ -126,7 +128,7 @@ groups:
           family: probe_outcome
         annotations:
           summary: "Data-placement probe loop silent for 30m"
-          description: "Zero ok-probes landed over 30m. The probe loop has gone silent — typically a stalled meterd poller, a missing upstream manifest, or a complete outbound network partition. Per-(kind, region) localization is not possible here because the counter is fleet-wide (the canonical cardinality-bounded shape — pkg/wire/metrics.go:2554). To localize, cross-reference `FaasUpstreamRttDegraded` for the per-(kind, region) connectivity view (the histogram carries the labels the counter doesn't). This is informational (severity info) until the silent condition chains with `FaasUpstreamRttDegraded`; at that point the degradation is connectivity-bound rather than poller-bound. Runbook at docs/runbooks/FaasUpstreamProbeOutcomeSilent.md."
+          description: "A previously active probe surface produced zero ok-probes over 30m. The probe loop has gone silent — typically a stalled meterd poller, a removed upstream manifest, or a complete outbound network partition. A platform with no configured or attempted upstream probes does not fire. Per-(kind, region) localization is not possible here because the counter is fleet-wide (the canonical cardinality-bounded shape — pkg/wire/metrics.go:2554). To localize, cross-reference `FaasUpstreamRttDegraded` for the per-(kind, region) connectivity view (the histogram carries the labels the counter doesn't). This is informational (severity info) until the silent condition chains with `FaasUpstreamRttDegraded`; at that point the degradation is connectivity-bound rather than poller-bound. Runbook at docs/runbooks/FaasUpstreamProbeOutcomeSilent.md."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUpstreamProbeOutcomeSilent.md"
 
       - alert: FaasUpstreamClassifierFailure

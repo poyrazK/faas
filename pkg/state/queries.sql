@@ -357,6 +357,20 @@ select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at
 from instances where app_id = $1 order by started_at desc;
 
+-- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
+-- Operator beta funnel: one bounded aggregate read replaces an N+1
+-- ListInstancesForAccount loop. last_request_at is stamped only after a
+-- successful public request and terminal instances remain for 30 days, which
+-- fully covers the 14-day beta cohort window.
+select a.account_id, min(i.last_request_at)::timestamptz as first_success_at
+from instances i
+join apps a on a.id = i.app_id
+join accounts acct on acct.id = a.account_id
+where acct.created_at >= $1
+  and i.last_request_at is not null
+group by a.account_id
+order by a.account_id;
+
 -- name: UpdateInstanceState :exec
 update instances set state = $2 where id = $1;
 

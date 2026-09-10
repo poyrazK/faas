@@ -11969,6 +11969,21 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 	return scanInstances(rows)
 }
 
+func (s *PgStore) ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, since time.Time) ([]AccountFirstSuccess, error) {
+	rows, err := sqlc.New().ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx, s.pool, pgtype.Timestamptz{Time: since, Valid: true})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AccountFirstSuccess, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, AccountFirstSuccess{
+			AccountID: uuidString(row.AccountID),
+			At:        timestamptzToTime(row.FirstSuccessAt),
+		})
+	}
+	return out, nil
+}
+
 // ListInstancesForAccount joins instances→apps in SQL so the meterd
 // quota loop can park every live instance for an account in one round
 // trip. Filtered to instances.state ∈ {WAKING, COLD_BOOTING, RUNNING,

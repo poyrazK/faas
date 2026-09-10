@@ -50,6 +50,7 @@ func Run(t *testing.T, open Open) {
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
@@ -60,6 +61,43 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testBetaFirstSuccess(t *testing.T, fx *Fixture) {
+	firstInstance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateParked), 128, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance(parked): %v", err)
+	}
+	secondInstance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 128, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance(running): %v", err)
+	}
+	firstAt := fx.Account.CreatedAt.Add(10 * time.Second)
+	secondAt := fx.Account.CreatedAt.Add(30 * time.Second)
+	if _, err := fx.Store.TouchInstancesLastSeen(fx.Ctx, []state.InstanceTouch{
+		{InstanceID: secondInstance.ID, LastRequest: secondAt},
+		{InstanceID: firstInstance.ID, LastRequest: firstAt},
+	}); err != nil {
+		t.Fatalf("TouchInstancesLastSeen: %v", err)
+	}
+	rows, err := fx.Store.ListFirstSuccessfulRequestsForAccountsCreatedSince(
+		fx.Ctx, fx.Account.CreatedAt.Add(-time.Second))
+	if err != nil {
+		t.Fatalf("ListFirstSuccessfulRequestsForAccountsCreatedSince: %v", err)
+	}
+	if len(rows) != 1 || rows[0].AccountID != fx.Account.ID || !rows[0].At.Equal(firstAt) {
+		t.Fatalf("first-success rows = %+v, want account=%s at=%s", rows, fx.Account.ID, firstAt)
+	}
+	rows, err = fx.Store.ListFirstSuccessfulRequestsForAccountsCreatedSince(
+		fx.Ctx, fx.Account.CreatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("ListFirstSuccessfulRequestsForAccountsCreatedSince(excluded): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("excluded cohort rows = %+v, want none", rows)
 	}
 }
 

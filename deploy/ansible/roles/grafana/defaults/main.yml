@@ -41,7 +41,7 @@ gv_dashboards_dir: /var/lib/grafana/dashboards
 # never enters Ansible vars or the rendered config. Same precedent as
 # the alertmanager secret files (gap G2 lean §17, sealed at rest).
 # Mode 0400, owner grafana:grafana — asserted before systemd enable.
-gv_admin_password_file: ""
+gv_admin_password_file: /etc/grafana/secrets/admin_password
 
 # Internal Prometheus address Grafana queries. Keep the datasource local;
 # operators can use an SSH tunnel for the Grafana UI when needed.
