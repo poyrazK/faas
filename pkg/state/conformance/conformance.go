@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -65,6 +66,7 @@ func Run(t *testing.T, open Open) {
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
+		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -742,6 +744,79 @@ func testExecutionIntentLifecycle(t *testing.T, fx *Fixture) {
 	}
 	if sweep.ExpiredQueued != 1 || sweep.PayloadsDeleted != 1 {
 		t.Fatalf("SweepExecutions = %#v", sweep)
+	}
+}
+
+func testPublicStatusLifecycle(t *testing.T, fx *Fixture) {
+	startsAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	input := state.StatusEventCreate{
+		IdempotencyKey: "status-create-" + uuid.NewString(), Actor: fx.Account.ID,
+		Kind: publicstatus.KindIncident, Title: "Conformance incident", Impact: publicstatus.StateDegraded,
+		Components: []publicstatus.Component{publicstatus.ComponentAPIConsole}, State: publicstatus.LifecycleInvestigating,
+		StartsAt: &startsAt, Message: "Investigating from the shared state contract.",
+	}
+	created, err := fx.Store.CreatePublicStatusEvent(fx.Ctx, input)
+	if err != nil {
+		t.Fatalf("CreatePublicStatusEvent: %v", err)
+	}
+	replayed, err := fx.Store.CreatePublicStatusEvent(fx.Ctx, input)
+	if err != nil || replayed.PublicID != created.PublicID {
+		t.Fatalf("CreatePublicStatusEvent replay = (%q,%v), want %q", replayed.PublicID, err, created.PublicID)
+	}
+
+	updateKey := "status-update-" + uuid.NewString()
+	errs := make(chan error, 8)
+	for i := 0; i < cap(errs); i++ {
+		go func() {
+			_, updateErr := fx.Store.AppendPublicStatusUpdate(fx.Ctx, created.PublicID, state.StatusEventUpdateInput{
+				IdempotencyKey: updateKey, Actor: fx.Account.ID, State: publicstatus.LifecycleIdentified,
+				Message: "The cause has been identified.",
+			})
+			errs <- updateErr
+		}()
+	}
+	for i := 0; i < cap(errs); i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent AppendPublicStatusUpdate: %v", err)
+		}
+	}
+
+	got, err := fx.Store.StatusEventByPublicID(fx.Ctx, created.PublicID)
+	if err != nil {
+		t.Fatalf("StatusEventByPublicID: %v", err)
+	}
+	if got.State != publicstatus.LifecycleIdentified || len(got.Updates) != 2 || got.Updates[0].At.After(got.Updates[1].At) {
+		t.Fatalf("status event after retries = %+v, want one chronological update", got)
+	}
+	listed, err := fx.Store.ListPublicStatusEvents(fx.Ctx, state.StatusEventListOptions{Kind: publicstatus.KindIncident, ActiveOnly: true, Limit: 10})
+	if err != nil || len(listed) != 1 || listed[0].PublicID != created.PublicID {
+		t.Fatalf("ListPublicStatusEvents = (%+v,%v)", listed, err)
+	}
+
+	bucketAt := time.Now().UTC().Truncate(5 * time.Minute)
+	if err := fx.Store.RecordStatusBucket(fx.Ctx, state.StatusBucket{Component: publicstatus.ComponentAPIConsole, BucketAt: bucketAt, State: publicstatus.StateOperational, HasTelemetry: true}); err != nil {
+		t.Fatalf("RecordStatusBucket: %v", err)
+	}
+	if err := fx.Store.RecordStatusBucket(fx.Ctx, state.StatusBucket{Component: publicstatus.ComponentAPIConsole, BucketAt: bucketAt.Add(time.Minute), State: publicstatus.StateMajorOutage, HasTelemetry: true}); err != nil {
+		t.Fatalf("RecordStatusBucket replay: %v", err)
+	}
+	buckets, err := fx.Store.ListStatusBuckets(fx.Ctx, bucketAt.Add(-time.Minute), bucketAt.Add(6*time.Minute))
+	if err != nil || len(buckets) != 1 || buckets[0].State != publicstatus.StateOperational {
+		t.Fatalf("ListStatusBuckets = (%+v,%v), want first bucket retained", buckets, err)
+	}
+
+	audits, err := fx.Store.ListEvents(fx.Ctx, fx.Account.ID, 10)
+	if err != nil {
+		t.Fatalf("ListEvents status audits: %v", err)
+	}
+	statusAudits := 0
+	for _, event := range audits {
+		if event.Kind == "status.event.created" || event.Kind == "status.event.updated" {
+			statusAudits++
+		}
+	}
+	if statusAudits != 2 {
+		t.Fatalf("status audit count = %d, want create and update", statusAudits)
 	}
 }
 

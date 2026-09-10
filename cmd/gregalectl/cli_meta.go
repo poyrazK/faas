@@ -85,6 +85,15 @@ type cliFlag struct {
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
 	{
+		Name:    "status",
+		DocSlug: "status",
+		Short:   "Publish and inspect public incidents and maintenance",
+		Subcommands: []cliSub{
+			{Name: "incident", Short: "Create, update, resolve, or list incidents"},
+			{Name: "maintenance", Short: "Schedule, update, start, complete, cancel, or list maintenance"},
+		},
+	},
+	{
 		Name:    dispatchOperatorAuth,
 		DocSlug: "operator-auth",
 		Short:   "Manage the MFA-stepped-up session used for provider mutations",

@@ -128,6 +128,63 @@ type queryResponse struct {
 	} `json:"data"`
 }
 
+// VectorSample is one labeled instant-vector sample. Labels are copied from
+// Prometheus so policy layers can map infrastructure alerts without exposing
+// those internal labels on their public response.
+type VectorSample struct {
+	Labels map[string]string
+	Value  float64
+}
+
+// QueryVector runs an instant query and preserves every series' labels. Rows
+// with malformed values are ignored; a non-vector response is a contract
+// error. This is used by the public-status evaluator for ALERTS{}.
+func (c *Client) QueryVector(ctx context.Context, query string) ([]VectorSample, error) {
+	if c == nil || c.baseURL == "" {
+		return nil, fmt.Errorf("promql: client not configured")
+	}
+	qctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	u := c.baseURL + "/api/v1/query?query=" + url.QueryEscape(query)
+	req, err := http.NewRequestWithContext(qctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doer.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+		return nil, fmt.Errorf("prometheus %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var payload queryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	if payload.Data.ResultType != "vector" {
+		return nil, fmt.Errorf("expected vector, got %q for query %q", payload.Data.ResultType, query)
+	}
+	out := make([]VectorSample, 0, len(payload.Data.Result))
+	for _, row := range payload.Data.Result {
+		raw, ok := row.Value[1].(string)
+		if !ok {
+			continue
+		}
+		value, err := strconv.ParseFloat(raw, 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+		labels := make(map[string]string, len(row.Metric))
+		for key, label := range row.Metric {
+			labels[key] = label
+		}
+		out = append(out, VectorSample{Labels: labels, Value: value})
+	}
+	return out, nil
+}
+
 // QueryRangeSample is one step in a Prometheus query_range response.
 // Timestamp is the bucket-start time in nanoseconds (Prometheus
 // emits seconds-as-float; the renderer converts at the call site).

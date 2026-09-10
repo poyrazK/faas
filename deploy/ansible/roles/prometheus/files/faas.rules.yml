@@ -20,6 +20,19 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: public_status
+    rules:
+      - alert: FaasPublicStatusEvaluationStalled
+        expr: (apid_status_rollup_last_success_timestamp_seconds == 0 and time() - process_start_time_seconds{job="apid"} > 900) or (apid_status_rollup_last_success_timestamp_seconds > 0 and time() - apid_status_rollup_last_success_timestamp_seconds > 900)
+        labels:
+          severity: page
+          component: apid
+          family: public_status
+        annotations:
+          summary: "Public status evaluation has not succeeded for 15 minutes"
+          description: "The five-minute public status evaluator has not persisted a complete capability bucket set for at least 15 minutes. Check apid logs, Prometheus reachability, and Postgres status_observation_buckets writes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/StatusPageDegraded.md"
+
   # ────────────────────────────────────────────────────────────────────
   # Off-host log pipeline health (issue #274).
   # Promtail exposes its own counters; these recording rules give the

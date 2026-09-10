@@ -192,7 +192,8 @@ type server struct {
 	// statusCache backs GET /status/slo.json (spec §12 public status
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
-	statusCache *statusCache
+	statusCache   *statusCache
+	statusMetrics *statusMetrics
 	// promqlClient is the Prometheus HTTP client shared by the
 	// statusCache and the per-app metrics endpoint (issue #273 /
 	// ADR-042). Owned here so the GET /v1/apps/{slug}/metrics handler
@@ -406,9 +407,13 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	if ops == nil {
 		s.metricsDiscoveryMetrics = nil
 		s.prewarmMetrics = nil
+		s.statusMetrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
 		s.prewarmMetrics = wire.NewPrewarmMetrics(ops.Registry())
+	}
+	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
+		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	// Re-bind the audit counter so the IAM-4 seam can record
 	// failures. If ops is nil (unit tests that don't care about
@@ -2811,6 +2816,11 @@ func (s *server) handler() http.Handler {
 	// on the public mux so the operator's HTTPS path serves it.
 	mux.HandleFunc("GET /status", s.statusHandler)
 	mux.HandleFunc("GET /status/slo.json", s.statusJSONHandler)
+	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
+	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
+	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))
+	mux.HandleFunc("POST /v1/admin/status/incidents/{public_id}/updates", s.authLimited(s.requireAdminMutation(s.updateAdminStatusEvent)))
+	mux.HandleFunc("GET /v1/admin/status/incidents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireSessionPrincipal(s.listAdminStatusEvents)))))
 
 	// CLI auth device-code flow (spec §2.2). Code minting and exchange
 	// are anonymous because the CLI has no credential yet; the browser

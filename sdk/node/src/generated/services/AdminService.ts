@@ -6,6 +6,8 @@ import type { AccountCreditResponse } from '../models/AccountCreditResponse.js';
 import type { AdminRefundResponse } from '../models/AdminRefundResponse.js';
 import type { AdminSetGithubWebhookSecretRequest } from '../models/AdminSetGithubWebhookSecretRequest.js';
 import type { AdminSetGithubWebhookSecretResponse } from '../models/AdminSetGithubWebhookSecretResponse.js';
+import type { AdminStatusEventCreateRequest } from '../models/AdminStatusEventCreateRequest.js';
+import type { AdminStatusEventUpdateRequest } from '../models/AdminStatusEventUpdateRequest.js';
 import type { BillingCatalogResponse } from '../models/BillingCatalogResponse.js';
 import type { BillingPaddleOveragePreflightResponse } from '../models/BillingPaddleOveragePreflightResponse.js';
 import type { BillingReconcileResponse } from '../models/BillingReconcileResponse.js';
@@ -15,12 +17,169 @@ import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatu
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
 import type { OperatorIntentResponse } from '../models/OperatorIntentResponse.js';
+import type { PublicStatusEvent } from '../models/PublicStatusEvent.js';
 import type { RekeyProgress } from '../models/RekeyProgress.js';
 import type { SweepStuckBuildsResponse } from '../models/SweepStuckBuildsResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AdminService {
+  /**
+   * List public status events (admin-only).
+   * Requires admin scope, operator allowlist membership, and MFA.
+   * @returns PublicStatusEvent Status events, newest update first.
+   * @throws ApiError
+   */
+  public static listAdminStatusEvents({
+    faasSid,
+    kind,
+    active = false,
+  }: {
+    /**
+     * Dashboard session cookie. Sealed; opaque to the client
+     * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.
+     * The browser sets it automatically on `/login` / `/signup`;
+     * the SDK uses the device-code flow instead and never sets
+     * this cookie.
+     *
+     */
+    faasSid?: string,
+    /**
+     * Restrict results to incidents or maintenance.
+     */
+    kind?: 'incident' | 'maintenance',
+    /**
+     * Return only events that have not reached a terminal lifecycle state.
+     */
+    active?: boolean,
+  }): CancelablePromise<Array<PublicStatusEvent>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/status/incidents',
+      cookies: {
+        'faas_sid': faasSid,
+      },
+      query: {
+        'kind': kind,
+        'active': active,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Publish a public incident or maintenance event (admin-only).
+   * Requires admin scope, operator allowlist membership, MFA, recent step-up authentication, and an Idempotency-Key.
+   * @returns PublicStatusEvent Published event. Replays return the same public UUID.
+   * @throws ApiError
+   */
+  public static createAdminStatusEvent({
+    idempotencyKey,
+    requestBody,
+    faasSid,
+  }: {
+    /**
+     * Stable caller-generated key used to replay this create safely.
+     */
+    idempotencyKey: string,
+    requestBody: AdminStatusEventCreateRequest,
+    /**
+     * Dashboard session cookie. Sealed; opaque to the client
+     * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.
+     * The browser sets it automatically on `/login` / `/signup`;
+     * the SDK uses the device-code flow instead and never sets
+     * this cookie.
+     *
+     */
+    faasSid?: string,
+  }): CancelablePromise<PublicStatusEvent> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/status/incidents',
+      cookies: {
+        'faas_sid': faasSid,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Append a public timeline update and lifecycle transition (admin-only).
+   * Updates are append-only. Terminal incidents and maintenance cannot reopen.
+   * @returns PublicStatusEvent Updated event with its complete chronological timeline.
+   * @throws ApiError
+   */
+  public static updateAdminStatusEvent({
+    publicId,
+    idempotencyKey,
+    requestBody,
+    faasSid,
+  }: {
+    /**
+     * Stable public UUID used by status permalinks.
+     */
+    publicId: string,
+    /**
+     * Stable caller-generated key used to replay this timeline update safely.
+     */
+    idempotencyKey: string,
+    requestBody: AdminStatusEventUpdateRequest,
+    /**
+     * Dashboard session cookie. Sealed; opaque to the client
+     * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.
+     * The browser sets it automatically on `/login` / `/signup`;
+     * the SDK uses the device-code flow instead and never sets
+     * this cookie.
+     *
+     */
+    faasSid?: string,
+  }): CancelablePromise<PublicStatusEvent> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/status/incidents/{public_id}/updates',
+      path: {
+        'public_id': publicId,
+      },
+      cookies: {
+        'faas_sid': faasSid,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
   /**
    * Issue a positive-cents credit to an account (admin-only).
    * @returns AccountCreditResponse Credit issued. Returns the new credit row.

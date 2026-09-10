@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -32,7 +33,7 @@ class BuildProvenanceResponse:
 
     """
 
-    id: str
+    id: UUID
     build_id: str
     source_sha256: str
     """sha256 of the customer's source tarball (the cache lookup key)."""
@@ -57,7 +58,7 @@ class BuildProvenanceResponse:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
+        id = str(self.id)
 
         build_id = self.build_id
 
@@ -130,7 +131,7 @@ class BuildProvenanceResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        id = d.pop("id")
+        id = UUID(d.pop("id"))
 
         build_id = d.pop("build_id")
 
