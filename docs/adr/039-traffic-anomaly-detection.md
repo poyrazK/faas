@@ -55,7 +55,7 @@ A 3d trailing average is the baseline for both modes.
 
 ### Alert fan-out: 4 separate alerts, not an umbrella
 
-- `FaasTrafficSpike` (page, fleet, spike): `max(faas_apid_request_rate_ratio:by_route) > 3` for 10m.
+- `FaasTrafficSpike` (page, fleet, spike): a route > 3x its baseline AND > 1 rps for 10m. Evaluating the per-route vector preserves the route label in the page; the absolute-rate guard prevents a handful of requests against a near-zero baseline from paging.
 - `FaasTrafficDrop` (page, fleet, drop): per-route ratio < 0.2 AND rate > 0.1 rps for 15m. The `> 0.1 rps` guard excludes idle routes.
 - `FaasTrafficSpikeAccount` (warn, account, spike): per-account ratio > 10 for 15m. Higher threshold than fleet-wide (3x) to suppress per-customer noise.
 - `FaasTrafficDropAccount` (warn, account, drop): per-account ratio < 0.1 AND rate > 0.1 rps for 30m. Longer `for:` than the spike rule because quiet customers are common and 30m crosses a real outage from a normal lull.

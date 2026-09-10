@@ -1041,7 +1041,10 @@ groups:
       # 10k admission cap and the operator must check the daemon slog.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasTrafficSpike
-        expr: max(faas_apid_request_rate_ratio:by_route) > 3
+        expr: |
+          (faas_apid_request_rate_ratio:by_route > 3)
+          and on (route)
+          (faas_apid_request_rate_5m:by_route > 1)
         for: 10m
         labels:
           severity: page
@@ -1051,7 +1054,7 @@ groups:
           direction: spike
         annotations:
           summary: "Traffic > 3x 3-day baseline (route {{ $labels.route }})"
-          description: "Route {{ $labels.route }} has been above 3x its 3d trailing average for 10m. DDoS, runaway retry storm, or upstream restore surge are the canonical causes. Drill down to the per-account level via the dedicated panel or sum by (account_id) (rate(apid_request_total[5m]))."
+          description: "Route {{ $labels.route }} has been above 3x its 3d trailing average and 1 request/second for 10m. DDoS, runaway retry storm, or upstream restore surge are the canonical causes. Drill down to the per-account level via the dedicated panel or sum by (account_id) (rate(apid_request_total[5m]))."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
 
       - alert: FaasTrafficDrop
