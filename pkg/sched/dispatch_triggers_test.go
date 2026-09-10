@@ -1,5 +1,6 @@
 // dispatch_triggers_test.go — focused unit tests for the
 // audit-round-2 fixes to pkg/sched/dispatch_triggers.go.
+// adr: 100
 //
 // Scope (audit round 2 finding #1, PR #910): the deadLetterAll
 // helper now bridges the broker-handle namespace to the
