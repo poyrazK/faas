@@ -239,3 +239,31 @@ func TestReadinessUsesConfiguredDriveWithoutAddingBuilds(t *testing.T) {
 	_, reason := p.All()
 	t.Fatalf("configured drive never ready: %s", reason)
 }
+
+func TestBuilderdRoleCreatesConfiguredReadinessDrive(t *testing.T) {
+	defaults, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "builderd_service", "defaults", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "builderd_service", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		`builderd_build_drive_dir: "{{ builderd_build_staging_root }}/drive"`,
+		`builderd_build_export_dir: "{{ builderd_build_staging_root }}/out"`,
+	} {
+		if !strings.Contains(string(defaults), want) {
+			t.Errorf("builderd role defaults missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		`- "{{ builderd_build_drive_dir }}"`,
+		`- "{{ builderd_build_export_dir }}"`,
+	} {
+		if !strings.Contains(string(tasks), want) {
+			t.Errorf("builderd role tasks do not create %q", want)
+		}
+	}
+}
