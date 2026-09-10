@@ -646,3 +646,60 @@ func TestDoctor_Deep_DriftPerNode(t *testing.T) {
 		t.Errorf("no node-hashes finding mentioning vmmd; got findings=%+v", rep.Findings)
 	}
 }
+
+func TestDoctor_Deep_SkipsUnavailableHistoryByDefault(t *testing.T) {
+	s := newDoctorSetup(t)
+	s.cleanup(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	legacySHA := "123456789abcdef0123456789abcdef012345678"
+	if _, err := s.pool.Exec(ctx, `
+		insert into release_bundles (git_sha, manifest_hash, daemon_hashes, applied_at)
+		select $1, manifest_hash, daemon_hashes, now()
+		from release_bundles where git_sha = $2`, legacySHA, s.gitSHA); err != nil {
+		t.Fatalf("insert legacy release bundle: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		set release_id = $1, lifecycle = 'unavailable'
+		where name = $2`, legacySHA, s.nodeA); err != nil {
+		t.Fatalf("make node unavailable: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		_, _ = s.pool.Exec(cleanupCtx, `delete from compute_nodes where name = $1`, s.nodeA)
+		_, _ = s.pool.Exec(cleanupCtx, `delete from release_bundles where git_sha = $1`, legacySHA)
+	})
+
+	code, out, errOut := s.runDoctor(t, nil,
+		"doctor",
+		"--releases-root="+s.releasesRoot,
+		"--deep",
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor --deep default fleet: exit=%d stderr=%q out=%q", code, errOut, out)
+	}
+	var report doctorReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("decode default report: %v", err)
+	}
+	for _, finding := range report.Findings {
+		if finding.Check == "node-hashes" && finding.Target == s.nodeA {
+			t.Fatalf("default deep audit inspected unavailable node: %+v", finding)
+		}
+	}
+
+	code, out, _ = s.runDoctor(t, nil,
+		"doctor",
+		"--releases-root="+s.releasesRoot,
+		"--node="+s.nodeA,
+		"--deep",
+		"--json",
+	)
+	if code != 3 {
+		t.Fatalf("doctor --deep explicit unavailable node: exit=%d, want 3; out=%q", code, out)
+	}
+}
