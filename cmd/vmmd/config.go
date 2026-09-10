@@ -496,20 +496,30 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_OVERLAY_INTERFACE"); v != "" {
 		c.ComputeNode.OverlayInterface = v
 	}
-	// Issue #938 / PR-A: env-var overlay for [compute_node].vcpu_budget
-	// so heterogeneous fleets can dial the per-host vCPU ceiling via the
-	// systemd drop-in without editing vmmd.toml on every box. Mirrors
-	// the FAAS_NODE_NAME / FAAS_HOST_BRIDGE_CIDR / FAAS_OVERLAY_INTERFACE
-	// pattern. Non-positive values are rejected at LoadConfig so the
-	// migration 00123 CHECK constraint (vcpu_budget > 0) can't trip the
-	// self-registration upsert later. Empty keeps the TOML value (or
-	// api.VCPUSlots when both are empty).
-	if v := os.Getenv("FAAS_VCPU_BUDGET"); v != "" {
-		n, perr := strconv.Atoi(v)
-		if perr != nil || n <= 0 {
-			return nil, fmt.Errorf("vmmd: FAAS_VCPU_BUDGET %q must be a positive integer", v)
+	// Production capacity is host-specific. The manifest renderer cannot own
+	// these values because one fleet can contain different machine sizes, so
+	// node_join derives them from Ansible facts and publishes this drop-in
+	// contract. Apply the whole set after TOML parsing so vmmd registration and
+	// the operator's pre-registration use the same physical host limits instead
+	// of falling back to the legacy 160-vCPU / 56-GB single-box defaults.
+	capacityOverlays := []struct {
+		name string
+		dst  *int
+	}{
+		{name: "FAAS_COMPUTE_VCPUS", dst: &c.ComputeNode.VPCPUs},
+		{name: "FAAS_COMPUTE_MEM_MB", dst: &c.ComputeNode.MemMB},
+		{name: "FAAS_COMPUTE_MAX_CONCURRENCY", dst: &c.ComputeNode.MaxConcurrency},
+		{name: "FAAS_COMPUTE_ADMISSION_CEILING_MB", dst: &c.ComputeNode.AdmissionCeilingMB},
+		{name: "FAAS_VCPU_BUDGET", dst: &c.ComputeNode.VCPUBudget},
+	}
+	for _, overlay := range capacityOverlays {
+		if v := os.Getenv(overlay.name); v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil || n <= 0 {
+				return nil, fmt.Errorf("vmmd: %s %q must be a positive integer", overlay.name, v)
+			}
+			*overlay.dst = n
 		}
-		c.ComputeNode.VCPUBudget = n
 	}
 	if v := os.Getenv("FAAS_PREPARED_NETWORKS"); v != "" {
 		n, perr := strconv.Atoi(v)
