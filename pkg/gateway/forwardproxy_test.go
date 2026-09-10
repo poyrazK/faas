@@ -588,6 +588,31 @@ func TestForwardingReverseProxy_HappyPath(t *testing.T) {
 	}
 }
 
+func TestForwardingReverseProxy_PreservesResponseTrailers(t *testing.T) {
+	stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+		{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{
+			Status:   http.StatusOK,
+			Trailers: []*vmmdpb.Header{{Name: "X-Audit-Final"}},
+		}}},
+		{Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{BodyChunk: []byte("audit-body")}},
+		{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{
+			Trailers: []*vmmdpb.Header{{Name: "X-Audit-Final", Value: "done"}},
+		}}},
+	}}
+	lookup := &fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}
+	proxy := gateway.ForwardingReverseProxy(lookup, nil)
+	req := httptest.NewRequest(http.MethodGet, "/trailers", nil)
+	req.Header.Set("x-faas-instance", "i-test")
+	rec := httptest.NewRecorder()
+	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+	if got := resp.Trailer.Get("X-Audit-Final"); got != "done" {
+		t.Fatalf("response trailer = %q, want done", got)
+	}
+}
+
 // TestForwardingReverseProxy_StampsTargetPort pins issue #460 /
 // ADR-053 (PR-C): the picked Target's Port must reach
 // ForwardHTTPRequestInit.port so vmmd's buildStreamingBridgeScript

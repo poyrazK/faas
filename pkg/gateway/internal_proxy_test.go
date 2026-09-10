@@ -1,3 +1,4 @@
+// spec: §4.1
 package gateway
 
 import (
@@ -108,6 +109,28 @@ func TestInternalReverseProxy_PreservesInboundHost(t *testing.T) {
 	}
 	if gotHost != "hello-node-test.apps.gregale.dev" {
 		t.Errorf("upstream Host = %q, want the inbound hostname preserved", gotHost)
+	}
+}
+
+func TestInternalReverseProxy_PreservesResponseTrailers(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Trailer", "X-Audit-Final")
+		_, _ = io.WriteString(w, "audit-body")
+		w.Header().Set("X-Audit-Final", "done")
+	}))
+	defer upstream.Close()
+	p := NewInternalReverseProxy(
+		&stubDialer{server: upstream},
+		&url.URL{Scheme: "http", Host: "internal"},
+		slog.Default(), false,
+	)
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/trailers", nil))
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+	if got := resp.Trailer.Get("X-Audit-Final"); got != "done" {
+		t.Fatalf("response trailer = %q, want done", got)
 	}
 }
 

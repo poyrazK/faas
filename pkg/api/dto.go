@@ -5410,6 +5410,23 @@ type EdgeRuleCORSAction struct {
 // guard is intentionally narrow.
 var CorsOriginPattern = regexp.MustCompile(`^(?:\*|https?://(?:\*\.[a-zA-Z0-9.\-]+|localhost)(?::\*|\:[0-9]+)?|https?://[a-zA-Z0-9.\-]+(?::\*|\:[0-9]+)?)$`)
 
+// CorsHeaderNamePattern accepts an HTTP field-name token or the CORS wildcard.
+// The wildcard is valid only when credentials are disabled; callers enforce
+// that cross-field rule separately.
+var CorsHeaderNamePattern = regexp.MustCompile("^(?:\\*|[!#$%&'*+\\-.^_`|~0-9A-Za-z]+)$")
+
+func validateCORSAllowHeaders(subject string, headers []string, allowCredentials bool) *Problem {
+	for _, header := range headers {
+		if !CorsHeaderNamePattern.MatchString(header) {
+			return ErrValidation(subject + " allow_header " + strconv.Quote(header) + " is not a valid HTTP header name")
+		}
+		if allowCredentials && header == "*" {
+			return ErrValidation(subject + " cannot combine AllowCredentials: true with AllowHeaders: [\"*\"] (browsers require explicit header names for credentialed requests)")
+		}
+	}
+	return nil
+}
+
 func (a *EdgeRuleCORSAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("cors action is required")
@@ -5485,6 +5502,9 @@ func (a *EdgeRuleCORSAction) Validate() *Problem {
 				return ErrValidation("cors action cannot combine AllowCredentials: true with AllowOrigins: [\"*\"] (browsers reject this combination)")
 			}
 		}
+	}
+	if problem := validateCORSAllowHeaders("cors action", a.AllowHeaders, a.AllowCredentials); problem != nil {
+		return problem
 	}
 	return nil
 }

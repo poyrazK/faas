@@ -1246,6 +1246,9 @@ func cmdQueueAck(args []string) int {
 	if err := client.AckQueueRow(context.Background(), slug, id); err != nil {
 		return printErr("Queue ack failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"id": id, "acked": true}))
+	}
 	PrintOK(osStdout, "Row %s acked.", id)
 	return 0
 }
@@ -1275,7 +1278,11 @@ func splitArgsForFlags(args []string) (flags, pos []string) {
 	for i < len(args) {
 		a := args[i]
 		if a == "--" {
-			pos = append(pos, args[i+1:]...)
+			i++
+			for i < len(args) {
+				pos = append(pos, args[i])
+				i++
+			}
 			return
 		}
 		if len(a) >= 2 && a[0] == '-' && a[1] == '-' {

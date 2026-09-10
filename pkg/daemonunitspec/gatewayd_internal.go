@@ -81,6 +81,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_GATEWAY_LISTEN", Value: "off"},
+			{Key: "FAAS_HOST_KEY_PATH", Value: "/etc/faas/secrets/host.age"},
 			// Security review A4 (mirrors faas-apid.service): the session
 			// key reaches the daemon as a LoadCredential= path, never as
 			// inherited env content. cmd/gatewayd-internal/session_key.go

@@ -1740,7 +1740,14 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 			case errors.Is(err, state.ErrNoRollbackTarget):
 				return state.Deployment{}, api.ErrRollbackTargetNotFound(fmt.Sprintf("no superseded deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
 			case errors.Is(err, state.ErrRollbackTargetAlreadyLive):
-				return state.Deployment{}, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q exists but is not in 'superseded' state; rollback to current live deployment is rejected", *req.TargetDeploymentID))
+				candidate, readErr := s.store.DeploymentByID(ctx, *req.TargetDeploymentID)
+				if readErr != nil {
+					return state.Deployment{}, api.ErrCapacity(fmt.Sprintf("lookup rollback target state: %v", readErr))
+				}
+				if candidate.Status == state.DeployLive {
+					return state.Deployment{}, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
+				}
+				return state.Deployment{}, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
 			default:
 				return state.Deployment{}, api.ErrCapacity(fmt.Sprintf("lookup rollback target: %v", err))
 			}

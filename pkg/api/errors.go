@@ -691,6 +691,10 @@ const (
 	// to the already-current deployment). Rejected explicitly rather
 	// than silently no-op'd. SAFE-RELEASES-G.
 	CodeRollbackTargetAlreadyLive = "rollback_target_already_live"
+	// CodeRollbackTargetIneligible is returned when an explicit rollback
+	// target exists but is cancelled, failed, or still progressing. Only a
+	// superseded deployment is a valid historical rollback target.
+	CodeRollbackTargetIneligible = "rollback_target_ineligible"
 	// CodeDeploySignatureInvalid is returned by apid when the
 	// customer's OCI image deploy is rejected at the accept-time
 	// signature-enforcement gate (issue #472 / ADR-054). Three
@@ -3915,6 +3919,13 @@ func ErrRollbackTargetNotFound(detail string) *Problem {
 func ErrRollbackTargetAlreadyLive(detail string) *Problem {
 	return NewProblem(http.StatusConflict, CodeRollbackTargetAlreadyLive,
 		"Rollback target is already live",
+		detail).
+		WithDocs(docsBase + "/deploys#rollback")
+}
+
+func ErrRollbackTargetIneligible(detail string) *Problem {
+	return NewProblem(http.StatusConflict, CodeRollbackTargetIneligible,
+		"Rollback target is not eligible",
 		detail).
 		WithDocs(docsBase + "/deploys#rollback")
 }

@@ -132,6 +132,9 @@ func (c *cacheWriter) WriteHeader(code int) {
 	// ResponseWriter is the lowest-level writer in the
 	// chain — its Header() is the canonical live map.
 	for k, vs := range c.Header() {
+		if isPerRequestPlatformHeader(k) {
+			continue
+		}
 		for _, v := range vs {
 			c.header.Add(k, v)
 		}

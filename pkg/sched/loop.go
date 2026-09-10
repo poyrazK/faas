@@ -3211,8 +3211,12 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)
 	if err != nil {
 		l.log.Warn("cron: enqueue invocation", "cron_id", c.ID, "err", err)
-		// Continue past — legacy wake-only path is still safe.
+		return CronRun{}, true
 	}
+	// Enqueue mints the durable invocation ID. Dispatch that persisted row;
+	// sending the pre-insert value leaves invocation_id empty and the gateway
+	// correctly rejects the synthetic envelope with HTTP 400.
+	inv = enq
 	// Walk the row through pending → dispatching BEFORE calling
 	// Invoke. The store's Claim only accepts state=pending, and
 	// StampInstanceInvocation only accepts state=dispatching — so

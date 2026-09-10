@@ -478,6 +478,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			for _, h := range init.GetHeaders() {
 				w.Header().Add(h.GetName(), h.GetValue())
 			}
+			for _, trailer := range init.GetTrailers() {
+				if name := strings.TrimSpace(trailer.GetName()); name != "" {
+					w.Header().Add("Trailer", name)
+				}
+			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
 			// The initial response headers are the first response byte for
@@ -515,6 +520,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					NodeID:     t.NodeID,
 					LatencyMs:  time.Since(started).Milliseconds(),
 				})
+			}
+			continue
+		}
+		if init := frame.GetInit(); init != nil && wroteHeader {
+			for _, trailer := range init.GetTrailers() {
+				if name := strings.TrimSpace(trailer.GetName()); name != "" {
+					w.Header().Add(name, trailer.GetValue())
+				}
 			}
 			continue
 		}

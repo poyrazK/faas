@@ -55,6 +55,32 @@ func TestAnalyzeProfilesCommonAPIs(t *testing.T) {
 	}
 }
 
+func TestAnalyzePythonIgnoresFrameworkNamesInRequirementsComments(t *testing.T) {
+	tests := []struct {
+		name         string
+		requirements string
+		want         string
+	}{
+		{"comment only", "# Functions do not pull Flask; the runner invokes the handler.\n", "python"},
+		{"commented dependency", "# Flask==3.1\n", "python"},
+		{"declared dependency", "Flask==3.1 # production server\n", "flask"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Analyze(fstest.MapFS{
+				"requirements.txt": &fstest.MapFile{Data: []byte(tt.requirements)},
+				"handler.py":       &fstest.MapFile{Data: []byte("async def handler(event, ctx): return {}\n")},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Framework != tt.want {
+				t.Fatalf("framework = %q, want %q (profile: %+v)", got.Framework, tt.want, got)
+			}
+		})
+	}
+}
+
 func TestAnalyzeDockerfileUsesExposedPortAndDefersCommand(t *testing.T) {
 	got, err := Analyze(fstest.MapFS{
 		"Dockerfile": &fstest.MapFile{Data: []byte("FROM node:22\nEXPOSE 9000\nCMD [\"node\", \"server.js\"]\n")},
