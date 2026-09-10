@@ -135,14 +135,30 @@ func TestTierD_RegistrySet_HappyPath(t *testing.T) {
 	if err := json.Unmarshal(f.sawBody, &got); err != nil {
 		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
 	}
-	if got["registry"] != "docker.io" {
-		t.Errorf("registry = %v, want docker.io", got["registry"])
+	if got["registry"] != "https://docker.io" {
+		t.Errorf("registry = %v, want https://docker.io", got["registry"])
 	}
 	if got["username"] != "u" {
 		t.Errorf("username = %v, want u", got["username"])
 	}
 	if got["password"] != "p" {
 		t.Errorf("password = %v, want p", got["password"])
+	}
+}
+
+func TestTierD_RegistrySetDocumentedVerbAndHTTPSInput(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"registry":"ghcr.io","username":"u","created_at":"2026-08-07T00:00:00Z","updated_at":"2026-08-07T00:00:00Z"}`
+	f := authedFakeAPI(t, body, http.StatusOK)
+	if code := cmdRegistry([]string{"set", "--app", "demo", "--registry", "https://ghcr.io", "--user", "u", "--password", "p"}); code != 0 {
+		t.Fatalf("registry set exit = %d", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["registry"] != "https://ghcr.io" {
+		t.Fatalf("registry body = %v", got["registry"])
 	}
 }
 

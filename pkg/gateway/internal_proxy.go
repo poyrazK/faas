@@ -503,6 +503,9 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			w.Header().Add(k, v)
 		}
 	}
+	for name := range resp.Trailer {
+		w.Header().Add("Trailer", name)
+	}
 	w.WriteHeader(resp.StatusCode)
 	// Body copy bound to ctx — a hung upstream pins only the
 	// in-flight goroutine, not the listener.
@@ -514,6 +517,11 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		p.logger().Warn("internal body copy failed",
 			"target", p.Target.String(),
 			"err", err)
+	}
+	for name, values := range resp.Trailer {
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
 	}
 }
 

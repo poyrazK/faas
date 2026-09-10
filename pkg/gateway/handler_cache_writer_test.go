@@ -190,6 +190,35 @@ func TestCacheWriter_HeaderCopyNotAliased(t *testing.T) {
 	}
 }
 
+func TestCacheWriter_DropsPerRequestPlatformHeaders(t *testing.T) {
+	now := time.Now()
+	cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now })
+	rule := EdgeRuleCacheResolved{ID: "rule-1", PathGlob: "/catalog", MaxAgeSeconds: 60}
+	rec := newTestStatusRecorder(httptest.NewRecorder())
+	cw := newCacheWriter(rec, rec, &rule, ResponseCachePerEntryMaxBytes)
+	cw.Header().Set("X-Faas-Request-Id", "old-request")
+	cw.Header().Set("X-Faas-Wake", "restored")
+	cw.Header().Set("Content-Type", "application/json")
+	cw.WriteHeader(http.StatusOK)
+	_, _ = cw.Write([]byte("{}"))
+	key := CacheKey{AppID: "a", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hashStable("")}
+	cw.finishCacheCapture(cache, key, now)
+
+	_, entry := cache.Get(key)
+	if entry == nil {
+		t.Fatal("expected cached entry")
+	}
+	if got := http.Header(entry.header).Get("X-Faas-Request-Id"); got != "" {
+		t.Fatalf("cached request id = %q", got)
+	}
+	if got := http.Header(entry.header).Get("X-Faas-Wake"); got != "" {
+		t.Fatalf("cached wake metadata = %q", got)
+	}
+	if got := http.Header(entry.header).Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content type = %q, want preserved", got)
+	}
+}
+
 // TestCacheWriter_OnlyOneWriteHeader is a stdlib-contract
 // regression: calling WriteHeader twice must not flip the
 // status. Mirrors statusRecorder's behaviour.

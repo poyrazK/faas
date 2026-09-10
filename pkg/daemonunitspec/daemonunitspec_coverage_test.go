@@ -201,6 +201,9 @@ func TestUnitBuilderd_Shape(t *testing.T) {
 
 func TestUnitGatewaydInternal_Shape(t *testing.T) {
 	u := UnitGatewaydInternal()
+	if !hasEnvironment(u, "FAAS_HOST_KEY_PATH", "/etc/faas/secrets/host.age") {
+		t.Fatal("gatewayd-internal must receive the host identity used to unseal public Basic auth")
+	}
 	assertBasicShape(t, "gatewayd-internal", u)
 	if u.Slice != FaasCPSlice {
 		t.Errorf("gatewayd-internal: Slice = %q, want %q", u.Slice, FaasCPSlice)

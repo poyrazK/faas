@@ -1632,6 +1632,30 @@ func TestRollbackApp_ExplicitTarget_AlreadyLive(t *testing.T) {
 	assertProblem(t, rec, http.StatusConflict, api.CodeRollbackTargetAlreadyLive)
 }
 
+func TestRollbackApp_ExplicitTarget_IneligibleStates(t *testing.T) {
+	for _, status := range []state.DeploymentStatus{
+		state.DeployBuilding,
+		state.DeployFailed,
+		state.DeployCancelled,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			dep := mustSeedDeployment(t, e, "rb-ineligible-"+string(status))
+			if status != state.DeployBuilding {
+				if err := e.store.UpdateDeploymentStatus(context.Background(), dep.ID, status, "test state"); err != nil {
+					t.Fatalf("set target status: %v", err)
+				}
+			}
+			body := api.RollbackRequest{TargetDeploymentID: &dep.ID}
+			rec := e.do(t, "POST", "/v1/apps/rb-ineligible-"+string(status)+"/rollback", body, nil)
+			assertProblem(t, rec, http.StatusConflict, api.CodeRollbackTargetIneligible)
+			if !strings.Contains(rec.Body.String(), string(status)) {
+				t.Fatalf("problem does not report target status %q: %s", status, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestRollbackApp_LegacyEmptyBodyUnchanged confirms the back-compat
 // path: POST without a body falls through to "rollback to most-recent
 // superseded deployment". Equivalent to the pre-G behaviour.

@@ -3,6 +3,8 @@ package gateway
 import (
 	"net/http"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // applyEdgeRuleCache (ADR-122 §Decision) is the kind=cache serve
@@ -113,12 +115,13 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// Vary. Operators that need Vary on cached responses
 		// can add it via kind=headers.
 		h.metricsIncCacheOutcome("hit")
+		w.Header().Del(wire.WakeHeader)
 		for k, vs := range entry.header {
 			// Skip hop-by-hop headers that don't survive
 			// into the stored body anyway; mirroring
 			// cacheWriter's drop-list to keep behaviour
 			// symmetric.
-			if isHopByHopHeader(k) {
+			if isHopByHopHeader(k) || isPerRequestPlatformHeader(k) {
 				continue
 			}
 			for _, v := range vs {

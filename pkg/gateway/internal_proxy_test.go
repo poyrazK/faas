@@ -111,6 +111,28 @@ func TestInternalReverseProxy_PreservesInboundHost(t *testing.T) {
 	}
 }
 
+func TestInternalReverseProxy_PreservesResponseTrailers(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Trailer", "X-Audit-Final")
+		_, _ = io.WriteString(w, "audit-body")
+		w.Header().Set("X-Audit-Final", "done")
+	}))
+	defer upstream.Close()
+	p := NewInternalReverseProxy(
+		&stubDialer{server: upstream},
+		&url.URL{Scheme: "http", Host: "internal"},
+		slog.Default(), false,
+	)
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/trailers", nil))
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+	if got := resp.Trailer.Get("X-Audit-Final"); got != "done" {
+		t.Fatalf("response trailer = %q, want done", got)
+	}
+}
+
 // TestInternalReverseProxy_StripsHopByHopHeaders pins the RFC 7230
 // §6.1 contract: the inbound hop-by-hop headers are NOT forwarded
 // to the upstream.

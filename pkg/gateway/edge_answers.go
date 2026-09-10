@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // EdgeAnswerKind is the bounded label vocabulary for gateway answers that do
@@ -144,14 +145,28 @@ func (c *edgeHeadHeaderCache) get(appID string) (http.Header, bool) {
 }
 
 func edgeHeadHeaderAllowed(key string) bool {
+	if isPerRequestPlatformHeader(key) {
+		return false
+	}
 	switch strings.ToLower(key) {
 	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
 		"te", "trailer", "transfer-encoding", "upgrade", "set-cookie",
-		"authorization", "www-authenticate":
+		"authorization", "www-authenticate",
+		"strict-transport-security", "x-frame-options", "x-content-type-options",
+		"referrer-policy", "permissions-policy":
 		return false
 	default:
 		return true
 	}
+}
+
+// isPerRequestPlatformHeader identifies response metadata that belongs to the
+// current request. Replaying one of these values from a previous origin request
+// makes correlation and wake diagnostics ambiguous. The handler regenerates
+// the relevant values for every request, including synthetic HEAD and response
+// cache hits.
+func isPerRequestPlatformHeader(key string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "x-faas-")
 }
 
 // serveEdgeAnswer handles the three M1 paths after host resolution and before
@@ -163,6 +178,9 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 	if h == nil || r == nil {
 		return false
 	}
+	// The generic handler starts with "hot" so early auth and policy exits
+	// expose a bounded wake value. Edge answers do not consult a VM at all.
+	w.Header().Del(wire.WakeHeader)
 
 	if r.URL.Path == normalizeHealthPath(app.HealthPath) && !app.HealthPathWakes {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

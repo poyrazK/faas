@@ -1246,6 +1246,9 @@ func cmdQueueAck(args []string) int {
 	if err := client.AckQueueRow(context.Background(), slug, id); err != nil {
 		return printErr("Queue ack failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"id": id, "acked": true}))
+	}
 	PrintOK(osStdout, "Row %s acked.", id)
 	return 0
 }

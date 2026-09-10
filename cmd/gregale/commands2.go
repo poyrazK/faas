@@ -1599,7 +1599,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	localZeroConfig := *image == "" && *tarball == ""
 	doctorEnabled := *doctorStrict || (!*noDoctor && localZeroConfig)
 	if doctorEnabled && sourceDir != "" {
-		rep := runDoctorChecks(sourceDir)
+		doctorShape := resolvedShape
+		if !*function && !*app {
+			doctorShape = detectShape(sourceDir)
+		}
+		rep := runDoctorChecksForShape(sourceDir, doctorShape)
 		if *doctorStrict && rep.HasErrors() {
 			if jsonOutput {
 				_ = json.NewEncoder(osStderr).Encode(struct {

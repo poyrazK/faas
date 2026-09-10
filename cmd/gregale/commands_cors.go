@@ -43,6 +43,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"sort"
@@ -111,7 +112,7 @@ func cmdCors(args []string) int {
 //
 //	gregale cors allow <slug> <origin> [<origin>...]
 //	  [--method GET] [--method POST] ...
-//	  [--credentials] [--max-age 600] [--host <match-host>]
+//	  [--credentials] [--allow-header NAME] [--max-age 600] [--host <match-host>]
 //
 // Each <origin> creates one rule. Repeated --method flags extend the
 // default method set. --credentials flips allow_credentials on every
@@ -145,10 +146,29 @@ func cmdCorsAllow(args []string) int {
 		return nil
 	})
 	credentials := fs.Bool("credentials", false, "enable Access-Control-Allow-Credentials (rare)")
+	var allowedHeaders stringListFlag
+	fs.Var(&allowedHeaders, "allow-header", "allowed request header (repeatable; explicit names are required for custom credentialed headers)")
 	maxAge := fs.Int("max-age", 600, "Access-Control-Max-Age in seconds (0 = SDK default 600; capped server-side at 86400)")
 	host := fs.String("host", "", "match_host override (default: app's first verified custom domain)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	for i, header := range allowedHeaders {
+		header = strings.TrimSpace(header)
+		if !api.CorsHeaderNamePattern.MatchString(header) {
+			return printErr("Invalid CORS header", fmt.Errorf("%q is not a valid HTTP header name", header))
+		}
+		if *credentials && header == "*" {
+			return printErr("Invalid CORS header", fmt.Errorf("--credentials requires explicit --allow-header names; wildcard headers are not valid for credentialed browser requests"))
+		}
+		allowedHeaders[i] = http.CanonicalHeaderKey(header)
+	}
+	if len(allowedHeaders) == 0 {
+		if *credentials {
+			allowedHeaders = stringListFlag{"Accept", "Authorization", "Content-Type", "X-Requested-With"}
+		} else {
+			allowedHeaders = stringListFlag{"*"}
+		}
 	}
 
 	client, err := authedClient()
@@ -184,7 +204,7 @@ func cmdCorsAllow(args []string) int {
 		MatchMethods:     methods,
 		AllowOrigins:     origins,
 		AllowMethods:     methods,
-		AllowHeaders:     []string{"*"},
+		AllowHeaders:     []string(allowedHeaders),
 		AllowCredentials: *credentials,
 		MaxAgeSeconds:    *maxAge,
 	}
