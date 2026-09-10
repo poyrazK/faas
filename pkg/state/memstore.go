@@ -9585,6 +9585,31 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	return out, nil
 }
 
+func (m *MemStore) ListFirstSuccessfulRequestsForAccountsCreatedSince(_ context.Context, since time.Time) ([]AccountFirstSuccess, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	first := make(map[string]time.Time)
+	for _, instance := range m.instances {
+		app, ok := m.apps[instance.AppID]
+		if !ok || instance.LastRequestAt.IsZero() {
+			continue
+		}
+		account, ok := m.accounts[app.AccountID]
+		if !ok || account.CreatedAt.Before(since) {
+			continue
+		}
+		if current, ok := first[account.ID]; !ok || instance.LastRequestAt.Before(current) {
+			first[account.ID] = instance.LastRequestAt
+		}
+	}
+	out := make([]AccountFirstSuccess, 0, len(first))
+	for accountID, at := range first {
+		out = append(out, AccountFirstSuccess{AccountID: accountID, At: at})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AccountID < out[j].AccountID })
+	return out, nil
+}
+
 // ListInstancesForAccount joins the instance set against the app set
 // in-memory; the production path is a single SQL query (pgstore). Used
 // by the meterd quota loop on Free hard-stop (spec §4.7).

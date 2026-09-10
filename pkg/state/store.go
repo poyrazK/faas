@@ -3839,6 +3839,11 @@ type Store interface {
 	// construction (invariant §6.2-4). The partial index
 	// `instances_reaper_state_idx` (migration 00009) covers this query.
 	ListAllInstances(ctx context.Context) ([]Instance, error)
+	// ListFirstSuccessfulRequestsForAccountsCreatedSince returns one row per
+	// account whose signup and first successful public request are inside the
+	// operator's cohort window. The query is a single aggregate scan so polling
+	// the beta overview never creates a per-account query fan-out.
+	ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, since time.Time) ([]AccountFirstSuccess, error)
 	// ListInstancesForAccount returns every live instance belonging to an
 	// account. Used by the meterd quota loop to park everything when a Free
 	// account crosses 100 % (spec §4.7). Per-account scan is O(instances);

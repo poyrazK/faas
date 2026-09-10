@@ -650,7 +650,6 @@ SweepExpiredWorkflowRuns
 SweepStuckRunningBuilds
 TenantSurfaceByHostname
 TouchConsumerKeyLastUsed
-TouchInstancesLastSeen
 TouchInstancesWithRequestDelta
 TouchKeyLastUsed
 TouchSessionLastSeen

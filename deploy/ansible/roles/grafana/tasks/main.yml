@@ -149,14 +149,24 @@
   ansible.builtin.stat:
     path: "{{ gv_admin_password_file }}"
   register: gv_secret_stat
-  failed_when:
-    - not gv_dev_mode | bool
-    - gv_admin_password_file | length > 0
-    - not gv_secret_stat.stat.exists
   when:
     - not gv_dev_mode | bool
-    - gv_admin_password_file | length > 0
-  no_log: true   # paths flow through stat; defensive even though they're not the bytes
+  no_log: true
+
+- name: grafana — require private admin password file (production)
+  ansible.builtin.assert:
+    that:
+      - gv_secret_stat.stat.exists
+      - gv_secret_stat.stat.isreg
+      - gv_secret_stat.stat.pw_name == 'grafana'
+      - gv_secret_stat.stat.gr_name == 'grafana'
+      - gv_secret_stat.stat.mode == '0400'
+    fail_msg: >-
+      {{ gv_admin_password_file }} must be a regular file owned by
+      grafana:grafana with mode 0400 before Grafana can start.
+  when:
+    - not gv_dev_mode | bool
+  no_log: true
 
 - name: grafana — require HTTPS Loki datasource endpoint (when configured)
   ansible.builtin.assert:
@@ -223,6 +233,17 @@
   ansible.builtin.copy:
     src: faas-fleet.json
     dest: "{{ gv_dashboards_dir }}/faas-fleet.json"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
+- name: grafana — drop warm-snapshot dashboard JSON
+  ansible.builtin.copy:
+    src: warm-snapshot.json
+    dest: "{{ gv_dashboards_dir }}/warm-snapshot.json"
     owner: grafana
     group: grafana
     mode: "0640"

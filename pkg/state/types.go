@@ -3137,6 +3137,13 @@ type GdprRequest struct {
 	RequestID    string    // optional X-Request-Id from the inbound request (PR-5.2)
 }
 
+// AccountFirstSuccess is the privacy-safe aggregate used by the operator beta
+// funnel. It intentionally carries no app, instance, request, or email data.
+type AccountFirstSuccess struct {
+	AccountID string
+	At        time.Time
+}
+
 // Instance mirrors the instances row; schedd is the sole writer (spec §6).
 type Instance struct {
 	ID            string

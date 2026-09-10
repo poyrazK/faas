@@ -2181,7 +2181,34 @@ groups:
     rules:
       # ── Recording rules ──────────────────────────────────────────
       - record: faas_api_down_over_5m:by_account_app
-        expr: meterd_api_reachable
+        # meterd_api_reachable is retained as the bounded app_id to
+        # account_id label map. Its value only observes durable async
+        # invocation rows, so it cannot classify ordinary public HTTP
+        # traffic. Emit no series for an idle app.
+        expr: |
+          (
+            (meterd_api_reachable * 0)
+            + on (app_id) group_left
+              label_replace(
+                (
+                  sum by (app) (
+                    increase(gateway_requests_total{app!="-",code=~"2.."}[5m])
+                  )
+                  or
+                  sum by (app) (
+                    increase(gateway_requests_total{app!="-"}[5m])
+                  ) * 0
+                ) > bool 0,
+                "app_id", "$1", "app", "(.*)"
+              )
+          )
+          and on (app_id)
+          label_replace(
+            sum by (app) (
+              increase(gateway_requests_total{app!="-"}[5m])
+            ) > 0,
+            "app_id", "$1", "app", "(.*)"
+          )
 
       - record: faas_spend_eur_20_over_24h:by_account
         expr: meterd_account_spend_eur
@@ -2208,7 +2235,7 @@ groups:
           preset: api_down
         annotations:
           summary: "API reachability below 1.0 for app {{ $labels.app_id }} (account {{ $labels.account_id }})"
-          description: "meterd_api_reachable{account_id=\"{{ $labels.account_id }}\",app_id=\"{{ $labels.app_id }}\"} has been < 1.0 (i.e. no successful invocation in the last 5 min) for 5m. This is the alert_preset catalog `api_down` signal. Cross-check `meterd_account_spend_eur` and `meterd_api_reachable` panels; common causes: customer app crashed and is restarting, gatewayd queue saturated, or the customer's app slug was typo'd at deploy time."
+          description: "Public traffic for app {{ $labels.app_id }} (account {{ $labels.account_id }}) has completed without any 2xx response in each rolling 5m window for 5m. Idle apps do not fire. This is the alert_preset catalog `api_down` signal. Cross-check gateway request status and queue panels; common causes: customer app crashes, repeated wake failures, or gateway queue saturation."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiDown.md"
 
       - alert: FaasSpendEur20Account
@@ -2282,16 +2309,16 @@ groups:
       # remains the account-authoritative webhook path.
       - record: faas_slo_burn_rate_1h:by_app
         expr: |
-          sum by (app) (rate(gateway_requests_total{code!~"2.."}[1h]))
+          sum by (app) (rate(gateway_requests_total{app!="-",code!~"2.."}[1h]))
             /
-          sum by (app) (rate(gateway_requests_total[1h]))
+          sum by (app) (rate(gateway_requests_total{app!="-"}[1h]))
             / 0.005
 
       - record: faas_slo_burn_rate_6h:by_app
         expr: |
-          sum by (app) (rate(gateway_requests_total{code!~"2.."}[6h]))
+          sum by (app) (rate(gateway_requests_total{app!="-",code!~"2.."}[6h]))
             /
-          sum by (app) (rate(gateway_requests_total[6h]))
+          sum by (app) (rate(gateway_requests_total{app!="-"}[6h]))
             / 0.005
 
       - alert: FaasSLOBurnRateHigh

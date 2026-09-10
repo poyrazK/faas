@@ -34,6 +34,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -43,6 +45,49 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type obsOverviewSnapshot struct {
+	accounts           []state.Account
+	apps               []state.App
+	deployments        []state.Deployment
+	instances          []state.Instance
+	nodes              []state.ComputeNode
+	firstSuccessByAcct map[string]time.Time
+}
+
+func loadObsOverviewSnapshot(ctx context.Context, store state.Store, now time.Time) (obsOverviewSnapshot, error) {
+	var snap obsOverviewSnapshot
+	var err error
+	if snap.accounts, err = store.ListAllAccounts(ctx); err != nil {
+		return snap, fmt.Errorf("list accounts: %w", err)
+	}
+	if snap.apps, err = store.ListAllApps(ctx); err != nil {
+		return snap, fmt.Errorf("list apps: %w", err)
+	}
+	if snap.deployments, err = store.ListAllDeployments(ctx); err != nil {
+		return snap, fmt.Errorf("list deployments: %w", err)
+	}
+	if snap.instances, err = store.ListAllInstances(ctx); err != nil {
+		return snap, fmt.Errorf("list live instances: %w", err)
+	}
+	if snap.nodes, err = store.ListComputeNodes(ctx, true); err != nil {
+		return snap, fmt.Errorf("list compute nodes: %w", err)
+	}
+	snap.firstSuccessByAcct, err = loadFirstSuccessfulRequests(ctx, store, now)
+	return snap, err
+}
+
+func loadFirstSuccessfulRequests(ctx context.Context, store state.Store, now time.Time) (map[string]time.Time, error) {
+	first := make(map[string]time.Time)
+	rows, err := store.ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx, now.Add(-14*24*time.Hour))
+	if err != nil {
+		return nil, fmt.Errorf("list beta first-success times: %w", err)
+	}
+	for _, row := range rows {
+		first[row.AccountID] = row.At
+	}
+	return first, nil
+}
 
 // summariseAccounts reduces the canonical accounts slice to the
 // five headline counts on the overview. PII is NEVER projected
@@ -61,6 +106,65 @@ func summariseAccounts(rows []state.Account) api.ObsOverviewTotals {
 		}
 	}
 	return t
+}
+
+func summariseBetaFunnel(now time.Time, accounts []state.Account, apps []state.App, deployments []state.Deployment, firstSuccess map[string]time.Time) api.ObsBetaFunnel {
+	out := api.ObsBetaFunnel{WindowStartedAt: now.Add(-14 * 24 * time.Hour)}
+	cohort := make(map[string]state.Account)
+	verified := make(map[string]bool)
+	for _, account := range accounts {
+		if account.CreatedAt.Before(out.WindowStartedAt) || account.CreatedAt.After(now) {
+			continue
+		}
+		cohort[account.ID] = account
+		out.AccountsCreated++
+		if account.EmailVerifiedAt != nil && !account.EmailVerifiedAt.After(now) {
+			verified[account.ID] = true
+			out.EmailVerified++
+		}
+	}
+	appAccounts := make(map[string]bool)
+	appOwners := make(map[string]string)
+	for _, app := range apps {
+		appOwners[app.ID] = app.AccountID
+		if verified[app.AccountID] {
+			appAccounts[app.AccountID] = true
+		}
+	}
+	out.WithApp = len(appAccounts)
+	liveAccounts := make(map[string]bool)
+	for _, deployment := range deployments {
+		accountID := appOwners[deployment.AppID]
+		if deployment.Status == state.DeployLive && appAccounts[accountID] {
+			liveAccounts[accountID] = true
+		}
+	}
+	out.WithLiveDeployment = len(liveAccounts)
+	latencies := make([]int64, 0, len(liveAccounts))
+	for accountID := range liveAccounts {
+		seen, ok := firstSuccess[accountID]
+		if !ok {
+			continue
+		}
+		out.WithSuccessfulRequest++
+		latencies = append(latencies, int64(seen.Sub(cohort[accountID].CreatedAt).Seconds()))
+	}
+	out.SignupToFirstSuccessSamples = len(latencies)
+	out.SignupToFirstSuccessP50Seconds = nearestRankSeconds(latencies, 0.50)
+	out.SignupToFirstSuccessP95Seconds = nearestRankSeconds(latencies, 0.95)
+	return out
+}
+
+func nearestRankSeconds(values []int64, percentile float64) int64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+	rank := int(math.Ceil(float64(len(values)) * percentile))
+	if rank < 1 {
+		rank = 1
+	}
+	return values[rank-1]
 }
 
 // summariseInstances counts live + waking instances across the

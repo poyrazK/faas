@@ -339,6 +339,7 @@ var dtoExclude = map[string]bool{
 	// DTO stays admin-only and is excluded here.
 	"ObsOverviewResponse":             true,
 	"ObsOverviewTotals":               true,
+	"ObsBetaFunnel":                   true,
 	"ObsOverviewRateLimited":          true,
 	"ObsOverviewNodeHealth":           true,
 	"ObsOverviewFailureKind":          true,
