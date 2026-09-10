@@ -133,6 +133,8 @@ jobs:
         run: make fix-has-test-check
       - name: fix-has-test checker tests
         run: make fix-has-test-check-test
+      - name: CVE monitor parser and issue-payload tests
+        run: scripts/ci/cve-monitor_test.sh
 
       - uses: actions/setup-go@v7
         with:
