@@ -17,7 +17,7 @@
 // Auth: header "Auth-API-Token: <token>".
 //
 // Why hand-rolled (rather than depending on libdns-hetzner): libdns-hetzner
-// exists but pulls go modules whose go.mod pins an older Go than our 1.25.7
+// exists but pulls go modules whose go.mod pins an older Go than our 1.25.13
 // toolchain — a Hetzner-specific implementation against the documented JSON
 // surface is small, dependency-free, and easy to test against an httptest
 // stub.

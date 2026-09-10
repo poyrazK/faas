@@ -16,7 +16,7 @@
 // Auth: header "Authorization: Bearer <token>".
 //
 // Why hand-rolled (rather than depending on libdns/cloudflare): the
-// libdns-cloudflare module pins a go.mod that lags our 1.25.7 toolchain
+// libdns-cloudflare module pins a go.mod that lags our 1.25.13 toolchain
 // at the time of writing — same tradeoff as the Hetzner sibling. ~80
 // lines against the documented JSON surface is dependency-free and test-
 // able against an httptest stub (see dns01_provider_cloudflare_test.go).
