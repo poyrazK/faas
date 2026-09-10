@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestKafkaSkipVerifyRequested is the MED-4 plan-gate unit test.
@@ -177,6 +178,198 @@ func TestPlanTLSSkipVerifyAllowed_FreeAndHobbyClosed(t *testing.T) {
 		t.Run(string(tc.plan), func(t *testing.T) {
 			if got := tc.plan.TLSSkipVerifyAllowed(); got != tc.want {
 				t.Errorf("Plan(%s).TLSSkipVerifyAllowed = %v, want %v", tc.plan, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestErrTriggerKindNotAllowedWireShape(t *testing.T) {
+	p := api.ErrTriggerKindNotAllowed(api.PlanHobby, api.TriggerKindKafka)
+	if p.Status != http.StatusForbidden {
+		t.Errorf("Status = %d, want 403", p.Status)
+	}
+	if p.Code != api.CodeTriggerKindNotAllowed {
+		t.Errorf("Code = %q, want %q", p.Code, api.CodeTriggerKindNotAllowed)
+	}
+	if !strings.Contains(p.Detail, "hobby") || !strings.Contains(p.Detail, "kafka") {
+		t.Errorf("Detail = %q, want hobby and kafka", p.Detail)
+	}
+}
+
+func TestCreateTriggerRejectsKindOutsidePlan(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "hobby-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+		AppID:  app.ID,
+		Kind:   api.TriggerKindKafka,
+		Slug:   "orders",
+		Config: json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g"}`),
+	}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != api.CodeTriggerKindNotAllowed {
+		t.Fatalf("code = %q, want %q", problem.Code, api.CodeTriggerKindNotAllowed)
+	}
+}
+
+func TestCreateTriggerAcceptsAllowedKafkaConfig(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "pro-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+		AppID:  app.ID,
+		Kind:   api.TriggerKindKafka,
+		Slug:   "orders",
+		Config: json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g"}`),
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEnforceCreateTriggerCapsUsesPlanSafeDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		plan api.Plan
+		want [4]int32
+	}{
+		{api.PlanHobby, [4]int32{50, 1000, 3, 1_048_576}},
+		{api.PlanPro, [4]int32{64, 1000, 5, 6_291_456}},
+		{api.PlanScale, [4]int32{64, 1000, 5, 6_291_456}},
+	} {
+		t.Run(string(tc.plan), func(t *testing.T) {
+			limits := api.MustLimitsFor(tc.plan)
+			bs, bw, ma, pb, _, problem := enforceCreateTriggerCaps(
+				&api.CreateTriggerRequest{Kind: api.TriggerKindQueue}, tc.plan, limits)
+			got := [4]int32{bs, bw, ma, pb}
+			if problem != nil || got != tc.want {
+				t.Fatalf("defaults = %v, problem=%v; want %v", got, problem, tc.want)
+			}
+		})
+	}
+}
+
+func TestEnforceCreateTriggerCapsRejectsExplicitOverCaps(t *testing.T) {
+	limits := api.MustLimitsFor(api.PlanHobby)
+	for _, tc := range []struct {
+		name string
+		req  api.CreateTriggerRequest
+	}{
+		{"batch_size", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, BatchSizeMax: intPtr(51)}},
+		{"batch_window", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, BatchWindowMs: intPtr(30_001)}},
+		{"attempts", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, MaxAttempts: intPtr(4)}},
+		{"payload", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, PayloadMaxBytes: intPtr(1_048_577)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, _, _, _, problem := enforceCreateTriggerCaps(&tc.req, api.PlanHobby, limits); problem == nil {
+				t.Fatal("problem = nil, want explicit over-cap rejection")
+			}
+		})
+	}
+}
+
+func TestBatchCreateTriggerUsesPlanSafeDefaults(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "hobby-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{
+		AppID: app.ID,
+		ManifestYAML: `triggers:
+  - kind: queue
+    app: hobby-app
+    slug: jobs
+    config:
+      mode: queue
+`,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out batchCreateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(out.Errors) != 0 || len(out.Created) != 1 {
+		t.Fatalf("batch result = %+v, want one created trigger", out)
+	}
+	got := out.Created[0]
+	if got.BatchSizeMax != 50 || got.BatchWindowMs != 1000 || got.MaxAttempts != 3 || got.PayloadMaxBytes != 1_048_576 {
+		t.Fatalf("delivery defaults = %d/%d/%d/%d, want 50/1000/3/1048576",
+			got.BatchSizeMax, got.BatchWindowMs, got.MaxAttempts, got.PayloadMaxBytes)
+	}
+}
+
+func TestBatchCreateTriggerRejectsKindOutsidePlan(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "hobby-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{
+		AppID: app.ID,
+		ManifestYAML: `triggers:
+  - kind: kafka
+    app: hobby-app
+    slug: orders
+    config:
+      brokers: ["b:9092"]
+      topic: orders
+      group: g
+`,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out batchCreateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(out.Created) != 0 || len(out.Errors) != 1 || !strings.Contains(out.Errors[0].Message, "kafka") {
+		t.Fatalf("batch result = %+v, want one kafka plan error", out)
+	}
+}
+
+func TestUpdateTriggerRejectsExplicitOverCaps(t *testing.T) {
+	limits := api.MustLimitsFor(api.PlanPro)
+	for _, tc := range []struct {
+		name  string
+		patch api.UpdateTriggerRequest
+	}{
+		{"batch_size", api.UpdateTriggerRequest{BatchSizeMax: intPtr(limits.TriggerBatchSizeMax + 1)}},
+		{"batch_window", api.UpdateTriggerRequest{BatchWindowMs: intPtr(limits.TriggerBatchWindowMaxSec*1000 + 1)}},
+		{"attempts", api.UpdateTriggerRequest{MaxAttempts: intPtr(limits.TriggerMaxAttemptsMax + 1)}},
+		{"payload", api.UpdateTriggerRequest{PayloadMaxBytes: intPtr(limits.TriggerPayloadMaxBytes + 1)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "caps-app"})
+			if err != nil {
+				t.Fatalf("CreateApp: %v", err)
+			}
+			created := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+				AppID: app.ID, Kind: api.TriggerKindQueue, Slug: "jobs", Config: json.RawMessage(`{"mode":"queue"}`),
+			}, nil)
+			if created.Code != http.StatusCreated {
+				t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
+			}
+			var trigger api.Trigger
+			if err := json.Unmarshal(created.Body.Bytes(), &trigger); err != nil {
+				t.Fatalf("decode trigger: %v", err)
+			}
+			rec := e.do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, tc.patch, nil)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("update status = %d, want 403: %s", rec.Code, rec.Body.String())
 			}
 		})
 	}

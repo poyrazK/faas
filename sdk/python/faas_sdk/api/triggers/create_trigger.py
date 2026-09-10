@@ -69,6 +69,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -93,8 +98,10 @@ def sync_detailed(
     """Create a trigger.
 
      Idempotent via Idempotency-Key header. Returns 402
-    `triggers_not_allowed` for Free plan, 403 `trigger_quota_exceeded`
-    on per-app or per-account cap; see ADR-100.
+    `plan_triggers_not_allowed` for Free plan. A 403 may be
+    `trigger_kind_not_allowed`, `plan_trigger_quota`,
+    `trigger_batch_window_too_large`, or
+    `trigger_tls_skip_verify_not_allowed`; see ADR-100.
 
     Args:
         idempotency_key (str | Unset):
@@ -103,6 +110,8 @@ def sync_detailed(
             gating mirrors pkg/gregalemanifest.validateKindConfig:
               - cron: requires schedule + path (slug ignored)
               - non-cron: requires slug + config
+            Omitted delivery settings use the platform default capped to the
+            selected account plan; explicit over-cap values are rejected.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -133,8 +142,10 @@ def sync(
     """Create a trigger.
 
      Idempotent via Idempotency-Key header. Returns 402
-    `triggers_not_allowed` for Free plan, 403 `trigger_quota_exceeded`
-    on per-app or per-account cap; see ADR-100.
+    `plan_triggers_not_allowed` for Free plan. A 403 may be
+    `trigger_kind_not_allowed`, `plan_trigger_quota`,
+    `trigger_batch_window_too_large`, or
+    `trigger_tls_skip_verify_not_allowed`; see ADR-100.
 
     Args:
         idempotency_key (str | Unset):
@@ -143,6 +154,8 @@ def sync(
             gating mirrors pkg/gregalemanifest.validateKindConfig:
               - cron: requires schedule + path (slug ignored)
               - non-cron: requires slug + config
+            Omitted delivery settings use the platform default capped to the
+            selected account plan; explicit over-cap values are rejected.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -168,8 +181,10 @@ async def asyncio_detailed(
     """Create a trigger.
 
      Idempotent via Idempotency-Key header. Returns 402
-    `triggers_not_allowed` for Free plan, 403 `trigger_quota_exceeded`
-    on per-app or per-account cap; see ADR-100.
+    `plan_triggers_not_allowed` for Free plan. A 403 may be
+    `trigger_kind_not_allowed`, `plan_trigger_quota`,
+    `trigger_batch_window_too_large`, or
+    `trigger_tls_skip_verify_not_allowed`; see ADR-100.
 
     Args:
         idempotency_key (str | Unset):
@@ -178,6 +193,8 @@ async def asyncio_detailed(
             gating mirrors pkg/gregalemanifest.validateKindConfig:
               - cron: requires schedule + path (slug ignored)
               - non-cron: requires slug + config
+            Omitted delivery settings use the platform default capped to the
+            selected account plan; explicit over-cap values are rejected.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -206,8 +223,10 @@ async def asyncio(
     """Create a trigger.
 
      Idempotent via Idempotency-Key header. Returns 402
-    `triggers_not_allowed` for Free plan, 403 `trigger_quota_exceeded`
-    on per-app or per-account cap; see ADR-100.
+    `plan_triggers_not_allowed` for Free plan. A 403 may be
+    `trigger_kind_not_allowed`, `plan_trigger_quota`,
+    `trigger_batch_window_too_large`, or
+    `trigger_tls_skip_verify_not_allowed`; see ADR-100.
 
     Args:
         idempotency_key (str | Unset):
@@ -216,6 +235,8 @@ async def asyncio(
             gating mirrors pkg/gregalemanifest.validateKindConfig:
               - cron: requires schedule + path (slug ignored)
               - non-cron: requires slug + config
+            Omitted delivery settings use the platform default capped to the
+            selected account plan; explicit over-cap values are rejected.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

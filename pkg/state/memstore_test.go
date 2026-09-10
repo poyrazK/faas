@@ -5712,6 +5712,50 @@ func TestMemStoreUpdateTrigger_FilterCriteriaPersists(t *testing.T) {
 	}
 }
 
+func TestMemStoreTriggerPersistsCreateAndUpdateFields(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "trigger-fields@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "trigger-fields"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	config := []byte(`{"mode":"delayed_task"}`)
+	created, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", true,
+		config, 12, 345, 2, 8192, "commit", api.Limits{})
+	if err != nil {
+		t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
+	}
+	config[0] = 'x'
+	if string(created.Config) != `{"mode":"delayed_task"}` ||
+		created.BatchSizeMax != 12 || created.BatchWindowMs != 345 ||
+		created.MaxAttempts != 2 || created.PayloadMaxBytes != 8192 {
+		t.Fatalf("created trigger did not preserve inputs: %+v", created)
+	}
+
+	updatedConfig := []byte(`{"mode":"queue"}`)
+	filter := []byte(`{"payload":[{"op":"eq","path":"$.kind","value":"job"}]}`)
+	batchSize, batchWindow, attempts, payload := int32(7), int32(890), int32(4), int32(16384)
+	strategy := "seek-to-offset"
+	updated, err := m.UpdateTrigger(ctx, uuidFromPgtype(created.ID).String(), nil,
+		updatedConfig, &batchSize, &batchWindow, &attempts, &payload, &strategy, &filter)
+	if err != nil {
+		t.Fatalf("UpdateTrigger: %v", err)
+	}
+	updatedConfig[0] = 'x'
+	filter[0] = 'x'
+	if string(updated.Config) != `{"mode":"queue"}` || updated.BatchSizeMax != batchSize ||
+		updated.BatchWindowMs != batchWindow || updated.MaxAttempts != attempts ||
+		updated.PayloadMaxBytes != payload || updated.BrokerPoisonStrategy != strategy ||
+		string(updated.FilterCriteria) != `{"payload":[{"op":"eq","path":"$.kind","value":"job"}]}` {
+		t.Fatalf("updated trigger did not preserve inputs: %+v", updated)
+	}
+}
+
 //   - closed-vocab guard (unknown fromStage → ErrInvalidArgument)
 //   - the original row is NOT mutated (failure history stays
 //     observable alongside the retry)

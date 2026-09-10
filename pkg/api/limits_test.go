@@ -1,9 +1,38 @@
 package api
 
 import (
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
+
+func TestAllowedTriggerKindsByPlan(t *testing.T) {
+	want := map[Plan][]TriggerKind{
+		PlanFree:  {},
+		PlanHobby: {TriggerKindSQSCompat, TriggerKindQueue},
+		PlanPro:   {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue},
+		PlanScale: {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue},
+	}
+	for plan, kinds := range want {
+		t.Run(string(plan), func(t *testing.T) {
+			if got := plan.AllowedTriggerKinds(); !reflect.DeepEqual(got, kinds) {
+				t.Fatalf("AllowedTriggerKinds() = %v, want %v", got, kinds)
+			}
+			for _, kind := range []TriggerKind{TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue} {
+				if got := plan.AllowsTriggerKind(kind); got != slices.Contains(kinds, kind) {
+					t.Errorf("AllowsTriggerKind(%s) = %v", kind, got)
+				}
+			}
+		})
+	}
+
+	got := PlanHobby.AllowedTriggerKinds()
+	got[0] = TriggerKindKafka
+	if PlanHobby.AllowsTriggerKind(TriggerKindKafka) {
+		t.Fatal("AllowedTriggerKinds returned mutable policy storage")
+	}
+}
 
 func TestLimitsEphemeralDiskMaxAliasesAppLayerCap(t *testing.T) {
 	for _, plan := range Plans {

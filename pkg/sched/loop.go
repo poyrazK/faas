@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -68,6 +69,10 @@ type Loop struct {
 	// cache is invalidated by NotifyTriggerChanged (commit #16);
 	// for now we never rebuild within a process lifetime.
 	triggerPollers map[string]triggerSource
+	// triggerSecretIdentities opens Kafka credentials only in the
+	// short-lived trigger copy passed to a poller factory. Current and
+	// previous identities coexist here during host-key rotation.
+	triggerSecretIdentities []*age.X25519Identity
 	// rateLimiter is the per-app wake rate limiter (shared with
 	// cron dispatch via pkg/sched/rate_limit.go).
 	rateLimiter *WakeRateLimiter
@@ -328,6 +333,11 @@ func (l *Loop) WithGatewaySynth(g GatewaySynth) *Loop {
 func (l *Loop) WithGatewayHTTPClient(client *http.Client, baseURL string) *Loop {
 	l.gatewayHTTPClient = client
 	l.gatewayBaseURL = baseURL
+	return l
+}
+
+func (l *Loop) WithTriggerSecretIdentities(identities []*age.X25519Identity) *Loop {
+	l.triggerSecretIdentities = append([]*age.X25519Identity(nil), identities...)
 	return l
 }
 

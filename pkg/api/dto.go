@@ -2246,14 +2246,23 @@ type AccountResponse struct {
 // serialization. Stripped of fields the dashboard doesn't need
 // (eg. internal ops); mirror pkg/api/limits.go for the wiring.
 type AccountLimits struct {
-	Plan               string `json:"plan"`
-	RAMMB              int    `json:"ram_mb"`
-	MaxConcurrency     int    `json:"max_concurrency"`
-	DeployedApps       int    `json:"deployed_apps"`
-	DeveloperApps      int    `json:"developer_apps"`
-	IncludedGBHours    int64  `json:"included_gb_hours"`
-	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
-	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`
+	Plan                        string        `json:"plan"`
+	RAMMB                       int           `json:"ram_mb"`
+	MaxConcurrency              int           `json:"max_concurrency"`
+	DeployedApps                int           `json:"deployed_apps"`
+	DeveloperApps               int           `json:"developer_apps"`
+	IncludedGBHours             int64         `json:"included_gb_hours"`
+	AppLayerMaxMB               int           `json:"app_layer_max_mb"`
+	EphemeralDiskMaxMB          int           `json:"ephemeral_disk_max_mb"`
+	TriggersAllowed             bool          `json:"triggers_allowed"`
+	TriggerKinds                []TriggerKind `json:"trigger_kinds"`
+	TriggerLimitPerApp          int           `json:"trigger_limit_per_app"`
+	TriggerLimitPerAccount      int           `json:"trigger_limit_per_account"`
+	TriggerBatchSizeMax         int           `json:"trigger_batch_size_max"`
+	TriggerBatchWindowMaxMs     int           `json:"trigger_batch_window_max_ms"`
+	TriggerMaxAttemptsMax       int           `json:"trigger_max_attempts_max"`
+	TriggerPayloadMaxBytes      int           `json:"trigger_payload_max_bytes"`
+	TriggerTLSSkipVerifyAllowed bool          `json:"trigger_tls_skip_verify_allowed"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext

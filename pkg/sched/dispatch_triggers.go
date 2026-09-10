@@ -84,6 +84,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/triggerconfig"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -276,12 +277,21 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	}
 	poller, ok := l.triggerPollers[t.ID.String()]
 	if !ok {
-		src, ok := newPollerForTrigger(t)
-		if !ok {
+		pollerTrigger := t
+		openedConfig, err := triggerconfig.Open(api.TriggerKind(t.Kind), t.Config, l.triggerSecretIdentities)
+		if err != nil {
+			return fmt.Errorf("open %s trigger credentials: %w", t.Kind, err)
+		}
+		pollerTrigger.Config = openedConfig
+		src, registered, err := newPollerForTrigger(pollerTrigger)
+		if !registered {
 			l.log.Debug("sched trigger tick: no poller for kind",
 				"trigger_id", t.ID.String(),
 				"kind", t.Kind)
 			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("construct %s trigger poller: %w", t.Kind, err)
 		}
 		poller = src
 		l.triggerPollers[t.ID.String()] = poller

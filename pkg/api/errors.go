@@ -2921,6 +2921,15 @@ const CodePlanLogDrainQuota = "plan_log_drain_quota"
 // finding F4 mirrored from createAlertRule / createAppWebhook).
 const CodePlanTriggersNotAllowed = "plan_triggers_not_allowed"
 
+// CodeTriggerKindNotAllowed distinguishes an enabled trigger product whose
+// selected broker family requires a higher plan.
+const CodeTriggerKindNotAllowed = "trigger_kind_not_allowed"
+
+// CodeSecretStoreUnavailable is returned when trigger credentials cannot be
+// sealed or opened because the host age key material is unavailable or
+// unusable. It is deliberately generic so no ciphertext details reach users.
+const CodeSecretStoreUnavailable = "secret_store_unavailable"
+
 // CodePlanTriggerQuota is the 403 the customer sees when the plan
 // DOES unlock triggers but the per-app or per-account cap was
 // reached. Distinct from CodePlanTriggersNotAllowed so the CLI
@@ -3559,6 +3568,21 @@ func ErrPlanTriggersNotAllowed(p Plan) *Problem {
 		"Triggers unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include event-source mappings (Kafka, NATS, Redis Streams, SQS-compatible, in-platform queue); upgrade to Hobby or above to subscribe.", p)).
 		WithDocs(docsBase + "/plans#triggers")
+}
+
+// ErrTriggerKindNotAllowed is returned when the plan includes triggers but
+// not the requested broker family.
+func ErrTriggerKindNotAllowed(plan Plan, kind TriggerKind) *Problem {
+	return NewProblem(http.StatusForbidden, CodeTriggerKindNotAllowed,
+		"Trigger kind not available",
+		fmt.Sprintf("%s triggers are not available on the %s plan", kind, plan)).
+		WithDocs(docsBase + "/plans#triggers")
+}
+
+func ErrSecretStoreUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeSecretStoreUnavailable,
+		"Secret storage unavailable",
+		"Trigger credentials cannot be stored safely; retry after the host key is restored")
 }
 
 // ErrPlanTriggerQuota is returned when CreateTriggerIfUnderQuota

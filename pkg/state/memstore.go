@@ -2677,6 +2677,17 @@ func (m *MemStore) AppByID(_ context.Context, id string) (App, error) {
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
 	if !ok {
+		// Production UUID columns accept canonical dashed UUIDs while
+		// MemStore's historical newID helper uses 32 lowercase hex
+		// characters. Trigger rows necessarily carry pgtype.UUID and
+		// therefore project the canonical form back into handlers.
+		// Accept that equivalent spelling here so trigger auth checks
+		// exercise the same path as PostgreSQL.
+		if parsed, err := uuid.Parse(id); err == nil {
+			a, ok = m.apps[strings.ReplaceAll(parsed.String(), "-", "")]
+		}
+	}
+	if !ok {
 		return App{}, ErrNotFound
 	}
 	return a, nil
@@ -8242,13 +8253,14 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 // (#14) reads from ListEnabledTriggers + ClaimTriggerRecords; both
 // are stubbed here so tests can run without a live Postgres.
 
-func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slug string, enabled bool, _ []byte, _, _, _, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
+func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slug string, enabled bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	perApp := 0
 	perAccount := 0
+	canonicalAppID := canonicalMemUUID(appID)
 	for _, t := range m.triggers {
-		if t.AppID.String() == appID {
+		if t.AppID.String() == canonicalAppID {
 			perApp++
 		}
 	}
@@ -8274,10 +8286,10 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 		Kind:                 kind,
 		Slug:                 slug,
 		Enabled:              enabled,
-		Config:               []byte("{}"),
-		BatchSizeMax:         64,
-		BatchWindowMs:        1000,
-		MaxAttempts:          5,
+		Config:               append([]byte(nil), config...),
+		BatchSizeMax:         batchSizeMax,
+		BatchWindowMs:        batchWindowMs,
+		MaxAttempts:          maxAttempts,
 		PayloadMaxBytes:      payloadMaxBytes,
 		BrokerPoisonStrategy: brokerPoisonStrategy,
 		CreatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
@@ -8300,7 +8312,7 @@ func (m *MemStore) TriggerByID(_ context.Context, id string) (sqlc.Trigger, erro
 	return t, nil
 }
 
-func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, _ []byte, _, _, _, payloadMaxBytes *int32, brokerPoisonStrategy *string, filterCriteria *[]byte) (sqlc.Trigger, error) {
+func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes *int32, brokerPoisonStrategy *string, filterCriteria *[]byte) (sqlc.Trigger, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.triggers[id]
@@ -8309,6 +8321,18 @@ func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, _ 
 	}
 	if enabled != nil {
 		t.Enabled = *enabled
+	}
+	if config != nil {
+		t.Config = append([]byte(nil), config...)
+	}
+	if batchSizeMax != nil {
+		t.BatchSizeMax = *batchSizeMax
+	}
+	if batchWindowMs != nil {
+		t.BatchWindowMs = *batchWindowMs
+	}
+	if maxAttempts != nil {
+		t.MaxAttempts = *maxAttempts
 	}
 	if payloadMaxBytes != nil {
 		t.PayloadMaxBytes = *payloadMaxBytes
@@ -8320,8 +8344,7 @@ func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, _ 
 		// REVIEW-FIX MED-1: nil = "leave unchanged" (mirrors
 		// pgstore coalesce()); non-nil = "replace the JSONB
 		// column". Memstore treats the byte slice as opaque.
-		fc := *filterCriteria
-		t.FilterCriteria = fc
+		t.FilterCriteria = append([]byte(nil), (*filterCriteria)...)
 	}
 	t.UpdatedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	m.triggers[id] = t
@@ -8339,12 +8362,20 @@ func (m *MemStore) ListTriggersForApp(_ context.Context, appID string) ([]sqlc.T
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
+	canonicalAppID := canonicalMemUUID(appID)
 	for _, t := range m.triggers {
-		if t.AppID.String() == appID {
+		if t.AppID.String() == canonicalAppID {
 			out = append(out, t)
 		}
 	}
 	return out, nil
+}
+
+func canonicalMemUUID(id string) string {
+	if parsed, err := uuid.Parse(id); err == nil {
+		return parsed.String()
+	}
+	return id
 }
 
 func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error) {
