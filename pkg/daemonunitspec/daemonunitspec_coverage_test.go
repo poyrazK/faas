@@ -283,6 +283,18 @@ func TestUnitMeterd_Shape(t *testing.T) {
 	if !hasReadWrite(u, "/var/log/faas") {
 		t.Errorf("meterd: missing ReadWritePaths=/var/log/faas")
 	}
+	if !hasEnvironment(u, "FAAS_PROMETHEUS_URL", "http://127.0.0.1:9090") {
+		t.Error("meterd: missing local Prometheus endpoint for alert evaluation")
+	}
+	if !hasEnvironment(u, "FAAS_HOST_AGE_IDENTITY_PATH", "%d/faas_host_age_identity") {
+		t.Error("meterd: missing host age credential path for webhook secret decryption")
+	}
+	if !hasLoadCredential(u, "faas_host_age_identity", "/etc/faas/secrets/host.age") {
+		t.Error("meterd: missing current host age identity LoadCredential")
+	}
+	if !hasOptionalLoadCredential(u, "faas_host_age_identity_previous", "/etc/faas/secrets/host.age.previous") {
+		t.Error("meterd: missing optional previous host age identity LoadCredential")
+	}
 }
 
 func TestUnitS3Gateway_OptionalShape(t *testing.T) {

@@ -707,6 +707,7 @@ from .rollout_transition_response import RolloutTransitionResponse
 from .rotate_alert_rule_secret_response import RotateAlertRuleSecretResponse
 from .rotate_app_secret_request import RotateAppSecretRequest
 from .rotate_app_secret_response import RotateAppSecretResponse
+from .rotate_app_webhook_secret_request import RotateAppWebhookSecretRequest
 from .rotate_app_webhook_secret_response import RotateAppWebhookSecretResponse
 from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
     RotateAppWebhookSecretResponseWebhookSecretSealedMasked,
@@ -1575,6 +1576,7 @@ __all__ = (
     "RotateAlertRuleSecretResponse",
     "RotateAppSecretRequest",
     "RotateAppSecretResponse",
+    "RotateAppWebhookSecretRequest",
     "RotateAppWebhookSecretResponse",
     "RotateAppWebhookSecretResponseWebhookSecretSealedMasked",
     "RotateKeyResponse",

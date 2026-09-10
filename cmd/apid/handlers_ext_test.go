@@ -1700,7 +1700,15 @@ func TestRollbackApp_LegacyEmptyBodyUnchanged(t *testing.T) {
 // TestParkApp_HappyPath confirms the app flips to AppEvictedCold.
 func TestParkApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "park-me")
+	appID := mustSeedApp(t, e, "park-me")
+	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: e.acct.ID, AppID: appID, TargetURL: "https://example.com/parked",
+		SecretSealed: []byte("sealed"), EventFilter: []string{"app.parked"},
+		RetryPolicy: state.AppWebhookRetryDefault, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec := e.do(t, "POST", "/v1/apps/park-me/park", nil, nil)
 	if rec.Code != 204 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -1709,12 +1717,27 @@ func TestParkApp_HappyPath(t *testing.T) {
 	if app.Status != state.AppEvictedCold {
 		t.Errorf("status = %s, want evicted_cold", app.Status)
 	}
+	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), appID, hook.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppParked || deliveries[0].Status != state.AppWebhookDeliveryPending {
+		t.Fatalf("park deliveries = %+v, want one pending app.parked row", deliveries)
+	}
 }
 
 // TestWakeApp_HappyPath parks, then wakes — exercises the inverse path.
 func TestWakeApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "wake-me")
+	appID := mustSeedApp(t, e, "wake-me")
+	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: e.acct.ID, AppID: appID, TargetURL: "https://example.com/woken",
+		SecretSealed: []byte("sealed"), EventFilter: []string{"app.woken"},
+		RetryPolicy: state.AppWebhookRetryDefault, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	e.do(t, "POST", "/v1/apps/wake-me/park", nil, nil)
 	rec := e.do(t, "POST", "/v1/apps/wake-me/wake", nil, nil)
 	if rec.Code != 204 {
@@ -1723,6 +1746,13 @@ func TestWakeApp_HappyPath(t *testing.T) {
 	app, _ := e.store.AppBySlug(context.Background(), "wake-me")
 	if app.Status != state.AppActive {
 		t.Errorf("status = %s, want active", app.Status)
+	}
+	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), appID, hook.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppWoken || deliveries[0].Status != state.AppWebhookDeliveryPending {
+		t.Fatalf("wake deliveries = %+v, want one pending app.woken row", deliveries)
 	}
 }
 

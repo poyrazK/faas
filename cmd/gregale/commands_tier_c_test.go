@@ -12,11 +12,9 @@
 // Secrets plaintext / API-key plaintext / webhook secret plaintext
 // are NEVER echoed by the CLI today (spec §17 G6) — those guards
 // live in the leaf body itself, not in tests that could miss a
-// future regression. The Tier B fix for `webhooks rotate-secret`
-// (where the CLI previously claimed a one-shot reveal flow that
-// doesn't exist) carries the same posture to `alerts
-// rotate-secret` — server-minted plaintext, server-dropped; the CLI
-// confirms and surfaces the masked sentinel only.
+// future regression. Alert-rule secret rotation retains its existing
+// server-minted, masked-only contract; app webhook rotation has a separate
+// caller-supplied handoff contract.
 
 package main
 
@@ -160,8 +158,7 @@ func TestTierC_AlertsUpdate_NameOnlyDoesNotResendEnabledOrCooldown(t *testing.T)
 	}
 }
 
-// --- alerts rotate-secret (one-shot plaintext dropped, mirroring
-// webhooks rotate-secret Tier B fix) ---
+// --- alerts rotate-secret (one-shot plaintext dropped) ---
 
 func TestTierC_AlertsRotateSecret_HappyPath(t *testing.T) {
 	resetJSONOut(t)

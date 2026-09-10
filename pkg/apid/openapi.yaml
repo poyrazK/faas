@@ -9724,12 +9724,17 @@ paths:
     post:
       tags: [webhooks]
       operationId: rotateAppWebhookSecret
-      summary: Server-mint a new webhook HMAC secret.
+      summary: Replace a webhook HMAC secret.
       description: |
-        Server-mints a 32-byte secret, seals it, and overwrites the
-        row's sealed ciphertext in place. The plaintext is NEVER
-        returned in the response — the body carries the masked
-        constant + rotated_at only.
+        Seals the caller-supplied replacement and overwrites the row's
+        ciphertext in place. Supply the same value to the receiver. The
+        plaintext is never returned; the response carries the masked
+        constant and rotated_at only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateAppWebhookSecretRequest' }
       responses:
         '200':
           description: Webhook secret rotation succeeded.
@@ -24186,8 +24191,7 @@ components:
       description: |
         Subscribe a target URL to events emitted by the app. The
         webhook_secret is HMAC-SHA256 sealed at rest with the host
-        X25519 recipient (namespace `APP_WEBHOOK`); apid mints a fresh
-        32-byte secret if omitted.
+        X25519 recipient (namespace `APP_WEBHOOK`).
       required: [target_url, webhook_secret]
       properties:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
@@ -24242,6 +24246,17 @@ components:
       example:
         rotated_at: "2026-08-06T12:00:00Z"
         webhook_secret_sealed_masked: "***"
+
+    RotateAppWebhookSecretRequest:
+      type: object
+      description: |
+        Caller-supplied replacement signing secret. The value is sealed at
+        rest and never returned in a response.
+      required: [webhook_secret]
+      properties:
+        webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+      example:
+        webhook_secret: "replacement-secret-from-manager"
 
     AppWebhookDeliveryResponse:
       type: object

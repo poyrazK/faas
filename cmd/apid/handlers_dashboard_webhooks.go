@@ -255,7 +255,8 @@ func (s *server) dashboardRotateAppWebhookSecret(w http.ResponseWriter, r *http.
 		return
 	}
 	slug, id := r.PathValue("slug"), r.PathValue("id")
-	resp := s.forwardDashboardWebhookJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/webhooks/"+url.PathEscape(id)+"/rotate-secret", id, "", nil, s.rotateAppWebhookSecret)
+	req := api.RotateAppWebhookSecretRequest{WebhookSecret: r.FormValue("webhook_secret")}
+	resp := s.forwardDashboardWebhookJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/webhooks/"+url.PathEscape(id)+"/rotate-secret", id, "", req, s.rotateAppWebhookSecret)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}

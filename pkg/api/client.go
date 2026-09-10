@@ -3910,13 +3910,11 @@ func (c *Client) DeleteAppWebhook(ctx context.Context, slug, id string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/webhooks/"+id, nil, nil)
 }
 
-// RotateAppWebhookSecret asks the server to mint a fresh sealed
-// secret. The new plaintext is returned ONCE in the response
-// (RotateAppWebhookSecretResponse.WebhookSecret); callers MUST
-// persist it immediately and MUST NOT log it.
-func (c *Client) RotateAppWebhookSecret(ctx context.Context, slug, id string) (RotateAppWebhookSecretResponse, error) {
+// RotateAppWebhookSecret replaces the sealed signing secret with the
+// caller-supplied value. The response remains masked.
+func (c *Client) RotateAppWebhookSecret(ctx context.Context, slug, id string, req RotateAppWebhookSecretRequest) (RotateAppWebhookSecretResponse, error) {
 	var out RotateAppWebhookSecretResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/rotate-secret", nil, &out)
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/rotate-secret", req, &out)
 }
 
 // ListAppWebhookDeliveries paginates the per-subscription delivery

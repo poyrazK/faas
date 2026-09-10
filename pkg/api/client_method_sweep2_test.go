@@ -296,7 +296,7 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			return c.DeleteAppWebhook(ctx, "x", "w")
 		}},
 		{"RotateAppWebhookSecret", obj.URL, func(t *testing.T, c *Client) error {
-			_, err := c.RotateAppWebhookSecret(ctx, "x", "w")
+			_, err := c.RotateAppWebhookSecret(ctx, "x", "w", RotateAppWebhookSecretRequest{WebhookSecret: "replacement"})
 			return err
 		}},
 		{"RetryAppWebhookDelivery", obj.URL, func(t *testing.T, c *Client) error {

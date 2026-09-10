@@ -1236,7 +1236,11 @@ var cliCommands = []cliCommand{
 			{Name: "rm", Short: "Delete one webhook"},
 			{Name: "deliveries", Short: "Show the delivery ledger"},
 			{Name: "retry", Short: "Retry a failed delivery"},
-			{Name: "rotate-secret", Short: "Rotate the webhook signing secret"},
+			{Name: "rotate-secret", Short: "Rotate the webhook signing secret", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "secret", Short: "replacement HMAC-SHA256 secret", Value: "VALUE"},
+				{Name: "from-stdin", Short: "read the replacement secret from stdin"},
+			}},
 		},
 	},
 	{
