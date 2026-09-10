@@ -572,11 +572,18 @@ func waitBootReady(t *testing.T, url string, timeout time.Duration, logs *syncBu
 
 func assertUnixAccepts(t *testing.T, name, path string, logs *syncBuffer) {
 	t.Helper()
-	conn, err := net.DialTimeout("unix", path, time.Second)
-	if err != nil {
-		t.Fatalf("%s listener %s is not accepting: %v\n%s", name, path, err, logs.String())
+	deadline := time.Now().Add(2 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		lastErr = err
+		time.Sleep(25 * time.Millisecond)
 	}
-	_ = conn.Close()
+	t.Fatalf("%s listener %s is not accepting: %v\n%s", name, path, lastErr, logs.String())
 }
 
 func randomBytes(t *testing.T, size int) []byte {
