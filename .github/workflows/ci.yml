@@ -40,7 +40,7 @@ permissions:
 
 env:
   # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
-  # and the go.mod `go 1.25.7` directive resolve to the same Go runtime.
+  # and the go.mod `go 1.25.13` directive resolve to the same Go runtime.
   # go1.25.12 carries 7 stdlib vulnerabilities (GO-2026-5026/5972/6088/
   # 6089/6090/6091/6218) fixed in go1.25.13 — the supply-chain gate fails
   # closed when the runner resolves "1.25" to a vulnerable patch. Bump

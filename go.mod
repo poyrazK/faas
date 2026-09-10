@@ -1,6 +1,6 @@
 module github.com/onebox-faas/faas
 
-go 1.25.7
+go 1.25.13
 
 // Pinned to match the version CI runs (.github/workflows/ci.yml:
 // golangci-lint-action@v9 with version: v2.4.0). Update both together.
@@ -23,7 +23,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/klauspost/compress v1.18.6
+	github.com/klauspost/compress v1.18.7
 	github.com/libdns/libdns v1.1.1
 	github.com/nats-io/nats.go v1.53.1
 	github.com/oschwald/maxminddb-golang v1.13.1
@@ -251,12 +251,12 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/go-archive v0.2.0 // indirect
+	github.com/moby/go-archive v0.3.3 // indirect
 	github.com/moby/moby/api v1.55.0 // indirect
 	github.com/moby/moby/client v0.5.0 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
-	github.com/moby/sys/user v0.4.0 // indirect
+	github.com/moby/sys/user v0.4.1 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/moricho/tparallel v0.3.2 // indirect
@@ -345,8 +345,8 @@ require (
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/mod v0.38.0
-	golang.org/x/tools v0.48.0 // indirect
+	golang.org/x/mod v0.40.0
+	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
