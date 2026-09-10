@@ -95,6 +95,10 @@ func TestPg_ListLatestDeploymentPerApp_IsScopedAndStable(t *testing.T) {
 
 	appB := createApp(account.ID, "latest-pg-b")
 	wantB := createDeployment(appB.ID, "sha256:b")
+	clearedB := createDeployment(appB.ID, "sha256:cleared")
+	if err := s.ClearDeployment(ctx, clearedB.ID, "operator:test"); err != nil {
+		t.Fatal(err)
+	}
 	deleted := createApp(account.ID, "latest-pg-deleted")
 	createDeployment(deleted.ID, "sha256:deleted")
 	if err := s.DeleteApp(ctx, deleted.ID); err != nil {
@@ -114,7 +118,7 @@ func TestPg_ListLatestDeploymentPerApp_IsScopedAndStable(t *testing.T) {
 		t.Errorf("app A latest = %q, want tie-break winner %q", got[appA.ID].ID, wantA)
 	}
 	if got[appB.ID].ID != wantB.ID {
-		t.Errorf("app B latest = %q, want %q", got[appB.ID].ID, wantB.ID)
+		t.Errorf("app B latest = %q, want previous visible deployment %q", got[appB.ID].ID, wantB.ID)
 	}
 	if _, ok := got[deleted.ID]; ok {
 		t.Error("soft-deleted app leaked into result")

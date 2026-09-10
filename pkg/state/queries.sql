@@ -133,7 +133,7 @@ from deployments where app_id = $1 order by created_at desc limit $2 offset $3;
 select distinct on (d.app_id) d.*
 from deployments d
 join apps a on a.id = d.app_id
-where a.account_id = $1 and a.status <> 'deleted'
+where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
 order by d.app_id, d.created_at desc, d.id desc;
 
 -- name: LatestSupersededDeployment :one

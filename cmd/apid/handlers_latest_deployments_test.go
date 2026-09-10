@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type latestDeploymentsListAppsErrorStore struct {
+	state.Store
+}
+
+func (latestDeploymentsListAppsErrorStore) ListApps(context.Context, string) ([]state.App, error) {
+	return nil, errors.New("synthetic list apps failure")
+}
 
 func TestListLatestDeploymentsByAppReturnsNewestOwnedRows(t *testing.T) {
 	e := setup(t, api.PlanPro)
@@ -114,6 +123,23 @@ func TestListLatestDeploymentsByAppEmptyAccountReturnsArray(t *testing.T) {
 	}
 	if out.Items == nil || len(out.Items) != 0 {
 		t.Fatalf("items = %#v, want non-nil empty array", out.Items)
+	}
+}
+
+func TestListLatestDeploymentsByAppReturnsUnavailableWhenAppsCannotBeLoaded(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "latest-batch-list-apps-error")
+	if _, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: appID, ImageDigest: "sha256:list-apps-error", Kind: state.DeploymentKindImage,
+		Status: state.DeployLive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.store = latestDeploymentsListAppsErrorStore{Store: e.store}
+
+	rec := e.do(t, http.MethodGet, "/v1/deployments/latest-by-app", nil, nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d, want 503: %s", rec.Code, rec.Body)
 	}
 }
 

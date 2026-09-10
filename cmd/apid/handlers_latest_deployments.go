@@ -19,7 +19,11 @@ func (s *server) listLatestDeploymentsByApp(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	apps, _ := s.store.ListApps(r.Context(), acct.ID)
+	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load apps for latest deployments"))
+		return
+	}
 	appByID := make(map[string]state.App, len(apps))
 	for _, app := range apps {
 		appByID[app.ID] = app

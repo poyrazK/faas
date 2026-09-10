@@ -5575,6 +5575,9 @@ func (m *MemStore) ListLatestDeploymentPerApp(_ context.Context, accountID strin
 
 	latest := make(map[string]Deployment)
 	for _, deployment := range m.deployments {
+		if deployment.DeletedAt != nil {
+			continue
+		}
 		if _, ok := owned[deployment.AppID]; !ok {
 			continue
 		}

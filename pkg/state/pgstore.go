@@ -5977,7 +5977,7 @@ func (s *PgStore) ListLatestDeploymentPerApp(ctx context.Context, accountID stri
 	rows, err := s.pool.Query(ctx,
 		`select distinct on (d.app_id) `+deploymentSelectColumnsQualified+`
 		 from deployments d join apps a on a.id = d.app_id
-		 where a.account_id = $1 and a.status <> 'deleted'
+		 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
 		 order by d.app_id, d.created_at desc, d.id desc`,
 		accountID)
 	if err != nil {
