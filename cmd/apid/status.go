@@ -114,7 +114,7 @@ const (
 	statusBuildSuccessQuery = `(
 		(sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m])) / sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) * 100)
 		and sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) > 0
-	) or vector(0)`
+	) or vector(100)`
 )
 
 // newStatusCache builds a cache. promURL is the local Prometheus base
@@ -174,8 +174,8 @@ func (c *statusCache) Get(ctx context.Context) (StatusPage, error) {
 //
 // We track per-query success instead of inferring failure from
 // "all values are zero" — a freshly-booted idle box legitimately
-// has 0% API availability, 0 ms wake p95, and 0% build success,
-// which is data, not failure.
+// has 0 ms wake p95. API and build availability use 100% when their
+// denominator is empty because no request or build failed.
 func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	if c.client == nil {
 		return StatusPage{}, fmt.Errorf("no prometheus URL configured")
