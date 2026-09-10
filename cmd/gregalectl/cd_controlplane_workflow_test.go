@@ -47,3 +47,23 @@ func TestCDControlPlaneReusesVerifiedImmutableRelease(t *testing.T) {
 		t.Fatalf("control-plane release handling is out of order: verify=%d reuse=%d guard=%d remove=%d upload=%d activate=%d", verify, reuse, activeGuard, remove, upload, activate)
 	}
 }
+
+func TestCDControlPlanePromotesVersionedStatusPage(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+
+	bundle := strings.Index(workflow, `"${BUNDLE_ROOT}/statuspage/index.html"`)
+	seal := strings.Index(workflow, `bundle-create "${BUNDLE_ROOT}"`)
+	deploy := strings.Index(workflow, `deployctl deploy ${RELEASE_ID}`)
+	stage := strings.Index(workflow, `install -o root -g faas -m 0644 ${release_dir}/statuspage/index.html`)
+	promote := strings.Index(workflow, `mv -Tf /etc/faas/statuspage/.index.html-${RELEASE_ID} /etc/faas/statuspage/index.html`)
+	if bundle < 0 || seal < 0 || deploy < 0 || stage < 0 || promote < 0 {
+		t.Fatalf("control-plane workflow is missing status-page release handling: bundle=%d seal=%d deploy=%d stage=%d promote=%d", bundle, seal, deploy, stage, promote)
+	}
+	if !(bundle < seal && seal < deploy && deploy < stage && stage < promote) {
+		t.Fatalf("status page must be sealed before deployment and promoted after activation: bundle=%d seal=%d deploy=%d stage=%d promote=%d", bundle, seal, deploy, stage, promote)
+	}
+}

@@ -147,7 +147,7 @@ jobs:
         run: |
           set -euo pipefail
           BUNDLE_ROOT="${RUNNER_TEMP}/faas-release/${RELEASE_ID}"
-          mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/tmpfiles.d" "${BUNDLE_ROOT}/prometheus"
+          mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/tmpfiles.d" "${BUNDLE_ROOT}/prometheus" "${BUNDLE_ROOT}/statuspage"
           PROM_BOX_LABEL="$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" hostname)"
           ansible localhost -i localhost, -c local \
             -e @deploy/ansible/roles/prometheus/defaults/main.yml \
@@ -225,6 +225,8 @@ jobs:
           test ! -e "${BUNDLE_ROOT}/systemd/faas-gatewayd.service"
           install -m 0644 deploy/ansible/roles/control_plane_service/files/faas.conf \
             "${BUNDLE_ROOT}/tmpfiles.d/faas.conf"
+          install -m 0644 deploy/statuspage/index.html \
+            "${BUNDLE_ROOT}/statuspage/index.html"
           "${BUNDLE_ROOT}/bin/deployctl" bundle-create "${BUNDLE_ROOT}" "${RELEASE_ID}" "${RELEASE_ID}" "linux/amd64"
           echo "BUNDLE_ROOT=${BUNDLE_ROOT}" >> "${GITHUB_ENV}"
 
@@ -299,6 +301,9 @@ jobs:
             root@${{ env.CP_HOST }} \
             "${release_dir}/bin/deployctl bundle-check ${release_dir} &&
              ${release_dir}/bin/deployctl deploy ${RELEASE_ID} &&
+             install -d -o faas-apid -g faas -m 0770 /etc/faas/statuspage &&
+             install -o root -g faas -m 0644 ${release_dir}/statuspage/index.html /etc/faas/statuspage/.index.html-${RELEASE_ID} &&
+             mv -Tf /etc/faas/statuspage/.index.html-${RELEASE_ID} /etc/faas/statuspage/index.html &&
              ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
              mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
 
