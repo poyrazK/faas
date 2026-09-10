@@ -319,6 +319,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TOKEN` | shared | `client` |  |  | `` | read by the CLI/SDK on the operator's machine, never by a daemon |
 | `FAAS_TRACE_OBSERVER_TOKEN` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACE_RING_CAP` | shared | `default` |  |  | `` |  |
+| `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | TLS terminator CIDRs allowed to provide canonical forwarding context |
 | `FAAS_TRUSTED_PUBLISHERS_DIR` | apid, imaged | `default` |  |  | `` |  |
 | `FAAS_UPSTREAM_AFFINITY` | schedd | `default` |  |  | `` | off by design until the §9.A rollout gate (spec) |
 | `FAAS_UPSTREAM_AFFINITY_TTL` | schedd | `default` |  |  | `` |  |

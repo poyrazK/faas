@@ -396,6 +396,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TOKEN", Owners: []string{"shared"}, Source: EnvSourceClient, Note: "read by the CLI/SDK on the operator's machine, never by a daemon"},
 	{Name: "FAAS_TRACE_OBSERVER_TOKEN", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TRACE_RING_CAP", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_TRUSTED_INGRESS_CIDRS", Owners: []string{"gatewayd-public"}, Source: EnvSourceUnit, Note: "TLS terminator CIDRs allowed to provide canonical forwarding context"},
 	{Name: "FAAS_TRUSTED_PUBLISHERS_DIR", Owners: []string{"apid", "imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_UPSTREAM_AFFINITY", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "off by design until the §9.A rollout gate (spec)"},
 	{Name: "FAAS_UPSTREAM_AFFINITY_TTL", Owners: []string{"schedd"}, Source: EnvSourceDefault},
