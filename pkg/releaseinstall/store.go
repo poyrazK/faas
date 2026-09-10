@@ -161,6 +161,8 @@ type ComputeNodeRow struct {
 	CertFingerprint *string `json:"cert_fingerprint,omitempty"`
 	Role            *string `json:"role,omitempty"`
 	Generation      *int    `json:"generation,omitempty"`
+	Lifecycle       string  `json:"lifecycle"`
+	Active          bool    `json:"active"`
 }
 
 // pgStore is the production Store, backed by pgxpool. Construct
@@ -449,7 +451,8 @@ func (s pgStore) GetComputeNode(ctx context.Context, name string) (ComputeNodeRo
 	)
 	err := s.pool.QueryRow(ctx, `
 		select id, name, release_id, manifest_hash,
-		       host_certificate, cert_fingerprint, role, generation
+		       host_certificate, cert_fingerprint, role, generation,
+		       lifecycle::text, active
 		  from compute_nodes
 		 where name = $1
 	`, name).Scan(
@@ -497,6 +500,7 @@ func (s pgStore) ListComputeNodes(ctx context.Context) ([]ComputeNodeRow, error)
 		if err := rows.Scan(
 			&row.ID, &row.Name, &releaseID, &manifestHash,
 			&row.HostCertificate, &row.CertFingerprint, &row.Role, &row.Generation,
+			&row.Lifecycle, &row.Active,
 		); err != nil {
 			return nil, fmt.Errorf("releaseinstall: scan compute_nodes: %w", err)
 		}

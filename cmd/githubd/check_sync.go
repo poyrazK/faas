@@ -158,8 +158,16 @@ func validateDeploymentCheckTarget(deploymentID, kind, commitSHA, repo string, i
 	if kind != string(state.DeploymentKindGitHub) && kind != string(state.DeploymentKindPreview) {
 		return false, nil
 	}
-	if commitSHA == "" || repo == "" || installationID <= 0 {
-		return false, fmt.Errorf("githubd: deployment check %s missing commit, repo, or installation", deploymentID)
+	if commitSHA == "" {
+		return false, fmt.Errorf("githubd: deployment check %s missing commit", deploymentID)
+	}
+	// Disconnecting a repository clears its repo and installation metadata.
+	// Historical deployment transitions can still leave a coalesced outbox row,
+	// but there is no external Check Run target to update. Completing that row as
+	// a no-op prevents a permanent retry/dead-letter loop after an intentional
+	// disconnect. A missing commit remains an invalid deployment record above.
+	if repo == "" || installationID <= 0 {
+		return false, nil
 	}
 	return true, nil
 }

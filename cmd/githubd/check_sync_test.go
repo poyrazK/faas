@@ -19,8 +19,11 @@ func TestValidateDeploymentCheckTarget(t *testing.T) {
 		wantErr        bool
 	}{
 		{name: "generic deployment ignores absent GitHub metadata", kind: "manual"},
-		{name: "GitHub deployment requires metadata", kind: string(state.DeploymentKindGitHub), wantErr: true},
-		{name: "preview deployment requires metadata", kind: string(state.DeploymentKindPreview), wantErr: true},
+		{name: "GitHub deployment requires commit", kind: string(state.DeploymentKindGitHub), repo: "owner/repo", installationID: 42, wantErr: true},
+		{name: "preview deployment requires commit", kind: string(state.DeploymentKindPreview), repo: "owner/repo", installationID: 42, wantErr: true},
+		{name: "disconnected repository is complete without projection", kind: string(state.DeploymentKindGitHub), commit: "abc", installationID: 42},
+		{name: "disconnected installation is complete without projection", kind: string(state.DeploymentKindGitHub), commit: "abc", repo: "owner/repo"},
+		{name: "disconnected preview is complete without projection", kind: string(state.DeploymentKindPreview), commit: "abc", repo: "owner/repo"},
 		{name: "GitHub deployment projects", kind: string(state.DeploymentKindGitHub), commit: "abc", repo: "owner/repo", installationID: 42, wantProject: true},
 	}
 	for _, tc := range tests {
