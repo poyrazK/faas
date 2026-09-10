@@ -3072,6 +3072,95 @@ func TestQueueReceive_TimeoutReturns204(t *testing.T) {
 	}
 }
 
+func TestQueueReceive_IgnoresNonQueueCompletions(t *testing.T) {
+	var e testEnv
+	var ordinaryID, delayedID, queueID string
+	e = setupWithNotifier(t, api.PlanPro, func(ctx context.Context, channel string, predicate func(string) bool, _ time.Duration) (string, error) {
+		if channel != db.NotifyInvocationDone {
+			t.Fatalf("channel = %q, want %q", channel, db.NotifyInvocationDone)
+		}
+		payload := func(id string) string {
+			return fmt.Sprintf(`{"invocation_id":%q,"app_id":%q}`, id, mustInvocationAppID(t, ctx, e, id))
+		}
+		if predicate(payload(ordinaryID)) {
+			t.Fatal("ordinary invocation completion matched queue receive")
+		}
+		if predicate(payload(delayedID)) {
+			t.Fatal("delayed-task completion matched queue receive")
+		}
+		queuePayload := payload(queueID)
+		if !predicate(queuePayload) {
+			t.Fatal("queue completion did not match queue receive")
+		}
+		return queuePayload, nil
+	})
+	appID := mustSeedApp(t, e, "myapp")
+	ordinaryID = mustSeedInvocationSource(t, e, appID, state.InvocationAsyncInvoke, `{"source":"ordinary"}`)
+	delayedID = mustSeedInvocationSource(t, e, appID, state.InvocationDelayedTask, `{"source":"delayed"}`)
+	queueID = mustSeedInvocationSource(t, e, appID, state.InvocationQueue, `{"source":"queue"}`)
+
+	rec := e.do(t, "POST", "/v1/apps/myapp/queues/receive", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out api.QueueReceiveResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.ID != queueID || string(out.Payload) != `{"source":"queue"}` {
+		t.Fatalf("response = %+v, want queue invocation %s", out, queueID)
+	}
+}
+
+func mustSeedInvocationSource(t *testing.T, e testEnv, appID string, source state.InvocationSource, payload string) string {
+	t.Helper()
+	inv, err := e.store.EnqueueInvocation(context.Background(), state.Invocation{
+		AppID: appID, AccountID: e.acct.ID, Source: source,
+		Payload: json.RawMessage(payload), DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("seed %s invocation: %v", source, err)
+	}
+	return inv.ID
+}
+
+func mustInvocationAppID(t *testing.T, ctx context.Context, e testEnv, id string) string {
+	t.Helper()
+	inv, err := e.store.InvocationByID(ctx, id)
+	if err != nil {
+		t.Fatalf("read invocation %s: %v", id, err)
+	}
+	return inv.AppID
+}
+
+func TestQueueAck_RequiresExistingAppAndQueueSource(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "myapp")
+	otherAppID := mustSeedApp(t, e, "other")
+	queueID := mustSeedInvocationSource(t, e, appID, state.InvocationQueue, `{}`)
+	otherQueueID := mustSeedInvocationSource(t, e, otherAppID, state.InvocationQueue, `{}`)
+	ordinaryID := mustSeedInvocationSource(t, e, appID, state.InvocationAsyncInvoke, `{}`)
+
+	for _, path := range []string{
+		"/v1/apps/myapp/queues/" + otherQueueID + "/ack",
+		"/v1/apps/myapp/queues/" + ordinaryID + "/ack",
+		"/v1/apps/missing/queues/" + queueID + "/ack",
+	} {
+		rec := e.do(t, "POST", path, nil, nil)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST %s status = %d, want 404; body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+
+	path := "/v1/apps/myapp/queues/" + queueID + "/ack"
+	for i := 0; i < 2; i++ {
+		rec := e.do(t, "POST", path, nil, nil)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("valid ack %d status = %d, want 204; body=%s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 // TestDelayedTaskCreate_PayloadTooLarge confirms the
 // MaxSourceBytesPerInvocation cap is enforced per-plan. Hobby's cap is
 // 64 KB; a 70 KB payload is a 413.

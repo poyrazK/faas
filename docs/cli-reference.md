@@ -1330,9 +1330,13 @@ Enqueue a wake request
 
 Receive a wake request
 
-### queue status
+### queue state
 
 Show queue state
+
+### queue status
+
+Alias for queue state
 
 ### queue peek
 

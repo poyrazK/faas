@@ -235,6 +235,18 @@ func TestTierC_QueueState_HappyPath(t *testing.T) {
 	}
 }
 
+func TestTierC_QueueStatusAlias_HappyPath(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"depth":0,"in_flight":0}`
+	f := authedFakeAPI(t, body, http.StatusOK)
+	if code := cmdQueueDispatch([]string{"status", "demo"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/queues/state" {
+		t.Errorf("route = %s %s, want GET /v1/apps/demo/queues/state", f.sawMethod, f.sawPath)
+	}
+}
+
 // --- orgs keys (Tier C arm of cmdOrgs) ---
 
 func TestTierC_OrgsKeysList_NoOrgFlagExitsOne(t *testing.T) {
