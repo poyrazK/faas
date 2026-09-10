@@ -372,6 +372,7 @@ export type { RolloutTransitionResponse } from './models/RolloutTransitionRespon
 export type { RotateAlertRuleSecretResponse } from './models/RotateAlertRuleSecretResponse.js';
 export type { RotateAppSecretRequest } from './models/RotateAppSecretRequest.js';
 export type { RotateAppSecretResponse } from './models/RotateAppSecretResponse.js';
+export type { RotateAppWebhookSecretRequest } from './models/RotateAppWebhookSecretRequest.js';
 export type { RotateAppWebhookSecretResponse } from './models/RotateAppWebhookSecretResponse.js';
 export type { RotateKeyResponse } from './models/RotateKeyResponse.js';
 export type { RotateOrgAPIKeyRequest } from './models/RotateOrgAPIKeyRequest.js';

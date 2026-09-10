@@ -115,8 +115,7 @@ def sync_detailed(
         slug (str):
         body (CreateAppWebhookRequest): Subscribe a target URL to events emitted by the app. The
             webhook_secret is HMAC-SHA256 sealed at rest with the host
-            X25519 recipient (namespace `APP_WEBHOOK`); apid mints a fresh
-            32-byte secret if omitted.
+            X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
             'event_filter': ['cron.fired', 'app.created'], 'retry_policy': 'default', 'enabled':
             True}.
@@ -162,8 +161,7 @@ def sync(
         slug (str):
         body (CreateAppWebhookRequest): Subscribe a target URL to events emitted by the app. The
             webhook_secret is HMAC-SHA256 sealed at rest with the host
-            X25519 recipient (namespace `APP_WEBHOOK`); apid mints a fresh
-            32-byte secret if omitted.
+            X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
             'event_filter': ['cron.fired', 'app.created'], 'retry_policy': 'default', 'enabled':
             True}.
@@ -204,8 +202,7 @@ async def asyncio_detailed(
         slug (str):
         body (CreateAppWebhookRequest): Subscribe a target URL to events emitted by the app. The
             webhook_secret is HMAC-SHA256 sealed at rest with the host
-            X25519 recipient (namespace `APP_WEBHOOK`); apid mints a fresh
-            32-byte secret if omitted.
+            X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
             'event_filter': ['cron.fired', 'app.created'], 'retry_policy': 'default', 'enabled':
             True}.
@@ -249,8 +246,7 @@ async def asyncio(
         slug (str):
         body (CreateAppWebhookRequest): Subscribe a target URL to events emitted by the app. The
             webhook_secret is HMAC-SHA256 sealed at rest with the host
-            X25519 recipient (namespace `APP_WEBHOOK`); apid mints a fresh
-            32-byte secret if omitted.
+            X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
             'event_filter': ['cron.fired', 'app.created'], 'retry_policy': 'default', 'enabled':
             True}.

@@ -43,6 +43,14 @@ func UnitMeterd() daemonunit.Unit {
 		MemoryMax: "256M",
 
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/meterd/billing.env",
+		Environment: []daemonunit.KV{
+			{Key: "FAAS_PROMETHEUS_URL", Value: "http://127.0.0.1:9090"},
+			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
+		},
+		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
+			{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
+		},
 
 		NoNewPrivileges:       true,
 		ProtectSystem:         "strict",

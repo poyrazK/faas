@@ -1717,6 +1717,12 @@ Retry a failed delivery
 
 Rotate the webhook signing secret
 
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--secret <VALUE>` | replacement HMAC-SHA256 secret |  |
+| `--from-stdin` | read the replacement secret from stdin |  |
+
 
 ## whoami
 

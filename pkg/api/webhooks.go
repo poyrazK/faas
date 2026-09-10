@@ -2,8 +2,8 @@ package api
 
 // Outbound webhook DTOs (issue #476 / ADR-076).
 //
-// Plaintext webhook_secret only appears in CreateAppWebhookRequest
-// and UpdateAppWebhookRequest; the response shape (AppWebhookResponse)
+// Plaintext webhook_secret only appears in create, update, and rotate
+// request bodies; the response shape (AppWebhookResponse)
 // carries a masked constant (AppWebhookSecretMasked) — same posture
 // as pkg/api/alerts.go.
 //
@@ -144,11 +144,12 @@ type UpdateAppWebhookRequest struct {
 	Enabled       *bool     `json:"enabled,omitempty"`
 }
 
-// RotateAppWebhookSecretRequest is the rotate-secret body. Reserved
-// for a future "customer supplies plaintext" variant; the rotate
-// endpoint always server-mints via crypto/rand so the body is empty
-// today.
-type RotateAppWebhookSecretRequest struct{}
+// RotateAppWebhookSecretRequest is the rotate-secret body. The caller supplies
+// the replacement so the receiver and Gregale can be updated atomically. The
+// plaintext is accepted only on the write path and is never returned.
+type RotateAppWebhookSecretRequest struct {
+	WebhookSecret string `json:"webhook_secret"`
+}
 
 // AppWebhookResponse is the GET / list / create / update shape.
 // Mirrors state.AppWebhook but drops the sealed ciphertext and
@@ -286,9 +287,8 @@ func AppWebhookDeliveryResponseFromRow(r AppWebhookDeliveryRow) AppWebhookDelive
 }
 
 // RotateAppWebhookSecretResponse is the body of POST
-// /v1/apps/{slug}/webhooks/{id}/rotate-secret. The plaintext is
-// server-minted and dropped; only the masked constant + rotation
-// timestamp cross the wire.
+// /v1/apps/{slug}/webhooks/{id}/rotate-secret. Only the masked constant and
+// rotation timestamp cross the response boundary.
 type RotateAppWebhookSecretResponse struct {
 	RotatedAt                 string `json:"rotated_at"`
 	WebhookSecretSealedMasked string `json:"webhook_secret_sealed_masked"`

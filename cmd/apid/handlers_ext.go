@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -1821,6 +1822,11 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
 		fmt.Sprintf(`{"kind":"parked","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
+	if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventAppParked, map[string]any{
+		"app_id": app.ID, "slug": app.Slug, "status": st, "occurred_at": time.Now().UTC(),
+	}); err != nil {
+		s.log.WarnContext(r.Context(), "enqueue app.parked webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+	}
 	s.log.Info("app parked", "app", app.ID, "account", acct.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1838,6 +1844,11 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
 		fmt.Sprintf(`{"kind":"woken","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
+	if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventAppWoken, map[string]any{
+		"app_id": app.ID, "slug": app.Slug, "status": st, "occurred_at": time.Now().UTC(),
+	}); err != nil {
+		s.log.WarnContext(r.Context(), "enqueue app.woken webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+	}
 	s.log.Info("app woken", "app", app.ID, "account", acct.ID)
 	w.WriteHeader(http.StatusNoContent)
 }

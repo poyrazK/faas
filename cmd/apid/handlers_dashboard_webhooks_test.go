@@ -107,3 +107,45 @@ func TestDashboardAppWebhookCreateRequiresNamedCSRF(t *testing.T) {
 		t.Fatalf("missing csrf problem: %s", rec.Body.String())
 	}
 }
+
+func TestDashboardAppWebhookRotateInstallsSuppliedSecret(t *testing.T) {
+	teardown := withTestRecipient(t)
+	t.Cleanup(teardown)
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountPlan(t.Context(), acct.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "hooks-rotate", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, err := store.CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: acct.ID, AppID: app.ID, TargetURL: "https://example.com/events",
+		SecretSealed: []byte("old-sealed"), RetryPolicy: state.AppWebhookRetryDefault, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardWebhooksAction, acct.ID, dashboardWebhooksCSRFCookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/hooks-rotate/webhooks/"+hook.ID+"/rotate-secret", map[string]string{
+		middleware.FormFieldName: token,
+		"webhook_secret":         "known-dashboard-replacement",
+	}, &http.Cookie{Name: dashboardWebhooksCSRFCookie, Value: token})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	updated, err := store.AppWebhookByID(t.Context(), hook.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(updated.SecretSealed) == "old-sealed" || strings.Contains(string(updated.SecretSealed), "known-dashboard-replacement") {
+		t.Fatalf("dashboard did not replace and seal the supplied secret")
+	}
+}

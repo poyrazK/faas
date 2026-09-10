@@ -268,16 +268,14 @@ var dtoExclude = map[string]bool{
 	"OrgMemberRow":     true,
 	"OrgInvitationRow": true,
 	// Issue #476 / ADR-076 — internal conversion structs (state row
-	// → wire DTO) and server-minted options / request bodies. The
+	// → wire DTO) and client-only option bags. The
 	// wire DTOs are AppWebhookResponse / AppWebhookDeliveryResponse
 	// etc.; the *Row types are the typed counterparts at the
-	// pkg/api ↔ pkg/state seam. ListAppWebhookDeliveriesOptions and
-	// RotateAppWebhookSecretRequest are server-side concerns that
-	// never appear in the wire spec.
+	// pkg/api ↔ pkg/state seam. ListAppWebhookDeliveriesOptions is a
+	// client-only query bag and never appears in the wire spec.
 	"AppWebhookRow":                   true,
 	"AppWebhookDeliveryRow":           true,
 	"ListAppWebhookDeliveriesOptions": true,
-	"RotateAppWebhookSecretRequest":   true,
 	"AppLogDrainRow":                  true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes

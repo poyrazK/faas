@@ -19,9 +19,12 @@ package main
 //   rotate-secret POST   /v1/apps/{slug}/webhooks/{id}/rotate-secret
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -158,7 +161,10 @@ func cmdWebhooksAdd(args []string) int {
 	if err != nil {
 		return printErr("Create failed", err)
 	}
-	PrintOK(osStdout, "Webhook subscribed: %s -> %s (id=%s)", out.ID, out.TargetURL)
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	PrintOK(osStdout, "Webhook subscribed: %s -> %s", out.ID, out.TargetURL)
 	return 0
 }
 
@@ -207,6 +213,9 @@ func cmdWebhooksUpdate(args []string) int {
 	if err != nil {
 		return printErr("Update failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
 	PrintOK(osStdout, "Updated webhook %s", out.ID)
 	return 0
 }
@@ -231,6 +240,9 @@ func cmdWebhooksRm(args []string) int {
 	}
 	if err := client.DeleteAppWebhook(context.Background(), *slug, id); err != nil {
 		return printErr("Delete failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"id": id, "removed": true}))
 	}
 	PrintOK(osStdout, "Removed")
 	return 0
@@ -269,7 +281,7 @@ func cmdWebhookDeliveries(args []string) int {
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeNDJSON(out.Deliveries))
+		return jsonOut(writeJSON(out))
 	}
 	for _, d := range out.Deliveries {
 		fmt.Printf("%-32s %-10s attempt=%-2d status=%-10s code=%-4d %s\n",
@@ -345,46 +357,62 @@ func cmdWebhookRetry(args []string) int {
 	if err != nil {
 		return printErr("Retry failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
 	PrintOK(osStdout, "Queued for retry: delivery=%s status=%s next_attempt_at=%s",
 		out.Delivery.ID, out.Delivery.Status, out.Delivery.NextAttemptAt)
 	return 0
 }
 
-// cmdWebhookRotateSecret mints a fresh sealed secret for the webhook.
-// The server response carries only the rotated_at timestamp and the
-// masked constant (***) — the plaintext is server-minted and dropped
-// (pkg/api/webhooks.go:230-233). The legacy CLI success message
-// claimed a "one-shot reveal flow" existed; there is no such endpoint
-// (the spec intentionally keeps the plaintext server-side only, so a
-// leakage log can never read it back). The CLI therefore only
-// confirms the rotation succeeded and surfaces the masked sentinel —
-// the operator must provision the new secret in the webhook receiver
-// via an out-of-band channel (read it from the receiver's logs, or
-// rotate-to-known-via the receiver's own tooling).
+// cmdWebhookRotateSecret installs a caller-supplied replacement. Reading from
+// stdin keeps the value out of shell history; the API response stays masked.
 func cmdWebhookRotateSecret(args []string) int {
 	fs := flag.NewFlagSet("webhooks-rotate-secret", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
+	secret := fs.String("secret", "", "replacement HMAC-SHA256 secret")
+	fromStdin := fs.Bool("from-stdin", false, "read the replacement secret from stdin (one line)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks rotate-secret --app <slug> <webhook-id>", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhooks rotate-secret --app <slug> (--secret <value>|--from-stdin) <webhook-id>", "webhooks")
 		return 1
 	}
 	id := fs.Args()[0]
 	if !webhookIDPattern.MatchString(id) {
 		return printErr("Invalid webhook id", fmt.Errorf("must be a 32-hex-char UUID; got %q", id))
 	}
+	if *fromStdin && *secret != "" {
+		return printErr("Invalid flags", fmt.Errorf("--secret and --from-stdin are mutually exclusive"))
+	}
+	if *fromStdin {
+		scanner := bufio.NewScanner(io.LimitReader(osStdin, int64(api.AppWebhookSecretMaxBytes)+2))
+		if scanner.Scan() {
+			*secret = strings.TrimSpace(scanner.Text())
+		}
+		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
+			return printErr("Could not read secret", err)
+		}
+	}
+	if *secret == "" {
+		return printErr("Missing secret", fmt.Errorf("--secret or --from-stdin is required"))
+	}
+	if len(*secret) > api.AppWebhookSecretMaxBytes {
+		return printErr("Invalid secret", fmt.Errorf("secret exceeds %d bytes", api.AppWebhookSecretMaxBytes))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	out, err := client.RotateAppWebhookSecret(context.Background(), *slug, id)
+	out, err := client.RotateAppWebhookSecret(context.Background(), *slug, id, api.RotateAppWebhookSecretRequest{WebhookSecret: *secret})
 	if err != nil {
 		return printErr("Rotate failed", err)
 	}
-	PrintOK(osStdout, "Webhook %s secret rotated at %s (sealed=%s). Plaintext is server-minted and not retrievable; provision the new secret in the webhook receiver out-of-band.",
-		id, out.RotatedAt, out.WebhookSecretSealedMasked)
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	PrintOK(osStdout, "Webhook %s signing secret updated at %s (sealed=%s)", id, out.RotatedAt, out.WebhookSecretSealedMasked)
 	return 0
 }
 
