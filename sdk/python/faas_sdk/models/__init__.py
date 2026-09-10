@@ -480,6 +480,7 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
@@ -578,6 +579,11 @@ from .obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTr
 from .obs_node_operation_preflight import ObsNodeOperationPreflight
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_response import OIDCExchangeResponse
+from .open_api_contract_addition import OpenAPIContractAddition
+from .open_api_contract_break import OpenAPIContractBreak
+from .open_api_contract_break_kind import OpenAPIContractBreakKind
+from .open_api_contract_break_method import OpenAPIContractBreakMethod
+from .open_api_contract_diff_response import OpenAPIContractDiffResponse
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -1344,6 +1350,7 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "LatestDeploymentsByAppResponse",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
     "ListBucketObjectsResponse200",
@@ -1440,6 +1447,11 @@ __all__ = (
     "ObsNodeOperationPreflight",
     "OIDCExchangeRequest",
     "OIDCExchangeResponse",
+    "OpenAPIContractAddition",
+    "OpenAPIContractBreak",
+    "OpenAPIContractBreakKind",
+    "OpenAPIContractBreakMethod",
+    "OpenAPIContractDiffResponse",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",

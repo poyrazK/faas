@@ -542,6 +542,12 @@ type DeploymentListResponse struct {
 	NextBefore string               `json:"next_before,omitempty"`
 }
 
+// LatestDeploymentsByAppResponse is the account-scoped batch shape returned
+// by GET /v1/deployments/latest-by-app.
+type LatestDeploymentsByAppResponse struct {
+	Items []DeploymentResponse `json:"items"`
+}
+
 // --- Dashboard auth (issue #165, ADR-032 PR #2) ----------------------------
 
 // OAuthProvider is the issuer name used by the dashboard OAuth flows

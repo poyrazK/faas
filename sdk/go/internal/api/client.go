@@ -1164,6 +1164,13 @@ func (c *Client) ListDeployments(ctx context.Context, before string, limit int) 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListLatestDeploymentsByApp returns at most one newest deployment for every
+// non-deleted app owned by the authenticated account.
+func (c *Client) ListLatestDeploymentsByApp(ctx context.Context) (LatestDeploymentsByAppResponse, error) {
+	var out LatestDeploymentsByAppResponse
+	return out, c.do(ctx, "GET", "/v1/deployments/latest-by-app", nil, &out)
+}
+
 // ListAppDeployments returns one cursor page of deployments for an app slug.
 func (c *Client) ListAppDeployments(ctx context.Context, slug, before string, limit int) (DeploymentListResponse, error) {
 	var out DeploymentListResponse

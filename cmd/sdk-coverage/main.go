@@ -322,6 +322,7 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/deployments/{id}":                              "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override
 	"DELETE /v1/deployments/{id}":                             "ClearDeployment", // ADR-124 PR-A; soft-delete (status untouched)
 	"GET /v1/deployments":                                     "ListDeployments",
+	"GET /v1/deployments/latest-by-app":                       "ListLatestDeploymentsByApp",
 	"POST /v1/deployments/{id}/reorder":                       "ReorderDeployment",        // ADR-124 PR-A; priority bump on pending deploy
 	"POST /v1/apps/{slug}/deployments/{id}/cancel":            "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
 	"POST /v1/apps/{slug}/deployments/clear-obsolete":         "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows

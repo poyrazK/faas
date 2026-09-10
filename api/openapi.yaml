@@ -6089,6 +6089,26 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/latest-by-app:
+    get:
+      tags: [deployments]
+      operationId: listLatestDeploymentsByApp
+      summary: List the latest deployment for each app on the account.
+      description: |
+        Returns at most one deployment for every non-deleted app owned by the
+        authenticated account. Items are ordered newest first by `created_at`,
+        with deployment ID as the stable tie-breaker.
+      responses:
+        '200':
+          description: The latest deployment for each deployed app.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestDeploymentsByAppResponse'
+              example: {"items":[]}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/deployments/{id}:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -16167,6 +16187,15 @@ components:
           type: array
           items: { $ref: '#/components/schemas/DeploymentResponse' }
         next_before: { type: [string, "null"], format: date-time }
+
+    LatestDeploymentsByAppResponse:
+      description: "At most one newest deployment for each non-deleted app owned by the authenticated account."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentResponse' }
 
     DeploymentSummaryResponse:
       description: "App-scoped release cockpit: selected deployment, immediate predecessor, non-secret field-level diff, and eligible rollback target."

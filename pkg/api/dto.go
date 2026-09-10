@@ -2708,6 +2708,13 @@ type DeploymentListResponse struct {
 	NextBefore string               `json:"next_before,omitempty"`
 }
 
+// LatestDeploymentsByAppResponse is the account-scoped batch shape returned
+// by GET /v1/deployments/latest-by-app. Items contains at most one newest
+// deployment for each non-deleted app the authenticated account owns.
+type LatestDeploymentsByAppResponse struct {
+	Items []DeploymentResponse `json:"items"`
+}
+
 // DeploymentSummaryResponse is the app-scoped release cockpit returned by
 // GET /v1/apps/{slug}/deployments/{id}/summary. It composes the existing
 // deployment detail shape with the immediately preceding release, a stable

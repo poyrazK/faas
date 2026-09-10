@@ -2209,6 +2209,7 @@ func (s *server) handler() http.Handler {
 
 	// Account-scoped deployments list (M7.5 dashboard).
 	mux.HandleFunc("GET /v1/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeployments))))
+	mux.HandleFunc("GET /v1/deployments/latest-by-app", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listLatestDeploymentsByApp))))
 
 	// MFA (IAM-2, issue #186). Five POST endpoints; all on the
 	// admin-only scope set because the dashboard never exposes

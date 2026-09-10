@@ -2452,6 +2452,10 @@ type Store interface {
 	// bound). MemStore sorts in memory; PgStore uses a LIMIT/OFFSET or
 	// keyset pagination (deferred — LIMIT/OFFSET is fine at one-box scale).
 	ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error)
+	// ListLatestDeploymentPerApp returns at most one deployment for each
+	// non-deleted app the account owns. Newness is ordered by created_at and
+	// then deployment ID so equal timestamps have a stable winner.
+	ListLatestDeploymentPerApp(ctx context.Context, accountID string) (map[string]Deployment, error)
 	// ListDeploymentsForAccountPage is the stable keyset-paginated form used
 	// by account export. The ID tie-breaker prevents rows with identical
 	// created_at values from being skipped at a page boundary.

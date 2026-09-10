@@ -54,11 +54,79 @@ func Run(t *testing.T, open Open) {
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
+		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testLatestDeploymentPerApp(t *testing.T, fx *Fixture) {
+	stamp := time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC)
+	lowID := "40000000-0000-0000-0000-000000000001"
+	highID := "40000000-0000-0000-0000-000000000002"
+	for _, id := range []string{lowID, highID} {
+		if _, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+			ID: id, AppID: fx.App.ID, CreatedAt: stamp,
+			Kind: state.DeploymentKindImage, Status: state.DeployFailed,
+		}); err != nil {
+			t.Fatalf("CreateDeployment(%s): %v", id, err)
+		}
+	}
+
+	limits := api.MustLimitsFor(api.PlanPro)
+	secondApp, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: "latest-second-" + uuid.NewString(),
+		Type: state.AppTypeApp, RAMMB: limits.RAMMB,
+		MaxConcurrency: limits.MaxConcurrency, IdleTimeoutS: limits.IdleTimeoutS,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(second): %v", err)
+	}
+	secondDeployment, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: secondApp.ID, CreatedAt: stamp.Add(time.Minute),
+		Kind: state.DeploymentKindImage, Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(second): %v", err)
+	}
+
+	foreignAccount, err := fx.Store.CreateAccount(fx.Ctx, "latest-foreign-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount(foreign): %v", err)
+	}
+	foreignApp, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: foreignAccount.ID, Slug: "latest-foreign-" + uuid.NewString(),
+		Type: state.AppTypeApp, RAMMB: limits.RAMMB,
+		MaxConcurrency: limits.MaxConcurrency, IdleTimeoutS: limits.IdleTimeoutS,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(foreign): %v", err)
+	}
+	if _, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: foreignApp.ID, CreatedAt: stamp.Add(2 * time.Minute),
+		Kind: state.DeploymentKindImage, Status: state.DeployPending,
+	}); err != nil {
+		t.Fatalf("CreateDeployment(foreign): %v", err)
+	}
+
+	got, err := fx.Store.ListLatestDeploymentPerApp(fx.Ctx, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("ListLatestDeploymentPerApp: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("latest map = %d rows, want 2: %+v", len(got), got)
+	}
+	if got[fx.App.ID].ID != highID {
+		t.Errorf("fixture app latest = %q, want tie-break winner %q", got[fx.App.ID].ID, highID)
+	}
+	if got[secondApp.ID].ID != secondDeployment.ID {
+		t.Errorf("second app latest = %q, want %q", got[secondApp.ID].ID, secondDeployment.ID)
+	}
+	if _, ok := got[foreignApp.ID]; ok {
+		t.Error("foreign account deployment leaked into latest map")
 	}
 }
 

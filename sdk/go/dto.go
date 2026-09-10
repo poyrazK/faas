@@ -28,9 +28,10 @@ type (
 	ResourceProfileSpec    = api.ResourceProfileSpec
 
 	// Deployments.
-	CreateDeploymentRequest = api.CreateDeploymentRequest
-	DeploymentResponse      = api.DeploymentResponse
-	DeploymentListResponse  = api.DeploymentListResponse
+	CreateDeploymentRequest        = api.CreateDeploymentRequest
+	DeploymentResponse             = api.DeploymentResponse
+	DeploymentListResponse         = api.DeploymentListResponse
+	LatestDeploymentsByAppResponse = api.LatestDeploymentsByAppResponse
 
 	// Account.
 	AccountResponse         = api.AccountResponse
