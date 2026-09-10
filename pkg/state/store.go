@@ -2159,22 +2159,14 @@ type Store interface {
 
 	// Deployments.
 	// CreateDeployment atomically inserts a new pending deployment row
-	// for the given app. When the app already has a pending or live
-	// deployment row, the SAME transaction flips that prior row's
-	// status to 'superseded' before INSERTing the new one. A
-	// building/imaging/snapshotting row is left untouched — its
-	// pipeline (vmmd VM, builderd, imaged ext4 conversion) is still
-	// running and we must not orphan it; the second deploy then
-	// creates a parallel row, and schedd's watchdog reaps the loser
-	// on the next idle window.
+	// for the given app. When the app already has a pending replacement,
+	// the SAME transaction supersedes that pending row before inserting
+	// the new one. Live and in-progress deployments remain untouched:
+	// MarkDeploymentLive performs the same-scope live cutover only after
+	// the replacement has completed its build and readiness pipeline.
 	//
 	// Callers that need to surface a NotifyDeploymentChanged for the
-	// just-superseded row use LatestDeployment(ctx, appID) AFTER
-	// CreateDeployment returns — the in-tx supersede means the prior
-	// row is already visible as 'superseded' to the next read. The
-	// two-step read avoids turning CreateDeployment into a 3-return
-	// signature that breaks every pre-PR-B call site (notably the
-	// slice-3 cascade test on main).
+	// just-superseded pending row may read it after CreateDeployment.
 	//
 	// AppDeleted apps must accept neither deployments nor supersedes;
 	// the parent-app gate is the same FOR UPDATE as PR-A's

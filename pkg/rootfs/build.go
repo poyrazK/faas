@@ -1021,6 +1021,8 @@ if (process.env.FAAS_PERSISTENT_WORKER === "1") {
 const lines = readlineModule.createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of lines) {
   if (!line.trim()) continue;
+  let invocationID = "";
+  try {
   const env = JSON.parse(line);
   const raw = Buffer.from(env.body_b64 || "", "base64").toString("utf8");
   let body = raw;
@@ -1030,7 +1032,7 @@ for await (const line of lines) {
     try { body = JSON.parse(raw); } catch (_) {}
   }
   const headers = env.headers || {};
-  const invocationID = headers["x-faas-invocation-id"] || headers["X-Faas-Invocation-Id"] || "";
+  invocationID = headers["x-faas-invocation-id"] || headers["X-Faas-Invocation-Id"] || "";
   const log = {};
   for (const level of ["debug", "info", "warn", "error"]) {
     log[level] = (...args) => console.error(...args);
@@ -1092,6 +1094,21 @@ for await (const line of lines) {
     headers: normalizedHeaders,
     body_b64: Buffer.from(responseBody).toString("base64"),
   }) + "\n");
+  } catch (err) {
+    const rawMessage = err instanceof Error ? err.message : String(err);
+    const message = rawMessage.length > 256 ? rawMessage.slice(0, 256) + "…" : rawMessage;
+    console.error(err && err.stack ? err.stack : err);
+    const responseBody = JSON.stringify({
+      error: "handler_error",
+      message,
+      invocation_id: invocationID,
+    });
+    process.stdout.write(JSON.stringify({
+      status: 500,
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body_b64: Buffer.from(responseBody).toString("base64"),
+    }) + "\n");
+  }
 }
 })().catch((err) => {
   console.error(err && err.stack ? err.stack : err);
@@ -1109,7 +1126,17 @@ import os
 import sys
 
 class _Log:
-    def info(self, *args, **kwargs): print(*args, file=sys.stderr)
+    def info(self, *args, **kwargs):
+        # Match the stdlib logging call shape used by the stock templates.
+        # Passing extra through to print raises TypeError and suppresses the
+        # handler's response; serialize it as structured context instead.
+        extra = kwargs.pop("extra", None)
+        kwargs.pop("exc_info", None)
+        kwargs.pop("stack_info", None)
+        message = " ".join(str(arg) for arg in args)
+        if isinstance(extra, dict) and extra:
+            message += " " + json.dumps(extra, sort_keys=True, default=str)
+        print(message, file=sys.stderr, flush=True)
     debug = info
     warning = info
     warn = info

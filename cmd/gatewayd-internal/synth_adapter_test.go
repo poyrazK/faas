@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -96,6 +97,45 @@ func TestSynthAdapterForwardInvocationStampsPlatformHeaders(t *testing.T) {
 	}
 	if out.State != state.InvocationDispatching {
 		t.Fatalf("state = %q, want dispatching", out.State)
+	}
+}
+
+func TestSynthAdapterForwardInvocationMarksHandlerErrorFailed(t *testing.T) {
+	a := &synthAdapter{forward: func(gateway.Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"handler_error","message":"boom"}`))
+		})
+	}}
+	out, statusCode, err := a.forwardInvocationWithStatus(context.Background(), gateway.Target{
+		InstanceID: "instance-1", NodeID: "node-1",
+	}, state.Invocation{ID: "inv-1", AppID: "app-1", Source: state.InvocationAsyncInvoke})
+	if err != nil {
+		t.Fatalf("forwardInvocationWithStatus: %v", err)
+	}
+	if statusCode != http.StatusInternalServerError || out.State != state.InvocationFailed {
+		t.Fatalf("status/state = %d/%q, want 500/failed", statusCode, out.State)
+	}
+	if !strings.Contains(string(out.Result), "handler_error") {
+		t.Fatalf("result = %s", out.Result)
+	}
+}
+
+func TestSynthAdapterForwardInvocationKeepsOrdinaryServerErrorRetryable(t *testing.T) {
+	a := &synthAdapter{forward: func(gateway.Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"upstream_unavailable"}`))
+		})
+	}}
+	out, statusCode, err := a.InvokeWithTargetStatus(context.Background(), "app-1", state.Invocation{
+		ID: "inv-1", AppID: "app-1", Source: state.InvocationAsyncInvoke,
+	}, gateway.Target{InstanceID: "instance-1", NodeID: "node-1"})
+	if err != nil {
+		t.Fatalf("InvokeWithTargetStatus: %v", err)
+	}
+	if statusCode != http.StatusServiceUnavailable || out.State != state.InvocationDispatching {
+		t.Fatalf("status/state = %d/%q, want 503/dispatching", statusCode, out.State)
 	}
 }
 

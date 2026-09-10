@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -22,7 +23,7 @@ func cmdAnalytics(args []string) int {
 	since := fs.String("since", "24h", "lookback window (for example 24h or 7d)")
 	until := fs.String("until", "", "exclusive RFC3339 end timestamp")
 	by := fs.String("by", "route", "grouping dimension")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(normalizeAnalyticsArgs(args)); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
@@ -48,6 +49,38 @@ func cmdAnalytics(args []string) int {
 	}
 	renderRequestAnalytics(osStdout, response)
 	return 0
+}
+
+// normalizeAnalyticsArgs permits the documented slug-first form while keeping
+// the traditional flags-first spelling. flag.FlagSet stops parsing at the
+// first positional, so move the one slug behind the known value flags.
+func normalizeAnalyticsArgs(args []string) []string {
+	flags := make([]string, 0, len(args))
+	positionals := make([]string, 0, 1)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--since=") || strings.HasPrefix(arg, "--until=") || strings.HasPrefix(arg, "--by=") {
+			flags = append(flags, arg)
+			continue
+		}
+		if arg == "--since" || arg == "--until" || arg == "--by" {
+			flags = append(flags, arg)
+			if i+1 >= len(args) {
+				// Preserve flag.FlagSet's native "needs an argument" error
+				// without letting an earlier slug become the missing value.
+				return flags
+			}
+			i++
+			flags = append(flags, args[i])
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			flags = append(flags, arg)
+			continue
+		}
+		positionals = append(positionals, arg)
+	}
+	return append(flags, positionals...)
 }
 
 func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) {

@@ -267,7 +267,7 @@ func TestDrain_TransientInvokeRetries(t *testing.T) {
 // future tick should pick it up.
 func TestDrain_PermanentInvokeTerminates(t *testing.T) {
 	t.Parallel()
-	d, store, _, _, ds := newDrainHarness(t, api.PlanHobby, true)
+	d, store, _, notifier, ds := newDrainHarness(t, api.PlanHobby, true)
 	ds.permanent.Store(true)
 	inv := seedDrainInvocation(t, store, state.InvocationAsyncInvoke)
 
@@ -281,6 +281,9 @@ func TestDrain_PermanentInvokeTerminates(t *testing.T) {
 	}
 	if got.LastError == "" {
 		t.Errorf("after permanent fail, last_error = empty, want set")
+	}
+	if notifier.count(db.NotifyInvocationDone) != 1 {
+		t.Errorf("permanent failure notifications = %d, want 1", notifier.count(db.NotifyInvocationDone))
 	}
 
 	// Second tick: failed rows are terminal, drain must not retry.

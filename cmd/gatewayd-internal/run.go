@@ -580,14 +580,22 @@ func debugReplayMetadata(inv state.Invocation) (map[string]string, error) {
 // Wake RPC for the same invocation. The target is forwarded directly to the
 // existing node-client path, so the handler needs no second app lookup.
 func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, error) {
+	out, _, err := a.InvokeWithTargetStatus(ctx, appID, inv, target)
+	return out, err
+}
+
+// InvokeWithTargetStatus is the pre-woken status-preserving path. The synth
+// server echoes the status to schedd so a runner-generated handler error is
+// reported with its real HTTP code and retryable 5xx responses remain distinct.
+func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, int, error) {
 	if target.InstanceID == "" || target.NodeID == "" {
-		return inv, fmt.Errorf("gateway synth: pre-woken target is incomplete")
+		return inv, 0, fmt.Errorf("gateway synth: pre-woken target is incomplete")
 	}
 	if a.forward == nil {
-		return inv, fmt.Errorf("gateway synth: invocation forwarder is not wired")
+		return inv, 0, fmt.Errorf("gateway synth: invocation forwarder is not wired")
 	}
 	inv.InstanceID = target.InstanceID
-	return a.forwardInvocation(ctx, target, inv)
+	return a.forwardInvocationWithStatus(ctx, target, inv)
 }
 
 // forwardInvocation delivers a synthetic invocation through the same
@@ -663,8 +671,22 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 	} else {
 		inv.Result = nil
 	}
-	inv.State = state.InvocationDispatching
+	if (rec.Code >= http.StatusBadRequest && rec.Code < http.StatusInternalServerError) ||
+		(rec.Code == http.StatusInternalServerError && isHandlerErrorResult(body)) {
+		// A 4xx or the runner's explicit handler_error means the invocation
+		// reached customer code and cannot recover by moving to another VM.
+		inv.State = state.InvocationFailed
+	} else {
+		inv.State = state.InvocationDispatching
+	}
 	return inv, rec.Code, nil
+}
+
+func isHandlerErrorResult(body []byte) bool {
+	var envelope struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &envelope) == nil && envelope.Error == "handler_error"
 }
 
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server

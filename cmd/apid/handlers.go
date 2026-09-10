@@ -527,15 +527,14 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, p)
 		return
 	}
-	// PR-B: prior-deployment supersede is in store.CreateDeployment's tx;
-	// we read prev BEFORE the call so the supersede-notify can carry
-	// its id (LatestDeployment returns the post-supersede row).
-	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
 	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
 		return
 	}
+	// Capture the current predecessor for audit. It remains live until the
+	// replacement passes readiness and MarkDeploymentLive cuts traffic over.
+	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
 	// Issue #606 / SAFE-RELEASES-E.1: server-side actor
 	// attribution. Stamped AFTER buildDeploymentForInsert so the
 	// pure-struct helper stays free of HTTP context (the helper

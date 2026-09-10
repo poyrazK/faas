@@ -4745,14 +4745,14 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		if existing.AppID != d.AppID || normalizedDeploymentScope(existing.Scope) != normalizedDeploymentScope(d.Scope) {
 			continue
 		}
-		// Same narrow set as PgStore (PR-B): only flip pending/live
+		// Same narrow set as PgStore: only replace an older pending
 		// rows. A building/imaging/snapshotting row represents a
 		// pipeline already running; flipping it would orphan the
 		// vmmd VM / builderd process / imaged ext4 conversion. The
 		// second deploy creates a parallel row and the schedd
 		// watchdog reaps the loser on idle.
 		switch existing.Status {
-		case DeployPending, DeployLive:
+		case DeployPending:
 			// current world — supersede
 		default:
 			continue
@@ -4763,7 +4763,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 			hasPrior = true
 		}
 	}
-	if hasPrior && !serviceRollout {
+	if hasPrior && d.CanaryTotalSteps <= 0 && !serviceRollout {
 		// Match PgStore exactly: mutate the stored prior in-place so
 		// subsequent LatestDeployment / DeploymentByID readers see
 		// the supersede immediately, under m.mu.
@@ -4773,27 +4773,10 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		// is stamped at d.TrafficPercent below (handler defaults to
 		// 100 when the caller omits the optional pointer). Mirrors
 		// the pgstore's two-field SET in CreateDeployment.
-		if d.CanaryTotalSteps <= 0 && !serviceRollout {
-			prior := m.deployments[priorID]
-			prior.Status = DeploySuperseded
-			prior.TrafficPercent = 0
-			m.deployments[priorID] = prior
-		}
-	}
-	if d.CanaryTotalSteps <= 0 && !serviceRollout {
-		// A stable deployment terminates any active canary overlap as
-		// well as the newest prior row. Without this sweep, a stable
-		// deploy made during a canary would leave the residual stable
-		// revision live and later collide with the one-live index when
-		// the new row is activated.
-		for otherID, other := range m.deployments {
-			if other.AppID != d.AppID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(d.Scope) || other.Status != DeployLive || otherID == priorID {
-				continue
-			}
-			other.Status = DeploySuperseded
-			other.TrafficPercent = 0
-			m.deployments[otherID] = other
-		}
+		prior := m.deployments[priorID]
+		prior.Status = DeploySuperseded
+		prior.TrafficPercent = 0
+		m.deployments[priorID] = prior
 	}
 
 	if d.ID == "" {
@@ -5686,7 +5669,7 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	// (for example, if the canonical spec cannot be loaded); keeping all
 	// mutations local until it succeeds gives MemStore the same atomic
 	// failure semantics as the Postgres transaction.
-	if d.Status == DeployLive || d.CanaryTotalSteps <= 0 {
+	if d.Status == DeployLive || (d.CanaryTotalSteps <= 0 && IsServiceRollout(d)) {
 		d.Status = DeployLive
 		d.Error = ""
 		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
@@ -5695,6 +5678,31 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		}
 		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
 			return err
+		}
+		m.deployments[id] = d
+		return nil
+	}
+	if d.CanaryTotalSteps <= 0 {
+		// Commit the stable cutover as one mutex-protected mutation. The old
+		// live row remains visible throughout the replacement build and is
+		// retired only when the replacement is ready to serve.
+		d.Status = DeployLive
+		d.Error = ""
+		d.TrafficPercent = 100
+		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
+		if err != nil {
+			return err
+		}
+		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+			return err
+		}
+		for otherID, other := range m.deployments {
+			if otherID == id || other.AppID != d.AppID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(d.Scope) || other.Status != DeployLive {
+				continue
+			}
+			other.Status = DeploySuperseded
+			other.TrafficPercent = 0
+			m.deployments[otherID] = other
 		}
 		m.deployments[id] = d
 		return nil

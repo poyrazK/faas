@@ -97,7 +97,7 @@ func TestPatchDeploymentTraffic_EmitsTrafficNotify(t *testing.T) {
 	// to redistribute the residual across (Σ=100 contract).
 	depB, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:def",
-		Status: state.DeployPending,
+		Status: state.DeployPending, Scope: "traffic-b",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment (B): %v", err)
@@ -105,9 +105,9 @@ func TestPatchDeploymentTraffic_EmitsTrafficNotify(t *testing.T) {
 	if err := store.MarkDeploymentLive(context.Background(), depB.ID); err != nil {
 		t.Fatalf("MarkDeploymentLive (B): %v", err)
 	}
-	// CreateDeployment(B) auto-superseded dep. Re-flip dep to live at 0.
-	if err := store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
-		t.Fatalf("MarkDeploymentLive (restore dep): %v", err)
+	// Establish a valid 0/100 two-live-row fixture before stamping dep to 25.
+	if _, err := store.UpdateDeploymentTraffic(context.Background(), dep.ID, 0); err != nil {
+		t.Fatalf("zero dep traffic: %v", err)
 	}
 	apiKey, hash, err := api.GenerateAPIKey()
 	if err != nil {

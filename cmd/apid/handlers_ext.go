@@ -720,6 +720,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	limits := api.MustLimitsFor(acct.Plan)
 	ram, mc := app.RAMMB, app.MaxConcurrency
 	if req.RAMMB != nil {
+		if *req.RAMMB <= 0 {
+			api.WriteProblem(w, api.ErrInvalidAppRAM(*req.RAMMB))
+			return
+		}
 		ram = *req.RAMMB
 	}
 	if req.MaxConcurrency != nil {
@@ -1756,9 +1760,6 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 			problem := api.ErrAPIContractBreakingChange((&openapidiff.GateError{Diff: check.Diff}).Error())
 			return state.Deployment{}, problem
 		}
-	}
-	if err := s.store.MarkDeploymentSuperseded(ctx, current.ID); err != nil {
-		return state.Deployment{}, api.ErrCapacity("could not supersede current")
 	}
 	if err := s.store.MarkDeploymentLive(ctx, target.ID); err != nil {
 		return state.Deployment{}, api.ErrCapacity("could not activate rollback target")

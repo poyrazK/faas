@@ -173,9 +173,9 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 	}
 
 	// 5. error_rate_pct.
-	errQ := fmt.Sprintf(
-		`sum(rate(gateway_requests_total{app=%q,code=~"[45].."}[%s])) / sum(rate(gateway_requests_total{app=%q}[%s])) * 100`,
-		app.ID, window, app.ID, window)
+	errQ := appmetrics.PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q,code=~"[45].."}[%s]))`, app.ID, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, app.ID, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = appmetrics.SafePercent(v)
 	} else {
@@ -183,9 +183,9 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 	}
 
 	// 6. cold_boot_rate_pct.
-	coldQ := fmt.Sprintf(
-		`sum(rate(gateway_cold_boot_total{app=%q}[%s])) / sum(rate(gateway_requests_total{app=%q}[%s])) * 100`,
-		app.ID, window, app.ID, window)
+	coldQ := appmetrics.PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, app.ID, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, app.ID, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, coldQ); err == nil {
 		resp.ColdBootRatePct = appmetrics.SafePercent(v)
 	} else {
@@ -280,9 +280,9 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 	}
 
 	// 5. error_rate_pct (fleet-wide).
-	errQ := fmt.Sprintf(
-		`sum(rate(gateway_requests_total{code=~"[45].."}[%s])) / sum(rate(gateway_requests_total[%s])) * 100`,
-		window, window)
+	errQ := appmetrics.PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_requests_total{code=~"[45].."}[%s]))`, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total[%s]))`, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = appmetrics.SafePercent(v)
 	} else {
@@ -290,9 +290,9 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 	}
 
 	// 6. cold_boot_rate_pct (fleet-wide).
-	coldQ := fmt.Sprintf(
-		`sum(rate(gateway_cold_boot_total[%s])) / sum(rate(gateway_requests_total[%s])) * 100`,
-		window, window)
+	coldQ := appmetrics.PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_cold_boot_total[%s]))`, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total[%s]))`, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, coldQ); err == nil {
 		resp.ColdBootRatePct = appmetrics.SafePercent(v)
 	} else {

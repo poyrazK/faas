@@ -22841,13 +22841,14 @@ components:
         status_url: { type: string, example: "/v1/invocations/0123456789abcdef0123456789abcdef" }
 
     InvokeResponse:
-      description: "Sync-invoke result. Status is the drain-driven terminal state (`completed` | `failed` | `cancelled`). Result is the original row's payload cast to JSON (omitted while still pending)."
+      description: "Sync-invoke result. Status is the drain-driven terminal state (`completed` | `failed` | `cancelled`). Result is the handler response. Error contains the terminal delivery error when status is failed."
       type: object
       required: [id, status]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         status: { type: string, enum: [pending, dispatching, completed, failed, cancelled] }
         result: { type: object, additionalProperties: true }
+        error: { type: string }
 
     QueueSendResponse:
       description: "201 — body of a freshly-enqueued queue row."

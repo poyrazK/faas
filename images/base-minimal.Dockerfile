@@ -29,6 +29,10 @@ COPY --from=busybox /bin/busybox /bin/busybox
 # diagnostic paths rely on it. Scratch does not create symlinks from the
 # source image, so install the BusyBox binary at the contract path too.
 COPY --from=busybox /bin/busybox /bin/sh
+# Railpack-managed tools use `#!/usr/bin/env ...` shebangs. Plain web apps
+# intentionally use this minimal base, so the app layer may contain a complete
+# Node/Python runtime while still relying on drive0 for env.
+COPY --from=busybox /bin/busybox /usr/bin/env
 COPY --from=build /bin/bash /bin/bash
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # The app user every guest execs as (uid 1000, spec §4.8).

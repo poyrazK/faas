@@ -383,8 +383,18 @@ type QueueConfig struct {
 // shipping a no-op deploy.
 type Manifest struct {
 	Hosting   *hostingconfig.Config `yaml:"hosting,omitempty"`
+	Function  *FunctionConfig       `yaml:"function,omitempty"`
 	Triggers  []Trigger             `yaml:"triggers"`
 	Workflows []api.WorkflowSpec    `yaml:"workflows,omitempty"`
+}
+
+// FunctionConfig records the deploy shape selected by a function scaffold.
+// It lets a later plain `gregale deploy --path ...` retain the runtime chosen
+// by `gregale init`, even when package metadata such as package.json is also
+// present for editor tooling and dependency installation.
+type FunctionConfig struct {
+	Runtime string `yaml:"runtime"`
+	Handler string `yaml:"handler"`
 }
 
 // Load reads `gregale.yaml` or `gregale.yml` from dir. Returns
@@ -483,6 +493,14 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m.Hosting != nil {
 		if err := m.Hosting.Validate(); err != nil {
 			return fmt.Errorf("hosting: %w", err)
+		}
+	}
+	if m.Function != nil {
+		if strings.TrimSpace(m.Function.Runtime) == "" {
+			return errors.New("function: runtime is required")
+		}
+		if strings.TrimSpace(m.Function.Handler) == "" {
+			return errors.New("function: handler is required")
 		}
 	}
 	seen := make(map[triggerKey]struct{}, len(m.Triggers))

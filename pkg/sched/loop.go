@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -2770,7 +2771,22 @@ func (h *httpGatewaySynth) InvokeWithWake(ctx context.Context, appID string, inv
 }
 
 func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, error) {
-	out, _, err := h.invokeWithStatus(ctx, appID, inv, wake)
+	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, wake)
+	if err == nil && out.State == state.InvocationFailed {
+		detail := strings.TrimSpace(string(out.Result))
+		if len(detail) > 512 {
+			detail = detail[:512] + "…"
+		}
+		if detail == "" {
+			detail = http.StatusText(statusCode)
+		}
+		err = fmt.Errorf("%w: application returned HTTP %d: %s", ErrPermanentInvoke, statusCode, detail)
+	} else if err == nil && statusCode >= http.StatusInternalServerError {
+		// An ordinary 5xx is retryable under the durable invocation contract.
+		// Runner-caught exceptions are marked InvocationFailed above and take
+		// the permanent branch instead.
+		err = fmt.Errorf("application or gateway returned retryable HTTP %d", statusCode)
+	}
 	return out, err
 }
 
@@ -2852,7 +2868,11 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return inv, 0, fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
+		err := fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
+		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
+			err = fmt.Errorf("%w: %w", ErrPermanentInvoke, err)
+		}
+		return inv, 0, err
 	}
 	var out struct {
 		State      string          `json:"state"`

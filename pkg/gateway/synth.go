@@ -63,6 +63,13 @@ type TargetAwareSynthDispatcher interface {
 	InvokeWithTarget(ctx context.Context, appID string, inv state.Invocation, target Target) (state.Invocation, error)
 }
 
+// TargetAwareStatusSynthDispatcher preserves the downstream status on the
+// pre-woken path. Durable invocations use the status to distinguish an
+// explicit terminal handler error from retryable 5xx/infrastructure failures.
+type TargetAwareStatusSynthDispatcher interface {
+	InvokeWithTargetStatus(ctx context.Context, appID string, inv state.Invocation, target Target) (state.Invocation, int, error)
+}
+
 // SynthServer is the unix-socket HTTP listener that exposes
 // /v1/synthesize (legacy no-payload path) and /v1/invocations:dispatch
 // (Move 1 event-shaped path). Both routes share the unix-socket DAC
@@ -478,7 +485,15 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	var out state.Invocation
 	var statusCode int
 	var err error
-	if targetDispatcher, ok := s.dispatcher.(TargetAwareSynthDispatcher); ok && req.InstanceID != "" && req.NodeID != "" {
+	if targetDispatcher, ok := s.dispatcher.(TargetAwareStatusSynthDispatcher); ok && req.InstanceID != "" && req.NodeID != "" {
+		out, statusCode, err = targetDispatcher.InvokeWithTargetStatus(r.Context(), req.AppID, inv, Target{
+			InstanceID:   req.InstanceID,
+			NodeID:       req.NodeID,
+			DeploymentID: req.DeploymentID,
+			WakeID:       req.WakeID,
+			Port:         req.Port,
+		})
+	} else if targetDispatcher, ok := s.dispatcher.(TargetAwareSynthDispatcher); ok && req.InstanceID != "" && req.NodeID != "" {
 		out, err = targetDispatcher.InvokeWithTarget(r.Context(), req.AppID, inv, Target{
 			InstanceID:   req.InstanceID,
 			NodeID:       req.NodeID,

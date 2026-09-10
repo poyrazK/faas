@@ -1266,6 +1266,40 @@ func TestUpdateApp_RAMValid(t *testing.T) {
 	}
 }
 
+func TestUpdateApp_RAMValidationPreservesConfiguration(t *testing.T) {
+	tests := []struct {
+		name       string
+		ram        int
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "negative", ram: -1, wantStatus: http.StatusUnprocessableEntity, wantCode: api.CodeInvalidAppRAM},
+		{name: "zero", ram: 0, wantStatus: http.StatusUnprocessableEntity, wantCode: api.CodeInvalidAppRAM},
+		{name: "above plan", ram: 513, wantStatus: http.StatusForbidden, wantCode: api.CodePlanLimitRAM},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			mustSeedApp(t, e, "upd-invalid-ram")
+			baselineRAM := 256
+			baseline := e.do(t, "PATCH", "/v1/apps/upd-invalid-ram", api.UpdateAppRequest{RAMMB: &baselineRAM}, nil)
+			if baseline.Code != http.StatusOK {
+				t.Fatalf("seed baseline RAM: status %d: %s", baseline.Code, baseline.Body)
+			}
+			rec := e.do(t, "PATCH", "/v1/apps/upd-invalid-ram", api.UpdateAppRequest{RAMMB: &test.ram}, nil)
+			assertProblem(t, rec, test.wantStatus, test.wantCode)
+			get := e.do(t, "GET", "/v1/apps/upd-invalid-ram", nil, nil)
+			var out api.AppResponse
+			if err := json.Unmarshal(get.Body.Bytes(), &out); err != nil {
+				t.Fatalf("unmarshal preserved app: %v", err)
+			}
+			if out.RAMMB != baselineRAM {
+				t.Fatalf("RAM after rejected update = %d, want %d", out.RAMMB, baselineRAM)
+			}
+		})
+	}
+}
+
 func TestUpdateApp_CPUValid(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	mustSeedApp(t, e, "upd-cpu")
