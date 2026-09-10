@@ -23,8 +23,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -470,12 +472,31 @@ func TestTierD_DelayedTaskCancel_NoArgExitsOne(t *testing.T) {
 
 func TestTierD_DelayedTaskCancel_HappyPath(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, "", http.StatusOK)
+	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"cancelled"}`, http.StatusOK)
 	if code := cmdDelayedTaskCancel([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	if f.sawMethod != "DELETE" || f.sawPath != "/v1/delayed-tasks/0123456789abcdef0123456789abcdef" {
 		t.Errorf("route = %s %s, want DELETE /v1/delayed-tasks/<id>", f.sawMethod, f.sawPath)
+	}
+}
+
+// spec: delayed task cancellation reports the authoritative terminal state.
+func TestTierD_DelayedTaskCancel_CompletedIsNotReportedCancelled(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"completed"}`, http.StatusOK)
+	var stderr bytes.Buffer
+	oldErr := osStderr
+	osStderr = &stderr
+	t.Cleanup(func() { osStderr = oldErr })
+	if code := cmdDelayedTaskCancel([]string{"0123456789abcdef0123456789abcdef"}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if f.sawMethod != "DELETE" {
+		t.Fatalf("method = %s, want DELETE", f.sawMethod)
+	}
+	if !strings.Contains(stderr.String(), "completed") || !strings.Contains(stderr.String(), "execution was not cancelled") {
+		t.Fatalf("stderr misreported result: %q", stderr.String())
 	}
 }
 

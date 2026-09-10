@@ -56,11 +56,41 @@ func Run(t *testing.T, open Open) {
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
+		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testPendingInvocationCancel(t *testing.T, fx *Fixture) {
+	pending, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationDelayedTask, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(pending): %v", err)
+	}
+	result, err := fx.Store.CancelPendingInvocation(fx.Ctx, pending.ID)
+	if err != nil || result != state.InvocationCancelled {
+		t.Fatalf("CancelPendingInvocation(pending) = (%q, %v), want cancelled", result, err)
+	}
+
+	dispatching, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationDelayedTask, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(dispatching): %v", err)
+	}
+	if _, err := fx.Store.ClaimInvocation(fx.Ctx, dispatching.ID, "conformance-instance", 30); err != nil {
+		t.Fatalf("ClaimInvocation: %v", err)
+	}
+	result, err = fx.Store.CancelPendingInvocation(fx.Ctx, dispatching.ID)
+	if err != nil || result != state.InvocationDispatching {
+		t.Fatalf("CancelPendingInvocation(dispatching) = (%q, %v), want dispatching", result, err)
 	}
 }
 

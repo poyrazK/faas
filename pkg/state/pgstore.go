@@ -3767,28 +3767,63 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	return nil
 }
 
-// SoftDeleteAppCascade marks the app deleted (status='deleted') and
-// returns the freshly-deleted App row. Per Phase 5 user decision the
-// cascade is status-only — child rows survive for slug-reuse (an app
-// deleted then recreated under the same slug keeps its envs and
-// secrets; cf. memstore_test.go:309-312). GDPR-style hard cascade
-// still lives in DeleteAccount. Returns ErrNotFound when no row
-// matches; the subsequent mapErr funnel wraps SQLSTATE 23502
-// (not_null) the same way as SetAppWorkloadClass.
+// SoftDeleteAppCascade marks the app deleted and atomically cancels every
+// non-terminal deployment/build. Child rows survive for history and slug
+// reuse, while the status fence prevents a late pipeline writer from
+// resuming work after deletion is acknowledged.
 func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return App{}, fmt.Errorf("state: soft delete app begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&locked); err != nil {
+		return App{}, mapErr(err)
+	}
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `
+		update deployments
+		   set status = 'cancelled',
+		       cancelled_at = $2,
+		       cancelled_by_principal = 'system:app-delete',
+		       cancel_reason = 'system'
+		 where app_id = $1
+		   and status in ('pending', 'building', 'imaging', 'snapshotting')`, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app cancel deployments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		with candidates as (
+			select b.id, b.status
+			  from builds b
+			  join deployments d on d.id = b.deployment_id
+			 where d.app_id = $1 and b.status in ('queued', 'running')
+			 for update of b
+		), cancelled as (
+			update builds b
+			   set status = 'cancelled',
+			       cancelled_at = $2,
+			       cancelled_by_deployment_cascade = true
+			  from candidates c
+			 where b.id = c.id
+			returning b.id
+		), cleanup as (
+			insert into builder_vm_cleanup (build_id)
+			select c.id from candidates c where c.status = 'running'
+			on conflict (build_id) do nothing
+		)
+		select count(*) from cancelled`, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app cancel builds: %w", err)
+	}
 	var a App
-	// The apps table does NOT have an updated_at column (appsSelectColumns
-	// at pgstore.go:6531 doesn't include it; no migration adds it). The
-	// earlier PR-E code touched updated_at = now() here, which trips
-	// SQLSTATE 42703 on every soft-delete. The deleted row is filtered
-	// out of every list/read by status <> 'deleted', so the deletion
-	// timestamp is implicit — no separate column needed.
-	row := s.pool.QueryRow(ctx, `
+	if err := scanAppInto(&a, tx.QueryRow(ctx, `
 		update apps set status = 'deleted'
 		where id = $1
-		returning `+appsSelectColumns, id)
-	if err := scanAppInto(&a, row); err != nil {
+		returning `+appsSelectColumns, id)); err != nil {
 		return App{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app commit: %w", err)
 	}
 	return a, nil
 }
@@ -5973,12 +6008,18 @@ func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID s
 }
 
 func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
-	tag, err := s.pool.Exec(ctx, `update deployments set status = $2, error = $3 where id = $1`, id, string(status), nullString(errMsg))
+	tag, err := s.pool.Exec(ctx, `
+		update deployments set status = $2, error = $3
+		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')`, id, string(status), nullString(errMsg))
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		var current DeploymentStatus
+		if err := s.pool.QueryRow(ctx, `select status from deployments where id = $1`, id).Scan(&current); err != nil {
+			return mapErr(err)
+		}
+		return ErrInvalidStateTransition
 	}
 	return nil
 }
@@ -6317,6 +6358,9 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 			return ErrNotFound
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
+	}
+	if dep.Status == DeployCancelled {
+		return ErrInvalidStateTransition
 	}
 	if dep.Status == DeployLive || (dep.CanaryTotalSteps <= 0 && IsServiceRollout(dep)) {
 		if _, err := tx.Exec(ctx,
@@ -6677,11 +6721,21 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	var d Deployment
 	var appID string
 	var status DeploymentStatus
-	if err := tx.QueryRow(ctx, `
-		SELECT app_id, status
-		  FROM deployments
-		 WHERE id = $1
-		 FOR UPDATE`, id).Scan(&appID, &status); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT app_id FROM deployments WHERE id = $1`, id).Scan(&appID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Deployment{}, nil, ErrNotFound
+		}
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: resolve deployment app: %w", err)
+	}
+
+	// Lock the parent apps row to serialise against concurrent
+	// creates and app teardown, then lock the deployment. This order
+	// matches CreateDeployment and SoftDeleteAppCascade.
+	var locked int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM apps WHERE id = $1 AND status = 'active' FOR UPDATE`, appID).Scan(&locked); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: lock apps row: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`, id).Scan(&status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, nil, ErrNotFound
 		}
@@ -6692,14 +6746,6 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	}
 	if !status.IsCancelEligible() {
 		return Deployment{}, nil, ErrInvalidStateTransition
-	}
-
-	// Lock the parent apps row to serialise against concurrent
-	// UpdateApp flips and another CreateDeployment on the same
-	// app. Mirrors pkg/state/pgstore.go:4185-4199 (the canonical
-	// CreateDeployment tx-pattern).
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM apps WHERE id = $1 AND status = 'active' FOR UPDATE`, appID); err != nil {
-		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: lock apps row: %w", err)
 	}
 
 	now := time.Now().UTC()
@@ -7831,7 +7877,7 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 	row := s.pool.QueryRow(ctx,
 		`update deployments
 		    set status = 'failed', error = $2, error_code = $3
-		  where id = $1
+		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code))
 	return scanDeploymentWithRootfs(row)
@@ -7868,7 +7914,7 @@ func (s *PgStore) SetDeploymentFailedEx(
 		    set status = 'failed', error = $2, error_code = $3,
 		        error_hint = $4, error_why = $5, error_fix = $6,
 		        error_relevant_logs = $7
-		  where id = $1
+		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code),
 		nullString(hint), nullString(why), nullString(fix),
@@ -11343,6 +11389,46 @@ func (s *PgStore) CancelInvocation(ctx context.Context, id string) error {
 		return fmt.Errorf("state: invocations cancel commit: %w", err)
 	}
 	return nil
+}
+
+func (s *PgStore) CancelPendingInvocation(ctx context.Context, id string) (InvocationState, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", fmt.Errorf("state: pending invocation cancel begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var accountID string
+	err = tx.QueryRow(ctx, `
+		update invocations
+		   set state = 'cancelled',
+		       completed_at = coalesce(completed_at, now())
+		 where id = $1 and state = 'pending'
+		 returning account_id`, id).Scan(&accountID)
+	if err == nil {
+		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
+			return "", err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return "", fmt.Errorf("state: pending invocation cancel commit: %w", err)
+		}
+		return InvocationCancelled, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+
+	var current string
+	if err := tx.QueryRow(ctx, `select state from invocations where id = $1`, id).Scan(&current); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("state: pending invocation state commit: %w", err)
+	}
+	return InvocationState(current), nil
 }
 
 func (s *PgStore) ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error) {

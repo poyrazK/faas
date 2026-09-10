@@ -1,10 +1,11 @@
 from typing import Literal
 
-DelayedTaskResponseState = Literal["cancelled", "completed", "dispatching", "failed", "pending"]
+DelayedTaskResponseState = Literal["cancelled", "completed", "dead_letter", "dispatching", "failed", "pending"]
 
 DELAYED_TASK_RESPONSE_STATE_VALUES: set[DelayedTaskResponseState] = {
     "cancelled",
     "completed",
+    "dead_letter",
     "dispatching",
     "failed",
     "pending",

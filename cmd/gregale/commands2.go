@@ -3753,7 +3753,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		if final, ok := pollDeploymentFinalContext(ctx, c, dep); ok {
 			return terminalDeployment(final)
 		}
-		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs --deployment %s", dep.ID)
+		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 		return 3
 	}
 	defer func() { _ = body.Close() }()
@@ -3841,7 +3841,7 @@ streamLoop:
 				}
 				break streamLoop
 			case streamEventError:
-				PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs --deployment %s", dep.ID)
+				PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 				return 3
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
@@ -3862,7 +3862,7 @@ streamLoop:
 			if errors.Is(err, io.EOF) {
 				break streamLoop
 			}
-			PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs --deployment %s", dep.ID)
+			PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 			return 3
 		}
 	}
@@ -3887,7 +3887,7 @@ streamLoop:
 	if final, ok := pollDeploymentFinalUntilContext(ctx, c, dep, 5*time.Minute); ok {
 		return terminalDeployment(final)
 	}
-	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs --deployment %s", dep.ID)
+	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 	return 3
 }
 
@@ -4049,20 +4049,20 @@ func terminalExitForDeploymentContext(ctx context.Context, c *Client, d api.Depl
 // so on failure we render a compact "BuildStatus=failed
 // failure_class=…" block and exit 2 (same exit-code convention as
 // terminalExitForDeployment's renderDeployFailure path).
-func terminalExitForBuild(b api.BuildResponse, appID string) int {
-	return terminalExitForBuildContext(context.Background(), nil, b, appID)
+func terminalExitForBuild(b api.BuildResponse, appSlug string) int {
+	return terminalExitForBuildContext(context.Background(), nil, b, appSlug)
 }
 
-func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appID string) int {
+func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string) int {
 	if b.Status == buildStatusSucceeded {
 		dep := api.DeploymentResponse{ID: b.DeploymentID, Status: statusLive}
-		return renderSuccessfulDeployment(ctx, c, dep, appID)
+		return renderSuccessfulDeployment(ctx, c, dep, appSlug)
 	}
 	// Failed build — surface the lifecycle info. End users hitting
 	// this path are CI scripts that lost their SSE; the canonical
-	// log path is `gregale logs --deployment <deployment_id>`.
-	PrintWarn(os.Stderr, "build %s failed (failure_class=%s); inspect logs with: gregale logs --deployment %s",
-		b.ID, b.FailureClass, b.DeploymentID)
+	// log path includes the required app slug positional argument.
+	PrintWarn(os.Stderr, "build %s failed (failure_class=%s); inspect logs with: gregale logs %s --deployment %s --follow",
+		b.ID, b.FailureClass, appSlug, b.DeploymentID)
 	return 2
 }
 

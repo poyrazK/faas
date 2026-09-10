@@ -10457,10 +10457,15 @@ paths:
       operationId: delayedTaskCancel
       summary: Cancel a pending delayed task.
       description: |
-        Idempotent: a re-cancel (or a cancel of an already-fired row)
-        is a 204. The drain ignores cancelled rows at dispatch.
+        Atomically cancels a pending row. A re-cancel is idempotent.
+        Dispatching or terminal rows are left unchanged and their actual
+        state is returned, so clients never claim completed work was stopped.
       responses:
-        '204': { description: 'Cron disabled (no body).' }
+        '200':
+          description: The task with its authoritative resulting state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DelayedTaskResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -22957,7 +22962,7 @@ components:
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         scheduled_at: { type: string, format: date-time }
-        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled] }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
 
     Invocation:
       description: "A single invocations row. Account-scoped; cross-account reads return 404."

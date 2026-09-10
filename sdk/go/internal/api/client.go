@@ -674,10 +674,11 @@ func (c *Client) GetDelayedTask(ctx context.Context, id string) (DelayedTaskResp
 	return out, c.do(ctx, "GET", "/v1/delayed-tasks/"+id, nil, &out)
 }
 
-// CancelDelayedTask cancels a pending delayed-task. Idempotent — a
-// re-cancel on a terminal row returns 404 invocation_not_found.
-func (c *Client) CancelDelayedTask(ctx context.Context, id string) error {
-	return c.do(ctx, "DELETE", "/v1/delayed-tasks/"+id, nil, nil)
+// CancelDelayedTask cancels a pending delayed-task and returns the row's
+// resulting state. A dispatching or terminal row is reported unchanged.
+func (c *Client) CancelDelayedTask(ctx context.Context, id string) (DelayedTaskResponse, error) {
+	var out DelayedTaskResponse
+	return out, c.do(ctx, "DELETE", "/v1/delayed-tasks/"+id, nil, &out)
 }
 
 // ListInvocations paginates the account's invocations by `?before=<id>`

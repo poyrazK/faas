@@ -303,6 +303,36 @@ func TestPg_CancelInvocationIdempotent(t *testing.T) {
 	}
 }
 
+// spec: delayed-task cancellation atomically returns the persisted final state.
+func TestPg_CancelPendingInvocationReturnsAuthoritativeState(t *testing.T) {
+	s, ctx, appID, acctID := seedInvocationPg(t)
+	pending, _ := s.EnqueueInvocation(ctx, state.Invocation{
+		AppID: appID, AccountID: acctID, Source: state.InvocationDelayedTask, DueAt: time.Now().UTC(),
+	})
+	result, err := s.CancelPendingInvocation(ctx, pending.ID)
+	if err != nil || result != state.InvocationCancelled {
+		t.Fatalf("cancel pending = (%q, %v), want cancelled", result, err)
+	}
+
+	completed, _ := s.EnqueueInvocation(ctx, state.Invocation{
+		AppID: appID, AccountID: acctID, Source: state.InvocationDelayedTask, DueAt: time.Now().UTC(),
+	})
+	if _, err := s.ClaimInvocation(ctx, completed.ID, "inst", 30); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteInvocation(ctx, completed.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err = s.CancelPendingInvocation(ctx, completed.ID)
+	if err != nil || result != state.InvocationCompleted {
+		t.Fatalf("cancel completed = (%q, %v), want completed", result, err)
+	}
+	got, _ := s.InvocationByID(ctx, completed.ID)
+	if got.State != state.InvocationCompleted {
+		t.Fatalf("completed row mutated to %q", got.State)
+	}
+}
+
 // TestPg_CountInstanceInvocationsInMinute pins the meter join: rows
 // for (instance_id, minute, state='dispatching') count, terminal
 // rows do not, future-dated rows do not.

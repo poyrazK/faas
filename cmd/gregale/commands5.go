@@ -234,23 +234,58 @@ func envPull(args []string) int {
 	if err != nil {
 		return printErr("List failed", err)
 	}
+	existing, readErr := os.ReadFile(*out)
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return printErr("Could not read existing .env", readErr)
+	}
+	present := envAssignmentKeys(existing)
 	var b strings.Builder
+	if len(existing) > 0 {
+		b.Write(existing)
+		if existing[len(existing)-1] != '\n' {
+			b.WriteByte('\n')
+		}
+	}
+	added := 0
 	for _, s := range resp.Secrets {
+		if _, ok := present[s.Key]; ok {
+			continue
+		}
 		// KEY-only template: the G2 boundary (§11) means the server
 		// never returns plaintext, so we intentionally write an empty
 		// value. The customer fills values by hand before `env push`.
 		fmt.Fprintf(&b, "%s=\n", s.Key)
+		added++
 	}
 	if err := os.WriteFile(*out, []byte(b.String()), 0o600); err != nil {
 		return printErr("Could not write .env", err)
 	}
-	if resp.Count == 0 {
+	if resp.Count == 0 && len(existing) == 0 {
 		PrintOK(osStdout, "Wrote empty %s (%s has no secrets)", *out, *app)
 		return 0
 	}
-	PrintOK(osStdout, "Wrote %d key(s) to %s (values intentionally blank — fill by hand)",
-		resp.Count, *out)
+	if len(existing) == 0 {
+		PrintOK(osStdout, "Wrote %d key(s) to %s (values intentionally blank — fill by hand)",
+			resp.Count, *out)
+	} else {
+		PrintOK(osStdout, "Added %d missing key(s) to %s; existing values and local keys were preserved",
+			added, *out)
+	}
 	return 0
+}
+
+func envAssignmentKeys(data []byte) map[string]struct{} {
+	keys := make(map[string]struct{})
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if pair, err := parseSecretsPair(line); err == nil {
+			keys[pair.Key] = struct{}{}
+		}
+	}
+	return keys
 }
 
 func envPush(args []string) int {
@@ -297,14 +332,16 @@ func envPush(args []string) int {
 		// larger truncates and the apid byte cap rejects.
 		scanner := bufio.NewScanner(osStdin)
 		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		lineNo := 0
 		for scanner.Scan() {
+			lineNo++
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
 			p, err := parseSecretsPair(line)
 			if err != nil {
-				return printErr("Bad stdin line", err)
+				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
@@ -322,14 +359,16 @@ func envPush(args []string) int {
 		// only candidate lines.
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		lineNo := 0
 		for scanner.Scan() {
+			lineNo++
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
 			p, err := parseSecretsPair(line)
 			if err != nil {
-				return printErr("Bad .env line", err)
+				return printErr("Bad .env line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}

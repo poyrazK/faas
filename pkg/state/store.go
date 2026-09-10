@@ -3652,6 +3652,11 @@ type Store interface {
 	// DELETE on /v1/delayed-tasks/{id}; the drain skips cancelled rows.
 	// Returns ErrNotFound if the row is already terminal.
 	CancelInvocation(ctx context.Context, id string) error
+	// CancelPendingInvocation atomically cancels only a pending row and
+	// returns the row's resulting state. Dispatching and terminal rows are
+	// left unchanged so a caller never claims that in-flight or completed
+	// work was prevented.
+	CancelPendingInvocation(ctx context.Context, id string) (InvocationState, error)
 	// ListInvocationsForAccount is the dashboard's "recent invocations"
 	// view; pagination cursor is the same opaque `before` convention used
 	// by ListDeployments. The cursor is an Invocation.ID (uuid) — the
