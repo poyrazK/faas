@@ -1278,7 +1278,11 @@ func splitArgsForFlags(args []string) (flags, pos []string) {
 	for i < len(args) {
 		a := args[i]
 		if a == "--" {
-			pos = append(pos, args[i+1:]...)
+			i++
+			for i < len(args) {
+				pos = append(pos, args[i])
+				i++
+			}
 			return
 		}
 		if len(a) >= 2 && a[0] == '-' && a[1] == '-' {
