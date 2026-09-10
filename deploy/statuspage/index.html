@@ -54,9 +54,9 @@
   .bar.warn > span { background: var(--yellow); }
   .bar.bad > span { background: var(--red); }
   /* Degraded pill: visible only when s.degraded is true. The pill
-     surfaces the same page/warn-severity alerts the operator's pager
-     sees (cmd/apid/status.go sets Degraded via PromQL
-     count(ALERTS{alertstate="firing",severity=~"page|warn"}) > 0). */
+     surfaces customer-impacting page/warn alerts. Internal operator
+     alerts remain visible in Prometheus and Alertmanager without
+     changing public service status. */
   .pill {
     display: inline-block;
     background: var(--red);
@@ -80,8 +80,8 @@
   <div class="sub" id="sub">Loading…</div>
   <!-- Degraded pill: hidden by default; the JS polling block in
        <script> toggles `.hidden` based on s.degraded from
-       /status/slo.json. The pill surfaces page/warn-severity alerts
-       that are currently firing on the local Prometheus. -->
+       /status/slo.json. The pill surfaces customer-impacting
+       page/warn alerts currently firing on the local Prometheus. -->
   <div id="degraded-pill" class="pill hidden" role="status" aria-live="polite">
     Service degraded
   </div>
