@@ -49,7 +49,7 @@ func pgJobsSeed(t *testing.T, s *state.PgStore, ctx context.Context, name string
 		t.Fatalf("setup CreateAccount: %v", err)
 	}
 	job, err := s.JobCreate(ctx,
-		acct.ID, name, "app",
+		acct.ID, name, "batch",
 		"oci://registry.example/x@sha256:deadbeef",
 		[]string{"/bin/sh", "-c", "echo hi"}, 256, 60, 4, 3,
 		json.RawMessage(`{}`),
