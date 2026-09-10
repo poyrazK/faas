@@ -467,6 +467,50 @@ func TestGetAppsMetrics_HappyPath_WithProm(t *testing.T) {
 	}
 }
 
+// TestGetAppsMetrics_ZeroTrafficDoesNotDegrade pins the ratio guard used by
+// the account dashboard. Prometheus evaluates an idle counter's 0/0 ratio as
+// NaN; filtering zero denominators must leave that app at the response map's
+// zero value instead of degrading metrics for the entire account.
+func TestGetAppsMetrics_ZeroTrafficDoesNotDegrade(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	active := createApp(t, e, "active-app")
+	idle := createApp(t, e, "idle-app")
+
+	responder := func(query string) string {
+		switch {
+		case strings.Contains(query, "sum by (app)(increase(gateway_requests_total"):
+			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"12"]},{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, active.ID, idle.ID)
+		case strings.Contains(query, "gateway_requests_total{code") || strings.Contains(query, "gateway_cold_boot_total"):
+			if !strings.Contains(query, "and on (app)") || !strings.Contains(query, "> 0") {
+				return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"NaN"]}]}}`, idle.ID)
+			}
+			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, active.ID)
+		case strings.Contains(query, "gateway_request_duration_seconds_bucket"):
+			return `{"data":{"resultType":"vector","result":[]}}`
+		case strings.Contains(query, "gateway_wake_latency_seconds_bucket"):
+			return `{"data":{"resultType":"vector","result":[{"value":[1,"250"]}]}}`
+		default:
+			return `{"data":{"resultType":"vector","result":[]}}`
+		}
+	}
+	installPromFixture(t, &e, responder)
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/metrics?range=24h", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AppsMetricsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Source != appmetrics.SourcePrometheus {
+		t.Fatalf("source: got %q want %q", out.Source, appmetrics.SourcePrometheus)
+	}
+	if out.Apps[idle.Slug].ErrorRatePct != 0 || out.Apps[idle.Slug].ColdStartPct != 0 {
+		t.Fatalf("idle metrics: got %+v, want zero-valued ratios", out.Apps[idle.Slug])
+	}
+}
+
 // TestGetAppsMetrics_Degraded_FirstQueryFails wires a fake Prometheus
 // that always returns errors, then asserts the rollup short-circuits
 // to "degraded: <reason>" with apps=null — never partial-populated.
