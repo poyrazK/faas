@@ -19,7 +19,7 @@ configured `for:` window:
 
 | Alert | Mode | Direction | Trigger |
 |---|---|---|---|
-| `FaasTrafficSpike` | fleet | spike | `max(faas_apid_request_rate_ratio:by_route) > 3` for 10m |
+| `FaasTrafficSpike` | fleet | spike | a route > 3x its 3d baseline AND > 1 rps for 10m |
 | `FaasTrafficDrop` | fleet | drop | a route < 0.2x its 3d baseline AND > 0.1 rps for 15m |
 | `FaasErrorRateSpike` | fleet | spike (error_rate) | `max(faas_apid_error_rate_ratio:by_route) > 2` for 10m |
 | `FaasErrorRateDrop` | fleet | drop (error_rate) | a route < 0.5x its 3d baseline AND > 0.001 err/s for 15m |
