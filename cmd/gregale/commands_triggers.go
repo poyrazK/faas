@@ -260,13 +260,7 @@ func cmdTriggersCreate(args []string) int {
 		Slug:   *slug,
 		Config: configRaw,
 	}
-	if explicit["enabled"] {
-		req.Enabled = boolPtr(*enabled)
-	}
-	if explicit["disabled"] {
-		v := false
-		req.Enabled = &v
-	}
+	req.Enabled = triggerEnabledValue(explicit, *enabled, *disabled)
 	if explicit["batch-size"] {
 		req.BatchSizeMax = triggerIntPtr(*batchSize)
 	}
@@ -336,13 +330,7 @@ func cmdTriggersUpdate(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	req := api.UpdateTriggerRequest{}
-	if explicit["enabled"] {
-		req.Enabled = boolPtr(*enabled)
-	}
-	if explicit["disabled"] {
-		v := false
-		req.Enabled = &v
-	}
+	req.Enabled = triggerEnabledValue(explicit, *enabled, *disabled)
 	if explicit["config"] {
 		req.Config, err = triggerJSONFlag(*config)
 		if err != nil {
@@ -581,6 +569,18 @@ func triggerExplicitFlags(fs *flag.FlagSet) map[string]bool {
 	seen := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { seen[f.Name] = true })
 	return seen
+}
+
+func triggerEnabledValue(explicit map[string]bool, enabled, disabled bool) *bool {
+	if explicit["enabled"] {
+		return boolPtr(enabled)
+	}
+	// Bool flags with an explicit false value are semantically absent:
+	// --disabled=false must not disable an already-enabled trigger.
+	if explicit["disabled"] && disabled {
+		return boolPtr(false)
+	}
+	return nil
 }
 
 func triggerJSONFlag(value string) (json.RawMessage, error) {

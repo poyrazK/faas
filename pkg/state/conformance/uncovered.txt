@@ -58,7 +58,6 @@ CheckWebhookReplay
 ClaimAlertFire
 ClaimCliAuthCode
 ClaimDueAppWebhookDeliveries
-ClaimInvocation
 ClaimInvocationWithCap
 ClaimNextDueWorkflowRun
 ClaimNextPendingRun
@@ -222,7 +221,6 @@ DeploymentSidecarRAMs
 DeploymentSnapshotBackoffActive
 DomainByName
 DropTriggerRecordByOperator
-EnqueueInvocation
 EnsureAccountAsyncQuota
 ExpireOrgInvitations
 ExpireUploadSession

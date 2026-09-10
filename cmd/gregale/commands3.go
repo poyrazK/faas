@@ -321,12 +321,12 @@ type secretsPair struct {
 func parseSecretsPair(s string) (secretsPair, error) {
 	i := strings.IndexByte(s, '=')
 	if i <= 0 {
-		return secretsPair{}, fmt.Errorf("secret set: %q must look like KEY=VALUE", s)
+		return secretsPair{}, fmt.Errorf("secret set must look like KEY=VALUE")
 	}
 	key := s[:i]
 	value := s[i+1:]
 	if key == "" {
-		return secretsPair{}, fmt.Errorf("secret set: empty KEY in %q", s)
+		return secretsPair{}, fmt.Errorf("secret set has an empty KEY")
 	}
 	return secretsPair{Key: key, Value: value}, nil
 }

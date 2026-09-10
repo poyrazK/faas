@@ -232,6 +232,30 @@ func TestInvocationCancelIsIdempotent(t *testing.T) {
 	}
 }
 
+// spec: customer cancellation only prevents work that is still pending.
+func TestCancelPendingInvocationReturnsAuthoritativeState(t *testing.T) {
+	m, appID, acctID := seedInvocationApp(t)
+	ctx := context.Background()
+	pending, _ := m.EnqueueInvocation(ctx, Invocation{AppID: appID, AccountID: acctID, Source: InvocationDelayedTask, DueAt: time.Now()})
+	state, err := m.CancelPendingInvocation(ctx, pending.ID)
+	if err != nil || state != InvocationCancelled {
+		t.Fatalf("cancel pending = (%q, %v), want cancelled", state, err)
+	}
+
+	dispatching, _ := m.EnqueueInvocation(ctx, Invocation{AppID: appID, AccountID: acctID, Source: InvocationDelayedTask, DueAt: time.Now()})
+	if _, err := m.ClaimInvocation(ctx, dispatching.ID, "inst", 30); err != nil {
+		t.Fatal(err)
+	}
+	state, err = m.CancelPendingInvocation(ctx, dispatching.ID)
+	if err != nil || state != InvocationDispatching {
+		t.Fatalf("cancel dispatching = (%q, %v), want dispatching", state, err)
+	}
+	got, _ := m.InvocationByID(ctx, dispatching.ID)
+	if got.State != InvocationDispatching {
+		t.Fatalf("dispatching row mutated to %q", got.State)
+	}
+}
+
 func TestInvocationListForAccount_OrdersDescAndCaps(t *testing.T) {
 	m, appID, acctID := seedInvocationApp(t)
 	ctx := context.Background()

@@ -437,6 +437,73 @@ func TestCmdEnvPull_WritesKeyOnlyTemplate(t *testing.T) {
 	}
 }
 
+// spec: env pull adds missing key skeletons without truncating local values.
+func TestCmdEnvPull_PreservesExistingValuesAndLocalKeys(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, ".env")
+	existing := "# local config\nAUDIT_VALUE=customer-secret\nLOCAL_ONLY=keep\n"
+	if err := os.WriteFile(out, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sink := &multiSink{onSecrets: func(method, path string) (int, any) {
+		return http.StatusOK, api.AppSecretListResponse{
+			Count: 2,
+			Quota: 25,
+			Secrets: []api.AppSecretResponse{
+				{Key: "AUDIT_VALUE"},
+				{Key: "AUDIT_NEW"},
+			},
+		}
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := envPull([]string{"--app", "hello", "-o", out}); code != 0 {
+		t.Fatalf("envPull exit = %d, want 0", code)
+	}
+	body, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	if !strings.HasPrefix(got, existing) {
+		t.Fatalf("existing file changed:\n%s", got)
+	}
+	if strings.Count(got, "AUDIT_VALUE=") != 1 || !strings.Contains(got, "AUDIT_NEW=\n") {
+		t.Fatalf("unexpected merged file:\n%s", got)
+	}
+	if !strings.Contains(stdout.String(), "existing values and local keys were preserved") {
+		t.Fatalf("missing preservation notice: %q", stdout.String())
+	}
+}
+
+// spec: env push reports location and syntax without echoing malformed secrets.
+func TestCmdEnvPush_MalformedLineDoesNotLeakValue(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".env")
+	const sensitive = "sk_live_customer_secret_without_separator"
+	if err := os.WriteFile(envFile, []byte("# header\n"+sensitive+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	oldErr := osStderr
+	osStderr = &stderr
+	t.Cleanup(func() { osStderr = oldErr })
+	if code := envPush([]string{"--app", "hello", "-f", envFile}); code != 1 {
+		t.Fatalf("envPush exit = %d, want 1", code)
+	}
+	got := stderr.String()
+	if strings.Contains(got, sensitive) {
+		t.Fatalf("diagnostic leaked supplied value: %q", got)
+	}
+	if !strings.Contains(got, "line 2") || !strings.Contains(got, "KEY=VALUE") {
+		t.Fatalf("diagnostic lacks safe location/syntax: %q", got)
+	}
+}
+
 func TestCmdEnvPush_ForwardsEveryKeyValue(t *testing.T) {
 	dir := t.TempDir()
 	envFile := filepath.Join(dir, ".env")

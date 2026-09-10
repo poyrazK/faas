@@ -1,11 +1,12 @@
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.delayed_task_response import DelayedTaskResponse
 from ...models.problem import Problem
 from ...types import Response
 
@@ -24,10 +25,13 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | Problem | None:
-    if response.status_code == 204:
-        response_204 = cast(Any, None)
-        return response_204
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> DelayedTaskResponse | Problem | None:
+    if response.status_code == 200:
+        response_200 = DelayedTaskResponse.from_dict(response.json())
+
+        return response_200
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -50,7 +54,9 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Any | Problem]:
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[DelayedTaskResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -63,11 +69,12 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Any | Problem]:
+) -> Response[DelayedTaskResponse | Problem]:
     """Cancel a pending delayed task.
 
-     Idempotent: a re-cancel (or a cancel of an already-fired row)
-    is a 204. The drain ignores cancelled rows at dispatch.
+     Atomically cancels a pending row. A re-cancel is idempotent.
+    Dispatching or terminal rows are left unchanged and their actual
+    state is returned, so clients never claim completed work was stopped.
 
     Args:
         id (str):
@@ -77,7 +84,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[DelayedTaskResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -95,11 +102,12 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Any | Problem | None:
+) -> DelayedTaskResponse | Problem | None:
     """Cancel a pending delayed task.
 
-     Idempotent: a re-cancel (or a cancel of an already-fired row)
-    is a 204. The drain ignores cancelled rows at dispatch.
+     Atomically cancels a pending row. A re-cancel is idempotent.
+    Dispatching or terminal rows are left unchanged and their actual
+    state is returned, so clients never claim completed work was stopped.
 
     Args:
         id (str):
@@ -109,7 +117,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Problem
+        DelayedTaskResponse | Problem
     """
 
     return sync_detailed(
@@ -122,11 +130,12 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Any | Problem]:
+) -> Response[DelayedTaskResponse | Problem]:
     """Cancel a pending delayed task.
 
-     Idempotent: a re-cancel (or a cancel of an already-fired row)
-    is a 204. The drain ignores cancelled rows at dispatch.
+     Atomically cancels a pending row. A re-cancel is idempotent.
+    Dispatching or terminal rows are left unchanged and their actual
+    state is returned, so clients never claim completed work was stopped.
 
     Args:
         id (str):
@@ -136,7 +145,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[DelayedTaskResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -152,11 +161,12 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Any | Problem | None:
+) -> DelayedTaskResponse | Problem | None:
     """Cancel a pending delayed task.
 
-     Idempotent: a re-cancel (or a cancel of an already-fired row)
-    is a 204. The drain ignores cancelled rows at dispatch.
+     Atomically cancels a pending row. A re-cancel is idempotent.
+    Dispatching or terminal rows are left unchanged and their actual
+    state is returned, so clients never claim completed work was stopped.
 
     Args:
         id (str):
@@ -166,7 +176,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Problem
+        DelayedTaskResponse | Problem
     """
 
     return (

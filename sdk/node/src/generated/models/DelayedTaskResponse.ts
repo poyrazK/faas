@@ -8,6 +8,6 @@
 export type DelayedTaskResponse = {
   id: string;
   scheduled_at: string;
-  state?: 'pending' | 'dispatching' | 'completed' | 'failed' | 'cancelled';
+  state?: 'pending' | 'dispatching' | 'completed' | 'failed' | 'cancelled' | 'dead_letter';
 };
 

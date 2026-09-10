@@ -428,10 +428,9 @@ func (s *server) delayedTaskGet(w http.ResponseWriter, r *http.Request, acct sta
 	})
 }
 
-// delayedTaskCancel moves a pending delayed_task row to cancelled.
-// The drain ignores cancelled rows. Idempotent: a re-cancel is 204
-// (the row may have already fired — that's a "we did the work", not
-// an error).
+// delayedTaskCancel moves a pending delayed_task row to cancelled and
+// returns the resulting state. Dispatching and terminal rows are left
+// unchanged so clients can distinguish prevention from observation.
 func (s *server) delayedTaskCancel(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
 	inv, err := s.store.InvocationByID(r.Context(), id)
@@ -439,7 +438,8 @@ func (s *server) delayedTaskCancel(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrInvocationNotFound(id))
 		return
 	}
-	if err := s.store.CancelInvocation(r.Context(), id); err != nil {
+	result, err := s.store.CancelPendingInvocation(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrInvocationNotFound(id))
 			return
@@ -447,7 +447,11 @@ func (s *server) delayedTaskCancel(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("cancel delayed task"))
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, api.DelayedTaskResponse{
+		ID:          inv.ID,
+		ScheduledAt: ptrTime(inv.ScheduledAt),
+		State:       string(result),
+	})
 }
 
 // ptrTime is a tiny adapter so delayedTaskGet can format *time.Time

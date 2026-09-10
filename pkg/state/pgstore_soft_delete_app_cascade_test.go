@@ -63,6 +63,45 @@ func TestPg_SoftDeleteAppCascade_NotFound(t *testing.T) {
 	}
 }
 
+// spec: app deletion cancels active pipelines and fences late workers.
+func TestPg_SoftDeleteAppCascade_CancelsActivePipeline(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx)
+	dep, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindTarball, ImageDigest: "sha256:cancel-on-delete",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateDeploymentStatus(ctx, dep.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatal(err)
+	}
+	build, err := s.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 128, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimQueuedBuild(ctx, build.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SoftDeleteAppCascade(ctx, appID); err != nil {
+		t.Fatal(err)
+	}
+	gotDep, _ := s.DeploymentByID(ctx, dep.ID)
+	if gotDep.Status != state.DeployCancelled {
+		t.Fatalf("deployment = %q, want cancelled", gotDep.Status)
+	}
+	gotBuild, _ := s.BuildByID(ctx, build.ID)
+	if gotBuild.Status != state.BuildCancelled {
+		t.Fatalf("build = %q, want cancelled", gotBuild.Status)
+	}
+	if err := s.UpdateDeploymentStatus(ctx, dep.ID, state.DeploySnapshotting, ""); !errors.Is(err, state.ErrInvalidStateTransition) {
+		t.Fatalf("late transition = %v, want ErrInvalidStateTransition", err)
+	}
+	if err := s.MarkDeploymentLive(ctx, dep.ID); !errors.Is(err, state.ErrInvalidStateTransition) {
+		t.Fatalf("late live = %v, want ErrInvalidStateTransition", err)
+	}
+}
+
 // TestPg_DeleteApp_LegacyWrapperStillWorks pins the apid deleteApp
 // handler's call site. After PR-E the handler still calls DeleteApp
 // (the legacy name); the wrapper must keep returning nil on success

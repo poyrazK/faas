@@ -95,6 +95,18 @@ func TestParseSecretsPair(t *testing.T) {
 	}
 }
 
+// spec: malformed secret input must never be echoed in diagnostics.
+func TestParseSecretsPair_RedactsMalformedInput(t *testing.T) {
+	const sensitive = "sk_live_customer_secret_without_separator"
+	_, err := parseSecretsPair(sensitive)
+	if err == nil {
+		t.Fatal("expected malformed pair error")
+	}
+	if strings.Contains(err.Error(), sensitive) {
+		t.Fatalf("error leaked supplied value: %q", err)
+	}
+}
+
 func TestCmdSecrets_ListRendersQuotaAndKeys(t *testing.T) {
 	sink := &secretsSink{
 		onGet: func() (int, any) {

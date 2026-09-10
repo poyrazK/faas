@@ -4375,9 +4375,9 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	return nil
 }
 
-// SoftDeleteAppCascade marks the app deleted (status=AppDeleted) and
-// returns the freshly-deleted App row. Memstore parity with
-// PgStore.SoftDeleteAppCascade — status-only, child rows survive.
+// SoftDeleteAppCascade marks the app deleted and atomically cancels
+// non-terminal deployment/build work. Child rows survive for history and
+// slug reuse, but no pipeline writer may resume work after acknowledgement.
 func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -4392,6 +4392,31 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
+	now := time.Now().UTC()
+	for deploymentID, d := range m.deployments {
+		if d.AppID != id || !d.Status.IsCancelEligible() {
+			continue
+		}
+		d.Status = DeployCancelled
+		d.CancelledAt = &now
+		d.CancelledByPrincipal = "system:app-delete"
+		d.CancelReason = string(CancelReasonSystem)
+		m.deployments[deploymentID] = d
+		m.markDeploymentSnapshotsStaleLocked(deploymentID)
+		for buildID, b := range m.builds {
+			if b.DeploymentID != deploymentID || (b.Status != BuildQueued && b.Status != BuildRunning) {
+				continue
+			}
+			wasRunning := b.Status == BuildRunning
+			b.Status = BuildCancelled
+			b.CancelledAt = &now
+			b.CancelledByDeploymentCascade = true
+			m.builds[buildID] = b
+			if wasRunning {
+				m.enqueueBuildVMCleanupLocked(buildID, now)
+			}
+		}
+	}
 	// App deletion retires snapshot replicas immediately, but keeps the
 	// snapshot rows available to GC. The PostgreSQL lifecycle trigger uses
 	// the same split: deleted-app snapshots are not wake-eligible, yet their
@@ -5615,6 +5640,9 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if !ok {
 		return ErrNotFound
 	}
+	if d.Status == DeployCancelled && status != DeployCancelled {
+		return ErrInvalidStateTransition
+	}
 	d.Status = status
 	d.Error = errMsg
 	m.deployments[id] = d
@@ -5663,6 +5691,9 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if d.Status == DeployCancelled {
+		return ErrInvalidStateTransition
 	}
 
 	// Build the post-transition rows locally first. The callback can fail
@@ -6893,6 +6924,9 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
+	if d.Status == DeployCancelled {
+		return Deployment{}, ErrInvalidStateTransition
+	}
 	d.Status = DeployFailed
 	d.Error = message
 	d.ErrorCode = code
@@ -6936,6 +6970,9 @@ func (m *MemStore) SetDeploymentFailedEx(
 	d, ok := m.deployments[id]
 	if !ok {
 		return Deployment{}, ErrNotFound
+	}
+	if d.Status == DeployCancelled {
+		return Deployment{}, ErrInvalidStateTransition
 	}
 	d.Status = DeployFailed
 	d.Error = message
@@ -8917,6 +8954,24 @@ func (m *MemStore) CancelInvocation(_ context.Context, id string) error {
 	// Cancel is always terminal; the row leaves the in-flight set.
 	m.decrementAccountAsyncInflightLocked(inv.AccountID)
 	return nil
+}
+
+func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (InvocationState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.invocations[id]
+	if !ok {
+		return "", ErrNotFound
+	}
+	if inv.State != InvocationPending {
+		return inv.State, nil
+	}
+	inv.State = InvocationCancelled
+	now := time.Now()
+	inv.CompletedAt = &now
+	m.invocations[id] = inv
+	m.decrementAccountAsyncInflightLocked(inv.AccountID)
+	return inv.State, nil
 }
 
 // ListInvocationsForAccount is the dashboard's unified history read.

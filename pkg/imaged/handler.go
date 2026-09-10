@@ -2888,7 +2888,7 @@ func (h *Handler) releaseBuildCacheLease(parent context.Context, dep state.Deplo
 		h.log.Warn("imaged: check build cache lease", "deployment", dep.ID, "err", err)
 		return
 	}
-	if current.RootfsPath == dep.RootfsPath && current.Status != state.DeployFailed {
+	if current.RootfsPath == dep.RootfsPath && current.Status != state.DeployFailed && current.Status != state.DeployCancelled {
 		return
 	}
 	if err := buildcache.Release(dep.RootfsPath); err != nil {
@@ -3118,7 +3118,7 @@ func (h *Handler) markFailedOnUnhandledError(ctx context.Context, depID string, 
 		return
 	}
 	switch current.Status {
-	case state.DeployFailed, state.DeployLive, state.DeploySuperseded:
+	case state.DeployFailed, state.DeployLive, state.DeploySuperseded, state.DeployCancelled:
 		// Inner path already handled it (or it's a success). The
 		// catch-all must NEVER clobber a terminal-good row.
 		return

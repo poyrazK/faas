@@ -1878,7 +1878,7 @@ func TestTerminalExitForBuild_Failed(t *testing.T) {
 	if !strings.Contains(got, "build b failed") {
 		t.Errorf("missing failure banner on stderr; got: %s", got)
 	}
-	if !strings.Contains(got, "gregale logs --deployment d") {
+	if !strings.Contains(got, "gregale logs hello --deployment d --follow") {
 		t.Errorf("missing log-hint; got: %s", got)
 	}
 }
