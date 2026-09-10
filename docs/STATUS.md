@@ -569,7 +569,9 @@ The §12 dashboard pipeline is wired end-to-end:
 - **Status page degraded flag** — `cmd/apid/status.go::fetch` runs a
   fourth PromQL query over firing warn/page platform alerts. It excludes
   `alert_preset_signals` and `alert_preset_correlation`, whose alerts describe
-  one tenant's configured policy rather than fleet health.
+  one tenant's configured policy rather than fleet health, and alerts labelled
+  `public_status="internal"`, which remain operator-actionable but do not mean
+  the customer-facing service is degraded.
   alongside the existing three. The boolean lands on
   `pkg/api.StatusPage.Degraded` and `deploy/statuspage/index.html`
   renders a red "Service degraded" pill driven by it. The public page
@@ -580,8 +582,9 @@ The §12 dashboard pipeline is wired end-to-end:
 
 - `Source = "prometheus"` — clean snapshot, no degraded pill.
 - `Source = "degraded: firing alerts"` — at least one fleet/platform warn- or
-  page-severity alert is currently firing; the pill is visible. Tenant alert
-  presets remain visible to their account without changing public status.
+  page-severity alert that represents customer impact is currently firing; the
+  pill is visible. Tenant alert presets and `public_status="internal"` operator
+  alerts remain visible without changing public status.
 - `Source = "degraded: <error>"` — the full Prometheus pipeline is
   unreachable; the handler returns the last cached snapshot with the
   error stringified. Pre-existing graceful-degradation contract from

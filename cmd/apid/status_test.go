@@ -357,7 +357,7 @@ func TestStatus_DegradedFlag(t *testing.T) {
 	})
 }
 
-func TestStatusDegradedQueryExcludesTenantAlertPresets(t *testing.T) {
+func TestStatusDegradedQueryExcludesNonServiceAlerts(t *testing.T) {
 	var alertQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if q := r.URL.Query().Get("query"); strings.Contains(q, "ALERTS") {
@@ -374,6 +374,9 @@ func TestStatusDegradedQueryExcludesTenantAlertPresets(t *testing.T) {
 	}
 	if !strings.Contains(alertQuery, `family!~"alert_preset_signals|alert_preset_correlation"`) {
 		t.Fatalf("alert query does not exclude tenant preset families: %s", alertQuery)
+	}
+	if !strings.Contains(alertQuery, `public_status!="internal"`) {
+		t.Fatalf("alert query does not exclude internal operator alerts: %s", alertQuery)
 	}
 }
 

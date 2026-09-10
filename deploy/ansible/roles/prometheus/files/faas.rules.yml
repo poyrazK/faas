@@ -1021,6 +1021,9 @@ groups:
           severity: warn
           component: meterd
           family: residency
+          # Economic density signal for operators. Resource saturation and
+          # request-path alerts report customer-visible degradation separately.
+          public_status: internal
         annotations:
           summary: "Resident GB per paying customer > 0.45 (plan {{ $labels.plan }})"
           description: "Plan {{ $labels.plan }} has been above the §12 threshold (0.45 average resident GB / paying customer) for 1h. Spec target is 0.305. Cross-check FaasHighResidentRamPct — fleet RAM pressure is the usual upstream cause."
