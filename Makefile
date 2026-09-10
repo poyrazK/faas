@@ -603,6 +603,20 @@ lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check 
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
 	@python3 scripts/ci/check_runbook_mutating_sql.py
 
+.PHONY: postmortem
+postmortem: ## Create docs/postmortems/YYYY-MM-DD-NAME.md from the post-mortem template (NAME required)
+	@test -n "$(NAME)" || (echo "NAME is required, e.g. make postmortem NAME=api-outage" >&2; exit 2)
+	@slug=$$(printf '%s' "$(NAME)" | LC_ALL=C tr -cs 'A-Za-z0-9' '-' | sed -e 's/^-//' -e 's/-$$//'); \
+	test -n "$$slug" || { echo "NAME must contain at least one letter or number" >&2; exit 2; }; \
+	path="docs/postmortems/$$(date -u +%F)-$$slug.md"; \
+	test ! -e "$$path" || { echo "postmortem already exists: $$path" >&2; exit 1; }; \
+	sed "s/YYYY-MM-DD/$$(date -u +%F)/g; s/short-name/$$slug/g" docs/postmortems/TEMPLATE.md > "$$path"; \
+	echo "created $$path; fill it in, then add it to docs/postmortems/INDEX.md"
+
+.PHONY: test-postmortems
+test-postmortems: ## Validate completed post-mortems and INDEX links
+	bash scripts/ci/check_postmortems.sh $(CURDIR)
+
 # ADR-111: packer-builder syntax gate. Delegates to deploy/packer/Makefile:image-validate,
 # which loops `packer validate -syntax-only` over every *.pkr.hcl. Works
 # without cloud creds; gates PR #928. install-packer.sh is the deterministic
