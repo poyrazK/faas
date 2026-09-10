@@ -480,6 +480,7 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
@@ -1344,6 +1345,7 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "LatestDeploymentsByAppResponse",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
     "ListBucketObjectsResponse200",

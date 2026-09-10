@@ -14,6 +14,7 @@ import type { DeploymentListResponse } from '../models/DeploymentListResponse.js
 import type { DeploymentPreviewURL } from '../models/DeploymentPreviewURL.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
+import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
@@ -624,6 +625,28 @@ export class DeploymentsService {
         'limit': limit,
         'before': before,
       },
+      errors: {
+        401: `code: unauthorized`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List the latest deployment for each app on the account.
+   * Returns at most one deployment for every non-deleted app owned by the
+   * authenticated account. Items are ordered newest first by `created_at`,
+   * with deployment ID as the stable tie-breaker.
+   *
+   * @returns LatestDeploymentsByAppResponse The latest deployment for each deployed app.
+   * @throws ApiError
+   */
+  public static listLatestDeploymentsByApp(): CancelablePromise<LatestDeploymentsByAppResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/latest-by-app',
       errors: {
         401: `code: unauthorized`,
         429: `429. Two response shapes:

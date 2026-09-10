@@ -129,6 +129,13 @@ select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        status, coalesce(error, ''), created_at
 from deployments where app_id = $1 order by created_at desc limit $2 offset $3;
 
+-- name: ListLatestDeploymentPerApp :many
+select distinct on (d.app_id) d.*
+from deployments d
+join apps a on a.id = d.app_id
+where a.account_id = $1 and a.status <> 'deleted'
+order by d.app_id, d.created_at desc, d.id desc;
+
 -- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),

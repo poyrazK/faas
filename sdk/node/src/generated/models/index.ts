@@ -220,6 +220,7 @@ export type { KafkaSASLConfig } from './KafkaSASLConfig.js';
 export type { KafkaSASLMechanism } from './KafkaSASLMechanism.js';
 export type { KafkaTLSConfig } from './KafkaTLSConfig.js';
 export type { KafkaTriggerConfig } from './KafkaTriggerConfig.js';
+export type { LatestDeploymentsByAppResponse } from './LatestDeploymentsByAppResponse.js';
 export type { ListAuditEventsResponse } from './ListAuditEventsResponse.js';
 export type { ListAuditLogResponse } from './ListAuditLogResponse.js';
 export type { ListCronRunsResponse } from './ListCronRunsResponse.js';

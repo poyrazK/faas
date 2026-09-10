@@ -5973,6 +5973,29 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 	return scanDeployments(rows)
 }
 
+func (s *PgStore) ListLatestDeploymentPerApp(ctx context.Context, accountID string) (map[string]Deployment, error) {
+	rows, err := s.pool.Query(ctx,
+		`select distinct on (d.app_id) `+deploymentSelectColumnsQualified+`
+		 from deployments d join apps a on a.id = d.app_id
+		 where a.account_id = $1 and a.status <> 'deleted'
+		 order by d.app_id, d.created_at desc, d.id desc`,
+		accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	deployments, err := scanDeployments(rows)
+	if err != nil {
+		return nil, err
+	}
+	latest := make(map[string]Deployment, len(deployments))
+	for _, deployment := range deployments {
+		latest[deployment.AppID] = deployment
+	}
+	return latest, nil
+}
+
 func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error) {
 	if limit <= 0 {
 		return nil, nil

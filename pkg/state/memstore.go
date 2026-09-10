@@ -5551,6 +5551,31 @@ func (m *MemStore) ListDeploymentsForAccount(_ context.Context, accountID string
 	return all, nil
 }
 
+func (m *MemStore) ListLatestDeploymentPerApp(_ context.Context, accountID string) (map[string]Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	owned := make(map[string]struct{})
+	for _, app := range m.apps {
+		if app.AccountID == accountID && app.Status != AppDeleted {
+			owned[app.ID] = struct{}{}
+		}
+	}
+
+	latest := make(map[string]Deployment)
+	for _, deployment := range m.deployments {
+		if _, ok := owned[deployment.AppID]; !ok {
+			continue
+		}
+		current, ok := latest[deployment.AppID]
+		if !ok || deployment.CreatedAt.After(current.CreatedAt) ||
+			(deployment.CreatedAt.Equal(current.CreatedAt) && deployment.ID > current.ID) {
+			latest[deployment.AppID] = deployment
+		}
+	}
+	return latest, nil
+}
+
 func (m *MemStore) ListDeploymentsForAccountPage(_ context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error) {
 	if limit <= 0 {
 		return nil, nil
