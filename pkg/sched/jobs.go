@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -386,7 +387,7 @@ func (e *Engine) RetryJob(ctx context.Context, accountID, runID string, taskInde
 	return nil
 }
 
-// HandleJobExit is invoked from vmmd's DGRAM notification on port
+// HandleJobExit is invoked from vmmd's terminal receipt on port
 // 1026 (M7). Validates the lease token, then runs the cleanup chain:
 //  1. MarkTaskTerminal with the observed exit_code + error_class.
 //  2. Release the lease (the lease columns are cleared as part of
@@ -396,7 +397,7 @@ func (e *Engine) RetryJob(ctx context.Context, accountID, runID string, taskInde
 //  4. JobRunRecompute to settle the aggregate counters.
 //
 // Idempotency: a duplicate HandleJobExit for an already-terminal
-// task returns nil (the second DGRAM is a vmmd retransmit).
+// task returns nil (the second receipt is a vmmd retransmit).
 //
 // Error classes that retry: failed, timeout, oom. Cancelled is
 // terminal-no-retry. Succeeded is terminal-no-retry.
@@ -502,10 +503,36 @@ func (e *Engine) ReconcileCancelledJobRun(ctx context.Context, runID string) err
 		if ins, ierr := e.store.InstanceByID(ctx, *task.InstanceID); ierr == nil && ins.NodeID != "" {
 			nodeID = ins.NodeID
 		}
-		e.cleanupJobInstance(ctx, *task.InstanceID, nodeID, "job_cancelled")
+		if e.vmm != nil {
+			// Let guest-init terminate the workload process group and report its
+			// final status. vmmd escalates to a hard Firecracker kill if the guest
+			// control channel is unavailable or the grace period expires.
+			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jobCancelStopTimeout)
+			_, stopErr := e.vmm.StopInstanceOnNode(
+				stopCtx,
+				e.nodeForRoute(nodeID),
+				*task.InstanceID,
+				int32(syscall.SIGTERM),
+				int32(jobCancelGrace/time.Second),
+			)
+			cancel()
+			if stopErr != nil {
+				e.log.Warn("sched: graceful job cancellation failed; falling back to destroy", "instance", *task.InstanceID, "node", nodeID, "err", stopErr)
+				e.cleanupJobInstance(ctx, *task.InstanceID, nodeID, "job_cancelled")
+				continue
+			}
+			e.settleJobInstance(ctx, *task.InstanceID, "job_cancelled")
+			continue
+		}
+		e.settleJobInstance(ctx, *task.InstanceID, "job_cancelled")
 	}
 	return nil
 }
+
+const (
+	jobCancelGrace       = 30 * time.Second
+	jobCancelStopTimeout = jobCancelGrace + 10*time.Second
+)
 
 // cleanupJobInstance releases host resources after a terminal job receipt.
 // Destruction uses a detached bounded context because the dispatch/wait
@@ -526,10 +553,17 @@ func (e *Engine) cleanupJobInstance(ctx context.Context, instanceID, nodeID, rea
 			return
 		}
 	}
+	e.settleJobInstance(cleanupCtx, instanceID, reason)
+}
+
+// settleJobInstance releases scheduler-side ownership only after vmmd confirms
+// the VM has stopped. Keeping this separate lets graceful cancellation and
+// receipt-driven hard cleanup share the same final state transition.
+func (e *Engine) settleJobInstance(ctx context.Context, instanceID, reason string) {
 	if e.ledger != nil {
 		e.ledger.Release(instanceID)
 	}
-	e.transitionWithKind(cleanupCtx, instanceID, "", state.StateStopped, "job_exit", reason)
+	e.transitionWithKind(ctx, instanceID, "", state.StateStopped, "job_exit", reason)
 }
 
 // dispatchJobsTick is the per-second loop. cmd/schedd/main.go
@@ -693,23 +727,29 @@ func (e *Engine) startJobExitWatch(ctx context.Context, spec JobExitSpec) {
 	if e.jobExitWaiter == nil {
 		return
 	}
+	lifecycleCtx := e.jobContext //nolint:contextcheck // exit supervision is owned by the engine lifecycle, not the dispatch request.
+	if lifecycleCtx == nil {
+		// Preserve request values in compatibility tests while detaching the
+		// waiter from the short-lived dispatch request's cancellation.
+		lifecycleCtx = context.WithoutCancel(ctx)
+	}
 	go func() {
-		waitCtx := ctx
+		waitCtx := lifecycleCtx
 		cancel := func() {}
 		if spec.Deadline > 0 {
-			waitCtx, cancel = context.WithTimeout(ctx, spec.Deadline)
+			waitCtx, cancel = context.WithTimeout(lifecycleCtx, spec.Deadline)
 		}
 		defer cancel()
 		result, err := e.jobExitWaiter.WaitJobExit(waitCtx, spec)
 		if err != nil {
-			if ctx.Err() != nil {
+			if lifecycleCtx.Err() != nil {
 				return
 			}
 			class, code := "infra", 1
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
 				class, code = "timeout", 124
 			}
-			if herr := e.HandleJobExit(context.WithoutCancel(ctx), spec.AccountID, spec.RunID, spec.TaskIndex, code, class, spec.LeaseToken); herr != nil {
+			if herr := e.HandleJobExit(context.WithoutCancel(lifecycleCtx), spec.AccountID, spec.RunID, spec.TaskIndex, code, class, spec.LeaseToken); herr != nil {
 				e.log.Warn("sched: handle job exit after wait failure", "run", spec.RunID, "task", spec.TaskIndex, "err", herr)
 			}
 			return
@@ -718,7 +758,7 @@ func (e *Engine) startJobExitWatch(ctx context.Context, spec JobExitSpec) {
 		if token == "" {
 			token = spec.LeaseToken
 		}
-		if herr := e.HandleJobExit(context.WithoutCancel(ctx), spec.AccountID, spec.RunID, spec.TaskIndex, result.ExitCode, result.ErrorClass, token); herr != nil {
+		if herr := e.HandleJobExit(context.WithoutCancel(lifecycleCtx), spec.AccountID, spec.RunID, spec.TaskIndex, result.ExitCode, result.ErrorClass, token); herr != nil {
 			e.log.Warn("sched: handle job exit", "run", spec.RunID, "task", spec.TaskIndex, "err", herr)
 		}
 	}()

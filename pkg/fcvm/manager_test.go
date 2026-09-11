@@ -307,10 +307,9 @@ func (v *fakeVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) 
 
 // BootColdBootForJob (issue #1184 Workstream A / ADR-099) is the
 // job-task sibling of BootColdBoot. The fake delegates to Boot
-// (SkipReady semantics are already on the VMConfig — see
-// BuildJobColdBootConfig setting EphemeralWritable=true). Tests
+// (the production entry point selects bootNoWait explicitly). Tests
 // that exercise the job boot path don't go through waitReady;
-// the supervisor exit DGRAM is faked at the schedd layer.
+// the supervisor exit stream is faked at the schedd layer.
 func (v *fakeVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobColdBootSpec) error {
 	if err := spec.Validate(); err != nil {
 		return err

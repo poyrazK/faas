@@ -81,8 +81,9 @@ type VMM interface {
 	BootColdBootForJob(ctx context.Context, l Lease, spec JobColdBootSpec) error
 	// WaitJobExit (issue #1184 Workstream A / ADR-099) is the host-side
 	// mirror of WaitCharacterizationReport for the job-exit envelope.
-	// Opens the per-instance vsock UDS, sends CONNECT <port> to FC,
-	// reads [4B msg_type][4B body_len][N JSON], validates msg_type =
+	// Accepts the guest-initiated stream on Firecracker's documented
+	// <uds_path>_<port> endpoint, reads [4B msg_type][4B body_len][N JSON],
+	// validates msg_type =
 	// VsockJobExitMsgType (=4), and returns the parsed JobExitPayload.
 	// Deadline is measured from entry; pass EffectiveDestroyWait(task_timeout_s)
 	// so the per-task wall-clock cap fits the listener window. On
@@ -374,6 +375,9 @@ type Instance struct {
 	Lease  Lease
 	Net    netns.Config
 	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
+	// settled by the lease-fenced job receipt, not the app liveness relay.
+	IsJob bool
 	// ADR-098 C11: phase-decomposed wake timings stamped at the
 	// three boundary sites inside Wake / bringUp so the vmmd
 	// WakeResponse can carry the typed scalars (restore_ms /
@@ -1572,6 +1576,13 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 		// Builderd owns the expected process-exit → artifact-export
 		// sequence. The VMM filters normal builder exits too, but keep
 		// this guard for alternate VMM implementations and tests.
+		return
+	}
+	if inst.IsJob {
+		// A job powers its VM off after vmmd acknowledges the terminal frame.
+		// Relaying that expected process exit through the app liveness path can
+		// race HandleJobExit and incorrectly recreate or fail the task. Missing
+		// receipts remain owned by WaitJobExit and the stuck-task reaper.
 		return
 	}
 
@@ -3238,13 +3249,14 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 
 	// Stamp the live Instance. No readiness gating — the
 	// supervisor exits as soon as the command exits, so the
-	// "ready" window is from bootNoWait return to job_exit
-	// DGRAM arrival. Mirrors the Wake path's struct literal at
+	// "ready" window is from bootNoWait return to the job-exit
+	// stream arrival. Mirrors the Wake path's struct literal at
 	// vmm.go:3003.
 	inst := &Instance{
 		Lease:           lease,
 		Net:             nc,
 		Method:          WakeColdBoot, // jobs are always cold-boot
+		IsJob:           true,
 		AccountID:       req.AccountID,
 		Plan:            req.Plan,
 		Port:            0,  // no listener port
@@ -3256,14 +3268,14 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	m.mu.Unlock()
 	// MarkInstanceFrameworkReady isn't called here — the
 	// supervisor doesn't emit a framework-ready receipt. The
-	// job exit DGRAM is the only receipt.
+	// job exit frame is the only receipt.
 	return inst, nil
 }
 
 // WaitJobExit (issue #1184 Workstream A / ADR-099) is the
 // Manager-level thin wrapper around VMM.WaitJobExit. The Engine's
 // HandleJobExit call site needs to block on the per-instance vsock
-// DGRAM until either the envelope arrives or the deadline elapses.
+// STREAM until either the envelope arrives or the deadline elapses.
 //
 // On deadline elapse the engine treats the task as crashed and
 // lets the stuck-task reaper take over (M6). On error return the
@@ -4500,7 +4512,20 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 		// Unknown instance — match Destroy's idempotent shape.
 		return false, 0, nil
 	}
-	killSignalSent, exitCode, err = m.vmm.SignalAndKill(ctx, inst.Lease, signal, grace)
+	if inst.IsJob {
+		// Job workloads are children of guest-init, not host processes. Ask the
+		// guest supervisor to signal the workload process group; implementations
+		// without this optional extension retain the hard-stop fallback.
+		if signaler, supported := m.vmm.(interface {
+			SignalJob(context.Context, Lease, syscall.Signal, time.Duration) (bool, int32, error)
+		}); supported {
+			killSignalSent, exitCode, err = signaler.SignalJob(ctx, inst.Lease, signal, grace)
+		} else {
+			killSignalSent, exitCode, err = m.vmm.SignalAndKill(ctx, inst.Lease, signal, grace)
+		}
+	} else {
+		killSignalSent, exitCode, err = m.vmm.SignalAndKill(ctx, inst.Lease, signal, grace)
+	}
 	// Cleanup uses a context detached from the caller's (same
 	// rationale as DestroyWithExport above — a cancelled caller's
 	// ctx must not leak netns / cgroup).

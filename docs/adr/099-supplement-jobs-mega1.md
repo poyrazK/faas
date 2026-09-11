@@ -48,8 +48,8 @@ order is the canonical reference.
 4. **Vsock 1026 port overlap with characterize.** ADR-099 v1 said
    "reuse the vsock exit port"; Mega-1 confirms the port-number
    overlap with `VsockCharacterizationHostPort=1026` is
-   intentional, discriminated by STREAM (host-initiated,
-   characterize) vs DGRAM (guest-initiated, job_exit).
+   intentional, discriminated by message type: characterize uses
+   `msg_type=3`, while the guest-initiated job-exit stream uses `msg_type=4`.
    `pkg/fcvm/config.go::VsockJobExitPort=1026` +
    `VsockJobExitMsgType=4`.
 
