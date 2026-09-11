@@ -26,6 +26,23 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func TestWorkflowsEnabledFromEnvUsesScheddExactOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"", false},
+		{"0", false},
+		{"true", false},
+		{" 1 ", true},
+	} {
+		got := workflowsEnabledFromEnv(func(string) string { return tc.value })
+		if got != tc.want {
+			t.Errorf("FAAS_WORKFLOWS_ENABLED=%q: got %t, want %t", tc.value, got, tc.want)
+		}
+	}
+}
+
 // newLocalListener is the test seam for httptest.Server when the test
 // wants to construct the http.Server directly (httptest.NewUnstartedServer
 // takes an http.Handler, not an *http.Server). Issue #995 Phase 1 helper.

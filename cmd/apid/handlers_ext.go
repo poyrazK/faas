@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -5548,14 +5549,23 @@ func (s *server) getBuildProvenance(w http.ResponseWriter, r *http.Request, acct
 // well under the handler heap budget.
 func (s *server) getBuildSbom(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	sbomPath, prob := s.resolveSbomPath(r, id, acct)
+	sbomKey, prob := s.resolveSbomKey(r, id, acct)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	f, err := os.Open(sbomPath) //nolint:forbidigo // sbomPath is constructed in resolveSbomPath from a server-trusted DB column (build_provenance.sbom_storage_key, written by imaged's populator) joined onto s.sbomRoot; the path-traversal guard at resolveSbomPath:2082-2085 already rejects leading "/", "..", and "." segments. Unlike cmd/faas/commands5.go's openCustomerFile, this is a server-side read of an operator-controlled root, not a customer-supplied path — the Lstat-on-final-component TOCTOU guard the CLI enforces is unnecessary here because the customer cannot influence the sbomRoot or sbomStorageKey contents.
+	var f io.ReadCloser
+	var err error
+	if s.sbomStorage != nil {
+		f, err = s.sbomStorage.Get(r.Context(), sbomKey)
+	} else if s.sbomRoot != "" {
+		f, err = os.Open(filepath.Join(s.sbomRoot, sbomKey)) //nolint:forbidigo // trusted root + validated database key; single-box compatibility fallback
+	} else {
+		api.WriteProblem(w, api.ErrBuildSBOMUnavailable())
+		return
+	}
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) || artifactstorage.IsNotFound(err) {
 			api.WriteProblem(w, api.ErrBuildSBOMUnavailable())
 			return
 		}
@@ -5568,24 +5578,9 @@ func (s *server) getBuildSbom(w http.ResponseWriter, r *http.Request, acct state
 	_, _ = io.Copy(w, f)
 }
 
-// resolveSbomPath centralises the IDOR-safe lookup + storage-key
-// validation logic so getBuildSbom stays under the 50-line handler
-// budget (CLAUDE.md). Returns the local-filesystem path to the SBOM
-// blob, or a 0 path + non-zero *api.Problem indicating the failure
-// mode:
-//
-//   - 404 not_found "no such build": build / deployment / app /
-//     AccountID mismatch — IDOR-safe (every negative path collapses
-//     to the same response so probing can't infer other customers'
-//     build ids).
-//   - 503 build_sbom_unavailable: SBOM populator didn't write the column
-//     (pre-Phase-3 build, populator INSERT best-effort WARN'd) or
-//     sbomRoot is unset, or the storage key fails the path-traversal guard.
-//
-// The caller never inspects the *api.Problem's code/message — just
-// renders it via api.WriteProblem. Pinned by TestGetBuildSbom_*
-// in handlers_ext_test.go.
-func (s *server) resolveSbomPath(r *http.Request, buildID string, acct state.Account) (string, *api.Problem) {
+// resolveSbomKey performs the IDOR-safe ownership chain and validates the
+// database key before either a local or shared storage backend sees it.
+func (s *server) resolveSbomKey(r *http.Request, buildID string, acct state.Account) (string, *api.Problem) {
 	notFound := func() (string, *api.Problem) {
 		return "", api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such build")
 	}
@@ -5602,27 +5597,14 @@ func (s *server) resolveSbomPath(r *http.Request, buildID string, acct state.Acc
 		return notFound()
 	}
 	prov, err := s.store.BuildProvenanceByBuildID(r.Context(), build.ID)
-	if err != nil {
-		// Provenance row absent — pre-PR build.
+	if err != nil || prov.SBOMStorageKey == "" {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
-	if prov.SBOMStorageKey == "" {
-		// Populator didn't stamp sbom_storage_key.
-		return "", api.ErrBuildSBOMUnavailable()
-	}
-	if s.sbomRoot == "" {
-		// Operator hasn't wired a SBOM root.
-		return "", api.ErrBuildSBOMUnavailable()
-	}
-	// Path-traversal guard: storage key MUST be a relative path
-	// under sbomRoot — no leading "/" or ".." segments. imaged's
-	// syft populator enforces a fixed "sboms/<buildID>.cdx.json"
-	// shape but the column is general-purpose, so re-validate here.
 	clean := filepath.Clean(prov.SBOMStorageKey)
 	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") || clean == "." {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
-	return filepath.Join(s.sbomRoot, clean), nil
+	return clean, nil
 }
 
 // policyPtrFromReq converts the wire DTO `*api.ScalingPolicy` to the

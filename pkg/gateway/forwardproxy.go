@@ -27,6 +27,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -687,6 +688,31 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		return
 	}
 
+	// The raw RPC init carries routing metadata only. Send the HTTP request
+	// line and headers as the first byte frame before streaming r.Body.
+	// Without this frame a normal WebSocket GET (empty body) leaves the
+	// guest waiting for a handshake while vmmd waits for its response.
+	requestHead, err := rawRequestHead(r)
+	if err != nil {
+		wsOutcome = WSOutcomeInitFailed
+		log.Error("gateway: raw forwarder request head build failed",
+			"node", t.NodeID, "err", err.Error())
+		http.Error(w, "raw forwarder request head failed", http.StatusBadGateway)
+		return
+	}
+	if err := stream.Send(&vmmdpb.ForwardRawRequest{
+		Frame: &vmmdpb.ForwardRawRequest_BodyChunk{BodyChunk: requestHead},
+	}); err != nil {
+		wsOutcome = WSOutcomeInitFailed
+		log.Error("gateway: raw forwarder request head send failed",
+			"node", t.NodeID, "err", err.Error())
+		http.Error(w, "raw forwarder request head failed", http.StatusBadGateway)
+		return
+	}
+	if metrics != nil {
+		metrics.AddWSSessionBytes(string(plan), WSDirectionTx, int64(len(requestHead)))
+	}
+
 	// Body-copy goroutine: stream r.Body → stream in 8 KiB
 	// chunks. The first error wins; the receiver loop below
 	// surfaces it via bodyErrCh so the bidi close is clean.
@@ -932,6 +958,63 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// could inspect bodyErrCh's final value to distinguish
 	// client-initiated FIN from server-initiated close; for
 	// PR-B the customer-side churn signal is sufficient.
+}
+
+// rawRequestHead reconstructs the inbound HTTP/1 request head for the raw
+// Upgrade bridge. net/http has already parsed the wire bytes, so ordering and
+// header casing may change, but the method, request target, Host, and all
+// Upgrade semantics are preserved. Platform-only x-faas metadata follows the
+// same guest-boundary policy as the ordinary HTTP forwarder.
+func rawRequestHead(r *http.Request) ([]byte, error) {
+	method := r.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	requestURI := r.URL.RequestURI()
+	if requestURI == "" {
+		requestURI = "/"
+	}
+	proto := r.Proto
+	if proto == "" || strings.HasPrefix(proto, "HTTP/2") {
+		proto = "HTTP/1.1"
+	}
+
+	headers := r.Header.Clone()
+	for name := range headers {
+		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
+			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, "x-faas-invocation-id")) &&
+			!strings.EqualFold(name, wire.ClientIPHeader) {
+			headers.Del(name)
+		}
+	}
+	propagation.TraceContext{}.Inject(r.Context(), propagation.HeaderCarrier(headers))
+
+	var buf bytes.Buffer
+	if _, err := fmt.Fprintf(&buf, "%s %s %s\r\n", method, requestURI, proto); err != nil {
+		return nil, err
+	}
+	host := r.Host
+	if host == "" {
+		host = r.URL.Host
+	}
+	if host != "" {
+		if _, err := fmt.Fprintf(&buf, "Host: %s\r\n", host); err != nil {
+			return nil, err
+		}
+	}
+	if r.ContentLength > 0 && headers.Get("Content-Length") == "" && len(r.TransferEncoding) == 0 {
+		if _, err := fmt.Fprintf(&buf, "Content-Length: %d\r\n", r.ContentLength); err != nil {
+			return nil, err
+		}
+	}
+	if len(r.TransferEncoding) > 0 && headers.Get("Transfer-Encoding") == "" {
+		headers.Set("Transfer-Encoding", strings.Join(r.TransferEncoding, ", "))
+	}
+	if err := headers.Write(&buf); err != nil {
+		return nil, err
+	}
+	_, _ = buf.WriteString("\r\n")
+	return buf.Bytes(), nil
 }
 
 // flushSafe is a recover-guarded wrapper around http.Flusher.Flush

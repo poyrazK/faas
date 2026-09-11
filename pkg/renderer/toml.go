@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
@@ -200,6 +201,10 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		// compute-only gatewayd must instead use the control-plane
 		// listener rendered by the split-box manifest.
 		return dc.APIDLoopback, nil
+	case "route_metrics_enabled":
+		return boolConfigValue(dc.RouteMetricsEnabled, true), nil
+	case "streaming_enabled":
+		return boolConfigValue(dc.StreamingEnabled, true), nil
 	case "schedd_tls_cert_path", "schedd_tls_key_path", "schedd_tls_ca_path":
 		return tlsMaterialValue(dc.ScheddTLS, key, "schedd_tls_"), nil
 	case "egress_tls_cert_path", "egress_tls_key_path", "egress_tls_ca_path":
@@ -275,6 +280,13 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		}
 	}
 	return "", nil
+}
+
+func boolConfigValue(configured *bool, defaultValue bool) string {
+	if configured == nil {
+		return strconv.FormatBool(defaultValue)
+	}
+	return strconv.FormatBool(*configured)
 }
 
 func tlsMaterialValue(material *manifest.TLSMaterial, key, prefix string) string {
@@ -510,7 +522,7 @@ func serialiseTOML(host manifest.HostBlock, flat map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// writeTOMLKV writes `key = "value"\n` if value is non-empty. Empty
+// writeTOMLKV writes a typed TOML key/value if value is non-empty. Empty
 // values are omitted (the daemon loads the TOML with default values).
 func writeTOMLKV(buf *bytes.Buffer, key, value string) {
 	if value == "" {
@@ -518,8 +530,16 @@ func writeTOMLKV(buf *bytes.Buffer, key, value string) {
 	}
 	_, _ = buf.WriteString(key)
 	_, _ = buf.WriteString(" = ")
-	_, _ = buf.WriteString(tomlQuote(value))
+	if isTOMLBoolKey(key) {
+		_, _ = buf.WriteString(value)
+	} else {
+		_, _ = buf.WriteString(tomlQuote(value))
+	}
 	_ = buf.WriteByte('\n')
+}
+
+func isTOMLBoolKey(key string) bool {
+	return key == "route_metrics_enabled" || key == "streaming_enabled"
 }
 
 // tomlQuote serialises a string value as a TOML basic string. The

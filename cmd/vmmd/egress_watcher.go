@@ -4,7 +4,7 @@
 // `egress_policy_changed` pg_notify channel (migration 00078), and
 // on every notification re-renders the policy with the host's
 // compile-time defaults, validates via `nft -c -f <staging>`, and
-// atomic-replaces /etc/nftables.conf followed by `nft -f`. Single-box
+// atomic-replaces a runtime ruleset followed by `nft -f`. Single-box
 // default-local vmmd does NOT observe this channel — the gate is
 // `cfg.ComputeNode.NodeName != ""` in main.go, mirroring the
 // capacity publisher wiring (ADR-025 axis 5).
@@ -72,7 +72,7 @@ type osExecNft struct{}
 func (osExecNft) CheckSyntax(ctx context.Context, path string) error {
 	// `nft -c -f <path>` is the dry-run / syntax-check mode. The
 	// production watcher holds a staging file at
-	// /tmp/vmmd-egress-staging/nftables.conf.staging (see
+	// /run/faas/vmmd-egress-staging/nftables.conf.staging (see
 	// runWithDeps); on syntax-check failure the staging file is
 	// left on disk so the operator can inspect it.
 	return runNftCmd(ctx, "nft -c -f "+shellQuote(path))
@@ -80,8 +80,8 @@ func (osExecNft) CheckSyntax(ctx context.Context, path string) error {
 
 func (osExecNft) Reload(ctx context.Context, path string) error {
 	// `nft -f <path>` is the live-reload path. The staging file
-	// at /tmp/vmmd-egress-staging/nftables.conf.staging has already
-	// been atomic-replaced over /etc/nftables.conf by the caller
+	// at /run/faas/vmmd-egress-staging/nftables.conf.staging has already
+	// been atomic-replaced over /run/faas/nftables.conf by the caller
 	// (atomicReplace's cross-fs copy+rename path), so the path here
 	// is the live file.
 	return runNftCmd(ctx, "nft -f "+shellQuote(path))
@@ -125,7 +125,7 @@ type renderStagingFunc func() string
 //   - stagingDir:   a temp directory where the watcher writes the
 //     rendered ruleset before validation.
 //   - livePath:     the path to be atomic-replaced once validation
-//     passes. Production: /etc/nftables.conf.
+//     passes. Production: /run/faas/nftables.conf.
 //
 // The watcher is an error-once-and-log shape: a `nft -c -f` failure
 // leaves the staging file on disk and emits a structured log; the
@@ -249,9 +249,9 @@ func (w *egressWatcher) Reload(ctx context.Context) error {
 	// 1. Render.
 	body := w.render()
 
-	// The production staging path lives under /tmp and is not provisioned by
-	// Ansible. Create it on every reload so a fresh boot or tmpfiles cleanup
-	// cannot strand egress and SMTP allowlist updates.
+	// The production staging path lives under /run/faas and is not provisioned
+	// as a child directory by Ansible. Create it on every reload so a fresh
+	// boot or tmpfiles cleanup cannot strand egress and SMTP allowlist updates.
 	if err := os.MkdirAll(w.stagingDir, 0o755); err != nil {
 		return fmt.Errorf("create staging directory %s: %w", w.stagingDir, err)
 	}
@@ -280,7 +280,8 @@ func (w *egressWatcher) Reload(ctx context.Context) error {
 	// the same filesystem IS atomic. Cross-filesystem rename is
 	// not — production uses /etc/nftables.conf and the staging
 	// dir is the daemon's temp dir, so the rename is cross-
-	// filesystem. atomicReplace handles EXDEV via copy+fsync.
+	// filesystem. Production keeps both paths below /run/faas so the rename is
+	// atomic; atomicReplace still handles EXDEV for custom/test paths.
 	if err := atomicReplace(staging, w.livePath); err != nil {
 		return fmt.Errorf("atomic-replace %s -> %s: %w", staging, w.livePath, err)
 	}
@@ -293,12 +294,9 @@ func (w *egressWatcher) Reload(ctx context.Context) error {
 }
 
 // atomicReplace moves src over dst. On the production wiring the
-// staging file lives at /tmp/vmmd-egress-staging/nftables.conf.staging
-// (tmpfs) and dst is /etc/nftables.conf (ext4) — different filesystems,
-// so os.Rename will fail with EXDEV and the copy+rename path below
-// is the production hot path, not a fallback. The optimistic rename
-// IS exercised when staging and dst happen to share a filesystem
-// (test fixtures, a custom stagingDir); that path is the fast path.
+// staging and live files both live under /run/faas, so os.Rename is the
+// production atomic path. The copy+rename fallback remains for custom paths
+// on different filesystems and for test fixtures.
 //
 // The intermediate scratch file uses the `<dst>.faas-new` suffix so a
 // concurrent ansible run that writes /etc/nftables.conf doesn't

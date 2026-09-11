@@ -5826,34 +5826,6 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: storageKey})
 	vmstate := filepath.Join(SnapDir(), strings.TrimPrefix(vmstateKey, "snap/"))
 	vmstateStorageKey := vmstateKey
-	e.ledger.BeginSnapshot(ins.ID) // drops concurrency, keeps RAM (§6.2-1 excludes snapshotting)
-	// Stamp parked_at on entry into SNAPSHOTTING so the §6.1 watchdog
-	// (commit 3) has an "age of state" anchor for the row.
-	now := time.Now()
-	if err := e.store.UpdateInstanceStateWithTimestamp(ctx, ins.ID, string(state.StateSnapshotting), now); err != nil {
-		e.log.Warn("snapshotAndPark: stamp parked_at", "instance", ins.ID, "err", err)
-		// Fall through to the normal path — the watchdog's beginSnapshot
-		// anchor being lost is recoverable (it'll trip after
-		// started_at + 20s, slightly inflating the budget).
-	}
-	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting, ins.WakeID)
-	// issue #517 / PR-C / ADR-064 — emit wake.park_started at the
-	// RUNNING→SNAPSHOTTING transition. Pairs with wake.park_completed
-	// below under the same wake_id so the timeline endpoint can
-	// surface "park took N ms" without joining the legacy
-	// state_transition rows. The wake_id is the one the just-finished
-	// boot produced (ins.WakeID), per ADR-035 the audit join key.
-	if e.events != nil {
-		e.events.Emit(ctx, events.ParkStarted{
-			EmitAt:       now.UTC(),
-			WakeID:       ins.WakeID,
-			AppID:        ins.AppID,
-			DeploymentID: ins.DeploymentID,
-			InstanceID:   ins.ID,
-			NodeID:       ins.NodeID,
-			StartedAt:    now.UTC(),
-		})
-	}
 
 	// issue #470 / PR A / ADR-070 — warm capture runs FIRST, while
 	// the VM is still live (RUNNING). The init tier's trailing Kill
@@ -5875,6 +5847,47 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 		return warmErr
 	}
 	_ = warmInfo
+	if warmInfo.MemBytes > 0 {
+		// Shared-storage publication can take seconds. The warm capture
+		// resumes the guest immediately after Firecracker creates its local
+		// files, so keep the row routable during that upload and abandon
+		// this park if fresh traffic arrived in the meantime.
+		fresh, freshErr := e.store.InstanceByID(ctx, ins.ID)
+		if freshErr != nil {
+			return fmt.Errorf("sched: park: refresh after warm capture: %w", freshErr)
+		}
+		if fresh.State != string(state.StateRunning) {
+			return nil
+		}
+		if fresh.LastRequestAt.After(ins.LastRequestAt) || fresh.RequestCount > ins.RequestCount {
+			e.log.Info("sched: park: fresh activity canceled park after warm capture",
+				"instance", ins.ID,
+				"request_count_before", ins.RequestCount,
+				"request_count_after", fresh.RequestCount)
+			return nil
+		}
+		ins = fresh
+	}
+
+	e.ledger.BeginSnapshot(ins.ID) // drops concurrency, keeps RAM (§6.2-1 excludes snapshotting)
+	// Stamp parked_at only once terminal capture starts. Warm publication
+	// above keeps the resumed guest routable and is canceled by activity.
+	now := time.Now()
+	if err := e.store.UpdateInstanceStateWithTimestamp(ctx, ins.ID, string(state.StateSnapshotting), now); err != nil {
+		e.log.Warn("snapshotAndPark: stamp parked_at", "instance", ins.ID, "err", err)
+	}
+	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting, ins.WakeID)
+	if e.events != nil {
+		e.events.Emit(ctx, events.ParkStarted{
+			EmitAt:       now.UTC(),
+			WakeID:       ins.WakeID,
+			AppID:        ins.AppID,
+			DeploymentID: ins.DeploymentID,
+			InstanceID:   ins.ID,
+			NodeID:       ins.NodeID,
+			StartedAt:    now.UTC(),
+		})
+	}
 
 	snapBudget := SnapshotBudgetFor(ins.RAMMB)
 	snapCtx, snapCancel := context.WithTimeout(ctx, snapBudget)

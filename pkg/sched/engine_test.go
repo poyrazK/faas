@@ -44,6 +44,7 @@ type fakeVMM struct {
 	forceColdFallback   bool // CreateFromSnapshot reports a cold-boot fallback (ADR-005)
 	wakeErr             error
 	snapErr             error
+	snapErrSequence     []error
 	// snapDeadline / snapHasDeadline capture the ctx deadline seen by
 	// PauseAndSnapshot. The RPC shipped with NO deadline and wedged the
 	// scheduler for 10+ minutes in production (2026-09-03); these let a
@@ -56,13 +57,16 @@ type fakeVMM struct {
 	// failed" without bleeding into the init capture that runs in the
 	// same Park. nil = warm capture succeeds.
 	warmSnapErr error
-	destroyErr  error
-	pingErr     error                   // PR #114: injectable Ping failure for heartbeat tests
-	prepareErr  error                   // Tier A5: injectable PrepareLiveMigration error
-	adoptErr    error                   // Tier A5: injectable AdoptMigratedInstance error
-	ackErr      error                   // Tier A5: injectable AcknowledgeMigration error
-	cancelErr   error                   // Tier A5: injectable CancelLiveMigration error
-	adoptHook   func(instanceID string) // Tier A5: runs after a successful AdoptMigratedInstance; tests use it to mutate the store row so a downstream Phase 4 commit returns ErrConflict (verifying the Phase 4 release-on-failure path)
+	// warmSnapshotHook simulates traffic/activity arriving while a remote
+	// warm snapshot is being published.
+	warmSnapshotHook func()
+	destroyErr       error
+	pingErr          error                   // PR #114: injectable Ping failure for heartbeat tests
+	prepareErr       error                   // Tier A5: injectable PrepareLiveMigration error
+	adoptErr         error                   // Tier A5: injectable AdoptMigratedInstance error
+	ackErr           error                   // Tier A5: injectable AcknowledgeMigration error
+	cancelErr        error                   // Tier A5: injectable CancelLiveMigration error
+	adoptHook        func(instanceID string) // Tier A5: runs after a successful AdoptMigratedInstance; tests use it to mutate the store row so a downstream Phase 4 commit returns ErrConflict (verifying the Phase 4 release-on-failure path)
 	// lastSnapRef records the SnapshotRef CreateFromSnapshot was
 	// invoked with on its most recent call. F-2 review finding —
 	// Wake's storage_key plumbing deserves a test pin; storing the
@@ -196,6 +200,13 @@ func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _, _ string) (S
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if len(f.snapErrSequence) > 0 {
+		err := f.snapErrSequence[0]
+		f.snapErrSequence = f.snapErrSequence[1:]
+		if err != nil {
+			return SnapshotBytes{}, err
+		}
+	}
 	if f.snapErr != nil {
 		return SnapshotBytes{}, f.snapErr
 	}
@@ -216,6 +227,9 @@ func (f *fakeVMM) WarmSnapshot(ctx context.Context, _, _, _, _ string) (Snapshot
 		case <-ctx.Done():
 			return SnapshotBytes{}, ctx.Err()
 		}
+	}
+	if f.warmSnapshotHook != nil {
+		f.warmSnapshotHook()
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -3668,6 +3682,44 @@ func TestCaptureWarmSnapshot_HappyPath(t *testing.T) {
 	ins, _ := store.InstanceByID(context.Background(), insID)
 	if ins.State != string(state.StateParked) {
 		t.Errorf("state = %q, want parked", ins.State)
+	}
+}
+
+// adr: 070
+func TestCaptureWarmSnapshot_FreshActivityCancelsTerminalPark(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	enableWarmSnapshot(t, store, app.ID)
+	vmm := &fakeVMM{}
+	notif := &fakeNotifier{}
+	e := newEngine(t, store, vmm, notif, "1.10.0")
+	insID := primeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
+	vmm.warmSnapshotHook = func() {
+		_, err := store.TouchInstancesWithRequestDelta(context.Background(), []state.InstanceTouch{{
+			InstanceID:   insID,
+			LastRequest:  time.Now(),
+			RequestDelta: 1,
+		}})
+		if err != nil {
+			t.Errorf("TouchInstancesWithRequestDelta: %v", err)
+		}
+	}
+
+	if err := e.Park(context.Background(), insID); err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+	ins, err := store.InstanceByID(context.Background(), insID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if ins.State != string(state.StateRunning) {
+		t.Fatalf("state = %q, want running after fresh traffic", ins.State)
+	}
+	if vmm.warmSnapshots != 1 || vmm.snapshots != 0 {
+		t.Fatalf("captures warm=%d init=%d, want warm=1 init=0", vmm.warmSnapshots, vmm.snapshots)
+	}
+	if notif.count("snapshot_written") != 1 {
+		t.Fatalf("snapshot_written = %d, want only the completed warm capture", notif.count("snapshot_written"))
 	}
 }
 

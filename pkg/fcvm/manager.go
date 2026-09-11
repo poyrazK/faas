@@ -4319,13 +4319,12 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 //     captureWarmSnapshotLocked; the instance is in RUNNING state
 //     and the runner is alive and can keep serving requests across
 //     the pause window).
-//  2. Call vmm.SnapshotKeepAlive (pause + /snapshot/create + publish
-//     mem + vmstate through the configured StorageBackend) WITHOUT
-//     releasing the chroot.
-//  3. Call vmm.ResumeVM to PATCH /vm {"state":"Resumed"} so the
-//     runner can keep accepting requests. Manager.live[instance] +
-//     cidToID stay intact — the warm path is purposefully a thin
-//     wrapper around SnapshotKeepAlive + ResumeVM, no teardown.
+//  2. Call vmm.SnapshotKeepAlive (pause + /snapshot/create), resuming
+//     immediately after Firecracker finishes the local files and before
+//     publishing mem + vmstate through the configured StorageBackend.
+//  3. Verify the VM is resumed after publication. ResumeVM treats an
+//     already-running VM as success. Manager.live[instance] + cidToID
+//     stay intact; the warm path performs no teardown.
 //  4. Return the SnapshotInfo the engine writes into the snapshots
 //     row (tier='warm').
 //
@@ -4343,13 +4342,12 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if !ok {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: not live", instance)
 	}
+	spec.ResumeBeforePublish = true
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err != nil {
-		// The VM is still paused (SnapshotKeepAlive publishes on
-		// success but the chroot is still alive). Best-effort
-		// resume so the runner can keep serving — failure to
-		// resume surfaces to the engine's destroy path with the
-		// original error wrapped.
+		// A failure before the early resume may leave the VM paused;
+		// a publication failure occurs after it is already running.
+		// ResumeVM is idempotent across both cases.
 		if rerr := m.vmm.ResumeVM(ctx, inst.Lease); rerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", rerr)))
 		}

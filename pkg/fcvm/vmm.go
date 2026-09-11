@@ -1549,6 +1549,14 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		slog.Default().Error("vmm: create snapshot failed", "instance", l.Instance, "err", err)
 		return SnapshotInfo{}, fmt.Errorf("vmm: create snapshot: %w", err)
 	}
+	if spec.ResumeBeforePublish {
+		// The snapshot files are complete once Firecracker returns from
+		// /snapshot/create. Shared OCI publication may take seconds and
+		// does not require the guest to remain paused.
+		if err := v.ResumeVM(ctx, l); err != nil {
+			return SnapshotInfo{}, fmt.Errorf("vmm: resume before snapshot publish: %w", err)
+		}
+	}
 
 	// #96 / ADR-025 axis 2 — after slice 3 the mem destination is
 	// vmmd-allocated. Firecracker dumps the paused mem at <chroot>/mem;

@@ -897,6 +897,13 @@ type runDeps struct {
 	// path unseals per-request. Production wires a single
 	// gateway.NewPublicAuthCache() constructed in run().
 	publicAuthCache *gateway.PublicAuthCache
+	// responseCache is the one process-local response cache shared by the
+	// request handler and PGBackend invalidation subscriber. Both consumers
+	// must receive the same instance: the handler serves and stores entries,
+	// while app/deployment/edge-rule notifications remove stale entries.
+	// Production creates it in run(); nil keeps cache rules disabled in tests
+	// that do not opt into this surface.
+	responseCache *gateway.ResponseCache
 	// publicAuthUnsealer (issue #477 / ADR-079) is the
 	// gateway.PublicAuthUnsealer the basic-auth branch uses
 	// to convert the secretbox-sealed BasicSealed blob into
@@ -1107,6 +1114,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// scoring, identical to a fresh install (ADR-005 cold boot must
 	// always work).
 	warmHintCache := gateway.NewWarmHintCache()
+	// ADR-122: keep one cache instance for both the request path and the
+	// notification invalidator. The cache implementation and metrics were
+	// previously present, but production never attached a cache to Handler,
+	// so every configured cache rule silently fell through to a wake and all
+	// response-cache counters remained zero.
+	responseCache := gateway.NewResponseCache()
+	deps.responseCache = responseCache
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithWarmHint(warmHintCache.HintFunc()).
 		WithAppResolver(func(ctx context.Context, appID string) (gateway.App, bool, error) {
@@ -1168,6 +1182,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return cli, true, nil
 		}).
 		WithPublicAuthCache(deps.publicAuthCache).
+		WithResponseCache(responseCache).
 		// ADR-089 / issue #561 PR 3: arm the per-host edge-rule
 		// matcher the invalidator resets on db.NotifyEdgeRuleChanged.
 		// Nil-safe; production always wires a real *gatewaydEdgeRules
@@ -1874,6 +1889,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	// The backend above owns invalidation; the handler owns lookup/store. Both
+	// sides intentionally share deps.responseCache so a deploy or rule update
+	// invalidates the exact cache serving customer traffic.
+	handler.WithResponseCache(deps.responseCache)
 	// ADR-104 amendment 5 / issue #881 Phase 4 C3: opt-in
 	// central-mode rate-limit counter (the [ratelimit] mode TOML
 	// knob added in C2). mode = "local" (default) leaves every
