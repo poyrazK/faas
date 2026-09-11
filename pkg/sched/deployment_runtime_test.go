@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -23,6 +24,8 @@ func TestDeploymentRuntimePort(t *testing.T) {
 		{name: "legacy default", dep: state.Deployment{}, want: 0},
 		{name: "source profile", dep: state.Deployment{InferredProfile: profile}, want: 3000},
 		{name: "explicit override wins", dep: state.Deployment{OverridePort: 8787, InferredProfile: profile}, want: 8787},
+		{name: "function uses runner manifest port", dep: state.Deployment{Handler: "handler.handler", InferredProfile: profile}, want: api.DefaultAppPort},
+		{name: "function explicit override wins", dep: state.Deployment{Handler: "handler.handler", OverridePort: 8787, InferredProfile: profile}, want: 8787},
 		{name: "malformed profile", dep: state.Deployment{InferredProfile: json.RawMessage(`{"version":"v1","port":70000}`)}, want: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

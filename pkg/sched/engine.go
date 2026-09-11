@@ -32,6 +32,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -5002,11 +5004,25 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 	if errors.As(cause, &upstream) && upstream != nil && upstream.Code != "" {
 		problem = upstream
 		code = upstream.Code
+	} else if errors.Is(cause, context.DeadlineExceeded) || status.Code(cause) == codes.DeadlineExceeded {
+		// The outer scheduler RPC budget can expire before vmmd has time to
+		// return its more specific guest-startup or handler-readiness Problem.
+		// Persist that third failure class explicitly instead of collapsing it
+		// into deploy_failed. Prime retryability still keys off the original
+		// cause returned by Prime, so this customer-facing classification does
+		// not change retry behavior.
+		problem = api.NewProblem(422, api.CodeStageSnapshotPrepareTimeout,
+			"snapshot prime exceeded the scheduler deadline",
+			fmt.Sprintf("startup_phase=scheduler_timeout: snapshot prime exceeded the %s cold-boot RPC budget", e.budgetFor(state.StateColdBooting)))
+		code = problem.Code
 	}
 	_ = whycopy.Decorate(problem, code, nil)
 
 	now := time.Now().UTC()
 	message := "snapshot prime failed: " + cause.Error()
+	if code == api.CodeStageSnapshotPrepareTimeout {
+		message = "snapshot prime failed: " + problem.Error()
+	}
 	if _, err := e.store.SetDeploymentFailedEx(markCtx, deploymentID, code, message, problem.Hint, problem.Why, problem.Fix, nil); err != nil {
 		e.log.Warn("sched: prime failure: mark deployment failed", "deployment", deploymentID, "err", err)
 	}
