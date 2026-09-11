@@ -770,6 +770,7 @@ func TestE2E_OrgLifecycle_PatchOrg(t *testing.T) {
 	if row.Name != "Renamed Inc." {
 		t.Errorf("persisted name = %q, want %q", row.Name, "Renamed Inc.")
 	}
+	originalPlan := row.Plan
 
 	// (b) A valid paid plan cannot be written directly. The provider-backed
 	// billing flow owns the entitlement transition, so the current plan stays
@@ -784,8 +785,8 @@ func TestE2E_OrgLifecycle_PatchOrg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OrgBySlug post-plan: %v", err)
 	}
-	if row.Plan != api.PlanHobby {
-		t.Errorf("persisted plan = %q, want hobby until provider confirmation", row.Plan)
+	if row.Plan != originalPlan {
+		t.Errorf("persisted plan = %q, want unchanged %q until provider confirmation", row.Plan, originalPlan)
 	}
 
 	// (c) Unknown plan rejected at the boundary with the
