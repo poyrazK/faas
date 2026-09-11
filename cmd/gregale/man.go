@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
 const manDocsTopic = "man"
@@ -101,21 +102,23 @@ func renderManTop(w io.Writer) {
 		_, _ = fmt.Fprintln(w, ".RI [ flags ]")
 	})
 	manSection(w, "DESCRIPTION", func(w io.Writer) {
-		_, _ = fmt.Fprintln(w, `.PP`)
 		_, _ = fmt.Fprintln(w, `gregale is the customer-facing CLI for the Gregale FaaS platform.`)
 		_, _ = fmt.Fprintln(w, `It is the primary interface to the platform; every action the platform`)
 		_, _ = fmt.Fprintln(w, `supports is reachable from this single binary.`)
 	})
 	manSection(w, "COMMANDS", func(w io.Writer) {
-		_, _ = fmt.Fprintln(w, `.PP`)
 		_, _ = fmt.Fprintln(w, `Run \fBgregale help\fP for the full command list. The most common verbs:`)
-		_, _ = fmt.Fprintln(w, ".TP")
-		_, _ = fmt.Fprintln(w, ".BR apps ,", " \\fIalerts\\fP,")
-		_, _ = fmt.Fprintln(w, ".BR deployments ,", " \\fIregistry\\fP,")
-		_, _ = fmt.Fprintln(w, ".BR webhooks ,", " \\fIinvocations\\fP,")
-		_, _ = fmt.Fprintln(w, ".BR crons ,", " \\fIdelayed-task\\fP,")
-		_, _ = fmt.Fprintln(w, ".BR orgs ,", " \\fIkeys\\fP,")
-		_, _ = fmt.Fprintln(w, ".BR mfa")
+		for _, command := range []string{
+			".BR apps , \\fIalerts\\fP",
+			".BR deployments , \\fIregistry\\fP",
+			".BR webhooks , \\fIinvocations\\fP",
+			".BR crons , \\fIdelayed-task\\fP",
+			".BR orgs , \\fIkeys\\fP",
+			".BR mfa",
+		} {
+			_, _ = fmt.Fprintln(w, ".TP")
+			_, _ = fmt.Fprintln(w, command)
+		}
 	})
 	manSection(w, "GLOBAL FLAGS", func(w io.Writer) {
 		_, _ = fmt.Fprintln(w, ".TP")
@@ -125,7 +128,6 @@ func renderManTop(w io.Writer) {
 		_, _ = fmt.Fprintln(w, `in the environment.`)
 	})
 	manSection(w, "EXAMPLES", func(w io.Writer) {
-		_, _ = fmt.Fprintln(w, `.PP`)
 		_, _ = fmt.Fprintln(w, `List your apps:`)
 		_, _ = fmt.Fprintln(w, `.PP`)
 		_, _ = fmt.Fprintln(w, ".RS 4")
@@ -176,33 +178,25 @@ func renderManCommand(w io.Writer, c cliCommand) {
 			// reader can distinguish them from optional flags at a
 			// glance — the conventional groff marker for "no brackets
 			// means required".
-			if f.Req {
-				_, _ = fmt.Fprintf(w, ".RI --%s ", f.Name)
-				_, _ = fmt.Fprint(w, ".IR value\n")
-			} else {
-				_, _ = fmt.Fprintf(w, ".RI [ --%s ", f.Name)
-				_, _ = fmt.Fprint(w, ".IR value ")
-				_, _ = fmt.Fprint(w, "]\n")
-			}
+			manSynopsisFlag(w, f)
 		}
 	})
 	manSection(w, "DESCRIPTION", func(w io.Writer) {
-		_, _ = fmt.Fprintf(w, ".PP\n%s\n", escapeRoff(c.Short))
+		writeRoffParagraph(w, c.Short)
 	})
 	if len(c.Subcommands) > 0 {
 		manSection(w, "SUBCOMMANDS", func(w io.Writer) {
-			_, _ = fmt.Fprintln(w, ".TP")
 			for _, s := range c.Subcommands {
-				_, _ = fmt.Fprintf(w, ".BR %s\n", s.Name)
-				_, _ = fmt.Fprintf(w, "%s\n", escapeRoff(s.Short))
 				_, _ = fmt.Fprintln(w, ".TP")
+				_, _ = fmt.Fprintf(w, ".BR %s\n", s.Name)
+				writeRoffParagraph(w, s.Short)
 			}
 		})
 	}
 	if len(c.Flags) > 0 {
 		manSection(w, "FLAGS", func(w io.Writer) {
-			_, _ = fmt.Fprintln(w, ".TP")
 			for _, f := range c.Flags {
+				_, _ = fmt.Fprintln(w, ".TP")
 				// Required flags get a "(required)" suffix in the
 				// FLAGS section so a reader scanning for the marker
 				// finds it without cross-referencing the SYNOPSIS.
@@ -212,11 +206,10 @@ func renderManCommand(w io.Writer, c cliCommand) {
 				} else {
 					_, _ = fmt.Fprintf(w, ".BR %s\n", flagHeader)
 				}
-				_, _ = fmt.Fprintf(w, "%s\n", escapeRoff(f.Short))
+				writeRoffParagraph(w, f.Short)
 				if len(f.ClosedSet) > 0 {
-					_, _ = fmt.Fprintf(w, "Allowed values: %s.\n", strings.Join(f.ClosedSet, ", "))
+					writeRoffParagraph(w, "Allowed values: "+strings.Join(f.ClosedSet, ", ")+".")
 				}
-				_, _ = fmt.Fprintln(w, ".TP")
 			}
 		})
 	}
@@ -232,7 +225,33 @@ func renderManCommand(w io.Writer, c cliCommand) {
 	manFooter(w)
 }
 
-// manHeader writes the page preamble only: .TH title section date source.
+// manSynopsisFlag emits one complete roff macro invocation. Embedding .IR
+// or another request in a .RI argument list makes the request visible as
+// text, so valued and boolean flags use separate, valid invocations.
+func manSynopsisFlag(w io.Writer, f cliFlag) {
+	name := `\-\-` + f.Name
+	value := f.Value
+	if value == "" && f.Req {
+		value = "value"
+	}
+	if value != "" {
+		if f.Req {
+			_, _ = fmt.Fprintf(w, ".RI %s \\~%s\n", name, value)
+			return
+		}
+		_, _ = fmt.Fprintf(w, ".RI [ %s \\~%s ]\n", name, value)
+		return
+	}
+	if f.Req {
+		_, _ = fmt.Fprintf(w, ".B %s\n", name)
+		return
+	}
+	_, _ = fmt.Fprintf(w, ".RB [ %s ]\n", name)
+}
+
+// manHeader writes the page preamble only: .TH title section date source
+// manual. The version lives in the manual field so the date slot remains a
+// valid ISO date for mandoc and rendered headers contain only one section.
 // The source field is the brand (`gregale`) for every page — the
 // per-command title (GREGALE-ALERTS) lives in the title slot, so
 // grepping the source label stays consistent across the whole
@@ -240,8 +259,33 @@ func renderManCommand(w io.Writer, c cliCommand) {
 // renderManCommand via manSection("NAME", ...) — keeping all .SH
 // openings in one place.
 func manHeader(w io.Writer, title, subtitle, source string) {
-	_, _ = fmt.Fprintf(w, ".TH %s 1 \"%s\" \"%s\"\n", title, gregaleVersion, source)
+	title = strings.TrimSuffix(strings.TrimSpace(title), "(1)")
+	_, _ = fmt.Fprintf(w, ".TH %s 1 \"%s\" \"%s\" \"%s\"\n", title, time.Now().UTC().Format("2006-01-02"), source, gregaleVersion)
 	_ = subtitle // subtitle is rendered inside the NAME section body
+}
+
+// writeRoffParagraph emits plain text wrapped to keep generated pages
+// readable under mandoc's line-length checks. It intentionally does not
+// emit a leading .PP: the caller places it immediately after .SH or .TP.
+func writeRoffParagraph(w io.Writer, text string) {
+	text = escapeRoff(text)
+	const width = 78
+	for len(text) > width {
+		cut := strings.LastIndexByte(text[:width+1], ' ')
+		if cut <= 0 {
+			cut = width
+		}
+		writeRoffLine(w, text[:cut])
+		text = strings.TrimLeft(text[cut:], " ")
+	}
+	writeRoffLine(w, text)
+}
+
+func writeRoffLine(w io.Writer, text string) {
+	if strings.HasPrefix(text, ".") {
+		text = "\\&" + text
+	}
+	_, _ = fmt.Fprintln(w, text)
 }
 
 // manSection writes a section header followed by the body callback.

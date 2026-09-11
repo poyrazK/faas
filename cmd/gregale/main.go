@@ -86,7 +86,7 @@ func main() {
 
 func init() {
 	// Tier A8 / ADR-083: gregaleVersion is the value substituted into
-	// the man page header (`.TH GREGALE(1) "version"`). Wired once
+	// the man page header (`.TH GREGALE 1 "date" "gregale" "version"`). Wired once
 	// at process boot from wire.Version so the man page reflects the
 	// binary the user is running, not a hardcoded literal.
 	gregaleVersion = wire.Version

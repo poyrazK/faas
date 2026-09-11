@@ -44,7 +44,7 @@ func TestCmdMan_NoArgs(t *testing.T) {
 		t.Errorf("cmdMan(nil) = %d, want 0", code)
 	}
 	out := buf.String()
-	for _, want := range []string{".TH GREGALE(1)", ".SH NAME", ".SH SYNOPSIS", ".SH DESCRIPTION", ".SH COMMANDS", ".SH GLOBAL FLAGS", ".SH EXAMPLES", ".SH SEE ALSO"} {
+	for _, want := range []string{".TH GREGALE 1", ".SH NAME", ".SH SYNOPSIS", ".SH DESCRIPTION", ".SH COMMANDS", ".SH GLOBAL FLAGS", ".SH EXAMPLES", ".SH SEE ALSO"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("renderManTop missing section %q", want)
 		}
@@ -53,7 +53,7 @@ func TestCmdMan_NoArgs(t *testing.T) {
 
 // TestCmdMan_ValidCommand pins the per-command branch. Picks the
 // "manifest" command (always present in cliCommands) and asserts
-// the per-command header includes "GREGALE-MANIFEST(1)".
+// the per-command header includes "GREGALE-MANIFEST 1".
 func TestCmdMan_ValidCommand(t *testing.T) {
 	resetManGlobals(t)
 	var buf bytes.Buffer
@@ -61,7 +61,7 @@ func TestCmdMan_ValidCommand(t *testing.T) {
 	if code := cmdMan([]string{"manifest"}); code != 0 {
 		t.Errorf("cmdMan(manifest) = %d, want 0", code)
 	}
-	if !strings.Contains(buf.String(), "GREGALE-MANIFEST(1)") {
+	if !strings.Contains(buf.String(), "GREGALE-MANIFEST 1") {
 		t.Errorf("renderManCommand missing title:\n%s", buf.String())
 	}
 }
@@ -152,7 +152,7 @@ func TestManHeader(t *testing.T) {
 	var buf bytes.Buffer
 	manHeader(&buf, "TEST(1)", "test sub", "gregale")
 	got := buf.String()
-	if !strings.Contains(got, ".TH TEST(1) 1") {
+	if !strings.Contains(got, ".TH TEST 1") {
 		t.Errorf("manHeader missing title section: %q", got)
 	}
 	if !strings.Contains(got, "gregale") {

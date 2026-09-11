@@ -5,14 +5,10 @@
 // no external process invocation, table-driven where the shape
 // is uniform across backends.
 //
-// The bash -n / groff -man syntax-check tests are intentionally
-// NOT included here — both tools are absent on most dev boxes
-// (CI's metal runner does have them, but unit tests must pass on
-// any machine per CLAUDE.md "make test"). A future PR can add
-// `//go:build bash_complete` and `//go:build roff_complete`
-// test files for the integrated validation when the toolchain
-// is reliably available; today the structural tests below are
-// the tripwire.
+// The shell syntax checks remain pure-string tests, while the man renderer
+// also runs mandoc when it is available. That keeps local environments
+// without mandoc usable while making the generated roff contract executable
+// in CI and on developer machines that have the standard linter installed.
 
 package main
 
@@ -270,7 +266,7 @@ func TestMan_TopLevel_ContainsNameAndSynopsis(t *testing.T) {
 	var buf bytes.Buffer
 	renderManTop(&buf)
 	out := buf.String()
-	for _, want := range []string{".TH GREGALE(1)", ".SH NAME", ".SH SYNOPSIS", ".SH SEE ALSO"} {
+	for _, want := range []string{".TH GREGALE 1", ".SH NAME", ".SH SYNOPSIS", ".SH SEE ALSO"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("man top: missing %q", want)
 		}
@@ -285,10 +281,62 @@ func TestMan_CommandPage_ContainsSubcommandList(t *testing.T) {
 	var buf bytes.Buffer
 	renderManCommand(&buf, c)
 	out := buf.String()
-	for _, want := range []string{".TH GREGALE-ALERTS(1)", ".SH SUBCOMMANDS", "list", "add", "rotate-secret"} {
+	for _, want := range []string{".TH GREGALE-ALERTS 1", ".SH SUBCOMMANDS", "list", "add", "rotate-secret"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("man alerts: missing %q", want)
 		}
+	}
+}
+
+func TestMan_CommandSynopsisHasReadableFlags(t *testing.T) {
+	c, ok := lookupCliCommand("deploy")
+	if !ok {
+		t.Fatal("deploy not in manifest")
+	}
+	var buf bytes.Buffer
+	renderManCommand(&buf, c)
+	out := buf.String()
+	if strings.Contains(out, ".IR") {
+		t.Fatalf("synopsis leaked a nested roff request: %q", out)
+	}
+	if !strings.Contains(out, `.RI [ \-\-image \~REF ]`) {
+		t.Errorf("synopsis missing valid valued flag macro: %q", out)
+	}
+}
+
+func TestManPages_LintWithMandoc(t *testing.T) {
+	mandoc, err := exec.LookPath("mandoc")
+	if err != nil {
+		t.Skipf("mandoc not available: %v", err)
+	}
+	cases := []struct {
+		name   string
+		render func(io.Writer)
+	}{
+		{name: "top", render: renderManTop},
+		{name: "deploy", render: func(w io.Writer) {
+			c, ok := lookupCliCommand("deploy")
+			if !ok {
+				t.Fatal("deploy not in manifest")
+			}
+			renderManCommand(w, c)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var roff bytes.Buffer
+			tc.render(&roff)
+			cmd := exec.Command(mandoc, "-Tlint")
+			cmd.Stdin = strings.NewReader(roff.String())
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("mandoc lint: %v\n%s\nroff:\n%s", err, stderr.String(), roff.String())
+			}
+			if got := strings.TrimSpace(stderr.String()); got != "" {
+				t.Fatalf("mandoc lint emitted diagnostics: %s", got)
+			}
+		})
 	}
 }
 
@@ -483,7 +531,7 @@ func TestMan_PerCommandSourceLabelIsGregale(t *testing.T) {
 	out := buf.String()
 	// The header line must end with the brand ("gregale") in the
 	// source slot — not the uppercased page slug ("GREGALE-ALERTS").
-	if !strings.Contains(out, `.TH GREGALE-ALERTS(1)`) {
+	if !strings.Contains(out, `.TH GREGALE-ALERTS 1`) {
 		t.Errorf("alerts man: title missing or wrong:\n%s", out)
 	}
 	if strings.Contains(out, `"GREGALE-ALERTS"`) {
