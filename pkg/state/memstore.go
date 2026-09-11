@@ -11093,8 +11093,9 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 }
 
 // UpsertComputeNodeFromOperator mirrors pgstore's operator-side
-// upsert (apid POST /v1/compute-nodes). On conflict, every field
-// is taken from the new row — the operator's POST wins.
+// upsert (apid POST /v1/compute-nodes). On conflict, every field is taken
+// from the new row — including an explicit lifecycle — so deferred
+// enrollment is atomic. Empty lifecycle defaults to active.
 func (m *MemStore) UpsertComputeNodeFromOperator(_ context.Context, node ComputeNode) (ComputeNode, error) {
 	return m.upsertComputeNodeLocked(node, false /* preserveTargetURLOnConflict */)
 }
@@ -11176,7 +11177,13 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 	if n.LastHeartbeatAt.IsZero() {
 		n.LastHeartbeatAt = n.CreatedAt
 	}
-	if existing == nil || !preserveTargetURLOnConflict {
+	if !preserveTargetURLOnConflict {
+		if n.Lifecycle == "" {
+			n.Lifecycle = NodeLifecycleActive
+		}
+	} else if existing == nil {
+		// vmmd cold registration always starts active: the daemon is healthy
+		// by definition and does not own the operator lifecycle field.
 		n.Lifecycle = NodeLifecycleActive
 	} else {
 		// vmmd registration refreshes capacity but must not undo an

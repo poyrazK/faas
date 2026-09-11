@@ -14141,9 +14141,10 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 
 // UpsertComputeNodeFromOperator is the apid POST /v1/compute-nodes
 // write path. The operator owns target_url; the on-conflict
-// branch re-applies target_url from the excluded row so the
-// operator's POST wins on every field. Identical schema to
-// UpsertComputeNode today — split out as a distinct method so
+// branch re-applies target_url and lifecycle from the excluded row so the
+// operator's POST wins on every field. Empty lifecycle defaults to active;
+// an explicit unavailable lifecycle supports atomic deferred enrollment.
+// Split out as a distinct method so
 // the ownership boundary is visible at the call site
 // (cmd/apid/compute_nodes.go) and so future divergence (e.g.
 // an operator-side COALESCE for region/zone that vmmd shouldn't
@@ -14157,6 +14158,10 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 	if vcpuBudget <= 0 {
 		vcpuBudget = api.VCPUSlots
 	}
+	lifecycle := node.Lifecycle
+	if lifecycle == "" {
+		lifecycle = NodeLifecycleActive
+	}
 	// Operator owns the release-bundle metadata too: PR-X secrets init
 	// stamps host_certificate / cert_fingerprint at first contact, the
 	// renderer (PR-2) stamps manifest_hash + role, release install
@@ -14167,13 +14172,13 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 	row := s.pool.QueryRow(ctx, `
 		insert into compute_nodes
 		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
-		     region, zone, gateway_target_url,
+		     region, zone, schedd_target_url, gateway_target_url,
 		     public_ip, public_ip_set_at,
 		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
-		values ($1, $2, $3, $4, $5, $6, $7, 'active'::compute_node_lifecycle,
-		        $8, $9, $10,
-		        $11, $12,
-		        $13, $14, $15, $16, $17, $18)
+		values ($1, $2, $3, $4, $5, $6, $7, $8::compute_node_lifecycle,
+		        $9, $10, $11, $12,
+		        $13, $14,
+		        $15, $16, $17, $18, $19, $20)
 		on conflict (name) do update
 		  set target_url          = excluded.target_url,
 		      vpcpus              = excluded.vpcpus,
@@ -14181,7 +14186,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		      max_concurrency     = excluded.max_concurrency,
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
-		      lifecycle           = 'active'::compute_node_lifecycle,
+		      lifecycle           = excluded.lifecycle,
 		      region              = excluded.region,
 		      zone                = excluded.zone,
 		      schedd_target_url   = excluded.schedd_target_url,
@@ -14199,8 +14204,8 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
-		node.AdmissionCeilingMB, vcpuBudget,
-		node.Region, node.Zone, node.GatewayTargetURL,
+		node.AdmissionCeilingMB, vcpuBudget, lifecycle,
+		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
 		node.Role, node.Generation)

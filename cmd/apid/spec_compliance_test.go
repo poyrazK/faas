@@ -260,6 +260,7 @@ var dtoExclude = map[string]bool{
 	"CliAuthExchangeRequest":       true, // POST /v1/cli-auth/exchange
 	"CliAuthExchangeResponse":      true, // POST /v1/cli-auth/exchange
 	"CliAuthStatus":                true, // enum used by CLI auth
+	"ComputeNodeEnrollmentRequest": true, // authenticated operator-only compute-node mutation payload
 	"ComputeNodeOperatorResponse":  true, // authenticated operator-only compute-node projection
 	"StatusPage":                   true, // GET /status/slo.json (public status)
 	"SessionsRevokeRequest":        true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
