@@ -89,6 +89,30 @@ func TestDomainsShow_JSONMode(t *testing.T) {
 	}
 }
 
+func TestDomainsShow_FAASJSONMode(t *testing.T) {
+	resetJSONOut(t)
+	t.Setenv("FAAS_JSON", "1")
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+	authedFakeAPI(t,
+		`{"domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef","verified":true,"cert_not_after":"2026-09-18T00:00:00Z","cert_sans":["app.example.com","www.example.com"]}`,
+		http.StatusOK,
+	)
+
+	if code := run([]string{"domains", "show", "app.example.com"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got api.CustomDomainResponse
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, out.String())
+	}
+	if got.Domain != "app.example.com" || got.AppID == "" || !got.Verified {
+		t.Fatalf("FAAS_JSON response = %+v, want verified domain response", got)
+	}
+}
+
 func TestDomainsShow_MissingArgExitsOne(t *testing.T) {
 	resetJSONOut(t)
 	authedFakeAPI(t, "", http.StatusOK)
