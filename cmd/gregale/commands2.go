@@ -1955,10 +1955,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	// Fingerprint local source bytes before the first deployment mutation so
 	// the default logical retry key follows the exact archive being shipped.
-	// An explicit key skips this extra read; the receipt still hashes the
-	// archive after upload when JSON output needs the provenance field.
+	// Normal deploys with an explicit key skip this extra read; previews still
+	// fingerprint the archive so their source identity is meaningful.
 	sourceSHA256 := ""
-	if *tarball != "" && strings.TrimSpace(*idempotencyKey) == "" {
+	// Preview requests always need the digest so the diff can identify the
+	// exact source archive, even when the user supplied an explicit
+	// idempotency key. Normal deploys retain the cheaper historical path.
+	if *tarball != "" && (strings.TrimSpace(*idempotencyKey) == "" || *diff) {
 		sourceSHA256, err = tarballSHA256(*tarball)
 		if err != nil {
 			// Keep the established CLI error title for invalid customer
@@ -2004,6 +2007,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				*deployOnly, *deployExclude, *deployShowAffected, *diffJSON)
 		}
 		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
+		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, *runtime, *handler, sourceSHA256, *image != "")
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
 		opts.Strict = !*diffLenient

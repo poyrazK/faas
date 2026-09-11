@@ -100,6 +100,11 @@ type Pending struct {
 	// the baseline's LatestDeployment differs, the engine emits
 	// [Break] "would_create_deployment".
 	Manifest *api.AppManifest
+	// BuildPlan is the resolved source intent for a deploy preview.
+	// It is populated by the CLI from local detection and by apid from
+	// the wire request. A non-nil plan makes a fresh-app preview explicit
+	// even when all resource fields use server defaults.
+	BuildPlan *api.BuildPlan
 	// ImageRef is the per-deployment image ref (matches
 	// [api.CreateDeploymentRequest.Image]). Empty string = no
 	// image deploy (e.g. tarball-only). When non-empty and the

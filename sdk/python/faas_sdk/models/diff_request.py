@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.app_manifest import AppManifest
+    from ..models.build_plan import BuildPlan
     from ..models.create_cron_request import CreateCronRequest
     from ..models.create_edge_rule_request import CreateEdgeRuleRequest
     from ..models.diff_app_config_patch import DiffAppConfigPatch
@@ -63,6 +64,10 @@ class DiffRequest:
     scope: None | str | Unset = UNSET
     """Pending per-deployment env scope (ADR-091 / SAFE-RELEASES production-leveling Stream E). Compared against
     Baseline.LatestScope; mismatch emits a scope_mismatch break. Empty = default."""
+    build_plan: BuildPlan | Unset = UNSET
+    """Effective build plan surfaced on DeploymentResponse (issue #961 / zero-config profile PR). Captured from the
+    exact source archive at enqueue time and retained after spool cleanup; legacy rows fall back to marker detection
+    when the spool is still available. Embedded on DeploymentResponse; never returned by a dedicated route."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,6 +105,10 @@ class DiffRequest:
         else:
             scope = self.scope
 
+        build_plan: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.build_plan, Unset):
+            build_plan = self.build_plan.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -117,12 +126,15 @@ class DiffRequest:
             field_dict["edge_rules"] = edge_rules
         if scope is not UNSET:
             field_dict["scope"] = scope
+        if build_plan is not UNSET:
+            field_dict["build_plan"] = build_plan
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_manifest import AppManifest
+        from ..models.build_plan import BuildPlan
         from ..models.create_cron_request import CreateCronRequest
         from ..models.create_edge_rule_request import CreateEdgeRuleRequest
         from ..models.diff_app_config_patch import DiffAppConfigPatch
@@ -179,6 +191,13 @@ class DiffRequest:
 
         scope = _parse_scope(d.pop("scope", UNSET))
 
+        _build_plan = d.pop("build_plan", UNSET)
+        build_plan: BuildPlan | Unset
+        if isinstance(_build_plan, Unset):
+            build_plan = UNSET
+        else:
+            build_plan = BuildPlan.from_dict(_build_plan)
+
         diff_request = cls(
             app_config=app_config,
             image=image,
@@ -187,6 +206,7 @@ class DiffRequest:
             crons=crons,
             edge_rules=edge_rules,
             scope=scope,
+            build_plan=build_plan,
         )
 
         diff_request.additional_properties = d

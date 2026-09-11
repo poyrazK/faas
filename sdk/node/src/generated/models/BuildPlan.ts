@@ -34,5 +34,13 @@ export type BuildPlan = {
    * App class from `app.Type` — `app` for plain apps, `function` for function rewrites (spec §4.2).
    */
   class?: 'app' | 'function';
+  /**
+   * Function-layer export (for example `handler.handler`). Distinct from the process entrypoint.
+   */
+  handler?: string | null;
+  /**
+   * Content identity of the exact source archive being previewed. Source contents are never returned.
+   */
+  source_sha256?: string | null;
 };
 

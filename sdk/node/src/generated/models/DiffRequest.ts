@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppManifest } from './AppManifest.js';
+import type { BuildPlan } from './BuildPlan.js';
 import type { CreateCronRequest } from './CreateCronRequest.js';
 import type { CreateEdgeRuleRequest } from './CreateEdgeRuleRequest.js';
 import type { DiffAppConfigPatch } from './DiffAppConfigPatch.js';
@@ -40,5 +41,9 @@ export type DiffRequest = {
    * Pending per-deployment env scope (ADR-091 / SAFE-RELEASES production-leveling Stream E). Compared against Baseline.LatestScope; mismatch emits a scope_mismatch break. Empty = default.
    */
   scope?: string | null;
+  /**
+   * Resolved source/workload intent for a deploy preview. Supplying this makes fresh app creation explicit even when resource values use server defaults.
+   */
+  build_plan?: BuildPlan;
 };
 

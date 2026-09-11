@@ -28,12 +28,12 @@
 //
 // App-not-found path: diff is a "what if" query, so we don't 404
 // it. Baseline.App stays nil; the engine emits would-create-app
-// Changes from the pointer-aware AppConfigPatch walk; the quota
-// gate still fires against the customer's plan. The customer
-// gets a 200 with blocking=true if the proposed fresh-app would
+// Changes from the pointer-aware AppConfigPatch and optional BuildPlan
+// walk; the quota gate still fires against the customer's plan. The
+// customer gets a 200 with blocking=true if the proposed fresh-app would
 // breach quotas.
 //
-// Empty body (no AppConfig, no Manifest, no Env/Cron/EdgeRules):
+// Empty body (no AppConfig, BuildPlan, Manifest, Env/Cron/EdgeRules):
 // valid. Returns 200 with an empty Diff{Changes:[], Breaks:[]} and
 // blocking=false (plan quota gate against a zero-value Pending
 // never fires). Useful for the "preview current state" CI smoke
@@ -101,9 +101,10 @@ func (s *server) diffApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		}
 	case errors.Is(err, state.ErrNotFound):
 		// Fresh-app preview path. Fall through with zero-value
-		// app; buildDiffBaseline handles App == nil by emitting
-		// would-create-app Changes from the AppConfigPatch walk.
-		app = state.App{AccountID: acct.ID, Slug: slug}
+		// app; buildDiffBaseline skips live-state reads and leaves
+		// Baseline.App nil so the engine can emit the explicit
+		// would-create-app/source-deployment changes.
+		app = state.App{}
 	default:
 		api.WriteProblem(w, api.ErrCapacity("could not load app"))
 		return
@@ -125,7 +126,7 @@ func (s *server) diffApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	// Run the engine. Plan is set from acct.Plan (the customer
 	// who called this endpoint), not from the baseline's app —
 	// which has no plan field (dto.go).
-	d := deploydiff.Compute(app.Slug, acct.Plan, baseline, pending)
+	d := deploydiff.Compute(slug, acct.Plan, baseline, pending)
 
 	// Per-account cron count for the per-account quota branch
 	// (CronLimitPerAccount). The CLI does the same via
@@ -170,6 +171,13 @@ func (s *server) diffApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 // filter out cross-account rows defensively (ListAllAppEnv takes
 // (accountID, appID) and the SQL JOIN scopes on both).
 func (s *server) buildDiffBaseline(ctx context.Context, app state.App, acct state.Account) (deploydiff.Baseline, error) {
+	// A missing slug is represented by a zero-ID app sentinel from the
+	// handler. Do not turn that sentinel into a non-nil baseline app: doing
+	// so suppresses the engine's fresh-app branch and also causes empty-ID
+	// deployment/env reads to fail as a misleading 503.
+	if app.ID == "" {
+		return deploydiff.EmptyBaseline(), nil
+	}
 	out := deploydiff.Baseline{
 		App:        appResponsePtr(s.appResponse(app, acct.Plan)),
 		EnvByScope: map[string][]string{},
@@ -286,6 +294,7 @@ func diffPendingFromRequest(req *api.DiffRequest) deploydiff.Pending {
 	}
 	p.Manifest = req.Manifest
 	p.ImageRef = req.ImageRef
+	p.BuildPlan = req.BuildPlan
 	// SAFE-RELEASES production-leveling Stream E: thread the
 	// pending deployment's scope so the engine can emit a
 	// `scope_mismatch` SeverityWarn break when the pending

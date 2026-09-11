@@ -2024,9 +2024,16 @@ type BuildPlan struct {
 	Runtime    string `json:"runtime,omitempty"`
 	Version    string `json:"version,omitempty"`
 	Entrypoint string `json:"entrypoint,omitempty"`
+	// Handler is the function-layer export (for example
+	// "handler.handler"). It is distinct from Entrypoint, which is
+	// the process start command used by app-shaped deployments.
+	Handler    string `json:"handler,omitempty"`
 	Port       int    `json:"port,omitempty"`
 	HealthPath string `json:"health_path,omitempty"`
 	Class      string `json:"class,omitempty"` // app|function
+	// SourceSHA256 identifies the exact source archive being previewed.
+	// It is a non-secret content identity, not source contents.
+	SourceSHA256 string `json:"source_sha256,omitempty"`
 }
 
 // UpdateDeploymentRequest is the body for PATCH /v1/deployments/{id}

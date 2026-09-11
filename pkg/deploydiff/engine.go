@@ -42,6 +42,11 @@ func Compute(slug string, plan Plan, baseline Baseline, pending Pending) Diff {
 	// 1. App-level scalars.
 	diffAppConfig(&out, baseline.App, pending.AppConfig)
 
+	// 1b. Source/workload intent. Resource defaults are intentionally
+	// omitted from deploy requests, so a fresh preview must carry an
+	// explicit app/deployment shape or it can look like a no-op.
+	diffBuildPlan(&out, baseline, pending.BuildPlan)
+
 	// 2. Per-scope env vars.
 	diffEnvByScope(&out, baseline.EnvByScope, pending.EnvByScope)
 
@@ -95,6 +100,91 @@ func Compute(slug string, plan Plan, baseline Baseline, pending Pending) Diff {
 	diffScopeMismatch(&out, baseline.LatestScope, pending.Scope)
 
 	return out
+}
+
+// diffBuildPlan compares the resolved source intent that a deploy would
+// persist. The BuildPlan is deliberately separate from AppManifest: the
+// latter is a runtime handoff, while this block describes the app/function
+// classification and the source identity known before a build runs.
+func diffBuildPlan(out *Diff, baseline Baseline, pending *api.BuildPlan) {
+	if pending == nil {
+		return
+	}
+
+	if baseline.App == nil {
+		appAfter := map[string]string{}
+		if pending.Class != "" {
+			appAfter["class"] = pending.Class
+		}
+		if pending.Framework != "" {
+			appAfter["framework"] = pending.Framework
+		}
+		if pending.Runtime != "" {
+			appAfter["runtime"] = pending.Runtime
+		}
+		if pending.Handler != "" {
+			appAfter["handler"] = pending.Handler
+		}
+		if len(appAfter) > 0 {
+			out.Changes = append(out.Changes, Change{
+				Field: "app", Kind: ChangeAdd, After: AsAny(appAfter),
+			})
+		}
+		if pending.SourceSHA256 != "" {
+			out.Changes = append(out.Changes, Change{
+				Field: "deployment", Kind: ChangeAdd,
+				After: AsAny(map[string]string{"source_sha256": pending.SourceSHA256}),
+			})
+		}
+		return
+	}
+
+	// Existing-app previews stay field-oriented. App fields come from the
+	// durable app row; framework/handler/source identity come from the latest
+	// deployment's BuildPlan when that provenance is available.
+	if pending.Class != "" && pending.Class != baseline.App.Type {
+		out.Changes = append(out.Changes, Change{
+			Field: "app.class", Kind: ChangeModify,
+			Before: AsAny(baseline.App.Type), After: AsAny(pending.Class),
+		})
+	}
+	if pending.Runtime != "" && pending.Runtime != baseline.App.Runtime {
+		out.Changes = append(out.Changes, Change{
+			Field: "app.runtime", Kind: ChangeModify,
+			Before: AsAny(baseline.App.Runtime), After: AsAny(pending.Runtime),
+		})
+	}
+
+	var basePlan *api.BuildPlan
+	if baseline.LatestDeployment != nil {
+		basePlan = baseline.LatestDeployment.BuildPlan
+	}
+	if basePlan != nil {
+		if pending.Framework != "" && pending.Framework != basePlan.Framework {
+			out.Changes = append(out.Changes, Change{
+				Field: "deployment.framework", Kind: ChangeModify,
+				Before: AsAny(basePlan.Framework), After: AsAny(pending.Framework),
+			})
+		}
+		if pending.Handler != "" && pending.Handler != basePlan.Handler {
+			out.Changes = append(out.Changes, Change{
+				Field: "deployment.handler", Kind: ChangeModify,
+				Before: AsAny(basePlan.Handler), After: AsAny(pending.Handler),
+			})
+		}
+	}
+	if pending.SourceSHA256 != "" {
+		baseSource := ""
+		if basePlan != nil {
+			baseSource = basePlan.SourceSHA256
+		}
+		if pending.SourceSHA256 != baseSource {
+			out.Changes = append(out.Changes, Change{
+				Field: "deployment.source_sha256", Kind: ChangeModify,
+				Before: AsAny(baseSource), After: AsAny(pending.SourceSHA256),
+			})
+		}
+	}
 }
 
 // diffScopeMismatch emits a SeverityWarn `scope_mismatch` Break
