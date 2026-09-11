@@ -87,6 +87,27 @@ func TestLocalBackendPutOverwrite(t *testing.T) {
 	}
 }
 
+func TestLocalBackendPutPublishesSharedReadMode(t *testing.T) {
+	root := t.TempDir()
+	be, err := NewLocalStorageBackend(root)
+	if err != nil {
+		t.Fatalf("NewLocalStorageBackend: %v", err)
+	}
+	path := filepath.Join(root, "base", "runner.ext4.digest")
+	for i, content := range []string{"first", "replacement"} {
+		if err := be.Put(context.Background(), "base/runner.ext4.digest", strings.NewReader(content)); err != nil {
+			t.Fatalf("Put %d: %v", i+1, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat %d: %v", i+1, err)
+		}
+		if got := info.Mode().Perm(); got != 0o644 {
+			t.Fatalf("mode after Put %d = %04o, want 0644", i+1, got)
+		}
+	}
+}
+
 // TestLocalBackendDeleteRemoves covers the success path: Put, Delete,
 // Get returns ErrNotFound. The chain is the same as imaged's
 // cleanupDeploymentFiles flow.
