@@ -4,9 +4,13 @@
 /* eslint-disable */
 import type { Invocation } from './Invocation.js';
 /**
- * Page of invocations; ordered by created_at DESC, id DESC. Pass the LAST id of the returned slice as the next `?before=` to load older.
+ * Page of invocations; ordered by created_at DESC, id DESC. When present, pass next_before as `?before=` to load older rows.
  */
 export type ListInvocationsResponse = {
   invocations: Array<Invocation>;
+  /**
+   * ID cursor for the next older page; omitted when this page contains fewer rows than requested.
+   */
+  next_before?: string;
 };
 
