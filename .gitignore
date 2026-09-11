@@ -60,3 +60,6 @@ vmlinux-*
 /.cache/
 # Temporary credentials emitted by google-github-actions/auth.
 gha-creds-*.json
+
+# Cloudflare Worker deploy copies (the pinned values live in wrangler.toml.example)
+deploy/cloudflare/*/wrangler.toml
