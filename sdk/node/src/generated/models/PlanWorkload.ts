@@ -36,3 +36,4 @@ export type PlanWorkload = {
   existing_app_id?: string;
   detected_by?: PlanDetectedBy;
 };
+
