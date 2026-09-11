@@ -130,13 +130,16 @@ func TestWaitForDevSourceChangeDebouncesWriteBurst(t *testing.T) {
 			writesDone <- writeErr
 			return
 		}
-		time.Sleep(60 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		writesDone <- os.WriteFile(source, []byte("{\"step\":2,\"done\":true}\n"), 0o600)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// Use the production settle interval so scheduler contention from the full
+	// repository test run cannot delay the writer past the artificial debounce
+	// window and turn this into a timing lottery.
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	got, err := waitForDevSourceChangeWithIntervals(ctx, dir, before, 5*time.Millisecond, 80*time.Millisecond)
+	got, err := waitForDevSourceChangeWithIntervals(ctx, dir, before, 5*time.Millisecond, devWatchSettleInterval)
 	if err != nil {
 		t.Fatal(err)
 	}
