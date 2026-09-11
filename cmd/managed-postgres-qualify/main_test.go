@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -131,4 +132,95 @@ func TestReadQualificationArtifactRejectsTrailingData(t *testing.T) {
 	if _, err := readQualificationArtifact(path); err == nil {
 		t.Fatal("trailing artifact data was accepted")
 	}
+}
+
+func TestConfigurationPreflightIsProviderFreeAndReportsWarnings(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "managed-postgres.json")
+	config := `{
+  "default_region": "eu-central-1",
+  "defaults": {"eu-central-1": "neon-eu"},
+  "max_databases_per_account": 3,
+  "provisioning_enabled": false,
+  "usage": {
+    "enabled": false,
+    "collection_interval_seconds": 300,
+    "window_seconds": 3600,
+    "stale_after_seconds": 10800,
+    "max_monthly_cost_millicents": 0,
+    "max_monthly_compute_unit_seconds": 0,
+    "max_monthly_storage_byte_seconds": 0,
+    "max_monthly_history_byte_seconds": 0,
+    "max_monthly_egress_bytes": 0,
+    "compute_unit_hour_millicents": 0,
+    "storage_gib_hour_millicents": 0,
+    "history_gib_hour_millicents": 0,
+    "egress_gib_millicents": 0
+  },
+  "backends": [{
+    "id": "neon-eu",
+    "driver": "neon",
+    "region": "eu-central-1",
+    "namespace": "org-preflight",
+    "settings": {
+      "region_id": "aws-eu-central-1",
+      "database_name": "gregale",
+      "max_storage_bytes": "107374182400",
+      "max_restore_window_seconds": "604800"
+    },
+    "secret_env": {"api-key": "FAAS_NEON_API_KEY"}
+  }]
+}`
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{
+		"FAAS_MANAGED_POSTGRES_CONFIG":              configPath,
+		managedpostgres.EnvironmentEnv:              "staging",
+		"FAAS_NEON_API_KEY":                         "preflight-only-secret",
+		"FAAS_MANAGED_POSTGRES_QUALIFY_RESOURCE_ID": "preflight-resource",
+		"FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT":     "10m",
+		managedpostgres.QualificationApprovalTTLEnv: "24h",
+		managedpostgres.CanaryAccountsEnv:           "account-a,account-b",
+	}
+	var output, errorOutput bytes.Buffer
+	if exitCode := runConfigurationPreflight(func(key string) string { return values[key] }, &output, &errorOutput); exitCode != 0 {
+		t.Fatalf("preflight exit=%d stderr=%q stdout=%s", exitCode, errorOutput.String(), output.String())
+	}
+	var result configurationPreflightOutput
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("decode preflight: %v", err)
+	}
+	if !result.Readiness.Ready || result.BackendID != "neon-eu" || result.Spec == nil {
+		t.Fatalf("preflight result = %+v", result)
+	}
+	if !containsString(result.Warnings, "usage_policy_disabled") || !containsString(result.Warnings, "restore_usage_not_isolated") {
+		t.Fatalf("preflight warnings = %v", result.Warnings)
+	}
+}
+
+func TestConfigurationPreflightFailsClosedBeforeLoadingProvider(t *testing.T) {
+	values := map[string]string{
+		managedpostgres.EnvironmentEnv: "production",
+	}
+	var output, errorOutput bytes.Buffer
+	if exitCode := runConfigurationPreflight(func(key string) string { return values[key] }, &output, &errorOutput); exitCode == 0 {
+		t.Fatalf("preflight unexpectedly passed: stdout=%s stderr=%s", output.String(), errorOutput.String())
+	}
+	var result configurationPreflightOutput
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("decode preflight: %v", err)
+	}
+	if result.Readiness.Ready || !containsString(result.Readiness.Reasons, "configuration_path_missing") || !containsString(result.Readiness.Reasons, "environment_not_staging") {
+		t.Fatalf("preflight readiness = %+v", result.Readiness)
+	}
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
