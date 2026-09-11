@@ -266,6 +266,38 @@ func TestAdmitMigrationKindHonoursRAMCeiling(t *testing.T) {
 	}
 }
 
+// A snapshot prime is a replacement reservation: the old revision remains
+// serving until the new revision has been booted and captured. It must still
+// consume node RAM/vCPU, but it must not consume the app's serving
+// max_concurrency slot.
+func TestAdmitSnapshotPrimeKindSkipsServingConcurrency(t *testing.T) {
+	l := NewLedger()
+	request := Request{
+		AppID: "app-1", Plan: api.PlanScale, RAMMB: 1024, VCPU: 4,
+		MaxConcurrency: 1, NodeID: "node-a", NodeCeilingMB: 100000,
+		VCPUBudget: 160,
+	}
+	request.Instance = "old-live"
+	if err := l.Admit(request); err != nil {
+		t.Fatalf("admit old live instance: %v", err)
+	}
+	request.Instance = "replacement-prime"
+	request.Kind = KindSnapshotPrime
+	if err := l.Admit(request); err != nil {
+		t.Fatalf("admit snapshot prime alongside maxed app: %v", err)
+	}
+	if got := l.Concurrency(request.AppID); got != 1 {
+		t.Fatalf("serving concurrency = %d, want 1 (prime must not bump it)", got)
+	}
+	if got := l.ResidentRAMForNode(request.NodeID); got != 2*(request.RAMMB+api.PerVMOverheadMB) {
+		t.Fatalf("resident RAM = %d, want both live and prime reservations", got)
+	}
+	l.Release("replacement-prime")
+	if got := l.Concurrency(request.AppID); got != 1 {
+		t.Fatalf("serving concurrency after prime release = %d, want 1", got)
+	}
+}
+
 // Tier A5 / ADR-066: a KindWake reservation with Plan unset still
 // fails fast (the existing pre-Tier-A5 contract). Pinning this
 // guards the KindMigration branch from being copy-pasted and

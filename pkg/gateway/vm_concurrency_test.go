@@ -135,6 +135,25 @@ func TestEffectiveVMConcurrencyLimitCapsFunctionWorkerPool(t *testing.T) {
 	}
 }
 
+func TestEffectiveAppConcurrencyLimitUsesAppOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		app  App
+		plan int
+		want int
+	}{
+		{name: "default uses plan", app: App{}, plan: 20, want: 20},
+		{name: "app override", app: App{MaxConcurrency: 1}, plan: 20, want: 1},
+		{name: "override is capped by plan", app: App{MaxConcurrency: 25}, plan: 20, want: 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := effectiveAppConcurrencyLimit(tc.app, tc.plan); got != tc.want {
+				t.Fatalf("effectiveAppConcurrencyLimit() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAcquireVMTargetMovesWaiterToNewSibling(t *testing.T) {
 	b := &fakeBackend{app: App{ID: "app", Type: AppTypeFunction}, targets: []Target{{NodeID: "node", InstanceID: "first"}}}
 	h := NewHandlerWith(b, NewMetrics(), nil)

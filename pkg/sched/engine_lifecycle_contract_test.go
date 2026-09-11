@@ -65,3 +65,63 @@ func TestPrimeSealedEnvFailureReleasesAdmissionImmediately(t *testing.T) {
 		t.Fatalf("instances after sealed-env rejection = %+v, want one failed row", instances)
 	}
 }
+
+func TestPrimeAllowsWarmReplacementAtServingConcurrencyCap(t *testing.T) {
+	store := state.NewMemStore()
+	acct, app, oldDep := seedApp(t, store, api.PlanScale, 1024, 1)
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		t.Fatalf("LimitsFor(%q) failed", acct.Plan)
+	}
+
+	old, err := store.CreateInstance(context.Background(), app.ID, oldDep.ID,
+		string(state.StateRunning), app.RAMMB, e.defaultLocalNodeID, "old-live-wake")
+	if err != nil {
+		t.Fatalf("CreateInstance(old live): %v", err)
+	}
+	if err := e.Ledger().Admit(Request{
+		Instance: old.ID, AppID: app.ID, DeploymentID: oldDep.ID,
+		Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU,
+		MaxConcurrency: app.MaxConcurrency, NodeID: e.defaultLocalNodeID,
+	}); err != nil {
+		t.Fatalf("admit old live instance: %v", err)
+	}
+
+	replacement, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:replacement", Status: state.DeploySnapshotting,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(replacement): %v", err)
+	}
+	if err := e.Prime(context.Background(), app.ID, replacement.ID); err != nil {
+		t.Fatalf("Prime replacement at max_concurrency=1: %v", err)
+	}
+
+	instances, err := store.ListInstancesForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListInstancesForApp: %v", err)
+	}
+	if len(instances) != 2 {
+		t.Fatalf("instances after replacement prime = %+v, want old live + new parked", instances)
+	}
+	var oldState, replacementState string
+	for _, instance := range instances {
+		if instance.ID == old.ID {
+			oldState = instance.State
+		}
+		if instance.DeploymentID == replacement.ID {
+			replacementState = instance.State
+		}
+	}
+	if oldState != string(state.StateRunning) {
+		t.Errorf("old revision state = %q, want running", oldState)
+	}
+	if replacementState != string(state.StateParked) {
+		t.Errorf("replacement revision state = %q, want parked", replacementState)
+	}
+	if got := e.Ledger().Concurrency(app.ID); got != 1 {
+		t.Errorf("serving concurrency after prime = %d, want 1 for the old revision", got)
+	}
+}

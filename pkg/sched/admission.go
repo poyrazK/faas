@@ -108,7 +108,20 @@ const (
 	// which gates BEFORE the ledger Admit so the per-node ceiling
 	// is only checked once the per-account pool has headroom.
 	KindJob
+	// KindSnapshotPrime is the deploy-time replacement reservation. It counts
+	// toward per-node RAM/vCPU capacity, but not the app's serving
+	// concurrency: a new revision must be primed while the old revision keeps
+	// serving traffic.
+	KindSnapshotPrime
 )
+
+// kindCountsConcurrency reports whether a reservation consumes the app's
+// serving-concurrency budget. Snapshot priming is a deployment reservation
+// that must overlap the old live revision; migration destinations and jobs
+// have the same non-serving accounting semantics for different reasons.
+func kindCountsConcurrency(kind Kind) bool {
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime
+}
 
 // Request is an admission request for one instance (a wake or a build).
 type Request struct {
@@ -215,10 +228,9 @@ func (l *NodeLedger) Admit(r Request) error {
 	// need the per-node RAM + vCPU ceilings (invariant §6.2-2),
 	// which use r.NodeCeilingMB / r.VCPUBudget directly. The
 	// per-app concurrency check below is also skipped for
-	// KindMigration, so Plan is unused on this path. We still
-	// validate Plan for KindWake so a malformed caller doesn't
-	// slip past the per-app concurrency check by leaving Plan
-	// empty.
+	// KindMigration, so Plan is unused on this path. Snapshot primes
+	// still validate Plan because their RAM/vCPU shape is plan-derived;
+	// they only bypass the serving-concurrency counter below.
 	var limits api.Limits
 	if r.Kind != KindMigration {
 		l, ok := api.LimitsFor(r.Plan)
@@ -253,13 +265,16 @@ func (l *NodeLedger) Admit(r Request) error {
 	// dispatch tick (M5) via api.JobConcurrentPerAccount before the
 	// ledger Admit is even called. RAM/vCPU per-node ceilings still
 	// apply so a job fan-out can't blow the tenant budget.
+	// KindSnapshotPrime skips the check because it is a replacement
+	// reservation: the old revision remains live until the new
+	// revision has been primed and its snapshot is ready.
 	maxConc := r.MaxConcurrency
-	if r.Kind != KindMigration && r.Kind != KindJob {
+	if kindCountsConcurrency(r.Kind) {
 		if maxConc <= 0 || maxConc > limits.MaxConcurrency {
 			maxConc = limits.MaxConcurrency
 		}
 		if have := l.perApp[r.AppID]; have >= maxConc {
-			return api.ErrPlanLimitConcurrency(limits, have)
+			return api.ErrPlanLimitConcurrencyAt(limits, maxConc, have)
 		}
 	}
 
@@ -314,11 +329,11 @@ func (l *NodeLedger) Admit(r Request) error {
 	l.entries[r.Instance] = &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, nodeID: r.NodeID,
 		admissionMB: r.admissionMB(), vcpu: r.VCPU,
-		countsConc: r.Kind != KindMigration,
+		countsConc: kindCountsConcurrency(r.Kind),
 	}
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
-	if r.Kind != KindMigration {
+	if kindCountsConcurrency(r.Kind) {
 		l.perApp[r.AppID]++
 		if r.DeploymentID != "" {
 			l.perAppDeployment[r.AppID+"\x00"+r.DeploymentID]++
