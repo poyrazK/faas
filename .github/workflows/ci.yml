@@ -230,6 +230,9 @@ jobs:
       # `curl | sh` on machines we do not control, so its checksum
       # enforcement and platform detection are gated on every PR, not just
       # exercised at release time when a mistake is already public.
+      - name: CLI release archive reproducibility
+        run: bash scripts/archive-cli-binary_test.sh
+
       - name: CLI installer
         run: bash scripts/install_test.sh
 
