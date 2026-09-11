@@ -55,6 +55,7 @@ type CreateAppRequest struct {
 	Type            string `json:"type,omitempty"`             // "app" (default) | "function"
 	Runtime         string `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
 	RAMMB           int    `json:"ram_mb,omitempty"`           // 0 => plan default
+	VCPU            int    `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
 	CPUMillicores   int    `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
 	ResourceProfile string `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
 	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
@@ -644,6 +645,7 @@ type AppResponse struct {
 	WorkloadClass   string          `json:"workload_class,omitempty"`
 	Runtime         string          `json:"runtime,omitempty"`
 	RAMMB           int             `json:"ram_mb"`
+	VCPU            int             `json:"vcpu"`
 	CPUMillicores   int             `json:"cpu_millicores"`
 	ResourceProfile ResourceProfile `json:"resource_profile,omitempty"`
 	MaxConcurrency  int             `json:"max_concurrency"`
@@ -2289,6 +2291,7 @@ type AccountResponse struct {
 type AccountLimits struct {
 	Plan                        string        `json:"plan"`
 	RAMMB                       int           `json:"ram_mb"`
+	VCPU                        int           `json:"vcpu"`
 	MaxConcurrency              int           `json:"max_concurrency"`
 	DeployedApps                int           `json:"deployed_apps"`
 	DeveloperApps               int           `json:"developer_apps"`
@@ -3148,7 +3151,7 @@ type AccountUsageResponse struct {
 // ValidateAppConfig checks a requested app config against its plan caps (spec
 // §4.2: validation before work). It returns the first violating *Problem, or nil.
 // The deployed-app COUNT check is done in apid (it needs the store).
-func ValidateAppConfig(l Limits, ramMB, maxConcurrency int) *Problem {
+func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *Problem {
 	if ramMB > l.RAMMB {
 		return ErrPlanLimitRAM(l, ramMB)
 	}
@@ -3158,6 +3161,23 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int) *Problem {
 			fmt.Sprintf("%s plan caps max_concurrency at %d; requested %d.", l.Plan, l.MaxConcurrency, maxConcurrency)).
 			WithLimit(int64(l.MaxConcurrency), int64(maxConcurrency)).
 			WithDocs(docsBase + "/plans#concurrency")
+	}
+	if len(guestVCPU) > 0 && guestVCPU[0] != 0 {
+		if prob := ValidateAppCPURAMPair(l, ramMB, guestVCPU[0]); prob != nil {
+			return prob
+		}
+	}
+	return nil
+}
+
+// ValidateAppCPURAMPair validates an explicitly supplied guest vCPU/RAM pair
+// against the plan's canonical shape. The variadic argument on
+// ValidateAppConfig keeps existing callers source-compatible while allowing
+// create-time callers to opt into the joint contract.
+func ValidateAppCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
+	shape, ok := PlanResourceShapeFor(l.Plan)
+	if !ok || guestVCPU != shape.VCPU || ramMB != shape.RAMMB {
+		return ErrInvalidCPURAMPair(l, ramMB, guestVCPU)
 	}
 	return nil
 }

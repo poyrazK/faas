@@ -38,6 +38,7 @@ type CreateAppRequest struct {
 	Type            string `json:"type,omitempty"`    // "app" (default) | "function"
 	Runtime         string `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
 	RAMMB           int    `json:"ram_mb,omitempty"`  // 0 => plan default
+	VCPU            int    `json:"vcpu,omitempty"`    // 0 => plan default; explicit values must match the plan shape
 	CPUMillicores   int    `json:"cpu_millicores,omitempty"`
 	ResourceProfile string `json:"resource_profile,omitempty"`
 	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
@@ -194,6 +195,7 @@ type AppResponse struct {
 	Type            string `json:"type"`
 	Runtime         string `json:"runtime,omitempty"`
 	RAMMB           int    `json:"ram_mb"`
+	VCPU            int    `json:"vcpu"`
 	CPUMillicores   int    `json:"cpu_millicores"`
 	ResourceProfile string `json:"resource_profile,omitempty"`
 	MaxConcurrency  int    `json:"max_concurrency"`
@@ -378,6 +380,7 @@ type AccountResponse struct {
 type AccountLimits struct {
 	Plan               string `json:"plan"`
 	RAMMB              int    `json:"ram_mb"`
+	VCPU               int    `json:"vcpu"`
 	MaxConcurrency     int    `json:"max_concurrency"`
 	DeployedApps       int    `json:"deployed_apps"`
 	DeveloperApps      int    `json:"developer_apps"`

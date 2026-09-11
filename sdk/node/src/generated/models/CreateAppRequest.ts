@@ -13,6 +13,10 @@ export type CreateAppRequest = {
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
   ram_mb?: number;
   /**
+   * Optional guest vCPU assertion. When supplied with ram_mb, the pair must match the plan shape: Free (128 MB/2), Hobby (256 MB/2), Pro (512 MB/2), or Scale (1024 MB/4). Omit to use the plan default.
+   */
+  vcpu?: number;
+  /**
    * Sustained CPU allowance per instance. Omit for 1000 millicores.
    */
   cpu_millicores?: 250 | 500 | 1000;

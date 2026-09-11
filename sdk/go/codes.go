@@ -17,6 +17,7 @@ const (
 	CodePlanLimitRAM                  = api.CodePlanLimitRAM
 	CodePlanLimitConcur               = api.CodePlanLimitConcur
 	CodeInvalidAppCPU                 = api.CodeInvalidAppCPU
+	CodeInvalidCPURAMPair             = api.CodeInvalidCPURAMPair
 	CodeInvalidResourceProfile        = api.CodeInvalidResourceProfile
 	CodeSourceTooLarge                = api.CodeSourceTooLarge
 	CodeSourceInvalid                 = api.CodeSourceInvalid

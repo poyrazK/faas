@@ -25,6 +25,10 @@ export type AppResponse = {
    */
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
   ram_mb: number;
+  /**
+   * Plan-derived guest vCPU count. Present on read responses; explicit create-time values must match the canonical plan RAM/vCPU pair.
+   */
+  vcpu: number;
   cpu_millicores: 250 | 500 | 1000;
   /**
    * Named profile when the configured memory and CPU exactly match one of the platform profiles; omitted for custom shapes.

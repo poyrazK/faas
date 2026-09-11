@@ -168,6 +168,9 @@ func TestCreateApp_AppliesDefaults(t *testing.T) {
 	if out.RAMMB != 512 {
 		t.Errorf("RAM default = %d, want 512 (pro)", out.RAMMB)
 	}
+	if out.VCPU != api.VCPUPerPlan[api.PlanPro] {
+		t.Errorf("guest vCPU default = %d, want %d (pro)", out.VCPU, api.VCPUPerPlan[api.PlanPro])
+	}
 	if out.MaxConcurrency != 1 {
 		t.Errorf("MaxConcurrency default = %d, want 1", out.MaxConcurrency)
 	}
@@ -187,6 +190,31 @@ func TestCreateApp_ExplicitRamAndConcur(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	if out.RAMMB != 256 || out.MaxConcurrency != 4 {
 		t.Errorf("explicit values lost: %+v", out)
+	}
+}
+
+func TestCreateApp_ExplicitCPURAMPair(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	good := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{
+		Slug: "cpu-ram-shape", RAMMB: 1024, VCPU: 4,
+	}, nil)
+	if good.Code != http.StatusCreated {
+		t.Fatalf("canonical pair: %d %s", good.Code, good.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(good.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode canonical pair: %v", err)
+	}
+	if out.VCPU != 4 || out.EffectiveLimits.GuestVCPUs != 4 {
+		t.Fatalf("vCPU shape = %+v, want 4", out)
+	}
+
+	bad := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{
+		Slug: "cpu-ram-invalid", RAMMB: 128, VCPU: 8,
+	}, nil)
+	assertProblem(t, bad, http.StatusUnprocessableEntity, api.CodeInvalidCPURAMPair)
+	if !strings.Contains(bad.Body.String(), "invalid (ram_mb, vcpu) pair for plan") {
+		t.Fatalf("invalid pair response = %s", bad.Body.String())
 	}
 }
 

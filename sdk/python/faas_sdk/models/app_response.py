@@ -40,6 +40,9 @@ class AppResponse:
     slug: str
     type_: AppResponseType
     ram_mb: int
+    vcpu: int
+    """Plan-derived guest vCPU count. Present on read responses; explicit create-time values must match the
+    canonical plan RAM/vCPU pair."""
     cpu_millicores: AppResponseCpuMillicores
     configured_resources: AppConfiguredResources
     """The memory and sustained CPU shape selected for each instance of this app."""
@@ -163,6 +166,8 @@ class AppResponse:
         type_: str = self.type_
 
         ram_mb = self.ram_mb
+
+        vcpu = self.vcpu
 
         cpu_millicores: int = self.cpu_millicores
 
@@ -322,6 +327,7 @@ class AppResponse:
                 "slug": slug,
                 "type": type_,
                 "ram_mb": ram_mb,
+                "vcpu": vcpu,
                 "cpu_millicores": cpu_millicores,
                 "configured_resources": configured_resources,
                 "max_concurrency": max_concurrency,
@@ -410,6 +416,8 @@ class AppResponse:
         type_ = check_app_response_type(d.pop("type"))
 
         ram_mb = d.pop("ram_mb")
+
+        vcpu = d.pop("vcpu")
 
         cpu_millicores = check_app_response_cpu_millicores(d.pop("cpu_millicores"))
 
@@ -658,6 +666,7 @@ class AppResponse:
             slug=slug,
             type_=type_,
             ram_mb=ram_mb,
+            vcpu=vcpu,
             cpu_millicores=cpu_millicores,
             configured_resources=configured_resources,
             max_concurrency=max_concurrency,

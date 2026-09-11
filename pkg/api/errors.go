@@ -368,6 +368,7 @@ const (
 	CodePlanLimitConcur        = "plan_limit_concurrency"
 	CodeInvalidAppCPU          = "invalid_cpu_millicores"
 	CodeInvalidAppRAM          = "invalid_ram_mb"
+	CodeInvalidCPURAMPair      = "invalid_cpu_ram_pair"
 	CodeInvalidResourceProfile = "invalid_resource_profile"
 	CodeSourceTooLarge         = "source_too_large"
 	CodeSourceInvalid          = "source_invalid"
@@ -1694,7 +1695,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -2103,6 +2104,21 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 func ErrInvalidAppRAM(requestedMB int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppRAM,
 		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB))
+}
+
+// ErrInvalidCPURAMPair rejects an explicit guest topology that does not match
+// the plan's canonical RAM/vCPU shape. Guest vCPU is plan-derived in v1, so
+// the pair is validated without introducing a per-app database column.
+func ErrInvalidCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
+	shape, ok := PlanResourceShapeFor(l.Plan)
+	if !ok {
+		shape = PlanResourceShape{Plan: l.Plan, RAMMB: l.RAMMB, VCPU: l.VCPU}
+	}
+	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidCPURAMPair,
+		"Invalid CPU/RAM pair",
+		fmt.Sprintf("invalid (ram_mb, vcpu) pair for plan %s: expected (%d, %d), received (%d, %d). Omit vcpu to use the plan default.",
+			l.Plan, shape.RAMMB, shape.VCPU, ramMB, guestVCPU)).
+		WithDocs(docsBase + "/plans#resources")
 }
 
 // ErrAppLayerTooLarge is returned when the built app layer (deps + code) would

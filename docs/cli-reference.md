@@ -251,6 +251,12 @@ Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|-
 
 Set max_concurrency / resource profile / RAM / CPU
 
+### deploy resource shape
+
+`gregale deploy --vcpu <N>` asserts the canonical plan guest CPU/RAM pair at
+app creation time. Omit it to use the plan default; the API rejects mismatched
+pairs with `invalid_cpu_ram_pair`.
+
 ### app rename
 
 Rename an app

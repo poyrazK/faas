@@ -288,7 +288,7 @@ func TestErrSourceTooLarge(t *testing.T) {
 // clients branch on these strings so they must not drift silently.
 func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 	codes := []string{
-		CodePlanLimitApps, CodePlanLimitRAM, CodePlanLimitConcur, CodeInvalidAppCPU, CodeInvalidAppRAM,
+		CodePlanLimitApps, CodePlanLimitRAM, CodePlanLimitConcur, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair,
 		CodeSourceTooLarge, CodeAppLayerTooBig,
 		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout,
 		CodeQuotaExhausted, CodeBillingPastDue, CodeCapacity,
@@ -439,6 +439,37 @@ func TestValidateAppConfig(t *testing.T) {
 			}
 			if p.Code != tc.wantCode {
 				t.Errorf("Code = %q, want %q", p.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestValidateAppCPURAMPair(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		plan      Plan
+		ramMB     int
+		guestVCPU int
+		wantOK    bool
+	}{
+		{name: "free canonical", plan: PlanFree, ramMB: 128, guestVCPU: 2, wantOK: true},
+		{name: "scale canonical", plan: PlanScale, ramMB: 1024, guestVCPU: 4, wantOK: true},
+		{name: "wrong vcpu", plan: PlanScale, ramMB: 128, guestVCPU: 8},
+		{name: "wrong ram", plan: PlanScale, ramMB: 128, guestVCPU: 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := ValidateAppCPURAMPair(MustLimitsFor(tc.plan), tc.ramMB, tc.guestVCPU)
+			if tc.wantOK {
+				if p != nil {
+					t.Fatalf("ValidateAppCPURAMPair = %+v, want nil", p)
+				}
+				return
+			}
+			if p == nil || p.Code != CodeInvalidCPURAMPair {
+				t.Fatalf("ValidateAppCPURAMPair = %+v, want %q", p, CodeInvalidCPURAMPair)
+			}
+			if !strings.Contains(p.Detail, "invalid (ram_mb, vcpu) pair for plan") {
+				t.Errorf("detail = %q, want pair explanation", p.Detail)
 			}
 		})
 	}

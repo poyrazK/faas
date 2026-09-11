@@ -554,6 +554,7 @@ func cmdApp(args []string) int {
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
 		fmt.Printf("%-30s %s\n", "url:", a.URL)
 		fmt.Printf("%-30s %d MB\n", "ram:", a.RAMMB)
+		fmt.Printf("%-30s %d\n", "guest vcpu:", a.VCPU)
 		fmt.Printf("%-30s %d mCPU\n", "cpu:", a.CPUMillicores)
 		if a.ResourceProfile != "" {
 			fmt.Printf("%-30s %s\n", "resource profile:", a.ResourceProfile)
@@ -1065,6 +1066,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	handler := fs.String("handler", "", "function handler (e.g. handler.handler)")
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	profile := fs.String("profile", "", "named app resource profile: micro|small|medium|large|xlarge")
+	vcpu := fs.Int("vcpu", 0, "assert the plan guest vCPU shape (omit to use the plan default)")
 	// Issue #737 / ADR-083: explicit shape override. Without either flag
 	// the CLI auto-detects from the cwd (handler.*-only → function,
 	// otherwise app). With --function or --app, detection is skipped.
@@ -1253,6 +1255,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if _, ok := api.ResourceProfileSpecFor(*profile); !ok {
 			return printErr("Invalid --profile", fmt.Errorf("must be one of micro, small, medium, large, xlarge; got %q", *profile))
 		}
+	}
+	if *vcpu < 0 {
+		return printErr("Invalid --vcpu", fmt.Errorf("must be zero (plan default) or greater; got %d", *vcpu))
 	}
 	// Issue #737 / ADR-083: --function and --app are mutually exclusive.
 	// Setting both is ambiguous noise; reject before any side effects so
@@ -2011,6 +2016,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr, *profile)
+		if *vcpu != 0 {
+			createReq.VCPU = *vcpu
+		}
 		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr); err != nil {
 			return printErr("Could not create or fetch app", err)
 		}
