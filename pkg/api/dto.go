@@ -6109,7 +6109,10 @@ func (a *EdgeRuleGeoAction) Validate() *Problem {
 	if len(a.Allow) == 0 && len(a.Deny) == 0 {
 		return ErrValidation("geo action requires at least one allow or deny entry")
 	}
-	seen := make(map[string]struct{}, len(a.Allow)+len(a.Deny))
+	// Do not size this map from the caller-provided slice lengths. Apart from
+	// allocating far more than the 50-entry rule cap for malformed input, the
+	// sum can overflow an int before make is called.
+	seen := make(map[string]struct{})
 	for _, code := range a.Allow {
 		if p := validateGeoCountryCode(code); p != nil {
 			return ErrValidation("geo action allow entry " + p.Error())
