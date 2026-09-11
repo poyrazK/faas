@@ -236,6 +236,9 @@ jobs:
       - name: npm package staging
         run: bash scripts/build-npm-packages_test.sh
 
+      - name: npm payload verifier
+        run: bash scripts/ci/check-npm-payload_test.sh
+
       # Provider-created machines hand their one-time connection details to
       # the provider-neutral adoption pipeline through ComputeNodeClaim files.
       # Keep checked-in examples schema-valid so the workflow can consume a

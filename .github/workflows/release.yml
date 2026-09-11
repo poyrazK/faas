@@ -317,9 +317,8 @@ jobs:
               want="package/bin/gregale"
             fi
             tarball="$( (cd "$dir" && npm pack --silent </dev/null) )"
-            if ! tar -tzf "$dir/$tarball" | grep -Fqx "$want"; then
+            if ! bash scripts/ci/check-npm-payload.sh "$dir/$tarball" "$want"; then
               echo "::error::$name would publish without $want" >&2
-              tar -tzf "$dir/$tarball" >&2
               exit 1
             fi
             rm -f "$dir/$tarball"
