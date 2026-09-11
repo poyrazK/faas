@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // memCoverageSlice4Fixture is the slice-4 analogue of memCoverageFixture:
@@ -270,6 +271,26 @@ func TestMemStoreCoverageGitHubBindings(t *testing.T) {
 	}
 	if _, err := m.GitHubInstallForAccount(ctx, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("install empty = %v", err)
+	}
+
+	// RecordGitHubInstallationSync — invalid IDs are harmless, counters are
+	// clamped, and an unknown installation is a no-op.
+	if err := m.RecordGitHubInstallationSync(ctx, 0, time.Time{}, "ignored", -1, -1); err != nil {
+		t.Fatalf("record sync invalid id = %v", err)
+	}
+	when := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	if err := m.RecordGitHubInstallationSync(ctx, 9, when, "remote timeout", -4, -2); err != nil {
+		t.Fatalf("record sync = %v", err)
+	}
+	got, err := m.GitHubInstallForAccountInstallation(ctx, account.ID, 9)
+	if err != nil {
+		t.Fatalf("read synced install = %v", err)
+	}
+	if got.LastReconciledAt == nil || !got.LastReconciledAt.Equal(when) || got.LastReconcileError != "remote timeout" || got.LastReconcileRepositoryCount != 0 || got.LastReconcileDetachedCount != 0 {
+		t.Fatalf("synced install = %+v", got)
+	}
+	if err := m.RecordGitHubInstallationSync(ctx, 404, when, "missing", 3, 2); err != nil {
+		t.Fatalf("record sync missing = %v", err)
 	}
 }
 
