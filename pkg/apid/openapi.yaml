@@ -8240,8 +8240,8 @@ paths:
       - name: idx
         in: path
         required: true
-        schema: { type: integer, minimum: 1 }
-        description: The task index within the run (1-indexed).
+        schema: { type: integer, minimum: 0 }
+        description: The task index within the run (zero-indexed).
       - name: max_bytes
         in: query
         required: false
@@ -18568,7 +18568,7 @@ components:
       required: [run_id, task_index, status, attempt, created_at]
       properties:
         run_id: { type: string, format: uuid }
-        task_index: { type: integer, minimum: 1 }
+        task_index: { type: integer, minimum: 0 }
         status: { type: string, enum: [queued, claimed, succeeded, failed, timeout, cancelled, oom] }
         attempt: { type: integer, minimum: 1 }
         instance_id: { type: string, format: uuid }

@@ -297,6 +297,23 @@ func TestListJobRunTasks_HappyPath(t *testing.T) {
 	}
 }
 
+func TestGetJobTaskLogs_AllowsZeroBasedIndex(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	seedJob(t, e, "task-logs-job", "ghcr.io/example/worker:v1")
+	runID := seedJobRun(t, e, "task-logs-job", 1)
+	rec := e.do(t, "GET", "/v1/jobs/task-logs-job/runs/"+runID+"/tasks/0/logs", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET task logs = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.JobTaskLogResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	if resp.TaskStatus != "queued" {
+		t.Errorf("task_status = %q, want queued", resp.TaskStatus)
+	}
+}
+
 // TestCancelJobRun_HappyPath pins the cancel shape. The
 // JobRunCancelledResponse wraps the post-cancel run aggregate +
 // a cancelled_at timestamp. Naturally idempotent — a second

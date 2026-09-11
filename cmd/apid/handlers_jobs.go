@@ -436,9 +436,9 @@ func (s *server) getJobTaskLogs(w http.ResponseWriter, r *http.Request, acct sta
 	runID := r.PathValue("id")
 	taskIdxStr := r.PathValue("idx")
 	taskIdx, err := strconv.Atoi(taskIdxStr)
-	if err != nil || taskIdx < 1 {
+	if err != nil || taskIdx < 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid task_index", "task_index must be a positive integer"))
+			"Invalid task_index", "task_index must be a non-negative integer"))
 		return
 	}
 	_, _, ok, err := s.resolveJobRun(r.Context(), runID, acct)
