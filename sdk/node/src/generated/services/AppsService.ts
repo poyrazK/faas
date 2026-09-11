@@ -1208,6 +1208,7 @@ export class AppsService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
       },
     });
   }
@@ -1254,6 +1255,7 @@ export class AppsService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
       },
     });
   }

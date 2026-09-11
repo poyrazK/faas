@@ -7,7 +7,7 @@ import type { DebugTelemetrySpan } from './DebugTelemetrySpan.js';
  * Deterministic explanation generated from the safe evidence payload.
  */
 export type DebugEvidenceExplanation = {
-  status: 'regression_detected' | 'unobserved';
+  status: 'regression_detected' | 'unobserved' | 'regression_unavailable';
   headline: string;
   primary_span?: (DebugTelemetrySpan | null);
 };
