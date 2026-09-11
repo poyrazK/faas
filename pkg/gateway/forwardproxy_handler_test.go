@@ -114,6 +114,17 @@ func (s *stubVmmdClient) PauseAndSnapshot(context.Context, *vmmdpb.PauseAndSnaps
 	panic("PauseAndSnapshot: not stubbed in handler integration test")
 }
 
+// WaitBuilderReady and DeleteWarmSnapshot belong to builderd's warm-builder
+// handoff path. The gateway handler never invokes them, but the generated
+// vmmd client requires both methods on every test client fake.
+func (s *stubVmmdClient) WaitBuilderReady(context.Context, *vmmdpb.WaitBuilderReadyRequest, ...grpc.CallOption) (*vmmdpb.WaitBuilderReadyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not manage builders")
+}
+
+func (s *stubVmmdClient) DeleteWarmSnapshot(context.Context, *vmmdpb.DeleteWarmSnapshotRequest, ...grpc.CallOption) (*vmmdpb.DeleteWarmSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not manage builder snapshots")
+}
+
 // WarmSnapshot (issue #470 / PR #470-FU-A) is the forwardproxy
 // handler integration test's no-op seam — the gateway forward
 // path doesn't fire warm captures (the engine reaper is the

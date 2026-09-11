@@ -157,6 +157,16 @@ func (f *fakeVmmdClient) PauseAndSnapshot(context.Context, *vmmdpb.PauseAndSnaps
 	panic("PauseAndSnapshot: not stubbed")
 }
 
+// WaitBuilderReady and DeleteWarmSnapshot belong to builderd's warm-builder
+// handoff path. The gateway forwarder never invokes them, but the generated
+// vmmd client requires both methods on every test fake.
+func (f *fakeVmmdClient) WaitBuilderReady(context.Context, *vmmdpb.WaitBuilderReadyRequest, ...grpc.CallOption) (*vmmdpb.WaitBuilderReadyResponse, error) {
+	panic("WaitBuilderReady: not stubbed")
+}
+func (f *fakeVmmdClient) DeleteWarmSnapshot(context.Context, *vmmdpb.DeleteWarmSnapshotRequest, ...grpc.CallOption) (*vmmdpb.DeleteWarmSnapshotResponse, error) {
+	panic("DeleteWarmSnapshot: not stubbed")
+}
+
 // WarmSnapshot (issue #470 / PR #470-FU-A) is the
 // forwardproxy test's no-op seam — the gateway forward path
 // doesn't fire warm captures. The stub intentionally panics
