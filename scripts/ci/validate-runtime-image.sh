@@ -19,7 +19,7 @@ case "${runtime_image}" in
     required=(etc/passwd usr/bin/sh)
     ;;
   base-minimal)
-    required=(etc/passwd bin/busybox bin/sh usr/bin/env)
+    required=(etc/passwd bin/busybox bin/sh usr/bin/env usr/bin/dirname)
     ;;
   runner-node22|runner-node24)
     required=(etc/passwd usr/local/bin/node)
@@ -100,6 +100,15 @@ if [[ "${runtime_image}" == base-minimal ]]; then
   # the full env -> bash exec chain so a present but unusable path also fails CI.
   docker run --rm --platform "${expected_platform}" --entrypoint /usr/bin/env "${image_ref}" \
     bash -ceu 'test -n "${BASH_VERSION}"'
+  # mise's npm wrapper invokes dirname before starting Node. Check the actual
+  # applet so a copied but incorrectly dispatched BusyBox binary also fails CI.
+  dirname_output=$(docker run --rm --platform "${expected_platform}" \
+    --entrypoint /usr/bin/dirname "${image_ref}" \
+    /mise/installs/node/22.23.2/bin/npm)
+  if [[ "${dirname_output}" != /mise/installs/node/22.23.2/bin ]]; then
+    echo "::error::${image_ref} has unusable /usr/bin/dirname: ${dirname_output}" >&2
+    exit 1
+  fi
 fi
 if [[ "${runtime_image}" == runner-python313 ]]; then
   python_minor=$(docker run --rm --platform "${expected_platform}" \
