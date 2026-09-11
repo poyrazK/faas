@@ -61,7 +61,7 @@ func UnitApid() daemonunit.Unit {
 
 		AmbientCapabilities: []string{"CAP_NET_BIND_SERVICE"},
 
-		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env",
+		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_SESSION_KEY", Value: "%d/faas_session_key"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},

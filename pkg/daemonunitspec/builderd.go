@@ -63,7 +63,7 @@ func UnitBuilderd() daemonunit.Unit {
 		// The source-layer path follows the same shared OCI storage contract
 		// as vmmd/imaged on a multi-box fleet. Runtime base refs are loaded
 		// from the same digest-pinned contract consumed by imaged.
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/runtime-bases.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/runtime-bases.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_BUILDERD_CONFIG", Value: "/etc/faas/builderd.toml"},
 		},
