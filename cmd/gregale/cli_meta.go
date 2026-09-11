@@ -1030,6 +1030,7 @@ var cliCommands = []cliCommand{
 			// completion tables.
 			{Name: "exclude", Short: "omit workloads (slug, comma-separated; mutex with --only; ADR-124)", Value: "SLUGS"},
 			{Name: "show-affected", Short: "render the WillDeploy + Unaffected tables (ADR-124)"},
+			{Name: "explain", Short: "show why each workload was detected (detector, marker, priority)"},
 			// ADR-124 follow-up #3 (PR-B commit 5): symmetric flag
 			// set on scan (no-op on the scan path; the scan handler
 			// ignores persist_exclude). Accepted so a single flag set

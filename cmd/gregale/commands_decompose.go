@@ -60,6 +60,10 @@ func cmdScan(args []string) int {
 	// preview opt in explicitly so the default behaviour for scripts
 	// and CI is unchanged.
 	showAffected := fs.Bool("show-affected", false, "render the WillDeploy + Unaffected tables (ADR-124)")
+	// Detector explainability is opt-in so the default table remains
+	// byte-compatible for scripts and existing operators. JSON already
+	// carries the structured detected_by field when the server supports it.
+	explain := fs.Bool("explain", false, "show why each workload was detected (detector, marker, priority)")
 	// ADR-124 follow-up #3 (PR-B commit 5): --persist-exclude on
 	// `scan` is a no-op (scan never writes); accepted for symmetry
 	// with `deploy` so a single flag set can be reused across the
@@ -69,7 +73,7 @@ func cmdScan(args []string) int {
 	installID := fs.Int64("install-id", 0, "GitHub install id (with --repo)")
 	prodBranch := fs.String("production-branch", "main", "production branch for the project")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--show-affected] [--exclude NAME,…]", "scan")
+		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--show-affected] [--explain] [--exclude NAME,…]", "scan")
 		return 1
 	}
 
@@ -117,7 +121,7 @@ func cmdScan(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(plan))
 	}
-	return printPlanText(osStdout, plan, excludeList, *showAffected)
+	return printPlanTextWithExplain(osStdout, plan, excludeList, *showAffected, *explain)
 }
 
 // resolveScanSource normalises the three input shapes (--tarball /
@@ -331,6 +335,14 @@ func intersect(a, b []string) (bool, []string) {
 //
 //nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected bool) int {
+	return printPlanTextWithExplain(w, plan, excludeSet, showAffected, false)
+}
+
+// printPlanTextWithExplain renders the plan and, when explain is true,
+// appends a deterministic detector trace below each workload. Keeping the
+// legacy printPlanText wrapper preserves the terse output used by deploy's
+// confirmation prompt and existing callers.
+func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
 	fmt.Fprintf(w, "Scan source: %s   tier: %s\n", plan.ScanSource, plan.Tier)
 	fmt.Fprintf(w, "Quota: %d/%d apps   %d/%d crons\n",
@@ -375,6 +387,9 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 	}
 	if !plan.CanApply {
 		fmt.Fprintln(w, "can_apply: false")
+		if explain {
+			printPlanDetectionTrace(w, plan.Workloads)
+		}
 		return 0
 	}
 	fmt.Fprintln(w, "can_apply: true")
@@ -384,6 +399,9 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 	}
 	if showAffected {
 		printAffectedText(w, plan, excludeIdx)
+		if explain {
+			printPlanDetectionTrace(w, plan.Workloads)
+		}
 		return 0
 	}
 	if len(plan.Workloads) > 0 {
@@ -408,6 +426,9 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
 			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix)
+			if explain {
+				printWorkloadDetectionTrace(w, wl)
+			}
 		}
 	}
 	if len(plan.Managed) > 0 {
@@ -424,6 +445,54 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 		}
 	}
 	return 0
+}
+
+// printPlanDetectionTrace renders traces for plans that have no workload
+// table (for example --show-affected or a blocked plan). Workloads are copied
+// and sorted so a caller-constructed response cannot make --explain flaky.
+func printPlanDetectionTrace(w io.Writer, workloads []api.PlanWorkload) {
+	if len(workloads) == 0 {
+		fmt.Fprintln(w, "\nDetection trace: (no workloads)")
+		return
+	}
+	fmt.Fprintln(w, "\nDetection trace:")
+	ws := append([]api.PlanWorkload(nil), workloads...)
+	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
+	for _, wl := range ws {
+		fmt.Fprintf(w, "  - %s\n", wl.Name)
+		printWorkloadDetectionTrace(w, wl)
+	}
+}
+
+// printWorkloadDetectionTrace emits the stable, human-readable form of the
+// structured PlanWorkload.detected_by trace. Source is the detector marker
+// (for example "compose.yaml: api"). A nil trace is called out explicitly so
+// operators can distinguish an older server from an unexplained workload.
+func printWorkloadDetectionTrace(w io.Writer, wl api.PlanWorkload) {
+	marker := wl.Source
+	if marker == "" {
+		marker = "(unavailable)"
+	}
+	if wl.DetectedBy == nil {
+		fmt.Fprintf(w, "      detected_by: unavailable  marker=%s  priority=(unavailable)\n", marker)
+		return
+	}
+	fmt.Fprintf(w, "      detected_by: %s  marker=%s  priority=%d\n",
+		wl.DetectedBy.Detector, marker, wl.DetectedBy.Priority)
+	if len(wl.DetectedBy.MergedFrom) > 0 {
+		merged := append([]string(nil), wl.DetectedBy.MergedFrom...)
+		sort.Strings(merged)
+		// The API contract already deduplicates this list. Collapse
+		// duplicates defensively so a hand-built/older response still
+		// produces a concise, deterministic explanation.
+		unique := merged[:0]
+		for _, detector := range merged {
+			if len(unique) == 0 || unique[len(unique)-1] != detector {
+				unique = append(unique, detector)
+			}
+		}
+		fmt.Fprintf(w, "      merged_from: %s\n", strings.Join(unique, ", "))
+	}
 }
 
 // printAffectedText renders the ADR-124 blast-radius view: WillDeploy
