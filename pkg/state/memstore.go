@@ -4674,6 +4674,36 @@ func (m *MemStore) GitHubInstallForAccountInstallation(_ context.Context, accoun
 	return inst, nil
 }
 
+// RecordGitHubInstallationSync mirrors PgStore's health projection for the
+// on-demand dashboard sync path. The installation ID is globally unique, so
+// the account key can be found without widening the public Store interface.
+func (m *MemStore) RecordGitHubInstallationSync(_ context.Context, installationID int64, syncedAt time.Time, syncErr string, remoteRepoCount, detachedCount int) error {
+	if installationID <= 0 {
+		return nil
+	}
+	if remoteRepoCount < 0 {
+		remoteRepoCount = 0
+	}
+	if detachedCount < 0 {
+		detachedCount = 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, inst := range m.githubInstalls {
+		if inst.InstallationID != installationID {
+			continue
+		}
+		ts := syncedAt
+		inst.LastReconciledAt = &ts
+		inst.LastReconcileError = syncErr
+		inst.LastReconcileRepositoryCount = remoteRepoCount
+		inst.LastReconcileDetachedCount = detachedCount
+		m.githubInstalls[key] = inst
+		return nil
+	}
+	return nil
+}
+
 // UpsertGithubWebhookSecret mirrors PgStore (PR-D / ADR-012 §7
 // amendment). The MemStore is the unit-test stand-in for the
 // resolver; the bytea is held in an in-memory map keyed by

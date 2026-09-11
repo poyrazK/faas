@@ -203,6 +203,8 @@ export type { FilterCriteriaOp } from './FilterCriteriaOp.js';
 export type { FireCronRequestResponse } from './FireCronRequestResponse.js';
 export type { FireCronResponse } from './FireCronResponse.js';
 export type { GdprAuditExportResponse } from './GdprAuditExportResponse.js';
+export type { GitHubInstallMutationRequest } from './GitHubInstallMutationRequest.js';
+export type { GitHubInstallStatus } from './GitHubInstallStatus.js';
 export type { GraceWindowResponse } from './GraceWindowResponse.js';
 export type { Id32 } from './Id32.js';
 export type { IdempotencyKey } from './IdempotencyKey.js';

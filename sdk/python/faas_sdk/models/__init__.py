@@ -438,6 +438,11 @@ from .get_deployment_stages_response_200_history_item_name import GetDeploymentS
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .git_hub_install_mutation_request import GitHubInstallMutationRequest
+from .git_hub_install_status import GitHubInstallStatus
+from .git_hub_install_status_health import GitHubInstallStatusHealth
+from .git_hub_install_status_state import GitHubInstallStatusState
+from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
 from .grace_window_response import GraceWindowResponse
 from .import_app_open_api_body import ImportAppOpenAPIBody
 from .import_app_open_api_body_info import ImportAppOpenAPIBodyInfo
@@ -1341,6 +1346,11 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItemStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
+    "GitHubInstallMutationRequest",
+    "GitHubInstallStatus",
+    "GitHubInstallStatusHealth",
+    "GitHubInstallStatusState",
+    "GitHubInstallStatusSyncResult",
     "GraceWindowResponse",
     "ImportAppOpenAPIBody",
     "ImportAppOpenAPIBodyInfo",

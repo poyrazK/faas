@@ -209,6 +209,8 @@ export type { FilterCriteriaOp } from './models/FilterCriteriaOp.js';
 export type { FireCronRequestResponse } from './models/FireCronRequestResponse.js';
 export type { FireCronResponse } from './models/FireCronResponse.js';
 export type { GdprAuditExportResponse } from './models/GdprAuditExportResponse.js';
+export type { GitHubInstallMutationRequest } from './models/GitHubInstallMutationRequest.js';
+export type { GitHubInstallStatus } from './models/GitHubInstallStatus.js';
 export type { GraceWindowResponse } from './models/GraceWindowResponse.js';
 export type { Id32 } from './models/Id32.js';
 export type { IdempotencyKey } from './models/IdempotencyKey.js';

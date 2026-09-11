@@ -2484,6 +2484,15 @@ func (s *server) handler() http.Handler {
 	// == install.account.login) is enforced in the handlers.
 	mux.Handle("POST /v1/install/repos/list", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.listInstallableRepos))))
 	mux.Handle("POST /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.bindAppToRepo))))
+	// Customer-facing connection management. GET returns the current
+	// installation/binding health and mints the named CSRF token used by
+	// the sync and disconnect actions. Mutations remain session-cookie
+	// authenticated so a GitHub connection cannot be changed with a
+	// leaked deploy API key.
+	mux.Handle("GET /v1/apps/{slug}/install", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.getGitHubInstallStatus))))
+	mux.Handle("GET /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.getGitHubInstallStatus))))
+	mux.Handle("DELETE /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.unbindGitHubApp))))
+	mux.Handle("POST /v1/apps/{slug}/install/sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.syncGitHubApp))))
 	// Issue #961 / Mega-B PR-3 — GET /v1/templates is the dashboard's
 	// source of truth for the template catalog (handlers_templates.go).
 	// Mirrors cmd/gregale/templates.Names without importing the CLI's
