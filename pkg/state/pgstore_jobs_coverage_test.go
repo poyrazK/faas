@@ -285,6 +285,20 @@ func TestPg_Jobs_JobRunListByAccount(t *testing.T) {
 	}
 }
 
+func TestPg_Jobs_JobRunListActive(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, run, _ := pgJobsSeed(t, s, ctx, "run-active")
+
+	accountRuns, err := s.JobRunListActive(ctx, job.AccountID, 50, 0)
+	if err != nil || len(accountRuns) < 1 || accountRuns[0].ID != run.ID {
+		t.Fatalf("account active runs = %+v, err=%v", accountRuns, err)
+	}
+	fleetRuns, err := s.JobRunListActive(ctx, "", 50, 0)
+	if err != nil || len(fleetRuns) < 1 {
+		t.Fatalf("fleet active runs = %+v, err=%v", fleetRuns, err)
+	}
+}
+
 func TestPg_Jobs_JobRunRecompute(t *testing.T) {
 	s, _, ctx := pgJobsStoreWithPool(t)
 	_, run, fanned := pgJobsSeed(t, s, ctx, "run-4")

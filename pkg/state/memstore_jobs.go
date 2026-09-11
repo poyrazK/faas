@@ -358,6 +358,30 @@ func (m *MemStore) JobRunListByAccount(_ context.Context, accountID string, limi
 	return matched, nil
 }
 
+// JobRunListActive mirrors the PostgreSQL operator incident query. Empty
+// accountID selects the bounded fleet view.
+func (m *MemStore) JobRunListActive(_ context.Context, accountID string, limit, offset int) ([]JobRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var matched []JobRun
+	for _, r := range m.jobRuns {
+		if (accountID == "" || r.AccountID == accountID) && (r.AggregateStatus == "queued" || r.AggregateStatus == "running") {
+			matched = append(matched, r)
+		}
+	}
+	sort.Slice(matched, func(i, k int) bool {
+		return matched[i].CreatedAt.After(matched[k].CreatedAt)
+	})
+	if offset >= len(matched) {
+		return nil, nil
+	}
+	matched = matched[offset:]
+	if limit > 0 && len(matched) > limit {
+		matched = matched[:limit]
+	}
+	return matched, nil
+}
+
 // recomputeJobRun applies the same aggregate-status precedence as
 // pgstore_jobs.JobRunRecompute and updates all denormalised counters.
 // Callers hold m.mu when invoking this helper.

@@ -2089,6 +2089,15 @@ func (s *server) handler() http.Handler {
 	// in-flight builds.
 	mux.Handle("POST /v1/admin/builds/sweep-stuck",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postSweepStuckBuilds))))
+	// Per-account job-run incident controls. Reads expose bounded lifecycle
+	// metadata without task leases or job inputs; cancellation reuses the
+	// atomic customer cancellation primitive behind the strict operator policy.
+	mux.HandleFunc("GET /v1/admin/ops/jobs/runs",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorActiveJobRuns))))
+	mux.HandleFunc("GET /v1/admin/ops/jobs/runs/{id}",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorJobRun))))
+	mux.Handle("POST /v1/admin/ops/jobs/runs/{id}/cancel",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postOperatorJobRunCancel))))
 	// githubd-owned incident recovery. The read path is MFA-gated and the
 	// retry paths use the strict provider-mutation policy; apid never opens or
 	// writes githubd's queue tables directly.

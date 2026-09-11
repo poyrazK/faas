@@ -121,6 +121,9 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/apps/{slug}/force-cold-boot":                 true, // PR #1099 P2b
 	"POST /v1/admin/instances/{id}/force-restart":                true, // PR #1105 P2d
 	"POST /v1/admin/builds/sweep-stuck":                          true, // PR #1099 P2c
+	"GET /v1/admin/ops/jobs/runs":                                true, // operator-only active job-run projection
+	"GET /v1/admin/ops/jobs/runs/{id}":                           true, // operator-only job-run inspection
+	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                   true, // operator-only job-run cancellation
 	"GET /v1/admin/ops/github/recovery":                          true, // operator-only githubd queue projection
 	"POST /v1/admin/ops/github/deliveries/{id}/retry":            true, // operator-only githubd delivery recovery
 	"POST /v1/admin/ops/github/check-updates/{id}/retry":         true, // operator-only githubd Check Run recovery
@@ -409,6 +412,12 @@ var dtoExclude = map[string]bool{
 	"ObsTenantBilling":          true,
 	"ObsTenantUsage":            true,
 	"ObsTenantUsageApp":         true,
+	// Operator job-run incident projections are intentionally absent from the
+	// public customer OpenAPI and generated SDKs.
+	"OperatorJobRun":               true,
+	"OperatorJobRunListResponse":   true,
+	"OperatorJobRunDetailResponse": true,
+	"OperatorJobRunCancelResponse": true,
 	// Issue #975 #4 / ADR-129 — query parameter struct for
 	// GET /v1/cors-presets (the `app_id` filter). The wire
 	// surface inlines the field directly in the query parameter

@@ -60,6 +60,7 @@ Commands:
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
   audit        Correlate operator intents and events by trace ID (audit trace)
   builds       Authenticated recovery for stuck builds (builds sweep-stuck)
+  jobs         Cross-account job-run diagnosis and guarded cancellation (active|inspect|cancel)
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
   obs           Operator-side meta-obs health snapshot (obs health; Obs-Meta + Trace-IDs Mega-PR / C8)
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
@@ -205,6 +206,10 @@ func run(args []string) int {
 		// Authenticated build recovery through apid; direct database
 		// mutation is reserved for the reviewed break-glass runbook.
 		return cmdBuildsDispatch(args[1:])
+	case dispatchJobs:
+		// Cross-account job-run incident control through apid. No database
+		// connection or customer credential is accepted by this command.
+		return cmdJobsDispatch(args[1:])
 	case dispatchDeploy:
 		// Provider-neutral join-node is the production path. The legacy
 		// add-node coordinator remains available for migration and local

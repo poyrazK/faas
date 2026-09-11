@@ -72,18 +72,23 @@ After the silence, page the on-call for one of the following:
 # 1. Drain stuck tasks (reaper picks them up next sweep)
 journalctl -u schedd --since '-5m' --no-pager | grep reapStuckJobTasks
 
-# 2. If node RAM ceiling is the cause, list the heaviest accounts:
-psql -U faas -d faas -c "
-  SELECT account_id, COUNT(*) AS live, SUM(ram_mb) AS mb
-  FROM instances
-  WHERE kind='job_task' AND status IN ('claimed','running')
-  GROUP BY 1 ORDER BY mb DESC LIMIT 10;"
+# 2. If node RAM ceiling is the cause, locate the largest active runs.
+#    ram_mb * tasks_running is the per-run live-memory estimate.
+gregalectl jobs active --json |
+  jq '.runs | sort_by(.ram_mb * .tasks_running) | reverse | .[:10]'
 
-# 3. Cancel the heaviest account's runs via the apid API (must be the
-#    customer's auth — operators do NOT have a backdoor):
-curl -fsS -X POST -H "Authorization: Bearer $CUSTOMER_TOKEN" \
-  https://api.faas.example/v1/jobs/$JOB_NAME/runs/$RUN_ID/cancel
+# 3. Inspect the selected run's task states without reading task leases.
+gregalectl jobs inspect --run-id "$RUN_ID" --task-limit 100
+
+# 4. Cancel a stuck/capacity-dominating run through the strict operator API.
+gregalectl auth step-up
+gregalectl jobs cancel --run-id "$RUN_ID" --reason jobs_queue_incident --yes
 ```
+
+The cancel command uses an idempotency key, requires explicit confirmation,
+emits `operator.action.cancel_job_run`, and prints a trace ID. It never opens
+PostgreSQL and never requires a customer token. Do not cancel healthy work only
+because a plan's intended concurrency cap is full.
 
 ## Related
 

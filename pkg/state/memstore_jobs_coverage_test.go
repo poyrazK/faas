@@ -282,6 +282,25 @@ func TestMemStoreJobs_JobRunListByAccount(t *testing.T) {
 	}
 }
 
+func TestMemStoreJobs_JobRunListActive(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, run, _ := newJobAndRun(t, ms, "acct-active", "active-1")
+	_, otherRun, _ := newJobAndRun(t, ms, "acct-other-active", "active-2")
+	if _, err := ms.JobRunCancel(ctx, otherRun.ID); err != nil {
+		t.Fatal(err)
+	}
+	accountRuns, err := ms.JobRunListActive(ctx, job.AccountID, 10, 0)
+	if err != nil || len(accountRuns) != 1 || accountRuns[0].ID != run.ID {
+		t.Fatalf("account active runs = %+v, err=%v", accountRuns, err)
+	}
+	fleetRuns, err := ms.JobRunListActive(ctx, "", 10, 0)
+	if err != nil || len(fleetRuns) != 1 || fleetRuns[0].AccountID != job.AccountID {
+		t.Fatalf("fleet active runs = %+v, err=%v", fleetRuns, err)
+	}
+}
+
 // TestMemStoreJobs_JobRunRecompute — exercise every aggregate-status
 // branch: running, succeeded, failed, cancelled, dead_letter. Also
 // verifies started_at/finished_at stamping for the terminal-pair
