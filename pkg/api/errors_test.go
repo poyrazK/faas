@@ -195,6 +195,22 @@ func TestErrCapacity(t *testing.T) {
 	}
 }
 
+func TestErrDebugRegressionUnavailable(t *testing.T) {
+	p := ErrDebugRegressionUnavailable("regression observations are unavailable")
+	if p.Status != http.StatusServiceUnavailable {
+		t.Errorf("Status = %d, want 503", p.Status)
+	}
+	if p.Code != CodeDebugRegressionUnavailable {
+		t.Errorf("Code = %q, want %q", p.Code, CodeDebugRegressionUnavailable)
+	}
+	if p.Detail != "regression observations are unavailable" {
+		t.Errorf("Detail = %q", p.Detail)
+	}
+	if !strings.Contains(p.DocsURL, "gregale.dev/status") {
+		t.Errorf("DocsURL = %q", p.DocsURL)
+	}
+}
+
 // TestErrWaitForWarm locks the 503 + Retry-After wire shape for
 // the per-app scale-out cooldown (issue #462 / PR-D). Distinct
 // from TestErrPlanLimitConcurrency (429, no Retry-After) and
@@ -307,7 +323,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodePlanLimitApps, CodePlanLimitRAM, CodePlanLimitConcur, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair,
 		CodeSourceTooLarge, CodeAppLayerTooBig,
 		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout,
-		CodeQuotaExhausted, CodeBillingPastDue, CodeCapacity,
+		CodeQuotaExhausted, CodeBillingPastDue, CodeCapacity, CodeDebugRegressionUnavailable,
 		CodeUnauthorized, CodeNotFound, CodeValidation,
 		CodeImageNotFound, CodeImageEgressDenied, CodeImageManifestInvalid,
 		CodeCliAuthPending, CodeCliAuthUnavailable,

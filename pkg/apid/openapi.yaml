@@ -3829,6 +3829,7 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
 
   /v1/apps/{slug}/debug/regressions:
     parameters:
@@ -3863,6 +3864,7 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
 
   /v1/apps/{slug}/debug/compare:
     parameters:
@@ -25019,7 +25021,7 @@ components:
       description: "Deterministic explanation generated from the safe evidence payload."
       required: [status, headline]
       properties:
-        status: { type: string, enum: [regression_detected, unobserved] }
+        status: { type: string, enum: [regression_detected, unobserved, regression_unavailable] }
         headline: { type: string }
         primary_span:
           oneOf:
@@ -25529,6 +25531,12 @@ components:
 
     CapacityUnavailable:
       description: 'code: capacity_unavailable — no host headroom (alerting; should be near-impossible).'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    DebuggerRegressionUnavailable:
+      description: 'code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
