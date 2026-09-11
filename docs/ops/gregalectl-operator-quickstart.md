@@ -269,6 +269,20 @@ no routine direct-database fallback for account mutations; use the reviewed
 [`database-repair`](../break-glass/database-repair.md) procedure only during an
 apid outage.
 
+### Compute-node inventory
+
+Routine fleet reads use the authenticated operator API and do not require
+database credentials:
+
+```
+gregalectl compute-nodes list
+gregalectl compute-nodes show --node <fqdn>
+```
+
+Use `--break-glass-db` only during an apid outage under the reviewed database
+repair procedure. These read commands do not affect provisioning or deployment
+latency.
+
 `target_url` is the VM manager endpoint. `gateway_target_url` is the
 separate private HTTP data-plane endpoint; the manifest/Ansible pipeline
 derives it from the node hostname, so normal node joins do not require a

@@ -2337,6 +2337,7 @@ func (s *server) handler() http.Handler {
 	// of /v1/* — a brute-force on admin routes costs the attacker
 	// the same budget they'd burn trying customer keys.
 	mux.HandleFunc("GET /v1/compute-nodes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.listComputeNodes))))
+	mux.HandleFunc("GET /v1/compute-nodes/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getComputeNode))))
 	mux.HandleFunc("POST /v1/compute-nodes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.createOrUpdateComputeNode)))))
 	mux.HandleFunc("DELETE /v1/compute-nodes/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.deleteComputeNode))))
 	// Workstream B (issue #1184 / ADR-137): drain handler.
