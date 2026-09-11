@@ -1405,7 +1405,7 @@ Manually advance / promote / abort a stuck rollout (operator escape hatch)
 
 Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 
-`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude]`
+`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1414,6 +1414,7 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 | `--repo <OWNER/NAME>` | scan a GitHub repo |  |
 | `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
 | `--show-affected` | render the WillDeploy + Unaffected tables (ADR-124) |  |
+| `--explain` | show why each workload was detected (detector, marker, priority) |  |
 | `--persist-exclude` | record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3) |  |
 
 

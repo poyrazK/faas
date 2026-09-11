@@ -202,6 +202,65 @@ func TestCmdScan_RendersTable(t *testing.T) {
 	}
 }
 
+// TestCmdScan_ExplainDetectionTrace pins the opt-in detector trace. The
+// trace is intentionally human-readable (detector + source marker + priority)
+// while preserving the terse default table for existing scripts. Merged
+// detectors are sorted before rendering so the output is stable even if a
+// server response was assembled in a different order.
+func TestCmdScan_ExplainDetectionTrace(t *testing.T) {
+	plan := goldenPlan
+	plan.Workloads = []api.PlanWorkload{
+		{
+			Name:    "worker",
+			RootDir: "/worker",
+			Class:   "worker",
+			Source:  "Procfile: worker",
+			DetectedBy: &api.PlanDetectedBy{
+				Detector:   "procfile",
+				Priority:   75,
+				MergedFrom: []string{"compose", "k8s", "compose"},
+			},
+		},
+		{
+			Name:    "api",
+			RootDir: "/api",
+			Class:   "http",
+			Source:  "compose.yaml: api",
+			DetectedBy: &api.PlanDetectedBy{
+				Detector: "compose",
+				Priority: 80,
+			},
+		},
+	}
+	sink := &decomposeSink{scanStatus: http.StatusOK, scanBody: plan}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	tarball := writeTarball(t)
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdScan([]string{"--tarball", tarball, "--project-slug", "fixture", "--explain"}); code != 0 {
+		t.Fatalf("cmdScan --explain exit = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"detected_by: compose  marker=compose.yaml: api  priority=80",
+		"detected_by: procfile  marker=Procfile: worker  priority=75",
+		"merged_from: compose, k8s",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--explain output missing %q:\n%s", want, out)
+		}
+	}
+	// The normal workload rows remain name-sorted and the explanation follows
+	// its corresponding row, so the first detector appears before the second.
+	if strings.Index(out, "detected_by: compose") > strings.Index(out, "detected_by: procfile") {
+		t.Errorf("detector trace not sorted with workloads:\n%s", out)
+	}
+}
+
 // TestCmdScan_OverQuotaApps confirms the dry-run shows can_apply=false
 // when the response already carries over-quota info, and exits 0 (the
 // CLI never writes — over-quota is reported, not errored).

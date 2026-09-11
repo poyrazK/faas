@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PlanDetectedBy } from './PlanDetectedBy.js';
 /**
  * One discovered unit of work. Mirrors reposcan.Workload.
  */
@@ -33,5 +34,6 @@ export type PlanWorkload = {
    * ADR-124: app row ID the update targets. Empty iff action == create.
    */
   existing_app_id?: string;
+  detected_by?: PlanDetectedBy;
 };
 
