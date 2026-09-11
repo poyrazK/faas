@@ -1,5 +1,7 @@
 package meter
 
+// adr: 046
+
 // usage_summary_test.go — pkg/meter/BuildAppWindowSummary unit tests.
 //
 // The handler-level tests live in cmd/apid/handlers_usage_test.go

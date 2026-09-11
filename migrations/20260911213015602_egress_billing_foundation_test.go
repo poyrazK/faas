@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	egressBillingFoundationPrevious int64 = 20260911221534789
-	egressBillingFoundationVersion  int64 = 20260911224500000
+	egressBillingFoundationPrevious int64 = 20260911191442727
+	egressBillingFoundationVersion  int64 = 20260911213015602
 )
 
 func TestMigrations_EgressBillingFoundationIsMeterQualifiedAndRollingSafe(t *testing.T) {
