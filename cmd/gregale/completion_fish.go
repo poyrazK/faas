@@ -35,16 +35,23 @@ func renderFishHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "function __gregale_cache_slugs")
 	_, _ = fmt.Fprintln(w, "  set -l kind $argv[1]")
-	_, _ = fmt.Fprintln(w, "  set -l path (gregale completion-cache-path 2>/dev/null)")
+	_, _ = fmt.Fprintln(w, "  set -l path (gregale completion completion-cache-path 2>/dev/null)")
 	_, _ = fmt.Fprintln(w, "  if test -z \"$path\"; or not test -r \"$path\"")
 	_, _ = fmt.Fprintln(w, "    return 1")
 	_, _ = fmt.Fprintln(w, "  end")
 	// sed slice rather than grep -E with literal braces — fish's
 	// grep treats '{' as a quantifier metacharacter and rejects it.
 	_, _ = fmt.Fprintln(w, "  sed -n \"/\\\"$kind\\\":\\[/,/]/p\" \"$path\" 2>/dev/null \\")
+	_, _ = fmt.Fprintln(w, "    | sed -E \"s/.*\\\"$kind\\\":\\[//; s/\\].*//\" \\")
 	_, _ = fmt.Fprintln(w, "    | grep -oE '\"slug\":\"[^\"]+\"' \\")
 	_, _ = fmt.Fprintln(w, "    | sed -E 's/.*\"slug\":\"([^\"]+)\".*/\\1/'")
 	_, _ = fmt.Fprintln(w, "end")
+	_, _ = fmt.Fprintln(w)
+	// Org-scoped and app-scoped leaf parsers accept these flags across
+	// nested command families. Keep their values cache-backed even when
+	// the parent cliCommand does not duplicate every leaf flag.
+	_, _ = fmt.Fprintln(w, "complete -c gregale -f -n \"__fish_prev_arg_in --app\" -a \"(__gregale_cache_slugs apps)\"")
+	_, _ = fmt.Fprintln(w, "complete -c gregale -f -n \"__fish_prev_arg_in --org\" -a \"(__gregale_cache_slugs orgs)\"")
 	_, _ = fmt.Fprintln(w)
 }
 
