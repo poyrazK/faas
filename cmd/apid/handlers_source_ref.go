@@ -229,7 +229,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+		s.writeDeploymentCreateError(w, err)
 		return
 	}
 	sourceAccepted = true
