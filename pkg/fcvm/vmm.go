@@ -2914,6 +2914,8 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 		Type:          w.Type,
 		RamMB:         w.RamMB,
 		CPUMillicores: w.CPUMillicores,
+		ScratchMB:     w.ScratchMB,
+		DiskIOProfile: w.DiskIOProfile,
 		Port:          w.Port,
 		Essential:     w.Essential,
 		Cmd:           w.Cmd,
@@ -3029,7 +3031,8 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // wiring (ADR-053), and Essential for the restart policy. Cmd/Entrypoint
 // override the per-workload image's baked entrypoint (the sidecar
 // image's /usr/local/bin/start.sh, the main workload's app.json), and
-// DependsOn for dependency-aware startup.
+// DependsOn for dependency-aware startup. ScratchMB selects the sidecar
+// /tmp ceiling; DiskIOProfile selects its guest io.weight policy.
 //
 // Both fields are omitempty so the legacy PR-B path (no customer
 // override) writes the same byte shape as before — dashboards
@@ -3051,12 +3054,14 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 type workloadManifest struct {
 	Cmd           []string                 `json:"cmd,omitempty"`
 	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
+	DiskIOProfile string                   `json:"disk_io_profile,omitempty"`
 	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
 	Entrypoint    []string                 `json:"entrypoint,omitempty"`
 	Essential     bool                     `json:"essential"`
 	Name          string                   `json:"name"`
 	Port          int                      `json:"port"`
 	RamMB         int                      `json:"ram_mb"`
+	ScratchMB     int                      `json:"scratch_mb,omitempty"`
 	Type          string                   `json:"type"`
 }
 
@@ -3126,6 +3131,8 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 			Type:          main.Type,
 			RamMB:         main.RamMB,
 			CPUMillicores: main.CPUMillicores,
+			ScratchMB:     main.ScratchMB,
+			DiskIOProfile: main.DiskIOProfile,
 			Port:          main.Port,
 			Essential:     main.Essential,
 			DependsOn:     main.DependsOn,
@@ -3137,6 +3144,8 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 			Type:          sc.Type,
 			RamMB:         sc.RamMB,
 			CPUMillicores: sc.CPUMillicores,
+			ScratchMB:     sc.ScratchMB,
+			DiskIOProfile: sc.DiskIOProfile,
 			Port:          sc.Port,
 			Essential:     sc.Essential,
 			Cmd:           sc.Cmd,

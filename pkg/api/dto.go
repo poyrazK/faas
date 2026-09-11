@@ -5196,10 +5196,18 @@ type Sidecar struct {
 	// means "absent / inherit the plan RAM" (the common case).
 	// 32..512 enforced at the API layer.
 	RamMB int `json:"ram_mb,omitempty"`
+	// ScratchMB is the customer-selectable writable /tmp tmpfs ceiling for
+	// this sidecar. 0 derives a safe default from RamMB (or 64 MiB when RAM
+	// is inherited); explicit values are bounded to 16..512 MiB.
+	ScratchMB int `json:"scratch_mb,omitempty"`
 	// CPUMillicores is the per-sidecar sustained CPU ceiling.
 	// 0 preserves the plan CPU quota, non-zero values are one of
 	// 250, 500, or 1000.
 	CPUMillicores int `json:"cpu_millicores,omitempty"`
+	// DiskIOProfile selects the per-workload cgroup v2 io.weight policy.
+	// Empty inherits the guest default; supported values are low, standard,
+	// and high.
+	DiskIOProfile string `json:"disk_io_profile,omitempty"`
 	// Essential defaults to true. If true and the workload exits
 	// non-zero: the dependency set fails (`failure_class=user_error`)
 	// and essential long-running sidecars restart-loop. If false,
@@ -5281,8 +5289,14 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	if s.RamMB != 0 && (s.RamMB < 32 || s.RamMB > 512) {
 		return ErrSidecarInvalidRamMB(s.RamMB)
 	}
+	if s.ScratchMB != 0 && (s.ScratchMB < SidecarScratchMBMin || s.ScratchMB > SidecarScratchMBMax) {
+		return ErrSidecarInvalidScratchMB(s.ScratchMB)
+	}
 	if s.CPUMillicores != 0 && !ValidAppCPUMillicores(s.CPUMillicores) {
 		return ErrSidecarInvalidCPUMillicores(s.CPUMillicores)
+	}
+	if !ValidSidecarDiskIOProfile(s.DiskIOProfile) {
+		return ErrSidecarInvalidDiskIOProfile(s.DiskIOProfile)
 	}
 	if len(s.DependsOn) > WorkloadDependencyCapMax {
 		return NewProblem(http.StatusBadRequest, CodeValidation,

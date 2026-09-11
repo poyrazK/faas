@@ -59,6 +59,11 @@ from .app_error_sample_response_headers_sample import AppErrorSampleResponseHead
 from .app_error_summary_item import AppErrorSummaryItem
 from .app_error_summary_item_error_class import AppErrorSummaryItemErrorClass
 from .app_errors_summary_response import AppErrorsSummaryResponse
+from .app_log_drain_analytics_bucket import AppLogDrainAnalyticsBucket
+from .app_log_drain_analytics_response import AppLogDrainAnalyticsResponse
+from .app_log_drain_analytics_response_bucket_interval import AppLogDrainAnalyticsResponseBucketInterval
+from .app_log_drain_analytics_response_window import AppLogDrainAnalyticsResponseWindow
+from .app_log_drain_analytics_summary import AppLogDrainAnalyticsSummary
 from .app_log_drain_health_response import AppLogDrainHealthResponse
 from .app_log_drain_health_response_status import AppLogDrainHealthResponseStatus
 from .app_log_drain_response import AppLogDrainResponse
@@ -436,6 +441,7 @@ from .gdpr_audit_export_response_action import GdprAuditExportResponseAction
 from .gdpr_audit_export_response_data import GdprAuditExportResponseData
 from .gdpr_audit_export_response_source import GdprAuditExportResponseSource
 from .get_account_slo_window import GetAccountSLOWindow
+from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
 from .get_app_open_api_source import GetAppOpenAPISource
@@ -810,6 +816,7 @@ from .set_password_request import SetPasswordRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
+from .sidecar_disk_io_profile import SidecarDiskIoProfile
 from .sidecar_env import SidecarEnv
 from .sidecar_type import SidecarType
 from .slo_duration import SLODuration
@@ -1011,6 +1018,11 @@ __all__ = (
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
     "AppliedBuild",
+    "AppLogDrainAnalyticsBucket",
+    "AppLogDrainAnalyticsResponse",
+    "AppLogDrainAnalyticsResponseBucketInterval",
+    "AppLogDrainAnalyticsResponseWindow",
+    "AppLogDrainAnalyticsSummary",
     "AppLogDrainHealthResponse",
     "AppLogDrainHealthResponseStatus",
     "AppLogDrainResponse",
@@ -1379,6 +1391,7 @@ __all__ = (
     "GdprAuditExportResponseData",
     "GdprAuditExportResponseSource",
     "GetAccountSLOWindow",
+    "GetAppLogDrainAnalyticsWindow",
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
     "GetAppOpenAPISource",
@@ -1749,6 +1762,7 @@ __all__ = (
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",
+    "SidecarDiskIoProfile",
     "SidecarEnv",
     "SidecarType",
     "SLODuration",

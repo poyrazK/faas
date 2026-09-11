@@ -24,7 +24,7 @@
 //
 //   2. Before each configured workload's exec.Command.Start, mkdir
 //      the per-workload leaf at /sys/fs/cgroup/<safe-name>, write
-//      any configured memory.max and cpu.max values, and after
+//      any configured memory.max, cpu.max, and io.weight values, and after
 //      Start write the child PID into cgroup.procs. Workloads
 //      without either override remain under the parent scope.
 //
@@ -69,17 +69,27 @@ var cgroupRoot = "/sys/fs/cgroup"
 // CPU value inherits the parent limit; when both are zero the legacy path is
 // preserved and no child leaf is created.
 func prepareWorkloadCgroup(typ, name string, ramMB int, log *slog.Logger, cpuMillicoresOpt ...int) (string, error) {
+	return prepareWorkloadCgroupWithIO(typ, name, ramMB, log, firstCPUOption(cpuMillicoresOpt), "")
+}
+
+func firstCPUOption(options []int) int {
+	if len(options) == 0 {
+		return 0
+	}
+	return options[0]
+}
+
+func prepareWorkloadCgroupWithIO(typ, name string, ramMB int, log *slog.Logger, cpuMillicores int, diskIOProfile string) (string, error) {
 	if ramMB < 0 {
 		return "", fmt.Errorf("invalid workload cgroup ram_mb %d", ramMB)
-	}
-	cpuMillicores := 0
-	if len(cpuMillicoresOpt) > 0 {
-		cpuMillicores = cpuMillicoresOpt[0]
 	}
 	if cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAppCPUMillicores(cpuMillicores)) {
 		return "", fmt.Errorf("invalid workload cgroup cpu_millicores %d", cpuMillicores)
 	}
-	if ramMB == 0 && cpuMillicores == 0 {
+	if !api.ValidSidecarDiskIOProfile(diskIOProfile) {
+		return "", fmt.Errorf("invalid workload cgroup disk_io_profile %q", diskIOProfile)
+	}
+	if ramMB == 0 && cpuMillicores == 0 && diskIOProfile == "" {
 		return "", nil
 	}
 	leaf := leafDir(typ, name)
@@ -89,7 +99,7 @@ func prepareWorkloadCgroup(typ, name string, ramMB int, log *slog.Logger, cpuMil
 	if log == nil {
 		log = slog.Default()
 	}
-	if err := partitionInto(leaf, ramMB, cpuMillicores); err != nil {
+	if err := partitionIntoWithIO(leaf, ramMB, cpuMillicores, diskIOProfile); err != nil {
 		log.Warn("cgroup partition into leaf failed",
 			"leaf", leaf, "name", name, "err", err)
 		return "", err
@@ -156,6 +166,7 @@ func leafDir(typ, name string) string {
 //  1. mkdir <leaf>
 //  2. write memory.max = ramMB << 20 (bytes), when configured
 //  3. write cpu.max = quota period, when configured
+//  4. write io.weight from the named disk-I/O profile, when configured
 //
 // Errors are logged + returned (the caller decides whether
 // to fail the deploy). A zero override is omitted so the
@@ -168,18 +179,22 @@ func leafDir(typ, name string) string {
 // pivotInto and the supervisor's first workload, so by the
 // time partitionInto runs the leaf path is reachable.
 func partitionInto(leaf string, ramMB int, cpuMillicoresOpt ...int) error {
+	return partitionIntoWithIO(leaf, ramMB, firstCPUOption(cpuMillicoresOpt), "")
+}
+
+func partitionIntoWithIO(leaf string, ramMB, cpuMillicores int, diskIOProfile string) error {
 	if leaf == "" {
 		return errors.New("cgroup partition: empty leaf")
 	}
 	if err := os.MkdirAll(leaf, 0o755); err != nil {
 		return fmt.Errorf("cgroup partition: mkdir %s: %w", leaf, err)
 	}
-	cpuMillicores := 0
-	if len(cpuMillicoresOpt) > 0 {
-		cpuMillicores = cpuMillicoresOpt[0]
-	}
 	if ramMB < 0 || cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAppCPUMillicores(cpuMillicores)) {
 		return fmt.Errorf("cgroup partition: invalid limits ram_mb=%d cpu_millicores=%d", ramMB, cpuMillicores)
+	}
+	ioWeight, ioConfigured := api.SidecarDiskIOProfileWeight(diskIOProfile)
+	if diskIOProfile != "" && !ioConfigured {
+		return fmt.Errorf("cgroup partition: invalid disk_io_profile=%q", diskIOProfile)
 	}
 	if ramMB > 0 {
 		bytes := int64(ramMB) << 20
@@ -200,6 +215,11 @@ func partitionInto(leaf string, ramMB int, cpuMillicoresOpt ...int) error {
 			0o644,
 		); err != nil {
 			return fmt.Errorf("cgroup partition: write cpu.max for %s: %w", leaf, err)
+		}
+	}
+	if ioConfigured {
+		if err := os.WriteFile(filepath.Join(leaf, "io.weight"), []byte(strconv.Itoa(ioWeight)+"\n"), 0o644); err != nil {
+			return fmt.Errorf("cgroup partition: write io.weight for %s: %w", leaf, err)
 		}
 	}
 	return nil
@@ -269,18 +289,18 @@ func mountCgroup2() error {
 
 // enableWorkloadControllers delegates the controllers needed by workload
 // leaves to the private cgroup namespace's root. A cgroup v2 child exposes
-// cpu.max and memory.max only after the corresponding controller is enabled in
-// its parent. Kernels that do not provide either controller remain usable for
-// the legacy host-side fence; the caller receives no error when neither is
-// available.
+// cpu.max, memory.max, and io.weight only after the corresponding controller
+// is enabled in its parent. Kernels that do not provide a controller remain
+// usable for workloads that do not request that policy; a configured policy
+// fails closed when its leaf file is unavailable.
 func enableWorkloadControllers() error {
 	availableRaw, err := os.ReadFile(filepath.Join(cgroupRoot, "cgroup.controllers"))
 	if err != nil {
 		return fmt.Errorf("cgroup2 controllers: %w", err)
 	}
 	available := strings.Fields(string(availableRaw))
-	wanted := make([]string, 0, 2)
-	for _, controller := range []string{"memory", "cpu"} {
+	wanted := make([]string, 0, 3)
+	for _, controller := range []string{"memory", "cpu", "io"} {
 		for _, candidate := range available {
 			if candidate == controller {
 				wanted = append(wanted, controller)

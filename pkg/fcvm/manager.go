@@ -5846,6 +5846,8 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 			DriveID:         sc.DriveID, // imaged populated this on the wire
 			RamMB:           sc.RamMB,
 			CPUMillicores:   sc.CPUMillicores,
+			ScratchMB:       sc.ScratchMB,
+			DiskIOProfile:   sc.DiskIOProfile,
 			Port:            sc.Port,
 			Essential:       sc.Essential,
 			Cmd:             append([]string(nil), sc.Cmd...),

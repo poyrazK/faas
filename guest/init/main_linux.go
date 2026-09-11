@@ -1919,7 +1919,8 @@ type sidecarDevice struct {
 	tmpfsSizeMB  int    // bounded writable /tmp capacity for this sidecar
 }
 
-// sidecarTmpfsSizeMB resolves the writable scratch ceiling for one sidecar.
+// sidecarTmpfsSizeMB resolves the writable scratch ceiling for one sidecar
+// when no customer override was supplied.
 // A malformed or inherited profile gets the conservative platform default;
 // API validation normally guarantees the explicit 32..512 MiB range, but the
 // guest must remain safe when handed a stale or hand-written roster.
@@ -1930,8 +1931,21 @@ func sidecarTmpfsSizeMB(ramMB int) int {
 	return defaultSidecarTmpfsSizeMB
 }
 
+// sidecarScratchSizeMB gives an explicit customer scratch quota precedence
+// over the RAM-derived default. The guest repeats the bounds check so a stale
+// or hand-written roster cannot mount an unbounded tmpfs.
+func sidecarScratchSizeMB(scratchMB, ramMB int) int {
+	if scratchMB >= api.SidecarScratchMBMin && scratchMB <= api.SidecarScratchMBMax {
+		return scratchMB
+	}
+	return sidecarTmpfsSizeMB(ramMB)
+}
+
 func sidecarTmpfsMountData(sizeMB int) string {
-	return fmt.Sprintf("mode=1777,size=%dM", sidecarTmpfsSizeMB(sizeMB))
+	if sizeMB < api.SidecarScratchMBMin || sizeMB > api.SidecarScratchMBMax {
+		sizeMB = defaultSidecarTmpfsSizeMB
+	}
+	return fmt.Sprintf("mode=1777,size=%dM", sizeMB)
 }
 
 // discoverSidecarDevices reads the roster file from drive1 (the
@@ -2002,7 +2016,7 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 			name:         fmt.Sprintf("sidecar-%d", i),
 			device:       fmt.Sprintf("/dev/vd%c", 'c'+i),
 			workloadName: workloadName,
-			tmpfsSizeMB:  sidecarTmpfsSizeMB(roster.Sidecars[i].RamMB),
+			tmpfsSizeMB:  sidecarScratchSizeMB(roster.Sidecars[i].ScratchMB, roster.Sidecars[i].RamMB),
 		})
 	}
 	return out, nil

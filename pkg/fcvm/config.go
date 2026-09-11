@@ -609,6 +609,10 @@ func JailerCommand(s JailerSpec) []string {
 // CPUMillicores is the per-workload cgroup cpu.max allowance. 0
 // inherits the parent app quota; non-zero values are one of 250,
 // 500, or 1000 millicores.
+// ScratchMB is the sidecar's writable /tmp tmpfs ceiling. 0 derives the
+// guest platform default from the workload RAM profile.
+// DiskIOProfile selects the guest cgroup v2 io.weight policy. Empty inherits
+// the guest default.
 //
 // Cmd and Entrypoint (PR-C §6) are the customer-image override
 // surface. Empty (the default) means "use the baked image
@@ -627,6 +631,8 @@ type WorkloadSpec struct {
 	DriveID       string // FC Drive.DriveID (DriveLayerMain / DriveSidecarPrefix+idx)
 	RamMB         int    // 0 = inherit plan RAM
 	CPUMillicores int    // 0 = inherit app CPU quota
+	ScratchMB     int    // 0 = platform default; sidecars only
+	DiskIOProfile string // "low", "standard", "high"; sidecars only
 	Port          int    // 0 = inherit main port (8080)
 	Essential     bool   // type=="init" + essential=true → fail deploy on non-zero exit
 	Cmd           []string

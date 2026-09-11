@@ -33,7 +33,9 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * any log, audit, or error.
  * - `port` ∈ {0, 1..65535}. 0 = absent.
  * - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
+ * - `scratch_mb` ∈ {0, 16..512}. 0 = platform default; explicit values cap the sidecar's writable `/tmp` tmpfs.
  * - `cpu_millicores` ∈ {0, 250, 500, 1000}. 0 = inherit app CPU quota.
+ * - `disk_io_profile` ∈ {`low`, `standard`, `high`}. Omit to inherit the guest default; profiles map to per-workload cgroup I/O weights.
  * - `essential` defaults to true. If true and the workload
  * exits non-zero, the dependency set fails
  * (`failure_class=user_error`) and essential long-running
@@ -76,9 +78,17 @@ export type Sidecar = {
    */
   ram_mb?: number;
   /**
+   * Writable /tmp tmpfs ceiling for this sidecar in MB. 0 = platform default; explicit values must be 16..512.
+   */
+  scratch_mb?: number;
+  /**
    * Sustained cgroup CPU allowance in millicores. 0 = inherit app CPU quota.
    */
   cpu_millicores?: 0 | 250 | 500 | 1000;
+  /**
+   * Per-workload guest cgroup I/O scheduling policy. Omit to inherit the guest default.
+   */
+  disk_io_profile?: 'low' | 'standard' | 'high';
   /**
    * Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained.
    */

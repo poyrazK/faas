@@ -71,6 +71,16 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 				Type:  SidecarTypeSidecar,
 			},
 		},
+		{
+			name: "resource-isolation-controls",
+			s: Sidecar{
+				Name:          "metrics",
+				Image:         "r/x@sha256:" + strings.Repeat("b", 64),
+				Type:          SidecarTypeSidecar,
+				ScratchMB:     SidecarScratchMBMax,
+				DiskIOProfile: string(SidecarDiskIOProfileHigh),
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -232,6 +242,21 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			name:    "cpu-invalid",
 			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, CPUMillicores: 750},
 			wantSub: "sidecar cpu_millicores",
+		},
+		{
+			name:    "scratch-below-floor",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, ScratchMB: SidecarScratchMBMin - 1},
+			wantSub: "sidecar scratch_mb",
+		},
+		{
+			name:    "scratch-above-ceiling",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, ScratchMB: SidecarScratchMBMax + 1},
+			wantSub: "sidecar scratch_mb",
+		},
+		{
+			name:    "disk-io-profile-invalid",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, DiskIOProfile: "burst"},
+			wantSub: "sidecar disk_io_profile",
 		},
 		// Stateful image rejection (issue #463 / ADR-068 §Decision 4).
 		// The shared pkg/statefuldenylist matcher strips the digest
@@ -435,7 +460,9 @@ func TestSidecar_JSONRoundTrip(t *testing.T) {
 				Env:           map[string]string{"DB_URL": "postgres://x"},
 				Port:          9090,
 				RamMB:         64,
+				ScratchMB:     128,
 				CPUMillicores: 500,
+				DiskIOProfile: string(SidecarDiskIOProfileHigh),
 				Essential:     &essTrue,
 			},
 		},
@@ -491,6 +518,12 @@ func TestSidecar_JSONRoundTrip(t *testing.T) {
 			}
 			if got.RamMB != tc.original.RamMB {
 				t.Errorf("RamMB: got %d, want %d", got.RamMB, tc.original.RamMB)
+			}
+			if got.ScratchMB != tc.original.ScratchMB {
+				t.Errorf("ScratchMB: got %d, want %d", got.ScratchMB, tc.original.ScratchMB)
+			}
+			if got.DiskIOProfile != tc.original.DiskIOProfile {
+				t.Errorf("DiskIOProfile: got %q, want %q", got.DiskIOProfile, tc.original.DiskIOProfile)
 			}
 			// Essential tri-state pin: nil must round-trip as nil,
 			// *true as *true, *false as *false. A nil-vs-false

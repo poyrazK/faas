@@ -273,6 +273,14 @@ func TestWorkloadManifest_RoundTripsCmdEntry(t *testing.T) {
 			wantJSON: `{"cpu_millicores":250,"essential":true,"name":"metrics","port":9100,"ram_mb":64,"type":"sidecar"}`,
 		},
 		{
+			name: "scratch and io policy",
+			in: workloadManifest{
+				Name: "metrics", Type: "sidecar", RamMB: 64, ScratchMB: 192,
+				DiskIOProfile: "high", Port: 9100, Essential: true,
+			},
+			wantJSON: `{"disk_io_profile":"high","essential":true,"name":"metrics","port":9100,"ram_mb":64,"scratch_mb":192,"type":"sidecar"}`,
+		},
+		{
 			name: "entrypoint and cmd",
 			in: workloadManifest{
 				Name: "metrics", Type: "sidecar",

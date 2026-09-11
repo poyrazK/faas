@@ -1064,6 +1064,8 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			Image:         sc.Image,
 			RamMb:         int32(sc.RamMB),
 			CpuMillicores: int32(sc.CPUMillicores),
+			ScratchMb:     int32(sc.ScratchMB),
+			DiskIoProfile: sc.DiskIOProfile,
 			Port:          uint32(sc.Port),
 			Essential:     sc.Essential,
 			StorageKey:    sc.StorageKey,
