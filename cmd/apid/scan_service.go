@@ -759,12 +759,13 @@ func (s *server) applyBuildsForAddedChanged(
 		// the prior row. Source="tarball" keeps the build_queued
 		// payload's kind field aligned with the deployment's kind.
 		enqRes, enqErr := apidsource.Enqueue(ctx, s.store, s.notif, apidsource.EnqueueParams{
-			AppID:       app.ID,
-			Kind:        state.DeploymentKindTarball,
-			SourcePath:  staged,
-			SourceBytes: bytes,
-			LogSpool:    spoolRoot(),
-			Log:         s.log,
+			AppID:           app.ID,
+			Kind:            state.DeploymentKindTarball,
+			SourcePath:      staged,
+			SourceBytes:     bytes,
+			FunctionRuntime: functionRuntimeForApp(app),
+			LogSpool:        spoolRoot(),
+			Log:             s.log,
 			// MEDIUM review #2 (PR #992): stamp the four
 			// actor columns on every scan-and-apply
 			// deployment. Without these, every

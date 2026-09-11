@@ -1,10 +1,39 @@
 package frameworkprofile
 
 import (
+	"reflect"
 	"testing"
 
 	"testing/fstest"
 )
+
+func TestProfileForFunctionRuntime(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		runtime   string
+		framework string
+	}{
+		{runtime: "node22", framework: "node"},
+		{runtime: "node24", framework: "node"},
+		{runtime: "python312", framework: "python"},
+		{runtime: "python313", framework: "python"},
+		{runtime: "go124", framework: "go"},
+		{runtime: "go124-alpine", framework: "go"},
+	} {
+		t.Run(tt.runtime, func(t *testing.T) {
+			profile, ok := ProfileForFunctionRuntime(tt.runtime)
+			if !ok || profile.Framework != tt.framework {
+				t.Fatalf("ProfileForFunctionRuntime(%q) = (%+v, %t), want framework=%q", tt.runtime, profile, ok, tt.framework)
+			}
+			if profile.Version != Version || profile.Inferred || profile.StartCommand != "" || profile.Port != 0 || profile.HealthPath != "" {
+				t.Fatalf("runtime profile = %+v, want explicit framework-only metadata", profile)
+			}
+		})
+	}
+	if profile, ok := ProfileForFunctionRuntime("ruby"); ok || !reflect.DeepEqual(profile, Profile{}) {
+		t.Fatalf("unsupported runtime profile = (%+v, %t), want zero profile and false", profile, ok)
+	}
+}
 
 func TestAnalyzeProfilesCommonAPIs(t *testing.T) {
 	tests := []struct {

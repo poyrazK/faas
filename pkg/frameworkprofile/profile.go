@@ -53,6 +53,34 @@ type Warning struct {
 	Sources []string `json:"sources,omitempty"`
 }
 
+// ProfileForFunctionRuntime returns the framework pipeline implied by an
+// explicitly selected function runtime. Function sources intentionally do not
+// need a framework manifest, so this metadata is the authoritative profile
+// when the archive contains only a handler file.
+//
+// The returned profile does not invent an application start command or health
+// endpoint. Function deployments use the platform runner and its fixed
+// manifest; callers should use the Framework field to select the build
+// pipeline while leaving those app-level defaults untouched.
+func ProfileForFunctionRuntime(runtime string) (Profile, bool) {
+	var framework markers.Framework
+	switch strings.ToLower(strings.TrimSpace(runtime)) {
+	case "node22", "node24":
+		framework = markers.FrameworkNode
+	case "python312", "python313":
+		framework = markers.FrameworkPython
+	case "go124", "go124-alpine":
+		framework = markers.FrameworkGo
+	default:
+		return Profile{}, false
+	}
+	return Profile{
+		Version:   Version,
+		Framework: string(framework),
+		Inferred:  false,
+	}, true
+}
+
 // AnalyzeDir analyzes a local directory without executing customer code.
 func AnalyzeDir(path string) (Profile, error) {
 	return Analyze(os.DirFS(path))

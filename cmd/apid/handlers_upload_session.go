@@ -628,6 +628,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		SourceBytes:      row.ReceivedBytes,
 		SourceRoot:       opts.SourceRoot,
 		Handler:          opts.Handler,
+		FunctionRuntime:  functionRuntimeForApp(app),
 		SourceURL:        "local-tar://upload-session/" + uploadID,
 		Source:           "upload-session:" + uploadID,
 		LogSpool:         spoolRoot(),

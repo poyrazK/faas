@@ -54,6 +54,7 @@ type fakeVM struct {
 	spawnCalls     int
 	waitCalls      int
 	handle         BuildHandle
+	lastRequest    VMRequest
 }
 
 var testBuildEnvironment = BuildEnvironment{
@@ -80,8 +81,9 @@ func testBuildCacheRecipe(sourceHash string, framework Framework, plan api.Plan,
 	}
 }
 
-func (f *fakeVM) Spawn(_ context.Context, _ VMRequest) (BuildHandle, error) {
+func (f *fakeVM) Spawn(_ context.Context, req VMRequest) (BuildHandle, error) {
 	f.spawnCalls++
+	f.lastRequest = req
 	if f.handle.Instance == "" {
 		f.handle = BuildHandle{Instance: "build-test", BuildID: "test", TimeoutSec: 30}
 	}
@@ -429,6 +431,47 @@ func TestProcessOne_FrameworkDetectFailsFlipsDeployment(t *testing.T) {
 	}
 	if !contains(dep.Error, "framework detect") {
 		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "framework detect")
+	}
+}
+
+func TestProcessOne_MarkerlessFunctionUsesRuntimeFramework(t *testing.T) {
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(context.Background(), "function@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "markerless-python", Type: state.AppTypeFunction,
+		Runtime: "python313", RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "handler-only.tar.gz")
+	makeTarballWithName(t, src, []string{"handler.py"})
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: src,
+		SourceBytes: 100, LogPath: filepath.Join(t.TempDir(), "build.log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 100, dep.LogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layer := filepath.Join(t.TempDir(), "produced.ext4")
+	if err := os.WriteFile(layer, []byte("produced layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: layer, ExitCode: 0}}
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := b.ProcessOne(context.Background(), build.ID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	if fvm.lastRequest.Framework != FrameworkPython || fvm.lastRequest.Runtime != "python313" {
+		t.Fatalf("VM request = %+v, want python framework with python313 runtime", fvm.lastRequest)
 	}
 }
 
