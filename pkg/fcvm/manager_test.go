@@ -1,3 +1,4 @@
+// adr: 053
 package fcvm
 
 import (
@@ -1730,6 +1731,18 @@ func TestSetupNetworkRunsNftBeforeVMBoot(t *testing.T) {
 	// VMM.Boot runs after setupNetwork returns (Wake's call sequence). bootCount
 	// is asserted at the top of this test via `vmm.boots() != 1`; the order
 	// between tap-create < DNAT < Boot is the load-bearing #30 invariant.
+}
+
+func TestSetupNetworkDNATsStableHostPortToDeploymentPort(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+
+	if _, err := m.ColdBoot(context.Background(), reqWithPort("dnat-custom", 3000)); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	if !run.ran("tcp dport 8080 dnat to 10.0.0.2:3000") {
+		t.Fatalf("custom deployment port was not applied to readiness DNAT: %v", run.commands)
+	}
 }
 
 func TestRunNftCommandsUsesSingleAtomicBatch(t *testing.T) {

@@ -2860,11 +2860,11 @@ type WakeRequest struct {
 	// It must match the timeout written by builderd into the build manifest;
 	// vmmd uses it to retain the corresponding export/teardown headroom.
 	BuildTimeoutSec int
-	// Port (issue #460 / ADR-053, PR-C) is the per-deployment override
+	// Port (issue #460 / ADR-053, PR-C) is the per-deployment runtime
 	// port the customer's app binds inside the guest. 0 = legacy 8080
-	// (netns.AppPort default). The host's waitReady + DNAT stay fixed
-	// on 8080 (ADR-009 + guest/init/portnorm_linux.go); vmmd's
-	// forwarder uses this port to dial the guest. Stamped onto the
+	// (netns.AppPort default). The host's published and readiness port
+	// stays fixed on 8080; the per-netns DNAT maps it to this target and
+	// vmmd's forwarder dials the same target. Stamped onto the
 	// live Instance so vmmdgrpc forwarder callers can resolve
 	// LiveFor(instance).Port without a second request lookup.
 	Port int
@@ -3379,6 +3379,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit
+	nc.GuestAppPort = req.Port
 	// Plan validation (issue #301 / ADR-043). An empty / unknown plan
 	// would land the VM under the wrong cgroup sub-slice (or under
 	// none at all) and silently disable per-plan cpu.weight + cpu.max
