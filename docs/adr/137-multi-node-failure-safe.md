@@ -1,6 +1,8 @@
 # ADR-137 · Multi-node failure-safe control plane
 
 - **Status:** accepted
+- **Extended by:** [ADR-174](174-compute-node-retirement.md), which adds the
+  orthogonal terminal `retired` state for operator decommissioning.
 - **Date:** 2026-08-30
 - **Deciders:** Gregale platform team
 - **Forks:** [issue #1184 Workstream B](https://github.com/onebox-faas/faas/issues/1184) — "Make multi-node compute failure-safe".
@@ -73,9 +75,9 @@ not a lifecycle state — it's a terminal instance state on a
 row that lives on a node (covered by the existing `instances`
 state machine, ADR-137's recovery_recreate path).
 
-**Trade-off accepted:** operators querying `lifecycle` directly
-get four values, not five. The dashboard's filter surface gets
-a clearer contract.
+**Trade-off accepted:** operators querying the recovery lifecycle originally
+got four values, not the proposed `failed` node state. ADR-174 later adds
+`retired` as an operator terminal state; it does not participate in recovery.
 
 ### Decision 3 · Recovery arbiter as single decision policy
 

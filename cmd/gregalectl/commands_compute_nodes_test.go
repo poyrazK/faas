@@ -940,6 +940,7 @@ func TestCmdComputeNodesDispatch_Routing(t *testing.T) {
 		{name: "drain_status", verb: "drain-status", wantErr: "--node required"},
 		{name: "activate", verb: "activate", wantErr: "--node required"},
 		{name: "force_drain", verb: "force-drain", wantErr: "--node required"},
+		{name: "retire", verb: "retire", wantErr: "--node, --reason, and --yes are required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -952,6 +953,33 @@ func TestCmdComputeNodesDispatch_Routing(t *testing.T) {
 				t.Errorf("dispatch(%s) stderr missing %q (got %q)", tc.verb, tc.wantErr, stderr)
 			}
 		})
+	}
+}
+
+func TestCmdComputeNodesRetire_BreakGlassRequiresMaintenance(t *testing.T) {
+	st := state.NewMemStore()
+	setComputeNodesStoreOpener(func() (state.Store, func(), error) {
+		return st, func() {}, nil
+	})
+	row, err := st.CreateComputeNode(context.Background(), state.ComputeNode{
+		Name: "retire-me", TargetURL: "tcp://retire-me.gregale.dev:50051",
+		Lifecycle: state.NodeLifecycleActive,
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if code := cmdComputeNodesRetire([]string{"--node", row.Name, "--reason", "hardware_eol", "--yes", "--break-glass-db"}); code != 1 {
+		t.Fatalf("retire active node exit=%d, want 1", code)
+	}
+	if err := st.NodeSetLifecycle(context.Background(), row.ID, state.NodeLifecycleActive, state.NodeLifecycleMaintenance); err != nil {
+		t.Fatalf("hold node: %v", err)
+	}
+	if code := cmdComputeNodesRetire([]string{"--node", row.Name, "--reason", "hardware_eol", "--yes", "--break-glass-db"}); code != 0 {
+		t.Fatalf("retire maintenance node exit=%d, want 0", code)
+	}
+	fresh, err := st.NodeGet(context.Background(), row.ID)
+	if err != nil || fresh.Lifecycle != state.NodeLifecycleRetired {
+		t.Fatalf("retired node=%+v err=%v", fresh, err)
 	}
 }
 

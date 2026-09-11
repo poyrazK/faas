@@ -2307,6 +2307,7 @@ const (
 	OperatorIntentKindNodeDrain      OperatorIntentKind = "node_drain"
 	OperatorIntentKindNodeForceDrain OperatorIntentKind = "node_force_drain"
 	OperatorIntentKindNodeActivate   OperatorIntentKind = "node_activate"
+	OperatorIntentKindNodeRetire     OperatorIntentKind = "node_retire"
 )
 
 // OperatorIntent is one row of operator_intents (migrations/00431).
@@ -3701,6 +3702,7 @@ const (
 	NodeLifecycleMaintenance   NodeLifecycle = "maintenance"
 	NodeLifecycleUnavailable   NodeLifecycle = "unavailable"
 	NodeLifecycleRecovering    NodeLifecycle = "recovering"
+	NodeLifecycleRetired       NodeLifecycle = "retired"
 )
 
 // IsAdmitting returns true for lifecycle states that the placement

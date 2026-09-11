@@ -54,7 +54,7 @@ Commands:
   backup       Operator rclone / archive credentials (backup init|unseal-archive-creds|unseal-rclone)
   secrets      Post-bootstrap secrets init (secrets init|rotate|status|stamp; PR-X / issue #911 / ADR-110)
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
-  compute-nodes  Compute-node state machine (add|drain|drain-status|activate|force-drain; PR-A / multi-host scale-out)
+  compute-nodes  Compute-node state machine (add|drain|drain-status|activate|force-drain|retire; PR-A / multi-host scale-out)
   instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart)
   accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)

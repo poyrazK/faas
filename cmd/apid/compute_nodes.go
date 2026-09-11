@@ -19,15 +19,12 @@
 //	GET    /v1/compute-nodes            — list (active only by default)
 //	GET    /v1/compute-nodes/{name}     — operator-safe detail + live count
 //	POST   /v1/compute-nodes            — upsert by name (admin POST)
-//	DELETE /v1/compute-nodes/{name}     — soft-delete (active=false);
-//	                                       ?hard=1 toggles to DELETE FROM
+//	DELETE /v1/compute-nodes/{name}     — enqueue retirement;
+//	                                       ?hard=1 removes unused retired rows
 //
-// Errors: RFC 7807 via api.WriteProblem. Hard-delete is admin-grade
-// and refuses on the synthetic default-local row (operator foot-gun
-// guard) — the canonical way to "remove" default-local is to set its
-// active=false via PATCH or to drain the box, not to wipe the row that
-// every pre-existing instance backfill from migration 00024 still
-// references.
+// Errors: RFC 7807 via api.WriteProblem. Retirement and hard deletion refuse
+// the synthetic default-local row. Hard deletion also requires a retired row
+// with no app or instance references.
 
 package main
 
@@ -120,6 +117,7 @@ func toComputeNodeResponse(n state.ComputeNode) computeNodeResponse {
 		MaxConcurrency:     n.MaxConcurrency,
 		AdmissionCeilingMB: n.AdmissionCeilingMB,
 		Active:             n.Active,
+		Lifecycle:          string(effectiveNodeLifecycle(n)),
 		Role:               n.Role,
 		Region:             n.Region,
 		Zone:               n.Zone,
@@ -217,12 +215,22 @@ func (s *server) createOrUpdateComputeNode(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	node, existed, err := s.prepareComputeNodeEnrollment(r.Context(), p)
+	if errors.Is(err, errComputeNodeRetired) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "node_retired",
+			"Node is retired", "retired node names cannot be re-enrolled; register a new node identity"))
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
 			"Lookup failed", err.Error()))
 		return
 	}
 	row, err := s.store.UpsertComputeNodeFromOperator(r.Context(), node)
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "node_retired",
+			"Node is retired", "retired node names cannot be re-enrolled; register a new node identity"))
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
 			"Upsert failed", err.Error()))
@@ -235,6 +243,8 @@ func (s *server) createOrUpdateComputeNode(w http.ResponseWriter, r *http.Reques
 	}
 	writeJSON(w, http.StatusOK, response)
 }
+
+var errComputeNodeRetired = errors.New("compute node is retired")
 
 func decodeComputeNodeEnrollment(r *http.Request) (computeNodePayload, string, *api.Problem) {
 	var p computeNodePayload
@@ -288,6 +298,9 @@ func (s *server) prepareComputeNodeEnrollment(ctx context.Context, p computeNode
 	}
 	if err != nil {
 		return state.ComputeNode{}, false, err
+	}
+	if effectiveNodeLifecycle(existing) == state.NodeLifecycleRetired {
+		return state.ComputeNode{}, false, errComputeNodeRetired
 	}
 	preserveComputeNodeEnrollmentMetadata(&node, existing)
 	return node, true, nil
@@ -366,63 +379,80 @@ func parseGatewayTargetURL(raw string) (host, port string, err error) {
 	return host, port, nil
 }
 
-// deleteComputeNode handles DELETE /v1/compute-nodes/{name}. Soft
-// delete by default (active=false, schedd's watchdog will not
-// re-activate because the heartbeat goroutine skips non-default
-// paths and the heartbeat itself stops once vmmd is gone). ?hard=1
-// is a real DELETE FROM — admin foot-gun and gated on name !=
-// "default-local" so an operator doesn't wipe the row every legacy
-// instance backfill from migration 00024 still references.
+// deleteComputeNode preserves the legacy route while replacing its unsafe
+// active=false toggle with the durable retirement workflow. Hard deletion is
+// limited to unused rows that have already reached the terminal state.
 func (s *server) deleteComputeNode(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	allowed, prob := s.adminAllows(acct)
-	if !allowed {
+	if r.URL.Query().Get("hard") != "1" {
+		s.enqueueObsNodeMutation(w, r, acct, "retire", false)
+		return
+	}
+	s.hardDeleteRetiredComputeNode(w, r, acct)
+}
+
+func (s *server) hardDeleteRetiredComputeNode(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if allowed, prob := s.adminAllows(acct); !allowed {
 		api.WriteProblem(w, prob)
 		return
 	}
-	name := r.PathValue("name")
-	if name == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "bad_request",
-			"Missing name", "path parameter name is required"))
+	reason, ok := parseNodeDeleteConfirmation(w, r)
+	if !ok {
 		return
 	}
-	hard := r.URL.Query().Get("hard") == "1"
-	if hard {
-		if name == state.DefaultLocalNodeName {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "default_local_protected",
-				"Cannot delete default-local",
-				"the synthetic default-local node is referenced by every legacy instance; drain it (set active=false) instead of hard-deleting"))
-			return
-		}
-		// Resolve to id first so the soft-then-hard flow uses the
-		// same key (and so a missing name yields the same 404 the
-		// rest of the API uses).
-		row, err := s.store.ComputeNodeByName(r.Context(), name)
-		if err != nil {
-			s.notFound(w, "no such compute_node")
-			return
-		}
-		if err := s.store.DeleteComputeNode(r.Context(), row.ID); err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-				"Delete failed", err.Error()))
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	// Soft-delete path: resolve, then flip active=false. The
-	// compute_node_changed pg_notify trigger (migration 00026) fires
-	// on the UPDATE, gatewayd-internal evicts its per-node client cache,
-	// and schedd's watchdog treats the row as drained.
-	row, err := s.store.ComputeNodeByName(r.Context(), name)
+	row, err := s.store.ComputeNodeByName(r.Context(), r.PathValue("name"))
 	if err != nil {
 		s.notFound(w, "no such compute_node")
 		return
 	}
-	if err := s.store.SetComputeNodeActive(r.Context(), row.ID, false); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-			"Deactivate failed", err.Error()))
+	if row.Name == state.DefaultLocalNodeName || effectiveNodeLifecycle(row) != state.NodeLifecycleRetired {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "node_not_deletable", "Node cannot be deleted", "only non-default, retired compute nodes can be hard-deleted"))
 		return
 	}
-	row.Active = false
-	writeJSON(w, http.StatusOK, toComputeNodeResponse(row))
+	instances, err := s.store.ListInstancesOnNodeID(r.Context(), row.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not inspect node history"))
+		return
+	}
+	apps, err := s.store.ListAppsByNodeID(r.Context(), row.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not inspect node ownership"))
+		return
+	}
+	if len(instances) > 0 || len(apps) > 0 {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "node_has_history", "Node has workload history", "hard deletion is limited to unused mistaken enrollments"))
+		return
+	}
+	if err := s.store.DeleteComputeNode(r.Context(), row.ID); errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "node_has_history", "Node has workload history", "hard deletion is limited to unused mistaken enrollments"))
+		return
+	} else if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal", "Delete failed", err.Error()))
+		return
+	}
+	s.emitComputeNodeDeleteAudit(r, acct, row, reason)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func parseNodeDeleteConfirmation(w http.ResponseWriter, r *http.Request) (string, bool) {
+	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
+	if r.URL.Query().Get("confirm") != "true" || reason == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "confirmation required", "?confirm=true and an explicit reason are required for hard deletion"))
+		return "", false
+	}
+	if len(reason) > obsOpsReasonMaxLen || !obsOpsReasonShape.MatchString(reason) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "invalid reason", "reason must match [a-z0-9_]{1,64}"))
+		return "", false
+	}
+	return reason, true
+}
+
+func (s *server) emitComputeNodeDeleteAudit(r *http.Request, acct state.Account, row state.ComputeNode, reason string) {
+	if s.audit == nil {
+		return
+	}
+	subject := row.ID
+	s.audit.Emit(r.Context(), "operator.action.node_delete", &subject, map[string]any{
+		"actor": acct.ID, "node_id": row.ID, "node_name": row.Name,
+		"reason": reason, "result": "deleted",
+	})
 }

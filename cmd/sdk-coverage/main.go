@@ -111,6 +111,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/nodes/{name}/drain":              true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":        true, // operator-only destructive node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/activate":           true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/retire":             true, // operator-only terminal node lifecycle control
 	"GET /v1/admin/operator-intents/{id}":                true, // PR #1099 P2.3 — operator-only intent polling endpoint
 	"GET /v1/admin/config":                               true, // operator-only runtime configuration catalog
 	"PATCH /v1/admin/config/{key}":                       true, // operator-only runtime configuration write

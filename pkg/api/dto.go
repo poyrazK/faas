@@ -6849,6 +6849,7 @@ type ComputeNodeOperatorResponse struct {
 	MaxConcurrency     int     `json:"max_concurrency"`
 	AdmissionCeilingMB int     `json:"admission_ceiling_mb"`
 	Active             bool    `json:"active"`
+	Lifecycle          string  `json:"lifecycle"`
 	Role               *string `json:"role,omitempty"`
 	Region             *string `json:"region,omitempty"`
 	Zone               *string `json:"zone,omitempty"`

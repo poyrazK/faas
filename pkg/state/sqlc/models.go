@@ -21,6 +21,7 @@ const (
 	ComputeNodeLifecycleMaintenance   ComputeNodeLifecycle = "maintenance"
 	ComputeNodeLifecycleUnavailable   ComputeNodeLifecycle = "unavailable"
 	ComputeNodeLifecycleRecovering    ComputeNodeLifecycle = "recovering"
+	ComputeNodeLifecycleRetired       ComputeNodeLifecycle = "retired"
 )
 
 func (e *ComputeNodeLifecycle) Scan(src interface{}) error {

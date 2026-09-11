@@ -10983,17 +10983,17 @@ func (m *MemStore) HeartbeatComputeNode(_ context.Context, nodeID string) error 
 	return nil
 }
 
-// MarkComputeNodeInactive flips active=false on the row (PR #114).
-// Idempotent — flipping an inactive row keeps active=false, no
-// observable change. The row is preserved so an operator can
-// re-enable it (a future admin endpoint will hit a re-activate
-// path; today nothing does).
+// MarkComputeNodeInactive flips active=false on a recoverable row. Retired is
+// terminal and returns ErrConflict rather than becoming unavailable again.
 func (m *MemStore) MarkComputeNodeInactive(_ context.Context, nodeID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	n, ok := m.computeNodes[nodeID]
 	if !ok {
 		return ErrNotFound
+	}
+	if n.Lifecycle == NodeLifecycleRetired {
+		return ErrConflict
 	}
 	n.Lifecycle = NodeLifecycleUnavailable
 	n.Active = false
@@ -11099,6 +11099,9 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 	if existing != nil {
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
+		if existing.Lifecycle == NodeLifecycleRetired {
+			n.Lifecycle = NodeLifecycleRetired
+		}
 	} else if n.ID == "" {
 		n.ID = newID()
 	}
@@ -11187,6 +11190,10 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 	}
 	n := node
 	if existing != nil {
+		if !preserveTargetURLOnConflict && existing.Lifecycle == NodeLifecycleRetired {
+			m.computeNodes[existing.ID] = *existing
+			return ComputeNode{}, ErrConflict
+		}
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
 		if preserveTargetURLOnConflict && existing.TargetURL != "" {
@@ -11276,6 +11283,9 @@ func (m *MemStore) SetComputeNodeActive(_ context.Context, id string, active boo
 	n, ok := m.computeNodes[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if n.Lifecycle == NodeLifecycleRetired {
+		return ErrConflict
 	}
 	if active {
 		n.Lifecycle = NodeLifecycleActive
@@ -11555,15 +11565,24 @@ func (m *MemStore) ListComputeNodes(_ context.Context, includeInactive bool) ([]
 	return out, nil
 }
 
-// DeleteComputeNode hard-deletes a row by id (issue #98 / ADR-028).
-// Mirrors pgstore's semantics: ErrNotFound when no row matches. The
-// caller (apid's DELETE ?hard=1) is responsible for refusing on the
-// synthetic default-local row — see cmd/apid/compute_nodes.go.
+// DeleteComputeNode hard-deletes an unused row by id. App ownership and
+// physical instance references make the row historical rather than mistaken,
+// so deletion refuses them with ErrConflict.
 func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.computeNodes[id]; !ok {
 		return ErrNotFound
+	}
+	for _, app := range m.apps {
+		if app.NodeID == id {
+			return ErrConflict
+		}
+	}
+	for _, instance := range m.instances {
+		if instance.NodeID == id {
+			return ErrConflict
+		}
 	}
 	delete(m.computeNodes, id)
 	// CP-1: cascade the heartbeat history. Mirrors the FK ON DELETE

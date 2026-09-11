@@ -124,6 +124,7 @@ func TestApplyNodeOperatorIntent_LifecycleTransitions(t *testing.T) {
 		{name: "force drain", kind: state.OperatorIntentKindNodeForceDrain, initial: state.NodeLifecycleRecovering, want: state.NodeLifecycleForceDraining},
 		{name: "activate", kind: state.OperatorIntentKindNodeActivate, initial: state.NodeLifecycleUnavailable, want: state.NodeLifecycleActive},
 		{name: "activate maintenance", kind: state.OperatorIntentKindNodeActivate, initial: state.NodeLifecycleMaintenance, want: state.NodeLifecycleActive},
+		{name: "retire", kind: state.OperatorIntentKindNodeRetire, initial: state.NodeLifecycleMaintenance, want: state.NodeLifecycleRetired},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -149,6 +150,29 @@ func TestApplyNodeOperatorIntent_LifecycleTransitions(t *testing.T) {
 				t.Fatalf("lifecycle=%q, want %q", got.Lifecycle, tt.want)
 			}
 		})
+	}
+}
+
+func TestApplyNodeOperatorIntent_RetireRechecksLiveInstances(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.CreateComputeNode(ctx, state.ComputeNode{
+		Name: "node-retire-race", TargetURL: "unix:///run/faas/vmmd.sock",
+		Lifecycle: state.NodeLifecycleMaintenance,
+	})
+	if err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	if _, err := store.CreateInstance(ctx, "app-a", "dep-a", string(state.StateRunning), 128, node.ID, "wake-a"); err != nil {
+		t.Fatalf("seed instance: %v", err)
+	}
+	err = applyNodeOperatorIntent(ctx, store, state.OperatorIntent{Kind: state.OperatorIntentKindNodeRetire, TargetID: node.ID})
+	if err == nil {
+		t.Fatal("retirement unexpectedly ignored a live instance")
+	}
+	fresh, getErr := store.NodeGet(ctx, node.ID)
+	if getErr != nil || fresh.Lifecycle != state.NodeLifecycleMaintenance {
+		t.Fatalf("rejected retirement mutated node: node=%+v err=%v", fresh, getErr)
 	}
 }
 
