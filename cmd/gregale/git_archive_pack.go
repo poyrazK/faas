@@ -104,6 +104,13 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		if gitArchiveShouldExclude(name, isDir, patterns) {
 			continue
 		}
+		if hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg {
+			return "", 0, findings, fmt.Errorf("git archive entry %q has unsupported type %d", name, hdr.Typeflag)
+		}
+		archiveEntryCount++
+		if archiveEntryCount > api.SourceArchiveMaxEntries {
+			return "", 0, findings, sourceArchiveEntryLimitError(archiveEntryCount)
+		}
 		existingEntries[name] = true
 
 		inputSize := hdr.Size
@@ -140,18 +147,12 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 					return "", 0, findings, fmt.Errorf("redacted git archive entry %q exceeds the %d MB zero-config cap", name, capMB)
 				}
 			}
-		default:
-			return "", 0, findings, fmt.Errorf("git archive entry %q has unsupported type %d", name, hdr.Typeflag)
 		}
 
 		hdr.ModTime = packEpoch
 		hdr.AccessTime = time.Time{}
 		hdr.ChangeTime = time.Time{}
 		hdr.PAXRecords = nil
-		archiveEntryCount++
-		if archiveEntryCount > api.SourceArchiveMaxEntries {
-			return "", 0, findings, sourceArchiveEntryLimitError(archiveEntryCount)
-		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return "", 0, findings, fmt.Errorf("write git archive header %q: %w", name, err)
 		}
