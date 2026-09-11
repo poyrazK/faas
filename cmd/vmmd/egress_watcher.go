@@ -33,6 +33,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -289,6 +290,24 @@ func (w *egressWatcher) Reload(ctx context.Context) error {
 	// 5. Reload the live ruleset.
 	if err := w.nft.Reload(ctx, w.livePath); err != nil {
 		return fmt.Errorf("nft reload %s: %w", w.livePath, err)
+	}
+	return nil
+}
+
+// applyStartupEgressPolicy makes the configured runtime policy authoritative
+// as part of multi-host vmmd startup. Hot reloads alone are insufficient: a
+// stale /run/faas/nftables.conf otherwise remains loaded until the next cache
+// mutation or database notification, which can strand the compute gateway and
+// guest egress immediately after a rollout.
+func applyStartupEgressPolicy(ctx context.Context, nodeID string, w *egressWatcher) error {
+	if nodeID == "" {
+		return nil
+	}
+	if w == nil {
+		return errors.New("vmmd: startup egress policy watcher is nil")
+	}
+	if err := w.Reload(ctx); err != nil {
+		return fmt.Errorf("vmmd: apply startup egress policy: %w", err)
 	}
 	return nil
 }

@@ -1622,10 +1622,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		egressStagingDir = "/run/faas/vmmd-egress-staging"
 		egressLivePath   = "/run/faas/nftables.conf"
 	)
-	w := newEgressWatcher(log, egressStagingDir, egressLivePath)
-	deps.egressWatcher = w
+	w := deps.egressWatcher
+	if w == nil {
+		w = newEgressWatcher(log, egressStagingDir, egressLivePath)
+	}
 	mgr.SetHostRenderer(w)
 	if nodeID != "" {
+		// A previous vmmd process may have left a runtime ruleset rendered
+		// from different host-network values. Apply the deployment-owned
+		// policy before accepting any wake or relying on the compute gateway;
+		// waiting for a cache mutation or pg_notify event leaves the node
+		// unreachable after an otherwise successful rollout.
+		if err := applyStartupEgressPolicy(ctx, nodeID, w); err != nil {
+			return err
+		}
+		log.Info("vmmd: startup egress policy applied",
+			"public_iface", hostPolicy.PublicIface,
+			"masquerade_cidr", hostPolicy.MasqueradeCIDR)
 		if deps.startEgressWatcher != nil {
 			deps.startEgressWatcher(ctx, log)
 		} else {

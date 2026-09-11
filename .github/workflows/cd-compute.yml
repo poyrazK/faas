@@ -755,6 +755,33 @@ jobs:
           fi
           "$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"
 
+      - name: Verify private compute gateway reachability
+        run: |
+          set -euo pipefail
+          # The trusted fleet runner is on the control-plane network. Probe the
+          # selected host through the private hostname published in the signed
+          # manifest so a locally healthy compute node cannot be activated with
+          # control-plane ingress still blocked.
+          gateway_host="$(awk -v node="$NODE" '
+            $1 == "-" && $2 == "name:" { selected = ($3 == node); next }
+            selected && $1 == "address:" {
+              address = $2
+              gsub(/^"|"$/, "", address)
+              sub(/:[0-9]+$/, "", address)
+              print address
+              exit
+            }
+          ' "$RELEASE_ROOT/production-manifest.yaml")"
+          [[ -n "$gateway_host" ]] || {
+            echo "::error::selected node $NODE has no private address in production-manifest.yaml" >&2
+            exit 1
+          }
+          curl --fail --silent --show-error \
+            --retry 10 --retry-delay 1 --retry-all-errors \
+            --connect-timeout 2 --max-time 3 \
+            --header 'Host: health-probe.invalid' \
+            "http://${gateway_host}:8080/healthz" >/dev/null
+
       - name: Show post-join identity without exposing secrets
         if: always()
         run: |

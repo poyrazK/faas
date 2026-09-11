@@ -131,6 +131,33 @@ func TestEgressWatcher_Reload_HappyPath(t *testing.T) {
 	}
 }
 
+func TestApplyStartupEgressPolicy_MultiHostReloadsImmediately(t *testing.T) {
+	nft := &stubNftExec{}
+	w, _, livePath := newTestWatcher(t, nft)
+
+	if err := applyStartupEgressPolicy(context.Background(), "node-id", w); err != nil {
+		t.Fatalf("applyStartupEgressPolicy: %v", err)
+	}
+	if len(nft.checkCalls) != 1 || len(nft.loadCalls) != 1 {
+		t.Fatalf("startup reload calls: check=%v load=%v", nft.checkCalls, nft.loadCalls)
+	}
+	if nft.loadCalls[0] != livePath {
+		t.Fatalf("startup reload path = %q, want %q", nft.loadCalls[0], livePath)
+	}
+}
+
+func TestApplyStartupEgressPolicy_SingleBoxKeepsBootPolicy(t *testing.T) {
+	nft := &stubNftExec{}
+	w, _, _ := newTestWatcher(t, nft)
+
+	if err := applyStartupEgressPolicy(context.Background(), "", w); err != nil {
+		t.Fatalf("applyStartupEgressPolicy: %v", err)
+	}
+	if len(nft.checkCalls) != 0 || len(nft.loadCalls) != 0 {
+		t.Fatalf("single-box startup unexpectedly reloaded: check=%v load=%v", nft.checkCalls, nft.loadCalls)
+	}
+}
+
 // Production starts with no /run/faas/vmmd-egress-staging directory. Reload owns
 // that process-local path and must recreate it after boot or tmpfiles cleanup.
 func TestEgressWatcher_Reload_CreatesMissingStagingDirectory(t *testing.T) {
