@@ -988,6 +988,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		} else if rep.Scanned > 0 {
 			log.Info("vmmd: orphan reap complete",
 				"scanned", rep.Scanned, "reaped", rep.Reaped,
+				"process_only", rep.ProcessOnly,
 				"skipped_live", rep.SkippedLive,
 				"skipped_young", rep.SkippedYoung,
 				"skipped_unknown", rep.SkippedUnknown)

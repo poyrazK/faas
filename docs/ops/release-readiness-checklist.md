@@ -131,10 +131,13 @@ for port in 9101 9103 9092 8083 9106; do
   curl -fsS "http://127.0.0.1:${port}/readyz"
 done
 
-# Each compute node: builderd, imaged, vmmd, gatewayd-internal.
-for port in 9105 9102 9104 9090; do
-  curl -fsS "http://127.0.0.1:${port}/readyz"
+# Each compute node: builderd, imaged and vmmd bind the node's private
+# address; gatewayd-internal binds loopback.
+NODE_IP=$(ip -4 route get 1.1.1.1 | awk '{print $7; exit}')
+for port in 9105 9102 9104; do
+  curl -fsS "http://${NODE_IP}:${port}/readyz"
 done
+curl -fsS "http://127.0.0.1:9090/readyz"
 ```
 
 All probes must return HTTP 200. The compute data listener also exposes a
