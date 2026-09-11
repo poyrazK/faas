@@ -697,13 +697,10 @@ func looksLikeOpenAPIDoc(body []byte) bool {
 // writes [msg_type 4 BE][body_len 4 BE][body], and awaits a 1-byte
 // ack with the 1.5s per-attempt timeout. Returns true on ack OK.
 func shipReport(r api.CharacterizationReport, log *slog.Logger) bool {
-	body, err := json.Marshal(r)
+	body, err := marshalCharacterizationReport(r)
 	if err != nil {
 		log.Warn("characterization marshal failed", "err", err)
 		return false
-	}
-	if len(body) > VsockCharacterizationMaxBody {
-		body = body[:VsockCharacterizationMaxBody]
 	}
 	var hdr [8]byte
 	binary.BigEndian.PutUint32(hdr[0:4], VsockCharacterizationMsgType)
@@ -729,6 +726,83 @@ func shipReport(r api.CharacterizationReport, log *slog.Logger) bool {
 	return false
 }
 
+// marshalCharacterizationReport keeps the JSON frame structurally valid while
+// fitting it inside the wire cap. LogTail keeps its newest data; OpenAPIDoc
+// keeps its prefix and advertises truncation. Raw truncation after json.Marshal
+// is forbidden because it produces a frame the host can never decode.
+func marshalCharacterizationReport(r api.CharacterizationReport) ([]byte, error) {
+	r.LogTail = strings.ToValidUTF8(truncateLog(r.LogTail, api.LogRingBufferBytes), "\uFFFD")
+	body, err := json.Marshal(r)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) <= VsockCharacterizationMaxBody {
+		return body, nil
+	}
+
+	openAPIDoc := r.OpenAPIDoc
+	r.OpenAPIDoc = nil
+	if len(openAPIDoc) > 0 {
+		r.OpenAPIDocTruncated = true
+	}
+	body, err = json.Marshal(r)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > VsockCharacterizationMaxBody && r.LogTail != "" {
+		logRunes := []rune(r.LogTail)
+		low, high := 0, len(logRunes)
+		for low < high {
+			mid := low + (high-low+1)/2
+			r.LogTail = string(logRunes[len(logRunes)-mid:])
+			candidate, marshalErr := json.Marshal(r)
+			if marshalErr != nil {
+				return nil, marshalErr
+			}
+			if len(candidate) <= VsockCharacterizationMaxBody {
+				low = mid
+			} else {
+				high = mid - 1
+			}
+		}
+		r.LogTail = string(logRunes[len(logRunes)-low:])
+		body, err = json.Marshal(r)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(body) > VsockCharacterizationMaxBody {
+		return nil, fmt.Errorf("characterization metadata is %d bytes (max %d)", len(body), VsockCharacterizationMaxBody)
+	}
+	if len(openAPIDoc) == 0 {
+		return body, nil
+	}
+
+	low, high := 0, len(openAPIDoc)
+	for low < high {
+		mid := low + (high-low+1)/2
+		r.OpenAPIDoc = openAPIDoc[:mid]
+		candidate, marshalErr := json.Marshal(r)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		if len(candidate) <= VsockCharacterizationMaxBody {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	r.OpenAPIDoc = openAPIDoc[:low]
+	body, err = json.Marshal(r)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > VsockCharacterizationMaxBody {
+		return nil, fmt.Errorf("characterization body is %d bytes (max %d)", len(body), VsockCharacterizationMaxBody)
+	}
+	return body, nil
+}
+
 // shipOnce is a single attempt: open STREAM, send, read 1 byte.
 func shipOnce(payload []byte) bool {
 	sock, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
@@ -736,6 +810,16 @@ func shipOnce(payload []byte) bool {
 		return false
 	}
 	defer func() { _ = unix.Close(sock) }()
+	// Set per-socket deadlines via SO_SNDTIMEO / SO_RCVTIMEO
+	// (golang.org/x/sys/unix has no SetDeadline helper for AF_VSOCK
+	// sockets; the kernel-level setsockopt works on all sockets). Install them
+	// before Connect so an unavailable host endpoint cannot block forever.
+	if err := setSockTimeout(sock, unix.SO_SNDTIMEO, VsockCharacterizationAckTimeout); err != nil {
+		return false
+	}
+	if err := setSockTimeout(sock, unix.SO_RCVTIMEO, VsockCharacterizationAckTimeout); err != nil {
+		return false
+	}
 	addr := &unix.SockaddrVM{
 		CID:  unix.VMADDR_CID_HOST,
 		Port: VsockCharacterizationPort,
@@ -743,31 +827,44 @@ func shipOnce(payload []byte) bool {
 	if err := unix.Connect(sock, addr); err != nil {
 		return false
 	}
-	// Set per-socket deadlines via SO_SNDTIMEO / SO_RCVTIMEO
-	// (golang.org/x/sys/unix has no SetDeadline helper for AF_VSOCK
-	// sockets; the kernel-level setsockopt works on all sockets).
-	setSockTimeout(sock, unix.SO_SNDTIMEO, 1500*time.Millisecond)
-	setSockTimeout(sock, unix.SO_RCVTIMEO, VsockCharacterizationAckTimeout)
-	if _, err := unix.Write(sock, payload); err != nil {
+	if !writeFullSocket(sock, payload) {
 		return false
 	}
-	ack := make([]byte, 1)
-	n, err := unix.Read(sock, ack)
-	return err == nil && n == 1 && ack[0] == 0
+	var ack [1]byte
+	for {
+		n, readErr := unix.Read(sock, ack[:])
+		if readErr == unix.EINTR {
+			continue
+		}
+		return readErr == nil && n == len(ack) && ack[0] == 0
+	}
+}
+
+func writeFullSocket(fd int, payload []byte) bool {
+	for len(payload) > 0 {
+		n, err := unix.Write(fd, payload)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil || n <= 0 {
+			return false
+		}
+		payload = payload[n:]
+	}
+	return true
 }
 
 // setSockTimeout applies a SO_*_TIMEO setsockopt on a raw socket fd.
-// Used to bound shipOnce's Read/Write because golang.org/x/sys/unix
-// has no per-fd deadline helper for AF_VSOCK. Errors are tolerated:
-// a failed setsockopt just means the default recv/send timeout (which
-// is 0 = indefinite) applies; the upper bound becomes the connect()
-// returning EAGAIN or the kernel eventually reclaiming the socket.
-func setSockTimeout(fd int, opt int, d time.Duration) {
+// Used to bound shipOnce's Connect/Read/Write because golang.org/x/sys/unix
+// has no per-fd deadline helper for AF_VSOCK. A failed setsockopt is fatal to
+// the attempt: continuing would turn a bounded readiness signal into an
+// indefinitely blocked guest-init goroutine.
+func setSockTimeout(fd int, opt int, d time.Duration) error {
 	tv := unix.Timeval{
 		Sec:  int64(d / time.Second),
 		Usec: int64(d%time.Second) / 1000,
 	}
-	_ = unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, opt, &tv)
+	return unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, opt, &tv)
 }
 
 // truncateLog lives in characterize_common.go (build-tag-free).
