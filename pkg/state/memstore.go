@@ -7237,6 +7237,9 @@ func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind Depl
 		return Build{}, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
 	}
 	b := Build{ID: newID(), DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath, EnqueuedAt: time.Now()}
+	dep := m.deployments[deploymentID]
+	dep.BuildID = b.ID
+	m.deployments[deploymentID] = dep
 	m.builds[b.ID] = b
 	return b, nil
 }
@@ -7256,6 +7259,7 @@ func (m *MemStore) CreateBuildWithID(_ context.Context, id, deploymentID string,
 	}
 	b := Build{ID: id, DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath, EnqueuedAt: time.Now()}
 	dep.Status = DeployBuilding
+	dep.BuildID = id
 	m.deployments[deploymentID] = dep
 	m.builds[b.ID] = b
 	return b, nil

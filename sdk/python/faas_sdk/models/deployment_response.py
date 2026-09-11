@@ -116,6 +116,9 @@ class DeploymentResponse:
     """Upstream commit SHA that produced this deployment, when known."""
     source_root: str | Unset = UNSET
     """Repository-relative build root used by a workspace context upload; omitted when the archive root is built."""
+    source_sha256: str | Unset = UNSET
+    """SHA-256 digest of the exact source archive handed to the builder; stable identity for local-source
+    revisions."""
     has_overrides: bool | Unset = UNSET
     """True when this deployment carries a non-null override_* column set."""
     override_entrypoint: list[str] | Unset = UNSET
@@ -359,6 +362,8 @@ class DeploymentResponse:
             commit_sha = self.commit_sha
 
         source_root = self.source_root
+
+        source_sha256 = self.source_sha256
 
         has_overrides = self.has_overrides
 
@@ -628,6 +633,8 @@ class DeploymentResponse:
             field_dict["commit_sha"] = commit_sha
         if source_root is not UNSET:
             field_dict["source_root"] = source_root
+        if source_sha256 is not UNSET:
+            field_dict["source_sha256"] = source_sha256
         if has_overrides is not UNSET:
             field_dict["has_overrides"] = has_overrides
         if override_entrypoint is not UNSET:
@@ -836,6 +843,8 @@ class DeploymentResponse:
         commit_sha = _parse_commit_sha(d.pop("commit_sha", UNSET))
 
         source_root = d.pop("source_root", UNSET)
+
+        source_sha256 = d.pop("source_sha256", UNSET)
 
         has_overrides = d.pop("has_overrides", UNSET)
 
@@ -1347,6 +1356,7 @@ class DeploymentResponse:
             source_url=source_url,
             commit_sha=commit_sha,
             source_root=source_root,
+            source_sha256=source_sha256,
             has_overrides=has_overrides,
             override_entrypoint=override_entrypoint,
             override_cmd=override_cmd,

@@ -8260,15 +8260,29 @@ func (s *PgStore) SetDeploymentFailedEx(
 // --- builds ------------------------------------------------------------------
 
 func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Build{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	build, err := scanBuild(tx.QueryRow(ctx,
 		`insert into builds (deployment_id, kind, source_bytes, status, log_path)
 		 values ($1, $2, $3, 'queued', $4)
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''), started_at, finished_at, enqueued_at,
 		           cancelled_at, cancelled_by_deployment_cascade,
 		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`,
-		deploymentID, string(kind), sourceBytes, nullString(logPath))
-	return scanBuild(row)
+		deploymentID, string(kind), sourceBytes, nullString(logPath)))
+	if err != nil {
+		return Build{}, err
+	}
+	if _, err := tx.Exec(ctx, `update deployments set build_id=$2 where id=$1`, deploymentID, build.ID); err != nil {
+		return Build{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Build{}, err
+	}
+	return build, nil
 }
 
 // CreateBuildWithID publishes a pre-uploaded source into the queue and
@@ -8290,6 +8304,9 @@ func (s *PgStore) CreateBuildWithID(ctx context.Context, id, deploymentID string
 	values($1,$2,$3,$4,'queued',$5)
 	returning id,deployment_id,kind,source_bytes,status,coalesce(failure_class,''),coalesce(log_path,''),started_at,finished_at,enqueued_at,cancelled_at,cancelled_by_deployment_cascade,coalesce(cache_status,''),coalesce(cache_key_sha256,'')`, id, deploymentID, kind, sourceBytes, nullString(logPath)))
 	if err != nil {
+		return Build{}, err
+	}
+	if _, err := tx.Exec(ctx, `update deployments set build_id=$2 where id=$1`, deploymentID, id); err != nil {
 		return Build{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

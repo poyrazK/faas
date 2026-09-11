@@ -113,6 +113,7 @@ func deploymentChanges(before, after api.DeploymentResponse) []api.DeploymentCha
 		{field: "source_url", before: before.SourceURL, after: after.SourceURL},
 		{field: "commit_sha", before: before.CommitSHA, after: after.CommitSHA},
 		{field: "source_root", before: before.SourceRoot, after: after.SourceRoot},
+		{field: "source_sha256", before: before.SourceSHA256, after: after.SourceSHA256},
 		{field: "scope", before: before.Scope, after: after.Scope},
 		{field: "build_plan", before: before.BuildPlan, after: after.BuildPlan},
 		{field: "min_instances", before: before.MinInstances, after: after.MinInstances},

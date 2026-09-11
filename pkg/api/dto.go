@@ -1795,6 +1795,10 @@ type DeploymentResponse struct {
 	// context upload. Empty means the archive root and is omitted for legacy
 	// self-contained source deploys.
 	SourceRoot string `json:"source_root,omitempty"`
+	// SourceSHA256 is the immutable digest of the exact source archive handed
+	// to the builder. It lets local-source deployments be compared after the
+	// source spool has been cleaned up.
+	SourceSHA256 string `json:"source_sha256,omitempty"`
 	// HasOverrides is true when the deployment carries an
 	// override_* column set (issue #460 / ADR-053). Lets dashboards
 	// render "this deploy pinned overrides" without re-parsing the

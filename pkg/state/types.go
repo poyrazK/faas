@@ -1489,7 +1489,7 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 type Deployment struct {
 	ID          string
 	AppID       string
-	BuildID     string // empty for image: deploys
+	BuildID     string // empty when an image deploy has no build pipeline
 	ImageDigest string
 	Kind        DeploymentKind
 	SourcePath  string // tarball spool path (kind=tarball|dockerfile)

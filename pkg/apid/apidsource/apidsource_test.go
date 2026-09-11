@@ -196,6 +196,9 @@ func TestEnqueue_HappyPath_FirstDeploy(t *testing.T) {
 	if dep.SourceSHA256 == "" {
 		t.Fatal("source digest was not persisted")
 	}
+	if dep.BuildID != res.BuildID {
+		t.Fatalf("deployment build id = %q, want %q", dep.BuildID, res.BuildID)
+	}
 	if got, err := hashSourceFile(srcPath); err != nil || dep.SourceSHA256 != got {
 		t.Fatalf("source digest = %q err %v, want %q", dep.SourceSHA256, err, got)
 	}

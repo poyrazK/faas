@@ -2850,6 +2850,13 @@ func TestMemStore_ClaimQueuedBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBuild: %v", err)
 	}
+	linked, err := m.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID after CreateBuild: %v", err)
+	}
+	if linked.BuildID != b.ID {
+		t.Fatalf("deployment build_id = %q, want %q", linked.BuildID, b.ID)
+	}
 
 	// First claim wins.
 	won, err := m.ClaimQueuedBuild(ctx, b.ID)
