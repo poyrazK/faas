@@ -243,6 +243,13 @@ func (c *Client) Whoami(ctx context.Context) (AccountResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/account", nil, &out)
 }
 
+// GetCapabilities returns the canonical feature maturity and plan
+// entitlement registry for the authenticated account.
+func (c *Client) GetCapabilities(ctx context.Context) (CapabilitiesResponse, error) {
+	var out CapabilitiesResponse
+	return out, c.do(ctx, "GET", "/v1/capabilities", nil, &out)
+}
+
 // ExportAccount downloads the GDPR export bundle (spec §17 G6) into
 // the provided writer. includeSecrets=false drops the ciphertext
 // slice. The streamed body is decoded as a single JSON document for

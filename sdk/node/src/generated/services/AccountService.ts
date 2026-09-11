@@ -7,6 +7,7 @@ import type { AccountEgressAllowlistExtraResponse } from '../models/AccountEgres
 import type { AccountExportResponse } from '../models/AccountExportResponse.js';
 import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
+import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
@@ -14,6 +15,30 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AccountService {
+  /**
+   * Return feature maturity and plan availability.
+   * Returns the canonical, account-scoped capability registry. `maturity`
+   * describes the product lifecycle state; `plans` lists entitled plans
+   * and `enabled` resolves that list for the caller. The registry is read-only and
+   * is suitable for CLIs, dashboards, and deployment preflight checks.
+   *
+   * @returns CapabilitiesResponse Customer-visible capability registry.
+   * @throws ApiError
+   */
+  public static getCapabilities(): CancelablePromise<CapabilitiesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/capabilities',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `Capability registry unavailable; retry with backoff.`,
+      },
+    });
+  }
   /**
    * Whoami.
    * Returns the calling account, its plan, and quota limits.

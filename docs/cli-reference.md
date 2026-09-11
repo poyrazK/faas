@@ -5,6 +5,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | Command | What it does |
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
+| [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`admin`](#admin) | Operator-only billing ops (admin credit\|refund\|consume-credits) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -110,6 +111,13 @@ Show DPA metadata
 ### account slo
 
 Account-wide SLO panel
+
+
+## capabilities
+
+Show feature maturity and plan availability
+
+`gregale capabilities`
 
 
 ## admin

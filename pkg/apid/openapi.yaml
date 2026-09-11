@@ -1299,6 +1299,30 @@ paths:
 
   # ─── Account ──────────────────────────────────────────────────────────────
 
+  /v1/capabilities:
+    get:
+      tags: [account]
+      operationId: getCapabilities
+      summary: Return feature maturity and plan availability.
+      description: |
+        Returns the canonical, account-scoped capability registry. `maturity`
+        describes the product lifecycle state; `plans` lists entitled plans
+        and `enabled` resolves that list for the caller. The registry is read-only and
+        is suitable for CLIs, dashboards, and deployment preflight checks.
+      responses:
+        '200':
+          description: Customer-visible capability registry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilitiesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Capability registry unavailable; retry with backoff.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account:
     get:
       tags: [account]
@@ -14668,6 +14692,34 @@ components:
         private: { type: boolean }
 
     # ─── Account ──────────────────────────────────────────────────────────
+
+    CapabilityStatus:
+      description: Customer-visible capability with the account plan gate resolved.
+      type: object
+      required: [key, name, category, description, maturity, plans, docs_url, acceptance, enabled]
+      properties:
+        key: { type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
+        name: { type: string }
+        category: { type: string }
+        description: { type: string }
+        maturity: { type: string, enum: [internal, preview, beta, ga] }
+        plans:
+          type: array
+          items: { type: string, enum: [free, hobby, pro, scale] }
+        docs_url: { type: string, format: uri-reference }
+        acceptance: { type: string, description: Stable acceptance-test handle for this capability. }
+        enabled: { type: boolean, description: Whether the calling account may use the capability under its current plan. }
+
+    CapabilitiesResponse:
+      description: Account-scoped capability registry and resolved plan entitlements.
+      type: object
+      required: [registry_version, plan, capabilities]
+      properties:
+        registry_version: { type: integer, minimum: 1, description: Version of the embedded product capability catalog. }
+        plan: { type: string, enum: [free, hobby, pro, scale] }
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/CapabilityStatus' }
 
     AccountResponse:
       description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."

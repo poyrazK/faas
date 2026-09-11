@@ -96,6 +96,8 @@ export type { BuildResponse } from './models/BuildResponse.js';
 export type { CanaryAdvanceResponse } from './models/CanaryAdvanceResponse.js';
 export type { CanaryPresetSpec } from './models/CanaryPresetSpec.js';
 export type { CancelDeploymentRequest } from './models/CancelDeploymentRequest.js';
+export type { CapabilitiesResponse } from './models/CapabilitiesResponse.js';
+export type { CapabilityStatus } from './models/CapabilityStatus.js';
 export type { ChangeMemberRoleRequest } from './models/ChangeMemberRoleRequest.js';
 export type { ChangePlanRequest } from './models/ChangePlanRequest.js';
 export type { ClearObsoleteReport } from './models/ClearObsoleteReport.js';
