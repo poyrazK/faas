@@ -26,6 +26,49 @@ type VmmdExecutionTransport interface {
 // the resume hook has completed. It must not receive caller source or input.
 type VmmdExecutionRestoreFunc func(context.Context, ExecutionRestoreRequest) (VmmdExecutionTransport, error)
 
+// RoutedExecutionVMM is the production scheduler-side capability pair. The
+// restore call creates the VM before payload dispatch; execute and destroy are
+// pinned to the same node and instance returned by that call.
+type RoutedExecutionVMM interface {
+	RestoreExecution(context.Context, string, ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error)
+	ExecuteExecution(context.Context, string, string, executionproto.Request) (executionproto.Result, error)
+	Destroy(context.Context, string, string) error
+}
+
+// NewRoutedVmmdExecutionBackend wires the coordinator to VMMRouter without
+// exposing generated protobuf types. Callers must resolve NodeID and the
+// immutable runtime machine fields before Restore is invoked; source/input
+// remain inside the opaque payload decoder until Execute.
+func NewRoutedVmmdExecutionBackend(router RoutedExecutionVMM, decode ExecutionPayloadDecoder) *VmmdExecutionBackend {
+	return NewVmmdExecutionBackend(func(ctx context.Context, request ExecutionRestoreRequest) (VmmdExecutionTransport, error) {
+		if router == nil || request.NodeID == "" {
+			return nil, ErrExecutionCoordinatorNotWired
+		}
+		outcome, err := router.RestoreExecution(ctx, request.NodeID, request)
+		if err != nil {
+			return nil, err
+		}
+		if outcome == nil || outcome.Instance == "" || outcome.Instance != request.ID {
+			return nil, errors.New("sched: vmmd returned an unexpected execution instance")
+		}
+		return &routedVmmdExecutionTransport{router: router, nodeID: request.NodeID, instance: outcome.Instance}, nil
+	}, decode)
+}
+
+type routedVmmdExecutionTransport struct {
+	router   RoutedExecutionVMM
+	nodeID   string
+	instance string
+}
+
+func (t *routedVmmdExecutionTransport) Execute(ctx context.Context, req executionproto.Request) (executionproto.Result, error) {
+	return t.router.ExecuteExecution(ctx, t.nodeID, t.instance, req)
+}
+
+func (t *routedVmmdExecutionTransport) Destroy(ctx context.Context) error {
+	return t.router.Destroy(ctx, t.nodeID, t.instance)
+}
+
 // ExecutionPayloadDecoder authenticates and decrypts the durable payload in
 // host memory. The plaintext must be discarded by the implementation after it
 // returns; no decoder error is exposed to the caller as raw detail.

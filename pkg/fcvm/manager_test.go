@@ -108,16 +108,17 @@ func (f *fakeRunner) ran(substr string) bool {
 
 // fakeVMM records calls and can be told to fail Boot/Restore/Snapshot.
 type fakeVMM struct {
-	mu           sync.Mutex
-	bootErr      error
-	restoreErr   error
-	snapErr      error
-	killErr      error
-	killed       []string
-	restored     []string
-	restoreSpecs []RestoreSpec
-	snapshotted  []string
-	bootCount    int
+	mu            sync.Mutex
+	bootErr       error
+	restoreErr    error
+	snapErr       error
+	killErr       error
+	killed        []string
+	restored      []string
+	restoreSpecs  []RestoreSpec
+	snapshotted   []string
+	bootCount     int
+	coldBootSpecs []ColdBootSpec
 	// resumeHookErr is returned from TriggerResumeHook when non-nil; the
 	// default (nil) matches production-success semantics. V6 tests that need
 	// the dial-failure path flip this.
@@ -299,6 +300,9 @@ func (v *fakeVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) 
 	if err := spec.Validate(); err != nil {
 		return err
 	}
+	v.mu.Lock()
+	v.coldBootSpecs = append(v.coldBootSpecs, spec)
+	v.mu.Unlock()
 	// Mirror production: thread the per-deployment override
 	// readiness probe path through Boot. The fakeVMM's Boot
 	// discards the parameter (the test doesn't go through

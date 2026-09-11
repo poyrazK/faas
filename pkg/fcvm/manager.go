@@ -2997,6 +2997,50 @@ type WakeRequest struct {
 	Sidecars []WorkloadSpec
 }
 
+// ExecutionWakeRequest is the payload-free machine envelope for a disposable
+// one-shot execution. Source and input are intentionally absent: the
+// scheduler sends them only after this fresh, networkless VM has crossed the
+// restore/cold-boot fence.
+type ExecutionWakeRequest struct {
+	Instance      string
+	AccountID     string
+	Plan          api.Plan
+	Runtime       string
+	KernelKey     string
+	BaseKey       string
+	LayerKey      string
+	Snapshot      *Snapshot
+	VcpuCount     int
+	MemSizeMiB    int
+	CPUMillicores int
+}
+
+// WakeExecution restores or cold-boots one dedicated networkless execution
+// guest. It shares the allocator, cgroup, vsock, and teardown machinery with
+// ordinary wakes, but cannot reuse an app wake because ExecutionOnly is set at
+// this boundary and the network setup phase is skipped entirely.
+func (m *Manager) WakeExecution(ctx context.Context, req ExecutionWakeRequest) (*Instance, error) {
+	if m == nil || m.vmm == nil {
+		return nil, errors.New("fcvm: execution wake is not configured")
+	}
+	if req.Instance == "" || req.AccountID == "" || !req.Plan.Valid() || !api.ExecutionRuntime(req.Runtime).Valid() {
+		return nil, errors.New("fcvm: invalid execution wake envelope")
+	}
+	if req.KernelKey == "" || req.BaseKey == "" || req.LayerKey == "" ||
+		req.VcpuCount <= 0 || req.MemSizeMiB <= 0 || req.CPUMillicores <= 0 {
+		return nil, errors.New("fcvm: incomplete execution wake machine shape")
+	}
+	if req.Snapshot != nil && !req.Snapshot.Networkless {
+		return nil, errors.New("fcvm: execution restore requires a networkless snapshot")
+	}
+	return m.Wake(ctx, WakeRequest{
+		Instance: req.Instance, ExecutionOnly: true, AccountID: req.AccountID,
+		BaseKey: req.BaseKey, LayerKey: req.LayerKey, VcpuCount: req.VcpuCount,
+		MemSizeMiB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores,
+		Snapshot: req.Snapshot, Plan: req.Plan, Runtime: req.Runtime,
+	})
+}
+
 // WakeNetworkReady describes the network namespace that has been prepared for
 // a wake. The callback runs after network policy is installed and before
 // Firecracker restore or cold boot begins, which lets host-side helpers start
@@ -3377,6 +3421,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// Plan is allocator-side state and must follow the lease's
 	// lifetime.
 	lease.Plan = req.Plan
+	lease.Networkless = req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
@@ -3400,12 +3445,19 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// ADR-043, PR #390 review finding #1).
 	defer func() {
 		if err != nil {
-			m.cleanup(context.WithoutCancel(ctx), lease, netns.NewConfig(
-				lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP,
-			), nil)
+			cleanupNet := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
+			if req.ExecutionOnly {
+				cleanupNet = netns.Config{Instance: lease.Instance}
+			}
+			m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil)
 		}
 	}()
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
+	if req.ExecutionOnly {
+		// Keep the allocator-derived identity on Instance for diagnostics, but
+		// never pass a tenant network plan to setup/teardown or host policy.
+		nc = netns.Config{Instance: lease.Instance}
+	}
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit
 	nc.GuestAppPort = req.Port
@@ -3582,7 +3634,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// sudden spike is a host-level signal not a workload signal.
 	phases.mark("pre_network")
 	netnsStart := time.Now()
-	preparedHit, networkErr := m.setupWakeNetwork(ctx, nc, preparedNetwork)
+	preparedHit := false
+	var networkErr error
+	if !req.ExecutionOnly {
+		preparedHit, networkErr = m.setupWakeNetwork(ctx, nc, preparedNetwork)
+	}
 	err = networkErr
 	if err != nil {
 		// Issue #1059 / ADR-127: closed-reason counter on the
@@ -3603,10 +3659,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
 	}
 	timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
-	if networkReady != nil {
+	if networkReady != nil && !req.ExecutionOnly {
 		networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
 	}
-	if m.preparedNetworks != nil {
+	if m.preparedNetworks != nil && !req.ExecutionOnly {
 		m.log.Info("wake network cache", "instance", req.Instance, "hit", preparedHit)
 		defer func() {
 			if err == nil {
@@ -3815,7 +3871,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	var guestReadyMs int64
 	// Builder VMs do not emit the app readiness/characterization signals;
 	// builderd owns completion by waiting for Destroy instead.
-	if method == WakeColdBoot && req.ExportDir == "" {
+	if method == WakeColdBoot && req.ExportDir == "" && !req.ExecutionOnly {
 		readyStart := time.Now()
 		report, _ = m.vmm.WaitCharacterizationReport(ctx, lease, m.characterizationWait)
 		guestReadyMs = time.Since(readyStart).Milliseconds()
@@ -3880,7 +3936,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// rule alongside the prior one. The next patch will then
 	// have the prior handle cached and can `delete` + `add` as
 	// intended.
-	hV4, hV6, herr := m.captureAllowlistHandlesForWake(ctx, nc.Netns, nc.EgressAllowlist)
+	var hV4, hV6 uint64
+	var herr error
+	if !req.ExecutionOnly {
+		hV4, hV6, herr = m.captureAllowlistHandlesForWake(ctx, nc.Netns, nc.EgressAllowlist)
+	}
 	if herr != nil {
 		m.log.Debug("fcvm: Wake handle capture best-effort failed",
 			"instance", req.Instance, "netns", nc.Netns, "err", herr)
@@ -3908,7 +3968,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.exportDirs[req.Instance] = req.ExportDir
 	}
 	m.mu.Unlock()
-	m.rebuildHostSMTPAllowlistRules(ctx)
+	if !req.ExecutionOnly {
+		m.rebuildHostSMTPAllowlistRules(ctx)
+	}
 	m.log.Info("wake ok", "wake_id", wakeID, "instance", req.Instance, "method", method.String(),
 		"uid", lease.UID, "host_ip", lease.HostIP.String(),
 		"setup_network_ms", timings.netnsTapMs, "scan_check_ms", timings.scanCheckMs,
@@ -3921,8 +3983,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// The Manager selects its daemon lifecycle context so the loop
 	// survives the short-lived Wake RPC and exits with vmmd shutdown
 	// or explicit instance teardown.
-	m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
-	m.startFrameworkReadyLoop(ctx, req.Instance)
+	if !req.ExecutionOnly {
+		m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
+		m.startFrameworkReadyLoop(ctx, req.Instance)
+	}
 	return inst, nil
 }
 
@@ -3940,7 +4004,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 // that wire bringUp directly without a Wake frame.
 func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest, timings *bringUpTimings) (WakeMethod, error) {
 	serviceDiscoveryIP := ""
-	if !lease.IsBuilder && nc.HostBridgeIP.IsValid() {
+	if !req.ExecutionOnly && !lease.IsBuilder && nc.HostBridgeIP.IsValid() {
 		serviceDiscoveryIP = nc.HostBridgeIP.String()
 	}
 	// issue #299: refuse to bring up an instance whose base ext4
@@ -4002,6 +4066,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			SecretsEnvJSON:     req.preparedSecretsEnvJSON,
 			APIEnvJSON:         req.preparedAPIEnvJSON,
 			ServiceDiscoveryIP: serviceDiscoveryIP,
+			Networkless:        req.ExecutionOnly,
 		}
 		// ADR-098 C11: stamp the RestoreMs (issue #470 / PR #543).
 		// vmm.Restore wraps /snapshot/load + waitReady for the
@@ -4088,6 +4153,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		SecretsEnvJSON:     req.preparedSecretsEnvJSON,
 		APIEnvJSON:         req.preparedAPIEnvJSON,
 		ServiceDiscoveryIP: serviceDiscoveryIP,
+		Networkless:        req.ExecutionOnly,
 	}
 	coldBootStartedAt := time.Now()
 	coldBootErr := m.vmm.BootColdBoot(ctx, lease, spec)
@@ -4512,7 +4578,7 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	}
 	m.mu.Unlock()
-	if ok {
+	if ok && !inst.ExecutionOnly {
 		m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(ctx))
 	}
 	if m.diskMetrics != nil {
@@ -4568,7 +4634,7 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
 	}
 	m.mu.Unlock()
-	if ok {
+	if ok && !inst.ExecutionOnly {
 		m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(ctx))
 	}
 	if m.diskMetrics != nil {
@@ -5724,11 +5790,13 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	if err := m.vmm.Kill(ctx, lease); err != nil {
 		m.log.Warn("cleanup: kill vm", "instance", lease.Instance, "err", err)
 	}
-	for _, argv := range nc.TeardownCommands() {
-		if err := m.run.Run(ctx, argv); err != nil {
-			// Teardown commands are expected to fail if the resource was never
-			// created (e.g. netns del on a boot that failed before netns add).
-			m.log.Debug("cleanup: teardown cmd", "cmd", argv, "err", err)
+	if !lease.Networkless {
+		for _, argv := range nc.TeardownCommands() {
+			if err := m.run.Run(ctx, argv); err != nil {
+				// Teardown commands are expected to fail if the resource was never
+				// created (e.g. netns del on a boot that failed before netns add).
+				m.log.Debug("cleanup: teardown cmd", "cmd", argv, "err", err)
+			}
 		}
 	}
 
@@ -5748,7 +5816,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	// Checking the marker after the fact separates the two cases. Only a
 	// namespace that still exists is reported, so the benign path stays
 	// quiet and a real leak is greppable and countable.
-	if nc.Netns != "" {
+	if !lease.Networkless && nc.Netns != "" {
 		if _, statErr := os.Lstat(filepath.Join("/run/netns", nc.Netns)); statErr == nil {
 			// Log only. Deliberately NOT counted on
 			// vmmd_wake_failure_total{reason=netns_fail}: that series
