@@ -8,7 +8,8 @@ import (
 )
 
 type warmBuilderTestVM struct {
-	deleted []WarmSnapshot
+	deleted   []WarmSnapshot
+	deletedCh chan struct{}
 }
 
 func (v *warmBuilderTestVM) Spawn(context.Context, VMRequest) (BuildHandle, error) {
@@ -31,6 +32,12 @@ func (v *warmBuilderTestVM) WaitForWarmCompletion(context.Context, BuildHandle) 
 }
 func (v *warmBuilderTestVM) DeleteWarmSnapshot(_ context.Context, snapshot WarmSnapshot) error {
 	v.deleted = append(v.deleted, snapshot)
+	if v.deletedCh != nil {
+		select {
+		case v.deletedCh <- struct{}{}:
+		default:
+		}
+	}
 	return nil
 }
 
@@ -320,6 +327,93 @@ func TestBuilderdWarmLifecycleUsesConfiguredIdleWindow(t *testing.T) {
 	}
 	if got := b.WarmState(); got != WarmCold {
 		t.Fatalf("WarmState() = %q, want %q", got, WarmCold)
+	}
+}
+
+func TestSweepExpiredWarmBuilderCleansBackingStore(t *testing.T) {
+	base := time.Unix(100, 0)
+	vm := &warmBuilderTestVM{}
+	b := New(nil, nil, vm, NewCache(t.TempDir()), nil, nil, Config{WarmIdle: time.Minute}, nil)
+
+	if _, _, err := b.StartWarmBuilder(base, "firecracker-1.8.0"); err != nil {
+		t.Fatal(err)
+	}
+	want := testStorageWarmSnapshot()
+	want.CreatedAt = base
+	want.LastUsedAt = base
+	if err := b.CompleteWarmBuilder(base, want); err != nil {
+		t.Fatal(err)
+	}
+
+	expired, err := b.SweepExpiredWarmBuilder(context.Background(), base.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("SweepExpiredWarmBuilder() error = %v", err)
+	}
+	if !expired {
+		t.Fatal("SweepExpiredWarmBuilder() = false, want true")
+	}
+	if len(vm.deleted) != 1 || vm.deleted[0] != want {
+		t.Fatalf("deleted snapshots = %+v, want %+v", vm.deleted, []WarmSnapshot{want})
+	}
+	if got := b.WarmState(); got != WarmCold {
+		t.Fatalf("WarmState() = %q, want %q", got, WarmCold)
+	}
+}
+
+func TestDrainCleansRetainedWarmSnapshot(t *testing.T) {
+	base := time.Unix(100, 0)
+	vm := &warmBuilderTestVM{}
+	b := New(nil, nil, vm, NewCache(t.TempDir()), nil, nil, Config{}, nil)
+
+	if _, _, err := b.StartWarmBuilder(base, "firecracker-1.8.0"); err != nil {
+		t.Fatal(err)
+	}
+	want := testStorageWarmSnapshot()
+	want.CreatedAt = base
+	want.LastUsedAt = base
+	if err := b.CompleteWarmBuilder(base, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Drain(context.Background()); err != nil {
+		t.Fatalf("Drain() error = %v", err)
+	}
+	if len(vm.deleted) != 1 || vm.deleted[0] != want {
+		t.Fatalf("deleted snapshots = %+v, want %+v", vm.deleted, []WarmSnapshot{want})
+	}
+	if got := b.WarmState(); got != WarmCold {
+		t.Fatalf("WarmState() = %q, want %q", got, WarmCold)
+	}
+}
+
+func TestWarmBuilderSweepLoopExpiresSnapshot(t *testing.T) {
+	vm := &warmBuilderTestVM{deletedCh: make(chan struct{}, 1)}
+	b := New(nil, nil, vm, NewCache(t.TempDir()), nil, nil, Config{WarmIdle: time.Millisecond}, nil)
+	now := time.Now()
+	if _, _, err := b.StartWarmBuilder(now, "firecracker-1.8.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.CompleteWarmBuilder(now, testStorageWarmSnapshot()); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		WarmBuilderSweepLoop(ctx, b, time.Millisecond, nil)
+		close(done)
+	}()
+	select {
+	case <-vm.deletedCh:
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("WarmBuilderSweepLoop did not expire the snapshot")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("WarmBuilderSweepLoop did not stop after cancellation")
 	}
 }
 
