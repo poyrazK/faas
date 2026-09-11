@@ -292,8 +292,6 @@ jobs:
             images/builder-resolv.conf \
             images/Dockerfile.lock \
             guest/init \
-            pkg/api \
-            pkg/reqbudget \
             pkg/sourcecontext \
             pkg/statefuldenylist \
             go.mod \
