@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
 )
@@ -32,7 +33,27 @@ type qualificationOutput struct {
 	Readiness          managedpostgres.QualificationReadiness        `json:"readiness"`
 }
 
+// configurationPreflightOutput is deliberately separate from the live
+// qualification artifact. It contains only configuration and capability
+// evidence; --check-config never calls a provider API and never emits a
+// qualification approval.
+type configurationPreflightOutput struct {
+	BackendID          string                                 `json:"backend_id,omitempty"`
+	BackendFingerprint string                                 `json:"backend_fingerprint,omitempty"`
+	Spec               *managedpostgres.Spec                  `json:"spec,omitempty"`
+	Checks             []managedpostgres.QualificationCheck   `json:"checks"`
+	Warnings           []string                               `json:"warnings,omitempty"`
+	Readiness          managedpostgres.QualificationReadiness `json:"readiness"`
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--check-config" {
+		if len(os.Args) != 2 {
+			_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify --check-config")
+			os.Exit(2)
+		}
+		os.Exit(runConfigurationPreflight(os.Getenv, os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--verify" {
 		path := strings.TrimSpace(os.Getenv(managedpostgres.QualificationApprovalPathEnv))
 		for index := 2; index < len(os.Args); index++ {
@@ -47,10 +68,142 @@ func main() {
 		os.Exit(runVerify(os.Getenv, path, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 {
-		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--verify [--approval PATH]]")
+		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --verify [--approval PATH]]")
 		os.Exit(2)
 	}
 	os.Exit(run(os.Getenv, os.Stdout, os.Stderr))
+}
+
+func runConfigurationPreflight(getenv func(string) string, output, errorOutput io.Writer) int {
+	result := configurationPreflightOutput{}
+	failed := false
+	addCheck := func(name string, passed bool, code string) {
+		check := managedpostgres.QualificationCheck{Name: name, Passed: passed}
+		if !passed {
+			check.Error = code
+			failed = true
+		}
+		result.Checks = append(result.Checks, check)
+	}
+
+	configPath := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_CONFIG"))
+	addCheck("config_path", configPath != "", "configuration_path_missing")
+	addCheck("staging_environment", strings.EqualFold(strings.TrimSpace(getenv(managedpostgres.EnvironmentEnv)), managedpostgres.QualificationStagingEnvironment), "environment_not_staging")
+
+	if configPath == "" {
+		return writeConfigurationPreflight(result, failed, errorOutput, output)
+	}
+	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	addCheck("configuration_valid", err == nil && registry != nil, "configuration_invalid")
+	if err != nil || registry == nil {
+		return writeConfigurationPreflight(result, failed, errorOutput, output)
+	}
+
+	regions := registry.Regions()
+	addCheck("single_default_backend", len(regions) == 1, "default_backend_count_invalid")
+	addCheck("provisioning_disabled", !registry.ProvisioningEnabled, "provisioning_must_remain_disabled")
+
+	backend, backendErr := registry.Default(registry.DefaultRegion)
+	addCheck("default_backend", backendErr == nil, "default_backend_unavailable")
+	if backendErr != nil {
+		return writeConfigurationPreflight(result, failed, errorOutput, output)
+	}
+	result.BackendID = backend.ID
+	result.BackendFingerprint = backend.Fingerprint
+	_, fingerprintErr := hex.DecodeString(backend.Fingerprint)
+	addCheck("placement_fingerprint", len(backend.Fingerprint) == sha256.Size*2 && fingerprintErr == nil, "placement_fingerprint_invalid")
+
+	spec, specErr := qualificationSpec(backend, backend.Region)
+	addCheck("qualification_spec", specErr == nil, "qualification_spec_unsupported")
+	if specErr == nil {
+		result.Spec = &spec
+	}
+	addCheck("plan_entitlements", preflightPlanEntitlements(backend), "plan_entitlement_unsupported")
+	scaleLimits, scalePlanOK := api.ManagedPostgresLimitsFor(api.PlanScale)
+	addCheck("global_database_ceiling", scalePlanOK && registry.MaxDatabasesPerAccount <= scaleLimits.DatabasesMax, "global_database_ceiling_invalid")
+
+	_, canaryErr := managedpostgres.ParseStagingCanaryAccounts(getenv(managedpostgres.CanaryAccountsEnv))
+	addCheck("canary_accounts", canaryErr == nil, "canary_accounts_invalid")
+
+	resourceID := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_RESOURCE_ID"))
+	addCheck("qualification_resource_id", resourceID != "" && len(resourceID) <= 255, "qualification_resource_id_invalid")
+	if timeoutValue := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")); timeoutValue != "" {
+		timeout, timeoutErr := time.ParseDuration(timeoutValue)
+		addCheck("qualification_timeout", timeoutErr == nil && timeout > 0, "qualification_timeout_invalid")
+	} else {
+		addCheck("qualification_timeout", true, "qualification_timeout_invalid")
+	}
+	_, approvalTTLErr := parseQualificationApprovalTTL(getenv)
+	addCheck("approval_ttl", approvalTTLErr == nil, "approval_ttl_invalid")
+
+	if !registry.UsagePolicy().Enabled {
+		result.Warnings = append(result.Warnings, "usage_policy_disabled")
+	}
+	if !backend.Capabilities.RestoreUsageIsolated {
+		result.Warnings = append(result.Warnings, "restore_usage_not_isolated")
+	}
+	return writeConfigurationPreflight(result, failed, errorOutput, output)
+}
+
+func writeConfigurationPreflight(result configurationPreflightOutput, failed bool, errorOutput, output io.Writer) int {
+	result.Readiness = managedpostgres.QualificationReadiness{Ready: !failed}
+	if failed {
+		for _, check := range result.Checks {
+			if !check.Passed && check.Error != "" {
+				result.Readiness.Reasons = append(result.Readiness.Reasons, check.Error)
+			}
+		}
+	}
+	encoder := json.NewEncoder(output)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(result); err != nil {
+		_, _ = fmt.Fprintln(errorOutput, "cannot write managed postgres configuration preflight")
+		return 1
+	}
+	if failed {
+		_, _ = fmt.Fprintln(errorOutput, "managed postgres configuration preflight failed")
+		return 1
+	}
+	return 0
+}
+
+func preflightPlanEntitlements(backend managedpostgres.Backend) bool {
+	plans := []struct {
+		plan  api.Plan
+		class managedpostgres.ServiceClass
+	}{
+		{plan: api.PlanHobby, class: managedpostgres.ClassDevelopment},
+		{plan: api.PlanPro, class: managedpostgres.ClassBurstable},
+		{plan: api.PlanScale, class: managedpostgres.ClassProduction},
+	}
+	major := 0
+	for _, candidate := range backend.Capabilities.PostgresMajors {
+		if candidate > major {
+			major = candidate
+		}
+	}
+	if major == 0 {
+		return false
+	}
+	for _, item := range plans {
+		limits, ok := api.ManagedPostgresLimitsFor(item.plan)
+		if !ok || limits.DatabasesMax <= 0 {
+			return false
+		}
+		spec := managedpostgres.Spec{
+			Region:               backend.Region,
+			PostgresMajor:        major,
+			Class:                item.class,
+			Availability:         managedpostgres.AvailabilitySingleZone,
+			ScaleToZero:          true,
+			StorageLimitBytes:    limits.StorageLimitBytes,
+			RestoreWindowSeconds: limits.RestoreWindowSeconds,
+		}
+		if backend.Capabilities.Supports(spec) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func run(getenv func(string) string, output, errorOutput io.Writer) int {

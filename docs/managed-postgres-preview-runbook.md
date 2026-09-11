@@ -6,6 +6,28 @@ backend fingerprint is approved.
 
 ## Qualification approval
 
+Before spending provider credits, run the no-side-effect configuration
+preflight. It loads the operator configuration, validates the single default
+backend and placement fingerprint, checks the provider-neutral qualification
+spec against every paid plan, and validates the staging/resource/canary
+inputs. It never calls Neon, creates a database, or emits an approval:
+
+The secret environment named by the backend's `secret_env.api-key` mapping
+must still be present so the adapter can validate its configuration; the
+preflight reads it but never sends it to Neon.
+
+```sh
+FAAS_ENVIRONMENT=staging \
+FAAS_MANAGED_POSTGRES_CONFIG=/etc/faas/managed-postgres.json \
+FAAS_MANAGED_POSTGRES_QUALIFY_RESOURCE_ID=qualification-preflight \
+go run ./cmd/managed-postgres-qualify --check-config
+```
+
+The JSON result contains stable check codes and a `readiness` object. Warnings
+such as `usage_policy_disabled` or `restore_usage_not_isolated` do not make the
+provider call safe to skip; they remain launch blockers that must be resolved
+or explicitly documented before a staging canary.
+
 Run the provider qualification with
 `FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` and save its JSON output in an
 operator-owned path. The output includes a versioned approval envelope and the
