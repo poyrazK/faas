@@ -89,11 +89,14 @@ func TestOrgs_Ls_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"list"}); code != 0 {
-		t.Fatalf("orgs list exit = %d, want 0", code)
-	}
-	if sawMethod != "GET" || sawPath != "/v1/orgs" {
-		t.Errorf("route = %s %s, want GET /v1/orgs", sawMethod, sawPath)
+	for _, subcommand := range []string{"list", "ls"} {
+		sawMethod, sawPath = "", ""
+		if code := cmdOrgs([]string{subcommand}); code != 0 {
+			t.Fatalf("orgs %s exit = %d, want 0", subcommand, code)
+		}
+		if sawMethod != "GET" || sawPath != "/v1/orgs" {
+			t.Errorf("orgs %s route = %s %s, want GET /v1/orgs", subcommand, sawMethod, sawPath)
+		}
 	}
 }
 
