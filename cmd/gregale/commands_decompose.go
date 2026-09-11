@@ -332,8 +332,6 @@ func intersect(a, b []string) (bool, []string) {
 // same slugs). The single-section Workloads loop does not need
 // it: plan.Workloads is the post-filter set, so excluded slugs
 // never appear there.
-//
-//nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected bool) int {
 	return printPlanTextWithExplain(w, plan, excludeSet, showAffected, false)
 }
@@ -342,6 +340,10 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 // appends a deterministic detector trace below each workload. Keeping the
 // legacy printPlanText wrapper preserves the terse output used by deploy's
 // confirmation prompt and existing callers.
+// write is indistinguishable from a malformed terminal and is intentionally
+// handled like the legacy renderer.
+//
+//nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
 	fmt.Fprintf(w, "Scan source: %s   tier: %s\n", plan.ScanSource, plan.Tier)
@@ -450,6 +452,8 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 // printPlanDetectionTrace renders traces for plans that have no workload
 // table (for example --show-affected or a blocked plan). Workloads are copied
 // and sorted so a caller-constructed response cannot make --explain flaky.
+//
+//nolint:errcheck // best-effort terminal rendering mirrors printPlanText.
 func printPlanDetectionTrace(w io.Writer, workloads []api.PlanWorkload) {
 	if len(workloads) == 0 {
 		fmt.Fprintln(w, "\nDetection trace: (no workloads)")
@@ -468,6 +472,8 @@ func printPlanDetectionTrace(w io.Writer, workloads []api.PlanWorkload) {
 // structured PlanWorkload.detected_by trace. Source is the detector marker
 // (for example "compose.yaml: api"). A nil trace is called out explicitly so
 // operators can distinguish an older server from an unexplained workload.
+//
+//nolint:errcheck // best-effort terminal rendering mirrors printPlanText.
 func printWorkloadDetectionTrace(w io.Writer, wl api.PlanWorkload) {
 	marker := wl.Source
 	if marker == "" {
