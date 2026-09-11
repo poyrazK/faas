@@ -39,7 +39,7 @@ func UnitSchedd() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:  "simple",
+		Type:  "notify",
 		User:  "faas-schedd",
 		Group: "faas",
 		ExecStartPre: []string{

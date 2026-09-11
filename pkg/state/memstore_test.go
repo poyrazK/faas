@@ -2876,12 +2876,10 @@ func TestMemStore_ClaimQueuedBuild(t *testing.T) {
 	}
 }
 
-// TestMemStore_CreateDeployment_SupersedesPriorLive mirrors the
-// PgStore supersede happy-path. Two pending-style deployments go
-// through; the second must observe the prior as superseded in the
-// store map (CreateDeployment's 2-return shape carries the new row
-// only; the prior is read back via DeploymentByID to assert).
-func TestMemStore_CreateDeployment_SupersedesPriorLive(t *testing.T) {
+// TestMemStore_CreateDeployment_CutsOverOnlyOnPromotion mirrors the PgStore
+// promotion boundary. A serving deployment remains live while its replacement
+// builds; MarkDeploymentLive performs the atomic cutover.
+func TestMemStore_CreateDeployment_CutsOverOnlyOnPromotion(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
 	acc, _ := m.CreateAccount(ctx, "sup@x.com", api.PlanPro)
@@ -2891,17 +2889,25 @@ func TestMemStore_CreateDeployment_SupersedesPriorLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("d1: %v", err)
 	}
+	if err := m.MarkDeploymentLive(ctx, d1.ID); err != nil {
+		t.Fatalf("promote d1: %v", err)
+	}
 	d2, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:2"})
 	if err != nil {
 		t.Fatalf("d2: %v", err)
 	}
-	// Map must agree: d1 (the prior) is now DeploySuperseded.
-	if m.deployments[d1.ID].Status != DeploySuperseded {
-		t.Errorf("m.deployments[%s].Status = %q, want superseded", d1.ID, m.deployments[d1.ID].Status)
+	if m.deployments[d1.ID].Status != DeployLive {
+		t.Errorf("prior status after replacement creation = %q, want live", m.deployments[d1.ID].Status)
 	}
 	// And d2 is the new pending row.
 	if d2.Status != DeployPending {
 		t.Errorf("d2.Status = %q, want pending", d2.Status)
+	}
+	if err := m.MarkDeploymentLive(ctx, d2.ID); err != nil {
+		t.Fatalf("promote d2: %v", err)
+	}
+	if m.deployments[d1.ID].Status != DeploySuperseded {
+		t.Errorf("prior status after replacement promotion = %q, want superseded", m.deployments[d1.ID].Status)
 	}
 }
 
@@ -4949,14 +4955,10 @@ func memstoreSeedAppLive(t *testing.T, m *MemStore, ctx context.Context, suffix 
 	return acc.ID, app.ID, dep.ID
 }
 
-// memstoreSeedLiveSibling creates a second deployment and flips the
-// superseded prior (created by CreateDeployment's auto-supersede)
-// back to live at 0 traffic, AND flips the new deployment to live at
-// 100, so the resulting pair is {prior:0, sibling:100}, Σ=100, both
-// live. This is the precondition for every proportional-redistribution
-// test in this file. CreateDeployment leaves the new row in
-// DeployPending; UpdateDeploymentTraffic guards on DeployLive, so the
-// sibling must be promoted to live before the test body exercises it.
+// memstoreSeedLiveSibling creates a traffic-test fixture with two live rows.
+// The production promotion path intentionally permits only one stable live
+// deployment per scope, so this helper writes the multi-live canary fixture
+// directly under the store lock.
 //
 // Returns (priorDepID, newDepID).
 func memstoreSeedLiveSibling(t *testing.T, m *MemStore, ctx context.Context, priorDepID, tag string) (string, string) {
@@ -4964,24 +4966,85 @@ func memstoreSeedLiveSibling(t *testing.T, m *MemStore, ctx context.Context, pri
 	appID := m.deployments[priorDepID].AppID
 	newDep, err := m.CreateDeployment(ctx, Deployment{
 		AppID: appID, Kind: DeploymentKindImage,
-		ImageDigest: "sha256:" + tag, Status: DeployPending,
+		ImageDigest: "sha256:" + tag, Status: DeployPending, Scope: tag,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment (%s): %v", tag, err)
 	}
-	// CreateDeployment auto-superseded priorDepID → traffic_percent=0,
-	// status=superseded. Flip prior back to live at 0 so we have two
-	// live rows summing to 100.
-	if err := m.MarkDeploymentLive(ctx, priorDepID); err != nil {
-		t.Fatalf("MarkDeploymentLive (restore prior): %v", err)
-	}
-	// Promote the new row from DeployPending to DeployLive. The
-	// status guard in UpdateDeploymentTraffic requires the target to
-	// be live before it can take a weight.
-	if err := m.MarkDeploymentLive(ctx, newDep.ID); err != nil {
-		t.Fatalf("MarkDeploymentLive (sibling %s): %v", tag, err)
-	}
+	m.mu.Lock()
+	prior := m.deployments[priorDepID]
+	prior.Status = DeployLive
+	prior.TrafficPercent = 0
+	m.deployments[priorDepID] = prior
+	sibling := m.deployments[newDep.ID]
+	sibling.Status = DeployLive
+	sibling.TrafficPercent = 100
+	m.deployments[newDep.ID] = sibling
+	m.mu.Unlock()
 	return priorDepID, newDep.ID
+}
+
+func TestMemStore_ExplicitZeroTrafficPreservesStableRevision(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	_, appID, stableID := memstoreSeedAppLive(t, m, ctx, "explicit-zero")
+	candidate, err := m.CreateDeployment(ctx, Deployment{
+		AppID: appID, Kind: DeploymentKindImage, ImageDigest: "sha256:candidate",
+		Status: DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(candidate): %v", err)
+	}
+	if candidate.TrafficPercent != 0 || !candidate.TrafficPercentExplicit {
+		t.Fatalf("candidate policy = %d explicit=%t, want 0/true", candidate.TrafficPercent, candidate.TrafficPercentExplicit)
+	}
+	if err := m.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(candidate): %v", err)
+	}
+	stable, _ := m.DeploymentByID(ctx, stableID)
+	candidate, _ = m.DeploymentByID(ctx, candidate.ID)
+	if stable.Status != DeployLive || stable.TrafficPercent != 100 {
+		t.Fatalf("stable = %s/%d, want live/100", stable.Status, stable.TrafficPercent)
+	}
+	if candidate.Status != DeployLive || candidate.TrafficPercent != 0 {
+		t.Fatalf("candidate = %s/%d, want live/0", candidate.Status, candidate.TrafficPercent)
+	}
+}
+
+func TestMemStore_RunningInstanceForAppIgnoresSupersededGeneration(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	_, appID, oldID := memstoreSeedAppLive(t, m, ctx, "running-current")
+	if _, err := m.CreateInstance(ctx, appID, oldID, string(StateRunning), 128, DefaultLocalNodeName, "old-wake"); err != nil {
+		t.Fatal(err)
+	}
+	newDep, err := m.CreateDeployment(ctx, Deployment{AppID: appID, Kind: DeploymentKindImage, ImageDigest: "sha256:new", Status: DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkDeploymentLive(ctx, newDep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.RunningInstanceForApp(ctx, appID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RunningInstanceForApp returned superseded generation: %v", err)
+	}
+}
+
+func TestMemStore_RunningInstanceForAppIgnoresZeroTrafficGeneration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMemStore()
+	appID := uuid.NewString()
+	zeroID := uuid.NewString()
+	liveID := uuid.NewString()
+	m.apps[appID] = App{ID: appID}
+	m.deployments[zeroID] = Deployment{ID: zeroID, AppID: appID, Status: DeployLive, TrafficPercent: 0}
+	m.deployments[liveID] = Deployment{ID: liveID, AppID: appID, Status: DeployLive, TrafficPercent: 100}
+	m.instances[uuid.NewString()] = Instance{ID: uuid.NewString(), AppID: appID, DeploymentID: zeroID, State: "running", StartedAt: time.Now()}
+
+	if _, err := m.RunningInstanceForApp(ctx, appID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RunningInstanceForApp returned zero-traffic generation: %v", err)
+	}
 }
 
 // TestMem_UpdateDeploymentTraffic_ProportionalRedistribution
@@ -5030,20 +5093,8 @@ func TestMem_UpdateDeploymentTraffic_ThreeWayResidual(t *testing.T) {
 	_, _, depA := memstoreSeedAppLive(t, m, ctx, "three-way-mem")
 	// Seed depB live alongside depA: prior=0, B=100, Σ=100.
 	depA, depB := memstoreSeedLiveSibling(t, m, ctx, depA, "B-mem")
-	// Seed depC live alongside A: prior(0) gets superseded again,
-	// B(100) stays live. Flip prior back: A=0, B=100, C=100? No —
-	// CreateDeployment supersedes the most recent live row (B),
-	// so after this B→0, C→100. Then restore A to live at 0, but
-	// B is already 0 from supersede — Σ = 0+0+100 = 100 ✓.
+	// Seed depC alongside A and B, yielding A=0, B=0, C=100.
 	depB, depC := memstoreSeedLiveSibling(t, m, ctx, depB, "C-mem")
-	// After this: A=superseded at 0, B=superseded at 0, C=live at 100.
-	// Re-flip A and B to live at 0.
-	if err := m.MarkDeploymentLive(ctx, depA); err != nil {
-		t.Fatalf("MarkDeploymentLive (A): %v", err)
-	}
-	if err := m.MarkDeploymentLive(ctx, depB); err != nil {
-		t.Fatalf("MarkDeploymentLive (B): %v", err)
-	}
 
 	// Build a 3-way table; Σ must be 100 after every stamp.
 	if _, err := m.UpdateDeploymentTraffic(ctx, depB, 30); err != nil {
@@ -5709,6 +5760,50 @@ func TestMemStoreUpdateTrigger_FilterCriteriaPersists(t *testing.T) {
 	}
 	if string(got.FilterCriteria) != string(replacement) {
 		t.Errorf("after replacement patch, got %q, want %q", got.FilterCriteria, replacement)
+	}
+}
+
+func TestMemStoreTriggerPersistsCreateAndUpdateFields(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "trigger-fields@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "trigger-fields"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	config := []byte(`{"mode":"delayed_task"}`)
+	created, err := m.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", true,
+		config, 12, 345, 2, 8192, "commit", api.Limits{})
+	if err != nil {
+		t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
+	}
+	config[0] = 'x'
+	if string(created.Config) != `{"mode":"delayed_task"}` ||
+		created.BatchSizeMax != 12 || created.BatchWindowMs != 345 ||
+		created.MaxAttempts != 2 || created.PayloadMaxBytes != 8192 {
+		t.Fatalf("created trigger did not preserve inputs: %+v", created)
+	}
+
+	updatedConfig := []byte(`{"mode":"queue"}`)
+	filter := []byte(`{"payload":[{"op":"eq","path":"$.kind","value":"job"}]}`)
+	batchSize, batchWindow, attempts, payload := int32(7), int32(890), int32(4), int32(16384)
+	strategy := "seek-to-offset"
+	updated, err := m.UpdateTrigger(ctx, uuidFromPgtype(created.ID).String(), nil,
+		updatedConfig, &batchSize, &batchWindow, &attempts, &payload, &strategy, &filter)
+	if err != nil {
+		t.Fatalf("UpdateTrigger: %v", err)
+	}
+	updatedConfig[0] = 'x'
+	filter[0] = 'x'
+	if string(updated.Config) != `{"mode":"queue"}` || updated.BatchSizeMax != batchSize ||
+		updated.BatchWindowMs != batchWindow || updated.MaxAttempts != attempts ||
+		updated.PayloadMaxBytes != payload || updated.BrokerPoisonStrategy != strategy ||
+		string(updated.FilterCriteria) != `{"payload":[{"op":"eq","path":"$.kind","value":"job"}]}` {
+		t.Fatalf("updated trigger did not preserve inputs: %+v", updated)
 	}
 }
 

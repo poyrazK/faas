@@ -3,6 +3,7 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,6 +92,59 @@ func TestUsagePolicyAdmitWithCeilingsRejectsPlanStorageCap(t *testing.T) {
 	}
 	if err := policy.AdmitWithCeilings(context.Background(), store, "account-1", now, UsageCeilings{MaxMonthlyStorageByteSeconds: 10}); !errors.Is(err, ErrQuotaExceeded) {
 		t.Fatalf("admission = %v, want ErrQuotaExceeded", err)
+	}
+}
+
+func TestServiceUsageSummaryIntersectsCustomerCeiling(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	provider := &fakeProvider{capabilities: testCapabilities()}
+	registry := testRegistry(t, provider, func(config *Config) {
+		config.Usage = UsageConfig{
+			Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
+			StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 1000,
+			MaxMonthlyComputeUnitSeconds: 1000, MaxMonthlyStorageByteSeconds: 1 << 50,
+			MaxMonthlyHistoryByteSeconds: 1 << 50, MaxMonthlyEgressBytes: 1 << 50,
+		}
+	})
+	store := NewMemoryStore()
+	store.databases["db-1"] = Database{
+		ID: "db-1", AccountID: "account-1", Name: "orders", State: StateReady,
+		BackendID: "primary-a", BackendFingerprint: strings.Repeat("a", 64),
+		ProviderResourceID: "provider-1", UpdatedAt: now,
+	}
+	if err := store.RecordUsage(context.Background(), []UsageRecord{{
+		AccountID: "account-1", DatabaseID: "db-1", BackendID: "primary-a",
+		BackendFingerprint: strings.Repeat("a", 64), WindowFrom: now.Add(-time.Hour), WindowTo: now,
+		ObservedAt: now, Meter: MeterStorageByteSeconds, Quantity: 10, CostMillicents: 1,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(registry, store, ServiceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := service.UsageSummary(context.Background(), "account-1", now, UsageCeilings{MaxMonthlyStorageByteSeconds: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !summary.PolicyEnabled || !summary.Fresh || !summary.Exceeded || summary.Snapshot.ReadyDatabases != 1 {
+		t.Fatalf("summary = %+v", summary)
+	}
+}
+
+func TestServiceUsageSummaryDisabledPolicyIsNotFresh(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities()}
+	registry := testRegistry(t, provider, nil)
+	service, err := NewService(registry, NewMemoryStore(), ServiceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := service.UsageSummary(context.Background(), "account-1", time.Now().UTC(), UsageCeilings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.PolicyEnabled || summary.Fresh || summary.Exceeded {
+		t.Fatalf("disabled summary = %+v", summary)
 	}
 }
 

@@ -41,7 +41,7 @@ gv_dashboards_dir: /var/lib/grafana/dashboards
 # never enters Ansible vars or the rendered config. Same precedent as
 # the alertmanager secret files (gap G2 lean §17, sealed at rest).
 # Mode 0400, owner grafana:grafana — asserted before systemd enable.
-gv_admin_password_file: ""
+gv_admin_password_file: /etc/grafana/secrets/admin_password
 
 # Internal Prometheus address Grafana queries. Keep the datasource local;
 # operators can use an SSH tunnel for the Grafana UI when needed.
@@ -60,3 +60,11 @@ gv_loki_url: ""
 gv_loki_tenant_id: gregale
 gv_loki_server_name: ""
 gv_loki_credentials_file: /etc/grafana/secrets/loki.env
+
+# Optional Prometheus exemplar destination. Set gv_trace_datasource_uid when
+# Grafana already has a Tempo/Jaeger/Datadog-compatible trace datasource, or
+# set gv_trace_exemplar_url to a trace viewer URL containing Grafana's escaped
+# `$${__value.raw}` trace-id macro. Empty values keep trace_id exemplars
+# visible without creating a broken link.
+gv_trace_datasource_uid: ""
+gv_trace_exemplar_url: ""

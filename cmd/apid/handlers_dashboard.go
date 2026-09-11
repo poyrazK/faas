@@ -68,6 +68,8 @@ const dashboardAccountPath = "/dashboard/account"
 //	GET /dashboard/apps/{slug}/domains → custom domains + TLS/doctor status
 //	GET /dashboard/apps/{slug}/instances → instance fleet + lifecycle actions
 //	GET /dashboard/apps/{slug}/edge-rules → edge rules + CORS presets
+//	GET /dashboard/apps/{slug}/webhooks → outbound webhooks + deliveries
+//	GET /dashboard/apps/{slug}/storage → buckets, objects, signed URLs, usage
 //	GET /dashboard/apps/{slug}/jobs → jobs and queue view (app filter)
 //	GET /dashboard/apps/{slug}/queues → queue state + samples (alias)
 //	GET /dashboard/jobs             → jobs, runs, and all application queues
@@ -112,6 +114,30 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// G10 / issue #1397 — object storage buckets, objects,
+			// signed URLs, and daily storage usage.
+			if sslug, ok := parseAppStoragePath(slug); ok {
+				s.renderAppStorage(w, r, log, acct, sslug)
+				return
+			}
+			// G9 / issue #1397 — tenant surfaces with hostname
+			// verification and durable certificate state.
+			if tslug, ok := parseAppTenantSurfacesPath(slug); ok {
+				s.renderAppTenantSurfaces(w, r, log, acct, tslug)
+				return
+			}
+			// G9 / issue #1397 — traffic mirrors with server-side
+			// comparison summary counters.
+			if mslug, ok := parseAppMirrorsPath(slug); ok {
+				s.renderAppMirrors(w, r, log, acct, mslug)
+				return
+			}
+			// G8 / issue #1397 — outbound webhook subscriptions,
+			// recent deliveries, secret rotation, and dead-letter retry.
+			if wslug, ok := parseAppWebhooksPath(slug); ok {
+				s.renderAppWebhooks(w, r, log, acct, wslug)
+				return
+			}
 			// G4 / issue #1397 — edge rules and reusable CORS presets.
 			// The form adapters below delegate to the existing JSON API
 			// handlers so the dashboard cannot drift from API validation.
@@ -397,17 +423,24 @@ func (s *server) appListItem(ctx context.Context, app state.App, latest map[stri
 	return item
 }
 
-// appURLForDomain joins an app or preview slug to the configured public
-// suffix. The suffix is intentionally opaque: `apps.gregale.dev` remains a
-// valid backwards-compatible value, while `gregale.dev` yields the current
-// wildcard contract (`<slug>.gregale.dev`) without hard-coding an extra
-// `.apps` label into the application.
-func appURLForDomain(slug, domain string) string {
+// appHostForDomain joins an app or preview slug to the configured public
+// suffix. The hosted Gregale contract is <slug>.gregale.dev. Normalize the
+// retired apps.gregale.dev setting as a safety net so stale configuration
+// cannot put a legacy hostname back into customer-facing URLs.
+func appHostForDomain(slug, domain string) string {
 	domain = strings.Trim(strings.TrimSpace(domain), ".")
-	if domain == "" {
-		return "https://" + slug
+	if domain == domainUnset || domain == "apps.gregale.dev" {
+		domain = "gregale.dev"
 	}
-	return "https://" + slug + "." + domain
+	if domain == "" {
+		return slug
+	}
+	return slug + "." + domain
+}
+
+// appURLForDomain returns the HTTPS customer URL for an app or preview slug.
+func appURLForDomain(slug, domain string) string {
+	return "https://" + appHostForDomain(slug, domain)
 }
 
 // renderAppsList renders /dashboard/apps — every deployed app + a
@@ -2533,6 +2566,21 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 		App:        dashboard.AppListItem{Slug: app.Slug},
 		Deployment: dashboardDeploymentItem(dep),
 	}
+	// Keep the dashboard's failure explanation aligned with the API/CLI
+	// projection: the persisted profile is the source of truth for the
+	// inferred runtime, start command, port, and health path. This remains
+	// available after the build spool is cleaned up.
+	if plan := s.deploymentResponse(dep, app).BuildPlan; plan != nil {
+		data.BuildPlan = &dashboard.BuildPlanView{
+			Framework:  plan.Framework,
+			Runtime:    plan.Runtime,
+			Version:    plan.Version,
+			Entrypoint: plan.Entrypoint,
+			Port:       plan.Port,
+			HealthPath: plan.HealthPath,
+			Class:      plan.Class,
+		}
+	}
 	// A superseded deployment is a valid rollback target. Surface the
 	// same app-scoped rollback action that already exists on the app
 	// detail page so the operator can recover from the deployment
@@ -3031,7 +3079,7 @@ func repoFullNameFromSourceURL(sourceURL string) string {
 
 // projectPreviewItems (ADR-095 PR-C / issue #272) materialises a
 // dashboard.PreviewItem slice from the raw state.App preview rows.
-// The preview-host label ("pr-{N}.{parent-slug}") is derived from
+// The preview-host label ("pr-{N}-{parent-slug}") is derived from
 // PreviewOfSlug + PreviewPrNumber rather than parsed from any
 // stored field because the column is the canonical input — the
 // dashboard never round-trips a host header to mint URLs.

@@ -39,6 +39,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -524,6 +525,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// only re-renders the nftables ruleset from compile-time
 	// defaults. The setter is invoked exactly once per process.
 	netns.SetDefaultHostBridgeIP(parsedBridge.Masked().Addr().Next())
+	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
+	// mutable policy from this host's deployment-owned network values before
+	// any wake can trigger a render; otherwise the package default (eth0)
+	// replaces a valid provider-specific boot policy (for example ens4 on
+	// GCP), cutting every guest off from DNS and the public internet.
+	hostPolicy := runtimeHostPolicy(cfg.ComputeNode, parsedBridge)
+	netns.SwapActiveHostPolicy(hostPolicy)
+	log.Info("vmmd: runtime host policy configured",
+		"public_iface", hostPolicy.PublicIface,
+		"masquerade_cidr", hostPolicy.MasqueradeCIDR)
 	listenTarget := cfg.ResolveListenTarget()
 	// targetURL is the DIAL target schedd/gatewayd use to reach
 	// this vmmd. Distinct from listenTarget (the bind address):
@@ -807,6 +818,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
 		WithStorage(storageBackend).
+		WithRestoreConcurrency(cfg.RestoreConcurrency).
 		// Issue #309 / tier-2 DX: install the per-VMM
 		// slow-subscriber callback that every ring
 		// registerRing creates will fire on a full
@@ -824,6 +836,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithSlowSubscriberCallback(func() {
 			ops.IncLogDropped("slow_subscriber")
 		})
+	log.Info("vmmd: snapshot restore concurrency configured", "limit", cfg.RestoreConcurrency)
 	if deps.prepareJailHelper != nil {
 		if err := deps.prepareJailHelper(jailer); err != nil {
 			return fmt.Errorf("vmmd: prepare jail helper: %w", err)
@@ -975,6 +988,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		} else if rep.Scanned > 0 {
 			log.Info("vmmd: orphan reap complete",
 				"scanned", rep.Scanned, "reaped", rep.Reaped,
+				"process_only", rep.ProcessOnly,
 				"skipped_live", rep.SkippedLive,
 				"skipped_young", rep.SkippedYoung,
 				"skipped_unknown", rep.SkippedUnknown)
@@ -1385,6 +1399,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// 200 ms cadence; meterd's sampler appends to
 	// usage_minutes.net_tx_bytes additively per minute.
 	go runNetworkEgressPoll(ctx, mgr, netCache, ops, nil, nil, nil, 0, log)
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, vmmdProbe.ReadyFunc())
+	defer notifyStop()
 
 	// Tier A5 (ADR-066) live-migration lease sweeper. Drops
 	// tracker entries whose lease has expired so a dead vmmd's
@@ -1592,19 +1608,38 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// already drops the policy file into place. The watcher is the
 	// multi-box hot-reload path.
 	//
-	// Staging defaults: /tmp/vmmd-egress-staging (mode 0755, owned
-	// by the daemon's process uid). /etc/nftables.conf is the
-	// canonical live path; cross-fs renames fall through atomicReplace's
-	// copy+rename fallback so the daemon does not silently fail on a
-	// host where /tmp is tmpfs and /etc is on ext4.
+	// Runtime policy files live below /run/faas, which is already the
+	// vmmd unit's writable runtime directory. ProtectSystem=strict makes
+	// /tmp and /etc read-only for this service; the former hard-coded
+	// /tmp staging path therefore prevented every live SMTP/egress policy
+	// refresh before nft was even invoked. The boot-time baseline remains
+	// /etc/nftables.conf; runtime refreshes validate and load the complete
+	// rendered ruleset from /run/faas/nftables.conf.
 	// Construct the watcher on every host so Manager cache mutations can
 	// use it as the HostRenderer seam. Only the pg_notify drain loop is
 	// gated on nodeID; default-local still needs live policy writes when a
 	// Hobby app changes its SMTP destination allowlist.
-	w := newEgressWatcher(log, "/tmp/vmmd-egress-staging", "/etc/nftables.conf")
-	deps.egressWatcher = w
+	const (
+		egressStagingDir = "/run/faas/vmmd-egress-staging"
+		egressLivePath   = "/run/faas/nftables.conf"
+	)
+	w := deps.egressWatcher
+	if w == nil {
+		w = newEgressWatcher(log, egressStagingDir, egressLivePath)
+	}
 	mgr.SetHostRenderer(w)
 	if nodeID != "" {
+		// A previous vmmd process may have left a runtime ruleset rendered
+		// from different host-network values. Apply the deployment-owned
+		// policy before accepting any wake or relying on the compute gateway;
+		// waiting for a cache mutation or pg_notify event leaves the node
+		// unreachable after an otherwise successful rollout.
+		if err := applyStartupEgressPolicy(ctx, nodeID, w); err != nil {
+			return err
+		}
+		log.Info("vmmd: startup egress policy applied",
+			"public_iface", hostPolicy.PublicIface,
+			"masquerade_cidr", hostPolicy.MasqueradeCIDR)
 		if deps.startEgressWatcher != nil {
 			deps.startEgressWatcher(ctx, log)
 		} else {
@@ -1614,7 +1649,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}()
 		}
-		log.Info("vmmd: egress watcher wired", "node_id", nodeID, "staging", "/tmp/vmmd-egress-staging", "live", "/etc/nftables.conf")
+		log.Info("vmmd: egress watcher wired", "node_id", nodeID, "staging", egressStagingDir, "live", egressLivePath)
 	}
 
 	// Issue #679 / PR-A: install the SIGHUP-driven egress

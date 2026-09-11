@@ -50,15 +50,151 @@ func Run(t *testing.T, open Open) {
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
+		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
+		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testPendingInvocationCancel(t *testing.T, fx *Fixture) {
+	pending, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationDelayedTask, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(pending): %v", err)
+	}
+	result, err := fx.Store.CancelPendingInvocation(fx.Ctx, pending.ID)
+	if err != nil || result != state.InvocationCancelled {
+		t.Fatalf("CancelPendingInvocation(pending) = (%q, %v), want cancelled", result, err)
+	}
+
+	dispatching, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationDelayedTask, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(dispatching): %v", err)
+	}
+	if _, err := fx.Store.ClaimInvocation(fx.Ctx, dispatching.ID, "conformance-instance", 30); err != nil {
+		t.Fatalf("ClaimInvocation: %v", err)
+	}
+	result, err = fx.Store.CancelPendingInvocation(fx.Ctx, dispatching.ID)
+	if err != nil || result != state.InvocationDispatching {
+		t.Fatalf("CancelPendingInvocation(dispatching) = (%q, %v), want dispatching", result, err)
+	}
+}
+
+func testBetaFirstSuccess(t *testing.T, fx *Fixture) {
+	firstInstance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateParked), 128, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance(parked): %v", err)
+	}
+	secondInstance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 128, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance(running): %v", err)
+	}
+	firstAt := fx.Account.CreatedAt.Add(10 * time.Second)
+	secondAt := fx.Account.CreatedAt.Add(30 * time.Second)
+	if _, err := fx.Store.TouchInstancesLastSeen(fx.Ctx, []state.InstanceTouch{
+		{InstanceID: secondInstance.ID, LastRequest: secondAt},
+		{InstanceID: firstInstance.ID, LastRequest: firstAt},
+	}); err != nil {
+		t.Fatalf("TouchInstancesLastSeen: %v", err)
+	}
+	rows, err := fx.Store.ListFirstSuccessfulRequestsForAccountsCreatedSince(
+		fx.Ctx, fx.Account.CreatedAt.Add(-time.Second))
+	if err != nil {
+		t.Fatalf("ListFirstSuccessfulRequestsForAccountsCreatedSince: %v", err)
+	}
+	if len(rows) != 1 || rows[0].AccountID != fx.Account.ID || !rows[0].At.Equal(firstAt) {
+		t.Fatalf("first-success rows = %+v, want account=%s at=%s", rows, fx.Account.ID, firstAt)
+	}
+	rows, err = fx.Store.ListFirstSuccessfulRequestsForAccountsCreatedSince(
+		fx.Ctx, fx.Account.CreatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("ListFirstSuccessfulRequestsForAccountsCreatedSince(excluded): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("excluded cohort rows = %+v, want none", rows)
+	}
+}
+
+func testLatestDeploymentPerApp(t *testing.T, fx *Fixture) {
+	stamp := time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC)
+	lowID := "40000000-0000-0000-0000-000000000001"
+	highID := "40000000-0000-0000-0000-000000000002"
+	for _, id := range []string{lowID, highID} {
+		if _, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+			ID: id, AppID: fx.App.ID, CreatedAt: stamp,
+			Kind: state.DeploymentKindImage, Status: state.DeployFailed,
+		}); err != nil {
+			t.Fatalf("CreateDeployment(%s): %v", id, err)
+		}
+	}
+
+	limits := api.MustLimitsFor(api.PlanPro)
+	secondApp, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: "latest-second-" + uuid.NewString(),
+		Type: state.AppTypeApp, RAMMB: limits.RAMMB,
+		MaxConcurrency: limits.MaxConcurrency, IdleTimeoutS: limits.IdleTimeoutS,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(second): %v", err)
+	}
+	secondDeployment, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: secondApp.ID, CreatedAt: stamp.Add(time.Minute),
+		Kind: state.DeploymentKindImage, Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(second): %v", err)
+	}
+
+	foreignAccount, err := fx.Store.CreateAccount(fx.Ctx, "latest-foreign-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount(foreign): %v", err)
+	}
+	foreignApp, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: foreignAccount.ID, Slug: "latest-foreign-" + uuid.NewString(),
+		Type: state.AppTypeApp, RAMMB: limits.RAMMB,
+		MaxConcurrency: limits.MaxConcurrency, IdleTimeoutS: limits.IdleTimeoutS,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(foreign): %v", err)
+	}
+	if _, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: foreignApp.ID, CreatedAt: stamp.Add(2 * time.Minute),
+		Kind: state.DeploymentKindImage, Status: state.DeployPending,
+	}); err != nil {
+		t.Fatalf("CreateDeployment(foreign): %v", err)
+	}
+
+	got, err := fx.Store.ListLatestDeploymentPerApp(fx.Ctx, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("ListLatestDeploymentPerApp: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("latest map = %d rows, want 2: %+v", len(got), got)
+	}
+	if got[fx.App.ID].ID != highID {
+		t.Errorf("fixture app latest = %q, want tie-break winner %q", got[fx.App.ID].ID, highID)
+	}
+	if got[secondApp.ID].ID != secondDeployment.ID {
+		t.Errorf("second app latest = %q, want %q", got[secondApp.ID].ID, secondDeployment.ID)
+	}
+	if _, ok := got[foreignApp.ID]; ok {
+		t.Error("foreign account deployment leaked into latest map")
 	}
 }
 

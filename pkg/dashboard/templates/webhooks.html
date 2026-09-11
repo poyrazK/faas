@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1280px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code, input, select { font-family: ui-monospace, Menlo, monospace; }
+    code { overflow-wrap: anywhere; }
+    .muted { color: #6b7280; }
+    .flash { padding: 0.55rem 0.75rem; border-radius: 4px; margin: 0.75rem 0; }
+    .flash.ok { background: #d1fae5; color: #065f46; }
+    .flash.error { background: #fee2e2; color: #991b1b; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.9rem; margin: 1rem 0; }
+    .actions form { display: inline; margin-right: 0.35rem; }
+    button { padding: 0.3rem 0.65rem; border: 1px solid #9ca3af; border-radius: 4px; background: #fff; cursor: pointer; }
+    input, select { box-sizing: border-box; max-width: 100%; padding: 0.35rem; }
+    label { display: block; margin: 0.55rem 0; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.8rem; white-space: nowrap; }
+    .badge.enabled, .badge.succeeded { background: #d1fae5; color: #065f46; }
+    .badge.disabled, .badge.dead, .badge.failed { background: #fee2e2; color: #991b1b; }
+    .badge.pending, .badge.in_flight { background: #fef3c7; color: #92400e; }
+    .event-list { display: flex; flex-wrap: wrap; gap: 0.25rem 0.7rem; max-width: 52rem; }
+    .event-list label { margin: 0; font-size: 0.85rem; }
+    .delivery-table { margin: 0.5rem 0 0; }
+    .delivery-table th, .delivery-table td { font-size: 0.85rem; }
+    .nowrap { white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/jobs">Jobs &amp; queues</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p><a href="/dashboard/apps/{{.Data.App.Slug}}">← Back to {{.Data.App.Slug}}</a></p>
+    <h1>Webhooks for <code>{{.Data.App.Slug}}</code></h1>
+    <p class="muted">Outbound events are signed and retried by Gregale. Secrets are write-only; delivery payloads are intentionally not shown here.</p>
+
+    {{if eq .Data.Action "created"}}<div class="flash ok" role="status">Webhook created.</div>{{end}}
+    {{if eq .Data.Action "toggled"}}<div class="flash ok" role="status">Webhook status updated.</div>{{end}}
+    {{if eq .Data.Action "deleted"}}<div class="flash ok" role="status">Webhook deleted.</div>{{end}}
+    {{if eq .Data.Action "rotated"}}<div class="flash ok" role="status">Webhook signing secret updated.</div>{{end}}
+    {{if eq .Data.Action "replayed"}}<div class="flash ok" role="status">Dead delivery returned to the retry queue.</div>{{end}}
+    {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The webhook action could not be completed. Refresh and try again.</div>{{end}}
+    {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
+
+    {{if not .Data.PlanAllowed}}
+      <section class="card" role="status">
+        <h2>Outbound webhooks require a paid plan</h2>
+        <p class="muted">Upgrade this account to configure signed event deliveries.</p>
+        <a href="/dashboard/upgrade">View upgrade options →</a>
+      </section>
+    {{else}}
+      <h2>Subscriptions</h2>
+      {{if .Data.Webhooks}}
+        {{range .Data.Webhooks}}
+          <section class="card" aria-labelledby="webhook-{{.ID}}">
+            {{$webhookID := .ID}}
+            <h3 id="webhook-{{.ID}}"><code>{{.TargetURL}}</code></h3>
+            <p>
+              {{if .Enabled}}<span class="badge enabled">enabled</span>{{else}}<span class="badge disabled">disabled</span>{{end}}
+              · retry policy <code>{{.RetryPolicy}}</code>
+              · secret <code>***</code>
+            </p>
+            <p class="muted">Events: {{if .EventFilter}}<code>{{range .EventFilter}}{{.}} {{end}}</code>{{else}}all events{{end}} · created {{.CreatedAt}} · updated {{.UpdatedAt}}</p>
+            <div class="actions">
+              <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">{{if .Enabled}}Disable{{else}}Enable{{end}}</button></form>
+              <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{.ID}}/rotate-secret"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><label>Replacement secret <input name="webhook_secret" type="password" required maxlength="256" autocomplete="new-password" size="24"></label><button type="submit">Rotate secret</button></form>
+              <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Delete</button></form>
+            </div>
+            <details>
+              <summary>Recent deliveries ({{len .Deliveries}})</summary>
+              {{if .Deliveries}}
+                <table class="delivery-table" aria-label="Recent webhook deliveries">
+                  <thead><tr><th>Event</th><th>Status</th><th>Attempt</th><th>Response</th><th>Error</th><th>Next attempt</th><th>Created</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {{range .Deliveries}}
+                      <tr>
+                        <td><code>{{.Event}}</code><br><small class="muted"><code>{{.ID}}</code></small></td>
+                        <td><span class="badge {{.Status}}">{{.Status}}</span></td>
+                        <td>{{.Attempt}}</td>
+                        <td>{{if .LastResponseCode}}{{.LastResponseCode}}{{else}}—{{end}}</td>
+                        <td>{{if .LastError}}<code>{{.LastError}}</code>{{else}}—{{end}}</td>
+                        <td class="nowrap">{{if .NextAttemptAt}}{{.NextAttemptAt}}{{else}}—{{end}}</td>
+                        <td class="nowrap">{{.CreatedAt}}</td>
+                        <td>{{if .Retryable}}<form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{$webhookID}}/deliveries/{{.ID}}/retry"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Retry</button></form>{{else}}—{{end}}</td>
+                      </tr>
+                    {{end}}
+                  </tbody>
+                </table>
+              {{else}}<p class="muted">No deliveries yet.</p>{{end}}
+            </details>
+          </section>
+        {{end}}
+      {{else}}<p class="muted">No outbound webhooks configured for this app.</p>{{end}}
+
+      <section class="card" aria-labelledby="create-webhook-heading">
+        <h2 id="create-webhook-heading">Add a webhook</h2>
+        <form method="POST" action="/dashboard/apps/{{.Data.App.Slug}}/webhooks">
+          <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}">
+          <label>Target URL <input name="target_url" type="url" required maxlength="2048" placeholder="https://example.com/gregale" size="48"></label>
+          <label>Signing secret <input name="webhook_secret" type="password" required maxlength="256" autocomplete="new-password" size="32"></label>
+          <label>Retry policy
+            <select name="retry_policy">{{range .Data.RetryPolicies}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+          </label>
+          <label>Status
+            <select name="enabled"><option value="true" selected>enabled</option><option value="false">disabled</option></select>
+          </label>
+          <fieldset>
+            <legend>Events (leave all unchecked for all events)</legend>
+            <div class="event-list">{{range .Data.Events}}<label><input type="checkbox" name="event_filter" value="{{.}}"> {{.}}</label>{{end}}</div>
+          </fieldset>
+          <p><button type="submit">Create webhook</button></p>
+        </form>
+      </section>
+    {{end}}
+  </main>
+  <footer>onebox faas · outbound webhooks</footer>
+</body>
+</html>

@@ -325,7 +325,7 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 		return fmt.Errorf("stream bridge exited before becoming ready: %w", entry.waitError())
 	}
 	entry.transport = transport
-	entry.client = &http.Client{Transport: transport}
+	entry.client = newGuestHTTPClient(transport)
 	m.mu.Unlock()
 	return nil
 }

@@ -605,7 +605,13 @@ type Querier interface {
 	// indexed — legacy audit rows are not in scope of PR-C, see
 	// ADR-064 §"Compatibility".
 	ListEventsByWakeID(ctx context.Context, db DBTX, arg ListEventsByWakeIDParams) ([]ListEventsByWakeIDRow, error)
+	// Operator beta funnel: one bounded aggregate read replaces an N+1
+	// ListInstancesForAccount loop. last_request_at is stamped only after a
+	// successful public request and terminal instances remain for 30 days, which
+	// fully covers the 14-day beta cohort window.
+	ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, db DBTX, createdAt pgtype.Timestamptz) ([]ListFirstSuccessfulRequestsForAccountsCreatedSinceRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
+	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
 	// Per-account dashboard list (PR-C). Empty slice on miss.
 	ListOIDCTrustPoliciesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListOIDCTrustPoliciesForAccountRow, error)
 	ListOrgInvitationsForOrg(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListOrgInvitationsForOrgRow, error)
@@ -767,6 +773,7 @@ type Querier interface {
 	ObjectMultipartLockBucket(ctx context.Context, db DBTX, arg ObjectMultipartLockBucketParams) (pgtype.UUID, error)
 	ObjectMultipartRetry(ctx context.Context, db DBTX, arg ObjectMultipartRetryParams) (int64, error)
 	ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error)
+	ObjectS3CredentialGet(ctx context.Context, db DBTX, arg ObjectS3CredentialGetParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg ObjectS3CredentialInsertParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialList(ctx context.Context, db DBTX, arg ObjectS3CredentialListParams) ([]ObjectStorageS3Credential, error)
 	ObjectS3CredentialListForRekey(ctx context.Context, db DBTX, arg ObjectS3CredentialListForRekeyParams) ([]ObjectStorageS3Credential, error)
@@ -774,8 +781,10 @@ type Querier interface {
 	ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg ObjectS3CredentialResealParams) (int64, error)
 	ObjectS3CredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectS3CredentialResolveRow, error)
 	ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg ObjectS3CredentialRevokeParams) (int64, error)
+	ObjectS3CredentialRotate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotateParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
 	ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg ObjectStorageProviderBucketsParams) ([]ObjectBucket, error)
+	ObjectStorageProviderEgressIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderEgressIncrementParams) error
 	ObjectStorageProviderRequestIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestIncrementParams) error
 	ObjectStorageProviderRequestMetrics(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestMetricsParams) ([]ObjectStorageProviderRequestMetricsRow, error)
 	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)

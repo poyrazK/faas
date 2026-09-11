@@ -97,7 +97,7 @@ func TestPatchDeploymentTraffic_EmitsTrafficNotify(t *testing.T) {
 	// to redistribute the residual across (Σ=100 contract).
 	depB, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:def",
-		Status: state.DeployPending,
+		Status: state.DeployPending, Scope: "traffic-b",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment (B): %v", err)
@@ -105,9 +105,9 @@ func TestPatchDeploymentTraffic_EmitsTrafficNotify(t *testing.T) {
 	if err := store.MarkDeploymentLive(context.Background(), depB.ID); err != nil {
 		t.Fatalf("MarkDeploymentLive (B): %v", err)
 	}
-	// CreateDeployment(B) auto-superseded dep. Re-flip dep to live at 0.
-	if err := store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
-		t.Fatalf("MarkDeploymentLive (restore dep): %v", err)
+	// Establish a valid 0/100 two-live-row fixture before stamping dep to 25.
+	if _, err := store.UpdateDeploymentTraffic(context.Background(), dep.ID, 0); err != nil {
+		t.Fatalf("zero dep traffic: %v", err)
 	}
 	apiKey, hash, err := api.GenerateAPIKey()
 	if err != nil {
@@ -221,5 +221,33 @@ func TestPatchDeploymentTraffic_RejectsFreePlan_NoNotify(t *testing.T) {
 	}
 	if calls := notif.byChannel(db.NotifyDeploymentChanged); len(calls) != 0 {
 		t.Errorf("deployment_changed emitted on Free plan: %v", calls)
+	}
+}
+
+func TestPatchDeploymentTraffic_NonLiveReportsConflict(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	stable := mustSeedDeployment(t, e, "traffic-non-live-api")
+	if err := e.store.MarkDeploymentLive(t.Context(), stable.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(t.Context(), "traffic-non-live-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := e.store.CreateDeployment(t.Context(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(t.Context(), candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, percent := range []int{0, 50, 100} {
+		rec := e.do(t, http.MethodPatch, "/v1/deployments/"+stable.ID+"/traffic", api.UpdateDeploymentTrafficRequest{TrafficPercent: percent}, nil)
+		assertProblem(t, rec, http.StatusConflict, api.CodeDeploymentNotLive)
+		if !strings.Contains(rec.Body.String(), string(state.DeploySuperseded)) {
+			t.Fatalf("percent=%d response does not include current state: %s", percent, rec.Body.String())
+		}
 	}
 }

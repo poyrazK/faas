@@ -365,6 +365,20 @@ func TestFunctionGoTemplateIsDetectedAsFunctionAfterInit(t *testing.T) {
 	}
 }
 
+func TestFunctionNode24TemplateRetainsInitMetadata(t *testing.T) {
+	dir := t.TempDir()
+	if err := templates.Materialize("function-node24", dir); err != nil {
+		t.Fatalf("materialize function-node24: %v", err)
+	}
+	if got := detectShape(dir); got != shapeFunction {
+		t.Fatalf("detectShape(function-node24 template) = %v, want function", got)
+	}
+	runtime, handler, ok := inferFunctionRuntime(dir)
+	if !ok || runtime != runtimeNode24 || handler != defaultTemplateHandler {
+		t.Fatalf("inferFunctionRuntime = (%q, %q, %t), want (%q, %q, true)", runtime, handler, ok, runtimeNode24, defaultTemplateHandler)
+	}
+}
+
 func TestFunctionGoTemplateWorkspaceArchivePlacesBuildModuleBesideHandler(t *testing.T) {
 	root := t.TempDir()
 	functionDir := filepath.Join(root, "services", "worker")

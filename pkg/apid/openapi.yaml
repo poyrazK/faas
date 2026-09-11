@@ -44,6 +44,8 @@ tags:
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
     description: App lifecycle (create, update, delete, wake, park).
+  - name: debugger
+    description: Customer production debugger request evidence and safe replay.
   - name: uploads
     description: |
       Resumable upload sessions (issue #1182 §P1 / ADR-115). A session
@@ -367,6 +369,58 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/account/managed-postgres-usage:
+    get:
+      operationId: getManagedPostgresUsage
+      summary: Read managed PostgreSQL usage and guardrail state
+      description: |
+        Requires usage read scope. Returns normalized current-month meters,
+        plan headroom, and freshness state. Provider IDs, rates, credentials,
+        and internal cost line items are never returned.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Current managed PostgreSQL usage; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageResponse' }
+        default:
+          description: Authentication or managed PostgreSQL accounting error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/usage:
+    get:
+      operationId: getAccountUsage
+      summary: Read the account-wide usage projection
+      description: |
+        Requires usage read scope. Returns the compute usage summary together
+        with optional object-storage and managed-PostgreSQL usage views when
+        those services are configured for the account. Each service keeps its
+        existing freshness and guardrail semantics; omitted optional fields
+        mean that service is not enabled for the account. The optional service
+        views are included only for the current UTC month; historical requests
+        return the compute projection alone.
+      tags: [usage]
+      parameters:
+        - name: month
+          in: query
+          required: false
+          description: UTC calendar month for compute usage, in YYYY-MM form. Defaults to the current month.
+          schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+      responses:
+        '200':
+          description: Account-wide usage projection; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountUsageResponse' }
+        default:
+          description: Authentication or usage accounting error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases/{id}/restore:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -491,7 +545,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
     post:
       operationId: createObjectBucket
-      summary: Create a private bucket on the region's current default backend
+      summary: Create a bucket on the region's current default backend
       description: |
         Requires storage:manage or admin. Idempotent by app, scope and name, not
         by Idempotency-Key. Retry provisioning by submitting the same name and
@@ -509,6 +563,8 @@ paths:
                 name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
                 scope: { type: string, default: default }
                 region: { type: string, description: 'Gregale region, not upstream signing region. Omit to use the configured default.' }
+                public: { type: boolean, default: false, description: 'Serve objects anonymously on the app hostname.' }
+                serve_at: { type: string, pattern: '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$', description: 'Immutable app path mounted when public is true.' }
       responses:
         '201':
           description: Bucket created
@@ -659,6 +715,88 @@ paths:
         '204': { description: Credential revoked }
         default:
           description: Credential or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/compute-bindings:
+    parameters:
+      - { name: slug, description: App receiving the sealed storage connection settings., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket exposed to the compute workload., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectStorageComputeBindings
+      summary: List compute bindings for a bucket
+      description: Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
+      tags: [storage]
+      responses:
+        '200':
+          description: Active compute bindings; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectStorageComputeBindingList' }
+        default:
+          description: Binding listing denied or its bucket is unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: createObjectStorageComputeBinding
+      summary: Bind a bucket to an app's compute environment
+      description: Creates a bucket-scoped Gregale S3 credential and injects endpoint, region, bucket, access-key, secret-key, and addressing settings as sealed app secrets. The secret values are never returned.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateObjectStorageComputeBindingRequest' }
+      responses:
+        '201':
+          description: Compute binding created; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectStorageComputeBinding' }
+        default:
+          description: Invalid request, secret quota/conflict, unavailable sealing key, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}:
+    parameters:
+      - { name: slug, description: App owning the compute binding., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket attached to the compute binding., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: binding, description: Opaque compute binding identifier., in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      operationId: deleteObjectStorageComputeBinding
+      summary: Revoke a compute binding
+      description: Revokes the bucket-scoped S3 credential before removing its sealed app secrets. The operation is idempotent after revocation.
+      tags: [storage]
+      responses:
+        '204': { description: Binding revoked and its managed secrets removed }
+        default:
+          description: Binding or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate:
+    parameters:
+      - { name: slug, description: App whose workload receives the rotated credential., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Logical bucket whose access key is being rotated., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: binding, description: Binding identifier retained across credential rotations., in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: rotateObjectStorageComputeBinding
+      summary: Rotate a compute binding credential
+      description: Replaces the bucket-scoped access key and sealed secret while keeping the binding and environment variable names stable. Secret values are never returned.
+      tags: [storage]
+      responses:
+        '200':
+          description: Binding rotated; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectStorageComputeBinding' }
+        default:
+          description: Binding unavailable, sealing key unavailable, or access denied
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -940,6 +1078,29 @@ paths:
               schema: { $ref: '#/components/schemas/ObjectStorageUsageResponse' }
         default:
           description: Access denied or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/usage/{account_id}:
+    get:
+      operationId: getManagedPostgresUsageOperator
+      summary: Read normalized managed PostgreSQL usage for an account
+      description: Operator-only view with effective guardrail ceilings and internal COGS line items. Provider IDs and credentials are never returned.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account whose normalized PostgreSQL usage is requested.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Account usage and internal normalized ledger lines; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageOperatorResponse' }
+        default:
+          description: Access denied, account not found, or accounting unavailable
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -2306,7 +2467,7 @@ paths:
         the `faas_csrf` cookie); a missing or mismatched token is 400
         `validation_failed`. The route is a same-site form POST, so
         `SameSite=Lax` alone does not protect it from a customer app
-        hosted under `*.apps.gregale.dev`.
+        hosted under `*.gregale.dev`.
 
         Proof of presence (ADR-140), decided by what the account has:
 
@@ -3706,6 +3867,31 @@ paths:
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/deployments/{id}/summary:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getAppDeploymentSummary
+      summary: Fetch a deployment release summary and diff.
+      description: |
+        Returns the selected deployment, its immediately preceding release,
+        a stable field-level diff of non-secret release metadata, and the
+        deployment id the app rollback operation would currently target.
+        Unknown, cross-account, or slug/deployment-mismatch requests return
+        the same IDOR-safe 404 surface as the other app-scoped reads.
+      responses:
+        '200':
+          description: The release summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentSummaryResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/deployments/latest:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -4332,6 +4518,63 @@ paths:
         '413': { description: "code: openapi_import_too_large. Body exceeds state.OpenAPIImportMaxDocBytes (256 KiB) on the dry-run endpoint." }
         '422':
           description: "code: openapi_import_invalid or openapi_import_too_many_endpoints. Doc fails the structural-minimum validator or declares more than state.OpenAPIImportMaxEndpoints (50) endpoints on the dry-run endpoint."
+
+  /v1/apps/{slug}/openapi/preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [openapi_import]
+      operationId: previewAppOpenAPIPolicy
+      summary: Preview declared routes, observed routes, and matching edge policies.
+      description: |
+        Read-only route-policy preview for API-hosting roadmap item 11.
+        Joins the persisted OpenAPI declaration with gatewayd's observed
+        route labels and the app's edge rules. Each route is classified as
+        `matched`, `declared_only`, or `observed_only`; `covered` is true
+        when at least one enabled edge rule matches the path and method.
+        When the gateway bridge is unavailable the response remains useful,
+        sets `observed_available` to false, and reports
+        `source=degraded: routes_unavailable`. No policy or document writes
+        occur on this endpoint.
+      responses:
+        '200':
+          description: Declared-vs-observed route and policy preview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOpenAPIPolicyPreviewResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/openapi/diff:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [openapi_import]
+      operationId: diffAppOpenAPIContract
+      summary: Preview the production OpenAPI contract gate.
+      description: |
+        Read-only ADR-121 contract diff. Compares the current projected
+        OpenAPI surface against the latest captured live snapshot in the
+        requested scope (default `prod`). `blocking=true` means a production
+        promotion would be rejected while `FAAS_API_CONTRACT_DIFF_ENABLED`
+        is enabled. The route remains registered while the flag is off and
+        returns 503 `api_contract_diff_disabled`.
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$' }
+          description: Deployment scope to compare; defaults to `prod`.
+      responses:
+        '200':
+          description: Contract diff result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAPIContractDiffResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: "code: api_contract_diff_disabled." }
 
   /v1/apps/{slug}/diff:
     parameters:
@@ -5926,6 +6169,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeploymentListResponse'
                 example: {"items":[],"next_before":null}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/deployments/latest-by-app:
+    get:
+      tags: [deployments]
+      operationId: listLatestDeploymentsByApp
+      summary: List the latest deployment for each app on the account.
+      description: |
+        Returns at most one deployment for every non-deleted app owned by the
+        authenticated account. Items are ordered newest first by `created_at`,
+        with deployment ID as the stable tie-breaker.
+      responses:
+        '200':
+          description: The latest deployment for each deployed app.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestDeploymentsByAppResponse'
+              example: {"items":[]}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -7808,8 +8071,10 @@ paths:
       summary: Create a trigger.
       description: |
         Idempotent via Idempotency-Key header. Returns 402
-        `triggers_not_allowed` for Free plan, 403 `trigger_quota_exceeded`
-        on per-app or per-account cap; see ADR-100.
+        `plan_triggers_not_allowed` for Free plan. A 403 may be
+        `trigger_kind_not_allowed`, `plan_trigger_quota`,
+        `trigger_batch_window_too_large`, or
+        `trigger_tls_skip_verify_not_allowed`; see ADR-100.
       requestBody:
         required: true
         content:
@@ -7829,6 +8094,7 @@ paths:
         '403': { $ref: '#/components/responses/TriggerQuotaExceeded' }
         '422': { $ref: '#/components/responses/TriggerImmutable' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/TriggerSecretUnavailable' }
 
   /v1/triggers:batch_create:
     post:
@@ -7894,6 +8160,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/TriggerImmutable' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/TriggerSecretUnavailable' }
     delete:
       tags: [triggers]
       operationId: deleteTrigger
@@ -8854,6 +9121,57 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # Dashboard form-POST sibling of the debugger replay API. The page uses a
+  # named CSRF envelope and redirects back to the selected request so the
+  # browser can inspect the durable mirror invocation by id.
+  /dashboard/apps/{slug}/debug/requests/{req_id}/replay:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: req_id
+        in: path
+        required: true
+        description: Retained request telemetry id to replay.
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [debugger]
+      operationId: dashboardReplayAppDebugRequest
+      summary: Queue a debugger replay from the dashboard.
+      description: |
+        Accepts the server-rendered dashboard form payload and queues the
+        same metadata-only replay as POST /v1/apps/{slug}/debug/requests/{req_id}/replay.
+        The response redirects to the request detail with a replay_id query
+        parameter; request bodies, credentials, and customer headers are
+        never replayed.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                csrf_token: { type: string }
+                since: { type: string }
+                route: { type: string, maxLength: 256 }
+              required: [csrf_token]
+      responses:
+        '303':
+          description: Redirect to the request detail and replay status.
+        '400':
+          description: Invalid dashboard CSRF token or form payload.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: No enabled mirror rule targets the serving deployment.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert"
   # (test-fire the customer's instantiated preset against their
   # configured webhook URL). The body is empty (the rule already
@@ -9489,12 +9807,17 @@ paths:
     post:
       tags: [webhooks]
       operationId: rotateAppWebhookSecret
-      summary: Server-mint a new webhook HMAC secret.
+      summary: Replace a webhook HMAC secret.
       description: |
-        Server-mints a 32-byte secret, seals it, and overwrites the
-        row's sealed ciphertext in place. The plaintext is NEVER
-        returned in the response — the body carries the masked
-        constant + rotated_at only.
+        Seals the caller-supplied replacement and overwrites the row's
+        ciphertext in place. Supply the same value to the receiver. The
+        plaintext is never returned; the response carries the masked
+        constant and rotated_at only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateAppWebhookSecretRequest' }
       responses:
         '200':
           description: Webhook secret rotation succeeded.
@@ -10217,10 +10540,15 @@ paths:
       operationId: delayedTaskCancel
       summary: Cancel a pending delayed task.
       description: |
-        Idempotent: a re-cancel (or a cancel of an already-fired row)
-        is a 204. The drain ignores cancelled rows at dispatch.
+        Atomically cancels a pending row. A re-cancel is idempotent.
+        Dispatching or terminal rows are left unchanged and their actual
+        state is returned, so clients never claim completed work was stopped.
       responses:
-        '204': { description: 'Cron disabled (no body).' }
+        '200':
+          description: The task with its authoritative resulting state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DelayedTaskResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -12770,6 +13098,22 @@ paths:
             application/json:
               schema: { type: object }
 
+  /docs:
+    get:
+      tags: [meta]
+      operationId: getDocs
+      summary: Human-readable API reference.
+      description: |
+        Anonymous Swagger UI page backed by the exact JSON document served
+        at `/v1/openapi.json`. The page does not persist bearer tokens.
+      security: []
+      responses:
+        '200':
+          description: Swagger UI HTML.
+          content:
+            text/html:
+              schema: { type: string }
+
   /v1/traces/{trace_id}:
     get:
       tags: [observability]
@@ -12970,6 +13314,62 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresDatabase' } }
+    ManagedPostgresUsageResponse:
+      description: Customer-safe current UTC-month managed PostgreSQL usage and guardrail state.
+      type: object
+      required: [period_start, policy_enabled, fresh, guardrail_state, ready_databases, database_limit, storage_limit_bytes, compute_unit_seconds, storage_byte_seconds, storage_byte_seconds_limit, storage_byte_seconds_remaining, history_byte_seconds, egress_bytes]
+      properties:
+        period_start: { type: string, format: date-time }
+        observed_at: { type: [string, "null"], format: date-time }
+        policy_enabled: { type: boolean }
+        fresh: { type: boolean }
+        guardrail_state: { type: string, enum: [disabled, healthy, stale, reached] }
+        ready_databases: { type: integer, minimum: 0 }
+        database_limit: { type: integer, minimum: 0 }
+        storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
+        compute_unit_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_limit: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
+        history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        egress_bytes: { type: integer, format: int64, minimum: 0 }
+    ManagedPostgresUsageLineItem:
+      description: Normalized operator-only managed PostgreSQL ledger line.
+      type: object
+      required: [code, meter, unit, quantity, cost_millicents]
+      properties:
+        code: { type: string, enum: [managed_postgres.compute, managed_postgres.storage, managed_postgres.restore_history, managed_postgres.egress] }
+        meter: { type: string }
+        unit: { type: string }
+        quantity: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+    ManagedPostgresUsageOperatorResponse:
+      description: Operator-only managed PostgreSQL usage, effective ceilings, and internal COGS line items.
+      type: object
+      required: [account_id, period_start, policy_enabled, fresh, guardrail_state, ready_databases, database_limit, storage_limit_bytes, compute_unit_seconds, storage_byte_seconds, storage_byte_seconds_limit, storage_byte_seconds_remaining, history_byte_seconds, egress_bytes, cost_millicents, max_monthly_cost_millicents, max_monthly_compute_unit_seconds, max_monthly_storage_byte_seconds, max_monthly_history_byte_seconds, max_monthly_egress_bytes, line_items]
+      properties:
+        account_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        observed_at: { type: [string, "null"], format: date-time }
+        policy_enabled: { type: boolean }
+        fresh: { type: boolean }
+        guardrail_state: { type: string, enum: [disabled, healthy, stale, reached] }
+        ready_databases: { type: integer, minimum: 0 }
+        database_limit: { type: integer, minimum: 0 }
+        storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
+        compute_unit_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_limit: { type: integer, format: int64, minimum: 0 }
+        storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
+        history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        egress_bytes: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        max_monthly_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        max_monthly_compute_unit_seconds: { type: integer, format: int64, minimum: 0 }
+        max_monthly_storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        max_monthly_history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        max_monthly_egress_bytes: { type: integer, format: int64, minimum: 0 }
+        line_items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresUsageLineItem' } }
     CreateManagedPostgresDatabaseRequest:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object
@@ -13026,15 +13426,17 @@ components:
         access: { type: string, enum: [read_write, read_only] }
 
     ObjectBucket:
-      description: Private logical bucket metadata without upstream credentials or placement details.
+      description: Logical bucket metadata without upstream credentials or placement details.
       type: object
-      required: [id, name, scope, region, state, created_at]
+      required: [id, name, scope, region, state, public, created_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         scope: { type: string }
         region: { type: string }
         state: { type: string, enum: [provisioning, ready, deleting] }
+        public: { type: boolean }
+        serve_at: { type: string }
         created_at: { type: string, format: date-time }
     ObjectBucketList:
       description: App bucket catalog and operator-configured preview capabilities.
@@ -13110,6 +13512,43 @@ components:
             endpoint: { type: string, format: uri, example: 'https://s3.gregale.dev' }
             region: { type: string, example: 'us-east-1' }
             addressing_style: { type: string, enum: [path] }
+    CreateObjectStorageComputeBindingRequest:
+      description: Least-privilege S3 access and the environment-variable prefix for an app-to-bucket binding.
+      type: object
+      additionalProperties: false
+      required: [permission]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 64, default: compute }
+        permission: { type: string, enum: [read, write, read_write] }
+        prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$', maxLength: 48 }
+    ObjectStorageComputeBindingSecretKeys:
+      description: Names of sealed app secrets written for a compute binding; values are never returned.
+      type: object
+      required: [endpoint, region, bucket, access_key_id, secret_access_key, addressing_style]
+      properties:
+        endpoint: { type: string }
+        region: { type: string }
+        bucket: { type: string }
+        access_key_id: { type: string }
+        secret_access_key: { type: string }
+        addressing_style: { type: string }
+    ObjectStorageComputeBinding:
+      description: Provider-neutral app-to-bucket compute binding.
+      type: object
+      required: [id, bucket_id, scope, prefix, credential, secret_keys]
+      properties:
+        id: { type: string, format: uuid }
+        bucket_id: { type: string, format: uuid }
+        scope: { type: string }
+        prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$' }
+        credential: { $ref: '#/components/schemas/ObjectS3Credential' }
+        secret_keys: { $ref: '#/components/schemas/ObjectStorageComputeBindingSecretKeys' }
+    ObjectStorageComputeBindingList:
+      description: Active compute bindings for one logical bucket.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ObjectStorageComputeBinding' } }
     ObjectStoragePolicy:
       description: Operator safety limits; zero values mean unconfigured and block signing.
       type: object
@@ -13592,9 +14031,9 @@ components:
         effective_at: { type: string, format: date-time }
 
     AccountLimits:
-      description: "Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and writable ephemeral app-disk capacity."
+      description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
       type: object
-      required: [plan, ram_mb, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb]
+      required: [plan, ram_mb, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
@@ -13604,6 +14043,18 @@ components:
         included_gb_hours: { type: integer, format: int64 }
         app_layer_max_mb: { type: integer }
         ephemeral_disk_max_mb: { type: integer, description: "Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb." }
+        triggers_allowed: { type: boolean, description: "Whether the plan permits external event triggers." }
+        trigger_kinds:
+          type: array
+          description: "External trigger kinds this plan may create. Cron schedules use the dedicated crons API and are not included."
+          items: { $ref: '#/components/schemas/TriggerKind' }
+        trigger_limit_per_app: { type: integer, minimum: 0 }
+        trigger_limit_per_account: { type: integer, minimum: 0 }
+        trigger_batch_size_max: { type: integer, minimum: 0 }
+        trigger_batch_window_max_ms: { type: integer, minimum: 0, description: "Maximum batching window in milliseconds." }
+        trigger_max_attempts_max: { type: integer, minimum: 0 }
+        trigger_payload_max_bytes: { type: integer, minimum: 0 }
+        trigger_tls_skip_verify_allowed: { type: boolean, description: "Whether Kafka tls.skip_verify=true is permitted." }
 
     ChangePlanRequest:
       description: "Target plan for the change."
@@ -14201,7 +14652,7 @@ components:
     AppEffectiveLimits:
       description: "The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the app configuration and current plan; they describe enforcement rather than guest hardware alone."
       type: object
-      required: [memory_limit_mb, plan_memory_max_mb, ephemeral_disk_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s]
+      required: [memory_limit_mb, plan_memory_max_mb, ephemeral_disk_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s, request_body_max_bytes]
       properties:
         memory_limit_mb: { type: integer, description: "Memory limit configured for this app instance, in MB." }
         plan_memory_max_mb: { type: integer, description: "Largest memory limit the current plan permits for an app instance, in MB." }
@@ -14218,6 +14669,7 @@ components:
         request_budget_ms: { type: integer, format: int64, description: "Default end-to-end request budget before a route override, in milliseconds." }
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
         response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
+        request_body_max_bytes: { type: integer, format: int64, description: "Maximum inbound request body accepted for this app's plan, in bytes." }
 
     AppConfiguredResources:
       description: "The memory and sustained CPU shape selected for each instance of this app."
@@ -15416,6 +15868,12 @@ components:
           description: "Per-line log excerpts explaining the failure (error-explanations cluster). Capped at 20 entries × 512 bytes by the CLI tripwire."
           items: { $ref: '#/components/schemas/LogExcerpt' }
         created_at: { type: string, format: date-time }
+        source_url:
+          type: [string, "null"]
+          description: "Upstream repository or registry reference that produced this deployment, when known."
+        commit_sha:
+          type: [string, "null"]
+          description: "Upstream commit SHA that produced this deployment, when known."
         source_root:
           type: string
           description: "Repository-relative build root used by a workspace context upload; omitted when the archive root is built."
@@ -15725,6 +16183,16 @@ components:
           type: integer
           minimum: 1
           description: "Pull-request number that drove this tarball deploy request (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."
+        traffic_percent:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: "Explicit initial traffic weight for this source-tarball deployment. Omitted uses the normal stable rollout; zero stages a dark live revision."
+        canary:
+          oneOf:
+            - $ref: '#/components/schemas/CanaryPresetSpec'
+            - type: 'null'
+          description: "Canary rollout policy for this source-tarball deployment. Mutually exclusive with traffic_percent."
 
     UpdateDeploymentRequest:
 
@@ -15840,6 +16308,49 @@ components:
           type: array
           items: { $ref: '#/components/schemas/DeploymentResponse' }
         next_before: { type: [string, "null"], format: date-time }
+
+    LatestDeploymentsByAppResponse:
+      description: "At most one newest deployment for each non-deleted app owned by the authenticated account."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentResponse' }
+
+    DeploymentSummaryResponse:
+      description: "App-scoped release cockpit: selected deployment, immediate predecessor, non-secret field-level diff, and eligible rollback target."
+      type: object
+      required: [deployment, changes]
+      properties:
+        deployment:
+          $ref: '#/components/schemas/DeploymentResponse'
+        previous:
+          oneOf:
+            - $ref: '#/components/schemas/DeploymentResponse'
+            - type: 'null'
+          description: "The immediately older deployment by created_at, or null for an initial release."
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeploymentChange'
+        rollback_target_id:
+          type: [string, "null"]
+          format: uuid
+          description: "The latest superseded deployment eligible for POST /v1/apps/{slug}/rollback; omitted when none exists."
+
+    DeploymentChange:
+      description: "One non-secret release field that changed from the previous deployment."
+      type: object
+      required: [field, before, after]
+      properties:
+        field:
+          type: string
+          enum: [status, kind, build_id, image_digest, source_url, commit_sha, source_root, scope, build_plan, min_instances, traffic_percent, has_overrides, canary_preset, rollback_on_5xx, rollout_state]
+        before:
+          type: [string, number, boolean, object, "null"]
+        after:
+          type: [string, number, boolean, object, "null"]
 
 # ─── Billing history (issue #259) ──────────────────────────────────────
 
@@ -17564,8 +18075,10 @@ components:
         Read shape returned by GET / POST / PATCH on /v1/triggers.
         The `config` blob is opaque at the wire level — each kind
         decodes its own per-shape struct lazily. The SDK round-trip
-        preserves the raw JSON so unknown fields survive client
-        versions older than the server.
+        preserves unknown fields across client versions. Kafka
+        credentials are never returned: `password_set` and
+        `client_key_set` report their presence without exposing
+        plaintext or the internal sealed envelope.
       type: object
       required:
         [id, account_id, app_id, kind, config, batch_size_max, batch_window_ms,
@@ -17587,22 +18100,25 @@ components:
           description: |
             Per-kind opaque configuration. Decode with the per-kind
             struct (KafkaTriggerConfig, NATSTriggerConfig, etc).
+            Kafka responses replace write-only password/client-key
+            leaves with boolean `password_set`/`client_key_set` markers.
           example:
             {brokers: ["broker:9092"], topic: orders.v1, group: faas-orders}
         batch_size_max:
           type: integer
           minimum: 1
           maximum: 5000
-          description: "Records per batch upper bound (per-plan cap in /v1/limits)."
+          description: "Records per batch upper bound. Omitted create values use min(64, the account plan cap)."
         batch_window_ms:
           type: integer
           minimum: 10
           maximum: 600000
-          description: "Milliseconds a partial batch may wait before dispatch."
+          description: "Milliseconds a partial batch may wait before dispatch. Omitted create values use min(1000, the account plan cap)."
         max_attempts:
           type: integer
           minimum: 1
           maximum: 25
+          description: "Omitted create values use min(5, the account plan cap)."
         payload_max_bytes:
           type: integer
           minimum: 1024
@@ -17612,7 +18128,7 @@ components:
             Records above this size are DLQ'd at insert time with
             reason='payload_too_large' rather than silently truncated.
             Plan-level ceiling in /v1/limits TriggerPayloadMaxBytes.
-            Default 6291456 (6 MiB) when omitted on create.
+            Omitted create values use min(6291456, the account plan cap).
         broker_poison_strategy:
           type: string
           enum: [commit, seek-to-offset]
@@ -17658,6 +18174,8 @@ components:
         gating mirrors pkg/gregalemanifest.validateKindConfig:
           - cron: requires schedule + path (slug ignored)
           - non-cron: requires slug + config
+        Omitted delivery settings use the platform default capped to the
+        selected account plan; explicit over-cap values are rejected.
       type: object
       required: [app_id, kind]
       properties:
@@ -17670,7 +18188,7 @@ components:
         config:
           type: object
           additionalProperties: true
-          description: "Per-kind opaque config blob."
+          description: "Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence."
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
@@ -17697,7 +18215,9 @@ components:
         Partial trigger update. nil means "leave unchanged" (same
         semantics as UpdateCronRequest). Kind is NOT a member — it
         is immutable. To change kind, create a new trigger and
-        delete the old one.
+        delete the old one. Inside a supplied Kafka sasl/tls block,
+        omitting the write-only credential preserves its stored value;
+        omitting the whole block removes that block and its credential.
       type: object
       properties:
         enabled: { type: [boolean, "null"] }
@@ -17745,15 +18265,21 @@ components:
         SCRAM client keypairs from Username + Password at dial
         time.
       type: object
-      required: [mechanism, username, password]
+      required: [mechanism, username]
       properties:
         mechanism: { $ref: '#/components/schemas/KafkaSASLMechanism' }
         username: { type: string, minLength: 1, maxLength: 256 }
         password:
           type: string
           format: password
+          writeOnly: true
           minLength: 1
-          maxLength: 1024
+          maxLength: 4096
+          description: "Plaintext-on-write only. Omit inside a supplied SASL block to preserve the stored password."
+        password_set:
+          type: boolean
+          readOnly: true
+          description: "Response-only marker indicating that a password is configured; no credential material is returned."
 
     KafkaTLSConfig:
       description: |
@@ -17775,7 +18301,13 @@ components:
         client_key:
           type: string
           format: password
-          description: "PEM-encoded client key for mTLS."
+          writeOnly: true
+          maxLength: 65536
+          description: "PEM-encoded client key for mTLS, accepted only on writes. Omit inside a supplied TLS block to preserve the stored key."
+        client_key_set:
+          type: boolean
+          readOnly: true
+          description: "Response-only marker indicating that a client key is configured; no credential material is returned."
         skip_verify:
           type: boolean
           default: false
@@ -18063,6 +18595,16 @@ components:
           type: integer
           minimum: 1
           description: "Pull-request number when the wire offers it (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."
+        traffic_percent:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: "Explicit initial traffic weight for this source-ref deployment. Omitted uses the normal stable rollout; zero stages a dark live revision."
+        canary:
+          oneOf:
+            - $ref: '#/components/schemas/CanaryPresetSpec'
+            - type: 'null'
+          description: "Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent."
 
     DiffRequest:
       description: |
@@ -21151,6 +21693,137 @@ components:
           x-since: "2026-08"
           x-issue: "975"
 
+    OpenAPIContractDiffResponse:
+      description: |
+        Read-only OpenAPI contract comparison for the current projected
+        edge-rule surface and the latest captured deployment snapshot.
+        `blocking` is true when a production promotion would be rejected
+        while the contract-diff feature flag is enabled.
+      type: object
+      required: [app_id, scope, proposed_sha256, blocking, breaks, additions]
+      properties:
+        app_id:
+          type: string
+          format: uuid
+        scope:
+          type: string
+        baseline_deployment_id:
+          type: string
+          format: uuid
+        baseline_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        proposed_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        baseline_captured_at:
+          type: string
+          format: date-time
+        blocking:
+          type: boolean
+        breaks:
+          type: array
+          items: { $ref: '#/components/schemas/OpenAPIContractBreak' }
+        additions:
+          type: array
+          items: { $ref: '#/components/schemas/OpenAPIContractAddition' }
+
+    OpenAPIContractBreak:
+      description: "One structural breaking change in an API response schema."
+      type: object
+      required: [path, method, kind]
+      properties:
+        path: { type: string }
+        method:
+          type: string
+          enum: [get, put, post, delete, options, head, patch, trace]
+        status: { type: string }
+        kind:
+          type: string
+          enum: [type_change, field_removed, required_added, nullability_change]
+        path_in_schema: { type: string }
+        before: {}
+        after: {}
+
+    OpenAPIContractAddition:
+      description: "One additive, non-blocking schema change."
+      type: object
+      required: [kind, path, method]
+      properties:
+        kind: { type: string }
+        path: { type: string }
+        method: { type: string }
+        status: { type: string }
+        path_in_schema: { type: string }
+        field: { type: string }
+
+    AppOpenAPIPolicyPreviewResponse:
+      description: |
+        Read-only declared-vs-observed route and edge-policy preview
+        (API-hosting roadmap item 11 / ADR-126 follow-up). The response
+        never writes an OpenAPI document or edge rule.
+      type: object
+      required: [app_id, source, observed_available, routes]
+      properties:
+        app_id:
+          type: string
+          format: uuid
+        source:
+          type: string
+          description: "preview, empty: no_import, or degraded: routes_unavailable."
+        observed_available:
+          type: boolean
+          description: "Whether the gatewayd observed-route bridge returned successfully."
+        openapi_version:
+          type: string
+          description: "OpenAPI version from the persisted declaration, when present."
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/AppOpenAPIPolicyPreviewRoute' }
+        suggestions:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleSuggestion' }
+
+    AppOpenAPIPolicyPreviewRoute:
+      description: "One declared/observed path-method row with policy coverage and drift status."
+      type: object
+      required: [path, method, status, declared, observed, covered]
+      properties:
+        path: { type: string }
+        method:
+          type: string
+          enum: [get, put, post, delete, options, head, patch, trace]
+        status:
+          type: string
+          enum: [matched, declared_only, observed_only]
+        declared: { type: boolean }
+        observed: { type: boolean }
+        covered:
+          type: boolean
+          description: "True when at least one enabled edge rule matches this path and method."
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/AppOpenAPIPolicyPreviewRule' }
+
+    AppOpenAPIPolicyPreviewRule:
+      description: "Read-only edge-rule subset explaining why a preview route is covered."
+      type: object
+      required: [id, match_host, match_path, match_methods, priority, enabled, kind, action]
+      properties:
+        id: { type: string, format: uuid }
+        match_host: { type: string }
+        match_path: { type: string }
+        match_methods:
+          type: array
+          items: { type: string }
+        priority: { type: integer }
+        enabled: { type: boolean }
+        kind: { type: string }
+        validate_mode: { type: string }
+        action:
+          type: object
+          additionalProperties: true
+
     AppRoutesResponse:
       description: |
         Per-route label snapshot (ADR-093). The bounded route label
@@ -22309,6 +22982,24 @@ components:
           x-since: "2026-09"
           x-issue: "308"
 
+    AccountUsageResponse:
+      description: "Account-level usage projection across compute and the optional object-storage and managed-PostgreSQL services."
+      type: object
+      required: [month, compute]
+      properties:
+        month: { type: string, pattern: '^\d{4}-\d{2}$' }
+        compute: { $ref: '#/components/schemas/UsageSummaryResponse' }
+        object_storage:
+          type: [object, "null"]
+          description: "Object-storage usage and safety policy when object storage is configured; omitted otherwise."
+          allOf:
+            - $ref: '#/components/schemas/ObjectStorageUsageResponse'
+        managed_postgres:
+          type: [object, "null"]
+          description: "Managed-PostgreSQL usage and guardrail state when the account plan includes it; omitted otherwise."
+          allOf:
+            - $ref: '#/components/schemas/ManagedPostgresUsageResponse'
+
     # ─── Event-driven surface (Move 2) ───────────────────────────────────
 
     AsyncInvokeResponse:
@@ -22320,13 +23011,14 @@ components:
         status_url: { type: string, example: "/v1/invocations/0123456789abcdef0123456789abcdef" }
 
     InvokeResponse:
-      description: "Sync-invoke result. Status is the drain-driven terminal state (`completed` | `failed` | `cancelled`). Result is the original row's payload cast to JSON (omitted while still pending)."
+      description: "Sync-invoke result. Status is the drain-driven terminal state (`completed` | `failed` | `cancelled`). Result is the handler response. Error contains the terminal delivery error when status is failed."
       type: object
       required: [id, status]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         status: { type: string, enum: [pending, dispatching, completed, failed, cancelled] }
         result: { type: object, additionalProperties: true }
+        error: { type: string }
 
     QueueSendResponse:
       description: "201 — body of a freshly-enqueued queue row."
@@ -22410,7 +23102,7 @@ components:
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         scheduled_at: { type: string, format: date-time }
-        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled] }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
 
     Invocation:
       description: "A single invocations row. Account-scoped; cross-account reads return 404."
@@ -22740,6 +23432,8 @@ components:
         detail: { type: string }
         limit: { type: [integer, "null"] }
         observed: { type: [integer, "null"] }
+        limit_bytes: { type: [integer, "null"], description: "Explicit byte limit for request-body and other byte-oriented errors." }
+        observed_bytes: { type: [integer, "null"], description: "Observed byte count for request-body and other byte-oriented errors." }
         docs_url: { type: string, format: uri }
         checkout_url:
           type: string
@@ -23662,8 +24356,7 @@ components:
       description: |
         Subscribe a target URL to events emitted by the app. The
         webhook_secret is HMAC-SHA256 sealed at rest with the host
-        X25519 recipient (namespace `APP_WEBHOOK`); apid mints a fresh
-        32-byte secret if omitted.
+        X25519 recipient (namespace `APP_WEBHOOK`).
       required: [target_url, webhook_secret]
       properties:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
@@ -23718,6 +24411,17 @@ components:
       example:
         rotated_at: "2026-08-06T12:00:00Z"
         webhook_secret_sealed_masked: "***"
+
+    RotateAppWebhookSecretRequest:
+      type: object
+      description: |
+        Caller-supplied replacement signing secret. The value is sealed at
+        rest and never returned in a response.
+      required: [webhook_secret]
+      properties:
+        webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+      example:
+        webhook_secret: "replacement-secret-from-manager"
 
     AppWebhookDeliveryResponse:
       type: object
@@ -23856,10 +24560,36 @@ components:
         status: { type: integer, minimum: 100, maximum: 599 }
         approximate: { type: boolean, description: "True when the marker is derived from a collapsed minute bucket rather than an exact request timestamp." }
 
+    DebugRequestCorrelationStage:
+      type: object
+      description: "One bounded edge-to-billing request stage. Missing and partial signals are explicit and are never rendered as zero latency."
+      required: [phase, status]
+      properties:
+        phase: { type: string, enum: [edge, queue, wake, guest, downstream, billing] }
+        status: { type: string, enum: [observed, partial, missing, not_applicable] }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        evidence_count: { type: integer, minimum: 0 }
+        reason: { type: string, maxLength: 256 }
+        approximate: { type: boolean, description: "True when the stage is derived from a collapsed request bucket rather than an exact request timestamp." }
+
+    DebugRequestCorrelation:
+      type: object
+      description: "Fixed-shape edge-to-billing correlation for a retained request. Every stage is present so unavailable telemetry is visible."
+      required: [stages, complete]
+      properties:
+        stages:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items: { $ref: '#/components/schemas/DebugRequestCorrelationStage' }
+        complete: { type: boolean, description: "True only when every applicable stage has complete retained evidence." }
+
     DebugRequestEvidenceResponse:
       type: object
       description: "Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."
-      required: [request, timeline, spans, spans_truncated, explanation, generated_at]
+      required: [request, timeline, correlation, spans, spans_truncated, explanation, generated_at]
       properties:
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
         regression:
@@ -23870,6 +24600,7 @@ components:
           type: array
           maxItems: 200
           items: { $ref: '#/components/schemas/DebugTimelineEvent' }
+        correlation: { $ref: '#/components/schemas/DebugRequestCorrelation' }
         spans:
           type: array
           maxItems: 100
@@ -24238,13 +24969,19 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
     TriggerNotAllowed:
-      description: 'code: triggers_not_allowed — Free plan cannot create triggers; upgrade required.'
+      description: 'code: plan_triggers_not_allowed — Free plan cannot create triggers; upgrade required.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
 
     TriggerQuotaExceeded:
-      description: 'code: trigger_quota_exceeded — per-app or per-account trigger cap reached (see TriggerLimitPerApp / TriggerLimitPerAccount in /v1/limits).'
+      description: 'code: trigger_kind_not_allowed | plan_trigger_quota | trigger_batch_window_too_large | trigger_tls_skip_verify_not_allowed — source-kind or delivery configuration exceeds the account plan capabilities returned by GET /v1/account.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    TriggerSecretUnavailable:
+      description: 'code: secret_store_unavailable — Kafka credentials could not be sealed or opened safely because host age key material is unavailable.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

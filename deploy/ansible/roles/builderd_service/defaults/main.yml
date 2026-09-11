@@ -10,6 +10,11 @@ builderd_config_path: /etc/faas/builderd.toml
 # builderd_build_staging_root matches the unit's ReadWritePaths=
 # pass at /srv/fc/builder. Must be writable by faas-builderd.
 builderd_build_staging_root: /srv/fc/builder
+# A fresh node has never run a build, so the daemon cannot rely on the VM
+# driver to create these children.  builderd's systemd readiness gate probes
+# the drive directory before the service is considered started.
+builderd_build_drive_dir: "{{ builderd_build_staging_root }}/drive"
+builderd_build_export_dir: "{{ builderd_build_staging_root }}/out"
 # builderd_cache_dir matches builderd's canonical Config.CacheDir and the
 # unit's ReadWritePaths=. It is a host-local content-addressed cache; the
 # build output remains in shared storage for the imaged/snapshot pipeline.

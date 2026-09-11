@@ -117,3 +117,60 @@ func TestBuildDebugRequestTimelineWithoutWake(t *testing.T) {
 		t.Fatalf("warm timeline = %+v", got)
 	}
 }
+
+func TestBuildDebugRequestCorrelationMakesMissingSignalsExplicit(t *testing.T) {
+	request := api.DebugTelemetryRequestItem{
+		ReceivedAt: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		LatencyMS:  12,
+		Status:     200,
+	}
+	timeline := []api.DebugTimelineEvent{
+		{At: "2026-09-09T11:59:59.988Z", Kind: "request.received", Phase: "request", Approximate: true},
+		{At: "2026-09-09T12:00:00Z", Kind: "request.completed", Phase: "request", Approximate: true},
+	}
+	got := buildDebugRequestCorrelation(request, timeline, nil)
+	if len(got.Stages) != 6 {
+		t.Fatalf("stage count = %d, want 6", len(got.Stages))
+	}
+	if got.Stages[0].Status != "observed" || !got.Stages[0].Approximate || got.Stages[0].DurationMS != 12 {
+		t.Fatalf("edge stage = %+v", got.Stages[0])
+	}
+	if got.Stages[1].Status != "not_applicable" || got.Stages[2].Status != "not_applicable" {
+		t.Fatalf("warm wake stages = %+v", got.Stages[1:3])
+	}
+	if got.Stages[3].Status != "missing" || got.Stages[4].Status != "missing" || got.Stages[5].Status != "missing" {
+		t.Fatalf("missing stages = %+v", got.Stages[3:])
+	}
+	if got.Complete {
+		t.Fatal("correlation with missing signals must not be complete")
+	}
+}
+
+func TestBuildDebugRequestCorrelationComputesQueueWakeAndDownstream(t *testing.T) {
+	request := api.DebugTelemetryRequestItem{WakeID: "wake-1"}
+	timeline := []api.DebugTimelineEvent{
+		{At: "2026-09-09T12:00:00.000Z", Kind: "wake.queue_accepted", Phase: "wake"},
+		{At: "2026-09-09T12:00:00.025Z", Kind: "wake.admitted", Phase: "wake"},
+		{At: "2026-09-09T12:00:00.050Z", Kind: "wake.boot_started", Phase: "wake"},
+		{At: "2026-09-09T12:00:00.200Z", Kind: "wake.readiness_200", Phase: "wake"},
+		{At: "2026-09-09T12:00:00.240Z", Kind: "wake.boot_completed", Phase: "wake"},
+		{At: "2026-09-09T12:00:00.300Z", Kind: "wake.proxy_first_byte", Phase: "wake"},
+	}
+	spans := []api.DebugTelemetrySpan{{DurationNanos: 41_000_000}, {DurationNanos: 7_000_000}}
+	got := buildDebugRequestCorrelation(request, timeline, spans)
+	if got.Stages[1].Status != "observed" || got.Stages[1].DurationMS != 25 {
+		t.Fatalf("queue stage = %+v", got.Stages[1])
+	}
+	if got.Stages[2].Status != "observed" || got.Stages[2].DurationMS != 190 {
+		t.Fatalf("wake stage = %+v", got.Stages[2])
+	}
+	if got.Stages[3].Status != "partial" || got.Stages[3].EvidenceCount != 1 {
+		t.Fatalf("guest stage = %+v", got.Stages[3])
+	}
+	if got.Stages[4].Status != "observed" || got.Stages[4].DurationMS != 41 || got.Stages[4].EvidenceCount != 2 {
+		t.Fatalf("downstream stage = %+v", got.Stages[4])
+	}
+	if got.Complete {
+		t.Fatal("partial guest and missing billing signals must not be complete")
+	}
+}

@@ -24,6 +24,14 @@ metrics_addr = "127.0.0.1:9105"
 # override is the single-box dev path; production ships the env-var.
 # database_url = "postgres://faas@127.0.0.1:5432/faas?sslmode=disable"
 
+# Shared source and build-log spool. Must match apid's FAAS_SPOOL_ROOT on
+# split-box deployments; builderd rejects persisted paths outside this root.
+source_spool_dir = "/var/spool/faas/builds"
+
+# Per-build persisted log cap. The builderd package enforces a 64 MiB hard
+# ceiling even if this value is raised accidentally.
+build_log_max_bytes = 8388608
+
 # builderd's ephemeral VMs ride vmmd's jailer (ADR-003) — no KVM
 # surface from this unit. drv = "vmmd" is the only supported value
 # at v1; the vmmd-raw-bridge driver lives in pkg/builderd for the

@@ -89,6 +89,11 @@ daemons:
       cert_path: /etc/faas/tls/egress/egress.crt
       key_path: /etc/faas/tls/egress/egress.key
       ca_path: /etc/faas/tls/ca/ca.crt
+  imaged:
+    # imaged has no primary RPC listener, but a non-empty bind declares the
+    # daemon in the manifest so the renderer emits its per-host private
+    # metrics and readiness listener on :9102.
+    bind: tcp://127.0.0.1:9102
   builderd:
     # The renderer derives the per-host vmmd target from the compute
     # host's own address; the placeholder target supplies the schema's

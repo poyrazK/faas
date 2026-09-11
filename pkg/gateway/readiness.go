@@ -336,23 +336,25 @@ func NewStalenessSignal(stale time.Duration) (signal *ReadySignal, touch func(),
 			case <-stop:
 				return
 			case <-t.C:
-				touched := lastTouch.Load()
-				if touched == 0 {
-					// No touch yet — keep signalling not ready.
-					s.Set(false, "no touch yet")
-					continue
+				for {
+					touched := lastTouch.Load()
+					if touched == 0 {
+						// No touch yet — keep signalling not ready.
+						s.Set(false, "no touch yet")
+					} else if time.Since(time.Unix(0, touched)) > stale {
+						s.Set(false, "stale")
+					} else {
+						// Fresh — re-flip ready so the signal is invariant
+						// under tick/touch interleaving.
+						s.Set(true, "")
+					}
+					// A Touch may land after the timestamp load but before
+					// Set. Re-evaluate in that case so an older timer tick
+					// cannot overwrite the fresh touch with "stale".
+					if lastTouch.Load() == touched {
+						break
+					}
 				}
-				age := time.Since(time.Unix(0, touched))
-				if age > stale {
-					s.Set(false, "stale")
-					continue
-				}
-				// Fresh — re-flip ready so the signal is invariant
-				// under tick/touch interleaving. touch() also writes
-				// ready, but a tick that arrives just after a stale
-				// flip and before the next touch would observe stale
-				// state from the prior tick without this re-set.
-				s.Set(true, "")
 			}
 		}
 	}()
@@ -433,6 +435,73 @@ func NewPGPingSignal(ctx context.Context, pool pinger, every time.Duration) (*Re
 			close(stop)
 			<-done
 			s.Set(false, "pg ping stopped")
+		})
+	}
+	return s, stopper
+}
+
+// NewDependencySignal returns a ReadySignal backed by an arbitrary
+// dependency check. The check runs immediately and then every half of
+// `every`, with each invocation bounded by the same half-interval timeout.
+// A failed check keeps the signal false and records the dependency name and
+// error for the operator-facing readiness reason.
+//
+// This is the common shape for readiness dependencies that are not Postgres:
+// a gRPC dial, a routing-cache probe, or a private HTTP health endpoint. The
+// callback must honor its context; the wrapper supplies a deadline so a
+// wedged dependency cannot hold the readiness goroutine indefinitely.
+func NewDependencySignal(ctx context.Context, name string, every time.Duration, check func(context.Context) error) (*ReadySignal, func()) {
+	if every <= 0 {
+		every = 5 * time.Second
+	}
+	if name == "" {
+		name = "dependency"
+	}
+	s := newReadySignal(false, name+" check not yet attempted")
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	cadence := every / 2
+	if cadence < 10*time.Millisecond {
+		cadence = 10 * time.Millisecond
+	}
+	checkTimeout := cadence
+	go func() {
+		defer close(done)
+		checkOnce := func() {
+			if check == nil {
+				s.Set(false, name+" check unavailable")
+				return
+			}
+			checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
+			err := check(checkCtx)
+			cancel()
+			if err != nil {
+				s.Set(false, name+" check failed: "+err.Error())
+				return
+			}
+			s.Set(true, "")
+		}
+		checkOnce()
+		t := time.NewTicker(cadence)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				s.Set(false, name+" context cancelled")
+				return
+			case <-t.C:
+				checkOnce()
+			}
+		}
+	}()
+	var stopOnce sync.Once
+	stopper := func() {
+		stopOnce.Do(func() {
+			close(stop)
+			<-done
+			s.Set(false, name+" check stopped")
 		})
 	}
 	return s, stopper

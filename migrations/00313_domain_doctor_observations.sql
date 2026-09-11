@@ -37,7 +37,7 @@
 --
 --   * observed_target / observed_aaaa / caa_observed are
 --     the raw observed values from the probe pass so the
---     doctor can render "CNAME → apps.gregale.dev" without
+--     doctor can render "CNAME → gregale.dev" without
 --     re-querying. last_error is a single human-readable
 --     string summarizing the failing check.
 --

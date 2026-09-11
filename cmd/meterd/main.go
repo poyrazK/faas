@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/reconciler"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssocket"
 	"github.com/onebox-faas/faas/pkg/mail"
@@ -402,19 +403,25 @@ func (a *gatewayEgressAdapter) startStream(ctx context.Context, socketPath strin
 				if log != nil {
 					log.Warn("gatewayEgressAdapter: dial failed; backing off", "err", err, "backoff", backoff)
 				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(backoff):
+			} else {
+				// grpc.Dial is intentionally non-blocking. During a gateway
+				// restart it can return a client whose first StreamBytes call
+				// fails immediately. Treat that as a failed connection attempt;
+				// resetting backoff before the RPC opens creates an allocation
+				// and log storm that can exhaust meterd's memory cgroup.
+				if a.consumeStream(ctx, client, log) {
+					backoff = 250 * time.Millisecond
 				}
-				backoff *= 2
-				if backoff > backoffMax {
-					backoff = backoffMax
-				}
-				continue
 			}
-			backoff = 250 * time.Millisecond
-			a.consumeStream(ctx, client, log)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			if backoff > backoffMax {
+				backoff = backoffMax
+			}
 		}
 	}()
 }
@@ -422,13 +429,13 @@ func (a *gatewayEgressAdapter) startStream(ctx context.Context, socketPath strin
 // consumeStream runs one stream-receive iteration: open the
 // server-streaming RPC, fold every frame into the snapshot,
 // return when the upstream closes or the ctx cancels.
-func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client egresspb.EgressTxServiceClient, log *slog.Logger) {
+func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client egresspb.EgressTxServiceClient, log *slog.Logger) bool {
 	stream, err := client.StreamBytes(ctx, &egresspb.StreamBytesRequest{})
 	if err != nil {
 		if log != nil {
 			log.Warn("gatewayEgressAdapter: stream open failed", "err", err)
 		}
-		return
+		return false
 	}
 	for {
 		frame, err := stream.Recv()
@@ -436,7 +443,7 @@ func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client egressp
 			if !errors.Is(err, io.EOF) && log != nil {
 				log.Debug("gatewayEgressAdapter: stream recv ended", "err", err)
 			}
-			return
+			return true
 		}
 		a.recordFrame(frame)
 	}
@@ -1256,6 +1263,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		metricsSrv = srv
 		log.Info("meterd metrics listening", "addr", cfg.MetricsAddr)
 	}
+
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, meterdProbe.ReadyFunc())
+	defer notifyStop()
 
 	select {
 	case <-ctx.Done():

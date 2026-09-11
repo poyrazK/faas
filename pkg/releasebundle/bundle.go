@@ -188,8 +188,26 @@ func Read(root string) (Manifest, error) {
 }
 
 func Verify(root string, manifest Manifest) error {
+	return VerifyWithAllowedFiles(root, manifest)
+}
+
+// VerifyWithAllowedFiles performs the same immutable bundle verification as
+// Verify while permitting named, root-relative regular files that are owned
+// by a later host lifecycle stage. Allowed files are not covered by the
+// manifest and must be validated by their owning subsystem.
+func VerifyWithAllowedFiles(root string, manifest Manifest, allowedFiles ...string) error {
 	if err := ValidateManifest(manifest); err != nil {
 		return err
+	}
+	allowed := make(map[string]struct{}, len(allowedFiles))
+	for _, rel := range allowedFiles {
+		if rel == ManifestName {
+			return fmt.Errorf("releasebundle: manifest cannot be an allowed extra file")
+		}
+		if err := validatePath(rel); err != nil {
+			return fmt.Errorf("releasebundle: invalid allowed extra file %q: %w", rel, err)
+		}
+		allowed[rel] = struct{}{}
 	}
 	seen := make(map[string]struct{}, len(manifest.Files))
 	for _, file := range manifest.Files {
@@ -238,6 +256,19 @@ func Verify(root string, manifest Manifest) error {
 		rel = filepath.ToSlash(rel)
 		if rel != ManifestName {
 			if _, ok := seen[rel]; !ok {
+				if _, allowedExtra := allowed[rel]; allowedExtra {
+					if entry.Type()&os.ModeSymlink != 0 {
+						return fmt.Errorf("releasebundle: allowed extra file %s is a symlink", rel)
+					}
+					info, infoErr := entry.Info()
+					if infoErr != nil {
+						return infoErr
+					}
+					if !info.Mode().IsRegular() {
+						return fmt.Errorf("releasebundle: allowed extra file %s is not a regular file", rel)
+					}
+					return nil
+				}
 				unexpected = append(unexpected, rel)
 			}
 		}

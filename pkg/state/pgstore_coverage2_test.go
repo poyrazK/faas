@@ -125,13 +125,16 @@ func TestPg_CoverageDeploymentReaders(t *testing.T) {
 	if _, err := s.LatestSupersededDeployment(ctx, app.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("superseded before = %v", err)
 	}
-	// A second deployment supersedes the first.
+	// A second deployment leaves the first serving until promotion.
 	second, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:second", Status: state.DeployPending})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.LatestDeployment(ctx, app.ID); err != nil || got.ID != second.ID {
 		t.Fatalf("latest after second = %+v, %v", got, err)
+	}
+	if err := s.MarkDeploymentLive(ctx, second.ID); err != nil {
+		t.Fatal(err)
 	}
 	if got, err := s.LatestSupersededDeployment(ctx, app.ID); err != nil || got.ID != deployment.ID {
 		t.Fatalf("superseded = %+v, %v", got, err)

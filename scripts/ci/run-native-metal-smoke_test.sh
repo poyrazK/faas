@@ -46,6 +46,37 @@ grep -Fq 'passed, ${skipped} skipped, ${failed} failed' "${runner}" || {
   exit 1
 }
 
+# The namespace batch is a second pass, not an argument tweak, so it needs
+# its own pins: the six tests that manipulate /run/netns skipped entirely
+# until it existed.
+grep -Fq 'unshare --mount --net --propagation private' "${runner}" || {
+  echo "native metal wrapper no longer runs the namespace batch under unshare" >&2
+  exit 1
+}
+grep -Fq 'mount -t tmpfs tmpfs /run/netns' "${runner}" || {
+  echo "native metal wrapper does not give the namespace batch a private /run/netns" >&2
+  exit 1
+}
+# Must be an ASSIGNMENT on a non-comment line. The first version of this
+# pin grepped for the bare name and matched the comment above the command,
+# so it passed while the six tests skipped for want of the variable. A
+# check that asserts a string appears somewhere is not a check.
+grep -vE '^[[:space:]]*#' "${runner}" | grep -Fq 'FAAS_TEST_NETWORK_BATCH=1' || {
+  echo "native metal wrapper does not set FAAS_TEST_NETWORK_BATCH=1 for the batch (a comment mentioning it does not count)" >&2
+  exit 1
+}
+grep -Fq 'namespace batch executed no test' "${runner}" || {
+  echo "native metal wrapper does not fail when the namespace batch runs nothing" >&2
+  exit 1
+}
+for batch_test in TestMetalImageBindMount TestMetalIPSetupBatch TestMetalFreshNetworkPolicy \
+  TestMetalReusedLeaseNeighbor TestMetalPreparedBridgeMAC TestMetalPreparedNetworkOwnership; do
+  grep -Fq "${batch_test}" "${runner}" || {
+    echo "native metal wrapper dropped ${batch_test} from the namespace batch" >&2
+    exit 1
+  }
+done
+
 base_mountpoints="$(sed -n 's/^base_mountpoints=(\(.*\))$/\1/p' "${runner}")"
 [[ -n "${base_mountpoints}" ]] || {
   echo "could not extract the native metal base mountpoint contract" >&2

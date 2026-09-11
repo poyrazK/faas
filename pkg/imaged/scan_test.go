@@ -99,7 +99,7 @@ func TestRunDeployScan_StampsComplete(t *testing.T) {
 	if err := json.Unmarshal(row.ScanResult, &got); err != nil {
 		t.Fatalf("unmarshal scan result: %v", err)
 	}
-	if got.Critical != 1 || got.High != 2 {
+	if got.SeverityCounts.Critical != 1 || got.SeverityCounts.High != 2 {
 		t.Errorf("severity counts = %+v, want CRITICAL=1 HIGH=2", got.SeverityCounts)
 	}
 }

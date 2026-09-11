@@ -25,8 +25,11 @@ bucket_name="smoke-$(date -u +%Y%m%d%H%M%S)-$(printf '%04x' "$RANDOM")"
 object_key="probe/hello.txt"
 bucket_id=""
 credential_id=""
+binding_id=""
+binding_prefix="SMOKE_S3"
 object_uploaded=false
 credential_revoked=false
+binding_deleted=false
 bucket_deleted=false
 
 api() {
@@ -50,6 +53,11 @@ cleanup() {
   if [[ -n "$credential_id" && "$credential_revoked" != true ]]; then
     api -X DELETE \
       "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/s3-credentials/$credential_id" \
+      >/dev/null 2>&1 || cleanup_status=1
+  fi
+  if [[ -n "$binding_id" && "$binding_deleted" != true ]]; then
+    api -X DELETE \
+      "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/compute-bindings/$binding_id" \
       >/dev/null 2>&1 || cleanup_status=1
   fi
   if [[ -n "$bucket_id" && "$bucket_deleted" != true ]]; then
@@ -89,6 +97,55 @@ api -X POST \
 bucket_id="$(jq -er '.id' "$smoke_tmp/bucket.json")"
 jq -e '.state == "ready"' "$smoke_tmp/bucket.json" >/dev/null
 
+# Compute bindings deliberately never return secret material. Verify the
+# managed secret names, binding identity, and rotation contract instead. The
+# direct S3 credential below supplies the data-plane read/write and revoke
+# checks; combining both in one run catches cross-surface cleanup leaks.
+api -X POST \
+  --data "$(jq -cn --arg prefix "$binding_prefix" '{label:"compute-smoke",permission:"read_write",prefix:$prefix}')" \
+  "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/compute-bindings" \
+  >"$smoke_tmp/binding.json"
+binding_id="$(jq -er '.id' "$smoke_tmp/binding.json")"
+jq -e --arg bucket "$bucket_id" --arg prefix "$binding_prefix" '
+  .bucket_id == $bucket and .prefix == $prefix and
+  .secret_keys == {
+    endpoint: ($prefix + "_ENDPOINT"),
+    region: ($prefix + "_REGION"),
+    bucket: ($prefix + "_BUCKET"),
+    access_key_id: ($prefix + "_ACCESS_KEY_ID"),
+    secret_access_key: ($prefix + "_SECRET_ACCESS_KEY"),
+    addressing_style: ($prefix + "_ADDRESSING_STYLE")
+  } and
+  (.credential.status == "active") and
+  (.credential | has("secret_access_key") | not)
+' "$smoke_tmp/binding.json" >/dev/null
+binding_access_key_id="$(jq -er '.credential.access_key_id' "$smoke_tmp/binding.json")"
+
+api -X GET \
+  "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/compute-bindings" \
+  >"$smoke_tmp/bindings-before-rotate.json"
+jq -e --arg id "$binding_id" '.items | length == 1 and .[0].id == $id' \
+  "$smoke_tmp/bindings-before-rotate.json" >/dev/null
+
+api -X POST \
+  "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/compute-bindings/$binding_id/rotate" \
+  >"$smoke_tmp/binding-rotated.json"
+jq -e --arg id "$binding_id" --arg bucket "$bucket_id" --arg prefix "$binding_prefix" --arg old "$binding_access_key_id" '
+  .id == $id and .bucket_id == $bucket and .prefix == $prefix and
+  .credential.status == "active" and
+  .credential.access_key_id != $old and
+  .secret_keys == {
+    endpoint: ($prefix + "_ENDPOINT"),
+    region: ($prefix + "_REGION"),
+    bucket: ($prefix + "_BUCKET"),
+    access_key_id: ($prefix + "_ACCESS_KEY_ID"),
+    secret_access_key: ($prefix + "_SECRET_ACCESS_KEY"),
+    addressing_style: ($prefix + "_ADDRESSING_STYLE")
+  }
+' "$smoke_tmp/binding-rotated.json" >/dev/null
+
+printf 'compute_binding_lifecycle=pass\n'
+
 api -X POST \
   --data '{"label":"deployment-smoke","permission":"read_write"}' \
   "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/s3-credentials" \
@@ -124,6 +181,14 @@ api -X DELETE \
   "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/s3-credentials/$credential_id" \
   >/dev/null
 credential_revoked=true
+
+api -X DELETE \
+  "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/compute-bindings/$binding_id" \
+  >/dev/null
+binding_deleted=true
+api -X GET \
+  "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/compute-bindings" \
+  | jq -e '.items | length == 0' >/dev/null
 
 if aws --endpoint-url "$GREGALE_S3_ENDPOINT" --region "$GREGALE_S3_REGION" \
   s3api head-bucket --bucket "$bucket_name" \

@@ -29,6 +29,10 @@ type Config struct {
 	// PreparedNetworks bounds the optional cache of unused namespaces.
 	// Zero disables it; FAAS_PREPARED_NETWORKS overrides TOML for canaries.
 	PreparedNetworks int `toml:"prepared_networks"`
+	// RestoreConcurrency bounds simultaneous Firecracker snapshot restores.
+	// Three stays below the measured contention knee on four-vCPU hosts while
+	// still sustaining a high restore rate. Operators can tune 1..64.
+	RestoreConcurrency int `toml:"restore_concurrency"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
 	// ADR-015 dictates mode 0660 group `faas`.
@@ -251,6 +255,16 @@ type ComputeNodeConfig struct {
 	// Single-host dev keeps the default; multi-host deployments
 	// override per-host via env-overlay or TOML.
 	HostBridgeCIDR string `toml:"host_bridge_cidr"`
+	// PublicIface is the host's outward-facing NIC used by the runtime
+	// nftables renderer. The deployment sets FAAS_PUBLIC_IFACE from the same
+	// Ansible fact/host variable that renders /etc/nftables.conf, so wake-time
+	// policy rebuilds cannot drift back to the compiled eth0 default.
+	PublicIface string `toml:"public_iface"`
+	// PrivateIngressCIDRs and PrivateIngressTCPPorts preserve the
+	// deployment-owned control-plane ingress rules across runtime nftables
+	// rebuilds. Both are supplied by the vmmd systemd egress drop-in.
+	PrivateIngressCIDRs    []string `toml:"private_ingress_cidrs"`
+	PrivateIngressTCPPorts []int    `toml:"private_ingress_tcp_ports"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
 	// `tailscale ip -4` (Mega-PR-B Commit 3). Defaults to
@@ -387,7 +401,8 @@ func (c *Config) MetricsListener() (read, write, idle time.Duration, maxHeaderBy
 // in that case an empty config is returned.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		SocketPath: "/run/faas/vmmd.sock",
+		SocketPath:         "/run/faas/vmmd.sock",
+		RestoreConcurrency: 3,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from sched.KernelKey(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
@@ -482,6 +497,19 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_HOST_BRIDGE_CIDR"); v != "" {
 		c.ComputeNode.HostBridgeCIDR = v
 	}
+	if v := os.Getenv("FAAS_PUBLIC_IFACE"); v != "" {
+		c.ComputeNode.PublicIface = v
+	}
+	if v := os.Getenv("FAAS_PRIVATE_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PrivateIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_INGRESS_TCP_PORTS"); v != "" {
+		ports, perr := parseTCPPorts(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_PRIVATE_INGRESS_TCP_PORTS %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.PrivateIngressTCPPorts = ports
+	}
 	// PR scale-out tier-1 residual (issue #911 / ADR-110 / Gap #5):
 	// env-var overlay for [compute_node].overlay_interface so
 	// operators with multiple NICs can pin the overlay detector
@@ -491,20 +519,30 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_OVERLAY_INTERFACE"); v != "" {
 		c.ComputeNode.OverlayInterface = v
 	}
-	// Issue #938 / PR-A: env-var overlay for [compute_node].vcpu_budget
-	// so heterogeneous fleets can dial the per-host vCPU ceiling via the
-	// systemd drop-in without editing vmmd.toml on every box. Mirrors
-	// the FAAS_NODE_NAME / FAAS_HOST_BRIDGE_CIDR / FAAS_OVERLAY_INTERFACE
-	// pattern. Non-positive values are rejected at LoadConfig so the
-	// migration 00123 CHECK constraint (vcpu_budget > 0) can't trip the
-	// self-registration upsert later. Empty keeps the TOML value (or
-	// api.VCPUSlots when both are empty).
-	if v := os.Getenv("FAAS_VCPU_BUDGET"); v != "" {
-		n, perr := strconv.Atoi(v)
-		if perr != nil || n <= 0 {
-			return nil, fmt.Errorf("vmmd: FAAS_VCPU_BUDGET %q must be a positive integer", v)
+	// Production capacity is host-specific. The manifest renderer cannot own
+	// these values because one fleet can contain different machine sizes, so
+	// node_join derives them from Ansible facts and publishes this drop-in
+	// contract. Apply the whole set after TOML parsing so vmmd registration and
+	// the operator's pre-registration use the same physical host limits instead
+	// of falling back to the legacy 160-vCPU / 56-GB single-box defaults.
+	capacityOverlays := []struct {
+		name string
+		dst  *int
+	}{
+		{name: "FAAS_COMPUTE_VCPUS", dst: &c.ComputeNode.VPCPUs},
+		{name: "FAAS_COMPUTE_MEM_MB", dst: &c.ComputeNode.MemMB},
+		{name: "FAAS_COMPUTE_MAX_CONCURRENCY", dst: &c.ComputeNode.MaxConcurrency},
+		{name: "FAAS_COMPUTE_ADMISSION_CEILING_MB", dst: &c.ComputeNode.AdmissionCeilingMB},
+		{name: "FAAS_VCPU_BUDGET", dst: &c.ComputeNode.VCPUBudget},
+	}
+	for _, overlay := range capacityOverlays {
+		if v := os.Getenv(overlay.name); v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil || n <= 0 {
+				return nil, fmt.Errorf("vmmd: %s %q must be a positive integer", overlay.name, v)
+			}
+			*overlay.dst = n
 		}
-		c.ComputeNode.VCPUBudget = n
 	}
 	if v := os.Getenv("FAAS_PREPARED_NETWORKS"); v != "" {
 		n, perr := strconv.Atoi(v)
@@ -512,6 +550,16 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_PREPARED_NETWORKS must be between 0 and %d", api.MaxPreparedNetworkCacheSize)
 		}
 		c.PreparedNetworks = n
+	}
+	if v := os.Getenv("FAAS_RESTORE_CONCURRENCY"); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 1 || n > 64 {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_CONCURRENCY must be between 1 and 64")
+		}
+		c.RestoreConcurrency = n
+	}
+	if c.RestoreConcurrency < 1 || c.RestoreConcurrency > 64 {
+		return nil, fmt.Errorf("vmmd: restore_concurrency must be between 1 and 64 (got %d)", c.RestoreConcurrency)
 	}
 	// Issue #938 / PR-A: reject non-positive TOML values for
 	// [compute_node].vcpu_budget at LoadConfig rather than letting them
@@ -586,7 +634,97 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: [compute_node].host_bridge_cidr %q invalid: %w", bridge, err)
 		}
 	}
+	if iface := strings.TrimSpace(c.ComputeNode.PublicIface); iface != "" {
+		if err := validatePublicIface(iface); err != nil {
+			return nil, fmt.Errorf("vmmd: [compute_node].public_iface %q invalid: %w", iface, err)
+		}
+		c.ComputeNode.PublicIface = iface
+	}
+	if len(c.ComputeNode.PrivateIngressCIDRs) > 0 && len(c.ComputeNode.PrivateIngressTCPPorts) == 0 {
+		return nil, fmt.Errorf("vmmd: private_ingress_cidrs requires private_ingress_tcp_ports")
+	}
+	if len(c.ComputeNode.PrivateIngressTCPPorts) > 0 && len(c.ComputeNode.PrivateIngressCIDRs) == 0 {
+		return nil, fmt.Errorf("vmmd: private_ingress_tcp_ports requires private_ingress_cidrs")
+	}
+	for i, raw := range c.ComputeNode.PrivateIngressCIDRs {
+		prefix, perr := netip.ParsePrefix(strings.TrimSpace(raw))
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: private_ingress_cidrs[%d] %q invalid: %w", i, raw, perr)
+		}
+		c.ComputeNode.PrivateIngressCIDRs[i] = prefix.Masked().String()
+	}
+	for _, port := range c.ComputeNode.PrivateIngressTCPPorts {
+		if port < 1 || port > 65535 {
+			return nil, fmt.Errorf("vmmd: private_ingress_tcp_ports contains invalid TCP port %d", port)
+		}
+	}
 	return c, nil
+}
+
+func splitNonEmpty(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func parseTCPPorts(raw string) ([]int, error) {
+	parts := splitNonEmpty(raw)
+	ports := make([]int, 0, len(parts))
+	for _, part := range parts {
+		port, err := strconv.Atoi(part)
+		if err != nil || port < 1 || port > 65535 {
+			return nil, fmt.Errorf("%q must be an integer from 1 through 65535", part)
+		}
+		ports = append(ports, port)
+	}
+	if len(ports) == 0 {
+		return nil, fmt.Errorf("must contain at least one TCP port")
+	}
+	return ports, nil
+}
+
+func validatePublicIface(iface string) error {
+	// Linux IFNAMSIZ includes the trailing NUL, so an interface name can use
+	// at most 15 bytes. Restrict the deployment value to the kernel's normal
+	// interface-name alphabet before it reaches nftables or systemd logs.
+	if iface == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if len(iface) > 15 {
+		return fmt.Errorf("must be at most 15 bytes")
+	}
+	for _, r := range iface {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' || r == ':' {
+			continue
+		}
+		return fmt.Errorf("contains unsupported character %q", r)
+	}
+	return nil
+}
+
+func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix) netns.HostPolicy {
+	policy := netns.DefaultHostPolicy
+	if iface := strings.TrimSpace(cfg.PublicIface); iface != "" {
+		policy.PublicIface = iface
+	}
+	policy.MasqueradeCIDR = bridge.Masked().String()
+	for _, raw := range cfg.PrivateIngressCIDRs {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			continue // LoadConfig validates; retain a safe pure helper for tests.
+		}
+		policy.PrivateInputAllowRules = append(policy.PrivateInputAllowRules, netns.PrivateInputAllowRule{
+			Source: prefix.Masked(),
+			Ports:  append([]int(nil), cfg.PrivateIngressTCPPorts...),
+		})
+	}
+	return policy
 }
 
 // validateHostBridgeCIDR is the Gap #3 wiring gate for the bridge

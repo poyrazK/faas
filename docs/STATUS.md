@@ -41,7 +41,8 @@ pinning (`snapshots.fc_version`), and the vsock post-restore resume
 hook (ADR-022) that re-seeds entropy + steps clock — V6 acceptance
 green in `pkg/fcvm/v6_resume_ext4_metal_test.go`.
 
-**Remaining:** §14 V2 platform latency loop driver (100 cycles, p95 < 350 ms)
+**Remaining:** §14 V2 platform latency loop driver (100 cycles per app class,
+p95 < 350 ms, p99 ≤ 500 ms, p999 ≤ 800 ms)
 — see [What's next](#whats-next).
 
 ## M4 — gatewayd-public + gatewayd-internal + schedd. ✅
@@ -566,8 +567,11 @@ The §12 dashboard pipeline is wired end-to-end:
   `schedd /metrics/fcvm`) so the alert rules' data sources are
   actually scraped. New jobs added: `builderd 9105`, `githubd 8083`.
 - **Status page degraded flag** — `cmd/apid/status.go::fetch` runs a
-  fourth PromQL
-  `count(ALERTS{alertstate="firing",severity=~"page|warn"}) > 0`
+  fourth PromQL query over firing warn/page platform alerts. It excludes
+  `alert_preset_signals` and `alert_preset_correlation`, whose alerts describe
+  one tenant's configured policy rather than fleet health, and alerts labelled
+  `public_status="internal"`, which remain operator-actionable but do not mean
+  the customer-facing service is degraded.
   alongside the existing three. The boolean lands on
   `pkg/api.StatusPage.Degraded` and `deploy/statuspage/index.html`
   renders a red "Service degraded" pill driven by it. The public page
@@ -577,8 +581,10 @@ The §12 dashboard pipeline is wired end-to-end:
 #### Status page degraded-flag contract
 
 - `Source = "prometheus"` — clean snapshot, no degraded pill.
-- `Source = "degraded: firing alerts"` — at least one warn- or
-  page-severity alert is currently firing; the pill is visible.
+- `Source = "degraded: firing alerts"` — at least one fleet/platform warn- or
+  page-severity alert that represents customer impact is currently firing; the
+  pill is visible. Tenant alert presets and `public_status="internal"` operator
+  alerts remain visible without changing public status.
 - `Source = "degraded: <error>"` — the full Prometheus pipeline is
   unreachable; the handler returns the last cached snapshot with the
   error stringified. Pre-existing graceful-degradation contract from
@@ -981,7 +987,7 @@ explicitly open issues that the doc otherwise implies are closed.
 
 ### M8
 
-- **CertMagic TLS** for `gatewayd-public` (`*.apps.gregale.dev` via DNS-01;
+- **CertMagic TLS** for `gatewayd-public` (`*.gregale.dev` via DNS-01;
   on-demand HTTP-01 gated by `custom_domains` allowlist). Plumbing
   landed across `pkg/gateway/tls*.go`, `dns01_hetzner.go`,
   `allowlist.go`, `acme.go`, `cmd/gatewayd-public/{main,config,secrets}.go`,
@@ -996,10 +1002,13 @@ explicitly open issues that the doc otherwise implies are closed.
   operator runbook at `docs/ops/gatewayd-public-tls-cutover.md` (the legacy `docs/ops/gatewayd-tls-cutover.md` retains the pre-PR-A cut-over steps; current process lives in the public-edge runbook).
 - **§14 V2 latency driver** — 100 platform-only park→wake cycles per app class,
   p95 < 350 ms from `wake.boot_started` through `wake.boot_completed` on
-  the reference SSD node. The gate is wired via
-  `pkg/fcvm/TestMetalParkWakeCycle`; the internal gateway first-byte
-  cohort remains a separate diagnostic. Per-app-class (Express, Next.js,
-  Flask, FastAPI, Go static) gating is the M8 follow-up. Runs on
+  the reference SSD node. The internal gateway first-byte cohort now also
+  enforces p99 ≤ 500 ms and p999 ≤ 800 ms in
+  `TestDeployWakeMetal/wake-latency-p99-100cycles`; its per-phase p99/p999
+  view is the `Wake phase latency (p99 / p999)` dashboard panel. The gate is
+  wired via `pkg/fcvm/TestMetalParkWakeCycle`; the internal gateway cohort
+  remains a separate diagnostic. Reference-SSD execution is recorded here
+  when the metal acceptance run is available. Runs on
   `make metal-lima RUN_ARGS='-run TestDeployWakeMetal'`.
 - **Documented timed restore drill** — §14 M8: PG + one app back
   serving on a clean VM < 30 min, recorded as executed. Run
@@ -1030,16 +1039,18 @@ explicitly open issues that the doc otherwise implies are closed.
   app's sticky-warm hint and choose by current fleet headroom, so a two-node
   fleet can keep desired replicas on separate compute nodes. The scheduler
   coverage lives in `TestConvergeServiceReplicasSpreadsAcrossComputeNodes`.
-- **Workload networking** — the gateway now exposes a deterministic,
-  loopback-only cross-VM service endpoint registry (ADR-167) and a trusted
-  node-local service proxy (ADR-168), both sourced from the same live target
-  cache used for request routing. Guest DNS/proxy binding to instance identity,
-  host ports, and public multi-port routing remain the next networking slices;
-  loopback discovery for workloads within one task remains the current guest
-  contract (ADR-164 and ADR-165).
-- **Resource and cost isolation** — named RAM/CPU profiles and ephemeral disk
-  ceilings are present; per-container CPU/disk enforcement and a combined
-  compute + S3 + managed-PostgreSQL usage/budget view remain follow-up work.
+- **Workload networking** — the gateway exposes a deterministic cross-VM
+  service endpoint registry (ADR-167), a trusted node-local service proxy
+  (ADR-168), and a tenant-bridge guest listener with HostIP caller binding
+  (ADR-169). ADR-170 adds node-local DNS for `<slug>.svc.gregale`, backed by
+  the same `HostBridgeIP:10080` proxy; the netns firewall admits DNS and proxy
+  traffic before the lateral-movement deny. Host ports and public multi-port
+  routing remain separate follow-ups; loopback discovery within one task remains
+  supported (ADR-164 and ADR-165).
+- **Resource and cost isolation** — named RAM/CPU profiles, per-node vCPU
+  admission, ephemeral disk ceilings, and the account-level compute + S3 +
+  managed-PostgreSQL usage projection are present; runtime per-container
+  CPU/disk enforcement remains follow-up work.
 
 ### Open security & infrastructure issues
 

@@ -14,9 +14,9 @@
 // optional — typical on-call usage is via apid, which carries
 // the admin actor identity through MFA + FAAS_ADMIN_EMAILS).
 // When the CLI is used directly, no audit row is emitted; the
-// operator's stdout trace is the only record. This is the same
-// trade-off documented at commands_instances.go for
-// `force-cold-boot`.
+// operator's stdout trace is the only record. Instance recovery no
+// longer makes this trade-off during routine operation; migrating this
+// build command to the authenticated apid path is the remaining follow-up.
 package main
 
 import (

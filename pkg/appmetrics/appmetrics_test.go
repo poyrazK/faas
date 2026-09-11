@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -148,6 +150,39 @@ func TestAppMetrics_Fetch_NaNGuard_Float(t *testing.T) {
 	}
 	if math.IsNaN(resp.WakeP95MS) || resp.WakeP95MS != 0 {
 		t.Errorf("WakeP95MS = %v, want 0 (NaN must be coerced)", resp.WakeP95MS)
+	}
+}
+
+// TestAppMetrics_Fetch_EmptyHistogramUsesPromQLFallback exercises the real
+// promql.Client boundary. QueryScalar rejects Prometheus's non-finite samples,
+// so every histogram query must turn an idle window into vector(0) before the
+// response reaches Go.
+func TestAppMetrics_Fetch_EmptyHistogramUsesPromQLFallback(t *testing.T) {
+	var histogramQueries int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		value := "0"
+		if strings.Contains(query, "histogram_quantile") {
+			histogramQueries++
+			if !strings.Contains(query, "_count") || !strings.Contains(query, "or vector(0)") {
+				value = "NaN"
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[{"value":[1,%q]}]}}`, value)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := pkgpromql.NewClient(srv.URL, srv.Client())
+	resp, src := appmetrics.Fetch(context.Background(), client, slog.Default(), "app-1", "1h")
+	if src != appmetrics.SourcePrometheus {
+		t.Fatalf("src = %q, want %q", src, appmetrics.SourcePrometheus)
+	}
+	if histogramQueries != 4 {
+		t.Fatalf("histogram queries = %d, want 4", histogramQueries)
+	}
+	if resp.LatencyP50MS != 0 || resp.LatencyP95MS != 0 || resp.LatencyP99MS != 0 || resp.WakeP95MS != 0 {
+		t.Fatalf("idle histogram values must be zero: %+v", resp)
 	}
 }
 

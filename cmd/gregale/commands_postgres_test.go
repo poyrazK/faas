@@ -72,6 +72,36 @@ func TestCmdPostgresCreateSendsProviderNeutralSpec(t *testing.T) {
 	}
 }
 
+func TestCmdPostgresUsageJSONUsesSafeEnvelope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/account/managed-postgres-usage" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"period_start":"2026-09-01T00:00:00Z","observed_at":"2026-09-06T12:00:00Z","policy_enabled":true,"fresh":true,"guardrail_state":"healthy","ready_databases":1,"database_limit":3,"storage_limit_bytes":10737418240,"compute_unit_seconds":10,"storage_byte_seconds":20,"storage_byte_seconds_limit":30,"storage_byte_seconds_remaining":10,"history_byte_seconds":0,"egress_bytes":0,"cost_millicents":999,"provider_resource_id":"must-not-be-rendered"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := osStdout, jsonOutput
+	osStdout, jsonOutput = &out, true
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+
+	if code := cmdPostgresUsage(nil); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	var got api.ManagedPostgresUsageResponse
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, out.String())
+	}
+	if got.GuardrailState != "healthy" || got.StorageByteSecondsRemaining != 10 {
+		t.Fatalf("unexpected output: %+v", got)
+	}
+	if strings.Contains(out.String(), "cost_millicents") || strings.Contains(out.String(), "provider_resource_id") {
+		t.Fatalf("CLI output exposed operator/provider fields: %s", out.String())
+	}
+}
+
 func TestRunDispatchesPostgresJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/postgres/bindings/binding-1" {

@@ -19,6 +19,8 @@ type ObjectBucket struct {
 	BackendFingerprint string
 	PhysicalName       string
 	State              string
+	PublicRead         bool
+	ServeAt            string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	LeaseToken         string

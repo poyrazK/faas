@@ -30,8 +30,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
+	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Manager is vmmd's core: it owns the whole per-instance resource lifecycle —
@@ -1769,6 +1771,7 @@ func (m *Manager) ReportLivenessFailed(ctx context.Context, instanceID, reason s
 // without vmmd hard-coding it.
 type LivenessProbeConfig struct {
 	Path                string
+	Port                int
 	PeriodSeconds       int
 	ConsecutiveFailures int
 	CooldownSeconds     int
@@ -2028,9 +2031,16 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 	// legacy pre-PR-B callers carry "" on the wire; the gate
 	// falls back to the bypass branch in that case.
 	deploymentID := ""
+	// The host publishes every guest through :8080, while DNAT can map that
+	// to a source-inferred or explicitly configured port inside the guest.
+	// Guest liveness runs inside the VM and must probe that actual port.
+	cfg.Port = netns.AppPort
 	m.mu.Lock()
 	if inst, ok := m.live[instance]; ok {
 		deploymentID = inst.DeploymentID
+		if inst.Port > 0 && inst.Port <= 65535 {
+			cfg.Port = inst.Port
+		}
 	}
 	m.mu.Unlock()
 	if m.livenessStarter == nil {
@@ -2117,6 +2127,21 @@ func (m *Manager) MarkInstanceFrameworkReady(ctx context.Context, instance strin
 	appID = inst.AppID
 	runtime = inst.Runtime
 	m.mu.Unlock()
+	ctx, readySpan := pkgtrace.StartSpan(ctx, "guest.framework_ready",
+		attribute.String("instance_id", instance),
+		attribute.String("app_id", appID),
+		attribute.String("runtime", runtime),
+		attribute.Int64("warmup_ms", warmupMs),
+	)
+	defer func() {
+		if err != nil {
+			readySpan.SetAttributes(attribute.String("outcome", "error"))
+			readySpan.RecordError(err)
+		} else {
+			readySpan.SetAttributes(attribute.String("outcome", "ready"))
+		}
+		readySpan.End()
+	}()
 	// Publish through the scheduler-owned persistence seam. Surface errors so
 	// the bounded observer can retry instead of losing warm eligibility.
 	if m.frameworkReadyStamper != nil {
@@ -2843,11 +2868,11 @@ type WakeRequest struct {
 	// It must match the timeout written by builderd into the build manifest;
 	// vmmd uses it to retain the corresponding export/teardown headroom.
 	BuildTimeoutSec int
-	// Port (issue #460 / ADR-053, PR-C) is the per-deployment override
+	// Port (issue #460 / ADR-053, PR-C) is the per-deployment runtime
 	// port the customer's app binds inside the guest. 0 = legacy 8080
-	// (netns.AppPort default). The host's waitReady + DNAT stay fixed
-	// on 8080 (ADR-009 + guest/init/portnorm_linux.go); vmmd's
-	// forwarder uses this port to dial the guest. Stamped onto the
+	// (netns.AppPort default). The host's published and readiness port
+	// stays fixed on 8080; the per-netns DNAT maps it to this target and
+	// vmmd's forwarder dials the same target. Stamped onto the
 	// live Instance so vmmdgrpc forwarder callers can resolve
 	// LiveFor(instance).Port without a second request lookup.
 	Port int
@@ -3362,6 +3387,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit
+	nc.GuestAppPort = req.Port
 	// Plan validation (issue #301 / ADR-043). An empty / unknown plan
 	// would land the VM under the wrong cgroup sub-slice (or under
 	// none at all) and silently disable per-plan cpu.weight + cpu.max
@@ -3892,6 +3918,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 // when constructing the Instance. timings is optional for tests
 // that wire bringUp directly without a Wake frame.
 func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest, timings *bringUpTimings) (WakeMethod, error) {
+	serviceDiscoveryIP := ""
+	if !lease.IsBuilder && nc.HostBridgeIP.IsValid() {
+		serviceDiscoveryIP = nc.HostBridgeIP.String()
+	}
 	// issue #299: refuse to bring up an instance whose base ext4
 	// staged with a fix-available CRITICAL Grype finding. Runs BEFORE the restore
 	// decision tree because a scan refusal is a policy gate, not a
@@ -3946,9 +3976,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// path. Non-empty → Restore stages one extra drive
 			// per entry (read-only for sidecars, read-write for
 			// the main workload's drive1). Additive per ADR-016.
-			Workloads:      buildWorkloadsForRestore(req),
-			SecretsEnvJSON: req.preparedSecretsEnvJSON,
-			APIEnvJSON:     req.preparedAPIEnvJSON,
+			Workloads:          buildWorkloadsForRestore(req),
+			SecretsEnvJSON:     req.preparedSecretsEnvJSON,
+			APIEnvJSON:         req.preparedAPIEnvJSON,
+			ServiceDiscoveryIP: serviceDiscoveryIP,
 		}
 		// ADR-098 C11: stamp the RestoreMs (issue #470 / PR #543).
 		// vmm.Restore wraps /snapshot/load + waitReady for the
@@ -4031,9 +4062,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// (main + sidecars). buildWorkloadsForColdBoot emits an
 		// empty slice on the legacy single-workload path so
 		// BootColdBoot falls through to the LayerKey branch.
-		Workloads:      buildWorkloadsForColdBoot(req),
-		SecretsEnvJSON: req.preparedSecretsEnvJSON,
-		APIEnvJSON:     req.preparedAPIEnvJSON,
+		Workloads:          buildWorkloadsForColdBoot(req),
+		SecretsEnvJSON:     req.preparedSecretsEnvJSON,
+		APIEnvJSON:         req.preparedAPIEnvJSON,
+		ServiceDiscoveryIP: serviceDiscoveryIP,
 	}
 	coldBootStartedAt := time.Now()
 	coldBootErr := m.vmm.BootColdBoot(ctx, lease, spec)
@@ -4296,13 +4328,12 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 //     captureWarmSnapshotLocked; the instance is in RUNNING state
 //     and the runner is alive and can keep serving requests across
 //     the pause window).
-//  2. Call vmm.SnapshotKeepAlive (pause + /snapshot/create + publish
-//     mem + vmstate through the configured StorageBackend) WITHOUT
-//     releasing the chroot.
-//  3. Call vmm.ResumeVM to PATCH /vm {"state":"Resumed"} so the
-//     runner can keep accepting requests. Manager.live[instance] +
-//     cidToID stay intact — the warm path is purposefully a thin
-//     wrapper around SnapshotKeepAlive + ResumeVM, no teardown.
+//  2. Call vmm.SnapshotKeepAlive (pause + /snapshot/create), resuming
+//     immediately after Firecracker finishes the local files and before
+//     publishing mem + vmstate through the configured StorageBackend.
+//  3. Verify the VM is resumed after publication. ResumeVM treats an
+//     already-running VM as success. Manager.live[instance] + cidToID
+//     stay intact; the warm path performs no teardown.
 //  4. Return the SnapshotInfo the engine writes into the snapshots
 //     row (tier='warm').
 //
@@ -4320,13 +4351,12 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if !ok {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: not live", instance)
 	}
+	spec.ResumeBeforePublish = true
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err != nil {
-		// The VM is still paused (SnapshotKeepAlive publishes on
-		// success but the chroot is still alive). Best-effort
-		// resume so the runner can keep serving — failure to
-		// resume surfaces to the engine's destroy path with the
-		// original error wrapped.
+		// A failure before the early resume may leave the VM paused;
+		// a publication failure occurs after it is already running.
+		// ResumeVM is idempotent across both cases.
 		if rerr := m.vmm.ResumeVM(ctx, inst.Lease); rerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", rerr)))
 		}

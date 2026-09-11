@@ -176,6 +176,13 @@ Runbook: `docs/runbooks/FaasOTLPMetricsExporterDown.md`.
 
 Trace exporter runbook: `docs/runbooks/FaasOTLPTraceExporterDown.md`.
 
+The fleet dashboard also includes request- and wake-latency heatmaps with
+`trace_id` exemplars. To make a marker clickable, configure either
+`gv_trace_datasource_uid` for an existing Grafana trace datasource or
+`gv_trace_exemplar_url` with a trace-viewer URL containing Grafana's escaped
+`$${__value.raw}` macro. The metrics and heatmaps remain useful when no trace
+backend is configured; the runbook documents the observer-endpoint fallback.
+
 ## `loki-pipeline.json` (issue #274 follow-up)
 
 The Loki pipeline dashboard covers both control-plane and compute Promtail
@@ -232,10 +239,12 @@ will move to a federated scrape per ADR-031).
 | Build success rate (non-user_error) | `builderd_ops_total{op="build"}` | build success |
 | Build queue wait p95 | `builderd_build_queue_wait_seconds` | build queue wait p95 |
 | Build duration p95 (by outcome) | `builderd_build_duration_seconds` | per-outcome wall-clock |
-| API availability (5m) | `gateway_requests_total{code=~"2.."}` / `gateway_requests_total` × 100 | public SLO |
+| API availability (5m) | `gateway_requests_total{app!="-",code=~"2.."}` / `gateway_requests_total{app!="-"}` × 100 | public SLO; excludes requests that never resolved to an app |
 | Resident GB per paying customer | `meterd_resident_gb_per_customer{plan}` | resident GB per paying customer |
 | Per-route top 10 reqps + error rate (ADR-093) | `faas_gateway_request_rate_5m:by_route`, `faas_gateway_error_rate_5m:by_route` | per-route breakdown (opt-in) |
 | Per-route top 10 p95 latency (ADR-093) | `faas_gateway_p95_seconds:by_route` | per-route p95 (opt-in) |
+| Request latency distribution + trace exemplars | `gateway_request_duration_seconds` buckets | request-to-trace drill-down |
+| Wake latency distribution + trace exemplars | `gateway_wake_latency_seconds` buckets | wake-to-trace drill-down |
 | Deployment cancel rate by outcome (5m) | `apid_ops_total{op="deployment_cancel",outcome}` | queue controls — cancel (ADR-124) |
 | Deployment reorder rate by outcome (5m) | `apid_ops_total{op="deployment_reorder",outcome}` | queue controls — reorder (ADR-124) |
 | Deployment clear (single) rate by outcome (5m) | `apid_ops_total{op="deployment_clear",outcome}` | queue controls — clear (ADR-124 + PR #1181) |

@@ -9,6 +9,9 @@ import (
 
 var metricsDiscoveryJobs = []string{
 	"gatewayd-internal",
+	"vmmd",
+	"imaged",
+	"builderd",
 	"promtail-compute",
 }
 

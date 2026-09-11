@@ -342,12 +342,14 @@ func cmdAppDeploymentsAll(ctx context.Context, client *api.Client, slug string, 
 // The 3-word verb shape mirrors cmdWebhookRotateSecret (commands_webhooks.go:361).
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment wait <id> [--timeout SECONDS] | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--timeout SECONDS] | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
 	case "set-min-instances":
 		return cmdDeploymentSetMinInstances(args[1:])
+	case "summary":
+		return cmdDeploymentSummary(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
 	}
@@ -615,6 +617,12 @@ func renderDeploymentHostingReceipt(w io.Writer, raw json.RawMessage) {
 			profile += " " + receipt.Profile.FrameworkVer
 		}
 		_, _ = fmt.Fprintf(w, "%-14s %s (port %d)\n", "profile:", profile, receipt.Profile.Port)
+	}
+	if receipt.Profile.PackageManager != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "package_manager:", receipt.Profile.PackageManager)
+	}
+	if receipt.Profile.StartCommand != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "start_command:", receipt.Profile.StartCommand)
 	}
 	if receipt.Source.CommitSHA != "" {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "source_sha:", receipt.Source.CommitSHA)

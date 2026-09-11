@@ -50,6 +50,14 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	if a.PRNumber > 0 {
 		_ = w.WriteField("pr_number", fmt.Sprintf("%d", a.PRNumber))
 	}
+	if a.TrafficPercent != nil {
+		_ = w.WriteField("traffic_percent", fmt.Sprintf("%d", *a.TrafficPercent))
+	}
+	if a.Canary != nil {
+		if raw, err := json.Marshal(a.Canary); err == nil {
+			_ = w.WriteField("canary", string(raw))
+		}
+	}
 	if len(a.Workflows) > 0 {
 		if raw, err := json.Marshal(a.Workflows); err == nil {
 			_ = w.WriteField("workflows", string(raw))
@@ -89,6 +97,11 @@ type DeployAnnotations struct {
 	DeployedBy string // human-readable actor label
 	PRNumber   int    // positive int (DB CHECK; 0 collapses to NULL)
 	Workflows  []WorkflowSpec
+	// Rollout options share this transport envelope so local directory,
+	// tarball, developer-source, and source-ref deploys preserve the same
+	// semantics as image JSON deploys. The pointer preserves explicit zero.
+	TrafficPercent *int
+	Canary         *CanaryPresetSpec
 }
 
 func normalizeMultipartSourceRoot(raw string) (string, error) {

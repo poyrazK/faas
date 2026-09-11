@@ -19,6 +19,7 @@ ExecStart=/usr/local/bin/prometheus \
   --config.file=/etc/prometheus/prometheus.yml \
   --storage.tsdb.path={{ prom_data_dir }} \
   --storage.tsdb.retention.time={{ prom_retention_days }}d \
+  --enable-feature=exemplar-storage \
   --web.listen-address={{ prom_listen_addr }} \
   --web.console.libraries=/usr/share/prometheus/console_libraries \
   --web.console.templates=/usr/share/prometheus/consoles

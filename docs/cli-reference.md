@@ -23,7 +23,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
 | [`deployments`](#deployments) | List deployments (--limit N \| --before C \| --all) |
-| [`deployment`](#deployment) | Get or wait for one deployment (&lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
+| [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete) |
 | [`deploy`](#deploy) | Deploy (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
@@ -53,7 +53,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
-| [`postgres`](#postgres) | Manage managed PostgreSQL (postgres list\|create\|get\|delete\|restore\|bindings ...) |
+| [`postgres`](#postgres) | Manage managed PostgreSQL (postgres list\|usage\|create\|get\|delete\|restore\|bindings ...) |
 | [`ps`](#ps) | Show live instances + state for an app |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
@@ -650,7 +650,7 @@ List deployments (--limit N | --before C | --all)
 
 ## deployment
 
-Get or wait for one deployment (&lt;id&gt; | wait &lt;id&gt; | set-min-instances &lt;id&gt;)
+Get, summarize, or wait for one deployment (&lt;id&gt; | summary &lt;id&gt; | wait &lt;id&gt; | set-min-instances &lt;id&gt;)
 
 `gregale deployment [<subcommand>] <id> [--show-scan] [--min <N>]`
 
@@ -658,6 +658,14 @@ Get or wait for one deployment (&lt;id&gt; | wait &lt;id&gt; | set-min-instances
 |---|---|---|
 | `--show-scan` | include the per-deploy grype scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
+
+### deployment summary
+
+Show the release diff and rollback target
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
 
 ### deployment wait
 
@@ -904,6 +912,10 @@ Import an app OpenAPI document from a JSON file or stdin
 
 Preview uncovered routes without importing the document
 
+### openapi preview
+
+Preview declared routes, observed routes, and matching edge policies
+
 ### openapi rm
 
 Remove the imported app OpenAPI document
@@ -999,15 +1011,19 @@ Production debugger (ADR-127)
 
 ### debug requests
 
-Per-request telemetry (list|get|evidence|replay)
+Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])
 
 ### debug regressions
 
-Active regression observations
+Active regression observations (list|watch [--interval D] [--once])
 
 ### debug compare
 
 Per-route deployment-vs-deployment compare
+
+### debug bundle
+
+Export a redacted incident investigation bundle (bundle &lt;slug&gt; &lt;req_id&gt; [--output PATH])
 
 
 ## invitations
@@ -1241,13 +1257,17 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 
 ## postgres
 
-Manage managed PostgreSQL (postgres list|create|get|delete|restore|bindings ...)
+Manage managed PostgreSQL (postgres list|usage|create|get|delete|restore|bindings ...)
 
 `gregale postgres [<subcommand>]`
 
 ### postgres list
 
 List managed PostgreSQL databases
+
+### postgres usage
+
+Show monthly managed PostgreSQL usage and guardrail state
 
 ### postgres create
 
@@ -1310,9 +1330,13 @@ Enqueue a wake request
 
 Receive a wake request
 
-### queue status
+### queue state
 
 Show queue state
+
+### queue status
+
+Alias for queue state
 
 ### queue peek
 
@@ -1696,6 +1720,12 @@ Retry a failed delivery
 ### webhooks rotate-secret
 
 Rotate the webhook signing secret
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--secret <VALUE>` | replacement HMAC-SHA256 secret |  |
+| `--from-stdin` | read the replacement secret from stdin |  |
 
 
 ## whoami

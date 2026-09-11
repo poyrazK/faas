@@ -311,7 +311,7 @@ func vulnPaths(locs []grypeLocation) []string {
 // client validator rejects null. Empty-slice vs nil is the
 // distinction the wire contract relies on.
 type ScanResult struct {
-	SeverityCounts
+	SeverityCounts SeverityCounts `json:"severity_counts"`
 	// Vulnerabilities is the full typed CVE list, ALWAYS
 	// present (no omitempty). For a zero-finding scan
 	// (len(out.Matches) == 0 in parseGrypeOutput) the
@@ -334,17 +334,17 @@ type ScanResult struct {
 func (s *ScanResult) bumpSeverity(severity string) {
 	switch severity {
 	case SeverityCritical:
-		s.Critical++
+		s.SeverityCounts.Critical++
 	case SeverityHigh:
-		s.High++
+		s.SeverityCounts.High++
 	case SeverityMedium:
-		s.Medium++
+		s.SeverityCounts.Medium++
 	case SeverityLow:
-		s.Low++
+		s.SeverityCounts.Low++
 	case SeverityUnknown:
-		s.Unknown++
+		s.SeverityCounts.Unknown++
 	default:
-		s.Unknown++
+		s.SeverityCounts.Unknown++
 	}
 }
 
@@ -364,11 +364,11 @@ func (s *ScanResult) toMap() map[string]int {
 		return nil
 	}
 	return map[string]int{
-		SeverityCritical: s.Critical,
-		SeverityHigh:     s.High,
-		SeverityMedium:   s.Medium,
-		SeverityLow:      s.Low,
-		SeverityUnknown:  s.Unknown,
+		SeverityCritical: s.SeverityCounts.Critical,
+		SeverityHigh:     s.SeverityCounts.High,
+		SeverityMedium:   s.SeverityCounts.Medium,
+		SeverityLow:      s.SeverityCounts.Low,
+		SeverityUnknown:  s.SeverityCounts.Unknown,
 	}
 }
 
@@ -397,11 +397,11 @@ func (s *ScanResult) fixAvailableToMap() map[string]int {
 // struct directly into the deployments.scan_result jsonb
 // column.
 type SeverityCounts struct {
-	Critical int
-	High     int
-	Medium   int
-	Low      int
-	Unknown  int
+	Critical int `json:"critical"`
+	High     int `json:"high"`
+	Medium   int `json:"medium"`
+	Low      int `json:"low"`
+	Unknown  int `json:"unknown"`
 }
 
 // Severity closed enum (issue #299 / ADR-055). Grype emits

@@ -65,6 +65,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -93,7 +98,9 @@ def sync_detailed(
         body (UpdateTriggerRequest): Partial trigger update. nil means "leave unchanged" (same
             semantics as UpdateCronRequest). Kind is NOT a member — it
             is immutable. To change kind, create a new trigger and
-            delete the old one.
+            delete the old one. Inside a supplied Kafka sasl/tls block,
+            omitting the write-only credential preserves its stored value;
+            omitting the whole block removes that block and its credential.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -128,7 +135,9 @@ def sync(
         body (UpdateTriggerRequest): Partial trigger update. nil means "leave unchanged" (same
             semantics as UpdateCronRequest). Kind is NOT a member — it
             is immutable. To change kind, create a new trigger and
-            delete the old one.
+            delete the old one. Inside a supplied Kafka sasl/tls block,
+            omitting the write-only credential preserves its stored value;
+            omitting the whole block removes that block and its credential.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,7 +167,9 @@ async def asyncio_detailed(
         body (UpdateTriggerRequest): Partial trigger update. nil means "leave unchanged" (same
             semantics as UpdateCronRequest). Kind is NOT a member — it
             is immutable. To change kind, create a new trigger and
-            delete the old one.
+            delete the old one. Inside a supplied Kafka sasl/tls block,
+            omitting the write-only credential preserves its stored value;
+            omitting the whole block removes that block and its credential.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -191,7 +202,9 @@ async def asyncio(
         body (UpdateTriggerRequest): Partial trigger update. nil means "leave unchanged" (same
             semantics as UpdateCronRequest). Kind is NOT a member — it
             is immutable. To change kind, create a new trigger and
-            delete the old one.
+            delete the old one. Inside a supplied Kafka sasl/tls block,
+            omitting the write-only credential preserves its stored value;
+            omitting the whole block removes that block and its credential.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

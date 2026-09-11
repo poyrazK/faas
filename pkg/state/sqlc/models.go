@@ -169,6 +169,18 @@ type AlertRule struct {
 	Action              string
 }
 
+type ApiConsumer struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	ExternalRef string
+	Name        string
+	Status      string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	RevokedAt   pgtype.Timestamptz
+}
+
 type ApiKey struct {
 	ID            pgtype.UUID
 	AccountID     pgtype.UUID
@@ -335,16 +347,17 @@ type AppRegistryCredential struct {
 }
 
 type AppSecret struct {
-	AccountID  pgtype.UUID
-	AppID      pgtype.UUID
-	Key        string
-	Ciphertext []byte
-	CreatedAt  pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
-	OrgID      pgtype.UUID
-	Kid        pgtype.Text
-	Scope      string
-	ValueHash  pgtype.Text
+	AccountID                        pgtype.UUID
+	AppID                            pgtype.UUID
+	Key                              string
+	Ciphertext                       []byte
+	CreatedAt                        pgtype.Timestamptz
+	UpdatedAt                        pgtype.Timestamptz
+	OrgID                            pgtype.UUID
+	Kid                              pgtype.Text
+	Scope                            string
+	ValueHash                        pgtype.Text
+	ManagedObjectStorageCredentialID pgtype.UUID
 }
 
 type AppTrustedSigner struct {
@@ -441,6 +454,17 @@ type BuilderUsage struct {
 	OrgID   pgtype.UUID
 }
 
+type BuilderVmCleanup struct {
+	BuildID       pgtype.UUID
+	NextAttemptAt pgtype.Timestamptz
+	ClaimedAt     pgtype.Timestamptz
+	ClaimToken    pgtype.UUID
+	Attempts      int32
+	LastError     pgtype.Text
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type CliAuthCode struct {
 	TokenHash  []byte
 	AccountID  pgtype.UUID
@@ -520,6 +544,7 @@ type ConsumerKey struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
 	AppID        pgtype.UUID
+	ConsumerID   pgtype.UUID
 	Name         string
 	Prefix       string
 	HashedSecret []byte
@@ -1170,6 +1195,8 @@ type ObjectBucket struct {
 	AttemptCount       int32
 	RetryAt            pgtype.Timestamptz
 	LastErrorCode      string
+	PublicRead         bool
+	ServeAt            pgtype.Text
 }
 
 type ObjectStorageAccessGrant struct {
@@ -1262,21 +1289,25 @@ type ObjectStorageRequestMetric struct {
 	BucketID     pgtype.UUID
 	PeriodStart  pgtype.Timestamptz
 	RequestCount int64
+	EgressBytes  int64
 }
 
 type ObjectStorageS3Credential struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	BucketID     pgtype.UUID
-	AccessKeyID  string
-	SecretSealed []byte
-	Kid          string
-	Label        string
-	Permission   string
-	Status       string
-	CreatedAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	RevokedAt    pgtype.Timestamptz
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	BucketID      pgtype.UUID
+	AccessKeyID   string
+	SecretSealed  []byte
+	Kid           string
+	Label         string
+	Permission    string
+	Status        string
+	CreatedAt     pgtype.Timestamptz
+	LastUsedAt    pgtype.Timestamptz
+	RevokedAt     pgtype.Timestamptz
+	ManagedAppID  pgtype.UUID
+	ManagedScope  pgtype.Text
+	ManagedPrefix pgtype.Text
 }
 
 type ObjectStorageUsageHead struct {

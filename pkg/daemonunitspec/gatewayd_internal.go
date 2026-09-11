@@ -60,7 +60,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "simple",
+		Type:               "notify",
 		User:               "faas",
 		Group:              "faas",
 		ExecStart:          `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
@@ -81,6 +81,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_GATEWAY_LISTEN", Value: "off"},
+			{Key: "FAAS_HOST_KEY_PATH", Value: "/etc/faas/secrets/host.age"},
 			// Security review A4 (mirrors faas-apid.service): the session
 			// key reaches the daemon as a LoadCredential= path, never as
 			// inherited env content. cmd/gatewayd-internal/session_key.go
@@ -96,6 +97,8 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		},
 
 		NoNewPrivileges:         true,
+		CapabilityBoundingSet:   []string{"CAP_NET_BIND_SERVICE"},
+		AmbientCapabilities:     []string{"CAP_NET_BIND_SERVICE"},
 		ProtectSystem:           "strict",
 		ProtectHome:             true,
 		PrivateTmp:              daemonunit.BoolPtr(true),

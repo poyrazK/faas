@@ -29,6 +29,16 @@ COPY --from=busybox /bin/busybox /bin/busybox
 # diagnostic paths rely on it. Scratch does not create symlinks from the
 # source image, so install the BusyBox binary at the contract path too.
 COPY --from=busybox /bin/busybox /bin/sh
+# Railpack-managed tools use `#!/usr/bin/env ...` shebangs. Plain web apps
+# intentionally use this minimal base, so the app layer may contain a complete
+# Node/Python runtime while still relying on drive0 for env.
+COPY --from=busybox /bin/busybox /usr/bin/env
+# mise's npm launcher resolves its install directory and plugin name with
+# `dirname` and `basename` before it execs Node. Plain web apps keep their
+# runtime in drive1 and rely on these shared drive0 tools, so provide the
+# BusyBox applets at the standard paths.
+COPY --from=busybox /bin/busybox /usr/bin/dirname
+COPY --from=busybox /bin/busybox /usr/bin/basename
 COPY --from=build /bin/bash /bin/bash
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # The app user every guest execs as (uid 1000, spec §4.8).

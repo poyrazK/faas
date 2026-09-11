@@ -270,6 +270,42 @@ func TestCmdMirrorUpdate_PatchSemantics(t *testing.T) {
 	}
 }
 
+func TestCmdMirrorUpdate_ExplicitFalseSemantics(t *testing.T) {
+	const wantSlug = "myapp"
+	const wantID = "mrr_abc123"
+	var hits int32
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		gotBody, _ = io.ReadAll(r.Body)
+		writeJSONTest(w, mirrorRuleTestFixture())
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	if code := cmdMirrorUpdate([]string{"--app", wantSlug, "--id", wantID, "--include-body=false"}); code != 0 {
+		t.Fatalf("--include-body=false exit = %d, want 0", code)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal(gotBody, &sent); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if value, ok := sent["include_body"]; !ok || value != false {
+		t.Fatalf("include_body = %v, present=%t; want false", value, ok)
+	}
+
+	for _, flagArg := range []string{"--enable=false", "--disable=false", "--no-include-body=false", "--clear-redact=false"} {
+		before := atomic.LoadInt32(&hits)
+		if code := cmdMirrorUpdate([]string{"--app", wantSlug, "--id", wantID, flagArg}); code == 0 {
+			t.Errorf("%s exit = 0, want non-zero no-op", flagArg)
+		}
+		if after := atomic.LoadInt32(&hits); after != before {
+			t.Errorf("%s sent an HTTP mutation: hits %d -> %d", flagArg, before, after)
+		}
+	}
+}
+
 // TestCmdMirrorUpdate_MutuallyExclusive pins that --enable +
 // --disable together are rejected before HTTP. The same posture
 // applies to --include-body vs --no-include-body in

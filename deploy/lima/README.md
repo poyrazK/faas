@@ -29,7 +29,7 @@ Tear down with `limactl delete -f faas-metal`.
 - Ubuntu 24.04 arm64, `vz` backend, `nestedVirtualization: true`, host `~`
   mounted read-write (so the repo checkout is reachable).
 - A `probe` that fails fast with a clear message if `/dev/kvm` never appears.
-- Go 1.25.7 (matches `go.mod`), `build-essential`, `e2fsprogs` (`mkfs.ext4`),
+- Go 1.25.13 (matches `go.mod`), `build-essential`, `e2fsprogs` (`mkfs.ext4`),
   `iproute2`/`iptables`, `busybox-static` (the M0 rootfs fallback), and the
   default user added to the `kvm` group.
 - aarch64 Firecracker + jailer **v1.7.0** on `PATH`, and the aarch64 guest

@@ -2771,9 +2771,9 @@ func (s *PgStore) ListLiveInstancesOnNode(ctx context.Context, nodeID string, ma
 	sel := `select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''),
 	               coalesce(i.guest_uid,0), coalesce(host(i.host_ip),''), i.ram_mb,
 	               i.started_at, i.last_request_at, i.parked_at,
-	               coalesce(i.node_id::text, ''), i.wake_id, i.framework_ready_at,
-	               i.migrated_from_node_id::text, i.migrated_at, coalesce(i.lease_token, ''),
-	               i.tail_count, i.mode, i.request_count
+		               coalesce(i.node_id::text, ''), i.wake_id, i.framework_ready_at,
+		               i.migrated_from_node_id::text, i.migrated_at, coalesce(i.lease_token, ''),
+		               i.migration_started_at, i.tail_count, i.mode, i.request_count
 	          from instances i
 	         where i.state = 'running'` +
 		nodeClause + `
@@ -2823,7 +2823,8 @@ func (s *PgStore) MarkInstanceMigrating(ctx context.Context, instanceID, current
 	tag, err := s.pool.Exec(ctx,
 		`update instances
 		    set state = 'migrating',
-		        lease_token = $3
+		        lease_token = $3,
+		        migration_started_at = now()
 		  where id = $1
 		    and node_id = $2
 		    and state = 'running'`,
@@ -2887,6 +2888,7 @@ func (s *PgStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNode
 		        migrated_from_node_id = $2,
 		        migrated_at = now(),
 		        lease_token = $4,
+		        migration_started_at = NULL,
 		        state = 'running'
 		where id = $1
 		    and state = 'migrating'
@@ -2935,7 +2937,8 @@ func (s *PgStore) CancelInstanceMigration(ctx context.Context, instanceID, origi
 	tag, err := s.pool.Exec(ctx,
 		`update instances
 		    set state = 'parked',
-		        lease_token = NULL
+		        lease_token = NULL,
+		        migration_started_at = NULL
 		  where id = $1
 		    and state = 'migrating'
 		    and node_id = $2
@@ -2950,16 +2953,14 @@ func (s *PgStore) CancelInstanceMigration(ctx context.Context, instanceID, origi
 	return nil
 }
 
-// ListExpiredMigrations returns every instance row in
-// state='migrating' (Tier A6 / ADR-067 migrating-instance
-// watchdog). The watchdog is the only writer that can move a
-// row out of 'migrating' without a peer commit, so the
-// unresolved row is the input set. The SQL also enforces
-// lease_token IS NOT NULL — every wedged migration must
-// carry the lease the watchdog needs to drive the gRPC
-// re-invite; a row in 'migrating' without a lease is a
-// corrupted state and the watchdog drops it silently (the
-// next watch-dog tick is no-op idempotent).
+// ListExpiredMigrations returns leased instance rows in
+// state='migrating' whose migration_started_at is older than the
+// requested lease age (Tier A6 / ADR-067 migrating-instance watchdog).
+// The watchdog is the only writer that can move a row out of
+// 'migrating' without a peer commit, so the unresolved row is the input
+// set. A row in 'migrating' without a lease or start timestamp is ignored
+// by the aged production query and remains visible through the legacy
+// unfiltered form for repair tooling.
 //
 // Sorted by instance id ASC for determinism so two peers
 // observing the same bad-owner event read the same input
@@ -2969,22 +2970,31 @@ func (s *PgStore) CancelInstanceMigration(ctx context.Context, instanceID, origi
 // Returns an empty slice (not ErrNotFound) when no rows
 // match; callers treat that as "nothing to reconcile this
 // tick". Symmetric with ListLiveInstancesOnNode (Tier A5).
-func (s *PgStore) ListExpiredMigrations(ctx context.Context, maxPerTick int) ([]Instance, error) {
+func (s *PgStore) ListExpiredMigrations(ctx context.Context, maxPerTick int, olderThan ...time.Duration) ([]Instance, error) {
 	if maxPerTick < 1 {
 		return nil, nil
+	}
+	var cutoff any
+	if len(olderThan) > 0 && olderThan[0] > 0 {
+		cutoff = time.Now().UTC().Add(-olderThan[0])
 	}
 	sel := `select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''),
 	               coalesce(i.guest_uid,0), coalesce(host(i.host_ip),''), i.ram_mb,
 	               i.started_at, i.last_request_at, i.parked_at,
 	               coalesce(i.node_id::text, ''), i.wake_id, i.framework_ready_at,
 	               i.migrated_from_node_id::text, i.migrated_at, coalesce(i.lease_token, ''),
+	               i.migration_started_at,
 	               i.tail_count, i.mode, i.request_count
 	          from instances i
 	         where i.state = 'migrating'
 	           and i.lease_token is not null
-	         order by i.id asc
-	         limit $1`
-	rows, err := s.pool.Query(ctx, sel, maxPerTick)
+		           and ($2::timestamptz IS NULL OR i.migration_started_at <= $2)`
+	orderBy := "i.id asc"
+	if cutoff != nil {
+		orderBy = "i.migration_started_at asc nulls first, i.id asc"
+	}
+	sel += " order by " + orderBy + " limit $1"
+	rows, err := s.pool.Query(ctx, sel, maxPerTick, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("state: list expired migrations: %w", err)
 	}
@@ -3026,7 +3036,8 @@ func (s *PgStore) ReinviteMigratingInstance(ctx context.Context, instanceID, lea
 		`update instances
 		    set state = 'running',
 		        migrated_at = now(),
-		        lease_token = NULL
+		        lease_token = NULL,
+		        migration_started_at = NULL
 		  where id = $1
 		    and state = 'migrating'
 		    and lease_token = $2`,
@@ -3069,7 +3080,8 @@ func (s *PgStore) AbortMigratingInstance(ctx context.Context, instanceID, leaseT
 	tag, err := s.pool.Exec(ctx,
 		`update instances
 		    set state = 'parked',
-		        lease_token = NULL
+		        lease_token = NULL,
+		        migration_started_at = NULL
 		  where id = $1
 		    and state = 'migrating'
 		    and lease_token = $2`,
@@ -3755,28 +3767,63 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	return nil
 }
 
-// SoftDeleteAppCascade marks the app deleted (status='deleted') and
-// returns the freshly-deleted App row. Per Phase 5 user decision the
-// cascade is status-only — child rows survive for slug-reuse (an app
-// deleted then recreated under the same slug keeps its envs and
-// secrets; cf. memstore_test.go:309-312). GDPR-style hard cascade
-// still lives in DeleteAccount. Returns ErrNotFound when no row
-// matches; the subsequent mapErr funnel wraps SQLSTATE 23502
-// (not_null) the same way as SetAppWorkloadClass.
+// SoftDeleteAppCascade marks the app deleted and atomically cancels every
+// non-terminal deployment/build. Child rows survive for history and slug
+// reuse, while the status fence prevents a late pipeline writer from
+// resuming work after deletion is acknowledged.
 func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return App{}, fmt.Errorf("state: soft delete app begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&locked); err != nil {
+		return App{}, mapErr(err)
+	}
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `
+		update deployments
+		   set status = 'cancelled',
+		       cancelled_at = $2,
+		       cancelled_by_principal = 'system:app-delete',
+		       cancel_reason = 'system'
+		 where app_id = $1
+		   and status in ('pending', 'building', 'imaging', 'snapshotting')`, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app cancel deployments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		with candidates as (
+			select b.id, b.status
+			  from builds b
+			  join deployments d on d.id = b.deployment_id
+			 where d.app_id = $1 and b.status in ('queued', 'running')
+			 for update of b
+		), cancelled as (
+			update builds b
+			   set status = 'cancelled',
+			       cancelled_at = $2,
+			       cancelled_by_deployment_cascade = true
+			  from candidates c
+			 where b.id = c.id
+			returning b.id
+		), cleanup as (
+			insert into builder_vm_cleanup (build_id)
+			select c.id from candidates c where c.status = 'running'
+			on conflict (build_id) do nothing
+		)
+		select count(*) from cancelled`, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app cancel builds: %w", err)
+	}
 	var a App
-	// The apps table does NOT have an updated_at column (appsSelectColumns
-	// at pgstore.go:6531 doesn't include it; no migration adds it). The
-	// earlier PR-E code touched updated_at = now() here, which trips
-	// SQLSTATE 42703 on every soft-delete. The deleted row is filtered
-	// out of every list/read by status <> 'deleted', so the deletion
-	// timestamp is implicit — no separate column needed.
-	row := s.pool.QueryRow(ctx, `
+	if err := scanAppInto(&a, tx.QueryRow(ctx, `
 		update apps set status = 'deleted'
 		where id = $1
-		returning `+appsSelectColumns, id)
-	if err := scanAppInto(&a, row); err != nil {
+		returning `+appsSelectColumns, id)); err != nil {
 		return App{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app commit: %w", err)
 	}
 	return a, nil
 }
@@ -4673,16 +4720,10 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // already-deleted rows anyway, so the invariant "an app either accepts
 // deploys OR is deleted" is one-directional here.
 //
-// PR-B folds the prior-deployment supersede INTO this transaction so
-// the apid → state boundary can never leave a live deployment as
-// 'superseded' with no replacement. The previous "supersede then
-// create" two-step bug (only on the image: branch — the tarball
-// branch never superseded at all) is closed by reading the latest
-// non-superseded-non-failed row under FOR UPDATE, marking it
-// 'superseded', and inserting the new row, all in the same tx. A
-// concurrent CreateDeployment against the same app serialises behind
-// the row lock (Step 2.5 below); if our subsequent INSERT fails the
-// defer tx.Rollback reverts both writes together.
+// A stable create supersedes only an older pending candidate in this
+// transaction. The serving row stays live throughout the build; the eventual
+// MarkDeploymentLive call retires it and promotes the ready replacement in one
+// transaction. Concurrent creates serialize on the parent app row.
 //
 // A non-empty d.ID is inserted verbatim. GitHub delivery dispatch uses this
 // to supply a deterministic UUID; all other callers keep the database-generated
@@ -4716,38 +4757,15 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		}
 		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
-	if d.CanaryTotalSteps <= 0 && !serviceRollout {
-		// Stable creation may end an active canary, so lock the whole
-		// live set in deterministic id order before the prior-row
-		// lookup. This preserves the lock ordering used by traffic
-		// updates and avoids a create-vs-rebalance deadlock.
-		rows, err := tx.Query(ctx,
-			`select id from deployments
-			  where app_id = $1 and status = 'live'
-			  order by id for update`, d.AppID)
-		if err != nil {
-			return Deployment{}, fmt.Errorf("state: lock live deployments: %w", err)
-		}
-		for rows.Next() {
-			var ignored string
-			if err := rows.Scan(&ignored); err != nil {
-				rows.Close()
-				return Deployment{}, fmt.Errorf("state: scan live deployment lock: %w", err)
-			}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return Deployment{}, fmt.Errorf("state: iterate live deployment locks: %w", err)
-		}
-		rows.Close()
-	}
-
-	// 2. Lock + supersede the prior live/pending row, if any. PR-B: the
-	//    supersede is in-tx so a failed INSERT below rolls it back too.
+	// 2. Supersede an older pending row, if any. A live deployment remains
+	//    routable until MarkDeploymentLive atomically promotes its healthy
+	//    replacement. Moving the live cutover to promotion prevents a stable
+	//    redeploy from creating a customer-visible no-live window while the
+	//    replacement is pending, building, or snapshotting.
 	//    The (app_id, created_at desc) index from migration 00007 covers
 	//    the search.
 	//
-	//    The status set is NARROW ('pending' | 'live') on purpose. A
+	//    The status set is NARROW ('pending') on purpose. A
 	//    row in 'building' / 'imaging' / 'snapshotting' represents a
 	//    build pipeline already in flight — the prior vmmd VM is
 	//    running, builderd is mid-build, imaged is rendering an ext4.
@@ -4763,59 +4781,32 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	//    We exclude 'failed' explicitly per PR-A's
 	//    LatestSupersededDeployment: failure history stays observable.
 	//
-	//    Callers that need the just-superseded row (apid's
-	//    NotifyDeploymentChanged fan-out) read it BEFORE the call via
-	//    LatestDeploymentForScope(ctx, appID, scope) — by the time this tx commits,
-	//    that row is already visible as 'superseded' to the next read.
-	//    The 2-return shape keeps the signature backward-compatible
-	//    with pre-PR-B call sites (the slice-3 cascade test on main
-	//    relies on `dep, err :=` form).
+	//    Callers capture the current same-scope row before this call when they
+	//    need to record the intended predecessor in audit metadata.
 	//
-	//    Stable deployments supersede the prior row here. Canary
-	//    deployments intentionally leave it live as the residual traffic
-	//    bucket until the canary reaches its terminal stage.
+	//    Canary and service-rollout deployments leave pending siblings alone;
+	//    their rollout coordinators own overlap and cancellation semantics.
 	var priorID string
-	if err := tx.QueryRow(ctx,
-		`select id from deployments
+	if d.CanaryTotalSteps <= 0 && !serviceRollout {
+		if err := tx.QueryRow(ctx,
+			`select id from deployments
 		  where app_id = $1
 		    and scope = $2
-		    and status in ('pending','live')
+		    and status = 'pending'
 		  order by created_at desc
 		  limit 1
 		  for update`,
-		d.AppID, normalizedDeploymentScope(d.Scope)).Scan(&priorID); err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return Deployment{}, fmt.Errorf("state: lock prior deployment: %w", err)
-		}
-		// pgx.ErrNoRows → no prior; that's fine. Move on.
-	} else if d.CanaryTotalSteps <= 0 && !serviceRollout {
-		// Issue #556 PR-A: zero the prior row's traffic_percent in
-		// the same tx so Σ over live rows remains 100 by construction
-		// (the new INSERT defaults traffic_percent to 100 below).
-		// Two-write update is intentional: the first write flips
-		// status to 'superseded' (the pre-#556 contract); the second
-		// zeroes the new column. Combining them into one UPDATE SET
-		// list would also work but makes the diff against #556's
-		// "minimal blast radius" intent harder to review.
-		if _, err := tx.Exec(ctx,
-			`update deployments
-			    set status = 'superseded', traffic_percent = 0
-			  where id = $1`,
-			priorID); err != nil {
-			return Deployment{}, fmt.Errorf("state: supersede prior %s: %w", priorID, err)
-		}
-	}
-	if d.CanaryTotalSteps <= 0 && !serviceRollout {
-		// A stable deployment terminates any active canary overlap as
-		// well as the newest prior row. The app-level partial unique
-		// index requires every other live revision to be gone before
-		// this deployment is activated.
-		if _, err := tx.Exec(ctx,
-			`update deployments
-			    set status = 'superseded', traffic_percent = 0
-			  where app_id = $1 and scope = $2 and status = 'live'`,
-			d.AppID, normalizedDeploymentScope(d.Scope)); err != nil {
-			return Deployment{}, fmt.Errorf("state: supersede live canary siblings: %w", err)
+			d.AppID, normalizedDeploymentScope(d.Scope)).Scan(&priorID); err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return Deployment{}, fmt.Errorf("state: lock prior pending deployment: %w", err)
+			}
+		} else {
+			if _, err := tx.Exec(ctx,
+				`update deployments
+				    set status = 'superseded', traffic_percent = 0
+				  where id = $1`, priorID); err != nil {
+				return Deployment{}, fmt.Errorf("state: supersede prior pending %s: %w", priorID, err)
+			}
 		}
 	}
 
@@ -4852,7 +4843,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	// stage, and the APID handler has already copied that stage onto the
 	// row. Mirrors memstore.CreateDeployment while preserving the schema
 	// NOT NULL DEFAULT 100 contract for non-canary rows.
-	if d.TrafficPercent == 0 && d.CanaryTotalSteps <= 0 && !serviceRollout {
+	if d.TrafficPercent == 0 && !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !serviceRollout {
 		d.TrafficPercent = 100
 	}
 	row := tx.QueryRow(ctx,
@@ -4868,10 +4859,11 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          scope,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number, workflows,
-		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile)
+		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
+		                          traffic_percent_explicit)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
-		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37)
+		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -4911,7 +4903,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		// deployments_pr_number_positive_chk CHECK (which rejects 0).
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
-		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile))
+		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -5406,7 +5398,7 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 	if status != string(DeployLive) {
 		return Deployment{}, fmt.Errorf("state: deployment %s status=%s: %w",
-			id, status, ErrInvalidTrafficPercent)
+			id, status, ErrDeploymentNotLive)
 	}
 
 	// (3) Lock sibling live rows in the same app so a concurrent
@@ -5961,6 +5953,29 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 	return scanDeployments(rows)
 }
 
+func (s *PgStore) ListLatestDeploymentPerApp(ctx context.Context, accountID string) (map[string]Deployment, error) {
+	rows, err := s.pool.Query(ctx,
+		`select distinct on (d.app_id) `+deploymentSelectColumnsQualified+`
+		 from deployments d join apps a on a.id = d.app_id
+		 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
+		 order by d.app_id, d.created_at desc, d.id desc`,
+		accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	deployments, err := scanDeployments(rows)
+	if err != nil {
+		return nil, err
+	}
+	latest := make(map[string]Deployment, len(deployments))
+	for _, deployment := range deployments {
+		latest[deployment.AppID] = deployment
+	}
+	return latest, nil
+}
+
 func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]Deployment, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -5993,12 +6008,18 @@ func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID s
 }
 
 func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
-	tag, err := s.pool.Exec(ctx, `update deployments set status = $2, error = $3 where id = $1`, id, string(status), nullString(errMsg))
+	tag, err := s.pool.Exec(ctx, `
+		update deployments set status = $2, error = $3
+		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')`, id, string(status), nullString(errMsg))
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		var current DeploymentStatus
+		if err := s.pool.QueryRow(ctx, `select status from deployments where id = $1`, id).Scan(&current); err != nil {
+			return mapErr(err)
+		}
+		return ErrInvalidStateTransition
 	}
 	return nil
 }
@@ -6267,12 +6288,67 @@ func (s *PgStore) MarkDeploymentSuperseded(ctx context.Context, id string) error
 	return s.UpdateDeploymentStatus(ctx, id, DeploySuperseded, "")
 }
 
+// captureDeploymentOpenAPISnapshotTx reads the edge-rule set while the
+// mark-live transaction is still open and delegates projection to the
+// registered openapidiff callback. Keeping the read, status update, and
+// eventual UPSERT on one tx makes a live deployment and its contract snapshot
+// an atomic unit.
+func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx.Tx, dep Deployment) (OpenAPISnapshot, error) {
+	rows, err := tx.Query(ctx,
+		`select `+edgeRuleSelectCols+` from edge_rules
+		 where app_id = $1::uuid
+		 order by priority asc, created_at desc`, dep.AppID)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: read edge rules for snapshot: %w", err)
+	}
+	defer rows.Close()
+	rules, err := scanEdgeRules(rows)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: scan edge rules for snapshot: %w", err)
+	}
+	pending := make([]api.CreateEdgeRuleRequest, 0, len(rules))
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+		request, err := edgeRuleToCreateEdgeRuleRequest(rule)
+		if err != nil {
+			return OpenAPISnapshot{}, fmt.Errorf("state: encode edge rule %s for snapshot: %w", rule.ID, err)
+		}
+		pending = append(pending, request)
+	}
+	scope := normalizedDeploymentScope(dep.Scope)
+	snap, err := getOpenAPICapture()(ctx, tx, dep.ID, dep.AppID, scope, pending)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: capture snapshot for %s: %w", dep.ID, err)
+	}
+	return snap, nil
+}
+
 func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("state: mark deployment live begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	// CreateDeployment takes the app lock before touching deployment rows.
+	// Use the same order here so two ready candidates cannot race through
+	// stable cutover and so create-versus-promote cannot deadlock.
+	var appID string
+	if err := tx.QueryRow(ctx, `select app_id from deployments where id = $1`, id).Scan(&appID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: mark deployment live resolve app: %w", err)
+	}
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: mark deployment live lock app: %w", err)
+	}
 
 	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
@@ -6283,13 +6359,117 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
 	}
-	if dep.Status == DeployLive || dep.CanaryTotalSteps <= 0 {
+	if dep.Status == DeployCancelled {
+		return ErrInvalidStateTransition
+	}
+	if dep.Status == DeployLive || (dep.CanaryTotalSteps <= 0 && IsServiceRollout(dep)) {
 		if _, err := tx.Exec(ctx,
 			`update deployments set status = $2, error = '' where id = $1`, id, string(DeployLive)); err != nil {
 			return fmt.Errorf("state: mark deployment live update: %w", err)
 		}
+		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+		if err != nil {
+			return err
+		}
+		if snap.DeploymentID != "" {
+			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
+				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+			}
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("state: mark deployment live commit: %w", err)
+		}
+		return nil
+	}
+	if dep.CanaryTotalSteps <= 0 && dep.TrafficPercentExplicit {
+		rows, err := tx.Query(ctx,
+			`select id, traffic_percent
+			   from deployments
+			  where app_id = $1 and scope = $2 and status = 'live' and id <> $3
+			  order by id
+			  for update`, dep.AppID, normalizedDeploymentScope(dep.Scope), id)
+		if err != nil {
+			return fmt.Errorf("state: mark manual split live lock siblings: %w", err)
+		}
+		var siblings []struct {
+			ID    string
+			Prior int
+		}
+		for rows.Next() {
+			var sibling struct {
+				ID    string
+				Prior int
+			}
+			if err := rows.Scan(&sibling.ID, &sibling.Prior); err != nil {
+				rows.Close()
+				return fmt.Errorf("state: mark manual split live scan sibling: %w", err)
+			}
+			siblings = append(siblings, sibling)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("state: mark manual split live iterate siblings: %w", err)
+		}
+		if len(siblings) == 0 && dep.TrafficPercent != 100 {
+			return fmt.Errorf("state: manual split has no live base deployment: %w", ErrTrafficPercentSumInvalid)
+		}
+
+		now := time.Now().UTC()
+		if _, err := tx.Exec(ctx,
+			`update deployments set
+				status = 'live', error = '', rollout_state = 'complete', rollout_completed_at = $2
+			 where id = $1`, id, now); err != nil {
+			return fmt.Errorf("state: mark manual split live: %w", err)
+		}
+		newWeights := RedistributeTraffic(siblings, 100-dep.TrafficPercent)
+		for i, sibling := range siblings {
+			if _, err := tx.Exec(ctx,
+				`update deployments set traffic_percent = $2 where id = $1`,
+				sibling.ID, newWeights[i]); err != nil {
+				return fmt.Errorf("state: mark manual split sibling %s: %w", sibling.ID, err)
+			}
+		}
+		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+		if err != nil {
+			return err
+		}
+		if snap.DeploymentID != "" {
+			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
+				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("state: mark manual split live commit: %w", err)
+		}
+		return nil
+	}
+	if dep.CanaryTotalSteps <= 0 {
+		// The replacement has completed its build/readiness pipeline. Retire
+		// every live revision in this scope and activate the replacement in
+		// one transaction, so readers observe either the old or the new live
+		// row and never an empty routing set.
+		if _, err := tx.Exec(ctx,
+			`update deployments
+			    set status = 'superseded', traffic_percent = 0
+			  where app_id = $1 and scope = $2 and status = 'live' and id <> $3`,
+			dep.AppID, normalizedDeploymentScope(dep.Scope), id); err != nil {
+			return fmt.Errorf("state: mark stable live supersede siblings: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`update deployments set status = 'live', error = '', traffic_percent = 100 where id = $1`, id); err != nil {
+			return fmt.Errorf("state: mark stable deployment live: %w", err)
+		}
+		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+		if err != nil {
+			return err
+		}
+		if snap.DeploymentID != "" {
+			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
+				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("state: mark stable deployment live commit: %w", err)
 		}
 		return nil
 	}
@@ -6358,40 +6538,29 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 			}
 		}
 	}
+	snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+	if err != nil {
+		return err
+	}
+	if snap.DeploymentID != "" {
+		if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
+			return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: mark deployment live commit: %w", err)
 	}
 	return nil
 }
 
-// UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)
-// upserts the deployment_openapi_snapshots row for the given
-// deployment. PR-B refactors MarkDeploymentLive to call this
-// method inside the same transaction as the status='live'
-// UPDATE.
-func (s *PgStore) UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap OpenAPISnapshot) error {
-	if snap.DeploymentID == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty deployment_id")
-	}
-	if snap.AppID == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty app_id")
-	}
-	if snap.Scope == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty scope")
-	}
-	if len(snap.Snapshot) == 0 {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty snapshot bytes")
-	}
-	if snap.SHA256 == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty sha256")
-	}
-	if snap.SchemaVersion < 1 {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: schema_version must be >= 1")
+func upsertDeploymentOpenAPISnapshotDBTX(ctx context.Context, db sqlc.DBTX, snap OpenAPISnapshot) error {
+	if err := validateOpenAPISnapshot(snap); err != nil {
+		return fmt.Errorf("pgstore: upsert snapshot: %w", err)
 	}
 	if snap.CapturedAt.IsZero() {
 		snap.CapturedAt = time.Now().UTC()
 	}
-	_, err := s.pool.Exec(ctx, `
+	_, err := db.Exec(ctx, `
 		insert into deployment_openapi_snapshots
 			(deployment_id, app_id, scope, snapshot, sha256, schema_version, captured_at)
 		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
@@ -6404,9 +6573,21 @@ func (s *PgStore) UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap Open
 		       captured_at = excluded.captured_at
 	`, snap.DeploymentID, snap.AppID, snap.Scope, []byte(snap.Snapshot), snap.SHA256, snap.SchemaVersion, snap.CapturedAt)
 	if err != nil {
-		return fmt.Errorf("pgstore: UpdateDeploymentOpenAPISnapshot: %w", err)
+		return fmt.Errorf("pgstore: upsert snapshot: %w", err)
 	}
 	return nil
+}
+
+// UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)
+// upserts the deployment_openapi_snapshots row for the given
+// deployment. PR-B refactors MarkDeploymentLive to call this
+// method inside the same transaction as the status='live'
+// UPDATE.
+func (s *PgStore) UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap OpenAPISnapshot) error {
+	if err := validateOpenAPISnapshot(snap); err != nil {
+		return fmt.Errorf("pgstore: UpdateDeploymentOpenAPISnapshot: %w", err)
+	}
+	return upsertDeploymentOpenAPISnapshotDBTX(ctx, s.pool, snap)
 }
 
 // LatestOpenAPISnapshotForScope returns the most recently
@@ -6540,11 +6721,21 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	var d Deployment
 	var appID string
 	var status DeploymentStatus
-	if err := tx.QueryRow(ctx, `
-		SELECT app_id, status
-		  FROM deployments
-		 WHERE id = $1
-		 FOR UPDATE`, id).Scan(&appID, &status); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT app_id FROM deployments WHERE id = $1`, id).Scan(&appID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Deployment{}, nil, ErrNotFound
+		}
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: resolve deployment app: %w", err)
+	}
+
+	// Lock the parent apps row to serialise against concurrent
+	// creates and app teardown, then lock the deployment. This order
+	// matches CreateDeployment and SoftDeleteAppCascade.
+	var locked int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM apps WHERE id = $1 AND status = 'active' FOR UPDATE`, appID).Scan(&locked); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: lock apps row: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`, id).Scan(&status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, nil, ErrNotFound
 		}
@@ -6555,14 +6746,6 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	}
 	if !status.IsCancelEligible() {
 		return Deployment{}, nil, ErrInvalidStateTransition
-	}
-
-	// Lock the parent apps row to serialise against concurrent
-	// UpdateApp flips and another CreateDeployment on the same
-	// app. Mirrors pkg/state/pgstore.go:4185-4199 (the canonical
-	// CreateDeployment tx-pattern).
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM apps WHERE id = $1 AND status = 'active' FOR UPDATE`, appID); err != nil {
-		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: lock apps row: %w", err)
 	}
 
 	now := time.Now().UTC()
@@ -6580,19 +6763,41 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	}
 
 	// Cascade-cancel every non-terminal build row attached to
-	// this deployment. The cascade flag tells the build-cancel
-	// audit column which side this row flip came from. We
-	// RETURNING id so the handler can fire a build_changed
-	// pg_notify per row (the LISTEN goroutine in cmd/builderd
-	// calls VM.Cancel for each).
+	// this deployment. Running rows also get a durable VM cleanup
+	// obligation in this transaction. The handler still receives every
+	// flipped ID so it can attempt immediate cancellation, while the
+	// builderd reaper retries failures after notification loss or restart.
 	rows, err := tx.Query(ctx, `
-		UPDATE builds
-		   SET status = $2,
-		       cancelled_at = $3,
-		       cancelled_by_deployment_cascade = true
-		 WHERE deployment_id = $1
-		   AND status IN ('queued', 'running')
-		RETURNING id`,
+		WITH candidates AS (
+			SELECT id, status
+			  FROM builds
+			 WHERE deployment_id = $1
+			   AND status IN ('queued', 'running')
+			 FOR UPDATE
+		),
+		cancelled AS (
+			UPDATE builds b
+			   SET status = $2,
+			       cancelled_at = $3,
+			       cancelled_by_deployment_cascade = true
+			  FROM candidates c
+			 WHERE b.id = c.id
+			RETURNING b.id
+		),
+		cleanup AS (
+			INSERT INTO builder_vm_cleanup (build_id)
+			SELECT c.id
+			  FROM cancelled c
+			  JOIN candidates candidate ON candidate.id = c.id
+			 WHERE candidate.status = 'running'
+			ON CONFLICT (build_id) DO NOTHING
+			RETURNING build_id
+		)
+		SELECT c.id
+		  FROM cancelled c
+		  LEFT JOIN cleanup q ON q.build_id = c.id
+		 CROSS JOIN (SELECT count(*) FROM cleanup) _cleanup_count
+		 ORDER BY c.id`,
 		id, string(BuildCancelled), now,
 	)
 	if err != nil {
@@ -6764,27 +6969,42 @@ func (s *PgStore) ClearObsoleteDeployments(ctx context.Context, appID string, ol
 // from CancelDeploymentTx (true) or a future direct build-cancel
 // path (false).
 func (s *PgStore) MarkBuildCancelled(ctx context.Context, buildID, _ string, cascade bool, when time.Time) error {
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("MarkBuildCancelled: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM builds WHERE id = $1 FOR UPDATE`, buildID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("MarkBuildCancelled: select: %w", err)
+	}
+	if status != string(BuildQueued) && status != string(BuildRunning) {
+		return ErrInvalidStateTransition
+	}
+	if _, err := tx.Exec(ctx, `
 		UPDATE builds
 		   SET status = $2,
 		       cancelled_at = $3,
 		       cancelled_by_deployment_cascade = $4
-		 WHERE id = $1
-		   AND status IN ('queued', 'running')`,
+		 WHERE id = $1 AND status IN ('queued', 'running')`,
 		buildID, string(BuildCancelled), when.UTC(), cascade,
-	)
-	if err != nil {
-		return fmt.Errorf("MarkBuildCancelled: %w", err)
+	); err != nil {
+		return fmt.Errorf("MarkBuildCancelled: update: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		var exists bool
-		if e := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM builds WHERE id = $1)`, buildID).Scan(&exists); e != nil {
-			return fmt.Errorf("MarkBuildCancelled: post-check: %w", e)
+	if status == string(BuildRunning) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO builder_vm_cleanup (build_id)
+			VALUES ($1)
+			ON CONFLICT (build_id) DO NOTHING`, buildID); err != nil {
+			return fmt.Errorf("MarkBuildCancelled: enqueue VM cleanup: %w", err)
 		}
-		if !exists {
-			return ErrNotFound
-		}
-		return ErrInvalidStateTransition
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("MarkBuildCancelled: commit: %w", err)
 	}
 	return nil
 }
@@ -7123,7 +7343,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number,
 		                          priority,
-		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile)
+		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
+		                          traffic_percent_explicit)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -7132,7 +7353,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44)
+		         $40, $41, $42, $43, $44, $45)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -7159,7 +7380,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		newDep.DeployedByUserID, newDep.DeployedVia, newDep.DeployedFromIP, newDep.PusherLogin,
 		nullString(newDep.Reason), nullString(newDep.Tag), nullString(newDep.DeployedBy), newDep.PRNumber,
 		newDep.Priority,
-		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile))
+		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile),
+		newDep.TrafficPercentExplicit)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -7655,7 +7877,7 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 	row := s.pool.QueryRow(ctx,
 		`update deployments
 		    set status = 'failed', error = $2, error_code = $3
-		  where id = $1
+		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code))
 	return scanDeploymentWithRootfs(row)
@@ -7692,7 +7914,7 @@ func (s *PgStore) SetDeploymentFailedEx(
 		    set status = 'failed', error = $2, error_code = $3,
 		        error_hint = $4, error_why = $5, error_fix = $6,
 		        error_relevant_logs = $7
-		  where id = $1
+		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code),
 		nullString(hint), nullString(why), nullString(fix),
@@ -7946,14 +8168,22 @@ func (s *PgStore) UpdateBuildProvenanceSBOM(ctx context.Context, buildID, sbomKe
 // A partial index on builds(status='running') keeps this O(matches)
 // instead of O(table).
 func (s *PgStore) SweepStuckRunningBuilds(ctx context.Context, threshold time.Time) (int, error) {
+	ids, err := s.SweepStuckRunningBuildsWithIDs(ctx, threshold)
+	return len(ids), err
+}
+
+// SweepStuckRunningBuildsWithIDs is the VM-aware reaper seam. The UPDATE and
+// deployment failure remain one transaction, and the returned IDs come from
+// that UPDATE's RETURNING set so builderd only asks vmmd to stop claims that
+// this sweep actually failed.
+func (s *PgStore) SweepStuckRunningBuildsWithIDs(ctx context.Context, threshold time.Time) ([]string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var buildsFlipped, deploymentsFailed int
-	err = tx.QueryRow(ctx, `
+	rows, err := tx.Query(ctx, `
 		with stuck as (
 			select id, deployment_id
 			  from builds
@@ -7967,7 +8197,7 @@ func (s *PgStore) SweepStuckRunningBuilds(ctx context.Context, threshold time.Ti
 			       finished_at = now()
 			  from stuck s
 			 where b.id = s.id
-			returning s.deployment_id
+			returning b.id, b.deployment_id
 		),
 		failed_deployments as (
 			update deployments d
@@ -7977,19 +8207,40 @@ func (s *PgStore) SweepStuckRunningBuilds(ctx context.Context, threshold time.Ti
 			  from flipped f
 			 where d.id = f.deployment_id
 			   and d.status in ('pending', 'building', 'imaging', 'snapshotting')
-			returning d.id
-		)
-		select
-			(select count(*) from flipped),
-			(select count(*) from failed_deployments)
-	`, threshold, api.CodeBuildTimeout).Scan(&buildsFlipped, &deploymentsFailed)
+				returning d.id
+			)
+			,cleanup AS (
+				insert into builder_vm_cleanup (build_id)
+				select f.id
+				  from flipped f
+				on conflict (build_id) do nothing
+				returning build_id
+			)
+			select f.id
+			  from flipped f
+			  left join cleanup c on c.build_id = f.id
+		 cross join (select count(*) from failed_deployments) _deployment_failure_count
+		 order by f.id
+	`, threshold, api.CodeBuildTimeout)
 	if err != nil {
-		return 0, err
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return buildsFlipped, nil
+	return ids, nil
 }
 
 // QueuedBuildsCount (operator-side observability mega-PR / Commit 7
@@ -11140,6 +11391,46 @@ func (s *PgStore) CancelInvocation(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *PgStore) CancelPendingInvocation(ctx context.Context, id string) (InvocationState, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", fmt.Errorf("state: pending invocation cancel begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var accountID string
+	err = tx.QueryRow(ctx, `
+		update invocations
+		   set state = 'cancelled',
+		       completed_at = coalesce(completed_at, now())
+		 where id = $1 and state = 'pending'
+		 returning account_id`, id).Scan(&accountID)
+	if err == nil {
+		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
+			return "", err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return "", fmt.Errorf("state: pending invocation cancel commit: %w", err)
+		}
+		return InvocationCancelled, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+
+	var current string
+	if err := tx.QueryRow(ctx, `select state from invocations where id = $1`, id).Scan(&current); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("state: pending invocation state commit: %w", err)
+	}
+	return InvocationState(current), nil
+}
+
 func (s *PgStore) ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error) {
 	if limit <= 0 {
 		limit = 50
@@ -11718,7 +12009,8 @@ func (s *PgStore) MigrationInstanceByID(ctx context.Context, id string) (Instanc
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at,
 		        coalesce(node_id::text, ''), wake_id, framework_ready_at,
-		        migrated_from_node_id::text, migrated_at, coalesce(lease_token, ''), tail_count, mode, request_count
+		        migrated_from_node_id::text, migrated_at, coalesce(lease_token, ''), migration_started_at,
+		        tail_count, mode, request_count
 		 from instances where id = $1`, id)
 	inst, err := scanInstanceColsWithMigration(row.Scan)
 	if err != nil {
@@ -11818,6 +12110,21 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 	}
 	defer rows.Close()
 	return scanInstances(rows)
+}
+
+func (s *PgStore) ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, since time.Time) ([]AccountFirstSuccess, error) {
+	rows, err := sqlc.New().ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx, s.pool, pgtype.Timestamptz{Time: since, Valid: true})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AccountFirstSuccess, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, AccountFirstSuccess{
+			AccountID: uuidString(row.AccountID),
+			At:        timestamptzToTime(row.FirstSuccessAt),
+		})
+	}
+	return out, nil
 }
 
 // ListInstancesForAccount joins instances→apps in SQL so the meterd
@@ -12340,10 +12647,12 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
-		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
-		 from instances where app_id = $1 and state = 'running'
-		 order by started_at desc nulls last limit 1`, appID)
+		`select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		           coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
+		 from instances i
+		 join deployments d on d.id = i.deployment_id and d.status = 'live' and d.traffic_percent > 0
+		 where i.app_id = $1 and i.state = 'running'
+		 order by i.started_at desc nulls last limit 1`, appID)
 	return scanInstance(row)
 }
 
@@ -16417,7 +16726,8 @@ func (s *PgStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, 
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       updated_at = now()
-		 where app_secrets.managed_postgres_binding_id is null`,
+		 where app_secrets.managed_postgres_binding_id is null
+		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -16436,7 +16746,8 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
 		       updated_at = now()
-		 where app_secrets.managed_postgres_binding_id is null`,
+		 where app_secrets.managed_postgres_binding_id is null
+		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext, kid)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -16469,7 +16780,8 @@ func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context,
 		       kid = excluded.kid,
 		       value_hash = excluded.value_hash,
 		       updated_at = now()
-		 where app_secrets.managed_postgres_binding_id is null`,
+		 where app_secrets.managed_postgres_binding_id is null
+		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext, kid, valueHash)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -16589,6 +16901,59 @@ func (s *PgStore) DeleteManagedPostgresSecret(ctx context.Context, credentialRef
 	return mapErr(tx.Commit(ctx))
 }
 
+// PutManagedObjectStorageSecret stores a sealed compute-binding value under
+// the credential that owns its app-secret row. Repeated calls for the same
+// credential update the ciphertext, which makes rotation retry-safe.
+func (s *PgStore) PutManagedObjectStorageSecret(ctx context.Context, secret AppSecret) error {
+	if secret.AccountID == "" || secret.AppID == "" || secret.Scope == "" || secret.Key == "" ||
+		len(secret.Ciphertext) == 0 || secret.ManagedObjectStorageCredentialID == "" {
+		return ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockAppSecretTarget(ctx, tx, secret.AppID, secret.Scope, secret.Key); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
+		`insert into app_secrets (
+			account_id, app_id, scope, key, ciphertext, kid, value_hash,
+			managed_object_storage_credential_id
+		) values ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8)
+		 on conflict (app_id, scope, key) do update set
+			ciphertext = excluded.ciphertext,
+			kid = excluded.kid,
+			value_hash = excluded.value_hash,
+			managed_object_storage_credential_id = excluded.managed_object_storage_credential_id,
+			updated_at = now()
+		 where app_secrets.managed_object_storage_credential_id = excluded.managed_object_storage_credential_id
+		   and app_secrets.managed_postgres_binding_id is null`,
+		secret.AccountID, secret.AppID, secret.Scope, secret.Key,
+		secret.Ciphertext, secret.Kid, secret.ValueHash,
+		secret.ManagedObjectStorageCredentialID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return mapErr(tx.Commit(ctx))
+}
+
+// DeleteManagedObjectStorageSecrets is idempotent so a revoked binding can
+// be cleaned up after a process crash without retaining stale credentials in
+// the workload environment.
+func (s *PgStore) DeleteManagedObjectStorageSecrets(ctx context.Context, credentialID string) error {
+	if credentialID == "" {
+		return ErrInvalidArgument
+	}
+	_, err := s.pool.Exec(ctx,
+		`delete from app_secrets where managed_object_storage_credential_id = $1`, credentialID)
+	return mapErr(err)
+}
+
 // GetAppSecretInScope is the scope-aware sibling of GetAppSecret
 // (ADR-092 PR-A). Returns the (account_id, app_id, scope, key) row
 // including ciphertext, kid, and timestamps. Returns ErrNotFound
@@ -16598,12 +16963,12 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 	err := s.pool.QueryRow(ctx,
 		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
 		        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
-		        COALESCE(managed_credential_generation, 0), created_at, updated_at
+		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key).Scan(
 		&out.AccountID, &out.AppID, &out.Scope, &out.Key, &out.Ciphertext, &out.Kid, &out.ValueHash,
-		&out.ManagedPostgresBindingID, &out.ManagedCredentialRef, &out.ManagedCredentialGeneration,
+		&out.ManagedPostgresBindingID, &out.ManagedCredentialRef, &out.ManagedCredentialGeneration, &out.ManagedObjectStorageCredentialID,
 		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -16665,7 +17030,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 		rows, err := s.pool.Query(ctx,
 			`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
 			        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
-			        COALESCE(managed_credential_generation, 0), created_at, updated_at
+			        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''), created_at, updated_at
 			 from app_secrets
 			 order by account_id asc, app_id asc, scope asc, key asc
 			 limit $1`,
@@ -16679,7 +17044,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 			var r AppSecret
 			if err := rows.Scan(
 				&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
-				&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+				&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
 				&r.CreatedAt, &r.UpdatedAt,
 			); err != nil {
 				return nil, err
@@ -16703,7 +17068,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
 		        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
-		        COALESCE(managed_credential_generation, 0), created_at, updated_at
+		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''), created_at, updated_at
 		 from app_secrets
 		 where (account_id, app_id, scope, key) >= ($1::uuid, $2::uuid, $3, $4)
 		 order by account_id asc, app_id asc, scope asc, key asc
@@ -16718,7 +17083,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 		var r AppSecret
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
-			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -16745,7 +17110,8 @@ func (s *PgStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID, 
 	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
 		`delete from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
-		   and managed_postgres_binding_id is null`,
+		   and managed_postgres_binding_id is null
+		   and managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key)
 	if err != nil {
 		return err
@@ -16808,7 +17174,7 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), created_at, updated_at
+		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3
 		 order by scope asc, key asc`,
@@ -16822,7 +17188,7 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 		var r AppSecret
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
-			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -16850,7 +17216,7 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), created_at, updated_at
+		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2
 		 order by scope asc, key asc`,
@@ -16864,7 +17230,7 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 		var r AppSecret
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
-			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration,
+			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -17776,7 +18142,7 @@ const deploymentSelectColumnsWithRootfs = `
 	secret_findings, secret_scanned_at,
 	liveness_restart_count,
 	coalesce(parked_reason,''), parked_at,
-	traffic_percent,
+	traffic_percent, traffic_percent_explicit,
 	scope,
 	stage_state,
 	coalesce(deployed_by_user_id::text,''), deployed_via, coalesce(host(deployed_from_ip),''), coalesce(pusher_login,''),
@@ -17833,7 +18199,7 @@ const deploymentSelectColumnsQualified = `
 	d.secret_findings, d.secret_scanned_at,
 	d.liveness_restart_count,
 	coalesce(d.parked_reason,''), d.parked_at,
-	d.traffic_percent,
+	d.traffic_percent, d.traffic_percent_explicit,
 	d.scope,
 	d.stage_state,
 	coalesce(d.deployed_by_user_id::text,''), d.deployed_via, coalesce(host(d.deployed_from_ip),''), coalesce(d.pusher_login,''),
@@ -17938,7 +18304,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.ScanResult, &scanStatus, &scannedAt,
 		&d.SecretFindings, &d.SecretScannedAt,
 		&d.LivenessRestartCount,
-		&d.ParkedReason, &parkedAt, &d.TrafficPercent,
+		&d.ParkedReason, &parkedAt, &d.TrafficPercent, &d.TrafficPercentExplicit,
 		&d.Scope,
 		&d.StageState,
 		&d.DeployedByUserID, &d.DeployedVia, &d.DeployedFromIP, &d.PusherLogin,
@@ -18262,10 +18628,11 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 	return ins, nil
 }
 
-// scanInstanceColsWithMigration is the 20-column variant of
+// scanInstanceColsWithMigration is the 21-column variant of
 // scanInstanceCols that also lifts framework_ready_at (PR #543 /
 // migration 00120), migrated_from_node_id, migrated_at, and
-// lease_token (Tier A5 / migration 00097, ADR-066), and
+// lease_token (Tier A5 / migration 00097, ADR-066), migration_started_at,
+// and
 // tail_count (issue #667 / ADR-078, migration 00151). Used by
 // ListLiveInstancesOnNode and ListExpiredMigrations — the rest
 // of the codebase reads 15-column instances rows and doesn't
@@ -18282,7 +18649,7 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 // scan it for shape parity. tail_count is NOT NULL DEFAULT 0
 // and scans into a plain int.
 //
-// Single-call scan: pgx rejects a 17-column SELECT with a 13-dest
+// Single-call scan: pgx rejects a multi-column SELECT with a 13-dest
 // scan followed by a 4-dest scan — the row surface is one
 // contiguous column stream and each scan call must consume all
 // columns in one go. The base 13 fields are duplicated here
@@ -18294,9 +18661,11 @@ func scanInstanceColsWithMigration(scan func(...any) error) (Instance, error) {
 	var migFromStr *string
 	var migAtTime *time.Time
 	var leaseStr *string
+	var migStartedAt *time.Time
 	if err := scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
 		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID,
-		&frameworkReady, &migFromStr, &migAtTime, &leaseStr, &ins.TailCount, &ins.Mode, &ins.RequestCount); err != nil {
+		&frameworkReady, &migFromStr, &migAtTime, &leaseStr, &migStartedAt,
+		&ins.TailCount, &ins.Mode, &ins.RequestCount); err != nil {
 		return Instance{}, err
 	}
 	if started != nil {
@@ -18314,6 +18683,7 @@ func scanInstanceColsWithMigration(scan func(...any) error) (Instance, error) {
 	}
 	ins.MigratedFromNodeID = migFromStr
 	ins.MigratedAt = migAtTime
+	ins.MigrationStartedAt = migStartedAt
 	if leaseStr != nil {
 		ins.LeaseToken = *leaseStr
 	}
@@ -23298,11 +23668,13 @@ func (s *PgStore) ListDistinctUpstreamHostHashes(ctx context.Context) ([]DataUps
 func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 	var k ConsumerKey
 	var scopes []string
+	var consumerID *string
 	var expiresAt, lastUsedAt, revokedAt *time.Time
 	if err := row.Scan(
 		&k.ID,
 		&k.AccountID,
 		&k.AppID,
+		&consumerID,
 		&k.Name,
 		&k.Prefix,
 		&k.Hash,
@@ -23314,6 +23686,9 @@ func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 	); err != nil {
 		return ConsumerKey{}, err
 	}
+	if consumerID != nil {
+		k.ConsumerID = *consumerID
+	}
 	k.Scopes = scopes
 	k.ExpiresAt = expiresAt
 	k.LastUsedAt = lastUsedAt
@@ -23324,7 +23699,7 @@ func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 // consumerKeySelectCols is the column list every read uses. Keeping
 // the order stable means scanConsumerKeyRow above is the single scan
 // helper, not five copies.
-const consumerKeySelectCols = `id, account_id, app_id, name, prefix, hashed_secret, scopes, created_at, expires_at, last_used_at, revoked_at`
+const consumerKeySelectCols = `id, account_id, app_id, consumer_id, name, prefix, hashed_secret, scopes, created_at, expires_at, last_used_at, revoked_at`
 
 func (s *PgStore) CreateConsumerKey(ctx context.Context, accountID, appID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error) {
 	if accountID == "" || appID == "" {

@@ -9,6 +9,8 @@ import type { TriggerKind } from './TriggerKind.js';
  * gating mirrors pkg/gregalemanifest.validateKindConfig:
  * - cron: requires schedule + path (slug ignored)
  * - non-cron: requires slug + config
+ * Omitted delivery settings use the platform default capped to the
+ * selected account plan; explicit over-cap values are rejected.
  *
  */
 export type CreateTriggerRequest = {
@@ -17,7 +19,7 @@ export type CreateTriggerRequest = {
   slug?: string;
   enabled?: boolean | null;
   /**
-   * Per-kind opaque config blob.
+   * Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence.
    */
   config?: Record<string, any>;
   batch_size_max?: number | null;

@@ -13,12 +13,14 @@ import (
 // per-instance uniqueness lives entirely on the host side (veth + host IP),
 // never inside the guest. Do not make these per-VM.
 const (
-	GuestIP      = "10.0.0.2"
-	GuestGateway = "10.0.0.1"
-	GuestPrefix  = "10.0.0.2/30"
-	TapPrefix    = "10.0.0.1/30" // host (tap0) side of the /30 inside the netns
-	AppPort      = 8080          // the :8080 contract (spec §2)
-	TenantBridge = "br-tenants"  // root-ns bridge the veth host-side enslaves to
+	GuestIP                 = "10.0.0.2"
+	GuestGateway            = "10.0.0.1"
+	GuestPrefix             = "10.0.0.2/30"
+	TapPrefix               = "10.0.0.1/30" // host (tap0) side of the /30 inside the netns
+	AppPort                 = 8080          // the :8080 contract (spec §2)
+	ServiceProxyPort        = 10080         // guest-to-guest service proxy on HostBridgeIP (ADR-169)
+	ServiceDiscoveryDNSPort = 53            // guest service-name resolver on HostBridgeIP (ADR-170)
+	TenantBridge            = "br-tenants"  // root-ns bridge the veth host-side enslaves to
 	// nft chain-policy words (ADR-031). Forwarded as the `policy`
 	// value in the per-netns forward-chain argv, so goconst demands
 	// the literals live in named constants.
@@ -68,6 +70,11 @@ type Config struct {
 	VethHost string     // root-ns end, enslaved to br-tenants
 	VethPeer string     // netns end, holds HostIP
 	HostIP   netip.Addr // routable identity, 10.100.x.y
+	// GuestAppPort is the port the customer process binds inside the guest.
+	// The host-facing identity remains fixed at :8080; prerouting translates
+	// that stable port to this deployment-specific target. Zero or an invalid
+	// value preserves the legacy :8080 -> :8080 contract.
+	GuestAppPort int
 	// TapUID is the jailer UID that will open the persistent tap device.
 	// When set, SetupCommands assigns tap ownership to that UID so the
 	// unprivileged Firecracker process can attach to the existing device.
@@ -159,6 +166,13 @@ func NewConfigWithBridge(instance, netnsName, vethHost, vethPeer string, hostIP,
 // hostCIDR renders HostIP with its prefix, e.g. "10.100.0.2/16".
 func (c Config) hostCIDR() string {
 	return fmt.Sprintf("%s/%d", c.HostIP, c.HostBits)
+}
+
+func (c Config) guestAppPort() int {
+	if c.GuestAppPort < 1 || c.GuestAppPort > 65535 {
+		return AppPort
+	}
+	return c.GuestAppPort
 }
 
 // SetupCommands returns the ordered argv list that creates the namespace, veth
@@ -318,7 +332,7 @@ func (c Config) NftCommands() [][]string {
 	}
 	// NAT: publish :8080 to the guest; masquerade the guest's egress.
 	add("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}")
-	add("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, AppPort))
+	add("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort()))
 	add("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
 	add("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade")
 	// ADR-119 redesign: per-netns SNAT rule was REMOVED. The legacy
@@ -341,6 +355,18 @@ func (c Config) NftCommands() [][]string {
 	// ever complete. Guest-INITIATED (ct state new) traffic still falls through
 	// to the denies, so lateral movement stays blocked.
 	add("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept")
+	// ADR-169: admit only the reserved service-proxy port on this host's
+	// bridge address. The listener binds HostBridgeIP, so this rule gives
+	// guests a cross-VM path without opening the rest of the host namespace;
+	// replies are covered by the established/related rule above.
+	if c.HostBridgeIP.IsValid() {
+		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyPort), "accept")
+		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
+		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
+	}
 	// PR scale-out tier-1 residual (Gap #4): per-netns operator
 	// exception accept rules. Each entry emits
 	// `iifname tap0 ip saddr <ex> accept` BEFORE the lateral-

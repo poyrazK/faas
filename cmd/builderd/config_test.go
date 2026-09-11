@@ -13,6 +13,7 @@ import (
 )
 
 func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
+	t.Setenv("FAAS_SPOOL_ROOT", "")
 	path := filepath.Join(t.TempDir(), "missing.toml")
 	cfg, err := LoadConfig(path)
 	if err != nil {
@@ -23,6 +24,12 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	}
 	if cfg.CacheDir != "/var/cache/faas/builds" {
 		t.Errorf("CacheDir = %q, want default", cfg.CacheDir)
+	}
+	if cfg.SourceSpoolDir != "/var/spool/faas/builds" {
+		t.Errorf("SourceSpoolDir = %q, want default", cfg.SourceSpoolDir)
+	}
+	if cfg.BuildLogMaxBytes != 8<<20 {
+		t.Errorf("BuildLogMaxBytes = %d, want 8 MiB default", cfg.BuildLogMaxBytes)
 	}
 	wantBase := "/srv/fc/base/runner-builder-" + runtime.GOARCH + ".ext4"
 	if cfg.BuilderBase != wantBase {
@@ -74,6 +81,7 @@ func TestConfig_LoadVMMTLS(t *testing.T) {
 }
 
 func TestLoadConfig_OverridesFromTOML(t *testing.T) {
+	t.Setenv("FAAS_SPOOL_ROOT", "")
 	path := filepath.Join(t.TempDir(), "builderd.toml")
 	body := `
 vmmd_target = "tcp://vmmd.internal:50051"
@@ -81,6 +89,8 @@ tls_cert_path = "/etc/faas/tls/builderd.crt"
 tls_key_path = "/etc/faas/tls/builderd.key"
 tls_ca_path = "/etc/faas/tls/ca.pem"
 cache_dir = "/var/cache/faas/builds-test"
+source_spool_dir = "/srv/faas/spool-test"
+build_log_max_bytes = 4096
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -97,6 +107,24 @@ cache_dir = "/var/cache/faas/builds-test"
 	}
 	if cfg.CacheDir != "/var/cache/faas/builds-test" {
 		t.Errorf("CacheDir = %q", cfg.CacheDir)
+	}
+	if cfg.SourceSpoolDir != "/srv/faas/spool-test" || cfg.BuildLogMaxBytes != 4096 {
+		t.Errorf("spool/log overrides not respected: root=%q max=%d", cfg.SourceSpoolDir, cfg.BuildLogMaxBytes)
+	}
+}
+
+func TestLoadConfig_SpoolRootEnvironmentWins(t *testing.T) {
+	t.Setenv("FAAS_SPOOL_ROOT", "/srv/faas/env-spool")
+	path := filepath.Join(t.TempDir(), "builderd.toml")
+	if err := os.WriteFile(path, []byte("source_spool_dir = \"/srv/faas/toml-spool\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.SourceSpoolDir != "/srv/faas/env-spool" {
+		t.Errorf("SourceSpoolDir = %q, want FAAS_SPOOL_ROOT override", cfg.SourceSpoolDir)
 	}
 }
 

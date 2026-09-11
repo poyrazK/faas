@@ -13,7 +13,7 @@
 # What it does:
 #   1. Downloads and verifies the signed canonical release for the selected tag
 #   2. Assembles the checked-in systemd/controller files around those binaries
-#   3. SCPs the immutable bundle + migrations to the Control Plane host
+#   3. Reuses a verified immutable bundle or uploads it when absent
 #   4. Runs pending DB migrations
 #   5. Restarts all FaaS services
 #
@@ -68,6 +68,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Install pinned config renderer
+        run: python3 -m pip install --quiet 'ansible-core==2.21.2'
 
       - name: Install pinned cosign verifier
         env:
@@ -140,11 +143,40 @@ jobs:
           ssh-keyscan -H ${{ env.CP_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Quarantine invalid legacy node exporter unit
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} 'set -euo pipefail
+            unit=/etc/systemd/system/node_exporter.service
+            if [[ ! -f "$unit" ]] || ! grep -Fq "{{" "$unit"; then
+              exit 0
+            fi
+            systemctl is-active --quiet prometheus-node-exporter.service
+            curl --fail --silent --max-time 2 http://127.0.0.1:9100/metrics >/dev/null
+            systemctl disable --now node_exporter.service
+            mv "$unit" "${unit}.invalid-placeholder"
+            systemctl daemon-reload
+            systemctl reset-failed node_exporter.service || true
+            curl --fail --silent --max-time 2 http://127.0.0.1:9100/metrics >/dev/null
+          '
+
       - name: Build immutable release bundle
         run: |
           set -euo pipefail
           BUNDLE_ROOT="${RUNNER_TEMP}/faas-release/${RELEASE_ID}"
-          mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/tmpfiles.d"
+          mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/tmpfiles.d" "${BUNDLE_ROOT}/prometheus" "${BUNDLE_ROOT}/statuspage"
+          PROM_BOX_LABEL="$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" hostname)"
+          ansible localhost -i localhost, -c local \
+            -e @deploy/ansible/roles/prometheus/defaults/main.yml \
+            -e "ansible_hostname=${PROM_BOX_LABEL}" \
+            -e faas_box_role=control-plane \
+            -m ansible.builtin.template \
+            -a "src=$(pwd)/deploy/ansible/roles/prometheus/templates/prometheus.yml.j2 dest=${BUNDLE_ROOT}/prometheus/prometheus.yml mode=0644"
+          install -m 0644 deploy/ansible/roles/prometheus/files/faas.rules.yml "${BUNDLE_ROOT}/prometheus/faas.rules.yml"
+          install -m 0644 deploy/ansible/roles/prometheus/files/bridge.rules.yml "${BUNDLE_ROOT}/prometheus/bridge.rules.yml"
+          install -m 0644 deploy/ansible/roles/prometheus/files/pg_backup.rules.yml "${BUNDLE_ROOT}/prometheus/pg_backup.rules.yml"
+          install -m 0644 pkg/promqlrules/data_placement.yaml "${BUNDLE_ROOT}/prometheus/data_placement.yaml"
           # The daemon and guest-runner bytes come only from the verified
           # release.tar.gz. The two controller-local tools are compiled on
           # the CI runner from the checked-out release tag; the production
@@ -211,6 +243,8 @@ jobs:
           test ! -e "${BUNDLE_ROOT}/systemd/faas-gatewayd.service"
           install -m 0644 deploy/ansible/roles/control_plane_service/files/faas.conf \
             "${BUNDLE_ROOT}/tmpfiles.d/faas.conf"
+          install -m 0644 deploy/statuspage/index.html \
+            "${BUNDLE_ROOT}/statuspage/index.html"
           "${BUNDLE_ROOT}/bin/deployctl" bundle-create "${BUNDLE_ROOT}" "${RELEASE_ID}" "${RELEASE_ID}" "linux/amd64"
           echo "BUNDLE_ROOT=${BUNDLE_ROOT}" >> "${GITHUB_ENV}"
 
@@ -260,16 +294,133 @@ jobs:
       - name: Upload and activate immutable release
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            root@${{ env.CP_HOST }} "mkdir -p /opt/faas/releases/${RELEASE_ID}"
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -r \
-            "${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:/opt/faas/releases/${RELEASE_ID}/"
+          release_dir="/opt/faas/releases/${RELEASE_ID}"
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} \
+            "test -x '${release_dir}/bin/deployctl' && '${release_dir}/bin/deployctl' bundle-check '${release_dir}'"; then
+            echo "reusing verified immutable release ${RELEASE_ID}"
+          else
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+              root@${{ env.CP_HOST }} "bash -s -- '${release_dir}'" <<'REMOTE'
+          set -euo pipefail
+          release_dir="$1"
+          current_release="$(readlink -f /opt/faas/current 2>/dev/null || true)"
+          if [[ "$current_release" == "$release_dir" ]]; then
+            echo "active immutable release failed bundle verification: ${release_dir}" >&2
+            exit 1
+          fi
+          rm -rf -- "$release_dir"
+          mkdir -p -- "$release_dir"
+          REMOTE
+            scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -r \
+              "${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:${release_dir}/"
+          fi
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
-            "/opt/faas/releases/${RELEASE_ID}/bin/deployctl bundle-check /opt/faas/releases/${RELEASE_ID} &&
-             /opt/faas/releases/${RELEASE_ID}/bin/deployctl deploy ${RELEASE_ID} &&
+            "${release_dir}/bin/deployctl bundle-check ${release_dir} &&
+             ${release_dir}/bin/deployctl deploy ${RELEASE_ID} &&
+             install -d -o faas-apid -g faas -m 0770 /etc/faas/statuspage &&
+             install -o root -g faas -m 0644 ${release_dir}/statuspage/index.html /etc/faas/statuspage/.index.html-${RELEASE_ID} &&
+             mv -Tf /etc/faas/statuspage/.index.html-${RELEASE_ID} /etc/faas/statuspage/index.html &&
              ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
              mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
+
+      - name: Converge Prometheus config and rules
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" "bash -s -- '${RELEASE_ID}'" <<'REMOTE'
+          set -euo pipefail
+          release_id="$1"
+          source_dir="/opt/faas/releases/${release_id}/prometheus"
+          config_dir=/etc/prometheus
+          files=(prometheus.yml faas.rules.yml bridge.rules.yml pg_backup.rules.yml data_placement.yaml)
+
+          test -d "$source_dir"
+          promtool check rules \
+            "$source_dir/faas.rules.yml" \
+            "$source_dir/bridge.rules.yml" \
+            "$source_dir/pg_backup.rules.yml" \
+            "$source_dir/data_placement.yaml"
+
+          validation_dir="$(mktemp -d)"
+          trap 'rm -r "$validation_dir"' EXIT
+          for file in "${files[@]}"; do
+            cp "$source_dir/$file" "$validation_dir/$file"
+          done
+          sed "s#/etc/prometheus/#${validation_dir}/#g" \
+            "$source_dir/prometheus.yml" > "$validation_dir/prometheus.checked.yml"
+          promtool check config "$validation_dir/prometheus.checked.yml"
+
+          backup_dir="$config_dir/.release-backups/${release_id}"
+          install -d -m 0750 "$backup_dir"
+          for file in "${files[@]}"; do
+            if [[ -e "$config_dir/$file" ]]; then
+              cp -a "$config_dir/$file" "$backup_dir/$file"
+            else
+              touch "$backup_dir/$file.absent"
+            fi
+          done
+
+          restore_prometheus() {
+            for file in "${files[@]}"; do
+              if [[ -e "$backup_dir/$file.absent" ]]; then
+                rm -f "$config_dir/$file"
+              else
+                cp -a "$backup_dir/$file" "$config_dir/$file"
+              fi
+            done
+            systemctl reload prometheus || true
+          }
+
+          install_failed=0
+          for file in "${files[@]}"; do
+            install -o prometheus -g prometheus -m 0644 \
+              "$source_dir/$file" "$config_dir/$file" || install_failed=1
+          done
+          if (( install_failed != 0 )); then
+            restore_prometheus
+            exit 1
+          fi
+          if ! promtool check config "$config_dir/prometheus.yml"; then
+            restore_prometheus
+            exit 1
+          fi
+          if ! systemctl reload prometheus; then
+            restore_prometheus
+            exit 1
+          fi
+
+          targets_healthy=0
+          for _ in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:9095/api/v1/targets |
+              python3 -c 'import json,sys; targets=json.load(sys.stdin)["data"]["activeTargets"]; raise SystemExit(0 if targets and all(t.get("health") == "up" for t in targets) else 1)'; then
+              targets_healthy=1
+              break
+            fi
+            sleep 3
+          done
+          if (( targets_healthy == 0 )); then
+            curl -fsS http://127.0.0.1:9095/api/v1/targets || true
+            restore_prometheus
+            exit 1
+          fi
+
+          status_body="$(mktemp)"
+          status_valid=0
+          for _ in $(seq 1 10); do
+            if curl -fsS http://127.0.0.1:8080/status/slo.json -o "$status_body" &&
+              python3 -c 'import json,math,sys; d=json.load(open(sys.argv[1])); values=[d["api_availability_pct"],d["wake_p95_ms"],d["build_success_pct"]]; raise SystemExit(0 if all(isinstance(v,(int,float)) and math.isfinite(v) for v in values) else 1)' "$status_body"; then
+              status_valid=1
+              break
+            fi
+            sleep 3
+          done
+          if (( status_valid == 0 )); then
+            cat "$status_body" || true
+            exit 1
+          fi
+          REMOTE
 
       - name: Restart configured optional S3 gateway
         run: |

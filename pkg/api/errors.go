@@ -78,6 +78,11 @@ type Problem struct {
 	// Limit and Observed are set on quota/limit errors (spec §Conventions).
 	Limit    *int64 `json:"limit,omitempty"`
 	Observed *int64 `json:"observed,omitempty"`
+	// LimitBytes and ObservedBytes are explicit byte-oriented aliases used by
+	// request-body cap errors. The generic fields remain populated for older
+	// clients that only understand limit/observed.
+	LimitBytes    *int64 `json:"limit_bytes,omitempty"`
+	ObservedBytes *int64 `json:"observed_bytes,omitempty"`
 	// DocsURL points the user at the single next action.
 	DocsURL string `json:"docs_url,omitempty"`
 	// CheckoutURL is the provider-neutral hosted checkout URL for a paid
@@ -267,6 +272,15 @@ func (p *Problem) WithLimit(limit, observed int64) *Problem {
 	return p
 }
 
+// WithByteLimit annotates a byte-oriented limit error with both the explicit
+// byte keys and the legacy generic limit/observed keys.
+func (p *Problem) WithByteLimit(limit, observed int64) *Problem {
+	p = p.WithLimit(limit, observed)
+	p.LimitBytes = &limit
+	p.ObservedBytes = &observed
+	return p
+}
+
 // WithDocs sets the docs URL and returns the same pointer for chaining.
 func (p *Problem) WithDocs(url string) *Problem {
 	p.DocsURL = url
@@ -353,6 +367,7 @@ const (
 	CodePlanLimitRAM           = "plan_limit_ram"
 	CodePlanLimitConcur        = "plan_limit_concurrency"
 	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidAppRAM          = "invalid_ram_mb"
 	CodeInvalidResourceProfile = "invalid_resource_profile"
 	CodeSourceTooLarge         = "source_too_large"
 	CodeSourceInvalid          = "source_invalid"
@@ -555,7 +570,7 @@ const (
 	CodeUnsupportedMediaType = "unsupported_media_type"
 	// CodeRequestTooLarge is returned when the inbound body
 	// exceeds the per-rule cap (kind=validate MaxBodyBytes) or
-	// the plan's outer cap (api.MaxRequestBodyBytes). Distinct
+	// the plan's outer cap (Plan.MaxRequestBodyBytes()). Distinct
 	// from CodeBadRequest so the dashboard pivots the message
 	// to "send a smaller body" — the customer's app's UI can
 	// chunk on receipt.
@@ -676,6 +691,10 @@ const (
 	// to the already-current deployment). Rejected explicitly rather
 	// than silently no-op'd. SAFE-RELEASES-G.
 	CodeRollbackTargetAlreadyLive = "rollback_target_already_live"
+	// CodeRollbackTargetIneligible is returned when an explicit rollback
+	// target exists but is cancelled, failed, or still progressing. Only a
+	// superseded deployment is a valid historical rollback target.
+	CodeRollbackTargetIneligible = "rollback_target_ineligible"
 	// CodeDeploySignatureInvalid is returned by apid when the
 	// customer's OCI image deploy is rejected at the accept-time
 	// signature-enforcement gate (issue #472 / ADR-054). Three
@@ -901,6 +920,9 @@ const (
 	// this code on out-of-range input as a defence-in-depth
 	// backstop.
 	CodeInvalidTrafficPercent = "invalid_traffic_percent"
+	// CodeDeploymentNotLive is a 409 for a legal traffic mutation whose
+	// target has moved out of the live lifecycle state.
+	CodeDeploymentNotLive = "deployment_not_live"
 	// CodeInvalidCanaryPreset (issue #976 / ADR-122 /
 	// SAFE-RELEASES-A) is a 422 for an out-of-catalog canary
 	// preset name. The pkg/api/canary closed-set is the source
@@ -1351,6 +1373,12 @@ const (
 	// failures so operators can tell serving-path regressions from image
 	// startup regressions.
 	CodeDeploymentSmokeFailed = "deployment_smoke_failed"
+	// CodeAPIContractDiffDisabled is returned by the read-only contract
+	// endpoint while the operator keeps the dark-launch flag off.
+	CodeAPIContractDiffDisabled = "api_contract_diff_disabled"
+	// CodeAPIContractBreakingChange is stamped on deployments rejected by
+	// the production OpenAPI contract gate.
+	CodeAPIContractBreakingChange = "api_contract_breaking_change"
 
 	// CLI auth (spec §2.2 device-code flow). Pending is the "user has
 	// not yet approved" signal the CLI's poll loop keys off; the CLI
@@ -1490,6 +1518,16 @@ const (
 	// create that would subsume an existing tenant-surface hostname.
 	CodeWildcardDomainTenantSurfaceOverlap = "wildcard_domain_tenant_surface_overlap"
 
+	// Disposable one-shot executions (ADR-171).
+	CodeExecutionsNotAllowed     = "executions_not_allowed"
+	CodeExecutionRuntimeInvalid  = "execution_runtime_invalid"
+	CodeExecutionSourceInvalid   = "execution_source_invalid"
+	CodeExecutionPayloadInvalid  = "execution_payload_invalid"
+	CodeExecutionPayloadTooLarge = "execution_payload_too_large"
+	CodeExecutionLimitInvalid    = "execution_limit_invalid"
+	CodeExecutionLimitExceeded   = "execution_limit_exceeded"
+	CodeExecutionNetworkInvalid  = "execution_network_invalid"
+
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement).
 	//
 	// CodeJobsNotAllowed is the Free-plan gate for all /v1/jobs
@@ -1608,6 +1646,8 @@ func StatusForCode(code string) int {
 	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity:
 		return http.StatusServiceUnavailable
+	case CodeAPIContractDiffDisabled:
+		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
 		// (issue #299). SLO-exempt: a CRITICAL CVE is a known
@@ -1641,7 +1681,7 @@ func StatusForCode(code string) int {
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict:
+	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict, CodeDeploymentNotLive:
 		// 409 — issue #556. Σ(traffic_percent WHERE status='live')
 		// != 100 after UpdateDeploymentTraffic. Defensive backstop;
 		// unreachable in practice. Sits next to CodeConflict /
@@ -1650,7 +1690,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
+	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -1965,6 +2005,17 @@ func StatusForCode(code string) int {
 		return http.StatusUnsupportedMediaType
 	case CodeRequestTooLarge:
 		return http.StatusRequestEntityTooLarge
+	// Disposable one-shot executions (ADR-171). Shape errors are 422;
+	// byte caps use 413; paid-plan resource ceilings are 403 because the
+	// same request can become admissible on a larger plan.
+	case CodeExecutionsNotAllowed, CodeExecutionLimitExceeded:
+		return http.StatusForbidden
+	case CodeExecutionRuntimeInvalid, CodeExecutionSourceInvalid,
+		CodeExecutionPayloadInvalid, CodeExecutionLimitInvalid,
+		CodeExecutionNetworkInvalid:
+		return http.StatusUnprocessableEntity
+	case CodeExecutionPayloadTooLarge:
+		return http.StatusRequestEntityTooLarge
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Eight
 	// codes that ship with Mega-1 (CR-8 / code-review #8 — the
 	// gRPC error path lifts a gRPC status into a Problem carrying
@@ -2040,6 +2091,14 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		fmt.Sprintf("%s plan caps %d MB/app; requested %d MB.", l.Plan, l.RAMMB, requestedMB)).
 		WithLimit(int64(l.RAMMB), int64(requestedMB)).
 		WithDocs(docsBase + "/plans#ram")
+}
+
+// ErrInvalidAppRAM rejects an explicit update that cannot satisfy the
+// database and Firecracker memory contracts. Creation may omit ram_mb (zero)
+// to select the plan default; an update pointer is always explicit.
+func ErrInvalidAppRAM(requestedMB int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppRAM,
+		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB))
 }
 
 // ErrAppLayerTooLarge is returned when the built app layer (deps + code) would
@@ -2261,6 +2320,19 @@ func ErrSourceTooLarge(l Limits, observedBytes int64) *Problem {
 		fmt.Sprintf("%s plan caps source at %d MB.", l.Plan, l.SourceTarballMaxMB)).
 		WithLimit(capBytes, observedBytes).
 		WithDocs(docsBase + "/build/limits")
+}
+
+// ErrRequestBodyTooLarge is the stable 413 envelope for an inbound request
+// body that exceeds the plan or route cap. The docs and hint point customers
+// at bucket signed-URL uploads, which avoid sending large objects through the
+// request path entirely.
+func ErrRequestBodyTooLarge(limit, observed int64) *Problem {
+	return NewProblem(http.StatusRequestEntityTooLarge, CodeRequestTooLarge,
+		"Request body too large",
+		fmt.Sprintf("request body is %d bytes, above the %d-byte cap", observed, limit)).
+		WithByteLimit(limit, observed).
+		WithDocs(docsBase + "/storage#signed-uploads").
+		WithHint("For larger uploads, use a bucket signed URL (gregale storage ... signed-url).")
 }
 
 // ErrSourceInvalid is returned when a tarball fails shape validation
@@ -2583,6 +2655,23 @@ func ErrDoctorUnavailable(domain, reason string) *Problem {
 		WithDocs(docsBase + "/domains/doctor")
 }
 
+// ErrAPIContractDiffDisabled is the deterministic dark-launch response for
+// the OpenAPI contract preview endpoint.
+func ErrAPIContractDiffDisabled() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeAPIContractDiffDisabled,
+		"API contract diff is disabled",
+		"the FAAS_API_CONTRACT_DIFF_ENABLED flag is not enabled on this cluster; ask the operator to enable it").
+		WithDocs(docsBase + "/api-hosting/contract-diff")
+}
+
+// ErrAPIContractBreakingChange is used by a promotion API caller when the
+// proposed OpenAPI surface removes or tightens a previously-live contract.
+func ErrAPIContractBreakingChange(detail string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractBreakingChange,
+		"API contract breaking change", detail).
+		WithDocs(docsBase + "/api-hosting/contract-diff")
+}
+
 // ErrCronInvalid is returned for malformed cron expressions.
 func ErrCronInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeCronInvalid,
@@ -2847,6 +2936,15 @@ const CodePlanLogDrainQuota = "plan_log_drain_quota"
 // instead of a 404 that would leak the slug's existence (PR review
 // finding F4 mirrored from createAlertRule / createAppWebhook).
 const CodePlanTriggersNotAllowed = "plan_triggers_not_allowed"
+
+// CodeTriggerKindNotAllowed distinguishes an enabled trigger product whose
+// selected broker family requires a higher plan.
+const CodeTriggerKindNotAllowed = "trigger_kind_not_allowed"
+
+// CodeSecretStoreUnavailable is returned when trigger credentials cannot be
+// sealed or opened because the host age key material is unavailable or
+// unusable. It is deliberately generic so no ciphertext details reach users.
+const CodeSecretStoreUnavailable = "secret_store_unavailable"
 
 // CodePlanTriggerQuota is the 403 the customer sees when the plan
 // DOES unlock triggers but the per-app or per-account cap was
@@ -3201,9 +3299,8 @@ func ErrPlanWorkflowsQuota(plan Plan, limit, observed int) *Problem {
 		WithDocs(docsBase + "/plans#workflows")
 }
 
-// ErrWorkflowDeploymentUnavailable is retained for clients that may still
-// recognize the pre-activation error code. New deployment requests persist
-// workflow definitions and no longer return this problem.
+// ErrWorkflowDeploymentUnavailable reports that definitions may be deployed,
+// but the durable workflow execution runtime is not active on this platform.
 func ErrWorkflowDeploymentUnavailable() *Problem {
 	return NewProblem(http.StatusNotImplemented, CodeWorkflowDeploymentUnavailable,
 		"Workflow deployment unavailable",
@@ -3486,6 +3583,21 @@ func ErrPlanTriggersNotAllowed(p Plan) *Problem {
 		"Triggers unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include event-source mappings (Kafka, NATS, Redis Streams, SQS-compatible, in-platform queue); upgrade to Hobby or above to subscribe.", p)).
 		WithDocs(docsBase + "/plans#triggers")
+}
+
+// ErrTriggerKindNotAllowed is returned when the plan includes triggers but
+// not the requested broker family.
+func ErrTriggerKindNotAllowed(plan Plan, kind TriggerKind) *Problem {
+	return NewProblem(http.StatusForbidden, CodeTriggerKindNotAllowed,
+		"Trigger kind not available",
+		fmt.Sprintf("%s triggers are not available on the %s plan", kind, plan)).
+		WithDocs(docsBase + "/plans#triggers")
+}
+
+func ErrSecretStoreUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeSecretStoreUnavailable,
+		"Secret storage unavailable",
+		"Trigger credentials cannot be stored safely; retry after the host key is restored")
 }
 
 // ErrPlanTriggerQuota is returned when CreateTriggerIfUnderQuota
@@ -3813,6 +3925,13 @@ func ErrRollbackTargetAlreadyLive(detail string) *Problem {
 		WithDocs(docsBase + "/deploys#rollback")
 }
 
+func ErrRollbackTargetIneligible(detail string) *Problem {
+	return NewProblem(http.StatusConflict, CodeRollbackTargetIneligible,
+		"Rollback target is not eligible",
+		detail).
+		WithDocs(docsBase + "/deploys#rollback")
+}
+
 // ErrPlanLimitSecrets is returned when a secret PUT would exceed the plan's
 // per-app secret count (spec §11/G2). Observed is the post-write count.
 func ErrPlanLimitSecrets(l Limits, observed int) *Problem {
@@ -3863,6 +3982,15 @@ func ErrManagedSecretConflict() *Problem {
 		"Secret is managed",
 		"This environment key is controlled by an active managed PostgreSQL binding. Delete the binding before changing the secret.").
 		WithDocs(docsBase + "/postgres#bindings")
+}
+
+// ErrManagedObjectStorageSecretConflict protects an environment key owned by
+// an active object-storage compute binding.
+func ErrManagedObjectStorageSecretConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict,
+		"Secret is managed",
+		"This environment key is controlled by an active object-storage compute binding. Delete the binding before changing the secret.").
+		WithDocs(docsBase + "/object-storage")
 }
 
 // ErrPlanLimitEnvVars is returned when an env PUT would exceed the plan's
@@ -4178,6 +4306,19 @@ func ErrInvalidTrafficPercent(got int) *Problem {
 		"Invalid traffic_percent",
 		fmt.Sprintf("traffic_percent must be in [0, %d]; got %d.", cap, got)).
 		WithLimit(int64(cap), int64(got)).
+		WithDocs("https://docs.gregale.dev/deployments#traffic-percent")
+}
+
+// ErrDeploymentNotLive distinguishes lifecycle conflict from percentage
+// validation. The submitted percentage may be valid, but it cannot make a
+// superseded, failed, or pending deployment routable.
+func ErrDeploymentNotLive(status string) *Problem {
+	if status == "" {
+		status = "non-live"
+	}
+	return NewProblem(http.StatusConflict, CodeDeploymentNotLive,
+		"Deployment is not live",
+		fmt.Sprintf("traffic can only be changed on a live deployment; current state is %s. Select the current live deployment, roll back, or redeploy.", status)).
 		WithDocs("https://docs.gregale.dev/deployments#traffic-percent")
 }
 

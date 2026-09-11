@@ -64,8 +64,10 @@ export class TriggersService {
   /**
    * Create a trigger.
    * Idempotent via Idempotency-Key header. Returns 402
-   * `triggers_not_allowed` for Free plan, 403 `trigger_quota_exceeded`
-   * on per-app or per-account cap; see ADR-100.
+   * `plan_triggers_not_allowed` for Free plan. A 403 may be
+   * `trigger_kind_not_allowed`, `plan_trigger_quota`,
+   * `trigger_batch_window_too_large`, or
+   * `trigger_tls_skip_verify_not_allowed`; see ADR-100.
    *
    * @returns Trigger The new trigger.
    * @throws ApiError
@@ -93,13 +95,14 @@ export class TriggersService {
       errors: {
         400: `code: trigger_invalid_kind | trigger_invalid_config — kind does not exist, or per-kind validation failed (missing brokers, empty topic, malformed URL, etc.).`,
         401: `code: unauthorized`,
-        402: `code: triggers_not_allowed — Free plan cannot create triggers; upgrade required.`,
-        403: `code: trigger_quota_exceeded — per-app or per-account trigger cap reached (see TriggerLimitPerApp / TriggerLimitPerAccount in /v1/limits).`,
+        402: `code: plan_triggers_not_allowed — Free plan cannot create triggers; upgrade required.`,
+        403: `code: trigger_kind_not_allowed | plan_trigger_quota | trigger_batch_window_too_large | trigger_tls_skip_verify_not_allowed — source-kind or delivery configuration exceeds the account plan capabilities returned by GET /v1/account.`,
         422: `code: trigger_immutable_field — kind and (for cron) trigger_id are immutable after create; changing them requires delete + recreate.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+        503: `code: secret_store_unavailable — Kafka credentials could not be sealed or opened safely because host age key material is unavailable.`,
       },
     });
   }
@@ -135,8 +138,8 @@ export class TriggersService {
       errors: {
         400: `code: trigger_invalid_kind | trigger_invalid_config — kind does not exist, or per-kind validation failed (missing brokers, empty topic, malformed URL, etc.).`,
         401: `code: unauthorized`,
-        402: `code: triggers_not_allowed — Free plan cannot create triggers; upgrade required.`,
-        403: `code: trigger_quota_exceeded — per-app or per-account trigger cap reached (see TriggerLimitPerApp / TriggerLimitPerAccount in /v1/limits).`,
+        402: `code: plan_triggers_not_allowed — Free plan cannot create triggers; upgrade required.`,
+        403: `code: trigger_kind_not_allowed | plan_trigger_quota | trigger_batch_window_too_large | trigger_tls_skip_verify_not_allowed — source-kind or delivery configuration exceeds the account plan capabilities returned by GET /v1/account.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
@@ -205,6 +208,7 @@ export class TriggersService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+        503: `code: secret_store_unavailable — Kafka credentials could not be sealed or opened safely because host age key material is unavailable.`,
       },
     });
   }

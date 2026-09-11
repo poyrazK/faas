@@ -161,6 +161,9 @@ type RestoreSpec struct {
 	// sees the same container contract as a cold boot.
 	SecretsEnvJSON []byte
 	APIEnvJSON     []byte
+	// ServiceDiscoveryIP refreshes the guest resolver before snapshot load so
+	// a VM restored on another compute node uses that node's bridge address.
+	ServiceDiscoveryIP string
 	// StorageKey is the prefix-matched key under which the mem blob lives
 	// (e.g. "snap/<deploymentID>/mem"). Restore resolves it via
 	// Storage.Get into a tmp file used as the FC restore source.
@@ -211,6 +214,12 @@ type SnapshotSpec struct {
 	// VMStatePath host-file path (single-box behaviour, unchanged);
 	// non-empty ⇒ the VMM publishes via Storage.Put at this key.
 	VMStateStorageKey string
+	// ResumeBeforePublish is set only by the warm-snapshot path. Once
+	// Firecracker has atomically created the local snapshot files, resume
+	// the guest before slower shared-storage uploads so ordinary traffic is
+	// paused for snapshot creation rather than registry latency. Migration
+	// and terminal park captures leave this false and remain paused.
+	ResumeBeforePublish bool
 }
 
 // SnapshotInfo is the result of a snapshot create.

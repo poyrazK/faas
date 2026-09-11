@@ -1,5 +1,6 @@
 // migrating_watchdog_engine_test.go — engine-level tests for
 // Tier A6 (ADR-067) Engine.ReconcileExpiredMigrations.
+// adr: 067
 //
 // The watcher loop (pkg/sched/migrating_watchdog.go) is
 // exercised by migrating_watchdog_test.go. THIS file pins
@@ -31,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -66,6 +68,10 @@ func seedReconcileFixture(t *testing.T, store *state.MemStore, nodeID string) (i
 	if err := store.MarkInstanceMigrating(ctx, ins.ID, nodeID, leaseToken); err != nil {
 		t.Fatalf("MarkInstanceMigrating: %v", err)
 	}
+	// The engine passes the real lease age to the watchdog. Backdate the
+	// fixture so these tests exercise the expired-row path without waiting
+	// through the production 90-second handoff window.
+	store.SetInstanceMigrationStartedAtForTest(ins.ID, time.Now().UTC().Add(-2*time.Minute))
 	return ins.ID, leaseToken
 }
 
@@ -231,6 +237,52 @@ func TestReconcileExpiredMigrations_NoRowsIsNoop(t *testing.T) {
 	if reconciled != 0 {
 		t.Fatalf("reconciled=%d want 0", reconciled)
 	}
+}
+
+func TestReconcileExpiredMigrations_DoesNotTouchFreshLease(t *testing.T) {
+	store := state.NewMemStore()
+	ops := wire.NewOpsMetrics("schedd")
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.WithOpsMetrics(ops)
+	nodeID := seedComputeNodeForReconcile(t, store, true)
+	instanceID, _ := seedReconcileMemStoreForFreshLease(t, store, nodeID)
+
+	reconciled, err := e.ReconcileExpiredMigrations(context.Background())
+	if err != nil {
+		t.Fatalf("ReconcileExpiredMigrations: %v", err)
+	}
+	if reconciled != 0 {
+		t.Fatalf("reconciled=%d want 0 for a fresh lease", reconciled)
+	}
+	ins, err := store.InstanceByID(context.Background(), instanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if ins.State != string(state.StateMigrating) || ins.LeaseToken == "" {
+		t.Fatalf("fresh lease mutated: state=%q lease=%q", ins.State, ins.LeaseToken)
+	}
+}
+
+func seedReconcileMemStoreForFreshLease(t *testing.T, store *state.MemStore, nodeID string) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "fresh-"+uuid.NewString()+"@m", "hobby")
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app := state.App{ID: uuid.NewString(), AccountID: acct.ID, Slug: "fresh-" + uuid.NewString(), NodeID: nodeID, Status: state.AppActive, RAMMB: 256}
+	if _, err := store.CreateApp(ctx, app); err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	ins, err := store.CreateInstance(ctx, app.ID, "", string(state.StateRunning), 256, nodeID, "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	lease := uuid.NewString()
+	if err := store.MarkInstanceMigrating(ctx, ins.ID, nodeID, lease); err != nil {
+		t.Fatalf("MarkInstanceMigrating: %v", err)
+	}
+	return ins.ID, lease
 }
 
 // readMigratingReconcileMetric reads the

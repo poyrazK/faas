@@ -6,6 +6,7 @@ import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliver
 import type { AppWebhookResponse } from '../models/AppWebhookResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
 import type { CreateAppWebhookRequest } from '../models/CreateAppWebhookRequest.js';
+import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
 import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
 import type { UpdateAppWebhookRequest } from '../models/UpdateAppWebhookRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -211,11 +212,11 @@ export class WebhooksService {
     });
   }
   /**
-   * Server-mint a new webhook HMAC secret.
-   * Server-mints a 32-byte secret, seals it, and overwrites the
-   * row's sealed ciphertext in place. The plaintext is NEVER
-   * returned in the response — the body carries the masked
-   * constant + rotated_at only.
+   * Replace a webhook HMAC secret.
+   * Seals the caller-supplied replacement and overwrites the row's
+   * ciphertext in place. Supply the same value to the receiver. The
+   * plaintext is never returned; the response carries the masked
+   * constant and rotated_at only.
    *
    * @returns RotateAppWebhookSecretResponse Webhook secret rotation succeeded.
    * @throws ApiError
@@ -223,6 +224,7 @@ export class WebhooksService {
   public static rotateAppWebhookSecret({
     slug,
     id,
+    requestBody,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -232,6 +234,7 @@ export class WebhooksService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    requestBody: RotateAppWebhookSecretRequest,
   }): CancelablePromise<RotateAppWebhookSecretResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -240,6 +243,8 @@ export class WebhooksService {
         'slug': slug,
         'id': id,
       },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         401: `code: unauthorized`,
         402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,

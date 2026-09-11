@@ -29,6 +29,19 @@ type UsageCollectionSummary struct {
 	CompletedAt time.Time
 }
 
+// UsageSummary is the provider-neutral account usage read model. It contains
+// only normalized meters and guardrail state; provider identifiers, rates,
+// and credentials stay behind the registry boundary. The API layer can use
+// this value for a customer-safe view while operators retain the raw ledger
+// and policy for reconciliation.
+type UsageSummary struct {
+	Snapshot        UsageSnapshot
+	EffectivePolicy UsagePolicy
+	PolicyEnabled   bool
+	Fresh           bool
+	Exceeded        bool
+}
+
 type UsageCollectorOptions struct {
 	Interval     time.Duration
 	BatchSize    int
@@ -223,6 +236,36 @@ func (p UsagePolicy) AdmitWithCeilings(ctx context.Context, store UsageStore, ac
 		return ErrQuotaExceeded
 	}
 	return nil
+}
+
+// UsageSummary returns the current UTC-month snapshot for one account. Plan
+// ceilings are supplied by the caller and intersected with the operator
+// policy before freshness and budget state are evaluated, keeping this seam
+// independent of plan names and provider billing models.
+func (s *Service) UsageSummary(ctx context.Context, accountID string, now time.Time, ceilings UsageCeilings) (UsageSummary, error) {
+	if s == nil || s.registry == nil || s.store == nil {
+		return UsageSummary{}, ErrUnavailable
+	}
+	if accountID == "" || now.IsZero() {
+		return UsageSummary{}, ErrInvalid
+	}
+	store, ok := s.store.(UsageStore)
+	if !ok {
+		return UsageSummary{}, ErrUnavailable
+	}
+	now = now.UTC()
+	snapshot, err := store.UsageSnapshot(ctx, accountID, monthStart(now))
+	if err != nil {
+		return UsageSummary{}, err
+	}
+	policy := s.registry.UsagePolicy().WithCeilings(ceilings)
+	return UsageSummary{
+		Snapshot:        snapshot,
+		EffectivePolicy: policy,
+		PolicyEnabled:   policy.Enabled,
+		Fresh:           policy.Enabled && !snapshot.Stale(policy, now),
+		Exceeded:        snapshot.Exceeds(policy),
+	}, nil
 }
 
 func (p UsagePolicy) Cost(reading MeterReading) (int64, error) {

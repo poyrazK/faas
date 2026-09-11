@@ -758,9 +758,10 @@ func (s *server) applyBuildsForAddedChanged(
 			// surface. routeKindForRequest + ClientIP
 			// are the same single source of truth used by
 			// every other HTTP-routed deploy path.
-			ActorUserID: acct.ID,
-			ActorVia:    routeKindForRequest(r),
-			ActorFromIP: middleware.ClientIP(r),
+			ActorUserID:    acct.ID,
+			ActorVia:       routeKindForRequest(r),
+			ActorFromIP:    middleware.ClientIP(r),
+			ServiceRollout: app.Manifest.ExecutionMode == api.ExecutionModeService,
 		})
 		if enqErr != nil {
 			// Same wire/server split as the stage branch

@@ -34,6 +34,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -45,6 +46,7 @@ import (
 	"filippo.io/age"
 	"github.com/caddyserver/certmagic"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
@@ -54,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -577,14 +580,22 @@ func debugReplayMetadata(inv state.Invocation) (map[string]string, error) {
 // Wake RPC for the same invocation. The target is forwarded directly to the
 // existing node-client path, so the handler needs no second app lookup.
 func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, error) {
+	out, _, err := a.InvokeWithTargetStatus(ctx, appID, inv, target)
+	return out, err
+}
+
+// InvokeWithTargetStatus is the pre-woken status-preserving path. The synth
+// server echoes the status to schedd so a runner-generated handler error is
+// reported with its real HTTP code and retryable 5xx responses remain distinct.
+func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, int, error) {
 	if target.InstanceID == "" || target.NodeID == "" {
-		return inv, fmt.Errorf("gateway synth: pre-woken target is incomplete")
+		return inv, 0, fmt.Errorf("gateway synth: pre-woken target is incomplete")
 	}
 	if a.forward == nil {
-		return inv, fmt.Errorf("gateway synth: invocation forwarder is not wired")
+		return inv, 0, fmt.Errorf("gateway synth: invocation forwarder is not wired")
 	}
 	inv.InstanceID = target.InstanceID
-	return a.forwardInvocation(ctx, target, inv)
+	return a.forwardInvocationWithStatus(ctx, target, inv)
 }
 
 // forwardInvocation delivers a synthetic invocation through the same
@@ -660,16 +671,31 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 	} else {
 		inv.Result = nil
 	}
-	inv.State = state.InvocationDispatching
+	if (rec.Code >= http.StatusBadRequest && rec.Code < http.StatusInternalServerError) ||
+		(rec.Code == http.StatusInternalServerError && isHandlerErrorResult(body)) {
+		// A 4xx or the runner's explicit handler_error means the invocation
+		// reached customer code and cannot recover by moving to another VM.
+		inv.State = state.InvocationFailed
+	} else {
+		inv.State = state.InvocationDispatching
+	}
 	return inv, rec.Code, nil
+}
+
+func isHandlerErrorResult(body []byte) bool {
+	var envelope struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &envelope) == nil && envelope.Error == "handler_error"
 }
 
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
-	listen  func(network, addr string) (net.Listener, error)
-	newSrv  func(addr string, handler http.Handler) *http.Server
-	backend gateway.Backend
+	listen       func(network, addr string) (net.Listener, error)
+	listenPacket func(network, addr string) (net.PacketConn, error)
+	newSrv       func(addr string, handler http.Handler) *http.Server
+	backend      gateway.Backend
 	// drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker the graceful-shutdown path waits on. ONE
 	// tracker per daemon, shared by Handler + InternalReverseProxy +
@@ -871,6 +897,13 @@ type runDeps struct {
 	// path unseals per-request. Production wires a single
 	// gateway.NewPublicAuthCache() constructed in run().
 	publicAuthCache *gateway.PublicAuthCache
+	// responseCache is the one process-local response cache shared by the
+	// request handler and PGBackend invalidation subscriber. Both consumers
+	// must receive the same instance: the handler serves and stores entries,
+	// while app/deployment/edge-rule notifications remove stale entries.
+	// Production creates it in run(); nil keeps cache rules disabled in tests
+	// that do not opt into this surface.
+	responseCache *gateway.ResponseCache
 	// publicAuthUnsealer (issue #477 / ADR-079) is the
 	// gateway.PublicAuthUnsealer the basic-auth branch uses
 	// to convert the secretbox-sealed BasicSealed blob into
@@ -941,10 +974,11 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		listen:      net.Listen,
-		newSrv:      defaultServer,
-		backend:     unwiredBackend{},
-		controlAddr: controlAddr,
+		listen:       net.Listen,
+		listenPacket: net.ListenPacket,
+		newSrv:       defaultServer,
+		backend:      unwiredBackend{},
+		controlAddr:  controlAddr,
 	}
 }
 
@@ -1080,6 +1114,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// scoring, identical to a fresh install (ADR-005 cold boot must
 	// always work).
 	warmHintCache := gateway.NewWarmHintCache()
+	// ADR-122: keep one cache instance for both the request path and the
+	// notification invalidator. The cache implementation and metrics were
+	// previously present, but production never attached a cache to Handler,
+	// so every configured cache rule silently fell through to a wake and all
+	// response-cache counters remained zero.
+	responseCache := gateway.NewResponseCache()
+	deps.responseCache = responseCache
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithWarmHint(warmHintCache.HintFunc()).
 		WithAppResolver(func(ctx context.Context, appID string) (gateway.App, bool, error) {
@@ -1106,10 +1147,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return nil, err
 			}
-			live := make(map[string]struct{}, len(liveDeployments))
+			live := make(map[string]int, len(liveDeployments))
 			for _, deployment := range liveDeployments {
 				if deployment.ID != "" {
-					live[deployment.ID] = struct{}{}
+					live[deployment.ID] = schedpkg.DeploymentRuntimePort(deployment)
 				}
 			}
 			instances, err := pgStore.ListInstancesForApp(ctx, appID)
@@ -1121,7 +1162,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 				if instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
 					continue
 				}
-				if _, ok := live[instance.DeploymentID]; !ok {
+				port, ok := live[instance.DeploymentID]
+				if !ok {
 					continue
 				}
 				targets = append(targets, gateway.Target{
@@ -1129,6 +1171,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 					NodeID:       instance.NodeID,
 					WakeID:       instance.WakeID,
 					DeploymentID: instance.DeploymentID,
+					Port:         port,
 				})
 			}
 			return targets, nil
@@ -1141,6 +1184,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return cli, true, nil
 		}).
 		WithPublicAuthCache(deps.publicAuthCache).
+		WithResponseCache(responseCache).
 		// ADR-089 / issue #561 PR 3: arm the per-host edge-rule
 		// matcher the invalidator resets on db.NotifyEdgeRuleChanged.
 		// Nil-safe; production always wires a real *gatewaydEdgeRules
@@ -1847,6 +1891,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	// The backend above owns invalidation; the handler owns lookup/store. Both
+	// sides intentionally share deps.responseCache so a deploy or rule update
+	// invalidates the exact cache serving customer traffic.
+	handler.WithResponseCache(deps.responseCache)
 	// ADR-104 amendment 5 / issue #881 Phase 4 C3: opt-in
 	// central-mode rate-limit counter (the [ratelimit] mode TOML
 	// knob added in C2). mode = "local" (default) leaves every
@@ -2729,16 +2777,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			internalRoutesHandler(handler, resolve, log).ServeHTTP(w, r)
 		})
 	}
-	// ADR-168: expose the node-local service proxy on the trusted control
-	// listener. This is the first data-plane consumer of ADR-167's endpoint
-	// registry: it resolves a service slug, checks that the caller and target
-	// belong to the same account, and forwards through the existing per-node
-	// vmmd bridge. The listener remains loopback-only; binding the same
-	// contract for guests requires remote-IP instance identity and netns
-	// firewall admission, which is the next networking slice.
+	// ADR-168/169: expose the node-local service proxy on the trusted control
+	// listener and, when configured, on the tenant bridge. Both listeners use
+	// the same endpoint registry, account authorizer, and vmmd transport; the
+	// guest listener adds source-IP instance identity before forwarding.
+	var guestServiceProxy http.Handler
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
-		serviceProxy := gateway.NewServiceProxy(gateway.ServiceProxyConfig{
+		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider: serviceEndpointProvider,
 			Resolve: func(ctx context.Context, service string) (string, bool, error) {
 				app, err := pgStore.AppBySlug(ctx, service)
@@ -2771,15 +2817,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return nil
 			},
 			Forward: deps.nodeCache.Forwarding(),
-		})
-		controlMux.Handle("/v1/internal/services/", serviceProxy)
+		}
+		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
+		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
+			serviceProxyConfig.ResolveCaller = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
+			guestServiceProxy = gateway.NewServiceProxy(serviceProxyConfig)
+		}
 	}
 
 	// Track every *http.Server we spin up so the shutdown path can drain
 	// them in parallel. sslib guidance is "call Shutdown on each" rather
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
-	errc := make(chan error, 4)
+	errc := make(chan error, 5)
 	var servers []*http.Server
+	var serviceDiscoveryServers []*dns.Server
 	addSrv := func(s *http.Server) { servers = append(servers, s) }
 
 	// Issue #675: build the unified mux that the unix-socket server
@@ -2940,6 +2991,67 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("gatewayd: FAAS_GATEWAY_CONTROL_LISTEN must bind loopback: %w", err)
 		}
 	}
+	serviceProxyAddr := strings.TrimSpace(cfg.ServiceProxyListen)
+	if serviceProxyAddr != "" {
+		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
+			return err
+		}
+		if guestServiceProxy == nil {
+			log.Warn("gatewayd guest service proxy disabled; dependencies are unavailable", "addr", serviceProxyAddr)
+		} else {
+			srv := deps.newSrv(serviceProxyAddr, guestServiceProxy)
+			srv.Addr = serviceProxyAddr
+			addSrv(srv)
+			l, lerr := deps.listen("tcp", serviceProxyAddr)
+			if lerr != nil {
+				log.Error("gatewayd guest service proxy listen failed", "addr", serviceProxyAddr, "err", lerr)
+				return lerr
+			}
+			go func() {
+				log.Info("gatewayd guest service proxy listening", "addr", serviceProxyAddr)
+				if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
+					errc <- err
+				}
+			}()
+			bridgeIP, bridgeErr := serviceProxyBridgeIP(serviceProxyAddr)
+			if bridgeErr != nil {
+				return fmt.Errorf("gatewayd: service discovery DNS bridge address: %w", bridgeErr)
+			}
+			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log)
+			if dnsErr != nil {
+				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
+			}
+			dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(gateway.ServiceDiscoveryDNSPort))
+			listenPacket := deps.listenPacket
+			if listenPacket == nil {
+				listenPacket = net.ListenPacket
+			}
+			packetConn, packetErr := listenPacket("udp", dnsAddr)
+			if packetErr != nil {
+				return fmt.Errorf("gatewayd: service discovery DNS UDP listen %s: %w", dnsAddr, packetErr)
+			}
+			dnsTCP, tcpErr := deps.listen("tcp", dnsAddr)
+			if tcpErr != nil {
+				_ = packetConn.Close()
+				return fmt.Errorf("gatewayd: service discovery DNS TCP listen %s: %w", dnsAddr, tcpErr)
+			}
+			udpServer := &dns.Server{PacketConn: packetConn, Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
+			tcpServer := &dns.Server{Listener: dnsTCP, Net: "tcp", Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
+			serviceDiscoveryServers = append(serviceDiscoveryServers, udpServer, tcpServer)
+			go func() {
+				log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "udp")
+				if err := udpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
+					errc <- err
+				}
+			}()
+			go func() {
+				log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "tcp")
+				if err := tcpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
+					errc <- err
+				}
+			}()
+		}
+	}
 	go func() {
 		log.Info("gatewayd control listening", "addr", ctrlAddr)
 		errc <- gateway.RunControlServer(ctx, ctrlAddr, controlMux)
@@ -2956,12 +3068,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
+	defer notifyStop()
+
 	select {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
 		defer cancel()
+		for _, s := range serviceDiscoveryServers {
+			//nolint:contextcheck // shutdownCtx intentionally outlives the cancelled run context.
+			_ = s.ShutdownContext(shutdownCtx)
+		}
 		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
 		// Best-effort shutdown of every listener we may have started.
 		// Servers track themselves in `servers`; certmagic owns its renew loop
@@ -3134,6 +3253,48 @@ func assertLoopbackBind(addr string) error {
 		return nil
 	}
 	return fmt.Errorf("control listener %q is not loopback; bind 127.0.0.1:9090 (or ::1) only", addr)
+}
+
+func validateServiceProxyListen(addr string) error {
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("gatewayd: service_proxy_listen must be host:port: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port != serviceProxyPort {
+		return fmt.Errorf("gatewayd: service_proxy_listen must use reserved port %d", serviceProxyPort)
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() {
+		return fmt.Errorf("gatewayd: service_proxy_listen must bind a private host-bridge address")
+	}
+	return nil
+}
+
+func serviceProxyBridgeIP(addr string) (netip.Addr, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	return netip.ParseAddr(host)
+}
+
+func serviceDiscoveryUpstreams() []string {
+	data, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return nil
+	}
+	var upstreams []string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "nameserver" {
+			continue
+		}
+		if ip := net.ParseIP(fields[1]); ip != nil {
+			upstreams = append(upstreams, net.JoinHostPort(fields[1], "53"))
+		}
+	}
+	return upstreams
 }
 
 // installComputeMetricsRoute exposes only /metrics on a compute node's

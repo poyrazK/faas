@@ -5,6 +5,7 @@
 import type { CompleteObjectMultipartUploadRequest } from '../models/CompleteObjectMultipartUploadRequest.js';
 import type { CreateObjectMultipartUploadRequest } from '../models/CreateObjectMultipartUploadRequest.js';
 import type { CreateObjectS3CredentialRequest } from '../models/CreateObjectS3CredentialRequest.js';
+import type { CreateObjectStorageComputeBindingRequest } from '../models/CreateObjectStorageComputeBindingRequest.js';
 import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
@@ -17,6 +18,8 @@ import type { ObjectS3CredentialList } from '../models/ObjectS3CredentialList.js
 import type { ObjectS3CredentialSecret } from '../models/ObjectS3CredentialSecret.js';
 import type { ObjectSignedRequest } from '../models/ObjectSignedRequest.js';
 import type { ObjectSignRequest } from '../models/ObjectSignRequest.js';
+import type { ObjectStorageComputeBinding } from '../models/ObjectStorageComputeBinding.js';
+import type { ObjectStorageComputeBindingList } from '../models/ObjectStorageComputeBindingList.js';
 import type { ObjectStorageUsageResponse } from '../models/ObjectStorageUsageResponse.js';
 import type { Problem } from '../models/Problem.js';
 import type { SetObjectBucketAccessGrantRequest } from '../models/SetObjectBucketAccessGrantRequest.js';
@@ -48,7 +51,7 @@ export class StorageService {
     });
   }
   /**
-   * Create a private bucket on the region's current default backend
+   * Create a bucket on the region's current default backend
    * Requires storage:manage or admin. Idempotent by app, scope and name, not
    * by Idempotency-Key. Retry provisioning by submitting the same name and
    * scope. Existing buckets retain their backend when the default changes.
@@ -72,6 +75,14 @@ export class StorageService {
        * Gregale region, not upstream signing region. Omit to use the configured default.
        */
       region?: string;
+      /**
+       * Serve objects anonymously on the app hostname.
+       */
+      public?: boolean;
+      /**
+       * Immutable app path mounted when public is true.
+       */
+      serve_at?: string;
     },
   }): CancelablePromise<ObjectBucket | Problem> {
     return __request(OpenAPI, {
@@ -307,6 +318,137 @@ export class StorageService {
         'slug': slug,
         'bucket': bucket,
         'credential': credential,
+      },
+    });
+  }
+  /**
+   * List compute bindings for a bucket
+   * Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
+   * @returns ObjectStorageComputeBindingList Active compute bindings; Cache-Control no-store
+   * @returns Problem Binding listing denied or its bucket is unavailable
+   * @throws ApiError
+   */
+  public static listObjectStorageComputeBindings({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App receiving the sealed storage connection settings.
+     */
+    slug: string,
+    /**
+     * Bucket exposed to the compute workload.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectStorageComputeBindingList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/compute-bindings',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Bind a bucket to an app's compute environment
+   * Creates a bucket-scoped Gregale S3 credential and injects endpoint, region, bucket, access-key, secret-key, and addressing settings as sealed app secrets. The secret values are never returned.
+   * @returns Problem Invalid request, secret quota/conflict, unavailable sealing key, or access denied
+   * @returns ObjectStorageComputeBinding Compute binding created; Cache-Control no-store
+   * @throws ApiError
+   */
+  public static createObjectStorageComputeBinding({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App receiving the sealed storage connection settings.
+     */
+    slug: string,
+    /**
+     * Bucket exposed to the compute workload.
+     */
+    bucket: string,
+    requestBody: CreateObjectStorageComputeBindingRequest,
+  }): CancelablePromise<Problem | ObjectStorageComputeBinding> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/compute-bindings',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Revoke a compute binding
+   * Revokes the bucket-scoped S3 credential before removing its sealed app secrets. The operation is idempotent after revocation.
+   * @returns Problem Binding or bucket missing, or access denied
+   * @throws ApiError
+   */
+  public static deleteObjectStorageComputeBinding({
+    slug,
+    bucket,
+    binding,
+  }: {
+    /**
+     * App owning the compute binding.
+     */
+    slug: string,
+    /**
+     * Bucket attached to the compute binding.
+     */
+    bucket: string,
+    /**
+     * Opaque compute binding identifier.
+     */
+    binding: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'binding': binding,
+      },
+    });
+  }
+  /**
+   * Rotate a compute binding credential
+   * Replaces the bucket-scoped access key and sealed secret while keeping the binding and environment variable names stable. Secret values are never returned.
+   * @returns ObjectStorageComputeBinding Binding rotated; Cache-Control no-store
+   * @returns Problem Binding unavailable, sealing key unavailable, or access denied
+   * @throws ApiError
+   */
+  public static rotateObjectStorageComputeBinding({
+    slug,
+    bucket,
+    binding,
+  }: {
+    /**
+     * App whose workload receives the rotated credential.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose access key is being rotated.
+     */
+    bucket: string,
+    /**
+     * Binding identifier retained across credential rotations.
+     */
+    binding: string,
+  }): CancelablePromise<ObjectStorageComputeBinding | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'binding': binding,
       },
     });
   }

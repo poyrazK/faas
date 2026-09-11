@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -71,6 +73,25 @@ func TestTierCQueueAckFlagParse(t *testing.T) {
 	resetJSONOut(t)
 	if code := cmdQueueAck([]string{"--bogus-flag"}); code != 1 {
 		t.Errorf("cmdQueueAck(bad flag) = %d, want 1", code)
+	}
+}
+
+func TestQueueAckJSON(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = false })
+	authedFakeAPI(t, "", http.StatusOK)
+	out, restore := swapStdout(t)
+	defer restore()
+	if code := cmdQueueAck([]string{"demo", "row-1"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v; output=%q", err, out.String())
+	}
+	if got["id"] != "row-1" || got["acked"] != true {
+		t.Fatalf("ack = %#v", got)
 	}
 }
 

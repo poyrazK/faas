@@ -1,3 +1,4 @@
+// spec: §4.10
 package sched
 
 import (
@@ -129,6 +130,7 @@ func (f *fakeWakeVMM) CancelLiveMigration(_ context.Context, _, _, _ string) err
 type recordingSynth struct {
 	calls atomic.Int64
 	last  atomic.Value // last (appID, path)
+	inv   atomic.Value // last persisted invocation delivered
 }
 
 func (r *recordingSynth) SynthesizeRequest(_ context.Context, appID, _, path string) error {
@@ -146,6 +148,7 @@ func (r *recordingSynth) SynthesizeRequest(_ context.Context, appID, _, path str
 func (r *recordingSynth) Invoke(_ context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
 	r.calls.Add(1)
 	r.last.Store(struct{ AppID, Path string }{AppID: appID, Path: inv.Path})
+	r.inv.Store(inv)
 	inv.State = state.InvocationDispatching
 	inv.InstanceID = "inst-fake-" + inv.ID
 	return inv, nil
@@ -228,6 +231,9 @@ func TestCronDispatch_FiresOncePerBoundary(t *testing.T) {
 	}
 	if got := synth.calls.Load(); got != 1 {
 		t.Fatalf("synth calls after first tick = %d, want 1", got)
+	}
+	if got := synth.inv.Load().(state.Invocation).ID; got == "" {
+		t.Fatal("cron dispatch received an empty invocation id")
 	}
 
 	// Second tick without advancing the clock: already fired in this

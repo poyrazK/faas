@@ -164,7 +164,12 @@ func secretsSet(args []string) int {
 	app := fs.String("app", "", "app slug")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to write into (omit for default)")
-	if err := fs.Parse(args); err != nil {
+	orderedArgs, err := reorderSecretsSetArgs(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "secret set:", err)
+		return 1
+	}
+	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
 	if *app == "" {
@@ -212,6 +217,15 @@ func secretsSet(args []string) int {
 	if len(pairs) == 0 {
 		fmt.Fprintln(os.Stderr, "secret set: at least one KEY=VALUE pair is required")
 		return 1
+	}
+	// Validate the complete batch before authenticating or issuing a PUT.
+	// SetSecretWithScope writes one key per request, so discovering an invalid
+	// later key after the first request would otherwise leave a partial update.
+	for _, p := range pairs {
+		if problem := api.ValidateSecretKey(p.Key); problem != nil {
+			fmt.Fprintln(os.Stderr, problem.Detail)
+			return 1
+		}
 	}
 
 	client, err := authedClient()
@@ -276,6 +290,38 @@ func secretsSet(args []string) int {
 	return 0
 }
 
+// reorderSecretsSetArgs keeps the documented "KEY=VALUE ... [flags]" form
+// compatible with Go's flag package, which otherwise stops parsing at the
+// first assignment. Only this command's known flags are moved; every other
+// token remains positional and is validated before any secret is written.
+func reorderSecretsSetArgs(args []string) ([]string, error) {
+	flags := make([]string, 0, len(args))
+	pairs := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			pairs = append(pairs, args[i+1:]...)
+			break
+		}
+		switch {
+		case a == "--app" || a == "-app" || a == "--scope" || a == "-scope":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("%s requires a value", a)
+			}
+			flags = append(flags, a, args[i+1])
+			i++
+		case strings.HasPrefix(a, "--app=") || strings.HasPrefix(a, "-app=") ||
+			strings.HasPrefix(a, "--scope=") || strings.HasPrefix(a, "-scope=") ||
+			a == "--from-stdin" || a == "-from-stdin" ||
+			strings.HasPrefix(a, "--from-stdin=") || strings.HasPrefix(a, "-from-stdin="):
+			flags = append(flags, a)
+		default:
+			pairs = append(pairs, a)
+		}
+	}
+	return append(flags, pairs...), nil
+}
+
 // printSecretsQuotaStamp prints "<app>: N/M secrets" after a
 // successful secrets set. Both inputs come from cheap GET endpoints;
 // failure is silent. Pulled out so the failure-mode logic stays out
@@ -321,12 +367,12 @@ type secretsPair struct {
 func parseSecretsPair(s string) (secretsPair, error) {
 	i := strings.IndexByte(s, '=')
 	if i <= 0 {
-		return secretsPair{}, fmt.Errorf("secret set: %q must look like KEY=VALUE", s)
+		return secretsPair{}, fmt.Errorf("secret set must look like KEY=VALUE")
 	}
 	key := s[:i]
 	value := s[i+1:]
 	if key == "" {
-		return secretsPair{}, fmt.Errorf("secret set: empty KEY in %q", s)
+		return secretsPair{}, fmt.Errorf("secret set has an empty KEY")
 	}
 	return secretsPair{Key: key, Value: value}, nil
 }

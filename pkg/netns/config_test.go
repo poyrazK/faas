@@ -1,3 +1,4 @@
+// adr: 169
 package netns
 
 import (
@@ -5,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -284,6 +286,15 @@ func TestNftCommandsPublishGuestPort(t *testing.T) {
 		if !strings.Contains(rules, w) {
 			t.Errorf("nft ruleset missing %q\ngot:\n%s", w, rules)
 		}
+	}
+}
+
+func TestNftCommandsPublishCustomGuestPortBehindStableHostPort(t *testing.T) {
+	c := testConfig()
+	c.GuestAppPort = 3000
+	rules := flatten(c.NftCommands())
+	if !strings.Contains(rules, "iifname vp7 tcp dport 8080 dnat to 10.0.0.2:3000") {
+		t.Fatalf("custom guest port DNAT missing:\n%s", rules)
 	}
 }
 
@@ -1094,7 +1105,7 @@ func TestNftCommandsAllowlistRuleRunsAfterDenies(t *testing.T) {
 				v4SmtpDrop = i
 			case v4DaddrDrop < 0 && strings.Contains(line, "ip daddr") && strings.Contains(line, "drop"):
 				v4DaddrDrop = i
-			case v4Allowlist < 0 && strings.Contains(line, "ip daddr") && strings.Contains(line, "accept"):
+			case v4Allowlist < 0 && strings.Contains(line, "ip daddr") && strings.Contains(line, "accept") && !strings.Contains(line, "dport "+strconv.Itoa(ServiceProxyPort)) && !strings.Contains(line, "dport "+strconv.Itoa(ServiceDiscoveryDNSPort)):
 				v4Allowlist = i
 			}
 		// v6 chain (no SMTP drop; ADR-023).

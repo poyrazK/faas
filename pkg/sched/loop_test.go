@@ -122,6 +122,43 @@ func TestHandleSnapshotPrimeFailureMarksDeploymentAndStageFailed(t *testing.T) {
 	}
 }
 
+// adr: 005
+func TestHandleSnapshotPrimeRetriesTransientCaptureFailure(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 2)
+	vmm := &fakeVMM{snapErrSequence: []error{context.DeadlineExceeded, nil}}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	loop := NewLoop(nil, engine, testLog())
+
+	loop.handleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotPrime,
+		Payload: `{"app_id":"` + app.ID + `","deployment_id":"` + dep.ID + `"}`,
+	})
+	loop.waitPrimes()
+
+	deployment, err := store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if deployment.Status == state.DeployFailed {
+		t.Fatalf("deployment status = %q after successful retry, want non-failed", deployment.Status)
+	}
+	rows, err := store.ListInstancesForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListInstancesForApp: %v", err)
+	}
+	states := map[string]int{}
+	for _, row := range rows {
+		states[row.State]++
+	}
+	if len(rows) != 2 || states[string(state.StateStopped)] != 1 || states[string(state.StateParked)] != 1 {
+		t.Fatalf("instances = %+v, want one stopped failed capture and one parked retry", rows)
+	}
+	if vmm.snapshots != 1 {
+		t.Fatalf("successful snapshots = %d, want 1 after one transient failure", vmm.snapshots)
+	}
+}
+
 // TestHandleParkedAppNotification dispatches the app_changed parked event to
 // the instance lifecycle owner. This is the regression test for the original
 // bug, where the event was only logged and the VM remained RUNNING.

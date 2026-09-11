@@ -1,0 +1,3 @@
+function:
+  runtime: node24
+  handler: handler.handler

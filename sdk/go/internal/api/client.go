@@ -674,10 +674,11 @@ func (c *Client) GetDelayedTask(ctx context.Context, id string) (DelayedTaskResp
 	return out, c.do(ctx, "GET", "/v1/delayed-tasks/"+id, nil, &out)
 }
 
-// CancelDelayedTask cancels a pending delayed-task. Idempotent — a
-// re-cancel on a terminal row returns 404 invocation_not_found.
-func (c *Client) CancelDelayedTask(ctx context.Context, id string) error {
-	return c.do(ctx, "DELETE", "/v1/delayed-tasks/"+id, nil, nil)
+// CancelDelayedTask cancels a pending delayed-task and returns the row's
+// resulting state. A dispatching or terminal row is reported unchanged.
+func (c *Client) CancelDelayedTask(ctx context.Context, id string) (DelayedTaskResponse, error) {
+	var out DelayedTaskResponse
+	return out, c.do(ctx, "DELETE", "/v1/delayed-tasks/"+id, nil, &out)
 }
 
 // ListInvocations paginates the account's invocations by `?before=<id>`
@@ -1107,6 +1108,20 @@ func (c *Client) UsageSummary(ctx context.Context, month string) (UsageSummaryRe
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// AccountUsage returns the account-level usage projection. It combines the
+// compute summary with optional object-storage and managed-PostgreSQL views;
+// an empty month asks the server for the current UTC month.
+func (c *Client) AccountUsage(ctx context.Context, month string) (AccountUsageResponse, error) {
+	var out AccountUsageResponse
+	path := "/v1/account/usage"
+	if month != "" {
+		q := url.Values{}
+		q.Set("month", month)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppSLO returns the per-app SLO panel for slug over the
 // named SLO window. window is one of "1h", "24h", "7d"
 // (strict subset of the /metrics vocabulary) — empty
@@ -1148,6 +1163,13 @@ func (c *Client) ListDeployments(ctx context.Context, before string, limit int) 
 		path += "limit=" + fmt.Sprintf("%d", limit)
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListLatestDeploymentsByApp returns at most one newest deployment for every
+// non-deleted app owned by the authenticated account.
+func (c *Client) ListLatestDeploymentsByApp(ctx context.Context) (LatestDeploymentsByAppResponse, error) {
+	var out LatestDeploymentsByAppResponse
+	return out, c.do(ctx, "GET", "/v1/deployments/latest-by-app", nil, &out)
 }
 
 // ListAppDeployments returns one cursor page of deployments for an app slug.
@@ -1345,13 +1367,11 @@ func (c *Client) DeleteAppWebhook(ctx context.Context, slug, id string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/webhooks/"+id, nil, nil)
 }
 
-// RotateAppWebhookSecret asks the server to mint a fresh sealed
-// secret. The plaintext is server-side and never crosses the wire;
-// the response carries only the masked constant and the rotated_at
-// timestamp. Subsequent reads of the row return the masked constant.
-func (c *Client) RotateAppWebhookSecret(ctx context.Context, slug, id string) (RotateAppWebhookSecretResponse, error) {
+// RotateAppWebhookSecret replaces the sealed signing secret with the
+// caller-supplied value. The response remains masked.
+func (c *Client) RotateAppWebhookSecret(ctx context.Context, slug, id string, req RotateAppWebhookSecretRequest) (RotateAppWebhookSecretResponse, error) {
 	var out RotateAppWebhookSecretResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/rotate-secret", nil, &out)
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/rotate-secret", req, &out)
 }
 
 // ListAppWebhookDeliveries paginates the per-subscription delivery

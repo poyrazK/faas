@@ -191,28 +191,50 @@ never automatically reactivates the node. Direct database mutation exists only
 as `--break-glass-db --yes` and is reserved for the reviewed
 [`database-repair`](../break-glass/database-repair.md) procedure.
 
+### Instance recovery
+
+The destructive instance-recovery commands use the same operator session and
+return only after their durable schedd intent reaches a terminal state:
+
+```
+gregalectl instances force-park --instance-id <uuid> --yes --reason incident_123
+gregalectl instances force-cold-boot --app-slug <slug> --yes --reason incident_123
+gregalectl instances force-restart --instance-id <uuid> --yes --reason incident_123
+```
+
+Each command emits an intent ID and trace ID for incident correlation. During
+an apid outage, `--break-glass-local --yes --reason <incident_slug>` preserves
+the former direct schedd/database path and prints a loud unaudited-action
+warning.
+
+### Account support
+
+Routine tenant investigation and lifecycle changes go through the authenticated
+operator API; they do not require SSH or direct database access:
+
+```
+gregalectl accounts list --status suspended
+gregalectl accounts show --account-id <uuid>
+gregalectl accounts 360 --account-id <uuid> --month 2026-09
+gregalectl accounts activity --account-id <uuid> --limit 100
+
+gregalectl auth step-up
+gregalectl accounts suspend --account-id <uuid> --reason abuse_incident_123 --yes
+gregalectl accounts restore --account-id <uuid> --reason appeal_approved_123 --yes
+gregalectl accounts revoke-sessions --account-id <uuid> --reason credential_reset_123 --yes
+```
+
+Email is redacted unless `--include-pii` is supplied; PII access is audited by
+apid. Every mutation requires a recent MFA step-up, an explicit reason and
+confirmation, and emits a trace ID for correlation with its audit row. There is
+no routine direct-database fallback for account mutations; use the reviewed
+[`database-repair`](../break-glass/database-repair.md) procedure only during an
+apid outage.
+
 `target_url` is the VM manager endpoint. `gateway_target_url` is the
 separate private HTTP data-plane endpoint; the manifest/Ansible pipeline
 derives it from the node hostname, so normal node joins do not require a
 second hand-written address.
-
-### Instance recovery
-
-```
-sudo gregalectl instances force-park \
-    --instance-id <uuid> --reason wedged_guest --yes
-sudo gregalectl instances force-cold-boot \
-    --app-slug <slug> --reason snapshot_validation --yes
-sudo gregalectl instances force-restart \
-    --instance-id <uuid> --reason failed_healthcheck --yes
-```
-
-These commands dial schedd directly. They reuse `schedd_socket` and the
-`schedd_tls_*` client paths from `/etc/faas/meterd.toml`, which makes the same
-commands work on single-box Unix-socket installs and split-box mTLS installs.
-`FAAS_SCHEDD_ADDR` overrides the target for incident response while retaining
-the configured TLS trust material. Run the commands as root so the CLI can
-read the sealed database configuration and the meterd client key.
 
 ### Fleet topology coordinator
 

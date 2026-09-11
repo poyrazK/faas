@@ -110,12 +110,12 @@ func TestWriteAppCgroupUsesConfiguredCPU(t *testing.T) {
 }
 
 // adr: 168
-func TestColdBootCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
+func TestStartupCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
 	dir := withFakeCgroupRoot(t)
-	inst := "cold-boot-cpu"
+	inst := "startup-cpu"
 	lease := Lease{
 		Instance:      inst,
-		Plan:          api.PlanFree,
+		Plan:          api.PlanScale,
 		MemoryMaxMiB:  128,
 		CPUMillicores: 250,
 	}
@@ -124,9 +124,9 @@ func TestColdBootCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	profile, err := resolveColdBootCPUProfile(lease.Plan, lease.CPUMillicores)
+	profile, err := resolveStartupCPUProfile(lease.Plan, lease.CPUMillicores)
 	if err != nil {
-		t.Fatalf("resolveColdBootCPUProfile: %v", err)
+		t.Fatalf("resolveStartupCPUProfile: %v", err)
 	}
 	if profile.StartupMillicores != 1000 || profile.ConfiguredMillicores != 250 {
 		t.Fatalf("profile = %+v, want startup=1000 configured=250", profile)
@@ -152,20 +152,20 @@ func TestColdBootCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", path, got, want)
 		}
 	}
-	assertCPU(filepath.Join(parent, "cpu.max"), "100000 100000\n")
+	assertCPU(filepath.Join(parent, "cpu.max"), "1000000 1000000\n")
 	if _, err := os.Stat(filepath.Join(parent, WorkloadNameMain)); !os.IsNotExist(err) {
 		t.Fatalf("host workload leaf must not be created; guest-init owns per-workload cgroups, err=%v", err)
 	}
 
-	if err := v.restoreColdBootCPUFence(lease, workloads, profile.ConfiguredMillicores); err != nil {
+	if err := v.restoreConfiguredCPUFence(lease, workloads, profile.ConfiguredMillicores); err != nil {
 		t.Fatalf("restore configured fence: %v", err)
 	}
-	assertCPU(filepath.Join(parent, "cpu.max"), "25000 100000\n")
+	assertCPU(filepath.Join(parent, "cpu.max"), "250000 1000000\n")
 }
 
-func TestColdBootCPUProfileResolvesLegacyZeroToPlanCeiling(t *testing.T) {
+func TestStartupCPUProfileResolvesLegacyZeroToPlanCeiling(t *testing.T) {
 	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
-		profile, err := resolveColdBootCPUProfile(plan, 0)
+		profile, err := resolveStartupCPUProfile(plan, 0)
 		if err != nil {
 			t.Fatalf("plan %s: %v", plan, err)
 		}

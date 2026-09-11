@@ -7,6 +7,13 @@ global:
   external_labels:
     box: "{{ ansible_hostname }}"
 
+# Trace exemplars are retained in a bounded circular buffer so Grafana can
+# query a concrete request from a latency bucket without turning trace IDs
+# into metric labels. The systemd unit enables --enable-feature=exemplar-storage.
+storage:
+  exemplars:
+    max_exemplars: {{ prom_exemplar_max_size }}
+
 # Alert rules — evaluated every 30s against the closed (daemon, severity)
 # label set declared in faas.rules.yml. Three severities map to receivers
 # via the Alertmanager role (deploy/ansible/roles/alertmanager/):
@@ -64,7 +71,27 @@ scrape_configs:
     http_sd_configs:
       - url: "{{ prom_compute_metrics_discovery_url }}"
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
     metrics_path: "/metrics"
+  - job_name: "vmmd"
+    http_sd_configs:
+      - url: "{{ prom_compute_vmmd_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+  - job_name: "imaged"
+    http_sd_configs:
+      - url: "{{ prom_compute_imaged_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+  - job_name: "builderd"
+    http_sd_configs:
+      - url: "{{ prom_compute_builderd_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+{% if prom_promtail_enabled | default(false) | bool %}
   # Issue #274: discover every compute-host Promtail endpoint from the same
   # active registry, but through a separate HTTP-SD endpoint so the gateway
   # scrape never attempts to hit Promtail's port.
@@ -72,7 +99,9 @@ scrape_configs:
     http_sd_configs:
       - url: "{{ prom_compute_promtail_discovery_url }}"
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
     metrics_path: "/metrics"
+{% endif %}
 {% endif %}
 {% if prom_loki_metrics_target | default('') | length > 0 %}
   # Dedicated Loki meta-monitoring. The /metrics endpoint is intentionally

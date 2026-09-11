@@ -11,6 +11,10 @@
 > **Note:** this drill was scaffolded against the legacy `cmd/gatewayd/`
 > daemon; the current process is `faas-gatewayd-public`
 > with config `/etc/faas/gatewayd-public.toml`.
+>
+> This historical drill retains the `.apps.gregale.dev` evidence
+> shape from the legacy daemon. New release checks must probe a
+> representative `<slug>.gregale.dev` hostname instead.
 
 ## Acceptance bar
 

@@ -25,7 +25,7 @@ die() {
   die "/etc/faas/builder-acceptance-host is missing; this node is not designated for disruptive acceptance tests"
 
 for tool in busybox e2fsck file firecracker flock gcc install ip iptables jailer \
-  make mkfs.ext4 nft readlink systemctl systemd-run tc truncate; do
+  make mkfs.ext4 nft readlink systemctl systemd-run tc truncate unshare; do
   command -v "${tool}" >/dev/null || die "required host tool is missing: ${tool}"
 done
 
@@ -211,4 +211,49 @@ if [[ "${passed}" -eq 0 ]]; then
   echo "native metal smoke: no metal test executed; the fixtures or the build tag are wrong" >&2
   metal_rc=1
 fi
+# Second pass: the six tests that need private mount + network namespaces.
+#
+# They gate on FAAS_TEST_NETWORK_BATCH and skipped in the pass above because
+# this host runs it in the host namespace — they manipulate /run/netns,
+# bridge MACs and neighbour entries, which is not safe there and would fight
+# the node's real networking. network_batch_metal_test.go documents the
+# invocation; this is that command, wired up.
+#
+# The binary is compiled OUTSIDE the namespace (go build wants a working
+# module cache) and executed inside it. `unshare --net` yields an empty
+# namespace, so loopback is brought up first — several of these tests dial
+# 127.0.0.1.
+batch_tests='^(TestMetalImageBindMount|TestMetalIPSetupBatch|TestMetalFreshNetworkPolicy|TestMetalReusedLeaseNeighbor|TestMetalPreparedBridgeMAC|TestMetalPreparedNetworkOwnership)$'
+batch_bin="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal.test"
+batch_log="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal-batch.log"
+
+echo "native metal smoke: compile the namespace-batch test binary"
+"${FAAS_METAL_GO}" test -c -tags metal -race -o "${batch_bin}" ./pkg/fcvm
+
+echo "native metal smoke: run the namespace batch under unshare"
+set +e
+FAAS_TEST_NETWORK_BATCH=1 \
+  unshare --mount --net --propagation private -- \
+  sh -c 'ip link set lo up 2>/dev/null; mount -t tmpfs tmpfs /run/netns && exec "$0" -test.run "$1" -test.timeout=10m -test.v' \
+  "${batch_bin}" "${batch_tests}" 2>&1 | tee "${batch_log}"
+batch_rc="${PIPESTATUS[0]}"
+set -e
+
+batch_passed="$(grep -cE '^--- PASS: ' "${batch_log}" || true)"
+batch_skipped="$(grep -cE '^--- SKIP: ' "${batch_log}" || true)"
+batch_failed="$(grep -cE '^--- FAIL: ' "${batch_log}" || true)"
+echo "native metal smoke: namespace batch — ${batch_passed} passed, ${batch_skipped} skipped, ${batch_failed} failed"
+if [[ "${batch_skipped}" -gt 0 ]]; then
+  echo "native metal smoke: namespace batch still skipping:"
+  grep -E '^--- SKIP: ' "${batch_log}" | sed 's/^/  /'
+fi
+# The whole point of this pass. If it executes nothing, the unshare or the
+# tmpfs failed and the six tests are silently back to not running.
+if [[ "${batch_passed}" -eq 0 ]]; then
+  echo "native metal smoke: namespace batch executed no test; unshare or /run/netns setup failed" >&2
+  batch_rc=1
+fi
+
+echo "native metal smoke: total — $((passed + batch_passed)) passed, $((skipped + batch_skipped)) skipped, $((failed + batch_failed)) failed"
 [[ "${metal_rc}" -eq 0 ]] || exit "${metal_rc}"
+[[ "${batch_rc}" -eq 0 ]] || exit "${batch_rc}"

@@ -13,6 +13,59 @@ import (
 
 const openapiDefaultSource = "manual_import"
 
+// cmdOpenapiPreview shows the read-only declared-vs-observed contract and
+// route-policy coverage for an app. The API remains the source of truth for
+// route matching; this command only renders the response for humans or JSON
+// consumers.
+func cmdOpenapiPreview(args []string) int {
+	flags, pos := splitArgsForFlags(args)
+	fs := newOpenapiFlagSet("openapi preview")
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(pos) != 1 {
+		PrintUsage(osStderr, "usage: gregale openapi preview <slug>", "openapi")
+		return 1
+	}
+	if !validCLISlug(pos[0]) {
+		return printErr("Invalid app slug", fmt.Errorf("invalid slug %q", pos[0]))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.PreviewAppOpenAPIPolicy(context.Background(), pos[0])
+	if err != nil {
+		return printErr("Could not preview OpenAPI policy", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	_, _ = fmt.Fprintf(osStdout, "OpenAPI policy preview for %s (source=%s, observed=%t)\n", pos[0], resp.Source, resp.ObservedAvailable)
+	if len(resp.Routes) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "(no declared or observed routes)")
+		return 0
+	}
+	for _, route := range resp.Routes {
+		coverage := "uncovered"
+		if route.Covered {
+			coverage = "covered"
+		}
+		_, _ = fmt.Fprintf(osStdout, "  %-8s %-32s %-13s %s\n", route.Method, route.Path, route.Status, coverage)
+		for _, rule := range route.Rules {
+			enabled := "disabled"
+			if rule.Enabled {
+				enabled = "enabled"
+			}
+			_, _ = fmt.Fprintf(osStdout, "    rule %-36s %-10s %s\n", rule.ID, rule.Kind, enabled)
+		}
+	}
+	if len(resp.Suggestions) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Suggestions: %d uncovered declared route(s)\n", len(resp.Suggestions))
+	}
+	return 0
+}
+
 // cmdOpenapiGet fetches the app-level OpenAPI document. The response is
 // deliberately written as raw JSON so it can be saved directly or piped to
 // jq; --source=auto returns the platform-merged document.

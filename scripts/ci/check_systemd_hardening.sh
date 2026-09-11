@@ -96,6 +96,20 @@ for rel in "${units[@]}"; do
   fi
 done
 
+# imaged performs bounded OCI download, extraction, validation, and scanning
+# before Type=notify readiness. Its dependency-aware verifier allows twenty
+# minutes, so both generated unit copies must override systemd's 90-second
+# default with the same ceiling.
+for rel in \
+  "deploy/ansible/roles/compute_only_service/files/faas-imaged.service" \
+  "deploy/systemd/faas-imaged.service"; do
+  file="${root}/${rel}"
+  if [[ -f "$file" ]] && ! grep -Fqx 'TimeoutStartSec=20min' "$file"; then
+    echo "systemd-hardening-check: ${rel}: imaged startup timeout must match the 20-minute readiness ceiling" >&2
+    errors=$((errors + 1))
+  fi
+done
+
 # Split-box hosts use a remote PostgreSQL instance for compute daemons, so a
 # blanket Requires=postgresql.service would make those units fail on hosts
 # that intentionally do not run a local database. Control-plane daemons are

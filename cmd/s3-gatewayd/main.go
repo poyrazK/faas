@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -149,21 +150,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	controlMux := http.NewServeMux()
 	controlMux.Handle("GET /metrics", ops.Handler())
 	controlMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	controlMux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		probeCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := pool.Ping(probeCtx); err != nil {
-			http.Error(w, "not ready", http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
+	readyProbe := buildReadinessProbe(ctx, pool, 5*time.Second)
+	readyProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("s3-gatewayd", ready, reason)
 	})
+	defer readyProbe.Drain("s3-gatewayd", log)
+	wire.ControlReadyMuxLite(controlMux, readyProbe.ReadyFunc(), readyProbe.ReasonFunc())
 	controlServer := &http.Server{Handler: controlMux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 
 	log.Info("s3-gatewayd: listening", "data_addr", dataListener.Addr().String(), "control_addr", controlListener.Addr().String(), "endpoint", registry.PublicEndpoint, "region", registry.PublicRegion)
 	errorsCh := make(chan error, 2)
 	go func() { errorsCh <- dataServer.Serve(dataListener) }()
 	go func() { errorsCh <- controlServer.Serve(controlListener) }()
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
+	defer notifyStop()
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)

@@ -75,7 +75,7 @@ process.stdin.on('end', () => {
   const env = JSON.parse(buf);
   const out = {
     status: 200,
-    headers: { "X-Echo-Method": env.method, "X-Echo-Path": env.path },
+    headers: { "X-Echo-Method": env.method, "X-Echo-Path": env.path, "content-type": "application/json" },
     body_b64: Buffer.from("echo:" + env.path).toString("base64")
   };
   process.stdout.write(JSON.stringify(out));
@@ -248,11 +248,8 @@ func (f FakeHandler) WriteMaterialize(t *testing.T) string {
 // RunRoundTrip wires up an httptest.Server that delegates / to handler,
 // fires GET /hello?x=1, and asserts: status=200, X-Echo-Method=="GET",
 // X-Echo-Path=="/hello", body contains "echo:/hello". When
-// fake.Interpreter == []string{"node"}, the helper also asserts
-// Content-Type == "application/octet-stream" — node22's runtime
-// override (guest/runners/node22/main.go:102). All other runtimes
-// skip the Content-Type check; the python312/go124 runners pass through
-// the handler's Content-Type verbatim.
+// fake.Interpreter == []string{"node"}, the helper also asserts that the
+// handler's application/json content type survives the runner boundary.
 //
 // The handler closure is invoked with the materialized handler script
 // path AND a RunnerSignal so the runner's per-package `handle`
@@ -261,11 +258,8 @@ func (f FakeHandler) WriteMaterialize(t *testing.T) string {
 // RunRoundTrip wires up an httptest.Server that delegates / to handler,
 // fires GET /hello?x=1, and asserts: status=200, X-Echo-Method=="GET",
 // X-Echo-Path=="/hello", body contains "echo:/hello". When
-// fake.Interpreter == []string{"node"}, the helper also asserts
-// Content-Type == "application/octet-stream" — node22's runtime
-// override (guest/runners/node22/main.go:102). All other runtimes
-// skip the Content-Type check; the python312/go124 runners pass through
-// the handler's Content-Type verbatim.
+// fake.Interpreter == []string{"node"}, the helper also asserts that the
+// handler's application/json content type survives the runner boundary.
 //
 // The handler closure is invoked with the materialized handler script
 // path AND a RunnerSignal so the runner's per-package `handle`
@@ -315,12 +309,12 @@ func RunRoundTrip(t *testing.T, fake FakeHandler, handler func(http.ResponseWrit
 	if got := resp.Header.Get("X-Echo-Path"); got != "/hello" {
 		t.Errorf("X-Echo-Path = %q, want /hello", got)
 	}
-	// node22's `handle` sets `Content-Type: application/octet-stream`
-	// AFTER copying the handler's headers (guest/runners/node22/main.go:102).
-	// python312 and go124 pass headers verbatim — skip the check.
+	// Node handlers frequently return JSON. Both supported Node runners must
+	// preserve that explicit value instead of replacing it with their binary
+	// fallback. The lower-case key in FakeNodeScript also pins case-insensitivity.
 	if len(fake.Interpreter) > 0 && fake.Interpreter[0] == "node" {
-		if got := resp.Header.Get("Content-Type"); got != "application/octet-stream" {
-			t.Errorf("Content-Type = %q, want application/octet-stream (node22 override)", got)
+		if got := resp.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", got)
 		}
 	}
 	body := new(bytes.Buffer)

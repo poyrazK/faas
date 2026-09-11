@@ -43,6 +43,7 @@ import (
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -59,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -156,6 +158,13 @@ func dataPlacementEnabledFromEnv(getenv func(string) string) bool {
 		}
 	}
 	return false
+}
+
+// workflowsEnabledFromEnv is shared with schedd's durable-dispatch gate.
+// Keeping apid on the same opt-in prevents it from accepting workflow runs
+// that no runtime will ever execute.
+func workflowsEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_WORKFLOWS_ENABLED")) == "1"
 }
 
 // resolveMetricsAddr reads FAAS_APID_METRICS_ADDR via the test seam
@@ -577,6 +586,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(os.Getenv))
 
 	deps.store = func() state.Store { return state.NewPgStore(pool) }
+	// Wire the canonical OpenAPI projector before any deployment can be
+	// promoted. state.MarkDeploymentLive invokes it inside the same Postgres
+	// transaction as the status flip and snapshot UPSERT.
+	openapidiff.RegisterStateCapture()
 	deps.config = cfg
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): boot log carrying the
 	// multi-box identity so an operator reading the systemd journal
@@ -1264,7 +1277,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"github_enabled", oauthCfg.GitHub.Enabled())
 	}
 	srv := newServerWithDeps(store, log, cfg.GetAppsDomain(deps.getenv), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv)).
-		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv))
+		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv)).
+		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv))
 	objectRegistry, err := objectstorage.Load(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
@@ -1353,17 +1367,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	log.Info("billing provider loaded", "provider", provName)
 
-	// Issue #299 / ADR-038 Phase 3: SBOM root directory. imagd's syft
-	// populator writes CycloneDX JSON to <root>/sboms/<buildID>.cdx.json
-	// and stores the relative path in build_provenance.sbom_storage_key.
-	// apid joins the relative path against this root at GET
-	// /v1/builds/{id}/sbom time. Default is the single-box deploy root
-	// (/srv/fc, FAAS_STORAGE_ROOT for the local storage backend); on a
-	// remote-storage deploy the operator sets FAAS_SBOM_ROOT to the
-	// mirror mount. Empty disables the route — the handler returns 503
-	// build_sbom_unavailable (issue #299: "may exist later, retry") so
-	// the CLI/SDK can distinguish from 404 "no such build".
-	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT"))
+	// Issue #299 / ADR-038 Phase 3: imagd stores CycloneDX JSON under
+	// sboms/<buildID>.cdx.json and records that storage key in provenance.
+	// Read through the same storage backend here so OCI-backed deployments
+	// do not depend on an apid-local mirror. FAAS_SBOM_ROOT remains the
+	// compatibility path for older single-box artifacts.
+	sbomStorage, err := artifactstorage.BackendFromEnv()
+	if err != nil {
+		return fmt.Errorf("apid: load SBOM storage backend: %w", err)
+	}
+	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage)
 
 	// Issue #98 / ADR-028: admin allowlist for /v1/compute-nodes.
 	// Empty in dev = all admin routes 403 with code admin_required;
@@ -1734,6 +1747,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 
+	// Issue #571 PR-A2: construct the daemon-level readiness probe
+	// independently of the optional metrics listener. systemd's
+	// Type=notify state must use the same dependency signal as /readyz
+	// even when FAAS_APID_METRICS_ADDR disables the operator listener.
+	var apidProbe wire.ReadyzProbe
+	if deps.pool != nil {
+		pgSig, pgStop := wire.NewPGPingSignal(ctx, deps.pool, 5*time.Second)
+		apidProbe.RegisterSignal(pgSig, pgStop)
+	} else {
+		// Test path: no pool. Keep the pre-split test behaviour while
+		// making the production path fail closed when a pool is absent.
+		s := apidProbe.Register()
+		s.Set(true, "")
+	}
+	apidProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("apid", ready, reason)
+	})
+	defer apidProbe.Drain("apid", log)
+
 	// Optional /metrics listener (this PR). Sits on its own bind
 	// address so a port collision can't take the daemon down. Empty
 	// FAAS_APID_METRICS_ADDR = no listener (the scrape observer is
@@ -1762,26 +1794,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// metrics_addr wired) short-circuits to an always-ready
 		// signal so unit tests don't construct a pgxpool they
 		// don't need.
-		var apidProbe wire.ReadyzProbe
-		if deps.pool != nil {
-			pgSig, pgStop := wire.NewPGPingSignal(ctx, deps.pool, 5*time.Second)
-			apidProbe.RegisterSignal(pgSig, pgStop)
-			// NOTE: pgStop is wired through pkg/wire.ReadyzProbe.Drain
-			// (issue #571 PR-A2 / Finding 4 PR #1091 review). The
-			// earlier `defer pgStop()` is gone — Drain fires the
-			// helper goroutine's stopper synchronously before
-			// flipping the signal to "draining", so a /readyz
-			// scrape that lands during the SIGTERM drain window
-			// sees the helper already stopped (no re-flip race).
-		} else {
-			// Test path: no pool. Always-ready so /readyz returns
-			// 200. Mirrors the pre-split degradation pattern.
-			s := apidProbe.Register()
-			s.Set(true, "")
-		}
-		apidProbe.SetReadyObserver(func(ready bool, reason string) {
-			ops.MarkReady("apid", ready, reason)
-		})
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle("/metrics", promhttp.HandlerFor(
 			prometheus.Gatherers{ops.Registry(), budgetReg},
@@ -2080,6 +2092,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 
+	// systemd Type=notify must not promote apid until all startup work
+	// (including migrations, listeners, and provider wiring) completed.
+	// The customer-facing /readyz remains the richer dependency probe;
+	// reaching this point means the HTTP listener and its dependencies are
+	// fully constructed.
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
+	defer notifyStop()
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenBind)

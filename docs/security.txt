@@ -2,7 +2,9 @@
 
 The live machine-readable document is served at `/.well-known/security.txt`.
 It is backed by the static handler in `pkg/securitytxt` so it remains
-available during control-plane incidents.
+available during control-plane incidents. It publishes the current PGP
+encryption key and the acknowledgments page through the RFC 9116
+`Encryption` and `Acknowledgments` fields.
 
 Security reports are accepted at `security@gregale.dev` or through the
 GitHub Security Advisories link in the live document. Our responsible
@@ -13,3 +15,7 @@ issue is resolved or a mitigation is published. The full policy is in
 
 Please include the affected surface, reproduction steps, impact, and a safe
 contact channel. Do not include customer secrets or personal data in a report.
+
+For a suspected exposure of customer data, follow
+[`docs/runbooks/breach-notification.md`](runbooks/breach-notification.md)
+immediately; do not wait for the normal disclosure triage loop.

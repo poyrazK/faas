@@ -105,6 +105,13 @@ func TestObsOverview_AuthGate_RejectsNonAllowlistedEmail(t *testing.T) {
 // generated_at timestamp.
 func TestObsOverview_HappyPath_ReturnsKPIBundle(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	if _, err := e.store.CreateApp(context.Background(), state.App{
+		AccountID: e.acct.ID,
+		Slug:      "overview-app",
+		Type:      state.AppTypeApp,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	rec := e.do(t, "GET", "/v1/admin/obs/overview", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("overview: got status %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -121,6 +128,12 @@ func TestObsOverview_HappyPath_ReturnsKPIBundle(t *testing.T) {
 		// so this is always 1+. The non-zero check pins that the
 		// projection helper ran (no nil-panic regression).
 		t.Errorf("overview: accounts_active is 0 (projection may not have run)")
+	}
+	if resp.Totals.AppsTotal != 1 {
+		t.Errorf("overview: apps_total = %d, want 1", resp.Totals.AppsTotal)
+	}
+	if resp.BetaFunnel14d.WindowStartedAt.IsZero() {
+		t.Errorf("overview: beta_funnel_14d.window_started_at is zero")
 	}
 }
 

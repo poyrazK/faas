@@ -7,7 +7,7 @@ StartLimitIntervalSec=60s
 StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
 User=faas-meterd
 Group=faas
 ExecStart=/opt/faas/current/bin/meterd --config /etc/faas/meterd.toml
@@ -18,6 +18,10 @@ Slice=faas-cp.slice
 MemoryMax=256M
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/meterd/billing.env
+Environment=FAAS_PROMETHEUS_URL=http://127.0.0.1:9095
+Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_host_age_identity
+LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
+LoadCredential=faas_host_age_identity_previous:-/etc/faas/secrets/host.age.previous
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

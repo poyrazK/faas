@@ -1,3 +1,4 @@
+// spec: §4.1
 package gateway
 
 import (
@@ -37,7 +38,7 @@ func TestEdgeRuleOldLoadCannotRepopulateAfterReset(t *testing.T) {
 		t.Fatal("current read not cached")
 	}
 }
-func TestEdgeRuleLaterKindsAreNotNegativeEntries(t *testing.T) {
+func TestEdgeRulePopulatedEntriesHaveBoundedFallbackExpiry(t *testing.T) {
 	for name, entry := range map[string]*HostEntry{
 		"throttle": {Throttle: []EdgeRuleThrottleResolved{{ID: "t"}}},
 		"budget":   {Budget: []EdgeRuleBudgetResolved{{ID: "b"}}},
@@ -48,9 +49,13 @@ func TestEdgeRuleLaterKindsAreNotNegativeEntries(t *testing.T) {
 			now := time.Unix(100, 0)
 			c.now = func() time.Time { return now }
 			c.Put("host", entry)
-			now = now.Add(edgeRuleNegativeTTL + time.Second)
+			now = now.Add(edgeRuleCacheTTL - time.Nanosecond)
 			if _, hit := c.Get("host"); !hit {
-				t.Fatal("populated later rule kind dropped or expired as empty")
+				t.Fatal("populated entry expired early")
+			}
+			now = now.Add(time.Nanosecond)
+			if _, hit := c.Get("host"); hit {
+				t.Fatal("populated entry survived bounded fallback expiry")
 			}
 		})
 	}

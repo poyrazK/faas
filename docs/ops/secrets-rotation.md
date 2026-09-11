@@ -9,7 +9,7 @@ response, not as scheduled maintenance).
 ## Hetzner DNS API token
 
 CertMagic uses the Hetzner DNS API to write `_acme-challenge` TXT
-records for the wildcard `*.apps.gregale.dev` cert and on-demand
+records for the wildcard `*.gregale.dev` cert and on-demand
 HTTP-01-challenged custom-domain certs. The token is read once at
 gatewayd-public startup from `/etc/faas/secrets/hetzner-dns.token` and held
 in process memory for the daemon's lifetime; **token rotation today
@@ -63,7 +63,7 @@ file-watch reload is a follow-up.
 6. Record the rotation in `docs/drills/YYYY-MM-DD-hetzner-token-rotation.md`
    (use `docs/drills/2026-07-21-tls-cutover.md` as the format template).
    Include the date, the new token label, the journalctl excerpt from
-   step 4, and a `curl -fsSL https://<slug>.apps.gregale.dev/ | head -1`
+   step 4, and a `curl -fsSL https://<slug>.gregale.dev/ | head -1`
    output proving customer traffic still serves after the restart.
 
 ### Rollback

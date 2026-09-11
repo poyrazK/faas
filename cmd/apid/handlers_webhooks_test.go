@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
 func webhookReq() api.CreateAppWebhookRequest {
@@ -177,13 +178,17 @@ func TestDeleteAppWebhook_HappyPath(t *testing.T) {
 }
 
 // TestRotateAppWebhookSecret_HappyPath pins the rotate-secret
-// endpoint: 200 + masked constant + rotated_at timestamp. The
-// plaintext is server-minted and never returned.
+// endpoint: the customer supplies a known replacement, while the response
+// remains masked.
 func TestRotateAppWebhookSecret_HappyPath(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
 	mustSeedApp(t, e, "wh-rotate")
 	created := mustCreateWebhook(t, e, "wh-rotate", webhookReq())
-	rec := e.do(t, "POST", "/v1/apps/wh-rotate/webhooks/"+created.ID+"/rotate-secret", nil, nil)
+	before, err := e.store.AppWebhookByID(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "POST", "/v1/apps/wh-rotate/webhooks/"+created.ID+"/rotate-secret", api.RotateAppWebhookSecretRequest{WebhookSecret: "known-replacement"}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -196,5 +201,32 @@ func TestRotateAppWebhookSecret_HappyPath(t *testing.T) {
 	}
 	if out.RotatedAt == "" {
 		t.Errorf("rotated_at missing from response")
+	}
+	after, err := e.store.AppWebhookByID(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after.SecretSealed) == string(before.SecretSealed) {
+		t.Error("sealed secret did not change")
+	}
+	if strings.Contains(rec.Body.String(), "known-replacement") || strings.Contains(string(after.SecretSealed), "known-replacement") {
+		t.Error("replacement plaintext leaked into response or persisted ciphertext")
+	}
+	namespace, plaintext, err := secretbox.OpenBytes(mfaIdentities()[0], after.SecretSealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if namespace != appWebhookSecretSealLabel || string(plaintext) != "known-replacement" {
+		t.Fatalf("unsealed rotation = namespace %q plaintext %q", namespace, plaintext)
+	}
+}
+
+func TestRotateAppWebhookSecret_RequiresReplacement(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	mustSeedApp(t, e, "wh-rotate-empty")
+	created := mustCreateWebhook(t, e, "wh-rotate-empty", webhookReq())
+	rec := e.do(t, "POST", "/v1/apps/wh-rotate-empty/webhooks/"+created.ID+"/rotate-secret", nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
 }

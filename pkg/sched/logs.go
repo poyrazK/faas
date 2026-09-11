@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"io"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -89,11 +89,9 @@ type LogFrame struct {
 //     deploymentID filter (legacy rows are unmatched-only when
 //     the filter itself is empty).
 //
-// Returns state.ErrNotFound when the app has zero live instances
-// after the deployment filter is applied (apid maps this to its
-// 404 "the app is parked; wake it first"). A node-level vmmd RPC
-// failure logs and continues — the surviving instances keep
-// streaming.
+// A follow opened while the app is parked remains attached and discovers the
+// instance created by a later wake. A node-level vmmd RPC failure is retried
+// on the discovery cadence; surviving instances keep streaming.
 //
 // Implementation notes:
 //
@@ -103,11 +101,9 @@ type LogFrame struct {
 //     goroutine so a slow consumer naturally backpressures all
 //     per-instance streams.
 //
-//   - The vmmd Logs RPC emits io.EOF on a clean instance shutdown
-//     (ring closed → subscribe channel drained). The goroutine
-//     exits on EOF and the wart set shrinks. The outer loop
-//     blocks on wg.Wait() until all instances have ended or
-//     the context cancels.
+//   - The vmmd Logs RPC emits io.EOF on a clean instance shutdown. The
+//     goroutine exits and the discovery loop waits for a new live instance ID.
+//     A non-EOF receive failure permits a bounded retry of the same ID.
 //
 //   - The writer goroutine owns the sink call (so the proto
 //     marshal is serialised with the gRPC Send). The per-
@@ -124,103 +120,96 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 	if err != nil {
 		return fmt.Errorf("sched: StreamAppLogs list instances: %w", err)
 	}
-	live := make([]state.Instance, 0, len(rows))
-	for _, ins := range rows {
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	frames := make(chan LogFrame, 32)
+	type readerDone struct {
+		instanceID string
+		retry      bool
+	}
+	done := make(chan readerDone, 32)
+	seen := make(map[string]bool)
+
+	matches := func(ins state.Instance) bool {
 		if !state.IsLive(ins.State) || ins.NodeID == "" {
-			continue
+			return false
 		}
-		// PR-B deployment filter: skip instances whose
-		// DeploymentID is set and disagrees with the filter.
-		// An instance with an empty DeploymentID matches any
-		// non-empty filter — forward-compat with legacy rows
-		// (the column was added in M7 / PR #169 but adoption
-		// is gradual).
-		if deploymentID != "" && ins.DeploymentID != "" && ins.DeploymentID != deploymentID {
-			continue
+		return deploymentID == "" || ins.DeploymentID == "" || ins.DeploymentID == deploymentID
+	}
+	attach := func(ins state.Instance) {
+		if seen[ins.ID] || !matches(ins) {
+			return
 		}
-		live = append(live, ins)
-	}
-	if len(live) == 0 {
-		return state.ErrNotFound
-	}
-	// Adapter: each per-instance goroutine sends LogFrame tuples
-	// on this channel; the writer goroutine reads them and
-	// invokes the sink. Keeping the proto marshal on the writer
-	// goroutine lets us serialise the gRPC Send with the callback
-	// chain.
-	ch := make(chan LogFrame, 32)
-	var wg sync.WaitGroup
-	for _, ins := range live {
-		ins := ins
-		wg.Add(1)
+		seen[ins.ID] = true
 		go func() {
-			defer wg.Done()
-			stream, err := e.vmm.Logs(ctx, ins.NodeID, ins.ID, sinceSeq, sinceWrittenAt)
+			stream, err := e.vmm.Logs(streamCtx, ins.NodeID, ins.ID, sinceSeq, sinceWrittenAt)
 			if err != nil {
-				// Per-instance dial failure is non-fatal;
-				// the surviving instances keep streaming.
+				select {
+				case done <- readerDone{instanceID: ins.ID, retry: true}:
+				case <-streamCtx.Done():
+				}
 				return
 			}
+			retry := false
+			defer func() {
+				select {
+				case done <- readerDone{instanceID: ins.ID, retry: retry}:
+				case <-streamCtx.Done():
+				}
+			}()
 			for {
 				line, err := stream.Recv()
 				if err != nil {
-					// io.EOF (clean shutdown) or a
-					// gRPC status error. Either way,
-					// this instance is done.
+					retry = !errors.Is(err, io.EOF)
 					return
 				}
 				frame := LogFrame{
-					InstanceID:     ins.ID,
-					Seq:            line.Seq,
-					Stream:         line.Stream,
-					Line:           line.Line,
-					Level:          line.Level,
-					WrittenAt:      line.WrittenAt,
-					IsGap:          line.IsGap,
-					GapToWrittenAt: line.GapToWrittenAt,
-					GapReason:      line.GapReason,
+					InstanceID: ins.ID, Seq: line.Seq, Stream: line.Stream,
+					Line: line.Line, Level: line.Level, WrittenAt: line.WrittenAt,
+					IsGap: line.IsGap, GapToWrittenAt: line.GapToWrittenAt, GapReason: line.GapReason,
 				}
-				// Gap frames must NOT carry stale line-frame
-				// values from any prior frame that reused the
-				// same buffer (vmmdgrpc zero-initialises but we
-				// belt-and-brace here so a future transport
-				// change can't accidentally leak seq/line into
-				// a gap event).
 				if line.IsGap {
-					frame.Seq = 0
-					frame.Stream = ""
-					frame.Line = ""
-					frame.Level = ""
-					frame.WrittenAt = time.Time{}
+					frame.Seq, frame.Stream, frame.Line, frame.Level, frame.WrittenAt = 0, "", "", "", time.Time{}
 				}
 				select {
-				case <-ctx.Done():
+				case frames <- frame:
+				case <-streamCtx.Done():
 					return
-				case ch <- frame:
 				}
 			}
 		}()
 	}
-	// Closer: closes the frame channel once all instance goroutines
-	// have ended, so the writer's range loop exits cleanly.
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-	for f := range ch {
-		if err := sink(f); err != nil {
-			// Bubble up so pkg/scheddgrpc.Server.StreamAppLogs can
-			// carry the gRPC trailer (the sink error is the
-			// per-frame Send failure; a context.Canceled or
-			// codes.Unavailable-from-StreamAppLogs). The
-			// per-instance reader goroutines exit on ctx.Done()
-			// inside their select; the closer goroutine drains
-			// them via wg.Wait.
-			return err
-		}
-		if ctx.Err() != nil {
+	for _, ins := range rows {
+		attach(ins)
+	}
+
+	// Instance IDs change whenever an app parks and wakes. Keep discovering
+	// live rows for the lifetime of the follow stream instead of ending when
+	// the rings that existed at attach time close.
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
 			return ctx.Err()
+		case f := <-frames:
+			if err := sink(f); err != nil {
+				return err
+			}
+		case ended := <-done:
+			if ended.retry {
+				// A dial can race vmmd's ring registration. Let the next poll
+				// retry while the store still reports this instance as live.
+				delete(seen, ended.instanceID)
+			}
+		case <-ticker.C:
+			current, listErr := e.store.ListInstancesForApp(streamCtx, appID)
+			if listErr != nil {
+				continue
+			}
+			for _, ins := range current {
+				attach(ins)
+			}
 		}
 	}
-	return nil
 }

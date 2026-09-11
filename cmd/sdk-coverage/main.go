@@ -52,6 +52,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/webhooks/resend":                  true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
 	"GET /v1/openapi.yaml":                      true, // metadata
 	"GET /v1/openapi.json":                      true, // metadata
+	"GET /docs":                                 true, // anonymous Swagger UI metadata page
 	"GET /v1/internal/metrics/targets":          true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
 	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	"POST /v1/cli-auth/code":                    true, // anonymous device-code (CLI uses wrapper)
@@ -96,21 +97,22 @@ var routeExclude = map[string]bool{
 	// Mirror the exclusion across BOTH this list AND
 	// cmd/apid/spec_compliance_test.go::routeExclude; the two
 	// lists must move together.
-	"POST /v1/admin/instances/{id}/force-park":         true, // PR #1099 P2a — operator-only recovery primitive
-	"POST /v1/admin/apps/{slug}/force-cold-boot":       true, // PR #1099 P2b — operator-only recovery primitive
-	"POST /v1/admin/instances/{id}/force-restart":      true, // PR #1105 P2d — operator-only recovery primitive
-	"POST /v1/admin/builds/sweep-stuck":                true, // PR #1099 P2c — operator-only recovery primitive
-	"POST /v1/admin/ops/accounts/{id}/suspend":         true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/restore":         true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/revoke-sessions": true, // operator-only tenant security control
-	"POST /v1/admin/ops/nodes/{name}/drain":            true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/force-drain":      true, // operator-only destructive node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/activate":         true, // operator-only node lifecycle control
-	"GET /v1/admin/operator-intents/{id}":              true, // PR #1099 P2.3 — operator-only intent polling endpoint
-	"GET /v1/admin/config":                             true, // operator-only runtime configuration catalog
-	"PATCH /v1/admin/config/{key}":                     true, // operator-only runtime configuration write
-	"GET /v1/admin/config-operations/{id}":             true, // operator-only runtime configuration operation polling
-	"GET /v1/admin/config/{key}/revisions":             true, // operator-only runtime configuration history
+	"POST /v1/admin/instances/{id}/force-park":          true, // PR #1099 P2a — operator-only recovery primitive
+	"POST /v1/admin/apps/{slug}/force-cold-boot":        true, // PR #1099 P2b — operator-only recovery primitive
+	"POST /v1/admin/instances/{id}/force-restart":       true, // PR #1105 P2d — operator-only recovery primitive
+	"POST /v1/admin/builds/sweep-stuck":                 true, // PR #1099 P2c — operator-only recovery primitive
+	"POST /v1/admin/ops/accounts/{id}/suspend":          true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/restore":          true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":  true, // operator-only tenant security control
+	"POST /v1/admin/ops/nodes/{name}/drain":             true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/force-drain":       true, // operator-only destructive node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/activate":          true, // operator-only node lifecycle control
+	"GET /v1/admin/operator-intents/{id}":               true, // PR #1099 P2.3 — operator-only intent polling endpoint
+	"GET /v1/admin/config":                              true, // operator-only runtime configuration catalog
+	"PATCH /v1/admin/config/{key}":                      true, // operator-only runtime configuration write
+	"GET /v1/admin/config-operations/{id}":              true, // operator-only runtime configuration operation polling
+	"GET /v1/admin/config/{key}/revisions":              true, // operator-only runtime configuration history
+	"GET /v1/admin/managed-postgres/usage/{account_id}": true, // operator-only COGS/capacity view; public SDK is customer-scoped
 
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the
 	// device-code flow for programmatic auth; the dashboard cookie
@@ -181,6 +183,12 @@ var routeExclude = map[string]bool{
 	// TestAlertPreset in the SDK method map below.
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/test": true,
 
+	// Dashboard debugger replay is a session-cookie form post protected by
+	// CSRF. Programmatic callers use the JSON sibling at
+	// POST /v1/apps/{slug}/debug/requests/{req_id}/replay, exposed as
+	// ReplayAppDebugRequest in the Bearer-auth SDK.
+	"POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay": true,
+
 	// ADR-127 PR-D: OTLP sidecar protocol — not a REST endpoint
 	// consumed by the generated SDK. OTel SDKs speak OTLP/HTTP
 	// directly; the SDK would never mint IngestOtlpSpans as a
@@ -231,34 +239,35 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
-	"DELETE /v1/keys/{id}":                        "DeleteKey",
-	"POST /v1/keys/{id}/rotate":                   "RotateKey",
-	"PATCH /v1/account/keys/grace_window_days":    "SetGraceWindow",
-	"GET /v1/account/keys/grace_window_days":      "GetGraceWindow",
-	"DELETE /v1/domains/{domain}":                 "DeleteDomain",
-	"DELETE /v1/crons/{id}":                       "DeleteCron",
-	"DELETE /v1/apps/{slug}":                      "DeleteApp",
-	"POST /v1/apps/{slug}/restore":                "RestoreApp",
-	"DELETE /v1/apps/{slug}/secrets/{key}":        "UnsetSecret",
-	"PUT /v1/apps/{slug}/secrets/{key}":           "SetSecret",
-	"POST /v1/apps/{slug}/secrets/{key}/rotate":   "RotateSecret",
-	"PATCH /v1/apps/{slug}":                       "UpdateApp",
-	"POST /v1/apps/{slug}/rename":                 "RenameApp",
-	"GET /v1/apps/{slug}":                         "GetApp",
-	"GET /v1/apps/{slug}/instances":               "ListInstances",
-	"POST /v1/apps/{slug}/park":                   "Park",
-	"POST /v1/apps/{slug}/wake":                   "Wake",
-	"POST /v1/apps/{slug}/restart":                "RestartApp",
-	"DELETE /v1/apps/{slug}/cache":                "PurgeAppCache",
-	"POST /v1/apps/{slug}/rollback":               "Rollback",
-	"POST /v1/apps/{slug}/rollouts/recover":       "RecoverRollout",
-	"POST /v1/apps/{slug}/deployments":            "Deploy",
-	"GET /v1/apps/{slug}/deployments":             "ListAppDeployments",
-	"GET /v1/apps/{slug}/deployments/latest":      "GetLatestAppDeployment",
-	"POST /v1/apps/{slug}/deployments/dev-source": "DeployDevSource",
-	"POST /v1/apps/{slug}/deployments/source-ref": "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
-	"GET /v1/uploads/{id}":                        "GetUploadSession",    // issue #1182; resumable session discovery after restart
-	"POST /v1/apps/{slug}/diff":                   "Diff",                // PR-1 of deploy-diff cluster; CI gate input
+	"DELETE /v1/keys/{id}":                         "DeleteKey",
+	"POST /v1/keys/{id}/rotate":                    "RotateKey",
+	"PATCH /v1/account/keys/grace_window_days":     "SetGraceWindow",
+	"GET /v1/account/keys/grace_window_days":       "GetGraceWindow",
+	"DELETE /v1/domains/{domain}":                  "DeleteDomain",
+	"DELETE /v1/crons/{id}":                        "DeleteCron",
+	"DELETE /v1/apps/{slug}":                       "DeleteApp",
+	"POST /v1/apps/{slug}/restore":                 "RestoreApp",
+	"DELETE /v1/apps/{slug}/secrets/{key}":         "UnsetSecret",
+	"PUT /v1/apps/{slug}/secrets/{key}":            "SetSecret",
+	"POST /v1/apps/{slug}/secrets/{key}/rotate":    "RotateSecret",
+	"PATCH /v1/apps/{slug}":                        "UpdateApp",
+	"POST /v1/apps/{slug}/rename":                  "RenameApp",
+	"GET /v1/apps/{slug}":                          "GetApp",
+	"GET /v1/apps/{slug}/instances":                "ListInstances",
+	"POST /v1/apps/{slug}/park":                    "Park",
+	"POST /v1/apps/{slug}/wake":                    "Wake",
+	"POST /v1/apps/{slug}/restart":                 "RestartApp",
+	"DELETE /v1/apps/{slug}/cache":                 "PurgeAppCache",
+	"POST /v1/apps/{slug}/rollback":                "Rollback",
+	"POST /v1/apps/{slug}/rollouts/recover":        "RecoverRollout",
+	"POST /v1/apps/{slug}/deployments":             "Deploy",
+	"GET /v1/apps/{slug}/deployments":              "ListAppDeployments",
+	"GET /v1/apps/{slug}/deployments/latest":       "GetLatestAppDeployment",
+	"GET /v1/apps/{slug}/deployments/{id}/summary": "GetAppDeploymentSummary",
+	"POST /v1/apps/{slug}/deployments/dev-source":  "DeployDevSource",
+	"POST /v1/apps/{slug}/deployments/source-ref":  "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
+	"GET /v1/uploads/{id}":                         "GetUploadSession",    // issue #1182; resumable session discovery after restart
+	"POST /v1/apps/{slug}/diff":                    "Diff",                // PR-1 of deploy-diff cluster; CI gate input
 	// Issue #961 / Mega-C PR-1 / leaf 3 — preview-destroy route.
 	// Auto-derivation would produce "PostPreviewSlugDestroy" (the
 	// Swagger-style verb+resource concat), but the SDK convention
@@ -279,6 +288,8 @@ var methodRouteMap = map[string]string{
 	// method names.
 	"GET /v1/account/egress_allowlist_extra":                  "GetEgressAllowlistExtra",
 	"PATCH /v1/account/egress_allowlist_extra":                "SetEgressAllowlistExtra",
+	"GET /v1/account/managed-postgres-usage":                  "GetManagedPostgresUsage",
+	"GET /v1/account/usage":                                   "AccountUsage",
 	"GET /v1/postgres/databases":                              "ListManagedPostgresDatabases",
 	"POST /v1/postgres/databases":                             "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                         "GetManagedPostgresDatabase",
@@ -305,10 +316,13 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/openapi":                            "ImportAppOpenAPI",               // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc
 	"DELETE /v1/apps/{slug}/openapi":                          "DeleteAppOpenAPI",               // idempotent wipe of the imported doc (item #2 D5 emits pg_notify)
 	"POST /v1/apps/{slug}/openapi/dry-run":                    "DryRunAppOpenAPI",               // read-only edge-rule suggestions (item #2 D3)
+	"GET /v1/apps/{slug}/openapi/preview":                     "PreviewAppOpenAPIPolicy",        // read-only declared-vs-observed route-policy preview (roadmap item 11)
+	"GET /v1/apps/{slug}/openapi/diff":                        "DiffAppOpenAPIContract",         // ADR-121 production contract gate preview
 	"GET /v1/deployments/{id}":                                "GetDeployment",
 	"PATCH /v1/deployments/{id}":                              "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override
 	"DELETE /v1/deployments/{id}":                             "ClearDeployment", // ADR-124 PR-A; soft-delete (status untouched)
 	"GET /v1/deployments":                                     "ListDeployments",
+	"GET /v1/deployments/latest-by-app":                       "ListLatestDeploymentsByApp",
 	"POST /v1/deployments/{id}/reorder":                       "ReorderDeployment",        // ADR-124 PR-A; priority bump on pending deploy
 	"POST /v1/apps/{slug}/deployments/{id}/cancel":            "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
 	"POST /v1/apps/{slug}/deployments/clear-obsolete":         "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows
@@ -470,6 +484,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/buckets/{bucket}/s3-credentials":                                      "ListObjectS3Credentials",
 	"POST /v1/apps/{slug}/buckets/{bucket}/s3-credentials":                                     "CreateObjectS3Credential",
 	"DELETE /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}":                      "RevokeObjectS3Credential",
+	"GET /v1/apps/{slug}/buckets/{bucket}/compute-bindings":                                    "ListObjectStorageComputeBindings",
+	"POST /v1/apps/{slug}/buckets/{bucket}/compute-bindings":                                   "CreateObjectStorageComputeBinding",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}":                       "DeleteObjectStorageComputeBinding",
+	"POST /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate":                  "RotateObjectStorageComputeBinding",
 	"GET /v1/apps/{slug}/buckets/{bucket}/access-grants":                                       "ListObjectBucketAccessGrants",
 	"PUT /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}":                                 "SetObjectBucketAccessGrant",
 	"DELETE /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}":                              "DeleteObjectBucketAccessGrant",

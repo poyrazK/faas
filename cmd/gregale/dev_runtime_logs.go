@@ -16,13 +16,21 @@ const (
 	devRuntimeLogRetryMax     = 5 * time.Second
 )
 
-// followDevRuntimeLogs keeps one app-level stream attached to a developer
-// session. The app stream follows the current live version, so a redeploy does
-// not require opening a second stream or losing the developer's terminal.
-func followDevRuntimeLogs(ctx context.Context, client *Client, slug string) {
+func followDevRuntimeLogsWithDiagnostics(ctx context.Context, client *Client, slug string, onDiagnostic func(devDiagnostic)) {
 	retry := devRuntimeLogRetryInitial
+	seen := make(map[string]struct{})
+	report := func(d devDiagnostic) {
+		if onDiagnostic == nil || d.Code == "" {
+			return
+		}
+		if _, ok := seen[d.Code]; ok {
+			return
+		}
+		seen[d.Code] = struct{}{}
+		onDiagnostic(d)
+	}
 	for {
-		err := streamDevRuntimeLogs(ctx, client, slug)
+		err := streamDevRuntimeLogsWithDiagnostics(ctx, client, slug, report)
 		if ctx.Err() != nil {
 			return
 		}
@@ -48,6 +56,10 @@ func followDevRuntimeLogs(ctx context.Context, client *Client, slug string) {
 }
 
 func streamDevRuntimeLogs(ctx context.Context, client *Client, slug string) error {
+	return streamDevRuntimeLogsWithDiagnostics(ctx, client, slug, nil)
+}
+
+func streamDevRuntimeLogsWithDiagnostics(ctx context.Context, client *Client, slug string, onDiagnostic func(devDiagnostic)) error {
 	body, err := client.StreamAppLogs(ctx, slug, "", true, api.LogFilter{})
 	if err != nil {
 		return fmt.Errorf("open app log stream: %w", err)
@@ -65,7 +77,7 @@ func streamDevRuntimeLogs(ctx context.Context, client *Client, slug string) erro
 			if !ok {
 				return nil
 			}
-			done, eventErr := renderDevRuntimeLogEvent(event)
+			done, eventErr := renderDevRuntimeLogEventWithDiagnostics(event, onDiagnostic)
 			if eventErr != nil {
 				return eventErr
 			}
@@ -87,7 +99,7 @@ func streamDevRuntimeLogs(ctx context.Context, client *Client, slug string) erro
 					if !ok {
 						return nil
 					}
-					done, eventErr := renderDevRuntimeLogEvent(event)
+					done, eventErr := renderDevRuntimeLogEventWithDiagnostics(event, onDiagnostic)
 					if eventErr != nil {
 						return eventErr
 					}
@@ -102,11 +114,21 @@ func streamDevRuntimeLogs(ctx context.Context, client *Client, slug string) erro
 	}
 }
 
-func renderDevRuntimeLogEvent(event api.Event) (bool, error) {
+func renderDevRuntimeLogEventWithDiagnostics(event api.Event, onDiagnostic func(devDiagnostic)) (bool, error) {
 	switch event.Event {
 	case "log":
 		if event.Data != "" {
 			_, _ = fmt.Fprintln(osStdout, formatDevRuntimeLog(event.Data))
+			var entry api.LogEvent
+			line := event.Data
+			if err := json.Unmarshal([]byte(event.Data), &entry); err == nil && entry.Line != "" {
+				line = entry.Line
+			}
+			if onDiagnostic != nil {
+				if diagnostic, ok := classifyDevRuntimeLog(line); ok {
+					onDiagnostic(diagnostic)
+				}
+			}
 		}
 	case "gap":
 		PrintWarn(osStderr, "runtime log gap: some earlier lines were not retained")

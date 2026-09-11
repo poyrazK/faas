@@ -24,9 +24,11 @@ func (c *Client) RecordObjectStorageUsage(ctx context.Context, report ObjectStor
 // CreateObjectBucketRequest describes logical placement. Empty scope/region
 // select the server defaults; retries use the same app, scope and name.
 type CreateObjectBucketRequest struct {
-	Name   string `json:"name"`
-	Scope  string `json:"scope,omitempty"`
-	Region string `json:"region,omitempty"`
+	Name    string `json:"name"`
+	Scope   string `json:"scope,omitempty"`
+	Region  string `json:"region,omitempty"`
+	Public  bool   `json:"public,omitempty"`
+	ServeAt string `json:"serve_at,omitempty"`
 }
 
 // BucketObject is one item from the upstream object listing, not a usage bill.
@@ -74,6 +76,32 @@ func (c *Client) CreateObjectS3Credential(ctx context.Context, slug, bucket stri
 func (c *Client) RevokeObjectS3Credential(ctx context.Context, slug, bucket, credential string) error {
 	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/s3-credentials/" + url.PathEscape(credential)
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+func (c *Client) ListObjectStorageComputeBindings(ctx context.Context, slug, bucket string) (ObjectStorageComputeBindingList, error) {
+	var out ObjectStorageComputeBindingList
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/compute-bindings"
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) CreateObjectStorageComputeBinding(ctx context.Context, slug, bucket string, req CreateObjectStorageComputeBindingRequest) (ObjectStorageComputeBinding, error) {
+	var out ObjectStorageComputeBinding
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/compute-bindings"
+	err := c.do(ctx, http.MethodPost, path, req, &out)
+	return out, err
+}
+
+func (c *Client) DeleteObjectStorageComputeBinding(ctx context.Context, slug, bucket, binding string) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/compute-bindings/" + url.PathEscape(binding)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+func (c *Client) RotateObjectStorageComputeBinding(ctx context.Context, slug, bucket, binding string) (ObjectStorageComputeBinding, error) {
+	var out ObjectStorageComputeBinding
+	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/compute-bindings/" + url.PathEscape(binding) + "/rotate"
+	err := c.do(ctx, http.MethodPost, path, struct{}{}, &out)
+	return out, err
 }
 
 func (c *Client) ListObjectBucketAccessGrants(ctx context.Context, slug, bucket string) (ObjectBucketAccessGrantList, error) {

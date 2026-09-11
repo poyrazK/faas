@@ -117,3 +117,60 @@ func TestCmdDebugRequestsEvidenceUsesEvidenceEndpoint(t *testing.T) {
 		t.Fatalf("JSON output missing span: %s", stdout.String())
 	}
 }
+
+func TestCmdDebugRequestsShow_RendersTimelineAndSpans(t *testing.T) {
+	traceID := "trace-1"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.DebugRequestEvidenceResponse{
+			Request: api.DebugTelemetryRequestItem{
+				ID: "request-1", Route: "/checkout", Method: "GET", Status: 502,
+				LatencyMS: 640, Count: 2, ColdBoot: true, TraceID: &traceID,
+				ReceivedAt: "2026-09-06T10:00:00Z", DeploymentID: "dep-1", WakeID: "wake-1",
+			},
+			Timeline: []api.DebugTimelineEvent{{
+				At: "2026-09-06T10:00:00.100Z", Phase: "wake", Kind: "wake.boot_completed",
+				Summary: "guest became ready", DurationMS: 120, Approximate: true,
+			}},
+			Correlation: api.DebugRequestCorrelation{Stages: []api.DebugRequestCorrelationStage{
+				{Phase: "edge", Status: "observed", DurationMS: 640, Approximate: true},
+				{Phase: "billing", Status: "missing", Reason: "billed dimensions are not attached to request evidence yet"},
+			}},
+			Spans: []api.DebugTelemetrySpan{{
+				Name: "db.query", Kind: "client", DurationNanos: 20_000_000, Status: "error",
+			}},
+			Explanation: api.DebugEvidenceExplanation{Headline: "Cold boot dominated request latency."},
+			GeneratedAt: "2026-09-06T10:01:00Z",
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test")
+
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	oldJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = oldJSON }()
+
+	if code := cmdDebugRequests([]string{"show", "my-app", "request-1"}); code != 0 {
+		t.Fatalf("cmdDebugRequests(show) = %d, want 0", code)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"GET /checkout · HTTP 502 · 640 ms",
+		"TIMELINE",
+		"~2026-09-06T10:00:00.100Z",
+		"wake.boot_completed",
+		"CORRELATION",
+		"billing",
+		"correlation incomplete",
+		"SPAN EVIDENCE",
+		"db.query",
+		"Cold boot dominated request latency.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("human evidence output missing %q:\n%s", want, got)
+		}
+	}
+}

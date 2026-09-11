@@ -162,9 +162,10 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 		{q: 0.95, dest: &resp.RequestDuration.P95MS, label: "p95"},
 		{q: 0.99, dest: &resp.RequestDuration.P99MS, label: "p99"},
 	} {
-		q := fmt.Sprintf(
-			`histogram_quantile(%g, sum by (le)(rate(gateway_request_duration_seconds_bucket{app=%q,class="2xx"}[%s]))) * 1000`,
-			p.q, app.ID, window)
+		q := appmetrics.HistogramQuantileMSQuery(
+			p.q,
+			fmt.Sprintf(`sum by (le)(rate(gateway_request_duration_seconds_bucket{app=%q,class="2xx"}[%s]))`, app.ID, window),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="2xx"}[%s]))`, app.ID, window))
 		v, err := s.promqlClient.QueryScalar(ctx, q)
 		if err != nil {
 			return degradedAppSLO(err, s.log, p.label, app.ID, window)
@@ -173,9 +174,9 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 	}
 
 	// 5. error_rate_pct.
-	errQ := fmt.Sprintf(
-		`sum(rate(gateway_requests_total{app=%q,code=~"[45].."}[%s])) / sum(rate(gateway_requests_total{app=%q}[%s])) * 100`,
-		app.ID, window, app.ID, window)
+	errQ := appmetrics.PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q,code=~"[45].."}[%s]))`, app.ID, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, app.ID, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = appmetrics.SafePercent(v)
 	} else {
@@ -183,9 +184,9 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 	}
 
 	// 6. cold_boot_rate_pct.
-	coldQ := fmt.Sprintf(
-		`sum(rate(gateway_cold_boot_total{app=%q}[%s])) / sum(rate(gateway_requests_total{app=%q}[%s])) * 100`,
-		app.ID, window, app.ID, window)
+	coldQ := appmetrics.PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, app.ID, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, app.ID, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, coldQ); err == nil {
 		resp.ColdBootRatePct = appmetrics.SafePercent(v)
 	} else {
@@ -193,8 +194,10 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 	}
 
 	// 7. wake_queue_p95 — fleet-wide (unlabeled histogram).
-	wakeQ := fmt.Sprintf(
-		`histogram_quantile(0.95, sum by (le)(rate(gateway_wake_queue_wait_seconds_bucket[%s]))) * 1000`, window)
+	wakeQ := appmetrics.HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le)(rate(gateway_wake_queue_wait_seconds_bucket[%s]))`, window),
+		fmt.Sprintf(`sum(rate(gateway_wake_queue_wait_seconds_count[%s]))`, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, wakeQ); err == nil {
 		resp.WakeQueueP95MS = appmetrics.SafeFloat(v)
 	} else {
@@ -269,9 +272,10 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 		{q: 0.95, dest: &resp.RequestDuration.P95MS, label: "p95"},
 		{q: 0.99, dest: &resp.RequestDuration.P99MS, label: "p99"},
 	} {
-		q := fmt.Sprintf(
-			`histogram_quantile(%g, sum by (le)(rate(gateway_request_duration_seconds_bucket{class="2xx"}[%s]))) * 1000`,
-			p.q, window)
+		q := appmetrics.HistogramQuantileMSQuery(
+			p.q,
+			fmt.Sprintf(`sum by (le)(rate(gateway_request_duration_seconds_bucket{class="2xx"}[%s]))`, window),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{class="2xx"}[%s]))`, window))
 		v, err := s.promqlClient.QueryScalar(ctx, q)
 		if err != nil {
 			return degradedAccountSLO(err, s.log, p.label, acct.ID, window)
@@ -280,9 +284,9 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 	}
 
 	// 5. error_rate_pct (fleet-wide).
-	errQ := fmt.Sprintf(
-		`sum(rate(gateway_requests_total{code=~"[45].."}[%s])) / sum(rate(gateway_requests_total[%s])) * 100`,
-		window, window)
+	errQ := appmetrics.PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_requests_total{code=~"[45].."}[%s]))`, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total[%s]))`, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = appmetrics.SafePercent(v)
 	} else {
@@ -290,9 +294,9 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 	}
 
 	// 6. cold_boot_rate_pct (fleet-wide).
-	coldQ := fmt.Sprintf(
-		`sum(rate(gateway_cold_boot_total[%s])) / sum(rate(gateway_requests_total[%s])) * 100`,
-		window, window)
+	coldQ := appmetrics.PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_cold_boot_total[%s]))`, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total[%s]))`, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, coldQ); err == nil {
 		resp.ColdBootRatePct = appmetrics.SafePercent(v)
 	} else {
@@ -300,8 +304,10 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 	}
 
 	// 7. wake_queue_p95 (fleet-wide, unlabeled).
-	wakeQ := fmt.Sprintf(
-		`histogram_quantile(0.95, sum by (le)(rate(gateway_wake_queue_wait_seconds_bucket[%s]))) * 1000`, window)
+	wakeQ := appmetrics.HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le)(rate(gateway_wake_queue_wait_seconds_bucket[%s]))`, window),
+		fmt.Sprintf(`sum(rate(gateway_wake_queue_wait_seconds_count[%s]))`, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, wakeQ); err == nil {
 		resp.WakeQueueP95MS = appmetrics.SafeFloat(v)
 	} else {

@@ -1,6 +1,6 @@
 # Customer object storage preview
 
-Gregale can manage private object buckets on interchangeable managed providers
+Gregale can manage object buckets on interchangeable managed providers
 without operating storage nodes. Compute remains stateless: these are not VM
 volumes. The dashboard's Storage page keeps object buckets separate from
 snapshot/image-layer usage.
@@ -16,14 +16,15 @@ Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
    provider placement, region, and exact browser origins. Use a dedicated
    upstream account/project, not one containing unrelated infrastructure buckets.
 3. For `s3`, supply the named access/secret environment variables only to
-   **apid and s3-gatewayd** through the deployment's secret mechanism. For
-   `gcs`, give both daemons Application Default Credentials (ADC) for the
-   configured service account; do not create a downloaded key. Never put
+   **apid, gatewayd-public, and s3-gatewayd** through the deployment's secret
+   mechanism. For `gcs`, give those daemons Application Default Credentials
+   (ADC) for the configured service account; do not create a downloaded key. Never put
    credentials in JSON, app envs, source control, URLs, or logs. Optional S3
    `session_token_env` supports temporary credentials; restart/rotate before
    their expiration.
-4. Set `FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json` for apid and
-   s3-gatewayd, then restart every replica with identical settings. Set
+4. Set `FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json` for apid,
+   gatewayd-public, and s3-gatewayd, then restart every replica with identical
+   settings. Set
    `public_endpoint` to `https://s3.gregale.dev` and `public_region` to
    `us-east-1`; those customer-facing values are independent of the upstream
    provider endpoint and signing region. Loading the configuration does not
@@ -75,6 +76,21 @@ PUT, GET, LIST and DELETE through `s3.gregale.dev`, verifies revocation, then
 deletes the credential and bucket. Its exit trap repeats cleanup after a
 failure and prints the exact bucket name if provider cleanup still needs
 operator attention.
+
+### Publish assets on an app hostname
+
+Create a bucket with `public: true` and a stable `serve_at` path, for example
+`{"name":"assets","public":true,"serve_at":"/assets"}`. Once the bucket
+is ready, `GET` and `HEAD` requests to
+`https://<app>.<apps-domain>/assets/<key>` are served directly by
+`gatewayd-public`; a route hit never wakes or proxies to the app. Responses
+use `Cache-Control: public, max-age=31536000, immutable` and do not require a
+Gregale or S3 signed URL. The mount path is immutable after creation; choose a
+new bucket if an app needs a different public path. Public reads still pass
+through the configured object-storage accounting policy, and successful bytes
+are recorded in the per-bucket request ledger; provider-authoritative egress
+reports then appear in `usage/storage`. Set `public: false` (and omit `serve_at`) for the default
+private bucket behavior.
 
 ### Run the live provider qualification
 
@@ -173,6 +189,60 @@ aws configure set profile.gregale.s3.addressing_style path
 aws --profile gregale --endpoint-url https://s3.gregale.dev \
   s3api list-objects-v2 --bucket assets
 ```
+
+### Bind storage to a compute workload
+
+Use `POST /v1/apps/{slug}/buckets/{bucket-id}/compute-bindings` when the
+workload should use the branded S3 endpoint without carrying credentials in
+deployment manifests. The request accepts the same `permission` values as a
+standalone credential and an optional uppercase `prefix`. Gregale creates one
+bucket-scoped credential and writes six sealed app secrets under that prefix:
+`ENDPOINT`, `REGION`, `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, and
+`ADDRESSING_STYLE`. The workload receives them through the existing secret
+staging path on its next deploy/wake; values are never returned by the binding
+API or stored in plaintext.
+
+List bindings with `GET .../compute-bindings`, rotate in place with
+`POST .../compute-bindings/{binding-id}/rotate`, and revoke with
+`DELETE .../compute-bindings/{binding-id}`. Rotation keeps secret names stable
+and immediately invalidates the previous access key. Revocation invalidates
+the credential first, then removes the managed app secrets. Ordinary secret
+PUT/DELETE calls cannot overwrite or remove a managed binding secret.
+
+Compute remains stateless: this binding supplies S3 SDK configuration, not a
+persistent filesystem mount. The app must still have outbound access to
+`s3.gregale.dev` under its egress policy.
+
+### Release gates and staging smoke
+
+Run the read-only release preflight before promoting a release. It checks that
+the provider registry is loaded and enabled, limits/regions are non-zero, and
+the compute-binding routes are present in the deployed binary:
+
+```sh
+FAAS_TOKEN=... \
+GREGALE_APP_SLUG=disposable-storage-smoke \
+GREGALE_API_URL=https://api.gregale.dev \
+make object-storage-release-preflight
+```
+
+After the preflight passes, run the mutating qualification against the same
+disposable app. It creates a uniquely named bucket, exercises direct S3
+object I/O, creates and rotates a compute binding, verifies that the managed
+secret names remain stable while the access key changes, revokes both
+credentials, and deletes the bucket on every exit path:
+
+```sh
+FAAS_TOKEN=... \
+GREGALE_APP_SLUG=disposable-storage-smoke \
+GREGALE_API_URL=https://api.gregale.dev \
+make object-storage-gateway-smoke
+```
+
+The smoke test requires `aws`, `curl`, and `jq`. It never prints credential
+material or signed URLs. Use a disposable app and do not run it against a
+customer bucket; the cleanup trap removes the temporary object, bindings,
+credential, and bucket even when a check fails.
 
 This first endpoint slice supports ListBuckets for the credential's one bucket,
 HeadBucket, GetBucketLocation, ListObjectsV2 without delimiters, and
@@ -529,10 +599,10 @@ object-storage operations are disabled. The upstream lifecycle rule is still
 required as a defense against control-plane outages.
 
 Key rotation copies bucket grants to the successor so applications can switch
-credentials during the normal grace window. Store the resulting narrowly scoped
-Gregale key through the existing app-secret workflow when a workload needs to
-request signed URLs. Gregale does not inject it automatically and never gives a
-workload the operator's upstream provider credential.
+credentials during the normal grace window. For compute workloads, prefer the
+compute-binding API above so Gregale owns the sealed credential lifecycle;
+standalone credentials remain available for laptops, CI, and external clients.
+Gregale never gives a workload the operator's upstream provider credential.
 
 ## Switch providers without rewriting the product
 

@@ -154,6 +154,31 @@ func TestNodeJoinFullBootstrapPreservesPlayLevelRoleSemantics(t *testing.T) {
 	}
 }
 
+func TestNodeJoinPublishesHardwareCapacityBeforeVMMDStarts(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	capacity := strings.Index(playbook, "Install the hardware-derived vmmd capacity contract")
+	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
+	if capacity < 0 || restart < 0 || capacity >= restart {
+		t.Fatal("node_join must install the vmmd capacity drop-in before restarting vmmd")
+	}
+	block := playbook[capacity:restart]
+	for _, token := range []string{
+		"FAAS_COMPUTE_VCPUS={{ ansible_processor_vcpus }}",
+		"FAAS_COMPUTE_MEM_MB={{ ansible_memtotal_mb }}",
+		"FAAS_COMPUTE_MAX_CONCURRENCY=",
+		"FAAS_COMPUTE_ADMISSION_CEILING_MB=",
+		"FAAS_VCPU_BUDGET=",
+	} {
+		if !strings.Contains(block, token) {
+			t.Errorf("capacity contract missing %q", token)
+		}
+	}
+}
+
 func splitboxJoinManifest(t *testing.T) string {
 	t.Helper()
 	body := strings.Replace(validManifestYAML,

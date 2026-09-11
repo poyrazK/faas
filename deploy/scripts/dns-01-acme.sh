@@ -8,11 +8,11 @@
 # Future ops follow-up (PR-9 candidate) will parameterize this script on the
 # provider so the same shell wrapper covers Cloudflare / Route53 too.
 #
-# Spec §4.1: gatewayd-public terminates TLS for *.apps.gregale.dev via DNS-01 against
+# Spec §4.1: gatewayd-public terminates TLS for *.gregale.dev via DNS-01 against
 # the DNS provider API. Three records have to exist before the first
 # daemon start:
 #
-#   *.apps.gregale.dev  A     <production host public IP>   wildcard cert cover
+#   gregale.dev         A     <production host public IP>   wildcard cert cover
 #   edge.gregale.dev    CNAME <production host public IP>   customer-facing alias (HTTP-01)
 #   _faas-verify   TXT   faas-domain-ok=1   proof-of-control marker for
 #                                           DNS-01 sanity checks (optional)
@@ -26,7 +26,7 @@
 # Usage:
 #   sudo bash dns-01-acme.sh \
 #       --zone gregale.dev \
-#       --apps-domain apps.gregale.dev \
+#       --apps-domain gregale.dev \
 #       --edge-host edge.gregale.dev \
 #       --host-ip 1.2.3.4 \
 #       [--token-file /etc/faas/secrets/hetzner-dns.token] \
@@ -191,10 +191,10 @@ if [[ -z "$ZONE_ID" ]]; then
 fi
 echo "    zone_id=$ZONE_ID"
 
-# The wildcard A: certmagic wants *.apps.<zone> to resolve to the
-# gatewayd-public box. We write it as the bare apps.<zone> (the DNS API
-# treats "apps.gregale.dev" as the record name and serves both apex + wildcard
-# lookups; the wildcard `*` prefix isn't a record on its own).
+# The wildcard A: certmagic wants *.<zone> to resolve to the
+# gatewayd-public box. We write the bare zone name; the DNS API
+# serves both apex and wildcard lookups from that record, so the
+# wildcard `*` prefix is not a record on its own.
 echo "==> A $APPS_DOMAIN -> $HOST_IP"
 hz_upsert_record "$ZONE_ID" "A" "$APPS_DOMAIN" "$HOST_IP"
 

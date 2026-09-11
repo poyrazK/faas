@@ -51,8 +51,10 @@ type Problem struct {
 	// Detail is the specific cause including the observed value.
 	Detail string `json:"detail,omitempty"`
 	// Limit and Observed are set on quota/limit errors (spec §Conventions).
-	Limit    *int64 `json:"limit,omitempty"`
-	Observed *int64 `json:"observed,omitempty"`
+	Limit         *int64 `json:"limit,omitempty"`
+	Observed      *int64 `json:"observed,omitempty"`
+	LimitBytes    *int64 `json:"limit_bytes,omitempty"`
+	ObservedBytes *int64 `json:"observed_bytes,omitempty"`
 	// DocsURL points the user at the single next action.
 	DocsURL string `json:"docs_url,omitempty"`
 	// CheckoutURL is the provider-neutral hosted checkout URL for a paid
@@ -148,6 +150,13 @@ func NewProblem(status int, code, title, detail string) *Problem {
 func (p *Problem) WithLimit(limit, observed int64) *Problem {
 	p.Limit = &limit
 	p.Observed = &observed
+	return p
+}
+
+func (p *Problem) WithByteLimit(limit, observed int64) *Problem {
+	p.WithLimit(limit, observed)
+	p.LimitBytes = &limit
+	p.ObservedBytes = &observed
 	return p
 }
 

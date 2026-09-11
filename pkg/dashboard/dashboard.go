@@ -496,6 +496,188 @@ type JobsQueuesData struct {
 	ErrorMessage string
 }
 
+// AppWebhooksData is the customer-facing projection for the per-app
+// outbound-webhook page (issue #1397 / G8). Secrets are never projected;
+// the page only carries the masked marker returned by the API contract.
+type AppWebhooksData struct {
+	App           AppListItem
+	PlanAllowed   bool
+	Events        []string
+	RetryPolicies []string
+	Webhooks      []WebhookPageItem
+	ActionCSRF    string
+	Action        string
+	ErrorMessage  string
+}
+
+// TenantSurfacesData is the customer-facing projection for the per-app
+// tenant-surface page (issue #1397 / G9). Hostname verification and durable
+// certificate state are kept as display fields so the template never needs
+// to know about pkg/state enums or timestamps.
+type TenantSurfacesData struct {
+	App            AppListItem
+	PlanAllowed    bool
+	FeatureEnabled bool
+	Surfaces       []TenantSurfacePageItem
+	ActionCSRF     string
+	Action         string
+	ErrorMessage   string
+}
+
+// TenantSurfacePageItem is one managed hostname surface and its bounded
+// hostname list.
+type TenantSurfacePageItem struct {
+	ID            string
+	Name          string
+	CertKind      string
+	Status        string
+	CertState     string
+	CertNotAfter  string
+	CertLastError string
+	CreatedAt     string
+	UpdatedAt     string
+	Hostnames     []TenantHostnamePageItem
+}
+
+// TenantHostnamePageItem is the safe dashboard projection of a hostname.
+// Challenge tokens are deliberately omitted from the page.
+type TenantHostnamePageItem struct {
+	Hostname   string
+	Verified   bool
+	VerifiedAt string
+	LastError  string
+	TXTRecord  string
+}
+
+// MirrorsData is the customer-facing projection for the per-app traffic
+// mirror page (issue #1397 / G9). Each rule carries the server-side aggregate
+// counters for the last-hour summary window.
+type MirrorsData struct {
+	App          AppListItem
+	PlanAllowed  bool
+	Rules        []MirrorPageItem
+	ActionCSRF   string
+	Action       string
+	ErrorMessage string
+}
+
+// MirrorPageItem is one mirror rule plus its comparison summary.
+type MirrorPageItem struct {
+	ID                    string
+	SourceDeploymentID    string
+	MirrorDeploymentID    string
+	Percent               int
+	Enabled               bool
+	IncludeBody           bool
+	RedactHeaders         []string
+	AlwaysStrippedHeaders []string
+	CreatedAt             string
+	UpdatedAt             string
+	Summary               MirrorSummaryPageItem
+}
+
+// MirrorSummaryPageItem mirrors api.MirrorSummaryResponse without exposing
+// API package types to dashboard templates.
+type MirrorSummaryPageItem struct {
+	TotalInvocations  int64
+	StatusDiffCount   int64
+	SchemaDiffCount   int64
+	BodyDiffCount     int64
+	MeanLatencyDiffMs int64
+	P99LatencyDiffMs  int64
+	CrashCount        int64
+	WindowLabel       string
+}
+
+// StorageData is the customer-facing projection for the per-app object
+// storage page (issue #1397 / G10). Bucket placement stays deliberately
+// small; provider names, credentials, leases, and physical bucket names are
+// never sent to the template.
+type StorageData struct {
+	App              AppListItem
+	Enabled          bool
+	Configured       bool
+	Regions          []string
+	DefaultRegion    string
+	MaxUploadBytes   int64
+	MaxBucketsPerApp int
+	Buckets          []StorageBucketPageItem
+	SelectedBucketID string
+	Prefix           string
+	Cursor           string
+	Objects          []StorageObjectPageItem
+	NextCursor       string
+	Usage            *StorageUsagePageItem
+	ActionCSRF       string
+	Action           string
+	ErrorMessage     string
+	SignedURL        *StorageSignedURLPageItem
+}
+
+// StorageBucketPageItem is the safe dashboard projection of an object bucket.
+type StorageBucketPageItem struct {
+	ID        string
+	Name      string
+	Scope     string
+	Region    string
+	State     string
+	Public    bool
+	ServeAt   string
+	CreatedAt string
+}
+
+// StorageObjectPageItem is one bounded provider object-list row.
+type StorageObjectPageItem struct {
+	Key          string
+	SizeBytes    int64
+	LastModified string
+}
+
+// StorageUsagePageItem mirrors one row from GET /v1/usage/storage.
+type StorageUsagePageItem struct {
+	Day           string
+	SnapshotBytes int64
+	LayerBytes    int64
+	TotalBytes    int64
+}
+
+// StorageSignedURLPageItem is shown only in the immediate response to the
+// signed-URL form. It is never persisted or placed in a redirect query.
+type StorageSignedURLPageItem struct {
+	URL       string
+	Method    string
+	ExpiresAt string
+}
+
+// WebhookPageItem is one outbound webhook subscription plus a bounded slice
+// of recent deliveries. Payloads are deliberately omitted from the dashboard
+// projection because they may contain arbitrary customer data.
+type WebhookPageItem struct {
+	ID          string
+	TargetURL   string
+	EventFilter []string
+	RetryPolicy string
+	Enabled     bool
+	CreatedAt   string
+	UpdatedAt   string
+	Deliveries  []WebhookDeliveryPageItem
+}
+
+// WebhookDeliveryPageItem is the safe, compact delivery ledger projection
+// shown on the webhooks page. A retry action is rendered only for dead rows.
+type WebhookDeliveryPageItem struct {
+	ID               string
+	Event            string
+	Attempt          int
+	Status           string
+	LastError        string
+	LastResponseCode int
+	NextAttemptAt    string
+	DeliveredAt      string
+	CreatedAt        string
+	Retryable        bool
+}
+
 // AppEdgeRulesData is the bounded, account-scoped projection rendered by the
 // per-app edge-rules page. Rules and presets are read from the same Store
 // paths used by the API; mutations are form adapters that delegate to those
@@ -854,8 +1036,13 @@ type WorkflowStepItem struct {
 type DeploymentDetailData struct {
 	App        AppListItem
 	Deployment DeploymentItem
-	Scan       *ScanPayload
-	Stages     *StagePayload
+	// BuildPlan is the persisted zero-config profile selected for this
+	// deployment. Keeping it separate from DeploymentItem lets list rows
+	// stay compact while failed-deployment detail pages explain the
+	// start/port/health assumptions behind a diagnosis.
+	BuildPlan *BuildPlanView
+	Scan      *ScanPayload
+	Stages    *StagePayload
 	// CanRollback is true for a superseded deployment that can be
 	// selected as the rollback target. The handler binds the form to
 	// the same app-scoped rollback endpoint used by the app detail
@@ -905,6 +1092,20 @@ type DeploymentDetailData struct {
 	// template can pick a CSS palette without re-implementing
 	// the kind→severity mapping.
 	DeploymentAudit []DeploymentAuditRow
+}
+
+// BuildPlanView is the dashboard-safe projection of api.BuildPlan. It
+// intentionally contains only inferred, non-secret source metadata so the
+// dashboard can show customers what zero-config chose without exposing
+// environment values or build internals.
+type BuildPlanView struct {
+	Framework  string
+	Runtime    string
+	Version    string
+	Entrypoint string
+	Port       int
+	HealthPath string
+	Class      string
 }
 
 // HostingReceiptView is the dashboard-safe projection of the durable API
@@ -1386,25 +1587,92 @@ type RequestAnalyticsRouteView struct {
 	P95MS         int
 	P99MS         int
 	TrendURL      string
+	// DebugURL opens the read-only request explorer filtered to this route.
+	DebugURL string
 }
 
-// DebugPageData is the read-only, server-rendered production debugger
-// surface for one app. The API/CLI remain the automation interface; this
-// projection keeps the dashboard template free of state/sqlc types and
-// makes the retention and plan gates visible to customers.
+// DebugPageData is the server-rendered production debugger surface for one
+// app. The API/CLI remain the automation interface, while the dashboard adds
+// a CSRF-protected replay action and a bounded status projection for the
+// invocation it just queued.
 type DebugPageData struct {
-	AppSlug       string
-	Plan          string
-	PlanAllowed   bool
-	Since         string
-	WindowStart   string
-	WindowEnd     string
-	WindowClamped bool
-	Route         string
-	ErrorMessage  string
-	Regressions   []DebugRegressionView
-	Requests      []DebugRequestView
-	Selected      *DebugRequestDetailView
+	AppSlug             string
+	Plan                string
+	PlanAllowed         bool
+	Since               string
+	WindowStart         string
+	WindowEnd           string
+	WindowClamped       bool
+	Route               string
+	ErrorMessage        string
+	ActionMessage       string
+	ActionError         bool
+	ReplayCSRF          string
+	Regressions         []DebugRegressionView
+	Deployments         []DebugDeploymentView
+	Compare             *DebugCompareView
+	Requests            []DebugRequestView
+	Selected            *DebugRequestDetailView
+	Replay              *DebugReplayView
+	ReplayPoll          int
+	ReplayPollActive    bool
+	ReplayPollExhausted bool
+}
+
+// DebugDeploymentView is a bounded deployment option for the dashboard
+// compare panel. The list is derived from observed telemetry, so deployments
+// without traffic are deliberately not presented as comparable.
+type DebugDeploymentView struct {
+	ID          string
+	Label       string
+	FirstSeenAt string
+	LastSeenAt  string
+	RowCount    int64
+}
+
+// DebugCompareView is the server-rendered projection of the public compare
+// contract. It keeps the dashboard free of API response JSON and includes
+// preformatted deltas so templates do not need arithmetic helpers.
+type DebugCompareView struct {
+	SourceID     string
+	MirrorID     string
+	Route        string
+	Compared     bool
+	Rows         []DebugCompareRouteView
+	ErrorMessage string
+}
+
+type DebugCompareRouteView struct {
+	Route       string
+	SourceP50MS int
+	SourceP95MS int
+	SourceP99MS int
+	SourceN     int64
+	MirrorP50MS int
+	MirrorP95MS int
+	MirrorP99MS int
+	MirrorN     int64
+	DeltaP95MS  int
+	Factor      string
+}
+
+// DebugReplayView is the template-safe status projection for a debugger
+// replay invocation. Result fields are copied from the gateway's bounded
+// comparison envelope; raw request payloads and customer headers are never
+// rendered here.
+type DebugReplayView struct {
+	ID               string
+	State            string
+	LastError        string
+	CreatedAt        string
+	CompletedAt      string
+	HasResult        bool
+	SourceStatusCode int
+	MirrorStatusCode int
+	SourceLatencyMS  int
+	MirrorLatencyMS  int
+	StatusDiff       bool
+	Crashed          bool
 }
 
 // DebugRegressionView carries the bounded regression observation plus a
@@ -1420,6 +1688,7 @@ type DebugRegressionView struct {
 	FirstDetectedAt string
 	LastDetectedAt  string
 	RequestsURL     string
+	CompareURL      string
 }
 
 // DebugRequestView is one row in the debugger request table.
@@ -1443,14 +1712,30 @@ type DebugRequestView struct {
 // explanation are already bounded/redacted by the API handler's shared
 // projection, so the dashboard never renders raw customer attributes.
 type DebugRequestDetailView struct {
-	Request        DebugRequestView
-	Regression     *DebugRegressionView
-	Timeline       []DebugTimelineEventView
-	Spans          []DebugSpanView
-	SpansTruncated bool
-	Explanation    string
-	EvidenceStatus string
-	GeneratedAt    string
+	Request             DebugRequestView
+	Regression          *DebugRegressionView
+	Correlation         []DebugCorrelationStageView
+	CorrelationComplete bool
+	Timeline            []DebugTimelineEventView
+	Spans               []DebugSpanView
+	SpansTruncated      bool
+	Explanation         string
+	EvidenceStatus      string
+	GeneratedAt         string
+}
+
+// DebugCorrelationStageView is the template-safe projection of one
+// edge-to-billing request stage. Missing and partial statuses are rendered
+// explicitly so the dashboard does not imply that an absent signal was fast.
+type DebugCorrelationStageView struct {
+	Phase         string
+	Status        string
+	StartedAt     string
+	CompletedAt   string
+	DurationMS    int64
+	EvidenceCount int
+	Reason        string
+	Approximate   bool
 }
 
 // DebugTimelineEventView is the template-safe projection of a deterministic

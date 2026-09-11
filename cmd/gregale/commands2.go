@@ -368,6 +368,9 @@ func cmdApp(args []string) int {
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	var req api.UpdateAppRequest
 	if explicit["ram"] {
+		if *ram <= 0 {
+			return printErr("Invalid --ram", fmt.Errorf("must be greater than zero; got %d", *ram))
+		}
 		v := *ram
 		req.RAMMB = &v
 	}
@@ -587,6 +590,9 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %d rpm across apps\n", "account request rate:", l.AccountRequestRateRPM)
 			fmt.Printf("%-30s %dms default, %dms max\n", "request budget:", l.RequestBudgetMS, l.RequestBudgetMaxMS)
 			fmt.Printf("%-30s %ds\n", "response write timeout:", l.ResponseWriteTimeoutS)
+			if l.RequestBodyMaxBytes > 0 {
+				fmt.Printf("%-30s %d bytes (%d MiB)\n", "request body cap:", l.RequestBodyMaxBytes, l.RequestBodyMaxBytes/(1024*1024))
+			}
 		}
 		// ADR-031 + ADR-032: surface the per-app outbound CIDR
 		// allowlist in the text-mode `gregale app <slug>` output so a
@@ -1003,6 +1009,13 @@ func cmdDeployTarball(args []string) int {
 // behavior below.
 type deployExecution struct {
 	onQueued            func(api.DeploymentResponse)
+	onSourceSync        func(time.Duration, error)
+	onStage             func(string, string, int64, string)
+	onTerminal          func(api.DeploymentResponse) int
+	onFailure           func(api.DeploymentResponse, string, string)
+	onError             func(error)
+	prefixBuildLogs     bool
+	streamLogsOnJSON    bool
 	developerSource     *devSourceSyncState
 	extraSourceExcludes []string
 }
@@ -1312,6 +1325,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if explicit["no-wait"] && *noWaitDeploy {
 		waitForDeploy = false
 	}
+	// Preserve the historical queued JSON response unless the operator
+	// explicitly asks for the terminal receipt with --json --wait.
+	jsonWait := jsonOutput && explicit["wait"] && waitForDeploy
+	// `gregale dev --json` needs to observe the real stage stream so it can
+	// emit the edit-to-live receipt. Ordinary deploys retain their historical
+	// queued JSON response unless the caller explicitly asks for --wait.
+	streamLogsOnJSON := jsonOutput && execution.streamLogsOnJSON
+	if streamLogsOnJSON {
+		waitForDeploy = true
+		jsonWait = false
+	}
 	var requireAuthnPtr *bool
 	var publicAuthPtr *api.PublicAuthBlock
 	switch {
@@ -1403,12 +1427,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintFail(os.Stderr, "--repo cannot be combined with --only or --project-slug")
 			return 1
 		}
-		return cmdDeployRepoSourceRefContextWithWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
-			Reason:     *reason,
-			Tag:        *tag,
-			DeployedBy: resolveDeployedBy(*deployedBy),
-			PRNumber:   *prNumber,
-		}, waitForDeploy)
+		return cmdDeployRepoSourceRefContextWithJSONWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
+			Reason:         *reason,
+			Tag:            *tag,
+			DeployedBy:     resolveDeployedBy(*deployedBy),
+			PRNumber:       *prNumber,
+			TrafficPercent: optTrafficPercent(*trafficPercent),
+			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
+		}, waitForDeploy, jsonWait)
 	}
 
 	// --template materializes an embedded starter project. For function
@@ -1577,7 +1603,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	localZeroConfig := *image == "" && *tarball == ""
 	doctorEnabled := *doctorStrict || (!*noDoctor && localZeroConfig)
 	if doctorEnabled && sourceDir != "" {
-		rep := runDoctorChecks(sourceDir)
+		doctorShape := resolvedShape
+		if !*function && !*app {
+			doctorShape = detectShape(sourceDir)
+		}
+		rep := runDoctorChecksForShape(sourceDir, doctorShape)
 		if *doctorStrict && rep.HasErrors() {
 			if jsonOutput {
 				_ = json.NewEncoder(osStderr).Encode(struct {
@@ -1869,10 +1899,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
 	// happen. --diff and --dry-run never ship a deploy.
 	if *diff {
-		if *profile != "" {
-			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --diff"))
-		}
-		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr)
+		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
 		opts.Strict = !*diffLenient
@@ -2011,11 +2038,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if *tarball != "" {
 		ann := api.DeployAnnotations{
-			Reason:     *reason,
-			Tag:        *tag,
-			DeployedBy: resolveDeployedBy(*deployedBy),
-			PRNumber:   *prNumber,
-			Workflows:  workflowDefs,
+			Reason:         *reason,
+			Tag:            *tag,
+			DeployedBy:     resolveDeployedBy(*deployedBy),
+			PRNumber:       *prNumber,
+			Workflows:      workflowDefs,
+			TrafficPercent: optTrafficPercent(*trafficPercent),
+			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -2024,12 +2053,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		)
 		if developerSync != nil {
 			var deployErr error
+			sourceSyncStarted := time.Now()
 			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann, developerSync)
+			if execution.onSourceSync != nil {
+				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
+			}
 			if deployErr != nil {
 				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
 					return 130
 				}
-				return printErr("Bad --tarball", deployErr)
+				code := printErr("Bad --tarball", deployErr)
+				if execution.onError != nil {
+					execution.onError(deployErr)
+				}
+				return code
 			}
 		} else if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			uploadOptions := api.UploadDeployOptions{
@@ -2058,7 +2095,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if errors.Is(uploadErr, context.Canceled) || ctx.Err() != nil {
 					return 130
 				}
-				return printErr("Bad --tarball", uploadErr)
+				code := printErr("Bad --tarball", uploadErr)
+				if execution.onError != nil {
+					execution.onError(uploadErr)
+				}
+				return code
 			}
 		} else {
 			var deployErr error
@@ -2067,11 +2108,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
 					return 130
 				}
-				return printErr("Bad --tarball", deployErr)
+				code := printErr("Bad --tarball", deployErr)
+				if execution.onError != nil {
+					execution.onError(deployErr)
+				}
+				return code
 			}
 		}
 		execution.notifyQueued(dep)
-		if jsonOutput {
+		if jsonOutput && !streamLogsOnJSON {
 			// Legacy multipart uploads do not calculate the digest while
 			// streaming, so preserve the stable receipt field there by
 			// hashing after the request completes.
@@ -2082,13 +2127,24 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					sourceSHA256 = sha
 				}
 			}
-			return jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
+			if !jsonWait {
+				return jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
+			}
 		}
 		if !waitForDeploy {
 			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 			return 0
 		}
-		return streamDeployLogsContext(ctx, client, dep, slug)
+		if jsonWait {
+			return writeWaitedDeploymentReceipt(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256)
+		}
+		return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
+			onStage:         execution.onStage,
+			onTerminal:      execution.onTerminal,
+			onFailure:       execution.onFailure,
+			prefixBuildLogs: execution.prefixBuildLogs,
+			quiet:           streamLogsOnJSON,
+		})
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
 	// (CreateDeploymentRequest), so the annotation fields ride on the
@@ -2116,10 +2172,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
 	})
 	if err != nil {
-		return printErr("Deploy failed", err)
+		code := printErr("Deploy failed", err)
+		if execution.onError != nil {
+			execution.onError(err)
+		}
+		return code
 	}
 	execution.notifyQueued(dep)
-	if jsonOutput {
+	if jsonOutput && !jsonWait && !streamLogsOnJSON {
 		// Image deploy path: no source tarball bytes (the digest
 		// rides on dep.ImageDigest), no git detection (prov is
 		// nil from the function-scope hoist), so commit_sha /
@@ -2134,7 +2194,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 		return 0
 	}
-	return streamDeployLogsContext(ctx, client, dep, slug)
+	if jsonWait {
+		return writeWaitedDeploymentReceipt(ctx, client, dep, nil, deployedAppURL(slug), "")
+	}
+	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
+		onStage:         execution.onStage,
+		onTerminal:      execution.onTerminal,
+		onFailure:       execution.onFailure,
+		prefixBuildLogs: execution.prefixBuildLogs,
+		quiet:           streamLogsOnJSON,
+	})
 }
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
@@ -3655,8 +3724,48 @@ func topPatterns(patterns map[string]int, n int) []string {
 // short-circuits the constructor when the customer piped the
 // output (`gregale deploy … | tee /tmp/log`) — the static fallback
 // in renderStageSummary is the path that fires instead.
+type streamDeployOptions struct {
+	onStage         func(string, string, int64, string)
+	onTerminal      func(api.DeploymentResponse) int
+	onFailure       func(api.DeploymentResponse, string, string)
+	prefixBuildLogs bool
+	quiet           bool
+}
+
 func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string) int {
-	PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
+	return streamDeployLogsContextWithOptions(ctx, c, dep, appSlug, streamDeployOptions{})
+}
+
+func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) int {
+	if !opts.quiet {
+		PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
+	}
+	terminalDeploymentWithFailure := func(d api.DeploymentResponse, phase, reason string) int {
+		if d.Status == deploymentStatusFailed && opts.onFailure != nil {
+			opts.onFailure(d, phase, reason)
+		}
+		if opts.onTerminal != nil {
+			return opts.onTerminal(d)
+		}
+		return terminalExitForDeploymentWithFailureContext(ctx, c, d, appSlug, nil)
+	}
+	terminalDeployment := func(d api.DeploymentResponse) int {
+		return terminalDeploymentWithFailure(d, "", d.Error)
+	}
+	terminalBuild := func(b api.BuildResponse) int {
+		status := statusLive
+		if b.Status == buildStatusFailed {
+			status = deploymentStatusFailed
+		}
+		dep := api.DeploymentResponse{ID: b.DeploymentID, BuildID: b.ID, Status: status, Error: b.FailureClass}
+		if status == deploymentStatusFailed && opts.onFailure != nil {
+			opts.onFailure(dep, "image_build", b.FailureClass)
+		}
+		if opts.onTerminal != nil {
+			return opts.onTerminal(dep)
+		}
+		return terminalExitForBuildWithFailureContext(ctx, c, b, appSlug, nil)
+	}
 	body, err := c.StreamDeploymentLogs(ctx, dep.ID, nil, 0, true)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -3670,12 +3779,12 @@ func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentR
 		// is the canonical case where the stream never opened and
 		// the build row is already terminal.
 		if b, ok := pollBuildStatusContext(ctx, c, dep, 5*time.Second); ok {
-			return terminalExitForBuild(b, appSlug)
+			return terminalBuild(b)
 		}
 		if final, ok := pollDeploymentFinalContext(ctx, c, dep); ok {
-			return terminalExitForDeploymentAs(final, appSlug)
+			return terminalDeployment(final)
 		}
-		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs --deployment %s", dep.ID)
+		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 		return 3
 	}
 	defer func() { _ = body.Close() }()
@@ -3684,8 +3793,14 @@ func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentR
 	defer func() { _ = dec.Close() }()
 	// ADR-117 §3: ticker construction happens AFTER the decoder so
 	// a decoder init failure doesn't draw a half-rendered block.
-	ticker := renderStageTicker(osStdout)
+	tickerWriter := io.Writer(osStdout)
+	if opts.quiet {
+		tickerWriter = io.Discard
+	}
+	ticker := renderStageTicker(tickerWriter)
 	defer ticker.Close()
+	failedStage := ""
+	failedReason := ""
 streamLoop:
 	for {
 		select {
@@ -3704,8 +3819,12 @@ streamLoop:
 				var entry struct {
 					Line string `json:"line"`
 				}
-				if json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
-					fmt.Println(entry.Line)
+				if !opts.quiet && json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
+					if opts.prefixBuildLogs {
+						fmt.Printf("build | %s\n", entry.Line)
+					} else {
+						fmt.Println(entry.Line)
+					}
 				}
 			case "stage":
 				// ADR-117 §3: server-side stage diff — drive the
@@ -3726,6 +3845,13 @@ streamLoop:
 				}
 				if json.Unmarshal([]byte(e.Data), &stage) == nil && stage.Name != "" {
 					ticker.HandleStageFrame(stage.Name, stage.Status, stage.DurationMs, stage.Reason)
+					if stage.Status == stageStatusFailed {
+						failedStage = stage.Name
+						failedReason = stage.Reason
+					}
+					if opts.onStage != nil {
+						opts.onStage(stage.Name, stage.Status, stage.DurationMs, stage.Reason)
+					}
 				}
 			case statusLiteral:
 				var status struct {
@@ -3733,12 +3859,9 @@ streamLoop:
 				}
 				if json.Unmarshal([]byte(e.Data), &status) == nil &&
 					(status.Status == statusLive || status.Status == deploymentStatusFailed) {
-					if status.Status == statusLive {
-						PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
-						printDeployColdWakeSentence()
-						return 0
-					}
-					return renderDeployFailure(dep)
+					terminal := dep
+					terminal.Status = status.Status
+					return terminalDeploymentWithFailure(terminal, failedStage, failedReason)
 				}
 			case "end":
 				var end struct {
@@ -3749,12 +3872,18 @@ streamLoop:
 				}
 				break streamLoop
 			case streamEventError:
-				PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs --deployment %s", dep.ID)
+				PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 				return 3
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
 				if e.Data != "" {
-					fmt.Println(e.Data)
+					if !opts.quiet {
+						if opts.prefixBuildLogs {
+							fmt.Printf("build | %s\n", e.Data)
+						} else {
+							fmt.Println(e.Data)
+						}
+					}
 				}
 			}
 		case err := <-dec.Errors():
@@ -3764,7 +3893,7 @@ streamLoop:
 			if errors.Is(err, io.EOF) {
 				break streamLoop
 			}
-			PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs --deployment %s", dep.ID)
+			PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 			return 3
 		}
 	}
@@ -3778,7 +3907,7 @@ streamLoop:
 	// fall back to pollDeploymentFinal when the new poll reports
 	// the build is still queued or running.
 	if b, ok := pollBuildStatusContext(ctx, c, dep, 60*time.Second); ok {
-		return terminalExitForBuild(b, appSlug)
+		return terminalBuild(b)
 	}
 	// Tarball/function deployments created by older API paths may not carry
 	// BuildID.  In that case the build poll above is intentionally skipped,
@@ -3787,9 +3916,9 @@ streamLoop:
 	// the deployment row through that recovery window so a healthy deployment
 	// is not reported as exit 3 merely because the SSE stream ended first.
 	if final, ok := pollDeploymentFinalUntilContext(ctx, c, dep, 5*time.Minute); ok {
-		return terminalExitForDeploymentAs(final, appSlug)
+		return terminalDeployment(final)
 	}
-	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs --deployment %s", dep.ID)
+	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 	return 3
 }
 
@@ -3937,11 +4066,12 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 	return api.BuildResponse{}, false
 }
 
-func terminalExitForDeploymentAs(d api.DeploymentResponse, appSlug string) int {
+func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client, d api.DeploymentResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
 	if d.Status == statusLive {
-		PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
-		printDeployColdWakeSentence()
-		return 0
+		return renderSuccessfulDeployment(ctx, c, d, appSlug)
+	}
+	if onFailure != nil {
+		onFailure(d, "", d.Error)
 	}
 	return renderDeployFailure(d)
 }
@@ -3953,17 +4083,32 @@ func terminalExitForDeploymentAs(d api.DeploymentResponse, appSlug string) int {
 // so on failure we render a compact "BuildStatus=failed
 // failure_class=…" block and exit 2 (same exit-code convention as
 // terminalExitForDeployment's renderDeployFailure path).
-func terminalExitForBuild(b api.BuildResponse, appID string) int {
+func terminalExitForBuild(b api.BuildResponse, appSlug string) int {
+	return terminalExitForBuildContext(context.Background(), nil, b, appSlug)
+}
+
+func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string) int {
+	return terminalExitForBuildWithFailureContext(ctx, c, b, appSlug, nil)
+}
+
+func terminalExitForBuildWithFailureContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
 	if b.Status == buildStatusSucceeded {
-		PrintOK(osStdout, "Deployed. %s", deployedAppURL(appID))
-		printDeployColdWakeSentence()
-		return 0
+		dep := api.DeploymentResponse{ID: b.DeploymentID, Status: statusLive}
+		return renderSuccessfulDeployment(ctx, c, dep, appSlug)
 	}
 	// Failed build — surface the lifecycle info. End users hitting
 	// this path are CI scripts that lost their SSE; the canonical
-	// log path is `gregale logs --deployment <deployment_id>`.
-	PrintWarn(os.Stderr, "build %s failed (failure_class=%s); inspect logs with: gregale logs --deployment %s",
-		b.ID, b.FailureClass, b.DeploymentID)
+	// log path includes the required app slug positional argument.
+	PrintWarn(os.Stderr, "build %s failed (failure_class=%s); inspect logs with: gregale logs %s --deployment %s --follow",
+		b.ID, b.FailureClass, appSlug, b.DeploymentID)
+	if onFailure != nil {
+		onFailure(api.DeploymentResponse{
+			ID:        b.DeploymentID,
+			BuildID:   b.ID,
+			Error:     b.FailureClass,
+			ErrorCode: inferDevDiagnosticCode(b.FailureClass, "image_build", ""),
+		}, "image_build", b.FailureClass)
+	}
 	return 2
 }
 
@@ -3973,7 +4118,7 @@ func terminalExitForBuild(b api.BuildResponse, appID string) int {
 // `*.gregale.dev` contract, while operators can point a CLI at another fleet.
 func deployedAppURL(appID string) string {
 	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" {
+	if domain == "" || domain == "apps.gregale.dev" {
 		domain = "gregale.dev"
 	}
 	return "https://" + appID + "." + domain

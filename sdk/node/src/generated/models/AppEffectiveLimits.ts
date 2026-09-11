@@ -66,5 +66,9 @@ export type AppEffectiveLimits = {
    * Maximum response write window for the plan, in seconds.
    */
   response_write_timeout_s: number;
+  /**
+   * Maximum inbound request body accepted for this app's plan, in bytes.
+   */
+  request_body_max_bytes: number;
 };
 

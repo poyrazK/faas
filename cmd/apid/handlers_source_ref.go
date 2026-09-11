@@ -87,6 +87,16 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			"Unsupported format", "format must be '"+fieldNameTarball+"' (PR-A)"))
 		return
 	}
+	rolloutReq := &api.CreateDeploymentRequest{TrafficPercent: req.TrafficPercent, Canary: req.Canary}
+	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	if rolloutProblem != nil {
+		api.WriteProblem(w, rolloutProblem)
+		return
+	}
 
 	installID, p := s.resolveInstallToken(r.Context(), acct, app, req.Repo)
 	if p != nil {
@@ -205,10 +215,18 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		// Issue #977 / ADR-116: annotation surface forwarded onto
 		// the deployment row from the request's annotationForm.
 		// nil/zero values are dropped by EnqueueParams handling.
-		Reason:     ann.Reason,
-		Tag:        ann.Tag,
-		DeployedBy: ann.DeployedBy,
-		PRNumber:   ann.PRNumber,
+		Reason:                 ann.Reason,
+		Tag:                    ann.Tag,
+		DeployedBy:             ann.DeployedBy,
+		PRNumber:               ann.PRNumber,
+		TrafficPercent:         rollout.TrafficPercent,
+		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
+		CanaryPreset:           rollout.CanaryPreset,
+		CanaryStep:             rollout.CanaryStep,
+		CanaryTotalSteps:       rollout.CanaryTotalSteps,
+		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
+		CanaryStages:           rollout.CanaryStages,
+		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
@@ -330,6 +348,12 @@ func (s *server) auditSourceRefDeploy(ctx context.Context, acct state.Account, a
 		return
 	}
 	resolvedActor := resolvedActorString(d.DeployedVia, d.DeployedByUserID, d.PusherLogin)
+	supersedes := prev.ID
+	if state.IsServiceRollout(d) {
+		// The predecessor remains live until readiness promotion; do not
+		// claim this enqueue replaced it in the audit timeline.
+		supersedes = ""
+	}
 	data := map[string]any{
 		"app_id":        app.ID,
 		"deployment_id": res.DeploymentID,
@@ -338,7 +362,7 @@ func (s *server) auditSourceRefDeploy(ctx context.Context, acct state.Account, a
 		"ref":           req.Ref,
 		"source_sha":    resolvedSHA,
 		"install_id":    installID,
-		"supersedes":    prev.ID,
+		"supersedes":    supersedes,
 	}
 	// Issue #977 / ADR-116: mirror the annotation surface into
 	// the deploy.source_ref audit row. mergeAnnotationAudit is

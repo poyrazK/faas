@@ -45,14 +45,23 @@ var accountResponse = mustJSON(map[string]any{
 
 func accountLimits() map[string]any {
 	return map[string]any{
-		"plan":                  "hobby",
-		"ram_mb":                256,
-		"max_concurrency":       2,
-		"deployed_apps":         3,
-		"developer_apps":        2,
-		"included_gb_hours":     50,
-		"app_layer_max_mb":      512,
-		"ephemeral_disk_max_mb": 512,
+		"plan":                            "hobby",
+		"ram_mb":                          256,
+		"max_concurrency":                 2,
+		"deployed_apps":                   3,
+		"developer_apps":                  2,
+		"included_gb_hours":               50,
+		"app_layer_max_mb":                512,
+		"ephemeral_disk_max_mb":           512,
+		"triggers_allowed":                true,
+		"trigger_kinds":                   []string{"sqs_compat", "queue"},
+		"trigger_limit_per_app":           2,
+		"trigger_limit_per_account":       10,
+		"trigger_batch_size_max":          50,
+		"trigger_batch_window_max_ms":     30_000,
+		"trigger_max_attempts_max":        3,
+		"trigger_payload_max_bytes":       1_048_576,
+		"trigger_tls_skip_verify_allowed": false,
 	}
 }
 
@@ -110,6 +119,7 @@ func appEffectiveLimits() map[string]any {
 		"request_budget_ms":        3000,
 		"request_budget_max_ms":    30000,
 		"response_write_timeout_s": 900,
+		"request_body_max_bytes":   25 * 1024 * 1024,
 	}
 }
 

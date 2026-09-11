@@ -1,9 +1,12 @@
+// adr: 080
+
 package sched
 
 import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,6 +62,39 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 	}
 	if string(got.Result) != `{"ok":true}` {
 		t.Fatalf("result = %s, want {\"ok\":true}", got.Result)
+	}
+}
+
+func TestHTTPGatewaySynthHandlerFailureIsPermanent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"state":"failed","status_code":500,"result":{"error":"handler_error","message":"boom"}}`))
+	}))
+	defer srv.Close()
+
+	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
+	out, err := h.Invoke(context.Background(), "app-1", state.Invocation{ID: "inv-1", AppID: "app-1"})
+	if !errors.Is(err, ErrPermanentInvoke) {
+		t.Fatalf("Invoke error = %v, want ErrPermanentInvoke", err)
+	}
+	if !strings.Contains(err.Error(), "boom") || !strings.Contains(string(out.Result), "handler_error") {
+		t.Fatalf("Invoke result/error = %s / %v", out.Result, err)
+	}
+}
+
+func TestHTTPGatewaySynthOrdinaryServerErrorIsRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"state":"dispatching","result":{"error":"upstream_unavailable"},"status_code":503}`))
+	}))
+	defer srv.Close()
+	synth := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
+	_, err := synth.Invoke(context.Background(), "app-1", state.Invocation{ID: "inv-1"})
+	if err == nil {
+		t.Fatal("Invoke returned nil error for retryable 503")
+	}
+	if errors.Is(err, ErrPermanentInvoke) {
+		t.Fatalf("Invoke error = %v, must remain retryable", err)
 	}
 }
 

@@ -7,6 +7,7 @@ package main
 //   GET    /v1/apps/{slug}/openapi?source=manual_import|auto
 //   POST   /v1/apps/{slug}/openapi
 //   POST   /v1/apps/{slug}/openapi/dry-run
+//   GET    /v1/apps/{slug}/openapi/preview
 //   DELETE /v1/apps/{slug}/openapi
 //
 // Test surface (table-driven where applicable):
@@ -18,6 +19,7 @@ package main
 //   - POST: 200 happy path, 413 too large, 422 invalid, 422 too
 //     many endpoints, 403 per-account quota
 //   - POST dry-run: 200 happy path, 422 invalid
+//   - GET preview: declared-vs-observed route and policy coverage
 //   - DELETE: 204 happy path, 204 idempotent
 //
 // The MemStore seeds the imported doc directly via
@@ -156,6 +158,49 @@ func TestGetAppOpenAPI_ManualImport_Missing(t *testing.T) {
 	}
 }
 
+// TestGetAppOpenAPIPolicyPreview_ReadOnly pins API-hosting roadmap deliverable
+// 11 / ADR-126 follow-up: the preview joins a persisted declaration with
+// matching policy rows and degrades honestly when gatewayd is unavailable.
+func TestGetAppOpenAPIPolicyPreview_ReadOnly(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedApp(t, e, "policy-preview")
+	seedImport(t, e, app.ID, []byte(sampleOpenAPIDoc), 1, "3.1.0")
+	if _, err := e.store.CreateEdgeRule(t.Context(), state.CreateEdgeRuleParams{
+		AccountID:    e.acct.ID,
+		AppID:        app.ID,
+		MatchPath:    "/users",
+		MatchMethods: []string{"GET"},
+		Priority:     10,
+		Enabled:      true,
+		Kind:         state.EdgeRuleKindValidate,
+		Action:       state.EdgeRuleAction{Kind: state.EdgeRuleKindValidate},
+	}); err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+
+	rec := e.do(t, "GET", "/v1/apps/policy-preview/openapi/preview", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out api.AppOpenAPIPolicyPreviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode preview: %v; body=%s", err, rec.Body.String())
+	}
+	if out.Source != "degraded: routes_unavailable" || out.ObservedAvailable {
+		t.Fatalf("source=%q observed_available=%t", out.Source, out.ObservedAvailable)
+	}
+	if out.OpenAPIVersion != "3.1.0" || len(out.Routes) != 1 {
+		t.Fatalf("preview metadata/routes: %+v", out)
+	}
+	route := out.Routes[0]
+	if route.Path != "/users" || route.Method != "get" || route.Status != "declared_only" || !route.Covered || len(route.Rules) != 1 {
+		t.Fatalf("route preview: %+v", route)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control=%q, want no-store", got)
+	}
+}
+
 // TestGetAppOpenAPI_Auto_NoImports verifies the auto-gen path
 // returns 200 with the Source=empty: no_import_no_rules marker
 // when neither an imported doc nor edge rules exist.
@@ -197,6 +242,58 @@ func TestGetAppOpenAPI_Auto_WithImport_CacheMiss(t *testing.T) {
 	}
 	if cache.Len() != 1 {
 		t.Errorf("cache.Len()=%d, want 1", cache.Len())
+	}
+}
+
+func TestRenderOpenAPISpecJSONPreservesImportedContract(t *testing.T) {
+	baseline := []byte(`{
+		"openapi":"3.0.3",
+		"info":{"title":"contract","version":"1.0.0"},
+		"paths":{"/hello/{id}":{"get":{
+			"operationId":"getHello",
+			"parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
+			"responses":{"200":{"description":"Found","headers":{"X-Result":{"schema":{"type":"string"}}},"content":{"application/json":{"schema":{"type":"object","required":["message","items"],"properties":{"message":{"oneOf":[{"type":"string"},{"$ref":"#/components/schemas/Message"}]},"items":{"type":"array","items":{"$ref":"#/components/schemas/Message"}}}}}}}}
+		}}},
+		"components":{"schemas":{"Message":{"type":"object","additionalProperties":false,"properties":{"text":{"type":"string","enum":["ok"]}}}}}
+	}`)
+	spec, err := openapidiff.LoadBytes(baseline)
+	if err != nil {
+		t.Fatalf("load baseline: %v", err)
+	}
+	rendered := renderOpenAPISpecJSON(spec, openapidiff.GenerateFromAppMeta{}, state.App{Slug: "contract-app"})
+
+	var doc map[string]any
+	if err := json.Unmarshal(rendered, &doc); err != nil {
+		t.Fatalf("rendered document is invalid JSON: %v; body=%s", err, rendered)
+	}
+	paths := doc["paths"].(map[string]any)
+	op := paths["/hello/{id}"].(map[string]any)["get"].(map[string]any)
+	if got := op["operationId"]; got != "getHello" {
+		t.Fatalf("operationId = %v, want getHello", got)
+	}
+	params := op["parameters"].([]any)
+	if len(params) != 1 || params[0].(map[string]any)["name"] != "id" {
+		t.Fatalf("path parameters = %#v, want id", params)
+	}
+	response := op["responses"].(map[string]any)["200"].(map[string]any)
+	schema := response["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	if _, bad := schema["Type"]; bad {
+		t.Fatalf("schema used Go field names: %#v", schema)
+	}
+	if schema["type"] != "object" || response["description"] != "Found" {
+		t.Fatalf("response contract changed: %#v", response)
+	}
+	components := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	if _, ok := components["Message"]; !ok {
+		t.Fatalf("components missing Message: %#v", components)
+	}
+
+	proposed, err := openapidiff.LoadBytes(rendered)
+	if err != nil {
+		t.Fatalf("reload auto document: %v", err)
+	}
+	if breaks := openapidiff.Compare(spec, proposed); len(breaks) != 0 {
+		t.Fatalf("unchanged import became breaking after auto render: %+v", breaks)
 	}
 }
 

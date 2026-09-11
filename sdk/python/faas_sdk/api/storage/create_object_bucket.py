@@ -66,7 +66,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateObjectBucketBody,
 ) -> Response[ObjectBucket | Problem]:
-    """Create a private bucket on the region's current default backend
+    """Create a bucket on the region's current default backend
 
      Requires storage:manage or admin. Idempotent by app, scope and name, not
     by Idempotency-Key. Retry provisioning by submitting the same name and
@@ -102,7 +102,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateObjectBucketBody,
 ) -> ObjectBucket | Problem | None:
-    """Create a private bucket on the region's current default backend
+    """Create a bucket on the region's current default backend
 
      Requires storage:manage or admin. Idempotent by app, scope and name, not
     by Idempotency-Key. Retry provisioning by submitting the same name and
@@ -133,7 +133,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateObjectBucketBody,
 ) -> Response[ObjectBucket | Problem]:
-    """Create a private bucket on the region's current default backend
+    """Create a bucket on the region's current default backend
 
      Requires storage:manage or admin. Idempotent by app, scope and name, not
     by Idempotency-Key. Retry provisioning by submitting the same name and
@@ -167,7 +167,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateObjectBucketBody,
 ) -> ObjectBucket | Problem | None:
-    """Create a private bucket on the region's current default backend
+    """Create a bucket on the region's current default backend
 
      Requires storage:manage or admin. Idempotent by app, scope and name, not
     by Idempotency-Key. Retry provisioning by submitting the same name and

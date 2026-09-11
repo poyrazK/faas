@@ -1,0 +1,72 @@
+{
+  "release_tag": "v0.1.18-rc.119",
+  "release_commit": "bca75d649ffabe5d40c466c246ed60dacad3bcc6",
+  "project": "project-5ae37259-04cf-4070-bef",
+  "node": "faas-compute-node-1",
+  "node_id_counts": {
+    "cc461882-cba6-4182-8f26-e67c314361dc": 100
+  },
+  "disk": {
+    "device": "sdb",
+    "rotational": 0,
+    "class": "pd-ssd"
+  },
+  "fixture": "gregale-api-demo",
+  "load_shape": "100 sequential explicit park-to-restore cycles; one public HTTP 200 verification after every restore",
+  "slo_interval": "schedd wake.boot_started.at -> schedd wake.boot_completed.at",
+  "n": 100,
+  "unique_wake_ids": 100,
+  "platform_ms": {
+    "min": 179.97,
+    "avg": 209.80187,
+    "p50": 205.533,
+    "p90": 234.511,
+    "p95": 240.76500000000001,
+    "p99": 273.34799999999996,
+    "max": 337.836
+  },
+  "vmmd_total_ms": {
+    "min": 165,
+    "avg": 190.32,
+    "p50": 183,
+    "p90": 212,
+    "p95": 224,
+    "p99": 249,
+    "max": 323
+  },
+  "restore_breakdown_total_ms": {
+    "min": 96,
+    "avg": 118.23,
+    "p50": 111,
+    "p90": 139,
+    "p95": 152,
+    "p99": 174,
+    "max": 253
+  },
+  "restore_gate_wait_ms": {
+    "min": 0,
+    "avg": 0.0,
+    "p50": 0,
+    "p90": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 0
+  },
+  "methods": [
+    "restore"
+  ],
+  "http_status_counts": {
+    "200": 100
+  },
+  "release_counts": {
+    "bca75d649ffabe5d40c466c246ed60dacad3bcc6": 100
+  },
+  "over_or_equal_350_ms": 0,
+  "artifact_source_counts": {
+    "base:cache_hit": 100,
+    "kernel:cache_hit": 100,
+    "main:cache_hit": 100
+  },
+  "max_concurrency_at_admit": 0,
+  "max_queued_count": 0
+}

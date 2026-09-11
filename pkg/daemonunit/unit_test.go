@@ -243,6 +243,7 @@ func TestDecode_RoundTripBasic(t *testing.T) {
 		ExecStartPre:          []string{"/usr/bin/chmod 0660 /run/faas/apid.sock"},
 		Restart:               "on-failure",
 		RestartSec:            "2s",
+		TimeoutStartSec:       "20min",
 		Slice:                 "faas-cp.slice",
 		MemoryHigh:            "192M",
 		MemoryMax:             "256M",
@@ -282,6 +283,9 @@ func TestDecode_RoundTripBasic(t *testing.T) {
 	}
 	if u.Slice != parsed.Slice {
 		t.Errorf("Slice: %q != %q", u.Slice, parsed.Slice)
+	}
+	if u.TimeoutStartSec != parsed.TimeoutStartSec {
+		t.Errorf("TimeoutStartSec: %q != %q", u.TimeoutStartSec, parsed.TimeoutStartSec)
 	}
 	if u.MemoryHigh != parsed.MemoryHigh {
 		t.Errorf("MemoryHigh: %q != %q", u.MemoryHigh, parsed.MemoryHigh)

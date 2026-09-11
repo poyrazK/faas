@@ -8,8 +8,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
+func pgUUIDStringNullable(value pgtype.UUID) string {
+	if !value.Valid {
+		return ""
+	}
+	return pgUUIDString(value)
+}
+
 var _ ObjectS3CredentialStore = (*PgStore)(nil)
 var _ ObjectS3CredentialRekeyStore = (*PgStore)(nil)
+var _ ObjectS3CredentialBindingStore = (*PgStore)(nil)
 
 func (s *PgStore) CreateObjectS3Credential(ctx context.Context, credential ObjectS3Credential, maxPerBucket int) (ObjectS3Credential, error) {
 	if !validObjectS3Credential(credential) || maxPerBucket < 1 {
@@ -34,6 +42,7 @@ func (s *PgStore) CreateObjectS3Credential(ctx context.Context, credential Objec
 	row, err := q.ObjectS3CredentialInsert(ctx, tx, sqlc.ObjectS3CredentialInsertParams{
 		ID: mustPgUUID(credential.ID), AccountID: mustPgUUID(credential.AccountID), BucketID: mustPgUUID(credential.BucketID),
 		AccessKeyID: credential.AccessKeyID, SecretSealed: credential.SecretSealed, Kid: credential.KID, Label: credential.Label, Permission: credential.Permission,
+		Column9: credential.ManagedAppID, Column10: credential.ManagedScope, Column11: credential.ManagedPrefix,
 	})
 	if err != nil {
 		return ObjectS3Credential{}, mapErr(err)
@@ -67,6 +76,30 @@ func (s *PgStore) RevokeObjectS3Credential(ctx context.Context, accountID, bucke
 	return nil
 }
 
+func (s *PgStore) GetObjectS3Credential(ctx context.Context, accountID, bucketID, credentialID string) (ObjectS3Credential, error) {
+	row, err := sqlc.New().ObjectS3CredentialGet(ctx, s.pool, sqlc.ObjectS3CredentialGetParams{
+		ID: mustPgUUID(credentialID), AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
+	})
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	return objectS3CredentialFromSQL(row), nil
+}
+
+func (s *PgStore) RotateObjectS3Credential(ctx context.Context, accountID, bucketID, credentialID, accessKeyID string, sealed []byte, kid string) (ObjectS3Credential, error) {
+	if accessKeyID == "" || len(sealed) == 0 || kid == "" {
+		return ObjectS3Credential{}, ErrInvalidArgument
+	}
+	row, err := sqlc.New().ObjectS3CredentialRotate(ctx, s.pool, sqlc.ObjectS3CredentialRotateParams{
+		ID: mustPgUUID(credentialID), AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
+		AccessKeyID: accessKeyID, SecretSealed: sealed, Kid: kid,
+	})
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	return objectS3CredentialFromSQL(row), nil
+}
+
 func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID string) (ObjectS3Credential, ObjectBucket, error) {
 	row, err := sqlc.New().ObjectS3CredentialResolve(ctx, s.pool, accessKeyID)
 	if err != nil {
@@ -77,6 +110,7 @@ func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID str
 		AccessKeyID: row.AccessKeyID, SecretSealed: append([]byte(nil), row.SecretSealed...), KID: row.Kid,
 		Label: row.Label, Permission: row.Permission, Status: row.Status, CreatedAt: row.CreatedAt.Time,
 		LastUsedAt: optionalObjectS3Time(row.LastUsedAt), RevokedAt: optionalObjectS3Time(row.RevokedAt),
+		ManagedAppID: pgUUIDStringNullable(row.ManagedAppID), ManagedScope: row.ManagedScope.String, ManagedPrefix: row.ManagedPrefix.String,
 	}
 	bucket := ObjectBucket{
 		ID: pgUUIDString(row.BucketID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID),
@@ -137,6 +171,7 @@ func objectS3CredentialFromSQL(row sqlc.ObjectStorageS3Credential) ObjectS3Crede
 		AccessKeyID: row.AccessKeyID, SecretSealed: append([]byte(nil), row.SecretSealed...), KID: row.Kid,
 		Label: row.Label, Permission: row.Permission, Status: row.Status, CreatedAt: row.CreatedAt.Time,
 		LastUsedAt: optionalObjectS3Time(row.LastUsedAt), RevokedAt: optionalObjectS3Time(row.RevokedAt),
+		ManagedAppID: pgUUIDStringNullable(row.ManagedAppID), ManagedScope: row.ManagedScope.String, ManagedPrefix: row.ManagedPrefix.String,
 	}
 }
 

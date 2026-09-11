@@ -2,7 +2,7 @@
 
 Source: `pkg/promqlrules/data_placement.yaml`.
 Metric: `meterd_data_upstream_probes_total{outcome="ok"}` — zero
-ok-probes over 30m on a (kind, region) pair.
+ok-probes over 30m after the fleet has attempted at least one probe.
 Spec: §12 (probe health SLO; see ADR-098 §9.A for the canonical
 outcome vocabulary).
 ADR: ADR-098 §9.A.
@@ -19,11 +19,15 @@ passing, too many failing", silent is "no ok probes at all".
 ## Symptom
 
 Zero ok-probes for `meterd_data_upstream_probes_total{outcome="ok"}`
-on a (kind, region) pair for 30 minutes. The data-placement
+for 30 minutes after the fleet previously attempted a probe. The data-placement
 probe loop has gone silent for that upstream. The chooser bias
 is running on stale scores; legacy fallthrough (ADR-098 C6)
 preserves service but the chooser cannot distinguish good from
 bad upstreams.
+
+When all outcome counters are still zero, no upstream probe has ever been
+attempted and the alert stays inactive. That is the expected state on a beta
+installation with no configured data upstreams.
 
 ## Verify
 

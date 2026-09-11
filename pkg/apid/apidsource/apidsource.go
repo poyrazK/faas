@@ -191,12 +191,26 @@ type EnqueueParams struct {
 	PRNumber   int
 	// Workflows is the validated definition set carried by a multipart source
 	// deploy and stored with the deployment for run snapshotting.
-	Workflows json.RawMessage
+	Workflows              json.RawMessage
+	TrafficPercent         int
+	TrafficPercentExplicit bool
+	CanaryPreset           string
+	CanaryStep             int
+	CanaryTotalSteps       int
+	CanaryStepStartedAt    *time.Time
+	CanaryStages           json.RawMessage
 	// HostingObserver and HostingFlow are optional. They let HTTP source paths
 	// report privacy-safe source-detection timing without adding customer,
 	// repository, path, URL, or environment labels.
 	HostingObserver HostingPhaseObserver
 	HostingFlow     string
+	// ServiceRollout opts source deployments into the same readiness-gated
+	// promotion used by image deployments for service-mode apps. The previous
+	// live generation stays serving while the new build warms; schedd promotes
+	// or aborts the new row after readiness. Callers set this from the app
+	// manifest, so ordinary request-mode deployments keep their historical
+	// supersede-on-create behavior.
+	ServiceRollout bool
 }
 
 // EnqueueResult is the durable artifact the caller writes back to
@@ -376,7 +390,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// strings to NULL/'' via the migrations/00303 nullif()+coalesce()
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
-	d, err := createDeployment(ctx, store, p, state.Deployment{
+	input := state.Deployment{
 		ID:           deploymentID,
 		AppID:        p.AppID,
 		Kind:         p.Kind,
@@ -401,13 +415,30 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		// the upstream caller (CLI multipart, JSON body, githubd
 		// bridge). pgstore.CreateDeployment collapses "" to NULL
 		// via nullString and PRNumber=0 to NULL via nullif(0).
-		Reason:          p.Reason,
-		Tag:             p.Tag,
-		DeployedBy:      p.DeployedBy,
-		PRNumber:        p.PRNumber,
-		Workflows:       append(json.RawMessage(nil), p.Workflows...),
-		InferredProfile: append(json.RawMessage(nil), inferredProfile...),
-	})
+		Reason:                 p.Reason,
+		Tag:                    p.Tag,
+		DeployedBy:             p.DeployedBy,
+		PRNumber:               p.PRNumber,
+		Workflows:              append(json.RawMessage(nil), p.Workflows...),
+		InferredProfile:        append(json.RawMessage(nil), inferredProfile...),
+		TrafficPercent:         p.TrafficPercent,
+		TrafficPercentExplicit: p.TrafficPercentExplicit,
+		CanaryPreset:           p.CanaryPreset,
+		CanaryStep:             p.CanaryStep,
+		CanaryTotalSteps:       p.CanaryTotalSteps,
+		CanaryStepStartedAt:    p.CanaryStepStartedAt,
+		CanaryStages:           append(json.RawMessage(nil), p.CanaryStages...),
+	}
+	if p.ServiceRollout {
+		// Keep the predecessor live until schedd observes the new service
+		// generation at the desired ready count. This must be stamped before
+		// CreateDeployment so both PgStore and MemStore skip superseding it.
+		input.RolloutState = "rolling_out"
+		input.TrafficPercent = 0
+		now := time.Now().UTC()
+		input.RolloutStartedAt = &now
+	}
+	d, err := createDeployment(ctx, store, p, input)
 	if err != nil {
 		// A deterministic ID conflict means this delivery/app pair crossed
 		// the commit boundary during an earlier attempt. Recover the durable
@@ -525,7 +556,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 
 	// Step 7: supersede notify for the prior non-terminal row.
 	// Skipped on first deploy (no prev).
-	if prev.ID != "" {
+	if prev.ID != "" && !state.IsServiceRollout(d) {
 		supPayload, _ := json.Marshal(map[string]any{
 			"kind":          source,
 			"status":        "superseded",

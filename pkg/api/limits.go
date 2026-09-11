@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"slices"
 	"testing"
 	"time"
 )
@@ -1283,6 +1284,10 @@ type Limits struct {
 	// this number; PR-A leaves the writer unused on the buffered
 	// path and PR-B activates it on the streaming path.
 	MaxResponseBodyBytes int64
+	// RequestBodyMaxBytes is the per-plan inbound request body cap. Edge
+	// rules may lower this value for a route, but never raise it. A zero
+	// value fails closed to MaxRequestBodyBytes for unknown/legacy rows.
+	RequestBodyMaxBytes int64
 	// ResponseWriteTimeoutSeconds is the total-response-write window
 	// for streaming responses (spec §4.1: 300 s; issue #471 raises
 	// it to 900 s for Hobby+ so 30 s LLM streams + slow client reads
@@ -1827,6 +1832,7 @@ var planLimits = map[Plan]Limits{
 		// cap lift (spec §4.1 baseline 25 MB / 300 s).
 		StreamingEnabled:            false,
 		MaxResponseBodyBytes:        MaxResponseBodyBytesDefault,
+		RequestBodyMaxBytes:         10 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: ResponseWriteTimeoutDefault,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Free
 		// is the abuse-floor tier — a long-lived WS would pin a
@@ -2191,6 +2197,7 @@ var planLimits = map[Plan]Limits{
 		// to cover a 30–120 s chat completion plus headroom.
 		StreamingEnabled:            true,
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
+		RequestBodyMaxBytes:         25 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Hobby
 		// is the first paid tier — opt-in by default (the LLM/agent
@@ -2549,6 +2556,7 @@ var planLimits = map[Plan]Limits{
 		// constraint long before 100 MB matters.
 		StreamingEnabled:            true,
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
+		RequestBodyMaxBytes:         100 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Pro is
 		// the first tier where production workloads sit — opt-in by
@@ -2923,6 +2931,7 @@ var planLimits = map[Plan]Limits{
 		// tripping the cap.
 		StreamingEnabled:            true,
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
+		RequestBodyMaxBytes:         250 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
 		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Scale
 		// stays on by default — production workloads at this tier
@@ -4240,6 +4249,23 @@ var (
 	// JobBackoffMaxSeconds) defined in the const block above.
 	JobMaxRetries = [4]int{0, 3, 5, 10}
 
+	// ExecutionConcurrentPerAccount caps one-shot executions that have not
+	// reached a terminal state. A restored execution VM is never parked or
+	// reused after caller code runs, so every admitted execution occupies one
+	// slot until teardown is acknowledged.
+	ExecutionConcurrentPerAccount = [4]int{0, 1, 5, 20}
+
+	// ExecutionOutputMaxBytes is a combined cap across the JSON result,
+	// stdout, and stderr. The guest stops accepting output at this boundary;
+	// the host independently enforces the same cap on the vsock frame stream.
+	ExecutionOutputMaxBytes = [4]int{0, 1 << 20, 4 << 20, 16 << 20}
+
+	// ExecutionTimeoutMaxMS is the admission-to-result wall-clock deadline,
+	// including snapshot restore. Remaining time is passed to the guest when
+	// execution starts, so queue/restore delay can never extend caller code
+	// beyond the advertised deadline.
+	ExecutionTimeoutMaxMS = [4]int{0, 10_000, 30_000, 30_000}
+
 	// Deprecated workflow cap aliases retained for source compatibility with
 	// the original PR-1279 shorthand. New code must read the named fields on
 	// Limits through the Plan accessors below.
@@ -4248,6 +4274,41 @@ var (
 	WorkflowStepMaxTimeoutSec = [4]int{0, 600, 1800, 7200}
 	WorkflowMaxWaitDays       = 7
 )
+
+const (
+	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
+	// arrays above or reuse the plan's existing RAM/disk source of truth.
+	ExecutionTimeoutDefaultMS       = 5_000
+	ExecutionTimeoutMinMS           = 100
+	ExecutionMemoryDefaultMB        = 128
+	ExecutionCPUMillicoresDefault   = 250
+	ExecutionCPUMillicoresMax       = DefaultAppCPUMillicores
+	ExecutionEphemeralDiskDefaultMB = 64
+	ExecutionOutputDefaultBytes     = 256 << 10
+	ExecutionOutputMinBytes         = 1 << 10
+	ExecutionPIDsMax                = 64
+)
+
+// ExecutionPlanLimits is the complete admission envelope for disposable
+// one-shot executions. It is returned as a value so callers cannot mutate the
+// package-level plan tables.
+type ExecutionPlanLimits struct {
+	Allowed                bool
+	MaxConcurrent          int
+	MaxSourceBytes         int
+	MaxInputBytes          int
+	DefaultOutputBytes     int
+	MaxOutputBytes         int
+	DefaultTimeoutMS       int
+	MaxTimeoutMS           int
+	DefaultMemoryMB        int
+	MaxMemoryMB            int
+	DefaultCPUMillicores   int
+	MaxCPUMillicores       int
+	DefaultEphemeralDiskMB int
+	MaxEphemeralDiskMB     int
+	PIDsMax                int
+}
 
 // DefaultComputeNodeCeilingMB is the per-compute-node admission ceiling
 // schedd hands out when no operator override is present. It mirrors
@@ -4529,6 +4590,72 @@ func (p Plan) EgressAllowlistMaxSize() int {
 		return 0
 	}
 	return l.EgressAllowlistMaxSize
+}
+
+// ExecutionLimits returns the complete one-shot execution envelope for this
+// plan. Free is a known plan with a zero, disabled envelope; unknown plans
+// return ok=false. Memory and scratch-disk maxima deliberately reuse the
+// existing plan limits instead of introducing a second quota source.
+func (p Plan) ExecutionLimits() (limits ExecutionPlanLimits, ok bool) {
+	planLimits, ok := LimitsFor(p)
+	if !ok {
+		return ExecutionPlanLimits{}, false
+	}
+	if !p.IsPaid() {
+		return ExecutionPlanLimits{}, true
+	}
+
+	idx := p.PlanIndex()
+	return ExecutionPlanLimits{
+		Allowed:       true,
+		MaxConcurrent: ExecutionConcurrentPerAccount[idx],
+		// Source and JSON input each reuse the existing event-payload
+		// ladder. Keeping one stored value prevents the invocation and
+		// execution request caps from drifting independently.
+		MaxSourceBytes:         planLimits.MaxSourceBytesPerInvocation,
+		MaxInputBytes:          planLimits.MaxSourceBytesPerInvocation,
+		DefaultOutputBytes:     ExecutionOutputDefaultBytes,
+		MaxOutputBytes:         ExecutionOutputMaxBytes[idx],
+		DefaultTimeoutMS:       ExecutionTimeoutDefaultMS,
+		MaxTimeoutMS:           ExecutionTimeoutMaxMS[idx],
+		DefaultMemoryMB:        ExecutionMemoryDefaultMB,
+		MaxMemoryMB:            planLimits.RAMMB,
+		DefaultCPUMillicores:   ExecutionCPUMillicoresDefault,
+		MaxCPUMillicores:       ExecutionCPUMillicoresMax,
+		DefaultEphemeralDiskMB: ExecutionEphemeralDiskDefaultMB,
+		MaxEphemeralDiskMB:     planLimits.EphemeralDiskMaxMB(),
+		PIDsMax:                ExecutionPIDsMax,
+	}, true
+}
+
+// ExecutionsAllowed reports whether a plan can create disposable one-shot
+// executions. Unknown plans fail closed.
+func (p Plan) ExecutionsAllowed() bool {
+	limits, ok := p.ExecutionLimits()
+	return ok && limits.Allowed
+}
+
+// ValidExecutionMemoryMB reports whether memoryMB is a runtime-snapshot
+// shape. Firecracker restore requires a compatible machine configuration, so
+// arbitrary memory sizes cannot be rounded silently after admission.
+func ValidExecutionMemoryMB(memoryMB int) bool {
+	switch memoryMB {
+	case 128, 256, 512, 1024:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidExecutionEphemeralDiskMB reports whether diskMB is a scratch-drive
+// shape provisioned by the runtime-snapshot builder.
+func ValidExecutionEphemeralDiskMB(diskMB int) bool {
+	switch diskMB {
+	case 64, 128, 256, 512, 1024, 2048:
+		return true
+	default:
+		return false
+	}
 }
 
 // JobsAllowed (issue #1184 / ADR-099 supplement) reports whether the
@@ -5274,6 +5401,17 @@ func (p Plan) MaxResponseBodyBytes() int64 {
 	return l.MaxResponseBodyBytes
 }
 
+// MaxRequestBodyBytes returns the per-plan inbound request body cap in bytes.
+// Unknown plans and legacy rows fail closed to the historical 25 MiB platform
+// cap. Edge-rule caps are applied as a further lower bound at the gateway.
+func (p Plan) MaxRequestBodyBytes() int64 {
+	l, ok := LimitsFor(p)
+	if !ok || l.RequestBodyMaxBytes <= 0 {
+		return MaxRequestBodyBytes
+	}
+	return l.RequestBodyMaxBytes
+}
+
 // ResponseWriteTimeout returns the per-response write timeout for this
 // plan, falling back to ResponseWriteTimeoutDefault (spec §4.1's 300 s)
 // when the plan row's field is unset. Same fail-closed shape as
@@ -5746,6 +5884,33 @@ func (p Plan) TriggersAllowed() bool {
 		return false
 	}
 	return l.TriggersAllowed
+}
+
+var externalTriggerKinds = []TriggerKind{
+	TriggerKindKafka,
+	TriggerKindNATS,
+	TriggerKindRedisStreams,
+	TriggerKindSQSCompat,
+	TriggerKindQueue,
+}
+
+// AllowedTriggerKinds returns the non-cron event sources the plan may
+// create. Callers receive a copy so the canonical policy cannot be mutated.
+func (p Plan) AllowedTriggerKinds() []TriggerKind {
+	var kinds []TriggerKind
+	switch p {
+	case PlanHobby:
+		kinds = []TriggerKind{TriggerKindSQSCompat, TriggerKindQueue}
+	case PlanPro, PlanScale:
+		kinds = externalTriggerKinds
+	}
+	return append([]TriggerKind{}, kinds...)
+}
+
+// AllowsTriggerKind reports whether kind is available on p. Unknown plans,
+// cron, and unknown kinds fail closed.
+func (p Plan) AllowsTriggerKind(kind TriggerKind) bool {
+	return slices.Contains(p.AllowedTriggerKinds(), kind)
 }
 
 // TriggerLimitPerApp returns the per-app trigger cap for the plan

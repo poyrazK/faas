@@ -221,6 +221,7 @@ func TestDo_GETCallsDoNotCarryIdempotencyKey(t *testing.T) {
 		{"GetStatusSLO", func(c *Client) error { _, err := c.GetStatusSLO(context.Background()); return err }},
 		{"GetDeployment", func(c *Client) error { _, err := c.GetDeployment(context.Background(), "d1"); return err }},
 		{"UsageSummary", func(c *Client) error { _, err := c.UsageSummary(context.Background(), ""); return err }},
+		{"AccountUsage", func(c *Client) error { _, err := c.AccountUsage(context.Background(), ""); return err }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -95,6 +95,18 @@ func TestParseSecretsPair(t *testing.T) {
 	}
 }
 
+// spec: malformed secret input must never be echoed in diagnostics.
+func TestParseSecretsPair_RedactsMalformedInput(t *testing.T) {
+	const sensitive = "sk_live_customer_secret_without_separator"
+	_, err := parseSecretsPair(sensitive)
+	if err == nil {
+		t.Fatal("expected malformed pair error")
+	}
+	if strings.Contains(err.Error(), sensitive) {
+		t.Fatalf("error leaked supplied value: %q", err)
+	}
+}
+
 func TestCmdSecrets_ListRendersQuotaAndKeys(t *testing.T) {
 	sink := &secretsSink{
 		onGet: func() (int, any) {
@@ -398,6 +410,60 @@ func TestCmdSecrets_Set_RotationHint(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCmdSecrets_Set_TrailingScopeTargetsPreview(t *testing.T) {
+	var putScopes []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x/secrets":
+			writeJSONTest(w, api.AppSecretListResponse{Quota: 25})
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/apps/x/secrets/"):
+			putScopes = append(putScopes, r.URL.Query().Get("scope"))
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	oldOut := osStdout
+	osStdout = io.Discard
+	defer func() { osStdout = oldOut }()
+
+	if code := cmdSecrets([]string{"set", "--app", "x", "FIRST=one", "SECOND=two", "--scope=preview"}); code != 0 {
+		t.Fatalf("cmdSecrets exit = %d, want 0", code)
+	}
+	if len(putScopes) != 2 {
+		t.Fatalf("PUT count = %d, want 2", len(putScopes))
+	}
+	for i, scope := range putScopes {
+		if scope != "preview" {
+			t.Errorf("PUT %d scope = %q, want preview", i, scope)
+		}
+	}
+}
+
+func TestCmdSecrets_Set_InvalidBatchDoesNotMutate(t *testing.T) {
+	putCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			putCount++
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdSecrets([]string{"set", "--app", "x", "VALID=one", "invalid-key=two", "--scope=preview"}); code != 1 {
+		t.Fatalf("cmdSecrets exit = %d, want 1", code)
+	}
+	if putCount != 0 {
+		t.Fatalf("PUT count = %d, want 0 for an invalid batch", putCount)
 	}
 }
 

@@ -1,0 +1,132 @@
+{
+  "release_tag": "v0.1.18-rc.98",
+  "release_commit": "76ff511e15d64df2ba703ad25a700381af8f3028",
+  "project": "project-5ae37259-04cf-4070-bef",
+  "node": "faas-compute-node-1",
+  "node_id_counts": {
+    "cc461882-cba6-4182-8f26-e67c314361dc": 100
+  },
+  "disk": {
+    "device": "sdb",
+    "rotational": 0,
+    "class": "pd-ssd"
+  },
+  "load_shape": "52 sequential restores plus 16 simultaneous three-app restore waves rotating across four runtimes; every request starts with its instance parked",
+  "slo_interval": "schedd wake.boot_started.at -> schedd wake.boot_completed.at",
+  "n": 100,
+  "unique_wake_ids": 100,
+  "platform_ms": {
+    "min": 99.119,
+    "avg": 164.14156,
+    "p50": 142.7,
+    "p90": 263.19,
+    "p95": 296.659,
+    "p99": 333.886,
+    "max": 335.953
+  },
+  "public_ms_context_only": {
+    "min": 245.093,
+    "avg": 470.87595,
+    "p50": 436.151,
+    "p90": 537.167,
+    "p95": 848.589,
+    "p99": 1140.469,
+    "max": 1162.536
+  },
+  "restore_gate_wait_ms": {
+    "min": 0,
+    "avg": 0.0,
+    "p50": 0,
+    "p90": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 0
+  },
+  "by_shape": {
+    "burst3": {
+      "n": 48,
+      "platform_ms": {
+        "min": 127.92600000000002,
+        "avg": 213.13566666666668,
+        "p50": 197.282,
+        "p90": 310.421,
+        "p95": 320.96999999999997,
+        "p99": 335.953,
+        "max": 335.953
+      }
+    },
+    "sequential": {
+      "n": 52,
+      "platform_ms": {
+        "min": 99.119,
+        "avg": 118.91623076923078,
+        "p50": 113.878,
+        "p90": 142.7,
+        "p95": 160.654,
+        "p99": 193.244,
+        "max": 193.244
+      }
+    }
+  },
+  "by_app": {
+    "public-val-go-oneshot-0906": {
+      "n": 12,
+      "platform_ms": {
+        "min": 137.266,
+        "avg": 185.04141666666666,
+        "p50": 171.663,
+        "p90": 221.209,
+        "p95": 310.421,
+        "p99": 310.421,
+        "max": 310.421
+      }
+    },
+    "public-val-go-persistent-0906": {
+      "n": 64,
+      "platform_ms": {
+        "min": 99.119,
+        "avg": 130.11546875,
+        "p50": 118.84599999999999,
+        "p90": 177.415,
+        "p95": 187.58700000000002,
+        "p99": 269.038,
+        "max": 269.038
+      }
+    },
+    "runtime-node24-0907": {
+      "n": 12,
+      "platform_ms": {
+        "min": 178.888,
+        "avg": 259.21774999999997,
+        "p50": 244.179,
+        "p90": 320.96999999999997,
+        "p95": 335.953,
+        "p99": 335.953,
+        "max": 335.953
+      }
+    },
+    "runtime-python313-generation-0907": {
+      "n": 12,
+      "platform_ms": {
+        "min": 149.26,
+        "avg": 229.638,
+        "p50": 209.702,
+        "p90": 296.659,
+        "p95": 333.886,
+        "p99": 333.886,
+        "max": 333.886
+      }
+    }
+  },
+  "methods": [
+    "restore"
+  ],
+  "over_or_equal_350_ms": 0,
+  "artifact_source_counts": {
+    "base:cache_hit": 100,
+    "kernel:cache_hit": 100,
+    "main:cache_hit": 100
+  },
+  "max_concurrency_at_admit": 0,
+  "max_queued_count": 0
+}

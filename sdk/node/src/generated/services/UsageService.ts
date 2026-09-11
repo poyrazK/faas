@@ -2,8 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AccountUsageResponse } from '../models/AccountUsageResponse.js';
 import type { DailyUsageListResponse } from '../models/DailyUsageListResponse.js';
 import type { InvoiceListResponse } from '../models/InvoiceListResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { StorageUsageListResponse } from '../models/StorageUsageListResponse.js';
 import type { UsageResponse } from '../models/UsageResponse.js';
 import type { UsageSummaryResponse } from '../models/UsageSummaryResponse.js';
@@ -11,6 +13,36 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class UsageService {
+  /**
+   * Read the account-wide usage projection
+   * Requires usage read scope. Returns the compute usage summary together
+   * with optional object-storage and managed-PostgreSQL usage views when
+   * those services are configured for the account. Each service keeps its
+   * existing freshness and guardrail semantics; omitted optional fields
+   * mean that service is not enabled for the account. The optional service
+   * views are included only for the current UTC month; historical requests
+   * return the compute projection alone.
+   *
+   * @returns AccountUsageResponse Account-wide usage projection; Cache-Control no-store
+   * @returns Problem Authentication or usage accounting error
+   * @throws ApiError
+   */
+  public static getAccountUsage({
+    month,
+  }: {
+    /**
+     * UTC calendar month for compute usage, in YYYY-MM form. Defaults to the current month.
+     */
+    month?: string,
+  }): CancelablePromise<AccountUsageResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/usage',
+      query: {
+        'month': month,
+      },
+    });
+  }
   /**
    * Per-app monthly usage.
    * @returns UsageResponse Per-app usage rows for the month.

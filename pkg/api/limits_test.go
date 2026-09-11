@@ -1,9 +1,38 @@
 package api
 
 import (
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
+
+func TestAllowedTriggerKindsByPlan(t *testing.T) {
+	want := map[Plan][]TriggerKind{
+		PlanFree:  {},
+		PlanHobby: {TriggerKindSQSCompat, TriggerKindQueue},
+		PlanPro:   {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue},
+		PlanScale: {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue},
+	}
+	for plan, kinds := range want {
+		t.Run(string(plan), func(t *testing.T) {
+			if got := plan.AllowedTriggerKinds(); !reflect.DeepEqual(got, kinds) {
+				t.Fatalf("AllowedTriggerKinds() = %v, want %v", got, kinds)
+			}
+			for _, kind := range []TriggerKind{TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue} {
+				if got := plan.AllowsTriggerKind(kind); got != slices.Contains(kinds, kind) {
+					t.Errorf("AllowsTriggerKind(%s) = %v", kind, got)
+				}
+			}
+		})
+	}
+
+	got := PlanHobby.AllowedTriggerKinds()
+	got[0] = TriggerKindKafka
+	if PlanHobby.AllowsTriggerKind(TriggerKindKafka) {
+		t.Fatal("AllowedTriggerKinds returned mutable policy storage")
+	}
+}
 
 func TestLimitsEphemeralDiskMaxAliasesAppLayerCap(t *testing.T) {
 	for _, plan := range Plans {
@@ -18,6 +47,23 @@ func TestLimitsEphemeralDiskMaxAliasesAppLayerCap(t *testing.T) {
 	}
 	if got := (Limits{}).EphemeralDiskMaxBytes(); got != 0 {
 		t.Fatalf("unset ephemeral disk cap = %d bytes, want 0", got)
+	}
+}
+
+func TestPlanMaxRequestBodyBytes(t *testing.T) {
+	want := map[Plan]int64{
+		PlanFree:  10 * 1024 * 1024,
+		PlanHobby: 25 * 1024 * 1024,
+		PlanPro:   100 * 1024 * 1024,
+		PlanScale: 250 * 1024 * 1024,
+	}
+	for plan, expected := range want {
+		if got := plan.MaxRequestBodyBytes(); got != expected {
+			t.Errorf("%s.MaxRequestBodyBytes() = %d, want %d", plan, got, expected)
+		}
+	}
+	if got := Plan("unknown").MaxRequestBodyBytes(); got != MaxRequestBodyBytes {
+		t.Fatalf("unknown.MaxRequestBodyBytes() = %d, want %d", got, MaxRequestBodyBytes)
 	}
 }
 
@@ -166,7 +212,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// seen before the streaming patch landed. MaxResponseBodyBytes
 			// (25 MiB) and ResponseWriteTimeoutSeconds (300 s) are the
 			// pre-#471 spec §4.1 caps PR-A inherits.
-			StreamingEnabled: false, MaxResponseBodyBytes: 26_214_400, ResponseWriteTimeoutSeconds: 300,
+			StreamingEnabled: false, MaxResponseBodyBytes: 26_214_400, RequestBodyMaxBytes: 10 * 1024 * 1024, ResponseWriteTimeoutSeconds: 300,
 			// Issue #676 / ADR-080: Free is the abuse-floor tier — a
 			// long-lived WS would pin a wake past the 30 s Free idle
 			// timeout. Default off; apid PATCH rejects with 403
@@ -319,7 +365,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #471 / ADR-047 (PR-A): Hobby unlocks streaming
 			// (100 MiB / 900 s) — the first paid tier. PR-A wires
 			// the flag + accessor; PR-B activates the Flusher path.
-			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, ResponseWriteTimeoutSeconds: 900,
+			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, RequestBodyMaxBytes: 25 * 1024 * 1024, ResponseWriteTimeoutSeconds: 900,
 			// Issue #676 / ADR-080: Hobby unlocks the raw-bytes
 			// Upgrade bridge — many agent / LLM SDKs speak WS over a
 			// thin HTTP boundary, and Hobby is the tier where those
@@ -467,7 +513,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #471 / ADR-047 (PR-A): Pro keeps the same streaming
 			// envelope as Hobby. The cap is the same; the per-app
 			// streaming path is gatewayd-internal-edged, not per-tier.
-			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, ResponseWriteTimeoutSeconds: 900,
+			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, RequestBodyMaxBytes: 100 * 1024 * 1024, ResponseWriteTimeoutSeconds: 900,
 			// Issue #676 / ADR-080: Pro unlocks the raw-bytes
 			// Upgrade bridge for the same reason as Hobby — production
 			// workloads at this tier run agent / WS-backed services.
@@ -635,7 +681,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// as Hobby/Pro. The streaming cap is uniform across paid
 			// tiers — the spec's paid-only unlock is the boolean, not
 			// the byte/time ceiling.
-			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, ResponseWriteTimeoutSeconds: 900,
+			StreamingEnabled: true, MaxResponseBodyBytes: 104_857_600, RequestBodyMaxBytes: 250 * 1024 * 1024, ResponseWriteTimeoutSeconds: 900,
 			// Issue #676 / ADR-080: Scale unlocks the raw-bytes
 			// Upgrade bridge — production WS-backed services sit at
 			// this tier.

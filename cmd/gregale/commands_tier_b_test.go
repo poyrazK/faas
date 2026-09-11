@@ -28,6 +28,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -104,11 +105,14 @@ func TestTierB_WebhooksRotateSecret_BadIDExitsOne(t *testing.T) {
 func TestTierB_WebhooksRotateSecret_HappyPath(t *testing.T) {
 	resetJSONOut(t)
 	f := authedFakeAPI(t, `{"rotated_at":"2026-08-07T12:00:00Z","webhook_secret_sealed_masked":"***"}`, http.StatusOK)
-	if code := cmdWebhookRotateSecret([]string{"--app", "demo", "0123456789abcdef0123456789abcdef"}); code != 0 {
+	if code := cmdWebhookRotateSecret([]string{"--app", "demo", "--secret", "known-replacement", "0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	if f.sawMethod != "POST" || f.sawPath != "/v1/apps/demo/webhooks/0123456789abcdef0123456789abcdef/rotate-secret" {
 		t.Errorf("route = %s %s, want POST /v1/apps/demo/webhooks/.../rotate-secret", f.sawMethod, f.sawPath)
+	}
+	if !strings.Contains(string(f.sawBody), `"webhook_secret":"known-replacement"`) {
+		t.Errorf("body = %s, want caller-supplied replacement", f.sawBody)
 	}
 }
 

@@ -58,6 +58,7 @@ const (
 	corsPresetsFile       = "cors_preset_dto.go" // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
 	uploadSessionFile     = "upload_session.go"  // issue #1182 §P1 PR-1 — resumable upload session DTOs
 	managedPostgresFile   = "managed_postgres.go"
+	openapiContractFile   = "openapi_contract.go"
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -80,6 +81,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/compute-nodes/{name}/heartbeats":   true, // CP-1: operator-only (heartbeat history; schedd-owned)
 	"GET /v1/compute-nodes/events":              true, // CP-1: operator-only SSE on compute_node_changed
 	"GET /v1/internal/metrics/targets":          true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/vmmd-targets":     true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/imaged-targets":   true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/builderd-targets": true, // compute daemon metrics use the active node registry
 	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
@@ -162,6 +166,11 @@ var routeExclude = map[string]bool{
 	// route — both lists must move together (session-cookie auth
 	// surface, no SDK wrapper, no programmatic bearer-key entrypoint).
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/test": true,
+	// Dashboard debugger replay is a session-cookie form post protected by
+	// CSRF. The public SDK exposes the JSON sibling at
+	// POST /v1/apps/{slug}/debug/requests/{req_id}/replay instead.
+	// Mirror cmd/sdk-coverage/main.go::routeExclude.
+	"POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay": true,
 	// ADR-124 affected-workloads preview. Dashboard HTML form endpoints
 	// parallel to the cron fire-now + retry entries. The /preview POST
 	// re-renders the preview; /preview/apply commits. Both share the
@@ -172,6 +181,8 @@ var routeExclude = map[string]bool{
 	"POST /v1/cli-auth/exchange":                    true, // CLI device-code exchange
 	"GET /cli-auth":                                 true, // dashboard claim form
 	"POST /cli-auth":                                true, // dashboard claim form submit
+	"GET /docs":                                     true, // anonymous Swagger UI metadata page; no SDK method
+	"GET /docs/":                                    true, // slash alias of the documented /docs route
 	"GET /status":                                   true, // public HTML status page
 	"GET /status/slo.json":                          true, // public status JSON
 	"GET /healthz":                                  true, // loopback infra probe
@@ -197,6 +208,43 @@ var routeExclude = map[string]bool{
 	"POST /v1/otel/v1/traces": true,
 }
 
+func init() {
+	// Issue #1397 G9: dashboard form routes are session-cookie surfaces,
+	// intentionally absent from the public OpenAPI document.
+	for _, route := range []string{
+		"POST /dashboard/apps/{slug}/tenant-surfaces",
+		"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/delete",
+		"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames",
+		"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames/{hostname}/delete",
+		"POST /dashboard/apps/{slug}/mirrors",
+		"POST /dashboard/apps/{slug}/mirrors/{id}/toggle",
+		"POST /dashboard/apps/{slug}/mirrors/{id}/delete",
+	} {
+		routeExclude[route] = true
+	}
+	// Issue #1397 G10: dashboard storage forms are session-cookie
+	// surfaces, intentionally absent from the public OpenAPI document.
+	for _, route := range []string{
+		"POST /dashboard/apps/{slug}/storage/buckets",
+		"POST /dashboard/apps/{slug}/storage/buckets/{bucket}/delete",
+		"POST /dashboard/apps/{slug}/storage/objects/delete",
+		"POST /dashboard/apps/{slug}/storage/signed-url",
+	} {
+		routeExclude[route] = true
+	}
+	// Issue #1397 G8: dashboard form routes are session-cookie surfaces,
+	// intentionally absent from the public OpenAPI document.
+	for _, route := range []string{
+		"POST /dashboard/apps/{slug}/webhooks",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/toggle",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/delete",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/rotate-secret",
+		"POST /dashboard/apps/{slug}/webhooks/{id}/deliveries/{did}/retry",
+	} {
+		routeExclude[route] = true
+	}
+}
+
 // dtoExclude lists pkg/api exported DTOs that are intentionally not in the
 // public OpenAPI spec. These are valid types — they live in pkg/api because
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
@@ -220,16 +268,14 @@ var dtoExclude = map[string]bool{
 	"OrgMemberRow":     true,
 	"OrgInvitationRow": true,
 	// Issue #476 / ADR-076 — internal conversion structs (state row
-	// → wire DTO) and server-minted options / request bodies. The
+	// → wire DTO) and client-only option bags. The
 	// wire DTOs are AppWebhookResponse / AppWebhookDeliveryResponse
 	// etc.; the *Row types are the typed counterparts at the
-	// pkg/api ↔ pkg/state seam. ListAppWebhookDeliveriesOptions and
-	// RotateAppWebhookSecretRequest are server-side concerns that
-	// never appear in the wire spec.
+	// pkg/api ↔ pkg/state seam. ListAppWebhookDeliveriesOptions is a
+	// client-only query bag and never appears in the wire spec.
 	"AppWebhookRow":                   true,
 	"AppWebhookDeliveryRow":           true,
 	"ListAppWebhookDeliveriesOptions": true,
-	"RotateAppWebhookSecretRequest":   true,
 	"AppLogDrainRow":                  true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
@@ -291,6 +337,7 @@ var dtoExclude = map[string]bool{
 	// DTO stays admin-only and is excluded here.
 	"ObsOverviewResponse":             true,
 	"ObsOverviewTotals":               true,
+	"ObsBetaFunnel":                   true,
 	"ObsOverviewRateLimited":          true,
 	"ObsOverviewNodeHealth":           true,
 	"ObsOverviewFailureKind":          true,
@@ -827,6 +874,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
+		filepath.Join(root, "pkg", "api", openapiContractFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

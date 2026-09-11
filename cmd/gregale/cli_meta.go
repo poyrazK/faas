@@ -505,8 +505,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployment,
 		DocSlug: "deployment",
-		Short:   "Get or wait for one deployment (<id> | wait <id> | set-min-instances <id>)",
+		Short:   "Get, summarize, or wait for one deployment (<id> | summary <id> | wait <id> | set-min-instances <id>)",
 		Subcommands: []cliSub{
+			{Name: "summary", Short: "Show the release diff and rollback target", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
+			}},
 			{Name: "wait", Short: "Wait until a deployment is live", Flags: []cliFlag{
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
 			}},
@@ -720,6 +723,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "import", Short: "Import an app OpenAPI document from a JSON file or stdin"},
 			{Name: "dry-run", Short: "Preview uncovered routes without importing the document"},
+			{Name: "preview", Short: "Preview declared routes, observed routes, and matching edge policies"},
 			{Name: "rm", Short: "Remove the imported app OpenAPI document"},
 		},
 	},
@@ -791,9 +795,10 @@ var cliCommands = []cliCommand{
 		DocSlug: "debug",
 		Short:   "Production debugger (ADR-127)",
 		Subcommands: []cliSub{
-			{Name: "requests", Short: "Per-request telemetry (list|get|evidence|replay)"},
-			{Name: "regressions", Short: "Active regression observations"},
+			{Name: "requests", Short: "Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])"},
+			{Name: "regressions", Short: "Active regression observations (list|watch [--interval D] [--once])"},
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
+			{Name: "bundle", Short: "Export a redacted incident investigation bundle (bundle <slug> <req_id> [--output PATH])"},
 		},
 		Positionals: []string{"<slug>"},
 	},
@@ -930,9 +935,10 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "postgres",
 		DocSlug: "postgres",
-		Short:   "Manage managed PostgreSQL (postgres list|create|get|delete|restore|bindings ...)",
+		Short:   "Manage managed PostgreSQL (postgres list|usage|create|get|delete|restore|bindings ...)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
+			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
 			{Name: "create", Short: "Create a managed PostgreSQL database", Flags: []cliFlag{
 				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
@@ -964,7 +970,8 @@ var cliCommands = []cliCommand{
 			{Name: "tail", Short: "Tail the wake queue"},
 			{Name: "send", Short: "Enqueue a wake request"},
 			{Name: "receive", Short: "Receive a wake request"},
-			{Name: statusLiteral, Short: "Show queue state"},
+			{Name: "state", Short: "Show queue state"},
+			{Name: statusLiteral, Short: "Alias for queue state"},
 			{Name: "peek", Short: "Peek at the next wake"},
 			{Name: "dead-letter", Short: "Inspect the dead-letter queue"},
 			{Name: "ack", Short: "Ack a wake"},
@@ -1230,7 +1237,11 @@ var cliCommands = []cliCommand{
 			{Name: "rm", Short: "Delete one webhook"},
 			{Name: "deliveries", Short: "Show the delivery ledger"},
 			{Name: "retry", Short: "Retry a failed delivery"},
-			{Name: "rotate-secret", Short: "Rotate the webhook signing secret"},
+			{Name: "rotate-secret", Short: "Rotate the webhook signing secret", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "secret", Short: "replacement HMAC-SHA256 secret", Value: "VALUE"},
+				{Name: "from-stdin", Short: "read the replacement secret from stdin"},
+			}},
 		},
 	},
 	{

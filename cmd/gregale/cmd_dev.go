@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -375,6 +376,15 @@ func cmdDev(args []string) int {
 	defer cancelRuntimeLogs()
 	runtimeLogsStarted := false
 	devBrowserOpened := false
+	var diagnosticReported atomic.Bool
+	reportDevDiagnostic := func(d devDiagnostic) {
+		d.SourceDir = sourceDir
+		if jsonOutput {
+			_ = writeJSON(d)
+			return
+		}
+		renderDevDiagnostic(osStderr, d)
+	}
 	openDevBrowser := func() {
 		if !*open || jsonOutput || devBrowserOpened {
 			return
@@ -396,10 +406,13 @@ func cmdDev(args []string) int {
 	}
 	return runDevWatchLoop(ctx, sourceDir, lastSynced, config, *once, devLoopOps{
 		deploy: func(deployCtx context.Context, config devSourceConfig, queued func(string)) int {
+			diagnosticReported.Store(false)
 			if envFilePath != "" {
 				report, syncErr := envSyncState.sync(deployCtx, client, session.App.Slug, envFilePath)
 				if syncErr != nil {
 					_ = printErr("Could not sync developer config", syncErr)
+					diagnosticReported.Store(true)
+					reportDevDiagnostic(devDiagnosticFromError(syncErr, "sync"))
 					return 1
 				}
 				if report.Changed && !jsonOutput {
@@ -407,8 +420,11 @@ func cmdDev(args []string) int {
 				}
 			}
 			started := time.Now()
+			devTelemetry := newDevPhaseTracker()
 			execution := deployExecution{
-				developerSource: syncState,
+				prefixBuildLogs:  true,
+				streamLogsOnJSON: true,
+				developerSource:  syncState,
 				extraSourceExcludes: func() []string {
 					if envFilePath == "" {
 						return nil
@@ -416,14 +432,47 @@ func cmdDev(args []string) int {
 					return []string{envFilePath}
 				}(),
 				onQueued: func(dep api.DeploymentResponse) {
+					devTelemetry.setDeploymentID(dep.ID)
 					if queued != nil {
 						queued(dep.ID)
 					}
 				},
+				onSourceSync: func(duration time.Duration, syncErr error) {
+					devTelemetry.sourceSync(duration, syncErr)
+				},
+				onStage: devTelemetry.observeStage,
+				onFailure: func(dep api.DeploymentResponse, phase, reason string) {
+					diagnosticReported.Store(true)
+					reportDevDiagnostic(devDiagnosticFromDeployment(dep, phase, reason))
+				},
+				onError: func(syncErr error) {
+					diagnosticReported.Store(true)
+					d := devDiagnosticFromError(syncErr, "sync")
+					reportDevDiagnostic(d)
+				},
+			}
+			if jsonOutput {
+				execution.onTerminal = func(dep api.DeploymentResponse) int {
+					devTelemetry.setDeploymentID(dep.ID)
+					if dep.Status == deploymentStatusFailed {
+						return 1
+					}
+					return 0
+				}
 			}
 			code := cmdDeployTarballToExisting(deployCtx, config.deployArgs(session.App.Slug, sourceDir), true, execution)
-			if code == 0 && !jsonOutput {
-				PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
+			if code == 0 {
+				devTelemetry.finishRouteSwitch()
+			}
+			if code == 0 {
+				if jsonOutput {
+					if receiptCode := jsonOut(writeNDJSON([]devSyncReceipt{devTelemetry.receipt("live")})); receiptCode != 0 {
+						return receiptCode
+					}
+				} else {
+					PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
+					devTelemetry.render(osStdout)
+				}
 			}
 			if code == 0 {
 				openDevBrowser()
@@ -436,7 +485,7 @@ func cmdDev(args []string) int {
 			}
 			runtimeLogsStarted = true
 			PrintProgress(osStdout, "runtime logs attached (Ctrl-C to stop watching)")
-			go followDevRuntimeLogs(runtimeLogCtx, client, session.App.Slug)
+			go followDevRuntimeLogsWithDiagnostics(runtimeLogCtx, client, session.App.Slug, reportDevDiagnostic)
 		},
 		cancelDeploy: func(cancelCtx context.Context, deploymentID string) error {
 			cancelCtx, cancel := context.WithTimeout(cancelCtx, 15*time.Second)
@@ -471,9 +520,12 @@ func cmdDev(args []string) int {
 				PrintProgress(osStdout, "newer change detected; superseding in-flight sync")
 			}
 		},
-		onDeployFailed: func(_ int) {
+		onDeployFailed: func(code int) {
+			if diagnosticReported.Swap(false) {
+				return
+			}
 			if !jsonOutput {
-				PrintWarn(osStderr, "developer sync failed; fix the source and save to retry (environment remains available at %s)", session.App.URL)
+				PrintWarn(osStderr, "developer sync failed (exit %d); fix the source and save to retry (environment remains available at %s)", code, session.App.URL)
 			}
 		},
 		onCancelFailed: func(cancelErr error) {

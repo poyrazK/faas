@@ -594,6 +594,7 @@ type AppEffectiveLimits struct {
 	RequestBudgetMS        int64 `json:"request_budget_ms"`
 	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
+	RequestBodyMaxBytes    int64 `json:"request_body_max_bytes"`
 }
 
 // AppConfiguredResources is the resource shape selected for an app. It is
@@ -1682,6 +1683,12 @@ type DeploymentResponse struct {
 	// tripwire; see pkg/whycopy.Render for the catalogue row).
 	ErrorRelevantLogs []LogExcerpt `json:"error_relevant_logs,omitempty"`
 	CreatedAt         string       `json:"created_at"`
+	// SourceURL and CommitSHA identify the upstream revision that produced
+	// this deployment when the deploy was triggered from a repository. They
+	// are non-secret provenance metadata and are omitted for image/tarball
+	// deploys without an upstream reference.
+	SourceURL string `json:"source_url,omitempty"`
+	CommitSHA string `json:"commit_sha,omitempty"`
 	// SourceRoot is the repository-relative build root used by a workspace
 	// context upload. Empty means the archive root and is omitted for legacy
 	// self-contained source deploys.
@@ -2239,14 +2246,23 @@ type AccountResponse struct {
 // serialization. Stripped of fields the dashboard doesn't need
 // (eg. internal ops); mirror pkg/api/limits.go for the wiring.
 type AccountLimits struct {
-	Plan               string `json:"plan"`
-	RAMMB              int    `json:"ram_mb"`
-	MaxConcurrency     int    `json:"max_concurrency"`
-	DeployedApps       int    `json:"deployed_apps"`
-	DeveloperApps      int    `json:"developer_apps"`
-	IncludedGBHours    int64  `json:"included_gb_hours"`
-	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
-	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`
+	Plan                        string        `json:"plan"`
+	RAMMB                       int           `json:"ram_mb"`
+	MaxConcurrency              int           `json:"max_concurrency"`
+	DeployedApps                int           `json:"deployed_apps"`
+	DeveloperApps               int           `json:"developer_apps"`
+	IncludedGBHours             int64         `json:"included_gb_hours"`
+	AppLayerMaxMB               int           `json:"app_layer_max_mb"`
+	EphemeralDiskMaxMB          int           `json:"ephemeral_disk_max_mb"`
+	TriggersAllowed             bool          `json:"triggers_allowed"`
+	TriggerKinds                []TriggerKind `json:"trigger_kinds"`
+	TriggerLimitPerApp          int           `json:"trigger_limit_per_app"`
+	TriggerLimitPerAccount      int           `json:"trigger_limit_per_account"`
+	TriggerBatchSizeMax         int           `json:"trigger_batch_size_max"`
+	TriggerBatchWindowMaxMs     int           `json:"trigger_batch_window_max_ms"`
+	TriggerMaxAttemptsMax       int           `json:"trigger_max_attempts_max"`
+	TriggerPayloadMaxBytes      int           `json:"trigger_payload_max_bytes"`
+	TriggerTLSSkipVerifyAllowed bool          `json:"trigger_tls_skip_verify_allowed"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext
@@ -2747,6 +2763,37 @@ type DeploymentListResponse struct {
 	NextBefore string               `json:"next_before,omitempty"`
 }
 
+// LatestDeploymentsByAppResponse is the account-scoped batch shape returned
+// by GET /v1/deployments/latest-by-app. Items contains at most one newest
+// deployment for each non-deleted app the authenticated account owns.
+type LatestDeploymentsByAppResponse struct {
+	Items []DeploymentResponse `json:"items"`
+}
+
+// DeploymentSummaryResponse is the app-scoped release cockpit returned by
+// GET /v1/apps/{slug}/deployments/{id}/summary. It composes the existing
+// deployment detail shape with the immediately preceding release, a stable
+// field-level diff, and the currently eligible rollback target. The full
+// deployment objects keep this response additive: consumers can reuse the
+// same decoder they already use for GET /v1/deployments/{id}.
+type DeploymentSummaryResponse struct {
+	Deployment       DeploymentResponse  `json:"deployment"`
+	Previous         *DeploymentResponse `json:"previous,omitempty"`
+	Changes          []DeploymentChange  `json:"changes"`
+	RollbackTargetID string              `json:"rollback_target_id,omitempty"`
+}
+
+// DeploymentChange describes one release field that changed relative to the
+// preceding deployment. Before and After intentionally use JSON-native
+// values so strings, numbers, booleans, and the build_plan object retain
+// their natural wire types. The field names are a closed, documented subset
+// of DeploymentResponse's non-secret release metadata.
+type DeploymentChange struct {
+	Field  string `json:"field"`
+	Before any    `json:"before"`
+	After  any    `json:"after"`
+}
+
 // --- Invoice history (issue #259) -----------------------------------------
 
 // Invoice is one persisted invoice from a billing provider, surfaced
@@ -3044,6 +3091,17 @@ type UsageSummaryResponse struct {
 	// Daily is the trailing 30 UTC calendar days of account usage,
 	// grouped by day. It is additive so existing clients can ignore it.
 	Daily []DailyUsagePoint `json:"daily"`
+}
+
+// AccountUsageResponse is the account-level usage projection. Compute keeps
+// the existing monthly usage contract while the optional service views make
+// the object-storage and managed-PostgreSQL meters visible in the same read
+// without changing their separate guardrails.
+type AccountUsageResponse struct {
+	Month           string                        `json:"month"`
+	Compute         UsageSummaryResponse          `json:"compute"`
+	ObjectStorage   *ObjectStorageUsageResponse   `json:"object_storage,omitempty"`
+	ManagedPostgres *ManagedPostgresUsageResponse `json:"managed_postgres,omitempty"`
 }
 
 // ValidateAppConfig checks a requested app config against its plan caps (spec
@@ -3356,10 +3414,11 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
-	// Degraded is true when at least one page- or warn-severity alert
-	// is currently firing on the local Prometheus. The public status
-	// page renders a "degraded" pill when this is true so prospects
-	// and customers see the same picture the operator's pager sees.
+	// Degraded is true when at least one fleet/platform page- or warn-severity
+	// alert is currently firing on the local Prometheus. Per-account alert
+	// preset signals stay private to their customer and do not change the
+	// fleet-wide public status. The public status page renders a "degraded"
+	// pill when this is true.
 	//
 	// The flag is intentionally conservative: a transient PromQL
 	// error against ALERTS{} is treated as "no firing alerts" rather
@@ -3403,6 +3462,7 @@ type InvokeResponse struct {
 	ID     string          `json:"id"`
 	Status string          `json:"status"`
 	Result json.RawMessage `json:"result,omitempty"`
+	Error  string          `json:"error,omitempty"`
 }
 
 // QueueSendResponse is returned on POST /v1/apps/{slug}/queues/invocations:send.
@@ -4450,10 +4510,12 @@ type SourceRefDeployRequest struct {
 	// defaults to ${{ github.event.pull_request.number }} on the
 	// Action side. All four are optional; the apid handler stamps
 	// them onto the deployment row + the audit data{} payload.
-	Reason     string `json:"reason,omitempty"`
-	Tag        string `json:"tag,omitempty"`
-	DeployedBy string `json:"deployed_by,omitempty"`
-	PRNumber   int    `json:"pr_number,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Tag            string            `json:"tag,omitempty"`
+	DeployedBy     string            `json:"deployed_by,omitempty"`
+	PRNumber       int               `json:"pr_number,omitempty"`
+	TrafficPercent *int              `json:"traffic_percent,omitempty"`
+	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -4472,10 +4534,12 @@ type SourceTarballDeployRequest struct {
 	// come from --reason / --tag; PRNumber is not normally
 	// supplied on a tarball deploy (it would be inferred from
 	// a paired GitHub Action, not the tarball CLI).
-	Reason     string `json:"reason,omitempty"`
-	Tag        string `json:"tag,omitempty"`
-	DeployedBy string `json:"deployed_by,omitempty"`
-	PRNumber   int    `json:"pr_number,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Tag            string            `json:"tag,omitempty"`
+	DeployedBy     string            `json:"deployed_by,omitempty"`
+	PRNumber       int               `json:"pr_number,omitempty"`
+	TrafficPercent *int              `json:"traffic_percent,omitempty"`
+	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).
@@ -5396,6 +5460,23 @@ type EdgeRuleCORSAction struct {
 // guard is intentionally narrow.
 var CorsOriginPattern = regexp.MustCompile(`^(?:\*|https?://(?:\*\.[a-zA-Z0-9.\-]+|localhost)(?::\*|\:[0-9]+)?|https?://[a-zA-Z0-9.\-]+(?::\*|\:[0-9]+)?)$`)
 
+// CorsHeaderNamePattern accepts an HTTP field-name token or the CORS wildcard.
+// The wildcard is valid only when credentials are disabled; callers enforce
+// that cross-field rule separately.
+var CorsHeaderNamePattern = regexp.MustCompile("^(?:\\*|[!#$%&'*+\\-.^_`|~0-9A-Za-z]+)$")
+
+func validateCORSAllowHeaders(subject string, headers []string, allowCredentials bool) *Problem {
+	for _, header := range headers {
+		if !CorsHeaderNamePattern.MatchString(header) {
+			return ErrValidation(subject + " allow_header " + strconv.Quote(header) + " is not a valid HTTP header name")
+		}
+		if allowCredentials && header == "*" {
+			return ErrValidation(subject + " cannot combine AllowCredentials: true with AllowHeaders: [\"*\"] (browsers require explicit header names for credentialed requests)")
+		}
+	}
+	return nil
+}
+
 func (a *EdgeRuleCORSAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("cors action is required")
@@ -5471,6 +5552,9 @@ func (a *EdgeRuleCORSAction) Validate() *Problem {
 				return ErrValidation("cors action cannot combine AllowCredentials: true with AllowOrigins: [\"*\"] (browsers reject this combination)")
 			}
 		}
+	}
+	if problem := validateCORSAllowHeaders("cors action", a.AllowHeaders, a.AllowCredentials); problem != nil {
+		return problem
 	}
 	return nil
 }
@@ -6569,14 +6653,15 @@ type RekeyProgress struct {
 }
 
 // OperatorIntentAcceptedResponse is the wire shape returned by
-// POST /v1/admin/instances/{id}/force-park and
-// POST /v1/admin/apps/{slug}/force-cold-boot (PR #1099 P2
-// redesign). Both handlers now return 202 Accepted with an
+// POST /v1/admin/instances/{id}/force-park,
+// POST /v1/admin/apps/{slug}/force-cold-boot, and
+// POST /v1/admin/instances/{id}/force-restart (PR #1099 P2
+// redesign). The handlers return 202 Accepted with an
 // intent_id; the operator polls GET /v1/admin/operator-intents/{id}
 // for terminal status. StatusURL is the relative path; clients
 // prepend the apid base URL.
 //
-// InstanceID + PreviousState are populated for force_park;
+// InstanceID + PreviousState are populated for force_park and force_restart;
 // AppID + DeploymentID for force_cold_boot. Kind disambiguates
 // which fields are meaningful. ExpiresAt is the recommended
 // horizon for the operator to stop polling (5 minutes; matches
@@ -6893,6 +6978,47 @@ type EdgeRuleSuggestion struct {
 	Action  map[string]any `json:"action"`
 }
 
+// AppOpenAPIPolicyPreviewResponse is the read-only declared-vs-observed
+// contract preview for an app (ADR-126 follow-up / API-hosting roadmap item
+// 11). Routes are sorted by path and method; each row includes the edge rules
+// that match it so a developer can see contract drift and policy coverage
+// before changing any rules.
+type AppOpenAPIPolicyPreviewResponse struct {
+	AppID             string                         `json:"app_id"`
+	Source            string                         `json:"source"`
+	ObservedAvailable bool                           `json:"observed_available"`
+	OpenAPIVersion    string                         `json:"openapi_version,omitempty"`
+	Routes            []AppOpenAPIPolicyPreviewRoute `json:"routes"`
+	Suggestions       []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
+}
+
+// AppOpenAPIPolicyPreviewRoute is one path/method row in the policy preview.
+// Status is one of matched, declared_only, or observed_only.
+type AppOpenAPIPolicyPreviewRoute struct {
+	Path     string                        `json:"path"`
+	Method   string                        `json:"method"`
+	Status   string                        `json:"status"`
+	Declared bool                          `json:"declared"`
+	Observed bool                          `json:"observed"`
+	Covered  bool                          `json:"covered"`
+	Rules    []AppOpenAPIPolicyPreviewRule `json:"rules,omitempty"`
+}
+
+// AppOpenAPIPolicyPreviewRule is the stable read-only rule subset attached to
+// a preview route. Action remains an opaque JSON object, matching the edge
+// rule API's existing wire contract.
+type AppOpenAPIPolicyPreviewRule struct {
+	ID           string          `json:"id"`
+	MatchHost    string          `json:"match_host"`
+	MatchPath    string          `json:"match_path"`
+	MatchMethods []string        `json:"match_methods"`
+	Priority     int             `json:"priority"`
+	Enabled      bool            `json:"enabled"`
+	Kind         string          `json:"kind"`
+	ValidateMode string          `json:"validate_mode,omitempty"`
+	Action       json.RawMessage `json:"action"`
+}
+
 // DebugTelemetryRequestItem is one row of per-app request telemetry
 // returned by GET /v1/apps/{slug}/debug/requests (ADR-127 / PR-A).
 // The fields are 1:1 with the request_telemetry table columns; the
@@ -6969,6 +7095,31 @@ type DebugTimelineEvent struct {
 	Approximate bool   `json:"approximate,omitempty"`
 }
 
+// DebugRequestCorrelation is the stable stage view for one request. It keeps
+// the customer-facing investigation narrative separate from the raw event
+// timeline: every stage is present, even when its signal is unavailable, so a
+// missing phase is explicit rather than silently inferred.
+type DebugRequestCorrelation struct {
+	Stages   []DebugRequestCorrelationStage `json:"stages"`
+	Complete bool                           `json:"complete"`
+}
+
+// DebugRequestCorrelationStage is one bounded edge-to-billing stage. Status
+// is one of observed, partial, missing, or not_applicable. StartedAt,
+// CompletedAt, and DurationMS are populated only when the retained signals
+// support that measurement; no payload, credentials, or raw span attributes
+// are included.
+type DebugRequestCorrelationStage struct {
+	Phase         string `json:"phase"`
+	Status        string `json:"status"`
+	StartedAt     string `json:"started_at,omitempty"`
+	CompletedAt   string `json:"completed_at,omitempty"`
+	DurationMS    int64  `json:"duration_ms,omitempty"`
+	EvidenceCount int    `json:"evidence_count,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Approximate   bool   `json:"approximate,omitempty"`
+}
+
 // DebugRequestEvidenceResponse combines request metadata, bounded span
 // evidence, a matching active regression observation, and a deterministic
 // explanation for GET /v1/apps/{slug}/debug/requests/{req_id}/evidence.
@@ -6976,6 +7127,7 @@ type DebugRequestEvidenceResponse struct {
 	Request        DebugTelemetryRequestItem `json:"request"`
 	Regression     *DebugRegressionItem      `json:"regression,omitempty"`
 	Timeline       []DebugTimelineEvent      `json:"timeline"`
+	Correlation    DebugRequestCorrelation   `json:"correlation"`
 	Spans          []DebugTelemetrySpan      `json:"spans"`
 	SpansTruncated bool                      `json:"spans_truncated"`
 	Explanation    DebugEvidenceExplanation  `json:"explanation"`

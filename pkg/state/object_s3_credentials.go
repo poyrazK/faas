@@ -27,6 +27,12 @@ type ObjectS3Credential struct {
 	CreatedAt    time.Time
 	LastUsedAt   *time.Time
 	RevokedAt    *time.Time
+	// ManagedAppID, ManagedScope and ManagedPrefix are set only for a
+	// compute binding. Empty values preserve the legacy customer-created
+	// credential shape.
+	ManagedAppID  string
+	ManagedScope  string
+	ManagedPrefix string
 }
 
 // ObjectS3CredentialStore is kept separate from Store so unrelated daemon
@@ -47,11 +53,27 @@ type ObjectS3CredentialRekeyStore interface {
 	ResealObjectS3Credential(context.Context, string, string, string, []byte) error
 }
 
+// ObjectS3CredentialBindingStore is the lifecycle surface used by the
+// compute-binding control plane. It is deliberately separate from the data
+// plane interface so gateway fakes and integrations only need the credential
+// operations they actually use.
+type ObjectS3CredentialBindingStore interface {
+	ObjectS3CredentialStore
+	GetObjectS3Credential(context.Context, string, string, string) (ObjectS3Credential, error)
+	RotateObjectS3Credential(context.Context, string, string, string, string, []byte, string) (ObjectS3Credential, error)
+}
+
 func validObjectS3Credential(c ObjectS3Credential) bool {
 	if c.ID == "" || c.AccountID == "" || c.BucketID == "" || c.AccessKeyID == "" || len(c.SecretSealed) == 0 || c.KID == "" || len(c.Label) < 1 || len(c.Label) > 64 {
 		return false
 	}
 	if c.Status != ObjectS3CredentialStatusActive {
+		return false
+	}
+	if c.ManagedAppID == "" && (c.ManagedScope != "" || c.ManagedPrefix != "") {
+		return false
+	}
+	if c.ManagedAppID != "" && (c.ManagedScope == "" || c.ManagedPrefix == "") {
 		return false
 	}
 	return validObjectBucketPermission(c.Permission)

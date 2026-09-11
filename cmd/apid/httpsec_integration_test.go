@@ -62,6 +62,7 @@ func TestHttpsec_StaticHeadersOnAllPaths(t *testing.T) {
 		auth         bool
 	}{
 		{"GET", "/healthz", false},
+		{"GET", "/docs", false},
 		{"GET", "/v1/whoami", true},
 		{"GET", "/dashboard/", true},
 		{"GET", "/this/does/not/exist", false},
@@ -121,6 +122,19 @@ func TestHttpsec_CSPOnAllPaths(t *testing.T) {
 	}
 	if !strings.Contains(csp, "https://unpkg.com") {
 		t.Errorf("CSP missing unpkg.com allow: %s", csp)
+	}
+	styleStart := strings.Index(csp, "style-src ")
+	styleEnd := -1
+	if styleStart >= 0 {
+		styleEnd = strings.Index(csp[styleStart:], ";")
+	}
+	if styleStart < 0 || styleEnd < 0 {
+		t.Errorf("CSP missing style-src directive: %s", csp)
+	} else {
+		style := csp[styleStart : styleStart+styleEnd]
+		if !strings.Contains(style, "'nonce-") || !strings.Contains(style, "https://unpkg.com") {
+			t.Errorf("CSP missing nonce or unpkg.com style allow: %s", csp)
+		}
 	}
 	if !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Errorf("CSP missing frame-ancestors 'none': %s", csp)

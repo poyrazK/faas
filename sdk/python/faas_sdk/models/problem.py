@@ -52,6 +52,10 @@ class Problem:
     detail: str | Unset = UNSET
     limit: int | None | Unset = UNSET
     observed: int | None | Unset = UNSET
+    limit_bytes: int | None | Unset = UNSET
+    """Explicit byte limit for request-body and other byte-oriented errors."""
+    observed_bytes: int | None | Unset = UNSET
+    """Observed byte count for request-body and other byte-oriented errors."""
     docs_url: str | Unset = UNSET
     checkout_url: str | Unset = UNSET
     """Provider-neutral hosted checkout URL on a `payment_required`
@@ -154,6 +158,18 @@ class Problem:
         else:
             observed = self.observed
 
+        limit_bytes: int | None | Unset
+        if isinstance(self.limit_bytes, Unset):
+            limit_bytes = UNSET
+        else:
+            limit_bytes = self.limit_bytes
+
+        observed_bytes: int | None | Unset
+        if isinstance(self.observed_bytes, Unset):
+            observed_bytes = UNSET
+        else:
+            observed_bytes = self.observed_bytes
+
         docs_url = self.docs_url
 
         checkout_url = self.checkout_url
@@ -210,6 +226,10 @@ class Problem:
             field_dict["limit"] = limit
         if observed is not UNSET:
             field_dict["observed"] = observed
+        if limit_bytes is not UNSET:
+            field_dict["limit_bytes"] = limit_bytes
+        if observed_bytes is not UNSET:
+            field_dict["observed_bytes"] = observed_bytes
         if docs_url is not UNSET:
             field_dict["docs_url"] = docs_url
         if checkout_url is not UNSET:
@@ -272,6 +292,24 @@ class Problem:
 
         observed = _parse_observed(d.pop("observed", UNSET))
 
+        def _parse_limit_bytes(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        limit_bytes = _parse_limit_bytes(d.pop("limit_bytes", UNSET))
+
+        def _parse_observed_bytes(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        observed_bytes = _parse_observed_bytes(d.pop("observed_bytes", UNSET))
+
         docs_url = d.pop("docs_url", UNSET)
 
         checkout_url = d.pop("checkout_url", UNSET)
@@ -325,6 +363,8 @@ class Problem:
             detail=detail,
             limit=limit,
             observed=observed,
+            limit_bytes=limit_bytes,
+            observed_bytes=observed_bytes,
             docs_url=docs_url,
             checkout_url=checkout_url,
             billing_portal_url=billing_portal_url,
