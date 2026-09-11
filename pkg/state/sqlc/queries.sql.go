@@ -7905,6 +7905,25 @@ func (q *Queries) ObjectMultipartRetry(ctx context.Context, db DBTX, arg ObjectM
 	return result.RowsAffected(), nil
 }
 
+const objectMultipartSetSize = `-- name: ObjectMultipartSetSize :execrows
+UPDATE object_storage_multipart_uploads SET size_bytes=$3,updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='completing'
+`
+
+type ObjectMultipartSetSizeParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.Text
+	SizeBytes  int64
+}
+
+func (q *Queries) ObjectMultipartSetSize(ctx context.Context, db DBTX, arg ObjectMultipartSetSizeParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartSetSize, arg.ID, arg.LeaseToken, arg.SizeBytes)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectS3CredentialCount = `-- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
 WHERE bucket_id=$1 AND status='active'

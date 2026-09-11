@@ -245,19 +245,25 @@ customer bucket; the cleanup trap removes the temporary object, bindings,
 credential, and bucket even when a check fails.
 
 This first endpoint slice supports ListBuckets for the credential's one bucket,
-HeadBucket, GetBucketLocation, ListObjectsV2 without delimiters, and
-GetObject/HeadObject/PutObject/DeleteObject. It validates header-based AWS
-Signature V4 and upload SHA-256/Content-MD5 before writing upstream. It emits
+HeadBucket, GetBucketLocation, ListObjectsV2 without delimiters,
+GetObject/HeadObject/PutObject/DeleteObject, and the standard multipart
+initiate/list-parts/upload-part/complete/abort operations. It validates AWS
+Signature V4 in both the `Authorization` header and presigned query form.
+Presigned GET, HEAD, PUT, and DELETE capabilities are limited to seven days and
+remain subject to credential revocation when a request arrives. Uploads
+validate SHA-256 and Content-MD5 before writing upstream. It emits
 Gregale-owned S3 XML errors and filters provider response headers, URLs, bucket
 names, and credentials. At most four PUTs per gateway are staged concurrently;
 additional authenticated uploads receive S3 `SlowDown` without consuming more
-spool disk. Use `s3api put-object` for uploads in this slice: the high-level
-`aws s3 cp` command can automatically select multipart uploads.
+spool disk. Multipart parts are streamed through the gateway to the selected
+provider and are limited by the configured per-part upload ceiling. Use
+`s3api put-object` for simple uploads; the high-level `aws s3 cp` command can
+automatically select multipart uploads.
 
-Presigned-query authentication, SigV4 streaming/chunked uploads, multipart S3
-operations, delimiter/common-prefix listing, CopyObject, object metadata/tags,
-bucket lifecycle APIs, versioning, ACLs, and bucket create/delete through the
-S3 protocol are explicit `NotImplemented` gaps. Bucket lifecycle remains on the
+SigV4 streaming/chunked uploads,
+delimiter/common-prefix listing, CopyObject, object metadata/tags, bucket
+lifecycle APIs, versioning, ACLs, and bucket create/delete through the S3
+protocol are explicit `NotImplemented` gaps. Bucket lifecycle remains on the
 authenticated Gregale API so a customer credential cannot escape its assigned
 logical bucket.
 

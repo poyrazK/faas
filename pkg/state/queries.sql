@@ -2956,6 +2956,10 @@ attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=$1 AND lease_token=$2 AND
 ((state='completing' AND $3='completed') OR (state='aborting' AND $3='aborted'));
 
+-- name: ObjectMultipartSetSize :execrows
+UPDATE object_storage_multipart_uploads SET size_bytes=$3,updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='completing';
+
 -- name: ObjectMultipartRetry :execrows
 UPDATE object_storage_multipart_uploads SET lease_token=NULL,lease_until=NULL,last_error_code=$3,
 retry_at=now()+($4::int * interval '1 second'),updated_at=now()

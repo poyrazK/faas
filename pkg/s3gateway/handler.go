@@ -62,6 +62,7 @@ type Config struct {
 type Handler struct {
 	registry       *objectstorage.Registry
 	store          Store
+	multipartStore state.ObjectMultipartUploadStore
 	requestMetrics state.ObjectStorageProviderUsageStore
 	openSecret     func([]byte) (string, error)
 	client         *http.Client
@@ -123,9 +124,15 @@ func New(c Config) (*Handler, error) {
 	}
 	return &Handler{
 		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, openSecret: c.OpenSecret, client: c.HTTPClient,
-		enabled: c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
+		multipartStore: multipartStore(c.Store),
+		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, putSlots: make(chan struct{}, c.MaxConcurrentPuts), now: c.Now, log: c.Log, lastTouch: map[string]time.Time{},
 	}, nil
+}
+
+func multipartStore(store Store) state.ObjectMultipartUploadStore {
+	storeWithMultipart, _ := store.(state.ObjectMultipartUploadStore)
+	return storeWithMultipart
 }
 
 type requestContext struct {
@@ -152,11 +159,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusNotImplemented, "NotImplemented", "SigV4 streaming uploads are not implemented by Gregale yet.", r.URL.Path, requestID)
 		return
 	}
-	if r.Header.Get("Authorization") == "" && r.URL.Query().Has("X-Amz-Algorithm") {
-		writeS3Error(w, http.StatusNotImplemented, "NotImplemented", "Presigned S3 URLs are not implemented by Gregale yet.", r.URL.Path, requestID)
+	var parsed sigV4Request
+	var presigned bool
+	var err error
+	switch {
+	case r.Header.Get("Authorization") != "" && r.URL.Query().Has("X-Amz-Algorithm"):
+		writeS3Error(w, http.StatusForbidden, "InvalidRequest", "Use either header or query authentication, not both.", r.URL.Path, requestID)
 		return
+	case r.Header.Get("Authorization") != "":
+		parsed, err = parseSigV4(r, h.region, h.now())
+	case r.URL.Query().Has("X-Amz-Algorithm"):
+		presigned = true
+		parsed, err = parsePresignedSigV4(r, h.region, h.now())
+	default:
+		err = errSignature
 	}
-	parsed, err := parseSigV4(r, h.region, h.now())
 	if err != nil {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
@@ -167,7 +184,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, err := h.openSecret(credential.SecretSealed)
-	if err != nil || verifySigV4(r.Context(), r, parsed, secret, h.region) != nil {
+	if err != nil || presigned && verifyPresignedSigV4(r.Context(), r, parsed, secret, h.region) != nil || !presigned && verifySigV4(r.Context(), r, parsed, secret, h.region) != nil {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
@@ -196,13 +213,14 @@ func (h *Handler) touchCredential(ctx context.Context, credentialID string) {
 }
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request, req requestContext) {
+	query := operationQuery(r.URL.Query())
 	bucketName, key, hasBucket, hasKey, err := parsePath(r.URL.EscapedPath())
 	if err != nil {
 		writeS3Error(w, http.StatusBadRequest, "InvalidURI", "Could not parse the specified URI.", r.URL.Path, req.requestID)
 		return
 	}
 	if !hasBucket {
-		if r.Method == http.MethodGet && len(r.URL.Query()) == 0 && h.can(req.credential, state.ObjectBucketPermissionRead) {
+		if r.Method == http.MethodGet && len(query) == 0 && h.can(req.credential, state.ObjectBucketPermissionRead) {
 			writeS3XML(w, http.StatusOK, req.requestID, listAllMyBucketsResult{XMLNS: s3XMLNamespace, Buckets: listBucketsBody{Buckets: []listBucket{{Name: req.bucket.Name, CreationDate: req.bucket.CreatedAt.UTC().Format(time.RFC3339)}}}})
 			return
 		}
@@ -243,7 +261,7 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 }
 
 func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req requestContext) {
-	query := r.URL.Query()
+	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
 	if r.Method == http.MethodHead && len(query) == 0 {
 		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
@@ -261,6 +279,10 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 			XMLNS   string   `xml:"xmlns,attr"`
 			Value   string   `xml:",chardata"`
 		}{XMLNS: s3XMLNamespace, Value: h.region})
+		return
+	}
+	if r.Method == http.MethodGet && query.Has("uploads") {
+		h.listMultipartUploads(w, r, req)
 		return
 	}
 	if r.Method == http.MethodGet && query.Get("list-type") == "2" {
@@ -292,8 +314,47 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 }
 
 func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
-	query := r.URL.Query()
+	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if uploadID := query.Get("uploadId"); uploadID != "" {
+		switch r.Method {
+		case http.MethodPut:
+			if !queryKeysOnly(query, "uploadId", "partNumber") || query.Get("partNumber") == "" {
+				h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+				return
+			}
+			h.uploadMultipartPart(w, r, req, key, uploadID, query.Get("partNumber"))
+		case http.MethodGet:
+			if !queryKeysOnly(query, "uploadId", "part-number-marker", "max-parts") {
+				h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+				return
+			}
+			h.listMultipartParts(w, r, req, key, uploadID, query)
+		case http.MethodPost:
+			if !queryKeysOnly(query, "uploadId") {
+				h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+				return
+			}
+			h.completeMultipart(w, r, req, key, uploadID)
+		case http.MethodDelete:
+			if !queryKeysOnly(query, "uploadId") {
+				h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+				return
+			}
+			h.abortMultipart(w, r, req, key, uploadID)
+		default:
+			h.unsupported(w, r, req.requestID)
+		}
+		return
+	}
+	if r.Method == http.MethodPost && query.Has("uploads") {
+		if !queryKeysOnly(query, "uploads") {
+			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+			return
+		}
+		h.initiateMultipart(w, r, req)
+		return
+	}
 	if len(query) != 0 {
 		h.unsupported(w, r, req.requestID)
 		return
@@ -544,6 +605,30 @@ func (h *Handler) providerHTTPError(w http.ResponseWriter, r *http.Request, req 
 
 func (h *Handler) unsupported(w http.ResponseWriter, r *http.Request, requestID string) {
 	writeS3Error(w, http.StatusNotImplemented, "NotImplemented", "This S3 operation is not implemented by Gregale yet.", r.URL.Path, requestID)
+}
+
+func operationQuery(query url.Values) url.Values {
+	out := make(url.Values, len(query))
+	for key, values := range query {
+		if strings.EqualFold(key, "x-id") || strings.HasPrefix(strings.ToLower(key), "x-amz-") {
+			continue
+		}
+		out[key] = append([]string(nil), values...)
+	}
+	return out
+}
+
+func queryKeysOnly(query url.Values, allowed ...string) bool {
+	keys := make(map[string]struct{}, len(allowed))
+	for _, key := range allowed {
+		keys[key] = struct{}{}
+	}
+	for key, values := range query {
+		if _, ok := keys[key]; !ok || len(values) != 1 {
+			return false
+		}
+	}
+	return true
 }
 
 func IsLoopbackAddress(address string) bool {

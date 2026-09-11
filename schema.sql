@@ -8612,9 +8612,9 @@ CREATE TABLE IF NOT EXISTS object_storage_multipart_uploads (
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
     object_key text NOT NULL CHECK (length(object_key) BETWEEN 1 AND 1024),
-    size_bytes bigint NOT NULL CHECK (size_bytes BETWEEN 1 AND 5497558138880),
-    part_size_bytes bigint NOT NULL CHECK (part_size_bytes BETWEEN 1 AND 5368709120),
-    part_count integer NOT NULL CHECK (part_count BETWEEN 1 AND 10000),
+    size_bytes bigint NOT NULL CHECK (size_bytes BETWEEN 0 AND 5497558138880),
+    part_size_bytes bigint NOT NULL CHECK (part_size_bytes BETWEEN 0 AND 5368709120),
+    part_count integer NOT NULL CHECK (part_count BETWEEN 0 AND 10000),
     content_type text NOT NULL DEFAULT '' CHECK (length(content_type) <= 255),
     provider_upload_id text NOT NULL DEFAULT '' CHECK (length(provider_upload_id) <= 4096),
     completion_parts jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(completion_parts) = 'array'),
@@ -8628,7 +8628,10 @@ CREATE TABLE IF NOT EXISTS object_storage_multipart_uploads (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CHECK ((lease_token IS NULL) = (lease_until IS NULL)),
-    CHECK (state = 'initiating' OR provider_upload_id <> '')
+    CHECK (state = 'initiating' OR provider_upload_id <> ''),
+    CHECK ((size_bytes = 0 AND part_size_bytes = 0 AND part_count = 0)
+        OR (size_bytes > 0 AND part_size_bytes = 0 AND part_count = 0)
+        OR (size_bytes > 0 AND part_size_bytes > 0 AND part_count > 0))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS object_storage_multipart_live_key_idx
     ON object_storage_multipart_uploads (bucket_id, object_key)
