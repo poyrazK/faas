@@ -104,7 +104,7 @@ func cmdCompletionCacheList(kind string) int {
 // so a SetPath override (tests, env var) propagates here.
 //
 // The completion scripts embed a shell expression that invokes
-// `gregale completion-cache-path` to recover this same path at
+// `gregale completion completion-cache-path` to recover this same path at
 // TAB time. This avoids embedding the UserConfigDir computation
 // in four different shell dialects.
 func cachePathForScripts() string {

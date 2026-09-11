@@ -8,7 +8,7 @@
 //   2. On each TAB, walks COMP_WORDS to figure out whether the
 //      user is completing the top-level command, a subcommand, a
 //      flag, or a flag value (closed-set enum).
-//   3. Reads the slug cache via `gregale completion-cache-path` and
+//   3. Reads the slug cache via `gregale completion completion-cache-path` and
 //      `gregale completion-cache-list <kind>` — two thin subcommands
 //      that print the path or the cached slugs to stdout.
 //
@@ -60,7 +60,7 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "# Or install: gregale completion bash > ~/.local/share/bash-completion/completions/gregale")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "__gregale_cache_path() {")
-	_, _ = fmt.Fprintln(w, "  gregale completion-cache-path 2>/dev/null")
+	_, _ = fmt.Fprintln(w, "  gregale completion completion-cache-path 2>/dev/null")
 	_, _ = fmt.Fprintln(w, "}")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "__gregale_cache_slugs() {")
@@ -68,6 +68,7 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  local path=\"$(__gregale_cache_path)\"")
 	_, _ = fmt.Fprintln(w, "  if [ -z \"$path\" ] || [ ! -r \"$path\" ]; then return 1; fi")
 	_, _ = fmt.Fprintln(w, "  sed -n \"/\\\"$kind\\\":\\[/,/]/p\" \"$path\" 2>/dev/null \\")
+	_, _ = fmt.Fprintln(w, "    | sed -E \"s/.*\\\"$kind\\\":\\[//; s/\\].*//\" \\")
 	_, _ = fmt.Fprintln(w, "    | grep -oE '\"slug\":\"[^\"]+\"' \\")
 	_, _ = fmt.Fprintln(w, "    | sed -E 's/.*\"slug\":\"([^\"]+)\".*/\\1/'")
 	_, _ = fmt.Fprintln(w, "}")
@@ -81,6 +82,21 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    prev=\"${COMP_WORDS[COMP_CWORD-1]}\"")
 	_, _ = fmt.Fprintln(w, "    words=(\"${COMP_WORDS[@]}\")")
 	_, _ = fmt.Fprintln(w, "    cword=$COMP_CWORD")
+	_, _ = fmt.Fprintln(w, "  fi")
+	_, _ = fmt.Fprintln(w)
+	// App and organization slugs are also accepted as values for flags
+	// on nested command families. Keep this check ahead of the command
+	// dispatch so it works even where cli_meta only documents the parent
+	// verb and the leaf parser owns the flag set.
+	_, _ = fmt.Fprintln(w, "  if [ \"$prev\" = \"--app\" ]; then")
+	_, _ = fmt.Fprintln(w, "    local slugs=\"$(__gregale_cache_slugs apps)\"")
+	_, _ = fmt.Fprintln(w, "    COMPREPLY=( $(compgen -W \"$slugs\" -- \"$cur\") )")
+	_, _ = fmt.Fprintln(w, "    return 0")
+	_, _ = fmt.Fprintln(w, "  fi")
+	_, _ = fmt.Fprintln(w, "  if [ \"$prev\" = \"--org\" ]; then")
+	_, _ = fmt.Fprintln(w, "    local slugs=\"$(__gregale_cache_slugs orgs)\"")
+	_, _ = fmt.Fprintln(w, "    COMPREPLY=( $(compgen -W \"$slugs\" -- \"$cur\") )")
+	_, _ = fmt.Fprintln(w, "    return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "  local cmd=\"${words[1]}\"")
@@ -97,13 +113,25 @@ func renderBashHeader(w io.Writer) {
 // check that maps cleanly to a slice in Go.
 func renderBashCommand(w io.Writer, c cliCommand) {
 	_, _ = fmt.Fprintf(w, "  if [ \"$cmd\" = %q ]; then\n", c.Name)
+	subcommandWord := c.completionSubcommandWord()
+	slugWord := c.completionSlugWord()
+	// `app` is the one slug-first command: offer the cached slug before
+	// its verbs so `gregale app <TAB>` does not return early with only
+	// `scale`, `rename`, and the other subcommands.
+	if c.hasSlugFirst() && c.SubcommandsAfterPositionals {
+		_, _ = fmt.Fprintf(w, "    if [ $cword -eq %d ]; then\n", slugWord)
+		_, _ = fmt.Fprintln(w, "      local slugs=\"$(__gregale_cache_slugs apps)\"")
+		_, _ = fmt.Fprintln(w, "      COMPREPLY=( $(compgen -W \"$slugs\" -- \"$cur\") )")
+		_, _ = fmt.Fprintln(w, "      return 0")
+		_, _ = fmt.Fprintln(w, "    fi")
+	}
 	// Subcommand completion.
 	if len(c.Subcommands) > 0 {
 		verbList := make([]string, 0, len(c.Subcommands))
 		for _, s := range c.Subcommands {
 			verbList = append(verbList, s.Name)
 		}
-		_, _ = fmt.Fprintf(w, "    if [ $cword -eq 2 ]; then\n")
+		_, _ = fmt.Fprintf(w, "    if [ $cword -eq %d ]; then\n", subcommandWord)
 		_, _ = fmt.Fprintf(w, "      COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", strings.Join(verbList, " "))
 		_, _ = fmt.Fprintln(w, "      return 0")
 		_, _ = fmt.Fprintln(w, "    fi")
@@ -121,8 +149,8 @@ func renderBashCommand(w io.Writer, c cliCommand) {
 	// Slug cache completion for any command whose first positional
 	// is the <slug> marker (app, invoke, metrics, slo, wake-timeline).
 	// Driven by cliCommand.hasSlugFirst — no hardcoded name list.
-	if c.hasSlugFirst() {
-		_, _ = fmt.Fprintf(w, "    if [ $cword -eq 2 ]; then\n")
+	if c.hasSlugFirst() && !c.SubcommandsAfterPositionals {
+		_, _ = fmt.Fprintf(w, "    if [ $cword -eq %d ]; then\n", slugWord)
 		_, _ = fmt.Fprintln(w, "      local slugs=\"$(__gregale_cache_slugs apps)\"")
 		_, _ = fmt.Fprintln(w, "      COMPREPLY=( $(compgen -W \"$slugs\" -- \"$cur\") )")
 		_, _ = fmt.Fprintln(w, "      return 0")

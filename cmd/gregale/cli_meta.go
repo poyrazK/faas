@@ -56,6 +56,11 @@ type cliCommand struct {
 	// Subcommands enumerates the verb set the dispatcher recognises.
 	// Empty for commands with no verb set (e.g. `whoami`, `version`).
 	Subcommands []cliSub
+	// SubcommandsAfterPositionals marks command families whose syntax puts
+	// the leading positional before the verb (for example, `app <slug>
+	// scale`). Most commands use the conventional verb-first shape, such
+	// as `cache purge <slug>`, so the zero value remains false.
+	SubcommandsAfterPositionals bool
 	// Flags enumerates the top-level flags accepted on this command's
 	// own flag set (i.e. before any subcommand dispatch). Empty if
 	// the command dispatches immediately on args[0] (most multi-verb
@@ -134,6 +139,27 @@ func cliHelpGroup(command cliCommand) string {
 // rather than a hardcoded name list.
 func (c cliCommand) hasSlugFirst() bool {
 	return len(c.Positionals) > 0 && c.Positionals[0] == "<slug>"
+}
+
+// completionSubcommandWord and completionSlugWord describe the argument
+// positions used by the generated shell completion backends. A few command
+// families put a slug after a verb (`cache purge <slug>`), while `app` keeps
+// its historical slug-first shape (`app <slug> scale`).
+func (c cliCommand) completionSubcommandWord() int {
+	if c.SubcommandsAfterPositionals && c.hasSlugFirst() {
+		return 3
+	}
+	return 2
+}
+
+func (c cliCommand) completionSlugWord() int {
+	if !c.hasSlugFirst() {
+		return 0
+	}
+	if len(c.Subcommands) > 0 && !c.SubcommandsAfterPositionals {
+		return 3
+	}
+	return 2
 }
 
 // cliSub is one verb under a cliCommand (e.g. alerts.list, alerts.add).
@@ -287,9 +313,10 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{{Name: "q", Short: "delete one app"}, {Name: "quiet", Short: "delete one app"}},
 	},
 	{
-		Name:    appSlugFallback,
-		DocSlug: "apps",
-		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|restart|--profile NAME|--ram N|…])",
+		Name:                        appSlugFallback,
+		DocSlug:                     "apps",
+		Short:                       "Get/update one app (gregale app <slug> [scale|rename <new>|restart|--profile NAME|--ram N|…])",
+		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
 			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU"},
 			{Name: "rename", Short: "Rename an app"},
