@@ -924,6 +924,7 @@ Preview routes, edge policies, and the read-only OpenAPI contract diff
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <scope>` | deployment scope to compare |  |
+| `--fail-on-unavailable` | fail when the contract-diff backend is unavailable |  |
 
 ### openapi apply
 

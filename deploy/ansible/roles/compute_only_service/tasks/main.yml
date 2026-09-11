@@ -395,6 +395,19 @@
     mode: "0644"
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
+# API-hosting contract safety (issue #1966 / ADR-121): enable imaged's
+# production promotion gate on public-beta compute nodes. This must ship with
+# the control-plane apid drop-in so preview and promotion use one policy.
+- name: compute_only_service — enable OpenAPI contract diff for public beta
+  notify: restart faas-imaged
+  ansible.builtin.template:
+    src: zz-faas-api-contract-diff.conf.j2
+    dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-api-contract-diff.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
 - name: compute_only_service — reload systemd after imaged drop-ins
   ansible.builtin.systemd:
     daemon_reload: true

@@ -630,6 +630,58 @@ func TestDeleteAppOpenAPI_Idempotent(t *testing.T) {
 	}
 }
 
+func TestGetAppOpenAPIContractDiffProductionBaselineAndBreakingProposal(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedApp(t, e, "contract-diff-production")
+	baselineDoc := []byte(`{"openapi":"3.1.0","info":{"title":"sample","version":"1"},"paths":{"/users":{"get":{"responses":{"200":{"description":"OK","content":{"application/json":{"schema":{"type":"object","properties":{"id":{"type":"string"}}}}}}}}}}}`)
+	proposedDoc := []byte(`{"openapi":"3.1.0","info":{"title":"sample","version":"2"},"paths":{"/users":{"get":{"responses":{"200":{"description":"OK","content":{"application/json":{"schema":{"type":"object","properties":{"id":{"type":"integer"}}}}}}}}}}}`)
+	seedImport(t, e, app.ID, baselineDoc, 1, "3.1.0")
+	baseline, source, err := openapidiff.SnapshotFromDocument("live-prod", app.ID, "prod", baselineDoc, nil)
+	if err != nil {
+		t.Fatalf("SnapshotFromDocument baseline: %v", err)
+	}
+	if source != openapidiff.SnapshotSourceManualImport {
+		t.Fatalf("baseline source = %q, want %q", source, openapidiff.SnapshotSourceManualImport)
+	}
+	baseline.CapturedAt = time.Now().UTC().Add(time.Minute)
+	if err := e.store.UpdateDeploymentOpenAPISnapshot(context.Background(), baseline); err != nil {
+		t.Fatalf("UpdateDeploymentOpenAPISnapshot: %v", err)
+	}
+	seedImport(t, e, app.ID, proposedDoc, 1, "3.1.0")
+	t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", "1")
+	rec := e.do(t, http.MethodGet, "/v1/apps/contract-diff-production/openapi/diff?scope=prod", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out api.OpenAPIContractDiffResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Source != openapidiff.SnapshotSourceManualImport || !out.Blocking || len(out.Breaks) != 1 {
+		t.Fatalf("contract diff = %+v, want imported blocking break", out)
+	}
+	if out.BaselineDeploymentID != "live-prod" || out.BaselineSHA256 == "" || out.ProposedSHA256 == "" {
+		t.Fatalf("baseline/proposed metadata = %+v", out)
+	}
+	if out.Breaks[0].Kind != string(openapidiff.SchemaKindTypeChange) {
+		t.Fatalf("break = %+v, want type_change", out.Breaks[0])
+	}
+}
+
+func TestGetAppOpenAPIContractDiffValidatesScopeBeforeFeatureGate(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	seedApp(t, e, "contract-diff-scope")
+	t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", "")
+	invalid := e.do(t, http.MethodGet, "/v1/apps/contract-diff-scope/openapi/diff?scope=bad%20scope", nil, nil)
+	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), api.CodeEnvScopeInvalid) {
+		t.Fatalf("invalid scope response = %d %s, want 400/%s", invalid.Code, invalid.Body.String(), api.CodeEnvScopeInvalid)
+	}
+	disabled := e.do(t, http.MethodGet, "/v1/apps/contract-diff-scope/openapi/diff?scope=prod", nil, nil)
+	if disabled.Code != http.StatusServiceUnavailable || !strings.Contains(disabled.Body.String(), api.CodeAPIContractDiffDisabled) {
+		t.Fatalf("disabled response = %d %s, want 503/%s", disabled.Code, disabled.Body.String(), api.CodeAPIContractDiffDisabled)
+	}
+}
+
 // _ keep time in the import set (CreateApp.CreatedAt uses it
 // via the seedApp helper).
 var _ = time.Now

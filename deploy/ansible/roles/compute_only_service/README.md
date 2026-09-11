@@ -27,6 +27,9 @@ populated with both `DATABASE_URL` and `FAAS_VMMD_DBURL` (gap G2).
   The origin is derived from `gatewayd_apps_domain`; the verifier sends the
   tenant slug in the Host header so the shared public gateway exercises the
   same route customers use.
+- `zz-faas-api-contract-diff.conf.j2` — enables the OpenAPI promotion gate on
+  public-beta compute-only nodes. The control-plane role installs the matching
+  apid drop-in so preview and promotion share the stored production baseline.
 
 ## Side effects
 

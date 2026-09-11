@@ -18,6 +18,7 @@ type openapiPreviewOutput struct {
 	Policy              api.AppOpenAPIPolicyPreviewResponse `json:"policy"`
 	Contract            *api.OpenAPIContractDiffResponse    `json:"contract,omitempty"`
 	ContractDiffEnabled bool                                `json:"contract_diff_enabled"`
+	ContractError       *api.Problem                        `json:"contract_error,omitempty"`
 }
 
 // cmdOpenapiPreview shows the read-only declared-vs-observed contract and
@@ -28,15 +29,19 @@ func cmdOpenapiPreview(args []string) int {
 	flags, pos := splitArgsForFlags(args)
 	fs := newOpenapiFlagSet("openapi preview")
 	scope := fs.String("scope", "prod", "deployment scope to compare")
+	failOnUnavailable := fs.Bool("fail-on-unavailable", false, "fail when the contract-diff backend is unavailable")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(pos) != 1 {
-		PrintUsage(osStderr, "usage: gregale openapi preview <slug> [--scope <scope>]", "openapi")
+		PrintUsage(osStderr, "usage: gregale openapi preview <slug> [--scope <scope>] [--fail-on-unavailable]", "openapi")
 		return 1
 	}
 	if !validCLISlug(pos[0]) {
 		return printErr("Invalid app slug", fmt.Errorf("invalid slug %q", pos[0]))
+	}
+	if problem := api.ValidateScope(*scope); problem != nil {
+		return printErr("Invalid --scope", &api.APIError{Problem: *problem})
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -56,18 +61,40 @@ func cmdOpenapiPreview(args []string) int {
 		if contractErr == nil {
 			contractPtr = &contract
 		}
-		return jsonOut(writeJSON(openapiPreviewOutput{
+		var contractProblem *api.Problem
+		if contractErr != nil {
+			contractProblem = contractDiffProblem(contractErr)
+		}
+		if code := jsonOut(writeJSON(openapiPreviewOutput{
 			Policy: resp, Contract: contractPtr, ContractDiffEnabled: contractErr == nil,
-		}))
+			ContractError: contractProblem,
+		})); code != 0 {
+			return code
+		}
+		if *failOnUnavailable && contractProblem != nil {
+			return exitCodeForStatus(contractProblem.Status)
+		}
+		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "OpenAPI policy preview for %s (source=%s, observed=%t)\n", pos[0], resp.Source, resp.ObservedAvailable)
 	if contractErr == nil {
 		printOpenapiContractPreview(contract)
 	} else {
-		_, _ = fmt.Fprintln(osStdout, "Contract diff: disabled")
+		problem := contractDiffProblem(contractErr)
+		if problem != nil {
+			_, _ = fmt.Fprintf(osStdout, "Contract diff: UNAVAILABLE (%s): %s\n", problem.Code, problem.Detail)
+		} else {
+			_, _ = fmt.Fprintf(osStdout, "Contract diff: UNAVAILABLE: %s\n", contractErr)
+		}
 	}
 	if len(resp.Routes) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no declared or observed routes)")
+		if *failOnUnavailable && contractErr != nil {
+			if problem := contractDiffProblem(contractErr); problem != nil {
+				return exitCodeForStatus(problem.Status)
+			}
+			return 3
+		}
 		return 0
 	}
 	for _, route := range resp.Routes {
@@ -87,12 +114,26 @@ func cmdOpenapiPreview(args []string) int {
 	if len(resp.Suggestions) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "Suggestions: %d uncovered declared route(s)\n", len(resp.Suggestions))
 	}
+	if *failOnUnavailable && contractErr != nil {
+		if problem := contractDiffProblem(contractErr); problem != nil {
+			return exitCodeForStatus(problem.Status)
+		}
+		return 3
+	}
 	return 0
 }
 
 func contractDiffDisabled(err error) bool {
+	return contractDiffProblem(err) != nil
+}
+
+func contractDiffProblem(err error) *api.Problem {
 	var apiErr *api.APIError
-	return errors.As(err, &apiErr) && apiErr.Problem.Code == api.CodeAPIContractDiffDisabled
+	if !errors.As(err, &apiErr) || apiErr.Problem.Code != api.CodeAPIContractDiffDisabled {
+		return nil
+	}
+	problem := apiErr.Problem
+	return &problem
 }
 
 func printOpenapiContractPreview(resp api.OpenAPIContractDiffResponse) {
