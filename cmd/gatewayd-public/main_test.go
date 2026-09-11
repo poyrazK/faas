@@ -51,6 +51,28 @@ func TestHstsEnabledFromEnv_LookupEnv(t *testing.T) {
 	}
 }
 
+func TestLoadPublicStorageRegistry_MissingConfigIsDisabled(t *testing.T) {
+	t.Setenv("FAAS_OBJECT_STORAGE_CONFIG", t.TempDir()+"/object-storage.json")
+	registry, err := loadPublicStorageRegistry(os.Getenv)
+	if err != nil {
+		t.Fatalf("loadPublicStorageRegistry() error = %v, want nil", err)
+	}
+	if registry != nil {
+		t.Fatalf("loadPublicStorageRegistry() = %v, want nil registry", registry)
+	}
+}
+
+func TestLoadPublicStorageRegistry_InvalidExistingConfigFails(t *testing.T) {
+	path := t.TempDir() + "/object-storage.json"
+	if err := os.WriteFile(path, []byte("not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAAS_OBJECT_STORAGE_CONFIG", path)
+	if _, err := loadPublicStorageRegistry(os.Getenv); err == nil {
+		t.Fatal("loadPublicStorageRegistry() error = nil, want invalid configuration error")
+	}
+}
+
 // TestDefaultPublicControlAddr_ADR070 pins the loopback control
 // listener default at :9092 per ADR-070 (Tier A7 edge split). The
 // legacy gatewayd daemon binds :9090 on the same node; a default

@@ -115,6 +115,25 @@ const (
 // a t.Cleanup.
 var gatewaydPublicCapCheck func() error
 
+// loadPublicStorageRegistry keeps customer object storage optional at the
+// public edge. The systemd unit always advertises the canonical configuration
+// path, including on installations where the feature has not been provisioned
+// yet. A missing file therefore means "disabled"; an existing but unreadable
+// or invalid file remains a fatal operator error.
+func loadPublicStorageRegistry(getenv func(string) string) (*objectstorage.Registry, error) {
+	path := strings.TrimSpace(getenv("FAAS_OBJECT_STORAGE_CONFIG"))
+	if path == "" {
+		return nil, nil
+	}
+	if _, err := os.Stat(path); err != nil { //nolint:forbidigo // Trusted operator path from the process environment.
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("object storage: inspect configuration: %w", err)
+	}
+	return objectstorage.Load(getenv)
+}
+
 func main() {
 	wire.Daemon("gatewayd-public", run)
 }
@@ -187,7 +206,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// sessions). We construct it here so the DNSHandoff wiring
 	// has a Store to call into. Mirrors cmd/gatewayd-internal/run.go:366.
 	pgStore := state.NewPgStore(pool)
-	publicStorageRegistry, err := objectstorage.Load(os.Getenv)
+	publicStorageRegistry, err := loadPublicStorageRegistry(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: load object storage: %w", err)
 	}
