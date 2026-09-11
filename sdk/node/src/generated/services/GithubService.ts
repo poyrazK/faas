@@ -49,13 +49,13 @@ export class GithubService {
     });
   }
   /**
-   * Read the GitHub installation and binding health for an app.
+   * Inspect the app's GitHub repository binding.
    * Cookie-session-authenticated (NOT API-key). Returns the durable
    * GitHub installation metadata and the app's repository binding without
    * exposing installation credentials. The response also carries the
    * named CSRF token required by the sync and disconnect actions.
    *
-   * @returns GitHubInstallStatus Current GitHub connection state.
+   * @returns GitHubInstallStatus Current installation and binding state.
    * @throws ApiError
    */
   public static getGitHubInstallBinding({
@@ -75,7 +75,7 @@ export class GithubService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `code: capacity — the connection state could not be read.`,
+        503: `code: capacity — the installation and binding state could not be loaded.`,
       },
     });
   }
@@ -156,7 +156,7 @@ export class GithubService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `code: validation — missing or invalid CSRF token.`,
+        400: `code: validation — missing or invalid CSRF token for disconnect.`,
         404: `code: not_found`,
         503: `code: capacity — githubd could not remove the binding.`,
       },
@@ -223,7 +223,7 @@ export class GithubService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `code: validation — missing or invalid CSRF token.`,
+        400: `code: validation — a valid CSRF token is required for GitHub sync.`,
         409: `code: github_not_bound or github_install_not_found — the app or installation must be connected first.`,
         502: `code: github_unreachable — GitHub could not be queried.`,
         503: `code: capacity — the connection state could not be reconciled.`,
