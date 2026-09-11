@@ -20,6 +20,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -53,6 +55,14 @@ const (
 type requestTelemetryStore interface {
 	AccountByID(ctx context.Context, id string) (state.Account, error)
 	InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertRequestTelemetryParams) error
+}
+
+// consumerUsageStore is the billing side of the receiver. PgStore and
+// MemStore implement it. The receiver fails closed when it is absent so a
+// rolling deployment cannot silently acknowledge requests without recording
+// the financial usage fact.
+type consumerUsageStore interface {
+	RecordAPIConsumerUsage(context.Context, state.APIConsumerUsageEvent) (bool, error)
 }
 
 // telemetryRateLimiter is an alias for *peraccount.Limiter, kept as
@@ -145,6 +155,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		return out
 	}
 	var consumerID pgtype.UUID
+	consumerKey := state.AnonymousConsumerKey
 	if raw := req.GetConsumerId(); raw != "" {
 		parsed, parseErr := uuid.Parse(raw)
 		if parseErr != nil {
@@ -153,6 +164,50 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 			return out
 		}
 		consumerID = state.NewPgtypeUUID(parsed)
+		consumerKey = parsed.String()
+	}
+
+	count := int(req.GetCount())
+	if count < 1 {
+		count = 1
+	}
+	if req.GetHttpStatus() < 100 || req.GetHttpStatus() > 599 {
+		r.observe(rtOutcomeDBError)
+		out.Outcome = rtOutcomeDBError
+		return out
+	}
+	windowStart := msToTime(req.GetReceivedAtUnixMs())
+	if windowStart.IsZero() {
+		windowStart = time.Now().UTC()
+	}
+	windowStart = windowStart.UTC().Truncate(time.Minute)
+	eventID := req.GetEventId()
+	if eventID == "" {
+		// Compatibility for an older gateway during a rolling upgrade. The
+		// fallback is deterministic for the same collapsed payload, so a
+		// response-loss retry remains idempotent even before all gateways
+		// carry event_id.
+		eventID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("%s/%s/%s/%d/%d/%d/%s/%s/%d/%s/%s/%s", accountID, appID, consumerKey, windowStart.Unix(), req.GetHttpStatus(), count, req.GetRouteTemplate(), req.GetMethod(), req.GetLatencyMs(), req.GetTraceId(), req.GetWakeId(), req.GetInstanceId()))).String()
+	}
+	var errorCount int64
+	if req.GetHttpStatus() >= 400 {
+		errorCount = int64(count)
+	}
+	usageStore, ok := r.store.(consumerUsageStore)
+	if !ok {
+		r.observe(rtOutcomeDBError)
+		out.Outcome = rtOutcomeDBError
+		return out
+	}
+	_, usageErr := usageStore.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
+		EventID: eventID, AccountID: accountID.String(), AppID: appID.String(),
+		ConsumerKey: consumerKey, WindowStart: windowStart,
+		RequestCount: int64(count), ErrorCount: errorCount, BillableUnits: int64(count),
+	})
+	if usageErr != nil {
+		r.observe(rtOutcomeDBError)
+		out.Outcome = rtOutcomeDBError
+		return out
 	}
 
 	// ---- 2. Resolve per-account rate cap ----
@@ -190,10 +245,6 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 	}
 
 	// ---- 4. INSERT ----
-	count := int(req.GetCount())
-	if count < 1 {
-		count = 1
-	}
 	// Wire compatibility: older gateways do not send the additive dimension
 	// fields. Map proto3 empty defaults to the database sentinels so a rolling
 	// upgrade continues to insert rows while new gateways populate dimensions.

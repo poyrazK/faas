@@ -54,6 +54,10 @@ import (
 // recorder's enqueue boundary (RecordFromObserve) so a publisher
 // collapse never has to reason about zero.
 type RequestTelemetryRow struct {
+	// EventID identifies the collapsed usage increment represented by this
+	// row. It is generated once at the recorder boundary and retained through
+	// publisher retries for idempotent apid ledger writes.
+	EventID      uuid.UUID
 	AccountID    uuid.UUID
 	AppID        uuid.UUID
 	DeploymentID uuid.UUID
@@ -186,6 +190,9 @@ func (r *requestTelemetryRecorder) RecordFromObserve(row RequestTelemetryRow) {
 	}
 	if row.Count < 1 {
 		row.Count = 1
+	}
+	if row.EventID == uuid.Nil {
+		row.EventID = uuid.New()
 	}
 	r.enqueue(row)
 }

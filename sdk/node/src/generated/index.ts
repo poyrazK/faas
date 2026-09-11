@@ -27,6 +27,8 @@ export type { AlertPresetResponse } from './models/AlertPresetResponse.js';
 export type { AlertRuleResponse } from './models/AlertRuleResponse.js';
 export type { APIConsumerListResponse } from './models/APIConsumerListResponse.js';
 export type { APIConsumerResponse } from './models/APIConsumerResponse.js';
+export type { APIConsumerUsageBucketResponse } from './models/APIConsumerUsageBucketResponse.js';
+export type { APIConsumerUsageResponse } from './models/APIConsumerUsageResponse.js';
 export type { APIKeyExportResponse } from './models/APIKeyExportResponse.js';
 export type { APIKeyResponse } from './models/APIKeyResponse.js';
 export type { AppConfiguredResources } from './models/AppConfiguredResources.js';

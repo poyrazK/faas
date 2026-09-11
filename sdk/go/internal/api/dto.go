@@ -213,6 +213,26 @@ type ConsumerKeyListResponse struct {
 	Keys []ConsumerKeyResponse `json:"keys"`
 }
 
+// APIConsumerUsageBucketResponse is one durable UTC minute of consumer usage.
+type APIConsumerUsageBucketResponse struct {
+	WindowStart   time.Time `json:"window_start"`
+	RequestCount  int64     `json:"request_count"`
+	ErrorCount    int64     `json:"error_count"`
+	BillableUnits int64     `json:"billable_units"`
+}
+
+// APIConsumerUsageResponse is the durable usage projection for one consumer.
+type APIConsumerUsageResponse struct {
+	ConsumerID    string                           `json:"consumer_id"`
+	PeriodStart   time.Time                        `json:"period_start"`
+	PeriodEnd     time.Time                        `json:"period_end"`
+	RequestCount  int64                            `json:"request_count"`
+	ErrorCount    int64                            `json:"error_count"`
+	BillableUnits int64                            `json:"billable_units"`
+	Buckets       []APIConsumerUsageBucketResponse `json:"buckets"`
+	AsOf          string                           `json:"as_of"`
+}
+
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
 // Validated server-side via the same validSlug regex used at CreateApp
 // time; rejected on conflict with 409 CodeAppRenameFailed when another

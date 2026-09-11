@@ -39,6 +39,8 @@ from .alert_rule_response_window_spec import AlertRuleResponseWindowSpec
 from .api_consumer_list_response import APIConsumerListResponse
 from .api_consumer_response import APIConsumerResponse
 from .api_consumer_response_status import APIConsumerResponseStatus
+from .api_consumer_usage_bucket_response import APIConsumerUsageBucketResponse
+from .api_consumer_usage_response import APIConsumerUsageResponse
 from .api_key_export_response import APIKeyExportResponse
 from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
@@ -981,6 +983,8 @@ __all__ = (
     "APIConsumerListResponse",
     "APIConsumerResponse",
     "APIConsumerResponseStatus",
+    "APIConsumerUsageBucketResponse",
+    "APIConsumerUsageResponse",
     "APIKeyExportResponse",
     "APIKeyExportResponseScopesItem",
     "APIKeyResponse",

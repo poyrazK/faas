@@ -457,6 +457,12 @@ type MemStore struct {
 	// per-app shape unchanged. (M7 fix; the previous shape was wrong.)
 	usage        []usageMinute
 	usageByMonth []Usage
+	// apiConsumerUsage mirrors the durable per-(app, consumer, minute)
+	// aggregate. apiConsumerUsageEvents is the idempotency ledger: an
+	// event is applied at most once even when the gateway retries a
+	// committed gRPC batch after a response loss.
+	apiConsumerUsage       map[string]APIConsumerUsageBucket
+	apiConsumerUsageEvents map[string]struct{}
 	// builderUsage is the per-build grain backing AppendBuilderUsage
 	// (ADR-048 §4). PK is build_id; the meterd rollup cron sums
 	// into usage_daily.builder_seconds per (account, app, day).
@@ -886,6 +892,8 @@ func NewMemStore() *MemStore {
 		nextAuditOutboxID:       1,
 		usage:                   []usageMinute{},
 		usageByMonth:            []Usage{},
+		apiConsumerUsage:        map[string]APIConsumerUsageBucket{},
+		apiConsumerUsageEvents:  map[string]struct{}{},
 		idem:                    map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByProviderCustomerID
 		// walks; populated by UpdateAccountProviderCustomerID.

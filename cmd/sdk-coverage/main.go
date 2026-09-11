@@ -342,6 +342,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/consumers":                                "ListAPIConsumers",
 	"POST /v1/apps/{slug}/consumers":                               "CreateAPIConsumer",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}":                  "GetAPIConsumer",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage":            "GetAPIConsumerUsage",
 	"DELETE /v1/apps/{slug}/consumers/{consumer_id}":               "RevokeAPIConsumer",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/keys":             "ListConsumerKeys",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/keys":            "CreateConsumerKey",

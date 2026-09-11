@@ -522,6 +522,31 @@ type ConsumerKeyListResponse struct {
 	Keys []ConsumerKeyResponse `json:"keys"`
 }
 
+// APIConsumerUsageBucketResponse is one billing-oriented UTC minute bucket
+// for a stable API consumer. It contains raw request facts; pricing and rate
+// cards are intentionally a later layer.
+type APIConsumerUsageBucketResponse struct {
+	WindowStart   time.Time `json:"window_start"`
+	RequestCount  int64     `json:"request_count"`
+	ErrorCount    int64     `json:"error_count"`
+	BillableUnits int64     `json:"billable_units"`
+}
+
+// APIConsumerUsageResponse is the owner-facing read surface for
+// GET /v1/apps/{slug}/consumers/{consumer_id}/usage. Anonymous traffic is
+// retained separately under the internal __anonymous__ key and is never
+// exposed through this consumer-specific endpoint.
+type APIConsumerUsageResponse struct {
+	ConsumerID    string                           `json:"consumer_id"`
+	PeriodStart   time.Time                        `json:"period_start"`
+	PeriodEnd     time.Time                        `json:"period_end"`
+	RequestCount  int64                            `json:"request_count"`
+	ErrorCount    int64                            `json:"error_count"`
+	BillableUnits int64                            `json:"billable_units"`
+	Buckets       []APIConsumerUsageBucketResponse `json:"buckets"`
+	AsOf          string                           `json:"as_of"`
+}
+
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
 // Validated server-side via the same validSlug regex used at CreateApp
 // time; rejected on conflict with 409 CodeAppRenameFailed when another

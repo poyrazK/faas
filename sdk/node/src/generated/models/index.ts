@@ -3,6 +3,8 @@
 
 export type { APIConsumerListResponse } from './APIConsumerListResponse.js';
 export type { APIConsumerResponse } from './APIConsumerResponse.js';
+export type { APIConsumerUsageBucketResponse } from './APIConsumerUsageBucketResponse.js';
+export type { APIConsumerUsageResponse } from './APIConsumerUsageResponse.js';
 export type { APIKeyExportResponse } from './APIKeyExportResponse.js';
 export type { APIKeyResponse } from './APIKeyResponse.js';
 export type { AccountAppSecretResponse } from './AccountAppSecretResponse.js';

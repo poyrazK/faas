@@ -368,6 +368,9 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 	bucketIdx := make(map[string]int, len(rows)/4+1)
 	out := make([]RequestTelemetryRow, 0, len(rows)/4+1)
 	for _, row := range rows {
+		if row.EventID == uuid.Nil {
+			row.EventID = uuid.New()
+		}
 		row.Count = normalizedRequestTelemetryCount(row.Count)
 		row.LatencyMS = requestTelemetryLatencyBucketUpperBound(row.LatencyMS)
 		row.GuestDurationMS = requestTelemetryLatencyBucketUpperBound(row.GuestDurationMS)
