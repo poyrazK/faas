@@ -169,7 +169,11 @@ func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
-	since := parseDebugSinceFromString(sinceRaw, 24*time.Hour)
+	since, err := parseDebugSinceStrict(sinceRaw, 24*time.Hour)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
 	if retention > 0 && since > retention {
 		since = retention
@@ -1253,6 +1257,29 @@ func parseDebugSinceFromString(raw string, def time.Duration) time.Duration {
 		return time.Duration(n) * 24 * time.Hour
 	}
 	return def
+}
+
+// parseDebugSinceStrict parses the coverage endpoint's user-supplied
+// lookback window without silently changing a malformed request into a
+// different query. Empty input keeps the endpoint's documented default;
+// every supplied value must be a positive Go duration or positive day
+// suffix. The coverage handler applies the plan-retention clamp after this
+// validation, so a valid long window remains distinguishable from invalid
+// input.
+func parseDebugSinceStrict(raw string, def time.Duration) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def, nil
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d, nil
+	}
+	if len(raw) > 1 && raw[len(raw)-1] == 'd' {
+		if n, err := strconv.Atoi(raw[:len(raw)-1]); err == nil && n > 0 {
+			return time.Duration(n) * 24 * time.Hour, nil
+		}
+	}
+	return 0, fmt.Errorf("since must be a positive duration (for example 30m, 24h, or 3d)")
 }
 
 // debugReplayHandler — POST /v1/apps/{slug}/debug/requests/{req_id}/replay.
