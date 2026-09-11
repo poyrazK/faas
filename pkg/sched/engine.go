@@ -7482,6 +7482,14 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 		return false, err
 	}
 	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
+	// Recovery recreates use this CAS-aware transition to park a
+	// service replica whose source node is gone. Keep the desired-count
+	// reconciler on the same notification path as the non-CAS transition
+	// helper so a no-snapshot recovery does not leave a service below its
+	// configured replica target until an unrelated event arrives.
+	if to == state.StateParked && ins.Mode == string(state.InstanceModeService) {
+		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	}
 	subject := instanceID
 	data, _ := json.Marshal(map[string]any{
 		"from": string(from), "to": string(to), "reason": reason, "ts": time.Now().UTC().Format(time.RFC3339Nano),

@@ -3,6 +3,8 @@
 // behind the recovery arbiter (Task #59); these tests pin the
 // per-instance verdict contract so a future engine field
 // addition can't silently bypass the CAS.
+// adr: 137
+
 package sched
 
 import (
@@ -10,7 +12,9 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -60,6 +64,67 @@ func TestRecreateInstance_HappyPath(t *testing.T) {
 	if post.State != "parked" {
 		t.Errorf("State = %q, want parked", post.State)
 	}
+}
+
+// TestRecreateInstance_ServiceReplicaReconcilesDeficit pins the recovery
+// contract for long-running services: parking a stranded replica must wake a
+// replacement so desired capacity is restored without waiting for another
+// lifecycle notification.
+func TestRecreateInstance_ServiceReplicaReconcilesDeficit(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 128, 4)
+	manifest := state.AppManifest{
+		ExecutionMode: api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{
+			Min: 1, Max: 2, Desired: 2,
+		},
+	}
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatalf("UpdateApp: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+			string(state.StateRunning), app.RAMMB, "node-a", "service-recovery-"+string(rune('a'+i)), string(state.InstanceModeService)); err != nil {
+			t.Fatalf("CreateInstanceWithMode[%d]: %v", i, err)
+		}
+	}
+	instances, err := store.ListInstancesForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListInstancesForApp: %v", err)
+	}
+	if len(instances) != 2 {
+		t.Fatalf("seeded instances = %d, want 2", len(instances))
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	if err := e.RecreateInstance(context.Background(), instances[0].ID); err != nil {
+		t.Fatalf("RecreateInstance: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, listErr := store.ListInstancesForApp(context.Background(), app.ID)
+		if listErr != nil {
+			t.Fatalf("ListInstancesForApp after recovery: %v", listErr)
+		}
+		running, parked := 0, 0
+		for _, row := range rows {
+			if row.Mode != string(state.InstanceModeService) {
+				continue
+			}
+			switch state.State(row.State) {
+			case state.StateRunning:
+				running++
+			case state.StateParked:
+				parked++
+			}
+		}
+		if running == 2 && parked == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("service replicas did not reconverge: want running=2 parked=1, got rows=%+v", instances)
 }
 
 // TestRecreateInstance_SkipsTerminalStates — STOPPED and FAILED
