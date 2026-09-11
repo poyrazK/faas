@@ -1,0 +1,7 @@
+[Service]
+# Keep vmmd's wake-time nftables renderer on the same provider-specific
+# interface and tenant bridge range as the boot policy rendered by Ansible.
+Environment="FAAS_PUBLIC_IFACE={{ public_iface | default(ansible_default_ipv4.interface | default('eth0'), true) }}"
+Environment="FAAS_HOST_BRIDGE_CIDR={{ masquerade_cidr | default('10.100.0.0/16', true) }}"
+Environment="FAAS_PRIVATE_INGRESS_CIDRS={{ faas_control_plane_allowed_cidrs | default([]) | join(',') }}"
+Environment="FAAS_PRIVATE_INGRESS_TCP_PORTS={{ faas_control_plane_allowed_ports | default([]) | join(',') }}"

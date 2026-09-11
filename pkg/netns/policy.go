@@ -69,6 +69,12 @@ type HostPolicy struct {
 	// else on the public IFace is dropped by the input chain's `policy drop`.
 	InputAllowTCPPorts []int
 
+	// PrivateInputAllowRules are deployment-owned source CIDR and TCP port
+	// pairs for control-plane traffic into a compute host. They are empty on
+	// single-box installs. Runtime renders must retain these rules or the first
+	// VM cache mutation will cut new schedd/gateway connections off from vmmd.
+	PrivateInputAllowRules []PrivateInputAllowRule
+
 	// MasqueradeCIDR is the source-address set the postrouting nat chain
 	// MASQUERADEs to the host's public IP on its way out PublicIface. Must be
 	// the NETWORK form of HostBridgeCIDR (e.g. "10.100.0.0/16", not the host
@@ -205,6 +211,14 @@ type SMTPAllowlistRule struct {
 	Destinations []netip.Prefix
 	AccountID    string
 	AppID        string
+}
+
+// PrivateInputAllowRule permits a bounded set of TCP services from one
+// trusted fleet CIDR. It represents the same provider-neutral contract as
+// faas_control_plane_allowed_cidrs/ports in the Ansible nftables template.
+type PrivateInputAllowRule struct {
+	Source netip.Prefix
+	Ports  []int
 }
 
 // DefaultHostPolicy is the platform-wide host nftables policy. Source of
@@ -470,6 +484,19 @@ func (h HostPolicy) Render() string {
 			}
 		}
 	}
+	for _, r := range h.PrivateInputAllowRules {
+		if !r.Source.IsValid() {
+			panic("netns: HostPolicy.Render: PrivateInputAllowRules has invalid source prefix")
+		}
+		if len(r.Ports) == 0 {
+			panic(fmt.Sprintf("netns: HostPolicy.Render: PrivateInputAllowRules[%s] has no ports", r.Source))
+		}
+		for _, port := range r.Ports {
+			if port < 1 || port > 65535 {
+				panic(fmt.Sprintf("netns: HostPolicy.Render: PrivateInputAllowRules[%s] has invalid TCP port %d", r.Source, port))
+			}
+		}
+	}
 
 	denyPorts := h.DenySet.SMTPPortsCommaSet()
 	allowPorts := joinInts(h.InputAllowTCPPorts, ",")
@@ -502,6 +529,14 @@ func (h HostPolicy) Render() string {
 	b.WriteString("    iif lo accept\n")
 	fmt.Fprintf(&b, "    iifname %q accept\n", h.BridgeName)
 	fmt.Fprintf(&b, "    tcp dport { %s } accept     # sshd + gatewayd-public public listener\n", allowPorts)
+	for _, r := range h.PrivateInputAllowRules {
+		family := "ip"
+		if r.Source.Addr().Is6() {
+			family = "ip6"
+		}
+		fmt.Fprintf(&b, "    %s saddr %s tcp dport { %s } accept comment %q\n",
+			family, r.Source, joinInts(r.Ports, ", "), "faas private control services")
+	}
 	b.WriteString("  }\n")
 	b.WriteString("\n")
 	b.WriteString("  chain forward {\n")

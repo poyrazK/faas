@@ -525,6 +525,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// only re-renders the nftables ruleset from compile-time
 	// defaults. The setter is invoked exactly once per process.
 	netns.SetDefaultHostBridgeIP(parsedBridge.Masked().Addr().Next())
+	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
+	// mutable policy from this host's deployment-owned network values before
+	// any wake can trigger a render; otherwise the package default (eth0)
+	// replaces a valid provider-specific boot policy (for example ens4 on
+	// GCP), cutting every guest off from DNS and the public internet.
+	hostPolicy := runtimeHostPolicy(cfg.ComputeNode, parsedBridge)
+	netns.SwapActiveHostPolicy(hostPolicy)
+	log.Info("vmmd: runtime host policy configured",
+		"public_iface", hostPolicy.PublicIface,
+		"masquerade_cidr", hostPolicy.MasqueradeCIDR)
 	listenTarget := cfg.ResolveListenTarget()
 	// targetURL is the DIAL target schedd/gatewayd use to reach
 	// this vmmd. Distinct from listenTarget (the bind address):

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,44 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestLoadConfigPublicIfaceEnvConfiguresRuntimePolicy(t *testing.T) {
+	t.Setenv("FAAS_PUBLIC_IFACE", "ens4")
+	t.Setenv("FAAS_HOST_BRIDGE_CIDR", "10.123.0.0/16")
+	t.Setenv("FAAS_PRIVATE_INGRESS_CIDRS", "10.156.0.0/20")
+	t.Setenv("FAAS_PRIVATE_INGRESS_TCP_PORTS", "50051,8080,9104")
+
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	bridge, err := netip.ParsePrefix(cfg.ComputeNode.HostBridgeCIDR)
+	if err != nil {
+		t.Fatalf("ParsePrefix: %v", err)
+	}
+	policy := runtimeHostPolicy(cfg.ComputeNode, bridge)
+	if policy.PublicIface != "ens4" {
+		t.Fatalf("PublicIface = %q, want ens4", policy.PublicIface)
+	}
+	if policy.MasqueradeCIDR != "10.123.0.0/16" {
+		t.Fatalf("MasqueradeCIDR = %q, want 10.123.0.0/16", policy.MasqueradeCIDR)
+	}
+	rendered := policy.Render()
+	if !strings.Contains(rendered, `iifname "br-tenants" oifname "ens4" accept`) {
+		t.Fatalf("runtime policy did not render provider interface:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `ip saddr 10.156.0.0/20 tcp dport { 50051, 8080, 9104 } accept`) {
+		t.Fatalf("runtime policy did not retain private ingress rule:\n%s", rendered)
+	}
+}
+
+func TestLoadConfigRejectsInvalidPublicIface(t *testing.T) {
+	t.Setenv("FAAS_PUBLIC_IFACE", `ens4"; flush ruleset`)
+	_, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err == nil || !strings.Contains(err.Error(), "public_iface") {
+		t.Fatalf("LoadConfig error = %v, want public_iface validation error", err)
+	}
+}
 
 func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.toml")
