@@ -39,7 +39,8 @@ CREATE TYPE public.compute_node_lifecycle AS ENUM (
     'force_draining',
     'maintenance',
     'unavailable',
-    'recovering'
+    'recovering',
+    'retired'
 );
 
 
@@ -2964,7 +2965,7 @@ CREATE TABLE public.operator_intents (
     error text,
     snap_ids_marked_stale text[],
     trace_id text,
-    CONSTRAINT operator_intents_kind_check CHECK ((kind = ANY (ARRAY['force_park'::text, 'force_cold_boot'::text, 'force_restart'::text]))),
+    CONSTRAINT operator_intents_kind_check CHECK ((kind = ANY (ARRAY['force_park'::text, 'force_cold_boot'::text, 'force_restart'::text, 'node_drain'::text, 'node_force_drain'::text, 'node_activate'::text, 'node_retire'::text]))),
     CONSTRAINT operator_intents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text]))),
     CONSTRAINT operator_intents_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
 );

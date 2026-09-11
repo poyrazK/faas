@@ -14015,18 +14015,23 @@ func (s *PgStore) OperatorCapacity(ctx context.Context) (OperatorCapacitySnapsho
 // the (now STORED GENERATED) `active` column directly; PG rejects
 // `UPDATE compute_nodes SET active = $X` with SQLSTATE 428C9 because
 // generated columns are derived from `lifecycle`. Idempotent at the
-// PG level: the UPDATE matches regardless of current lifecycle, so
-// re-flipping an unavailable row is a no-op. We preserve the row
-// rather than DELETE so an operator can re-enable it without
-// re-provisioning the target_url / cert.
+// PG level for every non-retired lifecycle; retired rows return ErrConflict.
+// We preserve the row rather than DELETE so recoverable nodes can be enabled
+// without re-provisioning the target_url / cert.
 func (s *PgStore) MarkComputeNodeInactive(ctx context.Context, nodeID string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update compute_nodes set lifecycle = 'unavailable'::compute_node_lifecycle where id = $1`, nodeID)
+	tag, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set lifecycle = 'unavailable'::compute_node_lifecycle
+		 where id = $1 and lifecycle <> 'retired'
+	`, nodeID)
 	if err != nil {
 		return fmt.Errorf("state: mark compute_node %s unavailable: %w", nodeID, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		if _, getErr := s.NodeGet(ctx, nodeID); getErr != nil {
+			return getErr
+		}
+		return ErrConflict
 	}
 	return nil
 }
@@ -14126,7 +14131,10 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		      max_concurrency     = excluded.max_concurrency,
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
-		      lifecycle           = 'active'::compute_node_lifecycle,
+		      lifecycle           = case
+		                                when compute_nodes.lifecycle = 'retired' then compute_nodes.lifecycle
+		                                else 'active'::compute_node_lifecycle
+		                            end,
 		      region              = excluded.region,
 		      zone                = excluded.zone,
 		      schedd_target_url   = excluded.schedd_target_url,
@@ -14214,6 +14222,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		      cert_fingerprint    = excluded.cert_fingerprint,
 		      role                = excluded.role,
 		      generation          = coalesce(compute_nodes.generation, excluded.generation)
+		where compute_nodes.lifecycle <> 'retired'
 		returning id, name, target_url, vpcpus, mem_mb, max_concurrency,
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
@@ -14227,6 +14236,9 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
 		node.Role, node.Generation)
 	n, err := scanComputeNode(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ComputeNode{}, ErrConflict
+	}
 	if err != nil {
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node (operator) %q: %w", node.Name, err)
 	}
@@ -14431,13 +14443,20 @@ func (s *PgStore) SetComputeNodeActive(ctx context.Context, id string, active bo
 	if active {
 		target = NodeLifecycleActive
 	}
-	tag, err := s.pool.Exec(ctx,
-		`update compute_nodes set lifecycle = $2::compute_node_lifecycle where id = $1`, id, string(target))
+	tag, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set lifecycle = $2::compute_node_lifecycle
+		 where id = $1
+		   and lifecycle <> 'retired'
+	`, id, string(target))
 	if err != nil {
 		return fmt.Errorf("state: set lifecycle compute_node %s = %v: %w", id, target, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		if _, getErr := s.NodeGet(ctx, id); getErr != nil {
+			return getErr
+		}
+		return ErrConflict
 	}
 	return nil
 }
@@ -14919,25 +14938,24 @@ func (s *PgStore) DeploymentSnapshotBackoffActive(ctx context.Context, deploymen
 	return d, row.SnapshotMissBackoffUntil.Time.After(time.Now().UTC()), nil
 }
 
-// DeleteComputeNode hard-deletes a compute_nodes row by id (issue #98 /
-// ADR-028). apid's DELETE /v1/compute-nodes/{name}?hard=1 is the only
-// caller; soft-delete via SetComputeNodeActive(false) is the routine
-// operator path. Returns ErrNotFound when the id is unknown so the
-// caller can surface a 404.
-//
-// Note: callers should NOT delete the synthetic default-local row
-// (state.DefaultLocalNodeName) — every legacy instance row from
-// migration 00024's backfill references it via FK. The handler in
-// cmd/apid/compute_nodes.go rejects the request before reaching this
-// method; we leave the safety check at the seam so the state layer
-// stays a thin SQL wrapper.
+// DeleteComputeNode hard-deletes an unused compute_nodes row by id. The
+// negative app/instance predicates make the safety invariant atomic with the
+// delete rather than trusting only the handler's earlier preflight.
 func (s *PgStore) DeleteComputeNode(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `delete from compute_nodes where id = $1`, id)
+	tag, err := s.pool.Exec(ctx, `
+		delete from compute_nodes n
+		 where n.id = $1
+		   and not exists (select 1 from apps a where a.node_id = n.id)
+		   and not exists (select 1 from instances i where i.node_id = n.id)
+	`, id)
 	if err != nil {
 		return fmt.Errorf("state: delete compute_node %s: %w", id, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		if _, getErr := s.NodeGet(ctx, id); getErr != nil {
+			return getErr
+		}
+		return ErrConflict
 	}
 	return nil
 }

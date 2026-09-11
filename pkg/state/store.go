@@ -4189,9 +4189,9 @@ type Store interface {
 	// flipping an already-inactive row is a no-op UPDATE. A
 	// future staleness gate (last_heartbeat_at > 2 × interval)
 	// will reuse this method; today only the heartbeat path
-	// calls it. The row is preserved (no DELETE) so an operator
-	// can flip it back via a future admin endpoint without
-	// re-provisioning the cert/target_url.
+	// calls it. Terminal retired rows return ErrConflict. The row is
+	// preserved (no DELETE) so an operator can flip it back via a future admin
+	// endpoint without re-provisioning the cert/target_url.
 	MarkComputeNodeInactive(ctx context.Context, nodeID string) error
 	// UpsertComputeNode inserts or updates a row by name. The
 	// vmmd self-registration path calls this on startup
@@ -4218,8 +4218,9 @@ type Store interface {
 	// ON CONFLICT (name) DO UPDATE SET target_url = excluded.target_url,
 	// vpcpus, mem_mb, max_concurrency, admission_ceiling_mb,
 	// vcpu_budget, lifecycle = excluded.lifecycle — full set, the operator's
-	// POST wins on every field. An explicit unavailable lifecycle makes
-	// deferred enrollment atomic; an empty lifecycle defaults to active.
+	// POST wins on every field except a terminal retired row, which returns
+	// ErrConflict. An explicit unavailable lifecycle makes deferred enrollment
+	// atomic; an empty lifecycle defaults to active.
 	UpsertComputeNodeFromOperator(ctx context.Context, node ComputeNode) (ComputeNode, error)
 	// UpsertComputeNodeFromVmmd is the vmmd self-registration
 	// write path (cmd/vmmd/register.go). Writes only the
@@ -4258,7 +4259,8 @@ type Store interface {
 	// previously-drained node. Emits compute_node_changed via the
 	// pg_notify listener (pkg/db/notify.NotifyComputeNodeChanged) so
 	// gatewayd-internal can add or drop its per-node client without a
-	// restart. ErrNotFound when the id has no row.
+	// restart. ErrNotFound when the id has no row; ErrConflict when a caller
+	// attempts to reactivate a terminal retired row.
 	SetComputeNodeActive(ctx context.Context, id string, active bool) error
 	// NodeGet returns a single ComputeNode by id with all lifecycle
 	// fields populated. Workstream B (issue #1184) replaces the
@@ -4343,11 +4345,10 @@ type Store interface {
 	// passes true so operators can drain visibility. Backed by the
 	// existing compute_nodes_active_idx partial index.
 	ListComputeNodes(ctx context.Context, includeInactive bool) ([]ComputeNode, error)
-	// DeleteComputeNode hard-deletes a row by id. apid's
-	// DELETE /v1/compute-nodes/{name}?hard=1 is the only caller;
-	// soft-delete via SetComputeNodeActive(false) is the default
-	// for the routine operator workflow. Returns ErrNotFound if
-	// the id is unknown.
+	// DeleteComputeNode hard-deletes an unused row by id. apid permits this
+	// only after retirement; the state layer additionally refuses rows with
+	// app or instance references. Returns ErrNotFound if the id is unknown and
+	// ErrConflict when workload history still references it.
 	DeleteComputeNode(ctx context.Context, id string) error
 
 	// AppendComputeNodeHeartbeat stamps one row in the append-only

@@ -149,6 +149,57 @@ func TestObsNodeDrain_EnqueuesDurableIntentBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestObsNodeRetire_EnqueuesTerminalIntent(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	node, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name: "node-retire-a", TargetURL: "unix:///run/faas/vmmd-retire-a.sock",
+		Lifecycle: state.NodeLifecycleMaintenance,
+	})
+	if err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+
+	rec := e.doAdmin(t, http.MethodPost, "/v1/admin/ops/nodes/node-retire-a/retire?confirm=true&reason=hardware_eol", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("node retire: got status %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.ObsNodeMutationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Kind != string(state.OperatorIntentKindNodeRetire) || resp.RequestedLifecycle != string(state.NodeLifecycleRetired) {
+		t.Fatalf("unexpected retirement receipt: %+v", resp)
+	}
+	if resp.Preflight.Reversible {
+		t.Fatal("retirement preflight incorrectly marked reversible")
+	}
+	intent, err := e.store.GetOperatorIntent(context.Background(), resp.IntentID)
+	if err != nil || intent.TraceID == nil || intent.ActorID != e.acct.ID {
+		t.Fatalf("retirement intent missing actor/trace: intent=%+v err=%v", intent, err)
+	}
+	fresh, err := e.store.NodeGet(context.Background(), node.ID)
+	if err != nil || fresh.Lifecycle != state.NodeLifecycleMaintenance {
+		t.Fatalf("handler mutated node before dispatch: node=%+v err=%v", fresh, err)
+	}
+}
+
+func TestObsNodeRetire_RequiresMaintenanceAndReason(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	if _, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name: "node-retire-active", TargetURL: "unix:///run/faas/vmmd-retire-active.sock",
+		Lifecycle: state.NodeLifecycleActive,
+	}); err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+
+	withoutReason := e.doAdmin(t, http.MethodPost, "/v1/admin/ops/nodes/node-retire-active/retire?confirm=true", nil, nil)
+	assertProblem(t, withoutReason, http.StatusBadRequest, api.CodeValidation)
+	active := e.doAdmin(t, http.MethodPost, "/v1/admin/ops/nodes/node-retire-active/retire?confirm=true&reason=hardware_eol", nil, nil)
+	if active.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("active retirement: got %d, want 422; body=%s", active.Code, active.Body.String())
+	}
+}
+
 func TestObsAccountMutation_RequiresConfirmation(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
 	target, err := e.store.CreateAccount(context.Background(), "tenant@example.com", api.PlanHobby)

@@ -66,7 +66,7 @@ type cliFlag struct {
 //   - backup          (init | unseal-rclone | unseal-archive-creds)
 //   - secrets         (init | rotate | status | stamp)
 //   - artifact        (publish | verify)
-//   - compute-nodes   (add | list | show | drain | drain-status | activate | force-drain)
+//   - compute-nodes   (add | list | show | drain | drain-status | activate | force-drain | retire)
 //   - deploy          (join-node | add-node)
 //   - obs             (health)
 //   - debug           (otel-smoke; ADR-127 PR-D)
@@ -187,7 +187,7 @@ var cliCommands = []cliCommand{
 		// tier-1-scaleout pair).
 		Name:    dispatchComputeNodes,
 		DocSlug: "compute-nodes",
-		Short:   "Compute-node state machine (compute-nodes add|list|show|drain|drain-status|activate|force-drain)",
+		Short:   "Compute-node state machine (compute-nodes add|list|show|drain|drain-status|activate|force-drain|retire)",
 		Subcommands: []cliSub{
 			{
 				Name:  "add",
@@ -238,7 +238,7 @@ var cliCommands = []cliCommand{
 					{Name: "yes", Short: "acknowledge break-glass database mutation"},
 				},
 			},
-			{Name: "drain-status", Short: "Exit 0 only when the node is held in maintenance", Flags: []cliFlag{{Name: "node", Short: "node fqdn", Req: true}, {Name: "break-glass-db", Short: "read directly during apid outage"}}},
+			{Name: "drain-status", Short: "Exit 0 only when the node is held in maintenance or retired", Flags: []cliFlag{{Name: "node", Short: "node fqdn", Req: true}, {Name: "break-glass-db", Short: "read directly during apid outage"}}},
 			{
 				Name:  "activate",
 				Short: "Submit and poll an authenticated node-activation intent",
@@ -258,6 +258,17 @@ var cliCommands = []cliCommand{
 					{Name: "reason", Short: "durable audit reason"},
 					{Name: "timeout", Short: "intent polling timeout"},
 					{Name: "yes", Short: "acknowledge possible cold eviction", Req: true},
+					{Name: "break-glass-db", Short: "bypass apid for reviewed database repair"},
+				},
+			},
+			{
+				Name:  "retire",
+				Short: "Permanently retire a maintenance-held node",
+				Flags: []cliFlag{
+					{Name: "node", Short: "node fqdn", Req: true},
+					{Name: "reason", Short: "required durable audit reason", Req: true},
+					{Name: "timeout", Short: "intent polling timeout"},
+					{Name: "yes", Short: "confirm permanent retirement", Req: true},
 					{Name: "break-glass-db", Short: "bypass apid for reviewed database repair"},
 				},
 			},

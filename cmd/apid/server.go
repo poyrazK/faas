@@ -2112,6 +2112,8 @@ func (s *server) handler() http.Handler {
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeForceDrain))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/activate",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeActivate))))
+	mux.Handle("POST /v1/admin/ops/nodes/{name}/retire",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeRetire))))
 
 	// ADR-132 — typed runtime configuration. GET is MFA-gated; PATCH and
 	// rollback use the strict operator-session policy
@@ -2342,7 +2344,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/compute-nodes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.listComputeNodes))))
 	mux.HandleFunc("GET /v1/compute-nodes/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getComputeNode))))
 	mux.Handle("POST /v1/compute-nodes", middleware.TraceID(s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.createOrUpdateComputeNode))))))
-	mux.HandleFunc("DELETE /v1/compute-nodes/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.deleteComputeNode))))
+	mux.Handle("DELETE /v1/compute-nodes/{name}", middleware.TraceID(s.authLimited(s.requireAdminMutation(s.deleteComputeNode))))
 	// Workstream B (issue #1184 / ADR-137): drain handler.
 	// POST /drain CAS-transitions the node's lifecycle to
 	// 'draining' (the recovery arbiter owns the actual

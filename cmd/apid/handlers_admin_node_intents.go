@@ -54,6 +54,10 @@ func (s *server) enqueueObsNodeMutation(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Node not found", err.Error()))
 		return
 	}
+	if spec.kind == state.OperatorIntentKindNodeRetire && node.Name == state.DefaultLocalNodeName {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "default_local_protected", "Cannot retire default-local", "move legacy ownership away from the synthetic node before retirement"))
+		return
+	}
 	if current := effectiveNodeLifecycle(node); !nodeIntentTransitionAllowed(spec.kind, current) {
 		api.WriteProblem(w, api.ErrNodeLifecycleInvalid(string(current), string(spec.requestedLifecycle)))
 		return
@@ -61,6 +65,10 @@ func (s *server) enqueueObsNodeMutation(w http.ResponseWriter, r *http.Request, 
 	preflight, err := s.nodeIntentPreflight(r, node, spec, forced)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not build compute-node preflight"))
+		return
+	}
+	if spec.kind == state.OperatorIntentKindNodeRetire && preflight.LiveInstances > 0 {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "node_not_drained", "Node is not drain-safe", "retirement requires maintenance lifecycle and zero live instances"))
 		return
 	}
 	s.enqueueNodeIntent(w, r, acct, node, spec, reason, forced, preflight)
@@ -84,6 +92,8 @@ func nodeIntentTransitionAllowed(kind state.OperatorIntentKind, current state.No
 		return current == state.NodeLifecycleUnavailable || current == state.NodeLifecycleMaintenance || current == state.NodeLifecycleActive
 	case state.OperatorIntentKindNodeForceDrain:
 		return true
+	case state.OperatorIntentKindNodeRetire:
+		return current == state.NodeLifecycleMaintenance || current == state.NodeLifecycleRetired
 	default:
 		return false
 	}
@@ -95,6 +105,10 @@ func parseNodeIntentConfirmation(w http.ResponseWriter, r *http.Request, action 
 		return "", false
 	}
 	reason := r.URL.Query().Get("reason")
+	if action == "retire" && reason == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "reason required", "an explicit reason is required to retire a compute node"))
+		return "", false
+	}
 	if reason == "" {
 		reason = "operator_" + strings.ReplaceAll(action, "-", "_")
 	}
@@ -124,6 +138,12 @@ func nodeIntentSpecFor(action string) (nodeIntentSpec, error) {
 			kind:               state.OperatorIntentKindNodeActivate,
 			requestedLifecycle: state.NodeLifecycleActive,
 			requestedActive:    true,
+		}, nil
+	case "retire":
+		return nodeIntentSpec{
+			kind:               state.OperatorIntentKindNodeRetire,
+			requestedLifecycle: state.NodeLifecycleRetired,
+			requestedActive:    false,
 		}, nil
 	default:
 		return nodeIntentSpec{}, fmt.Errorf("unknown action %q", action)
@@ -167,7 +187,7 @@ func (s *server) nodeIntentPreflight(r *http.Request, node state.ComputeNode, sp
 		LiveInstances:     live,
 		LiveRAMMB:         liveRAMMB,
 		CapacityChangeMB:  capacityChange,
-		Reversible:        !forced,
+		Reversible:        !forced && spec.kind != state.OperatorIntentKindNodeRetire,
 		DisruptionWarning: forced && live > 0,
 	}, nil
 }

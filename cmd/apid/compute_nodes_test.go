@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -284,41 +285,71 @@ func TestComputeNodes_RejectsUnreachableGatewayMetricsTarget(t *testing.T) {
 }
 
 func TestComputeNodes_HardDeleteRefusesDefaultLocal(t *testing.T) {
-	ts, tok := newComputeNodeTestServer(t, "ops@example.com", "ops@example.com")
-	resp := doJSON(t, "DELETE", "/v1/compute-nodes/default-local?hard=1", "", tok, ts)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusConflict {
-		t.Errorf("default-local hard-delete: status=%d, want 409", resp.StatusCode)
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	rec := e.doAdmin(t, http.MethodDelete, "/v1/compute-nodes/default-local?hard=1&confirm=true&reason=mistaken_enrollment", nil, nil)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("default-local hard-delete: status=%d, want 409", rec.Code)
 	}
 }
 
-func TestComputeNodes_SoftDeleteDeactivates(t *testing.T) {
-	ts, tok := newComputeNodeTestServer(t, "ops@example.com", "ops@example.com")
-
-	body := `{
-		"name":"box-soft",
-		"target_url":"tcp://100.64.0.2:50051",
-		"vpcpus":8,"mem_mb":8192,
-		"max_concurrency":16,"admission_ceiling_mb":4096
-	}`
-	resp := doJSON(t, "POST", "/v1/compute-nodes", body, tok, ts)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("seed: %d", resp.StatusCode)
+func TestComputeNodes_DeleteEnqueuesRetirement(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	node, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name: "box-retire", TargetURL: "tcp://100.64.0.2:50051",
+		Lifecycle: state.NodeLifecycleMaintenance,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
 	}
-
-	resp = doJSON(t, "DELETE", "/v1/compute-nodes/box-soft", "", tok, ts)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("soft delete: status=%d, want 200", resp.StatusCode)
+	rec := e.doAdmin(t, http.MethodDelete, "/v1/compute-nodes/box-retire?confirm=true&reason=hardware_eol", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("retire delete: status=%d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
-	var got computeNodeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+	var got api.ObsNodeMutationResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode delete response: %v", err)
 	}
-	if got.Active {
-		t.Errorf("soft delete: row still active")
+	if got.Kind != string(state.OperatorIntentKindNodeRetire) || got.RequestedLifecycle != string(state.NodeLifecycleRetired) {
+		t.Fatalf("unexpected retirement receipt: %+v", got)
 	}
+	fresh, err := e.store.NodeGet(context.Background(), node.ID)
+	if err != nil || fresh.Lifecycle != state.NodeLifecycleMaintenance {
+		t.Fatalf("delete mutated node before schedd dispatch: node=%+v err=%v", fresh, err)
+	}
+}
+
+func TestComputeNodes_HardDeleteOnlyUnusedRetiredNode(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	node, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name: "box-mistake", TargetURL: "tcp://100.64.0.3:50051",
+		Lifecycle: state.NodeLifecycleRetired,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rec := e.doAdmin(t, http.MethodDelete, "/v1/compute-nodes/box-mistake?hard=1&confirm=true&reason=mistaken_enrollment", nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("hard delete: status=%d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := e.store.NodeGet(context.Background(), node.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("deleted node lookup: got %v, want ErrNotFound", err)
+	}
+}
+
+func TestComputeNodes_EnrollmentRefusesRetiredName(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	if _, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name: "box-retired-name", TargetURL: "tcp://100.64.0.4:50051",
+		Lifecycle: state.NodeLifecycleRetired,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body := api.ComputeNodeEnrollmentRequest{
+		Name: "box-retired-name", TargetURL: "tcp://100.64.0.5:50051",
+		VPCPUs: 8, MemMB: 8192, MaxConcurrency: 16, AdmissionCeilingMB: 4096,
+	}
+	rec := e.do(t, http.MethodPost, "/v1/compute-nodes", body, nil)
+	assertProblem(t, rec, http.StatusConflict, "node_retired")
 }
 
 // seedHeartbeatTestNode is the shared seed for the heartbeats-history

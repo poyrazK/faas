@@ -130,6 +130,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/nodes/{name}/drain":                      true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":                true, // operator-only destructive node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/activate":                   true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/retire":                     true, // operator-only terminal node lifecycle control
 	"POST /v1/compute-nodes/{name}/drain":                        true, // Workstream B: canonical admin-scoped drain surface (ADR-137)
 	"GET /v1/compute-nodes/{name}/drain":                         true, // Workstream B: drain progress endpoint (ADR-137)
 	"GET /v1/admin/operator-intents/{id}":                        true, // PR #1099 P2.3

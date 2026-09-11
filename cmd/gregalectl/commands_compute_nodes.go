@@ -41,7 +41,7 @@ import (
 const dispatchComputeNodes = "compute-nodes"
 
 // cmdComputeNodesDispatch fans to add / drain / drain-status /
-// activate / force-drain / list / show. Matches the (args []string) int
+// activate / force-drain / retire / list / show. Matches the (args []string) int
 // signature every other dispatch* arm uses (see commands_release.go:cmdReleaseDispatch).
 //
 // `add` is the operator-side pre-registration path: it POSTs a row to
@@ -57,7 +57,7 @@ const dispatchComputeNodes = "compute-nodes"
 // explicit --break-glass-db path during an apid outage.
 func cmdComputeNodesDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes: missing subcommand; want add|list|show|drain|drain-status|activate|force-drain")
+		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes: missing subcommand; want add|list|show|drain|drain-status|activate|force-drain|retire")
 		return 2
 	}
 	switch args[0] {
@@ -75,6 +75,8 @@ func cmdComputeNodesDispatch(args []string) int {
 		return cmdComputeNodesActivate(args[1:])
 	case "force-drain":
 		return cmdComputeNodesForceDrain(args[1:])
+	case "retire":
+		return cmdComputeNodesRetire(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregalectl compute-nodes: unknown subcommand %q\n", args[0])
 		return 2
@@ -201,11 +203,11 @@ func computeNodeDrainStatusFromDB(node string) int {
 		_, _ = fmt.Fprintf(osStdout, "instances still on %s: %d\n", node, live)
 		return 1
 	}
-	if computeNode.Lifecycle != state.NodeLifecycleMaintenance {
+	if computeNode.Lifecycle != state.NodeLifecycleMaintenance && computeNode.Lifecycle != state.NodeLifecycleRetired {
 		_, _ = fmt.Fprintf(osStdout, "node %s is %s; waiting for maintenance hold\n", node, effectiveComputeNodeLifecycle(computeNode))
 		return 1
 	}
-	_, _ = fmt.Fprintf(osStdout, "drain-safe: %s is in maintenance with 0 live instances\n", node)
+	_, _ = fmt.Fprintf(osStdout, "drain-safe: %s is %s with 0 live instances\n", node, computeNode.Lifecycle)
 	return 0
 }
 
@@ -264,6 +266,34 @@ func cmdComputeNodesForceDrain(args []string) int {
 	return mutateComputeNodeViaAPI(*node, "force-drain", defaultNodeMutationReason(*reason, "operator_force_drain"), *timeout)
 }
 
+// cmdComputeNodesRetire permanently removes a drained node from controller
+// recovery. Both acknowledgement and an audit reason are mandatory.
+func cmdComputeNodesRetire(args []string) int {
+	fs := flag.NewFlagSet("retire", flag.ContinueOnError)
+	fs.SetOutput(osStderr)
+	node := fs.String("node", "", "fqdn of the maintenance-held node to retire")
+	reason := fs.String("reason", "", "required audit reason ([a-z0-9_]{1,64})")
+	timeout := fs.Duration("timeout", 30*time.Second, "maximum durable-intent wait")
+	breakGlass := fs.Bool("break-glass-db", false, "bypass apid and write the lifecycle row directly")
+	ack := fs.Bool("yes", false, "confirm permanent retirement")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	cleanReason := strings.TrimSpace(*reason)
+	if *node == "" || cleanReason == "" || !*ack {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes retire: --node, --reason, and --yes are required")
+		return 2
+	}
+	if !computeNodeEnrollmentReasonShape.MatchString(cleanReason) {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes retire: --reason must match [a-z0-9_]{1,64}")
+		return 2
+	}
+	if *breakGlass {
+		return mutateComputeNodeBreakGlass(*node, cleanReason, true, "retire")
+	}
+	return mutateComputeNodeViaAPI(*node, "retire", cleanReason, *timeout)
+}
+
 func defaultNodeMutationReason(reason, fallback string) string {
 	if strings.TrimSpace(reason) == "" {
 		return fallback
@@ -298,6 +328,23 @@ func mutateComputeNodeBreakGlass(node, reason string, ack bool, action string) i
 		next = state.NodeLifecycleForceDraining
 	case "activate":
 		next = state.NodeLifecycleActive
+	case "retire":
+		if current != state.NodeLifecycleMaintenance && current != state.NodeLifecycleRetired {
+			_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes retire: maintenance lifecycle required; got %s\n", current)
+			return 1
+		}
+		instances, listErr := st.ListInstancesOnNodeID(ctx, computeNode.ID)
+		if listErr != nil {
+			_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes retire: inspect instances: %v\n", listErr)
+			return 1
+		}
+		for _, instance := range instances {
+			if state.IsLive(strings.ToLower(instance.State)) {
+				_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes retire: zero live instances required")
+				return 1
+			}
+		}
+		next = state.NodeLifecycleRetired
 	}
 	if current != next {
 		if err := st.NodeSetLifecycle(ctx, computeNode.ID, current, next); err != nil {
@@ -382,14 +429,14 @@ func computeNodeDrainStatusViaAPI(node string) int {
 			return code
 		}
 	}
-	if status.Lifecycle != string(state.NodeLifecycleMaintenance) {
+	if status.Lifecycle != string(state.NodeLifecycleMaintenance) && status.Lifecycle != string(state.NodeLifecycleRetired) {
 		if !jsonEnabled() {
 			_, _ = fmt.Fprintf(osStdout, "node %s lifecycle=%s drained_instances=%d; waiting for maintenance hold\n", node, status.Lifecycle, status.DrainedInstanceCount)
 		}
 		return 1
 	}
 	if !jsonEnabled() {
-		_, _ = fmt.Fprintf(osStdout, "drain-safe: %s is in maintenance with 0 live instances\n", node)
+		_, _ = fmt.Fprintf(osStdout, "drain-safe: %s is %s with 0 live instances\n", node, status.Lifecycle)
 	}
 	return 0
 }
@@ -484,14 +531,14 @@ func reportComputeNodesList(w io.Writer, nodes []state.ComputeNode, activeOnly b
 		_, _ = fmt.Fprintf(w, "(no compute nodes%s)\n", activeOnlyString(activeOnly))
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%-32s  %-15s  %-7s  %-7s  %-7s  %-7s  %-36s  %s\n", "NAME", "ROLE", "VPCPUS", "MEM_MB", "MAXCON", "ACTIVE", "TARGET_URL", "GATEWAY_TARGET_URL")
+	_, _ = fmt.Fprintf(w, "%-32s  %-15s  %-14s  %-7s  %-7s  %-7s  %-7s  %-36s  %s\n", "NAME", "ROLE", "LIFECYCLE", "VPCPUS", "MEM_MB", "MAXCON", "ACTIVE", "TARGET_URL", "GATEWAY_TARGET_URL")
 	for _, n := range nodes {
 		role := ""
 		if n.Role != nil {
 			role = *n.Role
 		}
-		_, _ = fmt.Fprintf(w, "%-32s  %-15s  %-7d  %-7d  %-7d  %-7t  %-36s  %s\n",
-			n.Name, role, n.VPCPUs, n.MemMB, n.MaxConcurrency, n.Active, n.TargetURL, computeNodeGatewayTargetValue(n.GatewayTargetURL))
+		_, _ = fmt.Fprintf(w, "%-32s  %-15s  %-14s  %-7d  %-7d  %-7d  %-7t  %-36s  %s\n",
+			n.Name, role, effectiveComputeNodeLifecycle(n), n.VPCPUs, n.MemMB, n.MaxConcurrency, n.Active, n.TargetURL, computeNodeGatewayTargetValue(n.GatewayTargetURL))
 	}
 }
 
@@ -529,6 +576,7 @@ type computeNodeBrief struct {
 	MaxConcurrency     int     `json:"max_concurrency"`
 	AdmissionCeilingMB int     `json:"admission_ceiling_mb"`
 	Active             bool    `json:"active"`
+	Lifecycle          string  `json:"lifecycle"`
 	TargetURL          string  `json:"target_url"`
 	GatewayTargetURL   string  `json:"gateway_target_url,omitempty"`
 }
@@ -543,7 +591,7 @@ func emitComputeNodesListJSON(w io.Writer, nodes []state.ComputeNode) int {
 			Name: n.Name, ID: n.ID, Role: n.Role,
 			VPCPUs: n.VPCPUs, MemMB: n.MemMB,
 			MaxConcurrency: n.MaxConcurrency, AdmissionCeilingMB: n.AdmissionCeilingMB,
-			Active: n.Active, TargetURL: n.TargetURL,
+			Active: n.Active, Lifecycle: string(effectiveComputeNodeLifecycle(n)), TargetURL: n.TargetURL,
 			GatewayTargetURL: computeNodeGatewayTargetValue(n.GatewayTargetURL),
 		})
 	}
@@ -665,7 +713,7 @@ func computeNodeFromOperatorResponse(item api.ComputeNodeOperatorResponse) state
 	return state.ComputeNode{
 		ID: item.ID, Name: item.Name, TargetURL: item.TargetURL, GatewayTargetURL: gatewayTargetURL,
 		VPCPUs: item.VPCPUs, MemMB: item.MemMB, MaxConcurrency: item.MaxConcurrency,
-		AdmissionCeilingMB: item.AdmissionCeilingMB, Active: item.Active, Role: item.Role,
+		AdmissionCeilingMB: item.AdmissionCeilingMB, Active: item.Active, Lifecycle: state.NodeLifecycle(item.Lifecycle), Role: item.Role,
 		Region: item.Region, Zone: item.Zone, ReleaseID: item.ReleaseID, ManifestHash: item.ManifestHash,
 		CertFingerprint: item.CertFingerprint, Generation: item.Generation,
 	}
@@ -690,6 +738,7 @@ func reportComputeNodeShow(w io.Writer, n state.ComputeNode, live int) {
 	_, _ = fmt.Fprintf(w, "max_concurrency=%d\n", n.MaxConcurrency)
 	_, _ = fmt.Fprintf(w, "admission_ceiling_mb=%d\n", n.AdmissionCeilingMB)
 	_, _ = fmt.Fprintf(w, "active=%t\n", n.Active)
+	_, _ = fmt.Fprintf(w, "lifecycle=%s\n", effectiveComputeNodeLifecycle(n))
 	if n.Region != nil {
 		_, _ = fmt.Fprintf(w, "region=%s\n", *n.Region)
 	}
@@ -724,6 +773,7 @@ type computeNodeShowJSON struct {
 	MaxConcurrency     int     `json:"max_concurrency"`
 	AdmissionCeilingMB int     `json:"admission_ceiling_mb"`
 	Active             bool    `json:"active"`
+	Lifecycle          string  `json:"lifecycle"`
 	Region             *string `json:"region,omitempty"`
 	Zone               *string `json:"zone,omitempty"`
 	ReleaseID          *string `json:"release_id,omitempty"`
@@ -738,7 +788,7 @@ func emitComputeNodeShowJSON(w io.Writer, n state.ComputeNode, live int) int {
 		Name: n.Name, ID: n.ID, Role: n.Role,
 		TargetURL: n.TargetURL, GatewayTargetURL: computeNodeGatewayTargetValue(n.GatewayTargetURL), VPCPUs: n.VPCPUs, MemMB: n.MemMB,
 		MaxConcurrency: n.MaxConcurrency, AdmissionCeilingMB: n.AdmissionCeilingMB,
-		Active: n.Active, Region: n.Region, Zone: n.Zone,
+		Active: n.Active, Lifecycle: string(effectiveComputeNodeLifecycle(n)), Region: n.Region, Zone: n.Zone,
 		ReleaseID: n.ReleaseID, ManifestHash: n.ManifestHash,
 		CertFingerprint: n.CertFingerprint, Generation: n.Generation,
 		LiveInstanceCount: live,
@@ -936,6 +986,10 @@ func computeNodeAddBreakGlass(payload computeNodePayload, reason, traceID string
 		node.GatewayTargetURL = &value
 	}
 	if existing, lookupErr := st.ComputeNodeByName(context.Background(), payload.Name); lookupErr == nil {
+		if effectiveComputeNodeLifecycle(existing) == state.NodeLifecycleRetired {
+			fmt.Fprintln(os.Stderr, "gregalectl compute-nodes add: retired node names cannot be re-enrolled")
+			return 1
+		}
 		node.VCPUBudget = existing.VCPUBudget
 		node.Region = existing.Region
 		node.Zone = existing.Zone

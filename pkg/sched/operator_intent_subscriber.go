@@ -54,6 +54,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -165,7 +166,8 @@ func (l *Loop) processOperatorIntent(ctx context.Context, intent state.OperatorI
 		snapIDs, err = l.engine.ForceRestart(ctx, intent.TargetID, intent.Reason)
 	case state.OperatorIntentKindNodeDrain,
 		state.OperatorIntentKindNodeForceDrain,
-		state.OperatorIntentKindNodeActivate:
+		state.OperatorIntentKindNodeActivate,
+		state.OperatorIntentKindNodeRetire:
 		// Fleet-level node operations are applied by schedd, next to
 		// the recovery runner that owns the resulting migration work.
 		// The durable intent is already present before this lifecycle
@@ -307,9 +309,30 @@ func applyNodeOperatorIntent(ctx context.Context, store state.Store, intent stat
 			return fmt.Errorf("operator_intent: node_activate refuses controller-owned lifecycle %s", current)
 		}
 		return store.NodeSetLifecycle(ctx, node.ID, current, state.NodeLifecycleActive)
+	case state.OperatorIntentKindNodeRetire:
+		return applyNodeRetirement(ctx, store, node, current)
 	default:
 		return fmt.Errorf("operator_intent: unsupported node kind %s", intent.Kind)
 	}
+}
+
+func applyNodeRetirement(ctx context.Context, store state.Store, node state.ComputeNode, current state.NodeLifecycle) error {
+	if current == state.NodeLifecycleRetired {
+		return nil
+	}
+	if current != state.NodeLifecycleMaintenance {
+		return fmt.Errorf("operator_intent: node_retire requires maintenance lifecycle, got %s", current)
+	}
+	instances, err := store.ListInstancesOnNodeID(ctx, node.ID)
+	if err != nil {
+		return fmt.Errorf("operator_intent: inspect node instances: %w", err)
+	}
+	for _, instance := range instances {
+		if state.IsLive(strings.ToLower(instance.State)) {
+			return fmt.Errorf("operator_intent: node_retire requires zero live instances")
+		}
+	}
+	return store.NodeSetLifecycle(ctx, node.ID, current, state.NodeLifecycleRetired)
 }
 
 // operatorIntentResultLabel* mirror fireNowResultLabel* —
