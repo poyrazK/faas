@@ -329,10 +329,11 @@ func jobExitPayloadFromWait(waitResult jobWaitResult, reason jobTerminationReaso
 	if waitResult.err != nil && !waitResult.hasStatus {
 		errorClass = "infra"
 	}
-	if reason == jobTimedOut {
+	switch reason {
+	case jobTimedOut:
 		exitCode = 124
 		errorClass = "timeout"
-	} else if reason == jobCancelled {
+	case jobCancelled:
 		exitCode = 128 + int32(stopSignal)
 		errorClass = "cancelled"
 	}
