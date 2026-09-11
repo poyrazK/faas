@@ -341,6 +341,34 @@ func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceRespon
 		_ = tw.Flush()
 	}
 
+	if len(resp.Correlation.Stages) > 0 {
+		_, _ = fmt.Fprintln(w, "CORRELATION")
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "PHASE\tSTATUS\tDURATION_MS\tEVIDENCE\tDETAILS")
+		for _, stage := range resp.Correlation.Stages {
+			duration := "-"
+			if stage.DurationMS > 0 {
+				duration = fmt.Sprintf("%d", stage.DurationMS)
+			}
+			evidence := "-"
+			if stage.EvidenceCount > 0 {
+				evidence = fmt.Sprintf("%d", stage.EvidenceCount)
+			}
+			details := stage.Reason
+			if details == "" {
+				details = "-"
+			}
+			if stage.Approximate {
+				details = "~ " + details
+			}
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", stage.Phase, stage.Status, duration, evidence, details)
+		}
+		_ = tw.Flush()
+		if !resp.Correlation.Complete {
+			_, _ = fmt.Fprintln(w, "correlation incomplete: missing or partial stages are shown above")
+		}
+	}
+
 	if len(resp.Spans) == 0 {
 		_, _ = fmt.Fprintln(w, "span evidence: no linked OTel spans")
 	} else {

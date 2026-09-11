@@ -1710,14 +1710,30 @@ type DebugRequestView struct {
 // explanation are already bounded/redacted by the API handler's shared
 // projection, so the dashboard never renders raw customer attributes.
 type DebugRequestDetailView struct {
-	Request        DebugRequestView
-	Regression     *DebugRegressionView
-	Timeline       []DebugTimelineEventView
-	Spans          []DebugSpanView
-	SpansTruncated bool
-	Explanation    string
-	EvidenceStatus string
-	GeneratedAt    string
+	Request             DebugRequestView
+	Regression          *DebugRegressionView
+	Correlation         []DebugCorrelationStageView
+	CorrelationComplete bool
+	Timeline            []DebugTimelineEventView
+	Spans               []DebugSpanView
+	SpansTruncated      bool
+	Explanation         string
+	EvidenceStatus      string
+	GeneratedAt         string
+}
+
+// DebugCorrelationStageView is the template-safe projection of one
+// edge-to-billing request stage. Missing and partial statuses are rendered
+// explicitly so the dashboard does not imply that an absent signal was fast.
+type DebugCorrelationStageView struct {
+	Phase         string
+	Status        string
+	StartedAt     string
+	CompletedAt   string
+	DurationMS    int64
+	EvidenceCount int
+	Reason        string
+	Approximate   bool
 }
 
 // DebugTimelineEventView is the template-safe projection of a deterministic

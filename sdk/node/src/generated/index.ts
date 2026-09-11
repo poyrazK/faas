@@ -142,6 +142,8 @@ export type { DebugEvidenceExplanation } from './models/DebugEvidenceExplanation
 export type { DebugRegressionItem } from './models/DebugRegressionItem.js';
 export type { DebugRegressionsResponse } from './models/DebugRegressionsResponse.js';
 export type { DebugReplayResponse } from './models/DebugReplayResponse.js';
+export type { DebugRequestCorrelation } from './models/DebugRequestCorrelation.js';
+export type { DebugRequestCorrelationStage } from './models/DebugRequestCorrelationStage.js';
 export type { DebugRequestEvidenceResponse } from './models/DebugRequestEvidenceResponse.js';
 export type { DebugTelemetryListResponse } from './models/DebugTelemetryListResponse.js';
 export type { DebugTelemetryRequestItem } from './models/DebugTelemetryRequestItem.js';

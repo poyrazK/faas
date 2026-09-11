@@ -23,6 +23,9 @@
     .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.8rem; background: #e5e7eb; color: #374151; }
     .badge.regressed { background: #fee2e2; color: #991b1b; font-weight: 600; }
     .badge.ok { background: #d1fae5; color: #065f46; }
+    .badge.partial { background: #fef3c7; color: #92400e; }
+    .badge.missing { background: #f3f4f6; color: #4b5563; }
+    .badge.na { background: #e5e7eb; color: #374151; }
     .badge.cold { background: #dbeafe; color: #1e40af; }
     .regression { border: 1px solid #fecaca; border-left: 4px solid #dc2626; border-radius: 6px; padding: 0.7rem 0.85rem; margin: 0.5rem 0; }
     .regression strong { color: #991b1b; }
@@ -158,6 +161,23 @@
           <p><code>{{.Data.Selected.Request.Method}} {{.Data.Selected.Request.Route}}</code> · HTTP {{.Data.Selected.Request.Status}} · <strong>{{.Data.Selected.Request.LatencyMS}} ms</strong> · {{.Data.Selected.Request.ReceivedAt}}</p>
           <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.InstanceID}} · instance <code>{{.Data.Selected.Request.InstanceID}}</code>{{end}}{{if .Data.Selected.Request.WakeID}} · wake <code>{{.Data.Selected.Request.WakeID}}</code>{{end}}{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
           <div class="explanation"><strong>{{.Data.Selected.EvidenceStatus}}</strong>: {{.Data.Selected.Explanation}}</div>
+          <h3>Request correlation</h3>
+          <p class="muted">The stage view joins retained signals from the edge through billing. Missing signals are shown explicitly; they are not treated as zero latency.</p>
+          <table class="span-table correlation-table" aria-label="Request correlation stages">
+            <thead><tr><th>Stage</th><th>Status</th><th>Duration</th><th>Evidence</th><th>Details</th></tr></thead>
+            <tbody>
+            {{range .Data.Selected.Correlation}}
+              <tr>
+                <td><strong>{{.Phase}}</strong>{{if .Approximate}} <small class="muted">(approx.)</small>{{end}}</td>
+                <td><span class="badge {{if eq .Status "observed"}}ok{{else if eq .Status "partial"}}partial{{else if eq .Status "not_applicable"}}na{{else}}missing{{end}}">{{.Status}}</span></td>
+                <td>{{if .DurationMS}}{{.DurationMS}} ms{{else}}—{{end}}</td>
+                <td>{{if .EvidenceCount}}{{.EvidenceCount}}{{else}}—{{end}}</td>
+                <td>{{if .Reason}}{{.Reason}}{{else}}—{{end}}</td>
+              </tr>
+            {{end}}
+            </tbody>
+          </table>
+          {{if .Data.Selected.CorrelationComplete}}<p class="notice">All applicable request stages have retained evidence.</p>{{else}}<p class="notice">Correlation is incomplete. Use the missing stages to decide which telemetry to enable or inspect next.</p>{{end}}
           {{if $.Data.ReplayCSRF}}
             <form method="post" action="/dashboard/apps/{{.Data.AppSlug}}/debug/requests/{{.Data.Selected.Request.ID}}/replay">
               <input type="hidden" name="csrf_token" value="{{$.Data.ReplayCSRF}}">

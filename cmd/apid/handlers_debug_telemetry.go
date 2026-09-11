@@ -211,11 +211,13 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrCapacity("get debug request timeline"))
 		return
 	}
+	correlation := buildDebugRequestCorrelation(request, timeline, spans)
 
 	writeJSON(w, http.StatusOK, api.DebugRequestEvidenceResponse{
 		Request:        request,
 		Regression:     regression,
 		Timeline:       timeline,
+		Correlation:    correlation,
 		Spans:          spans,
 		SpansTruncated: truncated,
 		Explanation:    buildDebugEvidenceExplanation(request, regression, spans),
@@ -391,6 +393,8 @@ func textFromPg(value pgtype.Text) string {
 
 const debugTimelineMaxEvents = 200
 
+var debugCorrelationPhases = [...]string{"edge", "queue", "wake", "guest", "downstream", "billing"}
+
 // buildDebugRequestTimeline joins the retained request row to the wake event
 // stream using the opaque wake_id captured at the gateway. The request/error
 // markers are synthesized from the row itself, so a failed request remains
@@ -512,6 +516,196 @@ func debugWakeTimelineSummary(event state.Event) string {
 	default:
 		return "wake lifecycle event"
 	}
+}
+
+// buildDebugRequestCorrelation turns the bounded timeline and span evidence
+// into a fixed-shape request narrative. A stage is never omitted: customers
+// can distinguish an inapplicable warm-request wake from a missing telemetry
+// signal, instead of mistaking an empty timeline for a healthy request.
+func buildDebugRequestCorrelation(request api.DebugTelemetryRequestItem, timeline []api.DebugTimelineEvent, spans []api.DebugTelemetrySpan) api.DebugRequestCorrelation {
+	stages := make([]api.DebugRequestCorrelationStage, 0, len(debugCorrelationPhases))
+	for _, phase := range debugCorrelationPhases {
+		stages = append(stages, api.DebugRequestCorrelationStage{Phase: phase, Status: "missing"})
+	}
+
+	// The request row is a collapsed latency bucket, so the edge markers are
+	// useful but explicitly approximate rather than pretending to be a raw
+	// request trace.
+	edge := &stages[0]
+	edge.Status = "observed"
+	edge.StartedAt = correlationEventAt(timeline, "request.received")
+	edge.CompletedAt = correlationEventAt(timeline, "request.completed")
+	edge.DurationMS = int64(request.LatencyMS)
+	edge.EvidenceCount = countCorrelationKinds(timeline, "request.received", "request.completed")
+	edge.Approximate = true
+	edge.Reason = "derived from collapsed request telemetry"
+
+	if request.WakeID == "" {
+		stages[1] = api.DebugRequestCorrelationStage{
+			Phase:  "queue",
+			Status: "not_applicable",
+			Reason: "request did not record a wake",
+		}
+		stages[2] = api.DebugRequestCorrelationStage{
+			Phase:  "wake",
+			Status: "not_applicable",
+			Reason: "request did not record a wake",
+		}
+	} else {
+		buildDebugQueueCorrelation(&stages[1], timeline)
+		buildDebugWakeCorrelation(&stages[2], timeline)
+	}
+
+	guest := &stages[3]
+	if event := firstCorrelationEvent(timeline, "wake.proxy_first_byte"); event != nil {
+		guest.Status = "partial"
+		guest.CompletedAt = event.At
+		guest.EvidenceCount = 1
+		guest.Reason = "first-byte marker retained; guest execution duration is not captured"
+	} else {
+		guest.Reason = "no guest first-byte marker was retained"
+	}
+
+	downstream := &stages[4]
+	if len(spans) > 0 {
+		downstream.Status = "observed"
+		downstream.EvidenceCount = len(spans)
+		downstream.Reason = "slowest retained child span; span durations may overlap"
+		for _, span := range spans {
+			ms := int64(span.DurationNanos / 1_000_000)
+			if ms > downstream.DurationMS {
+				downstream.DurationMS = ms
+			}
+		}
+	} else {
+		downstream.Reason = "no linked OpenTelemetry spans were retained"
+	}
+
+	// Billed dimensions are deliberately not part of request_telemetry yet.
+	// Keep the absence visible in the same fixed-shape response so customers
+	// know this is a product gap, not evidence that billing was free.
+	stages[5] = api.DebugRequestCorrelationStage{
+		Phase:  "billing",
+		Status: "missing",
+		Reason: "billed dimensions are not attached to request evidence yet",
+	}
+
+	complete := true
+	for _, stage := range stages {
+		if stage.Status == "missing" || stage.Status == "partial" {
+			complete = false
+			break
+		}
+	}
+	return api.DebugRequestCorrelation{Stages: stages, Complete: complete}
+}
+
+func buildDebugQueueCorrelation(stage *api.DebugRequestCorrelationStage, timeline []api.DebugTimelineEvent) {
+	accepted := firstCorrelationEvent(timeline, "wake.queue_accepted")
+	admitted := firstCorrelationEvent(timeline, "wake.admitted")
+	stage.EvidenceCount = countCorrelationKinds(timeline, "wake.queue_accepted", "wake.admitted")
+	switch {
+	case accepted != nil && admitted != nil:
+		stage.Status = "observed"
+		stage.StartedAt, stage.CompletedAt, stage.DurationMS = correlationRange(accepted, admitted)
+	case accepted != nil:
+		stage.Status = "partial"
+		stage.StartedAt = accepted.At
+		stage.Reason = "queue admission marker is missing"
+	case admitted != nil:
+		stage.Status = "partial"
+		stage.CompletedAt = admitted.At
+		stage.Reason = "queue accepted marker is missing"
+	default:
+		stage.Reason = "no queue lifecycle markers were retained"
+	}
+}
+
+func buildDebugWakeCorrelation(stage *api.DebugRequestCorrelationStage, timeline []api.DebugTimelineEvent) {
+	started := firstCorrelationEvent(timeline, "wake.boot_started")
+	ready := firstCorrelationEvent(timeline, "wake.readiness_200")
+	completed := firstCorrelationEvent(timeline, "wake.boot_completed")
+	failed := firstCorrelationEvent(timeline, "wake.boot_failed")
+	stage.EvidenceCount = countCorrelationKinds(timeline, "wake.boot_started", "wake.readiness_200", "wake.boot_completed", "wake.boot_failed")
+	terminal := completed
+	if terminal == nil {
+		terminal = ready
+	}
+	if terminal == nil {
+		terminal = failed
+	}
+	switch {
+	case started != nil && completed != nil:
+		stage.Status = "observed"
+		stage.StartedAt, stage.CompletedAt, stage.DurationMS = correlationRange(started, completed)
+	case started != nil && terminal != nil:
+		stage.Status = "partial"
+		stage.StartedAt, stage.CompletedAt, stage.DurationMS = correlationRange(started, terminal)
+		if failed != nil {
+			stage.Reason = "wake boot failed before completion"
+		} else {
+			stage.Reason = "wake completion marker is missing"
+		}
+	case started != nil:
+		stage.Status = "partial"
+		stage.StartedAt = started.At
+		stage.Reason = "wake readiness/completion marker is missing"
+	case terminal != nil:
+		stage.Status = "partial"
+		stage.CompletedAt = terminal.At
+		stage.Reason = "wake boot-start marker is missing"
+	default:
+		stage.Reason = "no wake lifecycle markers were retained"
+	}
+}
+
+func firstCorrelationEvent(timeline []api.DebugTimelineEvent, kind string) *api.DebugTimelineEvent {
+	for i := range timeline {
+		if timeline[i].Kind == kind {
+			return &timeline[i]
+		}
+	}
+	return nil
+}
+
+func countCorrelationKinds(timeline []api.DebugTimelineEvent, kinds ...string) int {
+	wanted := make(map[string]struct{}, len(kinds))
+	for _, kind := range kinds {
+		wanted[kind] = struct{}{}
+	}
+	count := 0
+	for _, event := range timeline {
+		if _, ok := wanted[event.Kind]; ok {
+			count++
+		}
+	}
+	return count
+}
+
+func correlationEventAt(timeline []api.DebugTimelineEvent, kind string) string {
+	if event := firstCorrelationEvent(timeline, kind); event != nil {
+		return event.At
+	}
+	return ""
+}
+
+func correlationRange(start, end *api.DebugTimelineEvent) (string, string, int64) {
+	if start == nil || end == nil {
+		return correlationEventAtValue(start), correlationEventAtValue(end), 0
+	}
+	startAt, errStart := time.Parse(time.RFC3339Nano, start.At)
+	endAt, errEnd := time.Parse(time.RFC3339Nano, end.At)
+	if errStart != nil || errEnd != nil || endAt.Before(startAt) {
+		return start.At, end.At, 0
+	}
+	return start.At, end.At, endAt.Sub(startAt).Milliseconds()
+}
+
+func correlationEventAtValue(event *api.DebugTimelineEvent) string {
+	if event == nil {
+		return ""
+	}
+	return event.At
 }
 
 // uuidFromPg renders a pgtype.UUID as the canonical hyphenated-hex

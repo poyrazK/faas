@@ -272,6 +272,10 @@ from .debug_regression_item import DebugRegressionItem
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_response import DebugReplayResponse
 from .debug_replay_response_status import DebugReplayResponseStatus
+from .debug_request_correlation import DebugRequestCorrelation
+from .debug_request_correlation_stage import DebugRequestCorrelationStage
+from .debug_request_correlation_stage_phase import DebugRequestCorrelationStagePhase
+from .debug_request_correlation_stage_status import DebugRequestCorrelationStageStatus
 from .debug_request_evidence_response import DebugRequestEvidenceResponse
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
@@ -1147,6 +1151,10 @@ __all__ = (
     "DebugRegressionsResponse",
     "DebugReplayResponse",
     "DebugReplayResponseStatus",
+    "DebugRequestCorrelation",
+    "DebugRequestCorrelationStage",
+    "DebugRequestCorrelationStagePhase",
+    "DebugRequestCorrelationStageStatus",
     "DebugRequestEvidenceResponse",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",
