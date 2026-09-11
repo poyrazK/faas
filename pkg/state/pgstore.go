@@ -18517,20 +18517,26 @@ type customDomainScanner interface {
 }
 
 func scanCustomDomain(row customDomainScanner, d *CustomDomain) error {
-	var expiresAt, dnsCheckedAt, failedAt time.Time
+	var verifiedAt, expiresAt, dnsCheckedAt, failedAt time.Time
 	var status string
-	if err := row.Scan(&d.Domain, &d.AppID, &d.ChallengeToken, &d.VerifiedAt,
+	if err := row.Scan(&d.Domain, &d.AppID, &d.ChallengeToken, &verifiedAt,
 		&status, &expiresAt, &d.CertLastError, &dnsCheckedAt, &failedAt); err != nil {
 		return err
 	}
 	d.CertStatus = CustomDomainCertStatus(status)
-	if !expiresAt.Equal(time.Unix(0, 0).UTC()) {
+	epoch := time.Unix(0, 0).UTC()
+	if !verifiedAt.Equal(epoch) {
+		d.VerifiedAt = verifiedAt
+	} else {
+		d.VerifiedAt = time.Time{}
+	}
+	if !expiresAt.Equal(epoch) {
 		d.CertExpiresAt = expiresAt
 	}
-	if !dnsCheckedAt.Equal(time.Unix(0, 0).UTC()) {
+	if !dnsCheckedAt.Equal(epoch) {
 		d.DNSLastCheckedAt = dnsCheckedAt
 	}
-	if !failedAt.Equal(time.Unix(0, 0).UTC()) {
+	if !failedAt.Equal(epoch) {
 		d.CertFailedAt = failedAt
 	}
 	return nil

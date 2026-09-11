@@ -2006,6 +2006,11 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	app, err := s.store.AppByID(r.Context(), req.AppID)
+	if err != nil {
+		// The public CLI documents --app as an app slug. Keep accepting IDs
+		// for existing API clients, but resolve the documented slug form too.
+		app, err = s.store.AppBySlug(r.Context(), req.AppID)
+	}
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")
 		return
