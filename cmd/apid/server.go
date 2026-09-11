@@ -1161,6 +1161,16 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.upsertDevSession))))
 	mux.HandleFunc("DELETE /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.destroyDevSession))))
 	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getApp))))
+	// ADR-120: end-customer identity and credential management. Reads use
+	// the normal app-read scope; mutations require deploy-write + MFA and
+	// are idempotency-aware so a retry never mints a second plaintext key.
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumers))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumer)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumer))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeAPIConsumer))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listConsumerKeys))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createConsumerKey)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}/keys/{key_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeConsumerKey))))
 	// Issue #273 / ADR-042 — per-app metrics endpoint. Read-only,
 	// no MFA required (the primary caller is an API key with
 	// ScopesReadSurface). Mirrors getApp's IDOR-safe loadApp so a

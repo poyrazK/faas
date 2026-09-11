@@ -24,8 +24,16 @@ type (
 	AppResponse            = api.AppResponse
 	AppEffectiveLimits     = api.AppEffectiveLimits
 	AppConfiguredResources = api.AppConfiguredResources
-	ResourceProfile        = api.ResourceProfile
-	ResourceProfileSpec    = api.ResourceProfileSpec
+
+	// End-customer consumers and credentials (ADR-120).
+	CreateAPIConsumerRequest = api.CreateAPIConsumerRequest
+	APIConsumerResponse      = api.APIConsumerResponse
+	APIConsumerListResponse  = api.APIConsumerListResponse
+	CreateConsumerKeyRequest = api.CreateConsumerKeyRequest
+	ConsumerKeyResponse      = api.ConsumerKeyResponse
+	ConsumerKeyListResponse  = api.ConsumerKeyListResponse
+	ResourceProfile          = api.ResourceProfile
+	ResourceProfileSpec      = api.ResourceProfileSpec
 
 	// Deployments.
 	CreateDeploymentRequest        = api.CreateDeploymentRequest
@@ -139,9 +147,11 @@ type (
 )
 
 const (
-	ResourceProfileMicro  = api.ResourceProfileMicro
-	ResourceProfileSmall  = api.ResourceProfileSmall
-	ResourceProfileMedium = api.ResourceProfileMedium
-	ResourceProfileLarge  = api.ResourceProfileLarge
-	ResourceProfileXLarge = api.ResourceProfileXLarge
+	ResourceProfileMicro     = api.ResourceProfileMicro
+	ResourceProfileSmall     = api.ResourceProfileSmall
+	ResourceProfileMedium    = api.ResourceProfileMedium
+	ResourceProfileLarge     = api.ResourceProfileLarge
+	ResourceProfileXLarge    = api.ResourceProfileXLarge
+	ConsumerAuthModeOptional = api.ConsumerAuthModeOptional
+	ConsumerAuthModeRequired = api.ConsumerAuthModeRequired
 )

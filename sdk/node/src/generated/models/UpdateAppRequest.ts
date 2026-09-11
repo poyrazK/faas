@@ -127,6 +127,10 @@ export type UpdateAppRequest = {
    */
   require_authn?: boolean | null;
   /**
+   * End-customer credential policy for this app. Omit for no change; optional accepts anonymous requests, required mandates a valid consumer key.
+   */
+  consumer_auth_mode?: 'optional' | 'required';
+  /**
    * Per-app public-URL auth configuration (issue #477 / ADR-077). Omitted → no change. When present, mode is the closed enum {open, bearer, basic}; basic_user + basic_pass are required when mode='basic' and the apid seal step encrypts them under the APP_BASIC_AUTH secretbox namespace before persistence.
    */
   public_auth?: (null | PublicAuthBlock);

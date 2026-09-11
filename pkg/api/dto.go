@@ -352,6 +352,11 @@ type UpdateAppRequest struct {
 	// here: a valid token from a different account receives 403
 	// at the gateway, not at the PATCH endpoint.
 	RequireAuthn *bool `json:"require_authn,omitempty"`
+	// ConsumerAuthMode (ADR-120) controls end-customer API-key
+	// authentication. "optional" accepts anonymous requests and stamps a
+	// consumer when a valid key is present; "required" rejects anonymous
+	// requests. Nil leaves the existing mode unchanged.
+	ConsumerAuthMode *string `json:"consumer_auth_mode,omitempty"`
 	// PublicAuth (issue #477 / ADR-079) toggles per-app
 	// public-URL auth (open|bearer|basic). nil = don't
 	// touch the column (pre-#477 behaviour preserved).
@@ -464,6 +469,56 @@ type UpdateAppRequest struct {
 	// `MinScaleInCooldownS` / `MaxScaleInCooldownS`).
 	ScalingPolicy    *ScalingPolicy `json:"scaling_policy,omitempty"`
 	SetScalingPolicy bool           `json:"-"`
+}
+
+// CreateAPIConsumerRequest creates a stable API consumer identity within an app.
+type CreateAPIConsumerRequest struct {
+	ExternalRef string `json:"external_ref"`
+	Name        string `json:"name"`
+}
+
+// APIConsumerResponse is the public representation of an API consumer.
+type APIConsumerResponse struct {
+	ID          string     `json:"id"`
+	AppID       string     `json:"app_id"`
+	ExternalRef string     `json:"external_ref"`
+	Name        string     `json:"name"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+}
+
+// CreateConsumerKeyRequest creates a credential for an API consumer.
+type CreateConsumerKeyRequest struct {
+	Name      string     `json:"name"`
+	Scopes    []string   `json:"scopes"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// ConsumerKeyResponse is the public representation of a consumer key. Key is
+// populated only in the response that creates it.
+type ConsumerKeyResponse struct {
+	ID         string     `json:"id"`
+	ConsumerID string     `json:"consumer_id,omitempty"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	Scopes     []string   `json:"scopes"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	Key        string     `json:"key,omitempty"`
+}
+
+// APIConsumerListResponse wraps the consumers for an app.
+type APIConsumerListResponse struct {
+	Consumers []APIConsumerResponse `json:"consumers"`
+}
+
+// ConsumerKeyListResponse wraps the keys for a consumer.
+type ConsumerKeyListResponse struct {
+	Keys []ConsumerKeyResponse `json:"keys"`
 }
 
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
@@ -816,6 +871,10 @@ type AppResponse struct {
 	// dashboards can show the "auth required" pill alongside
 	// streaming / warm-snapshot / require_signed.
 	RequireAuthn bool `json:"require_authn"`
+	// ConsumerAuthMode (ADR-120) is the app-level end-customer credential
+	// policy. It is "optional" by default and becomes "required" when the
+	// app owner wants every request attributed to a consumer identity.
+	ConsumerAuthMode string `json:"consumer_auth_mode"`
 	// PublicAuth (issue #477 / ADR-079) reflects the
 	// per-app public-URL auth mode. Three shapes:
 	//   {mode:"open"}    — pre-#477 default; every existing

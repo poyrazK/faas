@@ -576,6 +576,20 @@ const (
 	APIConsumerStatusRevoked APIConsumerStatus = "revoked"
 )
 
+// ConsumerAuthMode controls whether an app accepts end-customer credentials
+// on its public request path. The gateway owns enforcement; state keeps the
+// closed-set value so control-plane updates are durable and cacheable.
+type ConsumerAuthMode string
+
+const (
+	ConsumerAuthModeOptional ConsumerAuthMode = "optional"
+	ConsumerAuthModeRequired ConsumerAuthMode = "required"
+)
+
+func (m ConsumerAuthMode) Valid() bool {
+	return m == ConsumerAuthModeOptional || m == ConsumerAuthModeRequired
+}
+
 // APIConsumer is the stable identity of one customer of an application.
 // Credentials (ConsumerKey) are attached to this row so key rotation does
 // not change the identity used for throttling, usage attribution, or billing.
@@ -1019,6 +1033,10 @@ type App struct {
 	// blob. Plan-gated at PATCH time (open=all, bearer=Hobby+,
 	// basic=Pro+); the per-plan default is always 'open'.
 	PublicAuthMode string
+	// ConsumerAuthMode (ADR-120) controls whether requests to this app must
+	// carry a valid API consumer key. Optional is the backwards-compatible
+	// default; required is enforced by the gateway consumer middleware.
+	ConsumerAuthMode ConsumerAuthMode
 	// PublicAuthBasicSealed (issue #477 / ADR-079) is the
 	// secretbox-sealed APP_BASIC_AUTH blob carrying the
 	// {username, password} pair the basic-auth path verifies
@@ -4392,6 +4410,11 @@ type UpdateAppParams struct {
 	// plan may PATCH true → false to opt out per-app.
 	RequireAuthn    *bool
 	SetRequireAuthn bool
+	// ConsumerAuthMode (ADR-120) is the closed-set app-level switch for
+	// end-customer API-key authentication. Nil means "don't touch";
+	// non-nil writes optional or required explicitly.
+	ConsumerAuthMode    *string
+	SetConsumerAuthMode bool
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth block on the PATCH request. Three
 	// shapes:

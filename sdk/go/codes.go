@@ -76,4 +76,7 @@ const (
 	CodeResetTokenExpired             = api.CodeResetTokenExpired
 	CodeAccountExists                 = api.CodeAccountExists
 	CodeRateLimited                   = api.CodeRateLimited
+	CodeConsumerAuthModeInvalid       = api.CodeConsumerAuthModeInvalid
+	CodeConsumerKeysNotAllowed        = api.CodeConsumerKeysNotAllowed
+	CodePlanConsumerKeyQuotaReached   = api.CodePlanConsumerKeyQuotaReached
 )

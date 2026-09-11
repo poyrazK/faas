@@ -540,6 +540,48 @@ func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (AppRespon
 	return out, c.do(ctx, "POST", "/v1/apps", req, &out)
 }
 
+// ListAPIConsumers returns the end-customer identities registered for an app.
+func (c *Client) ListAPIConsumers(ctx context.Context, slug string) (APIConsumerListResponse, error) {
+	var out APIConsumerListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers", nil, &out)
+}
+
+// CreateAPIConsumer registers an end-customer identity for an app.
+func (c *Client) CreateAPIConsumer(ctx context.Context, slug string, req CreateAPIConsumerRequest) (APIConsumerResponse, error) {
+	var out APIConsumerResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers", req, &out)
+}
+
+// GetAPIConsumer returns one end-customer identity by id.
+func (c *Client) GetAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
+	var out APIConsumerResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID, nil, &out)
+}
+
+// RevokeAPIConsumer revokes an end-customer identity and all future key issuance for it.
+func (c *Client) RevokeAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
+	var out APIConsumerResponse
+	return out, c.do(ctx, "DELETE", "/v1/apps/"+slug+"/consumers/"+consumerID, nil, &out)
+}
+
+// ListConsumerKeys returns the credential metadata for an end-customer identity.
+func (c *Client) ListConsumerKeys(ctx context.Context, slug, consumerID string) (ConsumerKeyListResponse, error) {
+	var out ConsumerKeyListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/keys", nil, &out)
+}
+
+// CreateConsumerKey issues a credential. The plaintext is returned only in this response.
+func (c *Client) CreateConsumerKey(ctx context.Context, slug, consumerID string, req CreateConsumerKeyRequest) (ConsumerKeyResponse, error) {
+	var out ConsumerKeyResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/keys", req, &out)
+}
+
+// RevokeConsumerKey revokes a credential while retaining its audit metadata.
+func (c *Client) RevokeConsumerKey(ctx context.Context, slug, consumerID, keyID string) (ConsumerKeyResponse, error) {
+	var out ConsumerKeyResponse
+	return out, c.do(ctx, "DELETE", "/v1/apps/"+slug+"/consumers/"+consumerID+"/keys/"+keyID, nil, &out)
+}
+
 // UpsertDevSession creates or refreshes the stable developer preview for a
 // project. Source is uploaded separately through the normal deploy surface.
 func (c *Client) UpsertDevSession(ctx context.Context, project string, req UpsertDevSessionRequest) (DevSessionResponse, error) {

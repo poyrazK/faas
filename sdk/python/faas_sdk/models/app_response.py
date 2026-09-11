@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.app_response_app_protocol import AppResponseAppProtocol, check_app_response_app_protocol
+from ..models.app_response_consumer_auth_mode import AppResponseConsumerAuthMode, check_app_response_consumer_auth_mode
 from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check_app_response_cpu_millicores
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
@@ -131,6 +132,9 @@ class AppResponse:
     """Per-deployment token-gate flag (issue #560). When true, gatewayd-internal demands `Authorization: Bearer
     <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby
     PATCH-true is rejected with 403 plan_require_authn_not_allowed."""
+    consumer_auth_mode: AppResponseConsumerAuthMode | Unset = "optional"
+    """End-customer credential policy (ADR-120). optional accepts anonymous requests and attributes valid consumer
+    keys; required mandates a valid consumer key."""
     parked_deployment: None | ParkedDeploymentRef | Unset = UNSET
     """Most-recently parked deployment for this app, or null if never parked (issue #554 / ADR-079 follow-up). The
     reference surfaces the closed-set parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why
@@ -272,6 +276,10 @@ class AppResponse:
 
         require_authn = self.require_authn
 
+        consumer_auth_mode: str | Unset = UNSET
+        if not isinstance(self.consumer_auth_mode, Unset):
+            consumer_auth_mode = self.consumer_auth_mode
+
         parked_deployment: dict[str, Any] | None | Unset
         if isinstance(self.parked_deployment, Unset):
             parked_deployment = UNSET
@@ -376,6 +384,8 @@ class AppResponse:
             field_dict["eviction_priority"] = eviction_priority
         if require_authn is not UNSET:
             field_dict["require_authn"] = require_authn
+        if consumer_auth_mode is not UNSET:
+            field_dict["consumer_auth_mode"] = consumer_auth_mode
         if parked_deployment is not UNSET:
             field_dict["parked_deployment"] = parked_deployment
         if overflow_node is not UNSET:
@@ -577,6 +587,13 @@ class AppResponse:
 
         require_authn = d.pop("require_authn", UNSET)
 
+        _consumer_auth_mode = d.pop("consumer_auth_mode", UNSET)
+        consumer_auth_mode: AppResponseConsumerAuthMode | Unset
+        if isinstance(_consumer_auth_mode, Unset):
+            consumer_auth_mode = UNSET
+        else:
+            consumer_auth_mode = check_app_response_consumer_auth_mode(_consumer_auth_mode)
+
         def _parse_parked_deployment(data: object) -> None | ParkedDeploymentRef | Unset:
             if data is None:
                 return data
@@ -690,6 +707,7 @@ class AppResponse:
             warm_snapshot_min_ms=warm_snapshot_min_ms,
             eviction_priority=eviction_priority,
             require_authn=require_authn,
+            consumer_auth_mode=consumer_auth_mode,
             parked_deployment=parked_deployment,
             overflow_node=overflow_node,
             cors_default_enabled=cors_default_enabled,

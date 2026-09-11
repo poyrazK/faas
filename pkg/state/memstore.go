@@ -2616,6 +2616,9 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	if app.PublicAuthMode == "" {
 		app.PublicAuthMode = api.AppPublicAuthModeOpen
 	}
+	if app.ConsumerAuthMode == "" {
+		app.ConsumerAuthMode = ConsumerAuthModeOptional
+	}
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -2687,6 +2690,9 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	// is the schema default), so no snap is needed there.
 	if app.PublicAuthMode == "" {
 		app.PublicAuthMode = api.AppPublicAuthModeOpen
+	}
+	if app.ConsumerAuthMode == "" {
+		app.ConsumerAuthMode = ConsumerAuthModeOptional
 	}
 	m.apps[app.ID] = app
 	return app, nil
@@ -4048,6 +4054,9 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	// behaviour regardless of backend.
 	if p.SetRequireAuthn {
 		a.RequireAuthn = boolOrFalse(p.RequireAuthn)
+	}
+	if p.SetConsumerAuthMode && p.ConsumerAuthMode != nil {
+		a.ConsumerAuthMode = ConsumerAuthMode(*p.ConsumerAuthMode)
 	}
 	// Issue #477 / ADR-079: per-app public_auth
 	// (open|bearer|basic). Memstore mirrors the on-disk shape —
