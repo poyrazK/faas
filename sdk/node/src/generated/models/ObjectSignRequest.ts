@@ -18,19 +18,19 @@ export type ObjectSignRequest = {
    */
   content_type?: string;
   /**
-   * PUT only.
+   * Cache-Control value for PUT.
    */
   cache_control?: string;
   /**
-   * PUT only.
+   * Content-Disposition value for PUT.
    */
   content_disposition?: string;
   /**
-   * PUT only.
+   * Content-Encoding value for PUT.
    */
   content_encoding?: string;
   /**
-   * PUT only.
+   * Content-Language value for PUT.
    */
   content_language?: string;
   /**
