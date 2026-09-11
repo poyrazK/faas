@@ -25,6 +25,14 @@ class AppLogDrainHealthResponse:
     active: bool
     queue_depth: int
     queue_capacity: int
+    pending_records: int
+    """Number of records waiting in the durable local outbox."""
+    pending_bytes: int
+    """Bytes waiting in the durable local outbox."""
+    pending_bytes_capacity: int
+    """Durable local outbox byte capacity."""
+    dead_letter_total: int
+    """Number of records retained in the bounded dead-letter file."""
     delivered_total: int
     failed_total: int
     dropped_total: int
@@ -32,6 +40,8 @@ class AppLogDrainHealthResponse:
     stream_reconnects_total: int
     gaps_total: int
     updated_at: datetime.datetime
+    oldest_pending_at: datetime.datetime | Unset = UNSET
+    """Timestamp of the oldest record still awaiting delivery."""
     last_success_at: datetime.datetime | Unset = UNSET
     last_failure_at: datetime.datetime | Unset = UNSET
     last_error: str | Unset = UNSET
@@ -49,6 +59,14 @@ class AppLogDrainHealthResponse:
 
         queue_capacity = self.queue_capacity
 
+        pending_records = self.pending_records
+
+        pending_bytes = self.pending_bytes
+
+        pending_bytes_capacity = self.pending_bytes_capacity
+
+        dead_letter_total = self.dead_letter_total
+
         delivered_total = self.delivered_total
 
         failed_total = self.failed_total
@@ -62,6 +80,10 @@ class AppLogDrainHealthResponse:
         gaps_total = self.gaps_total
 
         updated_at = self.updated_at.isoformat()
+
+        oldest_pending_at: str | Unset = UNSET
+        if not isinstance(self.oldest_pending_at, Unset):
+            oldest_pending_at = self.oldest_pending_at.isoformat()
 
         last_success_at: str | Unset = UNSET
         if not isinstance(self.last_success_at, Unset):
@@ -82,6 +104,10 @@ class AppLogDrainHealthResponse:
                 "active": active,
                 "queue_depth": queue_depth,
                 "queue_capacity": queue_capacity,
+                "pending_records": pending_records,
+                "pending_bytes": pending_bytes,
+                "pending_bytes_capacity": pending_bytes_capacity,
+                "dead_letter_total": dead_letter_total,
                 "delivered_total": delivered_total,
                 "failed_total": failed_total,
                 "dropped_total": dropped_total,
@@ -91,6 +117,8 @@ class AppLogDrainHealthResponse:
                 "updated_at": updated_at,
             }
         )
+        if oldest_pending_at is not UNSET:
+            field_dict["oldest_pending_at"] = oldest_pending_at
         if last_success_at is not UNSET:
             field_dict["last_success_at"] = last_success_at
         if last_failure_at is not UNSET:
@@ -113,6 +141,14 @@ class AppLogDrainHealthResponse:
 
         queue_capacity = d.pop("queue_capacity")
 
+        pending_records = d.pop("pending_records")
+
+        pending_bytes = d.pop("pending_bytes")
+
+        pending_bytes_capacity = d.pop("pending_bytes_capacity")
+
+        dead_letter_total = d.pop("dead_letter_total")
+
         delivered_total = d.pop("delivered_total")
 
         failed_total = d.pop("failed_total")
@@ -126,6 +162,13 @@ class AppLogDrainHealthResponse:
         gaps_total = d.pop("gaps_total")
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        _oldest_pending_at = d.pop("oldest_pending_at", UNSET)
+        oldest_pending_at: datetime.datetime | Unset
+        if isinstance(_oldest_pending_at, Unset):
+            oldest_pending_at = UNSET
+        else:
+            oldest_pending_at = datetime.datetime.fromisoformat(_oldest_pending_at)
 
         _last_success_at = d.pop("last_success_at", UNSET)
         last_success_at: datetime.datetime | Unset
@@ -149,6 +192,10 @@ class AppLogDrainHealthResponse:
             active=active,
             queue_depth=queue_depth,
             queue_capacity=queue_capacity,
+            pending_records=pending_records,
+            pending_bytes=pending_bytes,
+            pending_bytes_capacity=pending_bytes_capacity,
+            dead_letter_total=dead_letter_total,
             delivered_total=delivered_total,
             failed_total=failed_total,
             dropped_total=dropped_total,
@@ -156,6 +203,7 @@ class AppLogDrainHealthResponse:
             stream_reconnects_total=stream_reconnects_total,
             gaps_total=gaps_total,
             updated_at=updated_at,
+            oldest_pending_at=oldest_pending_at,
             last_success_at=last_success_at,
             last_failure_at=last_failure_at,
             last_error=last_error,

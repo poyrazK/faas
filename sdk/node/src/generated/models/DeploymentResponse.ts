@@ -62,6 +62,10 @@ export type DeploymentResponse = {
    */
   source_root?: string;
   /**
+   * SHA-256 digest of the exact source archive handed to the builder; stable identity for local-source revisions.
+   */
+  source_sha256?: string;
+  /**
    * True when this deployment carries a non-null override_* column set.
    */
   has_overrides?: boolean;
