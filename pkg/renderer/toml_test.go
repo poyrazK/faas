@@ -151,6 +151,37 @@ func TestRenderTOML_GatewaydInternal(t *testing.T) {
 	if !strings.Contains(string(body), "metrics_addr = \"127.0.0.1:9090\"") {
 		t.Errorf("gatewayd-internal body missing metrics_addr 9090\nbody:\n%s", body)
 	}
+	for _, want := range []string{
+		"route_metrics_enabled = true",
+		"streaming_enabled = true",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("gatewayd-internal body missing production default %q\nbody:\n%s", want, body)
+		}
+	}
+}
+
+func TestRenderTOML_GatewaydInternalExplicitFeatureDisable(t *testing.T) {
+	disabled := false
+	body, _, err := renderTOML(tomlRenderCtx{
+		Daemon: "gatewayd-internal",
+		DC: &manifest.DaemonConfig{
+			Bind:                "tcp://0.0.0.0:8080",
+			RouteMetricsEnabled: &disabled,
+			StreamingEnabled:    &disabled,
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTOML: %v", err)
+	}
+	for _, want := range []string{
+		"route_metrics_enabled = false",
+		"streaming_enabled = false",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("gatewayd-internal body missing explicit override %q\nbody:\n%s", want, body)
+		}
+	}
 }
 
 func TestRenderTOML_GatewaydInternalPeerTLS(t *testing.T) {
@@ -344,6 +375,38 @@ func TestRenderTOML_PerDaemonMetricsAddr(t *testing.T) {
 		if got != c.want {
 			t.Errorf("defaultMetricsAddrForDaemon(%q) = %q, want %q", c.daemon, got, c.want)
 		}
+	}
+}
+
+func TestRenderTOML_ComputeMetricsBindPrivateHost(t *testing.T) {
+	tests := []struct {
+		daemon string
+		want   string
+	}{
+		{daemon: "vmmd", want: `metrics_addr = "10.42.0.2:9104"`},
+		{daemon: "imaged", want: `metrics_addr = "10.42.0.2:9102"`},
+		{daemon: "builderd", want: `metrics_addr = "10.42.0.2:9105"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.daemon, func(t *testing.T) {
+			dc := fixtureTOML(tc.daemon)
+			if dc.Bind == "" {
+				dc.Bind = "tcp://127.0.0.1:1"
+			}
+			body, _, err := renderTOML(tomlRenderCtx{
+				Daemon:      tc.daemon,
+				DC:          dc,
+				HostName:    "compute-a.faas",
+				HostAddress: "10.42.0.2:50051",
+				HostRole:    "compute-only",
+			})
+			if err != nil {
+				t.Fatalf("renderTOML: %v", err)
+			}
+			if !strings.Contains(string(body), tc.want) {
+				t.Fatalf("body missing %q:\n%s", tc.want, body)
+			}
+		})
 	}
 }
 

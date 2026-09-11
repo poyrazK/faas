@@ -220,17 +220,21 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 
-	// 2. error_rate per app (share of [45]xx in the window).
+	// 2. error_rate per app (share of [45]xx in the window). The
+	// positive-denominator filter drops idle series before QueryMap sees
+	// Prometheus' 0/0 = NaN result; the response map's missing-key value
+	// correctly represents an idle app as 0%.
 	errRateByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`sum by (app)(rate(gateway_requests_total{code=~"[45].."}[%s])) / sum by (app)(rate(gateway_requests_total[%s])) * 100`, rng, rng))
+		fmt.Sprintf(`(sum by (app)(rate(gateway_requests_total{code=~"[45].."}[%s])) / sum by (app)(rate(gateway_requests_total[%s])) * 100) and on (app) (sum by (app)(rate(gateway_requests_total[%s])) > 0)`, rng, rng, rng))
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "error_rate")
 		return
 	}
 
-	// 3. cold_start per app.
+	// 3. cold_start per app. Apply the same zero-traffic guard as the
+	// error-rate ratio so dormant apps cannot degrade the whole rollup.
 	coldByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`sum by (app)(rate(gateway_cold_boot_total[%s])) / sum by (app)(rate(gateway_requests_total[%s])) * 100`, rng, rng))
+		fmt.Sprintf(`(sum by (app)(rate(gateway_cold_boot_total[%s])) / sum by (app)(rate(gateway_requests_total[%s])) * 100) and on (app) (sum by (app)(rate(gateway_requests_total[%s])) > 0)`, rng, rng, rng))
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "cold_start")
 		return
@@ -247,8 +251,10 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 
 	// 7. Fleet wake p95 (unlabeled — single scalar, same as the
 	// per-app handler).
-	wakeQ := fmt.Sprintf(
-		`histogram_quantile(0.95, sum by (le)(rate(gateway_wake_latency_seconds_bucket[%s]))) * 1000`, rng)
+	wakeQ := appmetrics.HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le)(rate(gateway_wake_latency_seconds_bucket[%s]))`, rng),
+		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, rng))
 	wakeV, err := s.promqlClient.QueryScalar(r.Context(), wakeQ)
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "wake_p95")

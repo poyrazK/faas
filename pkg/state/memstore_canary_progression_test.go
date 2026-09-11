@@ -191,16 +191,31 @@ func TestMemStoreStableDeploymentClearsCanaryOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Creating the replacement must not disturb the serving set. The cutover
+	// happens only after the replacement has completed build/snapshot work and
+	// is explicitly promoted.
+	for _, id := range []string{prior.ID, canary.ID} {
+		got, err := store.DeploymentByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != DeployLive {
+			t.Errorf("overlap deployment %s = %+v, want live before promotion", id, got)
+		}
+	}
+	if stable.TrafficPercent != 100 || stable.Status != DeployPending {
+		t.Fatalf("stable replacement = %+v, want pending/100", stable)
+	}
+	if err := store.MarkDeploymentLive(ctx, stable.ID); err != nil {
+		t.Fatal(err)
+	}
 	for _, id := range []string{prior.ID, canary.ID} {
 		got, err := store.DeploymentByID(ctx, id)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if got.Status != DeploySuperseded || got.TrafficPercent != 0 {
-			t.Errorf("overlap deployment %s = %+v, want superseded/0", id, got)
+			t.Errorf("overlap deployment %s = %+v, want superseded/0 after promotion", id, got)
 		}
-	}
-	if stable.TrafficPercent != 100 || stable.Status != DeployPending {
-		t.Fatalf("stable replacement = %+v, want pending/100", stable)
 	}
 }

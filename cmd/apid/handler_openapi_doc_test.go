@@ -30,6 +30,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -38,6 +39,31 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestOpenAPITriggerContractDocumentsCapabilitiesAndRedaction(t *testing.T) {
+	raw, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatalf("read source OpenAPI: %v", err)
+	}
+	spec := string(raw)
+	for _, required := range []string{
+		"trigger_kinds:", "trigger_batch_window_max_ms:", "writeOnly: true",
+		"password_set:", "client_key_set:", "plan_triggers_not_allowed",
+		"trigger_kind_not_allowed", "plan_trigger_quota", "secret_store_unavailable",
+	} {
+		if !strings.Contains(spec, required) {
+			t.Errorf("OpenAPI missing %q", required)
+		}
+	}
+	if strings.Count(spec, "writeOnly: true") < 2 {
+		t.Errorf("OpenAPI has %d write-only credential leaves, want at least 2", strings.Count(spec, "writeOnly: true"))
+	}
+	for _, internal := range []string{"password_sealed", "client_key_sealed"} {
+		if strings.Contains(spec, internal) {
+			t.Errorf("OpenAPI exposes internal field %q", internal)
+		}
+	}
+}
 
 // patchOpenAPIDocJSON pre-marshals the body as a `map[string]any`
 // (matches the handler's `patchOpenAPIDocRequest` Set-bit shape).

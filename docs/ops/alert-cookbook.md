@@ -11,6 +11,34 @@ and `deploy/ansible/roles/prometheus/files/pg_backup.rules.yml`.
 The dispatch path is `prometheus → alertmanager →
 faas-page route → Pushover + email → primary oncall`.
 
+Prometheus mirrors for customer alert presets (`family=alert_preset_signals`
+and `family=alert_preset_correlation`) stay visible in Prometheus and Grafana,
+but do not email the shared platform inbox by default. Meterd delivers enabled
+customer rules through the signed webhook configured on that rule. Set
+`am_email_customer_alert_presets=true` only when the platform inbox should also
+receive those mirrors.
+
+### Resend SMTP
+
+Alertmanager can use the same verified Resend sender domain as Gregale's
+transactional mail path. Configure the role with:
+
+```yaml
+am_smtp_smarthost: "smtp.resend.com:587"
+am_smtp_auth_username: "resend"
+am_smtp_require_tls: true
+am_smtp_password_file: "/etc/alertmanager/secrets/resend-api-key"
+am_email_from: "alerts@gregale.dev"
+am_email_to_warn: "<operations inbox>"
+am_email_to_page: "<operations inbox>"
+```
+
+The password file contains a Resend sending key as raw text, is owned by
+`alertmanager:alertmanager`, and has mode `0400`. Prefer a dedicated Resend key
+restricted to the verified sender domain; do not put the key in Ansible vars or
+the rendered Alertmanager configuration. Resend's current SMTP settings are
+documented at <https://resend.com/docs/send-with-smtp>.
+
 ## How to use this cookbook
 
 When you receive a page:

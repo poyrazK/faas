@@ -113,6 +113,9 @@ func cmdAuditEventsList(args []string) int {
 	if err != nil {
 		return printErr("Could not list audit events", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeNDJSON(resp.Events))
+	}
 	for _, e := range resp.Events {
 		// Subject may be empty when --include-anonymous surfaced a
 		// subject=NULL row; print "-" so the column stays aligned.

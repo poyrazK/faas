@@ -588,6 +588,31 @@ func TestForwardingReverseProxy_HappyPath(t *testing.T) {
 	}
 }
 
+func TestForwardingReverseProxy_PreservesResponseTrailers(t *testing.T) {
+	stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+		{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{
+			Status:   http.StatusOK,
+			Trailers: []*vmmdpb.Header{{Name: "X-Audit-Final"}},
+		}}},
+		{Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{BodyChunk: []byte("audit-body")}},
+		{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{
+			Trailers: []*vmmdpb.Header{{Name: "X-Audit-Final", Value: "done"}},
+		}}},
+	}}
+	lookup := &fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}
+	proxy := gateway.ForwardingReverseProxy(lookup, nil)
+	req := httptest.NewRequest(http.MethodGet, "/trailers", nil)
+	req.Header.Set("x-faas-instance", "i-test")
+	rec := httptest.NewRecorder()
+	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+	if got := resp.Trailer.Get("X-Audit-Final"); got != "done" {
+		t.Fatalf("response trailer = %q, want done", got)
+	}
+}
+
 // TestForwardingReverseProxy_StampsTargetPort pins issue #460 /
 // ADR-053 (PR-C): the picked Target's Port must reach
 // ForwardHTTPRequestInit.port so vmmd's buildStreamingBridgeScript
@@ -999,7 +1024,7 @@ func keys(m map[string]any) []string {
 // canned 101 Switching Protocols response with a small body is
 // delivered to the inbound writer, the init frame carries the
 // expected Instance + Port + MaxRequestBytes, and the request
-// body's bytes arrive on the bridge verbatim.
+// request line and Upgrade headers arrive before any request body bytes.
 func TestRawStreamReverseProxy_RoundTrip(t *testing.T) {
 	stream := &fakeRawBidiStream{
 		Responses: []*vmmdpb.ForwardRawResponse{
@@ -1021,10 +1046,11 @@ func TestRawStreamReverseProxy_RoundTrip(t *testing.T) {
 	lookup := &fakeNodeLookup{cli: cli}
 	proxy := gateway.ForwardingRawReverseProxy(lookup, nil, nil)
 
-	body := "GET /socket HTTP/1.1\r\nHost: app.example.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
-	req := httptest.NewRequest(http.MethodGet, "/socket", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodGet, "https://app.example.com/socket?room=one", nil)
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Version", "13")
 	req.Header.Set("x-faas-instance", "i-test")
 
 	rec := httptest.NewRecorder()
@@ -1056,6 +1082,26 @@ func TestRawStreamReverseProxy_RoundTrip(t *testing.T) {
 	if init.GetMaxRequestBytes() != int64(api.RawStreamMaxRequestBytes) {
 		t.Errorf("init.MaxRequestBytes = %d, want %d",
 			init.GetMaxRequestBytes(), api.RawStreamMaxRequestBytes)
+	}
+	var sent []byte
+	for _, frame := range stream.Sends[1:] {
+		sent = append(sent, frame.GetBodyChunk()...)
+	}
+	requestHead := string(sent)
+	for _, want := range []string{
+		"GET /socket?room=one HTTP/1.1\r\n",
+		"Host: app.example.com\r\n",
+		"Connection: Upgrade\r\n",
+		"Upgrade: websocket\r\n",
+		"Sec-Websocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+		"\r\n\r\n",
+	} {
+		if !strings.Contains(requestHead, want) {
+			t.Errorf("raw guest request missing %q:\n%s", want, requestHead)
+		}
+	}
+	if strings.Contains(strings.ToLower(requestHead), "x-faas-instance") {
+		t.Errorf("raw guest request leaked internal instance header:\n%s", requestHead)
 	}
 }
 

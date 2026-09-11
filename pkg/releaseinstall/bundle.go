@@ -379,7 +379,11 @@ func verifyDeploymentBundle(root string, m Manifest) (bool, error) {
 	if deployment.ReleaseID != m.GitSHA || deployment.CommitSHA != m.GitSHA {
 		return true, fmt.Errorf("releaseinstall: deployment manifest identity (%s, %s) does not match git_sha %s", deployment.ReleaseID, deployment.CommitSHA, m.GitSHA)
 	}
-	if err := releasebundle.Verify(releaseRoot, deployment); err != nil {
+	// KGV rotation writes an operator-owned baseline after the signed host
+	// bundle is assembled. The baseline has its own strict JSON validation;
+	// permit that exact regular-file sidecar without weakening verification
+	// for any other unexpected path.
+	if err := releasebundle.VerifyWithAllowedFiles(releaseRoot, deployment, SBOMBaselineName); err != nil {
 		return true, fmt.Errorf("releaseinstall: verify deployment bundle: %w", err)
 	}
 	return true, nil

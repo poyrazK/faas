@@ -23,6 +23,8 @@ Do not file a public GitHub issue for security vulnerabilities.
 The full policy (scope, safe harbour, what to include in a report,
 operator commitments) lives at
 [`docs/compliance/responsible-disclosure.md`](docs/compliance/responsible-disclosure.md).
+Suspected customer-data breaches follow the operator procedure in
+[`docs/runbooks/breach-notification.md`](docs/runbooks/breach-notification.md).
 
 ## DPA cross-reference
 

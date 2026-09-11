@@ -35,6 +35,8 @@ class CreateTriggerRequest:
     gating mirrors pkg/gregalemanifest.validateKindConfig:
       - cron: requires schedule + path (slug ignored)
       - non-cron: requires slug + config
+    Omitted delivery settings use the platform default capped to the
+    selected account plan; explicit over-cap values are rejected.
 
     """
 
@@ -44,7 +46,8 @@ class CreateTriggerRequest:
     slug: str | Unset = UNSET
     enabled: bool | None | Unset = UNSET
     config: CreateTriggerRequestConfig | Unset = UNSET
-    """Per-kind opaque config blob."""
+    """Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before
+    persistence."""
     batch_size_max: int | None | Unset = UNSET
     batch_window_ms: int | None | Unset = UNSET
     max_attempts: int | None | Unset = UNSET

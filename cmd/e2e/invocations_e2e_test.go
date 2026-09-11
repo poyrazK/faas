@@ -55,9 +55,10 @@ import (
 )
 
 // TestE2E_AsyncInvoke_PostEnqueuesRowAndDrainCompletesIt is the headline
-// M7 gate. It boots apid + schedd + gatewayd (gatewayd only so the
-// per-test synth unix socket exists; schedd's drain goroutine otherwise
-// logs an error and is silently disabled per cmd/schedd/main.go:319-345).
+// M7 gate. It boots apid + schedd and a successful synth stub. The stub
+// represents a 2xx customer handler at the gateway boundary, so the test
+// covers completion without requiring KVM while preserving real 5xx retry
+// semantics.
 //
 // The fast-path trick that keeps this KVM-free: schedd's engine.Wake
 // Phase-1 (pkg/sched/engine.go:268-281) is a pure DB read — if there's a
@@ -79,7 +80,7 @@ func TestE2E_AsyncInvoke_PostEnqueuesRowAndDrainCompletesIt(t *testing.T) {
 	}
 
 	h := e2etest.Start(t, pool,
-		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
+		e2etest.APID|e2etest.Schedd|e2etest.GatewaySynthStub)
 
 	key := h.SeedAccount(ctx, api.PlanHobby, "async-headline")
 	store := state.NewPgStore(h.Pool)
@@ -221,7 +222,8 @@ func TestE2E_QueueSend_PlanCap_QueueDepth(t *testing.T) {
 // TestE2E_QueueSend_DrainLongPoll — bonus coverage: send a row, then
 // long-poll receive. Pairs the queue send with the drain's
 // invocation_done notify so the receive handler unblocks. The seeded
-// RUNNING instance keeps the Wake fast-path off vmmd (same trick as the
+// RUNNING instance keeps the Wake fast-path off vmmd, and the successful
+// synth stub gives the drain a real terminal delivery (same shape as the
 // headline test).
 func TestE2E_QueueSend_DrainLongPoll(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
@@ -237,7 +239,7 @@ func TestE2E_QueueSend_DrainLongPoll(t *testing.T) {
 	}
 
 	h := e2etest.Start(t, pool,
-		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
+		e2etest.APID|e2etest.Schedd|e2etest.GatewaySynthStub)
 	key := h.SeedAccount(ctx, api.PlanHobby, "queue-longpoll")
 	store := state.NewPgStore(h.Pool)
 	nodeID := defaultLocalComputeNodeID(t, ctx, store)
@@ -325,6 +327,9 @@ func seedLiveDeployment(t *testing.T, ctx context.Context, store *state.PgStore,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
 	}
 	if _, err := store.CreateInstance(ctx, appID, dep.ID, string(state.StateRunning), 256, nodeID, ""); err != nil {
 		t.Fatalf("CreateInstance: %v", err)

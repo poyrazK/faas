@@ -17,6 +17,7 @@ type ObjectStorageProviderRequestMetric struct {
 	PhysicalName       string
 	PeriodStart        time.Time
 	RequestCount       int64
+	EgressBytes        int64
 }
 
 // ObjectStorageProviderUsageStore is the narrow persistence seam shared by
@@ -26,4 +27,11 @@ type ObjectStorageProviderUsageStore interface {
 	RecordObjectStorageProviderRequest(context.Context, string, time.Time) error
 	ListObjectStorageProviderRequestMetrics(context.Context, string, string, time.Time) ([]ObjectStorageProviderRequestMetric, error)
 	ListObjectStorageProviderBuckets(context.Context, string, string) ([]ObjectBucket, error)
+}
+
+// ObjectStorageProviderEgressStore is an optional extension implemented by
+// production stores. Keeping it separate preserves compatibility with small
+// request-metric test doubles and older exporters.
+type ObjectStorageProviderEgressStore interface {
+	RecordObjectStorageProviderEgress(context.Context, string, int64, time.Time) error
 }

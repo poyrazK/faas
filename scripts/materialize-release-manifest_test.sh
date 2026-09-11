@@ -43,6 +43,11 @@ if cmp -s "$TEMPLATE" "$OUT_A"; then
 fi
 grep -Fqx "  builder_base_digest: $BUILDER_DIGEST" "$OUT_OVERRIDE"
 grep -Fqx "  kernel_digest: $KERNEL_DIGEST" "$OUT_OVERRIDE"
+# Every compute daemon whose metrics are discovered by Prometheus must be
+# declared in the production manifest. A missing block renders an empty TOML
+# and silently falls back to loopback, which makes the discovered target down.
+grep -Fqx '  imaged:' "$OUT_A"
+grep -Fqx '    bind: tcp://127.0.0.1:9102' "$OUT_A"
 grep -Fqx '    minimal: ghcr.io/poyrazk/base-minimal@sha256:0000000000000000000000000000000000000000000000000000000000000000' "$OUT_A"
 grep -Fqx '    debian_parent: ghcr.io/poyrazk/base-debian-parent@sha256:7777777777777777777777777777777777777777777777777777777777777777' "$OUT_A"
 grep -Fqx '    node22: ghcr.io/poyrazk/runner-node22@sha256:1111111111111111111111111111111111111111111111111111111111111111' "$OUT_A"

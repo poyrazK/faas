@@ -416,7 +416,10 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			if errors.Is(err, ErrPermanentInvoke) {
 				retryAfter = 0
 			}
-			_ = d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, d.queueAttemptBudget(ctx, inv), failOutcome(err))
+			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, d.queueAttemptBudget(ctx, inv), failOutcome(err))
+			if failErr == nil && retryAfter == 0 {
+				d.emitDone(ctx, inv, state.InvocationFailed)
+			}
 			d.log.Warn("drain: debug replay", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
 			return
 		}
@@ -494,7 +497,10 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		if errors.Is(err, ErrPermanentInvoke) {
 			retryAfter = 0
 		}
-		_ = d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, d.queueAttemptBudget(ctx, inv), failOutcome(err))
+		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, d.queueAttemptBudget(ctx, inv), failOutcome(err))
+		if failErr == nil && retryAfter == 0 {
+			d.emitDone(ctx, inv, state.InvocationFailed)
+		}
 		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
 		return
 	}
@@ -533,15 +539,19 @@ func isDebugMirrorReplay(inv state.Invocation) bool {
 // concatenation to keep the CodeQL go/log-injection rules clean
 // (the inputs are UUIDs so the bug is theoretical, but Marshal
 // makes the audit story a no-op).
-func (d *Drain) emitDone(ctx context.Context, inv state.Invocation) {
+func (d *Drain) emitDone(ctx context.Context, inv state.Invocation, terminalState ...state.InvocationState) {
 	if d.notifier == nil {
 		return
+	}
+	finalState := state.InvocationCompleted
+	if len(terminalState) > 0 {
+		finalState = terminalState[0]
 	}
 	body, err := json.Marshal(map[string]string{
 		"invocation_id": inv.ID,
 		"app_id":        inv.AppID,
 		"source":        string(inv.Source),
-		"state":         string(state.InvocationCompleted),
+		"state":         string(finalState),
 	})
 	if err != nil {
 		d.log.Warn("drain: marshal invocation_done", "inv", inv.ID, "err", err)

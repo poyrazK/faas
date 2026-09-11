@@ -81,6 +81,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/compute-nodes/{name}/heartbeats":   true, // CP-1: operator-only (heartbeat history; schedd-owned)
 	"GET /v1/compute-nodes/events":              true, // CP-1: operator-only SSE on compute_node_changed
 	"GET /v1/internal/metrics/targets":          true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/vmmd-targets":     true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/imaged-targets":   true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/builderd-targets": true, // compute daemon metrics use the active node registry
 	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
@@ -265,16 +268,14 @@ var dtoExclude = map[string]bool{
 	"OrgMemberRow":     true,
 	"OrgInvitationRow": true,
 	// Issue #476 / ADR-076 — internal conversion structs (state row
-	// → wire DTO) and server-minted options / request bodies. The
+	// → wire DTO) and client-only option bags. The
 	// wire DTOs are AppWebhookResponse / AppWebhookDeliveryResponse
 	// etc.; the *Row types are the typed counterparts at the
-	// pkg/api ↔ pkg/state seam. ListAppWebhookDeliveriesOptions and
-	// RotateAppWebhookSecretRequest are server-side concerns that
-	// never appear in the wire spec.
+	// pkg/api ↔ pkg/state seam. ListAppWebhookDeliveriesOptions is a
+	// client-only query bag and never appears in the wire spec.
 	"AppWebhookRow":                   true,
 	"AppWebhookDeliveryRow":           true,
 	"ListAppWebhookDeliveriesOptions": true,
-	"RotateAppWebhookSecretRequest":   true,
 	"AppLogDrainRow":                  true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
@@ -336,6 +337,7 @@ var dtoExclude = map[string]bool{
 	// DTO stays admin-only and is excluded here.
 	"ObsOverviewResponse":             true,
 	"ObsOverviewTotals":               true,
+	"ObsBetaFunnel":                   true,
 	"ObsOverviewRateLimited":          true,
 	"ObsOverviewNodeHealth":           true,
 	"ObsOverviewFailureKind":          true,

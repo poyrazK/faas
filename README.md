@@ -21,6 +21,21 @@ nodes without a code rewrite (see
 - **Status / what's next:** [`docs/STATUS.md`](docs/STATUS.md)
 - **Agent guide:** [`CLAUDE.md`](CLAUDE.md)
 
+## Install the CLI
+
+```bash
+curl -fsSL https://get.gregale.dev | sh
+```
+
+```bash
+npm install -g gregale
+```
+
+macOS and Linux, amd64 and arm64. Both channels install the same binary
+from the same GitHub Release and verify it against the release's
+`SHA256SUMS`. Windows is not supported yet. Full matrix, version pinning,
+CI usage, and uninstall: [`docs/cli-install.md`](docs/cli-install.md).
+
 ## Layout
 
 ```

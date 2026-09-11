@@ -101,7 +101,8 @@ func (m *Manager) ClosePreparedNetworks() error {
 // full resulting config is checked again after Wake validates its request.
 func (m *Manager) preparedPolicy(req WakeRequest) (preparedNetworkPolicy, bool) {
 	if !req.Plan.Valid() || req.ExportDir != "" || req.StaticEgressIP != "" ||
-		len(req.EgressAllowlist) != 0 || len(m.mergeOperatorBundle(nil)) != 0 {
+		len(req.EgressAllowlist) != 0 || len(m.mergeOperatorBundle(nil)) != 0 ||
+		(req.Port != 0 && req.Port != netns.AppPort) {
 		return preparedNetworkPolicy{}, false
 	}
 	return preparedNetworkPolicy{req.EgressMbit, m.conntrackCap, hostIPForSlot(0)}, true

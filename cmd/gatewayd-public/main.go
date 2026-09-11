@@ -65,6 +65,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -186,14 +187,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// sessions). We construct it here so the DNSHandoff wiring
 	// has a Store to call into. Mirrors cmd/gatewayd-internal/run.go:366.
 	pgStore := state.NewPgStore(pool)
+	publicStorageRegistry, err := objectstorage.Load(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("gatewayd-public: load object storage: %w", err)
+	}
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(hstsEnabledFromEnv))
+	s3Flag := runtimeconfig.NewBoolFlag(false)
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	// gatewayd-public owns the outer response headers, so it must consume the
 	// same durable HSTS flag as apid and gatewayd-internal. This keeps a hot
 	// operator change from producing different security headers at the edge.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
-	watcher := runtimeconfig.New(pgStore, pool, []string{runtimeconfig.KeyHSTS},
+	watcher := runtimeconfig.New(pgStore, pool, []string{runtimeconfig.KeyHSTS, runtimeconfig.KeyS3},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
@@ -202,6 +208,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if key == runtimeconfig.KeyHSTS {
 				hstsFlag.Store(enabled)
 				httpsec.SetHSTSEnabled(enabled)
+			}
+			if key == runtimeconfig.KeyS3 {
+				s3Flag.Store(enabled)
 			}
 			return nil
 		}, log)
@@ -293,12 +302,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// the split-box TCP listener uses the ordinary HTTP/1.1 server unless
 	// an operator explicitly enables H2C after both ends are configured.
 	h2cEnabled := envBoolOr("FAAS_INTERNAL_H2C", internalTarget == "" && computeDiscovery != "database")
+	trustedIngressCIDRs, err := gateway.ParseTrustedIngressCIDRs(os.Getenv("FAAS_TRUSTED_INGRESS_CIDRS"))
+	if err != nil {
+		return fmt.Errorf("gatewayd-public: trusted ingress config: %w", err)
+	}
 	proxy := gateway.NewInternalReverseProxy(
 		internalDialer,
 		internalURL,
 		log,
 		h2cEnabled,
-	)
+	).WithTrustedIngressCIDRs(trustedIngressCIDRs)
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.
@@ -493,7 +506,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 			_ = spansWriterCli.Close()
 		}()
 	}
-	traceMux.Handle("/", controlPlaneHandler)
+	rootHandler := http.Handler(controlPlaneHandler)
+	if publicStorageRegistry != nil {
+		requestMetrics, _ := any(pgStore).(state.ObjectStorageProviderUsageStore)
+		accounting, _ := any(pgStore).(state.ObjectStorageAccountingStore)
+		publicHandler, publicErr := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
+			Store: pgStore, Registry: publicStorageRegistry, RequestMetrics: requestMetrics,
+			Accounting: accounting, Enabled: s3Flag.Load, AppsDomain: os.Getenv("FAAS_APPS_DOMAIN"),
+			Next: controlPlaneHandler, Log: log,
+		})
+		if publicErr != nil {
+			return fmt.Errorf("gatewayd-public: public object storage handler: %w", publicErr)
+		}
+		rootHandler = publicHandler
+		log.Info("gatewayd-public: public object storage reads enabled")
+	}
+	traceMux.Handle("/", rootHandler)
 
 	// Public-facing handler: httpsec outer wrapper → budget middleware →
 	// trace mux → internal proxy.

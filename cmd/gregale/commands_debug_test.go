@@ -132,6 +132,10 @@ func TestCmdDebugRequestsShow_RendersTimelineAndSpans(t *testing.T) {
 				At: "2026-09-06T10:00:00.100Z", Phase: "wake", Kind: "wake.boot_completed",
 				Summary: "guest became ready", DurationMS: 120, Approximate: true,
 			}},
+			Correlation: api.DebugRequestCorrelation{Stages: []api.DebugRequestCorrelationStage{
+				{Phase: "edge", Status: "observed", DurationMS: 640, Approximate: true},
+				{Phase: "billing", Status: "missing", Reason: "billed dimensions are not attached to request evidence yet"},
+			}},
 			Spans: []api.DebugTelemetrySpan{{
 				Name: "db.query", Kind: "client", DurationNanos: 20_000_000, Status: "error",
 			}},
@@ -158,6 +162,9 @@ func TestCmdDebugRequestsShow_RendersTimelineAndSpans(t *testing.T) {
 		"TIMELINE",
 		"~2026-09-06T10:00:00.100Z",
 		"wake.boot_completed",
+		"CORRELATION",
+		"billing",
+		"correlation incomplete",
 		"SPAN EVIDENCE",
 		"db.query",
 		"Cold boot dominated request latency.",

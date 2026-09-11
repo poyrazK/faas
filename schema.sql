@@ -228,6 +228,20 @@ $$;
 
 
 --
+-- Name: api_consumers_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.api_consumers_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: consumer_keys_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1651,6 +1665,27 @@ COMMENT ON COLUMN public.compute_nodes.generation IS 'monotonic counter bumped b
 
 
 --
+-- Name: api_consumers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    external_ref text NOT NULL,
+    name text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT api_consumers_external_ref_len_chk CHECK ((char_length(external_ref) >= 1) AND (char_length(external_ref) <= 256)),
+    CONSTRAINT api_consumers_name_len_chk CHECK ((char_length(name) >= 1) AND (char_length(name) <= 128)),
+    CONSTRAINT api_consumers_status_chk CHECK (status = ANY (ARRAY['active'::text, 'revoked'::text])),
+    CONSTRAINT api_consumers_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at)))
+);
+
+
+--
 -- Name: consumer_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1658,6 +1693,7 @@ CREATE TABLE public.consumer_keys (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
+    consumer_id uuid,
     name text NOT NULL,
     prefix text NOT NULL,
     hashed_secret bytea NOT NULL,
@@ -4016,6 +4052,14 @@ ALTER TABLE ONLY public.compute_nodes
 
 
 --
+-- Name: api_consumers api_consumers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: consumer_keys consumer_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5289,10 +5333,31 @@ CREATE INDEX compute_nodes_region_zone_idx ON public.compute_nodes USING btree (
 
 
 --
+-- Name: api_consumers_account_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumers_account_app_idx ON public.api_consumers USING btree (account_id, app_id);
+
+
+--
+-- Name: api_consumers_app_external_ref_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumers_app_external_ref_uniq ON public.api_consumers USING btree (app_id, external_ref);
+
+
+--
 -- Name: consumer_keys_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX consumer_keys_app_idx ON public.consumer_keys USING btree (app_id);
+
+
+--
+-- Name: consumer_keys_consumer_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX consumer_keys_consumer_id_idx ON public.consumer_keys USING btree (consumer_id);
 
 
 --
@@ -6771,6 +6836,13 @@ CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON
 
 
 --
+-- Name: api_consumers api_consumers_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER api_consumers_set_updated_at_trg BEFORE UPDATE ON public.api_consumers FOR EACH ROW EXECUTE FUNCTION public.api_consumers_set_updated_at();
+
+
+--
 -- Name: consumer_keys consumer_keys_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7323,6 +7395,22 @@ ALTER TABLE ONLY public.compute_node_keys
 
 
 --
+-- Name: api_consumers api_consumers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumers api_consumers_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: consumer_keys consumer_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7336,6 +7424,14 @@ ALTER TABLE ONLY public.consumer_keys
 
 ALTER TABLE ONLY public.consumer_keys
     ADD CONSTRAINT consumer_keys_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: consumer_keys consumer_keys_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.consumer_keys
+    ADD CONSTRAINT consumer_keys_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --
@@ -8204,6 +8300,8 @@ CREATE TABLE public.object_buckets (
     attempt_count integer DEFAULT 0 NOT NULL,
     retry_at timestamp with time zone DEFAULT now() NOT NULL,
     last_error_code text DEFAULT '' NOT NULL,
+    public_read boolean DEFAULT false NOT NULL,
+    serve_at text,
     CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -8212,7 +8310,8 @@ CREATE TABLE public.object_buckets (
     CONSTRAINT object_buckets_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT object_buckets_region_check CHECK (((length(region) >= 1) AND (length(region) <= 63))),
     CONSTRAINT object_buckets_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
-    CONSTRAINT object_buckets_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'deleting'::text, 'deleted'::text])))
+    CONSTRAINT object_buckets_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'deleting'::text, 'deleted'::text]))),
+    CONSTRAINT object_buckets_serve_at_check CHECK (((NOT public_read AND serve_at IS NULL) OR (public_read AND (serve_at ~ '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$'::text) AND (serve_at !~ '//'::text) AND (serve_at !~ '/\.$'::text) AND (serve_at !~ '(^|/)\.\.($|/)'::text) AND (right(serve_at, 1) <> '/'::text))))
 );
 
 
@@ -8337,6 +8436,8 @@ CREATE INDEX object_buckets_recovery_idx ON public.object_buckets USING btree (r
 
 CREATE UNIQUE INDEX object_buckets_name_idx ON public.object_buckets USING btree (app_id, scope, name) WHERE (state <> 'deleted'::text);
 
+CREATE UNIQUE INDEX object_buckets_public_serve_at_idx ON public.object_buckets USING btree (app_id, serve_at) WHERE (public_read AND (state <> 'deleted'::text) AND (serve_at IS NOT NULL));
+
 
 --
 -- Name: apps app_object_buckets_guard; Type: TRIGGER; Schema: public; Owner: -
@@ -8405,6 +8506,7 @@ CREATE TABLE IF NOT EXISTS object_storage_request_metrics (
     bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
     period_start timestamptz NOT NULL CHECK (period_start = date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),
     request_count bigint NOT NULL DEFAULT 0 CHECK (request_count BETWEEN 0 AND 1152921504606846976),
+    egress_bytes bigint NOT NULL DEFAULT 0 CHECK (egress_bytes BETWEEN 0 AND 1152921504606846976),
     PRIMARY KEY (bucket_id, period_start)
 );
 CREATE INDEX IF NOT EXISTS object_storage_request_metrics_period_idx

@@ -110,10 +110,11 @@ func TestRenderRestoreBreakdown_ExactTotalAndPhases(t *testing.T) {
 	ev := api.WakeTimelineEvent{
 		Kind: "wake.restore_breakdown",
 		Data: map[string]any{
-			"total_ms":           float64(596),
-			"load_snapshot_ms":   float64(400),
-			"wait_ready_ms":      float64(131),
-			"materialize_mem_ms": float64(3),
+			"total_ms":             float64(596),
+			"restore_gate_wait_ms": float64(12),
+			"load_snapshot_ms":     float64(400),
+			"wait_ready_ms":        float64(131),
+			"materialize_mem_ms":   float64(3),
 			"resolve_artifacts": []any{
 				map[string]any{"artifact": "kernel", "source": "backend_local", "duration_ms": float64(1)},
 				map[string]any{"artifact": "main", "source": "cache_hit", "duration_ms": float64(4)},
@@ -123,6 +124,7 @@ func TestRenderRestoreBreakdown_ExactTotalAndPhases(t *testing.T) {
 	got := renderRestoreBreakdown(ev)
 	for _, want := range []string{
 		"restore total=596ms",
+		"restore_gate_wait=12ms",
 		"materialize_mem=3ms",
 		"load_snapshot=400ms",
 		"wait_ready=131ms",

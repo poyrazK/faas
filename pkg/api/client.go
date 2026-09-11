@@ -286,23 +286,7 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if !success(resp) {
-		var p Problem
-		if json.Unmarshal(data, &p) == nil && p.Code != "" {
-			// Copy RFC 7231 §7.1.3 wire headers the server attaches
-			// for transient / retryable errors (Retry-After on 503
-			// source_ref_unavailable, 429 plan_limit_concurrency,
-			// etc.) so callers can branch on Problem.HasHeader
-			// without re-reading resp.Header themselves. The SDK
-			// already discards the raw http.Response (see do), so
-			// this is the load-bearing surface for the backoff
-			// hint. Issue #739 / ADR-092: the headless source-ref
-			// CLI path relies on this for the 409 backoff message.
-			if ra := resp.Header.Get("Retry-After"); ra != "" {
-				p = *p.WithHeader("Retry-After", ra)
-			}
-			return &APIError{Problem: p}
-		}
-		return fmt.Errorf("API error: %s", resp.Status)
+		return apiErrorFromResponse(resp, data)
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		// Tier A8 / ADR-083: auto-refresh the completion cache on every
@@ -357,18 +341,7 @@ func (c *Client) doBytes(ctx context.Context, method, path string, body, out any
 	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode >= 300 {
-		var p Problem
-		if json.Unmarshal(data, &p) == nil && p.Code != "" {
-			// Mirror doReq: copy the Retry-After wire header into
-			// the Problem so the 409 / 429 / 503 backoff hint is
-			// reachable via Problem.HasHeader after the SDK
-			// discards the raw http.Response.
-			if ra := resp.Header.Get("Retry-After"); ra != "" {
-				p = *p.WithHeader("Retry-After", ra)
-			}
-			return &APIError{Problem: p}
-		}
-		return fmt.Errorf("API error: %s", resp.Status)
+		return apiErrorFromResponse(resp, data)
 	}
 	if out != nil {
 		if bp, ok := out.(*[]byte); ok {
@@ -385,6 +358,28 @@ func (c *Client) doBytes(ctx context.Context, method, path string, body, out any
 		}
 	}
 	return nil
+}
+
+// apiErrorFromResponse preserves the wire status even when an intermediary
+// returns plaintext, HTML, an empty body, or malformed JSON. The raw body is
+// deliberately excluded: proxy error pages can contain untrusted markup and
+// are not a stable customer-facing contract.
+func apiErrorFromResponse(resp *http.Response, data []byte) error {
+	var p Problem
+	if json.Unmarshal(data, &p) != nil || p.Code == "" {
+		p = Problem{
+			Status: resp.StatusCode,
+			Code:   "http_error",
+			Title:  http.StatusText(resp.StatusCode),
+			Detail: fmt.Sprintf("API returned HTTP %d", resp.StatusCode),
+		}
+	} else if p.Status == 0 {
+		p.Status = resp.StatusCode
+	}
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		p = *p.WithHeader("Retry-After", ra)
+	}
+	return &APIError{Problem: p}
 }
 
 // ErrNoBody is returned by helpers that expected a body but got none.
@@ -962,7 +957,8 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	}
 	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
 	// (the server treats missing sidecar as zero provenance).
-	if sidecar.Repo != "" || sidecar.Ref != "" {
+	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
+		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil {
 		sidecarJSON, err := json.Marshal(sidecar)
 		if err != nil {
 			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
@@ -2237,10 +2233,11 @@ func (c *Client) GetDelayedTask(ctx context.Context, id string) (DelayedTaskResp
 	return out, c.do(ctx, "GET", "/v1/delayed-tasks/"+id, nil, &out)
 }
 
-// CancelDelayedTask cancels a pending delayed-task. Idempotent — a
-// re-cancel on a terminal row returns 404 invocation_not_found.
-func (c *Client) CancelDelayedTask(ctx context.Context, id string) error {
-	return c.do(ctx, "DELETE", "/v1/delayed-tasks/"+id, nil, nil)
+// CancelDelayedTask cancels a pending delayed-task and returns the row's
+// resulting state. A dispatching or terminal row is reported unchanged.
+func (c *Client) CancelDelayedTask(ctx context.Context, id string) (DelayedTaskResponse, error) {
+	var out DelayedTaskResponse
+	return out, c.do(ctx, "DELETE", "/v1/delayed-tasks/"+id, nil, &out)
 }
 
 // ListInvocations paginates the account's invocations by `?before=<id>`
@@ -3385,6 +3382,13 @@ func (c *Client) ListDeployments(ctx context.Context, before string, limit int) 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListLatestDeploymentsByApp returns at most one newest deployment for every
+// non-deleted app owned by the authenticated account.
+func (c *Client) ListLatestDeploymentsByApp(ctx context.Context) (LatestDeploymentsByAppResponse, error) {
+	var out LatestDeploymentsByAppResponse
+	return out, c.do(ctx, "GET", "/v1/deployments/latest-by-app", nil, &out)
+}
+
 // ListAppDeployments returns one cursor page of deployments for slug. The
 // app-scoped route avoids making app-centric callers scan account-wide pages.
 func (c *Client) ListAppDeployments(ctx context.Context, slug, before string, limit int) (DeploymentListResponse, error) {
@@ -3908,13 +3912,11 @@ func (c *Client) DeleteAppWebhook(ctx context.Context, slug, id string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/webhooks/"+id, nil, nil)
 }
 
-// RotateAppWebhookSecret asks the server to mint a fresh sealed
-// secret. The new plaintext is returned ONCE in the response
-// (RotateAppWebhookSecretResponse.WebhookSecret); callers MUST
-// persist it immediately and MUST NOT log it.
-func (c *Client) RotateAppWebhookSecret(ctx context.Context, slug, id string) (RotateAppWebhookSecretResponse, error) {
+// RotateAppWebhookSecret replaces the sealed signing secret with the
+// caller-supplied value. The response remains masked.
+func (c *Client) RotateAppWebhookSecret(ctx context.Context, slug, id string, req RotateAppWebhookSecretRequest) (RotateAppWebhookSecretResponse, error) {
 	var out RotateAppWebhookSecretResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/rotate-secret", nil, &out)
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/rotate-secret", req, &out)
 }
 
 // ListAppWebhookDeliveries paginates the per-subscription delivery

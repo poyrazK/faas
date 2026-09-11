@@ -128,15 +128,7 @@ func newMirrorFixture(t *testing.T) *mirrorFixture {
 	proApp := mkApp(pro, "pro-app")
 	scaleApp := mkApp(scale, "scale-app")
 	otherApp := mkApp(other, "other-app")
-	// mkLivePair returns two simultaneously-live deployments for
-	// the same app. CreateDeployment auto-supersedes the prior
-	// pending/live row on the same app (see memstore.go::CreateDeployment),
-	// so we: (1) create d1 + MarkLive(d1) → d1 live; (2) create d2
-	// → d1 superseded, d2 pending; (3) MarkLive(d2) → d2 live; (4)
-	// MarkLive(d1) again → d1 back to live (MarkDeploymentLive
-	// does NOT supersede siblings — it only flips the targeted row).
-	// Both end up live so a mirror rule (source=d1, mirror=d2) can
-	// be created on the same app.
+	// Mirror targets are simultaneously live in distinct deployment scopes.
 	mkLivePair := func(app state.App, s1, s2 string) (state.Deployment, state.Deployment) {
 		d1, err := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage,
@@ -150,16 +142,13 @@ func newMirrorFixture(t *testing.T) *mirrorFixture {
 		}
 		d2, err := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage,
-			ImageDigest: "sha256:" + s2, Status: state.DeployPending,
+			ImageDigest: "sha256:" + s2, Status: state.DeployPending, Scope: "mirror-" + s2,
 		})
 		if err != nil {
 			t.Fatalf("CreateDeployment d2: %v", err)
 		}
 		if err := store.MarkDeploymentLive(context.Background(), d2.ID); err != nil {
 			t.Fatalf("MarkDeploymentLive d2: %v", err)
-		}
-		if err := store.MarkDeploymentLive(context.Background(), d1.ID); err != nil {
-			t.Fatalf("MarkDeploymentLive d1 (restore): %v", err)
 		}
 		return d1, d2
 	}

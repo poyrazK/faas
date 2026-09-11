@@ -142,6 +142,8 @@ export type { DebugEvidenceExplanation } from './models/DebugEvidenceExplanation
 export type { DebugRegressionItem } from './models/DebugRegressionItem.js';
 export type { DebugRegressionsResponse } from './models/DebugRegressionsResponse.js';
 export type { DebugReplayResponse } from './models/DebugReplayResponse.js';
+export type { DebugRequestCorrelation } from './models/DebugRequestCorrelation.js';
+export type { DebugRequestCorrelationStage } from './models/DebugRequestCorrelationStage.js';
 export type { DebugRequestEvidenceResponse } from './models/DebugRequestEvidenceResponse.js';
 export type { DebugTelemetryListResponse } from './models/DebugTelemetryListResponse.js';
 export type { DebugTelemetryRequestItem } from './models/DebugTelemetryRequestItem.js';
@@ -226,6 +228,7 @@ export type { KafkaSASLConfig } from './models/KafkaSASLConfig.js';
 export type { KafkaSASLMechanism } from './models/KafkaSASLMechanism.js';
 export type { KafkaTLSConfig } from './models/KafkaTLSConfig.js';
 export type { KafkaTriggerConfig } from './models/KafkaTriggerConfig.js';
+export type { LatestDeploymentsByAppResponse } from './models/LatestDeploymentsByAppResponse.js';
 export type { ListAuditEventsResponse } from './models/ListAuditEventsResponse.js';
 export type { ListAuditLogResponse } from './models/ListAuditLogResponse.js';
 export type { ListCronRunsResponse } from './models/ListCronRunsResponse.js';
@@ -371,6 +374,7 @@ export type { RolloutTransitionResponse } from './models/RolloutTransitionRespon
 export type { RotateAlertRuleSecretResponse } from './models/RotateAlertRuleSecretResponse.js';
 export type { RotateAppSecretRequest } from './models/RotateAppSecretRequest.js';
 export type { RotateAppSecretResponse } from './models/RotateAppSecretResponse.js';
+export type { RotateAppWebhookSecretRequest } from './models/RotateAppWebhookSecretRequest.js';
 export type { RotateAppWebhookSecretResponse } from './models/RotateAppWebhookSecretResponse.js';
 export type { RotateKeyResponse } from './models/RotateKeyResponse.js';
 export type { RotateOrgAPIKeyRequest } from './models/RotateOrgAPIKeyRequest.js';

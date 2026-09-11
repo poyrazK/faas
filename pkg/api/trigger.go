@@ -68,6 +68,11 @@ const (
 	TriggerKindQueue        TriggerKind = "queue"
 )
 
+const (
+	KafkaSASLPasswordMaxBytes = 4 * 1024
+	KafkaTLSClientKeyMaxBytes = 64 * 1024
+)
+
 // BrokerPoisonStrategy is the closed-vocabulary carrier for the
 // audit #10 column added in migration 00299_triggers_poison_strategy.sql.
 // Pinned by the SQL CHECK on triggers.broker_poison_strategy.

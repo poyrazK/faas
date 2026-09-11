@@ -227,12 +227,11 @@ func cmdWorkflowsEvents(args []string) int {
 
 	fs := flag.NewFlagSet("workflows-events-send", flag.ContinueOnError)
 	payloadStr := fs.String("payload", "{}", "JSON payload for the event")
-	if err := fs.Parse(args[1:]); err != nil {
+	flags, posArgs := splitArgsForFlags(args[1:])
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-
-	posArgs := fs.Args()
-	if len(posArgs) < 2 {
+	if len(posArgs) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale workflows events send <run_id> <event_name> [--payload '{\"k\":\"v\"}']", "workflows")
 		return 1
 	}

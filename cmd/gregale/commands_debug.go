@@ -6,10 +6,13 @@
 // Subcommand surface:
 //
 //	gregale debug requests list <slug> [--since <dur>] [--route <pattern>] [--limit N]
+//	gregale debug requests watch <slug> [--since <dur>] [--route <pattern>] [--limit N] [--interval D] [--once]
 //	gregale debug requests get <slug> <req_id>
 //	gregale debug requests show <slug> <req_id>
 //	gregale debug requests evidence <slug> <req_id>
 //	gregale debug requests replay <slug> <req_id>
+//	gregale debug bundle <slug> <req_id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
+//	gregale debug regressions watch <slug> [--since <dur>] [--interval D] [--once]
 //	gregale debug regressions <slug> [--since <dur>]
 //	gregale debug compare <slug> --source <id> --mirror <id> [--route <pattern>] [--since <dur>]
 //
@@ -34,9 +37,9 @@ import (
 
 // debugCmdUsage is the canonical usage text. Mirrors the shape of
 // commands_invocations.go's PrintUsage strings.
-const debugCmdUsage = "usage: gregale debug <requests|regressions|compare> ..."
+const debugCmdUsage = "usage: gregale debug <requests|regressions|compare|bundle> ..."
 
-const debugRequestsCmdUsage = "usage: gregale debug requests <list|get|show|evidence|replay> ..."
+const debugRequestsCmdUsage = "usage: gregale debug requests <list|watch|get|show|evidence|replay> ..."
 
 // debugCmdDocsTopic is the docs topic slug for the debug
 // namespace. Resolves to cli_meta.go's "debug" cliCommand entry;
@@ -49,7 +52,7 @@ func cmdDebug(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  regressions       list detected regressions\n  compare           compare two deployments", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  regressions       list detected regressions\n  regressions watch watch regression observations for changes\n  compare           compare two deployments\n  bundle            export a redacted incident bundle", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -59,6 +62,8 @@ func cmdDebug(args []string) int {
 		return cmdDebugRegressions(args[1:])
 	case "compare":
 		return cmdDebugCompare(args[1:])
+	case "bundle":
+		return cmdDebugBundle(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown debug subcommand %q\n", args[0])
 	return 1
@@ -70,12 +75,14 @@ func cmdDebugRequests(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  get       show one request's metadata\n  show      show request timeline and evidence\n  evidence  show request evidence and explanation\n  replay    queue a request replay", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  watch     watch request telemetry for new or changed rows\n  get       show one request's metadata\n  show      show request timeline and evidence\n  evidence  show request evidence and explanation\n  replay    queue a request replay", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
 	case subList:
 		return cmdDebugRequestsList(args[1:])
+	case "watch":
+		return cmdDebugRequestsWatch(args[1:])
 	case "get":
 		return cmdDebugRequestsGet(args[1:])
 	case "show":
@@ -195,6 +202,9 @@ func cmdDebugRequestsReplay(args []string) int {
 // cmdDebugRegressions renders the active regression observations
 // for a slug. Powers the dashboard regression banner feed.
 func cmdDebugRegressions(args []string) int {
+	if len(args) > 0 && args[0] == "watch" {
+		return cmdDebugRegressionsWatch(args[1:])
+	}
 	fs := flag.NewFlagSet("debug regressions", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true})
@@ -329,6 +339,34 @@ func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceRespon
 			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", at, event.Phase, event.Kind, details)
 		}
 		_ = tw.Flush()
+	}
+
+	if len(resp.Correlation.Stages) > 0 {
+		_, _ = fmt.Fprintln(w, "CORRELATION")
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "PHASE\tSTATUS\tDURATION_MS\tEVIDENCE\tDETAILS")
+		for _, stage := range resp.Correlation.Stages {
+			duration := "-"
+			if stage.DurationMS > 0 {
+				duration = fmt.Sprintf("%d", stage.DurationMS)
+			}
+			evidence := "-"
+			if stage.EvidenceCount > 0 {
+				evidence = fmt.Sprintf("%d", stage.EvidenceCount)
+			}
+			details := stage.Reason
+			if details == "" {
+				details = "-"
+			}
+			if stage.Approximate {
+				details = "~ " + details
+			}
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", stage.Phase, stage.Status, duration, evidence, details)
+		}
+		_ = tw.Flush()
+		if !resp.Correlation.Complete {
+			_, _ = fmt.Fprintln(w, "correlation incomplete: missing or partial stages are shown above")
+		}
 	}
 
 	if len(resp.Spans) == 0 {

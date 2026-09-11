@@ -344,6 +344,13 @@ func renderOpenAPISpecJSON(spec *openapidiff.Spec, genMeta openapidiff.GenerateF
 		"info":    map[string]any{"title": app.Slug, "version": "1"},
 		"paths":   renderPathsJSON(spec.Paths),
 	}
+	if len(spec.Components) > 0 {
+		schemas := make(map[string]any, len(spec.Components))
+		for name, schema := range spec.Components {
+			schemas[name] = renderSchemaJSON(schema)
+		}
+		out["components"] = map[string]any{"schemas": schemas}
+	}
 	if len(genMeta.Annotations) > 0 {
 		out["x-faas-edge-rules"] = genMeta.Annotations
 	}
@@ -359,10 +366,10 @@ func renderOpenAPISpecJSON(spec *openapidiff.Spec, genMeta openapidiff.GenerateF
 func renderPathsJSON(paths map[string]*openapidiff.PathItem) map[string]any {
 	out := map[string]any{}
 	for pathKey, pi := range paths {
-		if pi == nil || len(pi.Methods) == 0 {
+		if pi == nil {
 			continue
 		}
-		methods := map[string]any{}
+		methods := cloneOpenAPIObject(pi.Raw)
 		for method, op := range pi.Methods {
 			if op == nil {
 				continue
@@ -379,26 +386,46 @@ func renderPathsJSON(paths map[string]*openapidiff.PathItem) map[string]any {
 // schema-shape fields (Responses.{Content.{Schema.{Type}}});
 // the bridge leaves the rest to the wire marshaller.
 func renderOperationJSON(op *openapidiff.Operation) map[string]any {
-	out := map[string]any{}
+	out := cloneOpenAPIObject(op.Raw)
 	if len(op.Responses) > 0 {
 		responses := map[string]any{}
 		for code, r := range op.Responses {
 			if r == nil {
 				continue
 			}
+			response := cloneOpenAPIObject(r.Raw)
 			content := map[string]any{}
 			for ct, sch := range r.Content {
 				if sch == nil {
 					continue
 				}
-				content[ct] = map[string]any{"schema": sch}
+				content[ct] = map[string]any{"schema": renderSchemaJSON(sch)}
 			}
-			responses[code] = map[string]any{
-				"description": "OK",
-				"content":     content,
+			if _, ok := response["description"]; !ok {
+				response["description"] = "OK"
 			}
+			response["content"] = content
+			responses[code] = response
 		}
 		out["responses"] = responses
+	}
+	return out
+}
+
+func renderSchemaJSON(schema *openapidiff.Schema) any {
+	if schema == nil {
+		return nil
+	}
+	if len(schema.Raw) > 0 {
+		return cloneOpenAPIObject(schema.Raw)
+	}
+	return schema
+}
+
+func cloneOpenAPIObject(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
 	}
 	return out
 }

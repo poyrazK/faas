@@ -272,6 +272,10 @@ from .debug_regression_item import DebugRegressionItem
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_response import DebugReplayResponse
 from .debug_replay_response_status import DebugReplayResponseStatus
+from .debug_request_correlation import DebugRequestCorrelation
+from .debug_request_correlation_stage import DebugRequestCorrelationStage
+from .debug_request_correlation_stage_phase import DebugRequestCorrelationStagePhase
+from .debug_request_correlation_stage_status import DebugRequestCorrelationStageStatus
 from .debug_request_evidence_response import DebugRequestEvidenceResponse
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
@@ -480,6 +484,7 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
@@ -707,6 +712,7 @@ from .rollout_transition_response import RolloutTransitionResponse
 from .rotate_alert_rule_secret_response import RotateAlertRuleSecretResponse
 from .rotate_app_secret_request import RotateAppSecretRequest
 from .rotate_app_secret_response import RotateAppSecretResponse
+from .rotate_app_webhook_secret_request import RotateAppWebhookSecretRequest
 from .rotate_app_webhook_secret_response import RotateAppWebhookSecretResponse
 from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
     RotateAppWebhookSecretResponseWebhookSecretSealedMasked,
@@ -1146,6 +1152,10 @@ __all__ = (
     "DebugRegressionsResponse",
     "DebugReplayResponse",
     "DebugReplayResponseStatus",
+    "DebugRequestCorrelation",
+    "DebugRequestCorrelationStage",
+    "DebugRequestCorrelationStagePhase",
+    "DebugRequestCorrelationStageStatus",
     "DebugRequestEvidenceResponse",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",
@@ -1350,6 +1360,7 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "LatestDeploymentsByAppResponse",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
     "ListBucketObjectsResponse200",
@@ -1575,6 +1586,7 @@ __all__ = (
     "RotateAlertRuleSecretResponse",
     "RotateAppSecretRequest",
     "RotateAppSecretResponse",
+    "RotateAppWebhookSecretRequest",
     "RotateAppWebhookSecretResponse",
     "RotateAppWebhookSecretResponseWebhookSecretSealedMasked",
     "RotateKeyResponse",

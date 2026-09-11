@@ -684,8 +684,8 @@ func TestLivenessRecv_FirecrackerVsockHandshake(t *testing.T) {
 			serverErr <- unmarshalErr
 			return
 		}
-		if req.Path != "/healthz" || req.TimeoutMs != 2000 {
-			serverErr <- fmt.Errorf("request = %+v, want path=/healthz timeout=2000", req)
+		if req.Path != "/healthz" || req.Port != 3000 || req.TimeoutMs != 2000 {
+			serverErr <- fmt.Errorf("request = %+v, want path=/healthz port=3000 timeout=2000", req)
 			return
 		}
 		respBody, marshalErr := json.Marshal(livenessResponseBody{Status: 200})
@@ -707,7 +707,7 @@ func TestLivenessRecv_FirecrackerVsockHandshake(t *testing.T) {
 	}()
 
 	loop := &livenessProbeLoop{
-		cfg:        livenessProbeConfig{Path: "/healthz"},
+		cfg:        livenessProbeConfig{Path: "/healthz", Port: 3000},
 		socketPath: sockPath,
 	}
 	if got := loop.dialAndProbe(context.Background(), 2000); got != livenessOutcomeOK {

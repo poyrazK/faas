@@ -119,6 +119,15 @@
     mode: "0644"
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
+- name: vmmd_service — install runtime egress policy drop-in
+  notify: restart faas-vmmd
+  ansible.builtin.template:
+    src: 99-faas-egress.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-egress.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: vmmd_service — ensure 'faas' group exists (socket auth group, ADR-015)
   ansible.builtin.group:
     name: faas

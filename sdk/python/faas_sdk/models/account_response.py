@@ -32,8 +32,7 @@ class AccountResponse:
     plan: AccountResponsePlan
     status: AccountResponseStatus
     limits: AccountLimits
-    """Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-
-    hours, and writable ephemeral app-disk capacity."""
+    """Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."""
     usage_gb_hours: float
     app_count: int
     developer_app_count: int

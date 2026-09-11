@@ -58,7 +58,6 @@ CheckWebhookReplay
 ClaimAlertFire
 ClaimCliAuthCode
 ClaimDueAppWebhookDeliveries
-ClaimInvocation
 ClaimInvocationWithCap
 ClaimNextDueWorkflowRun
 ClaimNextPendingRun
@@ -123,6 +122,7 @@ CountPendingOrgInvitations
 CountTenantHostnamesForSurface
 CountTenantSurfacesForAccount
 CountWakeBootStarted24h
+CreateAPIConsumer
 CreateAPIKey
 CreateAPIKeyWithExpiry
 CreateAPIKeyWithExpiryAndProvenance
@@ -138,6 +138,7 @@ CreateBuild
 CreateBuildProvenance
 CreateBuildWithID
 CreateConsumerKey
+CreateConsumerKeyForConsumer
 CreateCorsPresetIfUnderQuota
 CreateCreditLedgerEntry
 CreateCron
@@ -220,7 +221,6 @@ DeploymentSidecarRAMs
 DeploymentSnapshotBackoffActive
 DomainByName
 DropTriggerRecordByOperator
-EnqueueInvocation
 EnsureAccountAsyncQuota
 ExpireOrgInvitations
 ExpireUploadSession
@@ -232,6 +232,7 @@ FinalizeServiceRollout
 FindGdprRequestByRequestID
 FindMatchingEvent
 ForceDeadlineBreachedInvocations
+GetAPIConsumerByID
 GetAPIKey
 GetAccountAsyncQuota
 GetAccountEgressAllowlistExtra
@@ -335,6 +336,7 @@ LatestSnapshot
 LatestSnapshotBytes
 LatestSnapshotForTier
 LatestSupersededDeployment
+ListAPIConsumersForApp
 ListAPIKeys
 ListAccountCredits
 ListActiveRegressionsByApp
@@ -594,6 +596,7 @@ RestoreApp
 RetryDeploymentFromStage
 RetryQueueDeadLetter
 RetryTriggerRecordByOperator
+RevokeAPIConsumer
 RevokeAllSessions
 RevokeConsumerKey
 RevokeOrgAPIKey
@@ -645,7 +648,6 @@ SweepExpiredWorkflowRuns
 SweepStuckRunningBuilds
 TenantSurfaceByHostname
 TouchConsumerKeyLastUsed
-TouchInstancesLastSeen
 TouchInstancesWithRequestDelta
 TouchKeyLastUsed
 TouchSessionLastSeen

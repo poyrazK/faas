@@ -378,23 +378,25 @@ func NewStalenessSignal(stale time.Duration) (signal *ReadySignal, touch func(),
 			case <-stop:
 				return
 			case <-t.C:
-				touched := lastTouch.Load()
-				if touched == 0 {
-					// No touch yet — keep signalling not ready.
-					s.Set(false, "no touch yet")
-					continue
+				for {
+					touched := lastTouch.Load()
+					if touched == 0 {
+						// No touch yet — keep signalling not ready.
+						s.Set(false, "no touch yet")
+					} else if time.Since(time.Unix(0, touched)) > stale {
+						s.Set(false, "stale")
+					} else {
+						// Fresh — re-flip ready so the signal is invariant
+						// under tick/touch interleaving.
+						s.Set(true, "")
+					}
+					// A Touch may land after the timestamp load but before
+					// Set. Re-evaluate in that case so an older timer tick
+					// cannot overwrite the fresh touch with "stale".
+					if lastTouch.Load() == touched {
+						break
+					}
 				}
-				age := time.Since(time.Unix(0, touched))
-				if age > stale {
-					s.Set(false, "stale")
-					continue
-				}
-				// Fresh — re-flip ready so the signal is invariant
-				// under tick/touch interleaving. touch() also writes
-				// ready, but a tick that arrives just after a stale
-				// flip and before the next touch would observe stale
-				// state from the prior tick without this re-set.
-				s.Set(true, "")
 			}
 		}
 	}()

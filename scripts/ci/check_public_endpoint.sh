@@ -48,6 +48,20 @@ case "$status" in
     ;;
 esac
 
+# Customer app endpoints are API surfaces. Exercise a common non-browser user
+# agent so a zone-level Browser Integrity Check regression cannot pass the
+# ordinary curl probe while rejecting standard library clients.
+api_client_status="$(curl --silent --show-error --location --max-time 20 \
+  --proto '=https' --tlsv1.2 --user-agent 'Python-urllib/3.13' \
+  --output /dev/null --write-out '%{http_code}' "$url")"
+case "$api_client_status" in
+  2[0-9][0-9]) ;;
+  *)
+    echo "public-endpoint-check: ${url} returned HTTP ${api_client_status} to Python-urllib user agent; want 2xx" >&2
+    exit 1
+    ;;
+esac
+
 hsts="$(awk 'tolower($0) ~ /^strict-transport-security:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$headers" | tr -d '\r')"
 if [[ -z "$hsts" ]]; then
   echo "public-endpoint-check: missing Strict-Transport-Security header" >&2
@@ -90,6 +104,7 @@ if [[ -n "$http_endpoint" ]]; then
 fi
 
 echo "public-endpoint-check: OK endpoint=${endpoint} status=${status} hsts_max_age=${hsts_age}"
+echo "public-endpoint-check: OK api_client_user_agent=Python-urllib/3.13 status=${api_client_status}"
 if [[ -n "$http_endpoint" ]]; then
   echo "public-endpoint-check: OK http_redirect=${http_endpoint} status=${redirect_status}"
 fi

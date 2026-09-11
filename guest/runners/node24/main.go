@@ -156,10 +156,7 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	// writing the response (the customer's __faas_tail.js shim
 	// has already appended JSONL lines to env.TailPipePath).
 	drainTailHost(r.Context(), env, &resp)
-	for k, v := range resp.Headers {
-		w.Header().Set(k, v)
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
+	internal.ApplyResponseHeaders(w.Header(), resp.Headers)
 	if resp.Status == 0 {
 		resp.Status = http.StatusOK
 	}

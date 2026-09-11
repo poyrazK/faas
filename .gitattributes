@@ -1,0 +1,3 @@
+# openapi-typescript-codegen emits a trailing blank line in every generated
+# TypeScript file. Keep Git's whitespace checks strict outside this directory.
+sdk/node/src/generated/** whitespace=-blank-at-eof

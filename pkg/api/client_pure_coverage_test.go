@@ -415,9 +415,7 @@ func TestClient_Do_RetryAfterHeaderSurfacesOn503(t *testing.T) {
 	}
 }
 
-func TestClient_Do_ProblemDecodeFailureFallsBackToGenericError(t *testing.T) {
-	// A non-Problem body (no JSON, or JSON without .code) must NOT be
-	// surfaced as a Problem — the SDK falls through to "API error: <status>".
+func TestClient_Do_ProblemDecodeFailurePreservesTypedStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -430,8 +428,11 @@ func TestClient_Do_ProblemDecodeFailureFallsBackToGenericError(t *testing.T) {
 		t.Fatal("err = nil, want generic API error")
 	}
 	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		t.Errorf("non-Problem body surfaced as *APIError; want generic error")
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("non-Problem body error = %T, want *APIError", err)
+	}
+	if apiErr.Problem.Status != http.StatusInternalServerError || apiErr.Problem.Code != "http_error" {
+		t.Errorf("problem = %+v", apiErr.Problem)
 	}
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("err = %v, want 500 in chain", err)

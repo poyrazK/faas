@@ -47,8 +47,14 @@ import (
 // on the build row for audit/provenance, but the build pipeline does
 // NOT use them to fetch upstream.
 type sidecarPayload struct {
-	Repo string `json:"repo,omitempty"`
-	Ref  string `json:"ref,omitempty"`
+	Repo           string                `json:"repo,omitempty"`
+	Ref            string                `json:"ref,omitempty"`
+	Reason         string                `json:"reason,omitempty"`
+	Tag            string                `json:"tag,omitempty"`
+	DeployedBy     string                `json:"deployed_by,omitempty"`
+	PRNumber       int                   `json:"pr_number,omitempty"`
+	TrafficPercent *int                  `json:"traffic_percent,omitempty"`
+	Canary         *api.CanaryPresetSpec `json:"canary,omitempty"`
 }
 
 // fieldNameTarball is the multipart field name on both
@@ -132,6 +138,16 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	rolloutReq := &api.CreateDeploymentRequest{TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary}
+	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	if rolloutProblem != nil {
+		api.WriteProblem(w, rolloutProblem)
+		return
+	}
 
 	// Issue #977 / ADR-116: read the four annotation form fields.
 	// Empty / missing → NULL on the row (pgstore handles the
@@ -141,6 +157,18 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	//   - tag in closed-set (CodeValidation otherwise)
 	//   - pr_number > 0 when present (CodeValidation otherwise)
 	ann := annotationFormFromRequest(r)
+	if ann.Reason == "" {
+		ann.Reason = sidecar.Reason
+	}
+	if ann.Tag == "" {
+		ann.Tag = sidecar.Tag
+	}
+	if ann.DeployedBy == "" {
+		ann.DeployedBy = sidecar.DeployedBy
+	}
+	if ann.PRNumber == 0 {
+		ann.PRNumber = sidecar.PRNumber
+	}
 	if prob := validateAnnotationForm(ann); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -188,13 +216,20 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		ActorFromIP: middleware.ClientIP(r),
 		// Issue #977 / ADR-116: annotation surface forwarded onto
 		// the deployment row from the request's annotationForm.
-		Reason:          ann.Reason,
-		Tag:             ann.Tag,
-		DeployedBy:      ann.DeployedBy,
-		PRNumber:        ann.PRNumber,
-		HostingObserver: s.ops,
-		HostingFlow:     "first_deploy",
-		ServiceRollout:  app.Manifest.ExecutionMode == api.ExecutionModeService,
+		Reason:                 ann.Reason,
+		Tag:                    ann.Tag,
+		DeployedBy:             ann.DeployedBy,
+		PRNumber:               ann.PRNumber,
+		TrafficPercent:         rollout.TrafficPercent,
+		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
+		CanaryPreset:           rollout.CanaryPreset,
+		CanaryStep:             rollout.CanaryStep,
+		CanaryTotalSteps:       rollout.CanaryTotalSteps,
+		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
+		CanaryStages:           rollout.CanaryStages,
+		HostingObserver:        s.ops,
+		HostingFlow:            "first_deploy",
+		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && sidecar.TrafficPercent == nil && sidecar.Canary == nil,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))

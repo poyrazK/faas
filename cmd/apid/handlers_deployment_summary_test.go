@@ -17,17 +17,23 @@ func TestGetAppDeploymentSummaryIncludesDiffAndRollbackTarget(t *testing.T) {
 	base := time.Now().UTC().Add(-time.Minute)
 	previous, err := e.store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: appID, ImageDigest: "sha256:previous", CommitSHA: "1111111", SourceURL: "https://github.com/acme/app",
-		Kind: state.DeploymentKindImage, Status: state.DeployLive, CreatedAt: base, Scope: "production", TrafficPercent: 100,
+		Kind: state.DeploymentKindImage, Status: state.DeployPending, CreatedAt: base, Scope: "production", TrafficPercent: 100,
 	})
 	if err != nil {
 		t.Fatalf("create previous: %v", err)
 	}
+	if err := e.store.MarkDeploymentLive(context.Background(), previous.ID); err != nil {
+		t.Fatalf("promote previous: %v", err)
+	}
 	current, err := e.store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: appID, ImageDigest: "sha256:current", CommitSHA: "2222222", SourceURL: "https://github.com/acme/app",
-		Kind: state.DeploymentKindImage, Status: state.DeployLive, CreatedAt: base.Add(time.Second), Scope: "production", TrafficPercent: 50,
+		Kind: state.DeploymentKindImage, Status: state.DeployPending, CreatedAt: base.Add(time.Second), Scope: "production", TrafficPercent: 50,
 	})
 	if err != nil {
 		t.Fatalf("create current: %v", err)
+	}
+	if err := e.store.MarkDeploymentLive(context.Background(), current.ID); err != nil {
+		t.Fatalf("promote current: %v", err)
 	}
 
 	rec := e.do(t, http.MethodGet, "/v1/apps/summary-app/deployments/"+current.ID+"/summary", nil, nil)

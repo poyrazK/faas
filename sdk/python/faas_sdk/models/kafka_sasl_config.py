@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.kafka_sasl_mechanism import KafkaSASLMechanism, check_kafka_sasl_mechanism
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="KafkaSASLConfig")
 
@@ -23,7 +24,10 @@ class KafkaSASLConfig:
     mechanism: KafkaSASLMechanism
     """Kafka SASL mechanism (ADR-118 §5). Closed-vocab."""
     username: str
-    password: str
+    password: str | Unset = UNSET
+    """Plaintext-on-write only. Omit inside a supplied SASL block to preserve the stored password."""
+    password_set: bool | Unset = UNSET
+    """Response-only marker indicating that a password is configured; no credential material is returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,15 +37,20 @@ class KafkaSASLConfig:
 
         password = self.password
 
+        password_set = self.password_set
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "mechanism": mechanism,
                 "username": username,
-                "password": password,
             }
         )
+        if password is not UNSET:
+            field_dict["password"] = password
+        if password_set is not UNSET:
+            field_dict["password_set"] = password_set
 
         return field_dict
 
@@ -52,12 +61,15 @@ class KafkaSASLConfig:
 
         username = d.pop("username")
 
-        password = d.pop("password")
+        password = d.pop("password", UNSET)
+
+        password_set = d.pop("password_set", UNSET)
 
         kafka_sasl_config = cls(
             mechanism=mechanism,
             username=username,
             password=password,
+            password_set=password_set,
         )
 
         kafka_sasl_config.additional_properties = d

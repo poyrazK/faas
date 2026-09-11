@@ -368,6 +368,9 @@ func cmdApp(args []string) int {
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	var req api.UpdateAppRequest
 	if explicit["ram"] {
+		if *ram <= 0 {
+			return printErr("Invalid --ram", fmt.Errorf("must be greater than zero; got %d", *ram))
+		}
 		v := *ram
 		req.RAMMB = &v
 	}
@@ -1423,10 +1426,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 1
 		}
 		return cmdDeployRepoSourceRefContextWithJSONWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
-			Reason:     *reason,
-			Tag:        *tag,
-			DeployedBy: resolveDeployedBy(*deployedBy),
-			PRNumber:   *prNumber,
+			Reason:         *reason,
+			Tag:            *tag,
+			DeployedBy:     resolveDeployedBy(*deployedBy),
+			PRNumber:       *prNumber,
+			TrafficPercent: optTrafficPercent(*trafficPercent),
+			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
 		}, waitForDeploy, jsonWait)
 	}
 
@@ -1596,7 +1601,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	localZeroConfig := *image == "" && *tarball == ""
 	doctorEnabled := *doctorStrict || (!*noDoctor && localZeroConfig)
 	if doctorEnabled && sourceDir != "" {
-		rep := runDoctorChecks(sourceDir)
+		doctorShape := resolvedShape
+		if !*function && !*app {
+			doctorShape = detectShape(sourceDir)
+		}
+		rep := runDoctorChecksForShape(sourceDir, doctorShape)
 		if *doctorStrict && rep.HasErrors() {
 			if jsonOutput {
 				_ = json.NewEncoder(osStderr).Encode(struct {
@@ -1888,10 +1897,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
 	// happen. --diff and --dry-run never ship a deploy.
 	if *diff {
-		if *profile != "" {
-			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --diff"))
-		}
-		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr)
+		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
 		opts.Strict = !*diffLenient
@@ -2030,11 +2036,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if *tarball != "" {
 		ann := api.DeployAnnotations{
-			Reason:     *reason,
-			Tag:        *tag,
-			DeployedBy: resolveDeployedBy(*deployedBy),
-			PRNumber:   *prNumber,
-			Workflows:  workflowDefs,
+			Reason:         *reason,
+			Tag:            *tag,
+			DeployedBy:     resolveDeployedBy(*deployedBy),
+			PRNumber:       *prNumber,
+			Workflows:      workflowDefs,
+			TrafficPercent: optTrafficPercent(*trafficPercent),
+			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3745,7 +3753,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		if final, ok := pollDeploymentFinalContext(ctx, c, dep); ok {
 			return terminalDeployment(final)
 		}
-		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs --deployment %s", dep.ID)
+		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 		return 3
 	}
 	defer func() { _ = body.Close() }()
@@ -3833,7 +3841,7 @@ streamLoop:
 				}
 				break streamLoop
 			case streamEventError:
-				PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs --deployment %s", dep.ID)
+				PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 				return 3
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
@@ -3854,7 +3862,7 @@ streamLoop:
 			if errors.Is(err, io.EOF) {
 				break streamLoop
 			}
-			PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs --deployment %s", dep.ID)
+			PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 			return 3
 		}
 	}
@@ -3879,7 +3887,7 @@ streamLoop:
 	if final, ok := pollDeploymentFinalUntilContext(ctx, c, dep, 5*time.Minute); ok {
 		return terminalDeployment(final)
 	}
-	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs --deployment %s", dep.ID)
+	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 	return 3
 }
 
@@ -4041,20 +4049,20 @@ func terminalExitForDeploymentContext(ctx context.Context, c *Client, d api.Depl
 // so on failure we render a compact "BuildStatus=failed
 // failure_class=…" block and exit 2 (same exit-code convention as
 // terminalExitForDeployment's renderDeployFailure path).
-func terminalExitForBuild(b api.BuildResponse, appID string) int {
-	return terminalExitForBuildContext(context.Background(), nil, b, appID)
+func terminalExitForBuild(b api.BuildResponse, appSlug string) int {
+	return terminalExitForBuildContext(context.Background(), nil, b, appSlug)
 }
 
-func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appID string) int {
+func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string) int {
 	if b.Status == buildStatusSucceeded {
 		dep := api.DeploymentResponse{ID: b.DeploymentID, Status: statusLive}
-		return renderSuccessfulDeployment(ctx, c, dep, appID)
+		return renderSuccessfulDeployment(ctx, c, dep, appSlug)
 	}
 	// Failed build — surface the lifecycle info. End users hitting
 	// this path are CI scripts that lost their SSE; the canonical
-	// log path is `gregale logs --deployment <deployment_id>`.
-	PrintWarn(os.Stderr, "build %s failed (failure_class=%s); inspect logs with: gregale logs --deployment %s",
-		b.ID, b.FailureClass, b.DeploymentID)
+	// log path includes the required app slug positional argument.
+	PrintWarn(os.Stderr, "build %s failed (failure_class=%s); inspect logs with: gregale logs %s --deployment %s --follow",
+		b.ID, b.FailureClass, appSlug, b.DeploymentID)
 	return 2
 }
 

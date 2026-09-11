@@ -18,6 +18,23 @@ datasources:
     jsonData:
       timeInterval: 15s
       httpMethod: POST
+{% if gv_trace_datasource_uid | length > 0 or gv_trace_exemplar_url | length > 0 %}
+      # Prometheus exemplars carry trace_id as sample metadata. Keep the
+      # destination optional because the platform does not require a specific
+      # trace backend; providers can point this at Tempo, Jaeger, Datadog, or
+      # another Grafana-supported trace datasource.
+      exemplarTraceIdDestinations:
+{% if gv_trace_datasource_uid | length > 0 %}
+        - datasourceUid: "{{ gv_trace_datasource_uid }}"
+          name: trace_id
+          urlDisplayLabel: View trace
+{% endif %}
+{% if gv_trace_exemplar_url | length > 0 %}
+        - name: trace_id
+          url: "{{ gv_trace_exemplar_url }}"
+          urlDisplayLabel: View trace
+{% endif %}
+{% endif %}
 {% if gv_loki_url | length > 0 %}
   # Loki is enabled only when the provider supplies the dedicated backend
   # endpoint and the provider-owned EnvironmentFile. The TLS values below

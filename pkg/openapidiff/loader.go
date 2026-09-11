@@ -140,6 +140,10 @@ func (s *Spec) OpenAPIVersion() string { return s.version }
 // [Operation] for that verb. Methods are lower-case to match the
 // differ's path traversal.
 type PathItem struct {
+	// Raw preserves path-level OpenAPI metadata that the structural differ does
+	// not interpret, including shared parameters and servers. Auto rendering
+	// overlays the normalized methods onto this map.
+	Raw map[string]any `json:"-"`
 	// Methods is keyed by lower-case HTTP method (get, post, …).
 	Methods map[string]*Operation
 	// Parameters is the shared parameter list (path-level
@@ -153,6 +157,9 @@ type PathItem struct {
 // status string ("200", "404", "default", …). Content is keyed
 // by content type ("application/json", …).
 type Operation struct {
+	// Raw preserves operation metadata outside the structural response model,
+	// such as operationId, parameters, requestBody, security, tags and servers.
+	Raw map[string]any `json:"-"`
 	// Responses is keyed by status string. The differ walks each
 	// response's content schemas.
 	Responses map[string]*Response
@@ -161,6 +168,8 @@ type Operation struct {
 // Response is one status response. Content holds the per-content-type
 // schema payload.
 type Response struct {
+	// Raw preserves response descriptions, headers, links and extensions.
+	Raw map[string]any `json:"-"`
 	// Content is keyed by MIME type. Empty when the response has
 	// no body (e.g. 204 No Content).
 	Content map[string]*Schema
@@ -182,34 +191,37 @@ type Response struct {
 // refs — that's the differ's job, and only at the points it needs
 // to walk into the schema body.
 type Schema struct {
+	// Raw preserves JSON Schema facets outside the focused structural differ
+	// (format, enum, constraints, allOf, additionalProperties, and extensions).
+	Raw map[string]any `json:"-"`
 	// Type is the JSON Schema type string ("object", "string",
 	// "integer", "number", "boolean", "array", "null"). Empty
 	// for oneOf/anyOf unions.
-	Type string
+	Type string `json:"type,omitempty"`
 	// Properties is keyed by property name. Nil for non-object
 	// schemas.
-	Properties map[string]*Schema
+	Properties map[string]*Schema `json:"properties,omitempty"`
 	// Required is the sorted required-property list.
-	Required []string
+	Required []string `json:"required,omitempty"`
 	// Items is the array-element schema. Nil for non-array schemas.
-	Items *Schema
+	Items *Schema `json:"items,omitempty"`
 	// Nullable is true when the schema accepts null. Captures
 	// both OpenAPI 3.0 `nullable: true` and OpenAPI 3.1 `[T,
 	// 'null']` form per the noise rule.
-	Nullable bool
+	Nullable bool `json:"nullable,omitempty"`
 	// OneOf / AnyOf hold union alternatives. Nil when not a
 	// union. PR-2 does not walk into these for break detection
 	// (kept for completeness; the differ treats any non-nil
 	// union as opaque).
-	OneOf []*Schema
-	AnyOf []*Schema
+	OneOf []*Schema `json:"oneOf,omitempty"`
+	AnyOf []*Schema `json:"anyOf,omitempty"`
 	// Ref is the unresolved $ref string ("#/components/schemas/Foo").
 	// Empty when inlined.
-	Ref string
+	Ref string `json:"$ref,omitempty"`
 	// Description is the human-readable description. Held for
 	// completeness; the differ strips whitespace before any
 	// comparison so description-only changes never fire a break.
-	Description string
+	Description string `json:"description,omitempty"`
 }
 
 // Load reads the embedded pkg/apid/openapi.yaml via the existing
@@ -274,7 +286,7 @@ func parsePathItem(raw any) (*PathItem, error) {
 	if !ok {
 		return nil, fmt.Errorf("expected map, got %T", raw)
 	}
-	pi := &PathItem{Methods: map[string]*Operation{}}
+	pi := &PathItem{Raw: cloneOpenAPIMap(m), Methods: map[string]*Operation{}}
 	for _, method := range []string{"get", "post", "put", "patch", "delete", "options", "head"} {
 		if rawOp, ok := m[method].(map[string]any); ok {
 			op, err := parseOperation(rawOp)
@@ -293,7 +305,7 @@ func parsePathItem(raw any) (*PathItem, error) {
 // only via the [PathItem] parameter list, which PR-2 ignores for
 // break detection.
 func parseOperation(raw map[string]any) (*Operation, error) {
-	op := &Operation{Responses: map[string]*Response{}}
+	op := &Operation{Raw: cloneOpenAPIMap(raw), Responses: map[string]*Response{}}
 	if rawResp, ok := raw["responses"].(map[string]any); ok {
 		for status, rawR := range rawResp {
 			resp, err := parseResponse(rawR)
@@ -317,6 +329,7 @@ func parseResponse(raw any) (*Response, error) {
 	if !ok {
 		return resp, nil
 	}
+	resp.Raw = cloneOpenAPIMap(m)
 	if rawC, ok := m["content"].(map[string]any); ok {
 		for ct, rawS := range rawC {
 			ctm, ok := rawS.(map[string]any)
@@ -354,7 +367,7 @@ func parseSchema(raw any) (*Schema, error) {
 	if !ok {
 		return &Schema{}, nil
 	}
-	sch := &Schema{}
+	sch := &Schema{Raw: cloneOpenAPIMap(m)}
 	// $ref short-circuits — the differ resolves it later.
 	if ref, ok := m["$ref"].(string); ok {
 		sch.Ref = ref
@@ -440,6 +453,20 @@ func parseSchema(raw any) (*Schema, error) {
 		}
 	}
 	return sch, nil
+}
+
+// cloneOpenAPIMap copies the current object level. Nested maps are treated as
+// immutable loader input; renderers replace only the normalized top-level
+// fields they own, so a shallow copy avoids aliasing without a JSON round trip.
+func cloneOpenAPIMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 // trimWS collapses runs of whitespace to a single space and strips

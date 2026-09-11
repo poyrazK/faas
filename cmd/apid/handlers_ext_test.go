@@ -1266,6 +1266,40 @@ func TestUpdateApp_RAMValid(t *testing.T) {
 	}
 }
 
+func TestUpdateApp_RAMValidationPreservesConfiguration(t *testing.T) {
+	tests := []struct {
+		name       string
+		ram        int
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "negative", ram: -1, wantStatus: http.StatusUnprocessableEntity, wantCode: api.CodeInvalidAppRAM},
+		{name: "zero", ram: 0, wantStatus: http.StatusUnprocessableEntity, wantCode: api.CodeInvalidAppRAM},
+		{name: "above plan", ram: 513, wantStatus: http.StatusForbidden, wantCode: api.CodePlanLimitRAM},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			mustSeedApp(t, e, "upd-invalid-ram")
+			baselineRAM := 256
+			baseline := e.do(t, "PATCH", "/v1/apps/upd-invalid-ram", api.UpdateAppRequest{RAMMB: &baselineRAM}, nil)
+			if baseline.Code != http.StatusOK {
+				t.Fatalf("seed baseline RAM: status %d: %s", baseline.Code, baseline.Body)
+			}
+			rec := e.do(t, "PATCH", "/v1/apps/upd-invalid-ram", api.UpdateAppRequest{RAMMB: &test.ram}, nil)
+			assertProblem(t, rec, test.wantStatus, test.wantCode)
+			get := e.do(t, "GET", "/v1/apps/upd-invalid-ram", nil, nil)
+			var out api.AppResponse
+			if err := json.Unmarshal(get.Body.Bytes(), &out); err != nil {
+				t.Fatalf("unmarshal preserved app: %v", err)
+			}
+			if out.RAMMB != baselineRAM {
+				t.Fatalf("RAM after rejected update = %d, want %d", out.RAMMB, baselineRAM)
+			}
+		})
+	}
+}
+
 func TestUpdateApp_CPUValid(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	mustSeedApp(t, e, "upd-cpu")
@@ -1598,6 +1632,30 @@ func TestRollbackApp_ExplicitTarget_AlreadyLive(t *testing.T) {
 	assertProblem(t, rec, http.StatusConflict, api.CodeRollbackTargetAlreadyLive)
 }
 
+func TestRollbackApp_ExplicitTarget_IneligibleStates(t *testing.T) {
+	for _, status := range []state.DeploymentStatus{
+		state.DeployBuilding,
+		state.DeployFailed,
+		state.DeployCancelled,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			dep := mustSeedDeployment(t, e, "rb-ineligible-"+string(status))
+			if status != state.DeployBuilding {
+				if err := e.store.UpdateDeploymentStatus(context.Background(), dep.ID, status, "test state"); err != nil {
+					t.Fatalf("set target status: %v", err)
+				}
+			}
+			body := api.RollbackRequest{TargetDeploymentID: &dep.ID}
+			rec := e.do(t, "POST", "/v1/apps/rb-ineligible-"+string(status)+"/rollback", body, nil)
+			assertProblem(t, rec, http.StatusConflict, api.CodeRollbackTargetIneligible)
+			if !strings.Contains(rec.Body.String(), string(status)) {
+				t.Fatalf("problem does not report target status %q: %s", status, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestRollbackApp_LegacyEmptyBodyUnchanged confirms the back-compat
 // path: POST without a body falls through to "rollback to most-recent
 // superseded deployment". Equivalent to the pre-G behaviour.
@@ -1642,7 +1700,15 @@ func TestRollbackApp_LegacyEmptyBodyUnchanged(t *testing.T) {
 // TestParkApp_HappyPath confirms the app flips to AppEvictedCold.
 func TestParkApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "park-me")
+	appID := mustSeedApp(t, e, "park-me")
+	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: e.acct.ID, AppID: appID, TargetURL: "https://example.com/parked",
+		SecretSealed: []byte("sealed"), EventFilter: []string{"app.parked"},
+		RetryPolicy: state.AppWebhookRetryDefault, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec := e.do(t, "POST", "/v1/apps/park-me/park", nil, nil)
 	if rec.Code != 204 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -1651,12 +1717,27 @@ func TestParkApp_HappyPath(t *testing.T) {
 	if app.Status != state.AppEvictedCold {
 		t.Errorf("status = %s, want evicted_cold", app.Status)
 	}
+	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), appID, hook.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppParked || deliveries[0].Status != state.AppWebhookDeliveryPending {
+		t.Fatalf("park deliveries = %+v, want one pending app.parked row", deliveries)
+	}
 }
 
 // TestWakeApp_HappyPath parks, then wakes — exercises the inverse path.
 func TestWakeApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "wake-me")
+	appID := mustSeedApp(t, e, "wake-me")
+	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: e.acct.ID, AppID: appID, TargetURL: "https://example.com/woken",
+		SecretSealed: []byte("sealed"), EventFilter: []string{"app.woken"},
+		RetryPolicy: state.AppWebhookRetryDefault, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	e.do(t, "POST", "/v1/apps/wake-me/park", nil, nil)
 	rec := e.do(t, "POST", "/v1/apps/wake-me/wake", nil, nil)
 	if rec.Code != 204 {
@@ -1665,6 +1746,13 @@ func TestWakeApp_HappyPath(t *testing.T) {
 	app, _ := e.store.AppBySlug(context.Background(), "wake-me")
 	if app.Status != state.AppActive {
 		t.Errorf("status = %s, want active", app.Status)
+	}
+	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), appID, hook.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppWoken || deliveries[0].Status != state.AppWebhookDeliveryPending {
+		t.Fatalf("wake deliveries = %+v, want one pending app.woken row", deliveries)
 	}
 }
 
@@ -2981,6 +3069,95 @@ func TestQueueReceive_TimeoutReturns204(t *testing.T) {
 	}
 	if rec.Body.Len() != 0 {
 		t.Errorf("body = %q, want empty", rec.Body.String())
+	}
+}
+
+func TestQueueReceive_IgnoresNonQueueCompletions(t *testing.T) {
+	var e testEnv
+	var ordinaryID, delayedID, queueID string
+	e = setupWithNotifier(t, api.PlanPro, func(ctx context.Context, channel string, predicate func(string) bool, _ time.Duration) (string, error) {
+		if channel != db.NotifyInvocationDone {
+			t.Fatalf("channel = %q, want %q", channel, db.NotifyInvocationDone)
+		}
+		payload := func(id string) string {
+			return fmt.Sprintf(`{"invocation_id":%q,"app_id":%q}`, id, mustInvocationAppID(t, ctx, e, id))
+		}
+		if predicate(payload(ordinaryID)) {
+			t.Fatal("ordinary invocation completion matched queue receive")
+		}
+		if predicate(payload(delayedID)) {
+			t.Fatal("delayed-task completion matched queue receive")
+		}
+		queuePayload := payload(queueID)
+		if !predicate(queuePayload) {
+			t.Fatal("queue completion did not match queue receive")
+		}
+		return queuePayload, nil
+	})
+	appID := mustSeedApp(t, e, "myapp")
+	ordinaryID = mustSeedInvocationSource(t, e, appID, state.InvocationAsyncInvoke, `{"source":"ordinary"}`)
+	delayedID = mustSeedInvocationSource(t, e, appID, state.InvocationDelayedTask, `{"source":"delayed"}`)
+	queueID = mustSeedInvocationSource(t, e, appID, state.InvocationQueue, `{"source":"queue"}`)
+
+	rec := e.do(t, "POST", "/v1/apps/myapp/queues/receive", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out api.QueueReceiveResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.ID != queueID || string(out.Payload) != `{"source":"queue"}` {
+		t.Fatalf("response = %+v, want queue invocation %s", out, queueID)
+	}
+}
+
+func mustSeedInvocationSource(t *testing.T, e testEnv, appID string, source state.InvocationSource, payload string) string {
+	t.Helper()
+	inv, err := e.store.EnqueueInvocation(context.Background(), state.Invocation{
+		AppID: appID, AccountID: e.acct.ID, Source: source,
+		Payload: json.RawMessage(payload), DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("seed %s invocation: %v", source, err)
+	}
+	return inv.ID
+}
+
+func mustInvocationAppID(t *testing.T, ctx context.Context, e testEnv, id string) string {
+	t.Helper()
+	inv, err := e.store.InvocationByID(ctx, id)
+	if err != nil {
+		t.Fatalf("read invocation %s: %v", id, err)
+	}
+	return inv.AppID
+}
+
+func TestQueueAck_RequiresExistingAppAndQueueSource(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "myapp")
+	otherAppID := mustSeedApp(t, e, "other")
+	queueID := mustSeedInvocationSource(t, e, appID, state.InvocationQueue, `{}`)
+	otherQueueID := mustSeedInvocationSource(t, e, otherAppID, state.InvocationQueue, `{}`)
+	ordinaryID := mustSeedInvocationSource(t, e, appID, state.InvocationAsyncInvoke, `{}`)
+
+	for _, path := range []string{
+		"/v1/apps/myapp/queues/" + otherQueueID + "/ack",
+		"/v1/apps/myapp/queues/" + ordinaryID + "/ack",
+		"/v1/apps/missing/queues/" + queueID + "/ack",
+	} {
+		rec := e.do(t, "POST", path, nil, nil)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST %s status = %d, want 404; body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+
+	path := "/v1/apps/myapp/queues/" + queueID + "/ack"
+	for i := 0; i < 2; i++ {
+		rec := e.do(t, "POST", path, nil, nil)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("valid ack %d status = %d, want 204; body=%s", i+1, rec.Code, rec.Body.String())
+		}
 	}
 }
 

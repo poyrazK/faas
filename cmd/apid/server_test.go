@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -161,6 +162,31 @@ func TestWhoami(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	if out.Plan != "pro" || out.Email != "pro@example.com" {
 		t.Errorf("unexpected account: %+v", out)
+	}
+}
+
+func TestWhoamiIncludesTriggerCapabilities(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	rec := e.do(t, http.MethodGet, "/v1/account", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AccountResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	wantKinds := []api.TriggerKind{api.TriggerKindSQSCompat, api.TriggerKindQueue}
+	if !reflect.DeepEqual(out.Limits.TriggerKinds, wantKinds) {
+		t.Errorf("trigger_kinds = %v, want %v", out.Limits.TriggerKinds, wantKinds)
+	}
+	if !out.Limits.TriggersAllowed || out.Limits.TriggerLimitPerApp != 2 || out.Limits.TriggerLimitPerAccount != 10 {
+		t.Errorf("trigger availability/quota = %+v", out.Limits)
+	}
+	if out.Limits.TriggerBatchSizeMax != 50 || out.Limits.TriggerBatchWindowMaxMs != 30_000 || out.Limits.TriggerMaxAttemptsMax != 3 || out.Limits.TriggerPayloadMaxBytes != 1_048_576 {
+		t.Errorf("trigger delivery caps = %+v", out.Limits)
+	}
+	if out.Limits.TriggerTLSSkipVerifyAllowed {
+		t.Error("Hobby unexpectedly permits trigger TLS skip-verify")
 	}
 }
 

@@ -137,7 +137,8 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			return err
 		}},
 		{"CancelDelayedTask", obj.URL, func(t *testing.T, c *Client) error {
-			return c.CancelDelayedTask(ctx, "d")
+			_, err := c.CancelDelayedTask(ctx, "d")
+			return err
 		}},
 		{"ListInvocations", obj.URL, func(t *testing.T, c *Client) error {
 			_, err := c.ListInvocations(ctx, "", 50)
@@ -296,7 +297,7 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			return c.DeleteAppWebhook(ctx, "x", "w")
 		}},
 		{"RotateAppWebhookSecret", obj.URL, func(t *testing.T, c *Client) error {
-			_, err := c.RotateAppWebhookSecret(ctx, "x", "w")
+			_, err := c.RotateAppWebhookSecret(ctx, "x", "w", RotateAppWebhookSecretRequest{WebhookSecret: "replacement"})
 			return err
 		}},
 		{"RetryAppWebhookDelivery", obj.URL, func(t *testing.T, c *Client) error {

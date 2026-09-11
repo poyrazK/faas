@@ -61,6 +61,7 @@ import (
 	"strconv"
 	"time"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -69,6 +70,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/triggerconfig"
 )
 
 // notifyTriggerChangedJSON mirrors db.NotifyCronChanged's payload
@@ -103,7 +105,7 @@ func triggerResponse(t sqlc.Trigger) api.Trigger {
 		Kind:                 api.TriggerKind(t.Kind),
 		Slug:                 t.Slug,
 		Enabled:              t.Enabled,
-		Config:               json.RawMessage(t.Config),
+		Config:               triggerconfig.Redact(api.TriggerKind(t.Kind), t.Config),
 		BatchSizeMax:         int(t.BatchSizeMax),
 		BatchWindowMs:        int(t.BatchWindowMs),
 		MaxAttempts:          int(t.MaxAttempts),
@@ -176,21 +178,25 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "app_id is required"))
 		return
 	}
-	// PR #993 / issue #757 review MED-5: the original 188-line
-	// createTrigger was a linear early-return chain that mixed
-	// HTTP decode, kind validation, plan-cap application, store
-	// call, and audit emission. CLAUDE.md caps handler bodies at
-	// 50 lines; the review flagged that the chain had grown past
-	// that. Extract two helpers (validateCreateTriggerRequest +
-	// enforceCreateTriggerCaps) so the handler reads as
-	// decode → validate → caps → store → audit.
-	if p := validateCreateTriggerRequest(&req); p != nil {
-		api.WriteProblem(w, p)
+	// Unknown and cron kinds retain their request-shape errors even
+	// on plans without external triggers. For a recognised external
+	// kind, however, the plan gate runs before config validation so a
+	// source the account cannot use always has one stable 403 shape.
+	if !validTriggerKind(req.Kind) || req.Kind == api.TriggerKindCron {
+		api.WriteProblem(w, validateCreateTriggerRequest(&req))
 		return
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || !limits.TriggersAllowed {
 		api.WriteProblem(w, api.ErrPlanTriggersNotAllowed(acct.Plan))
+		return
+	}
+	if !acct.Plan.AllowsTriggerKind(req.Kind) {
+		api.WriteProblem(w, api.ErrTriggerKindNotAllowed(acct.Plan, req.Kind))
+		return
+	}
+	if p := validateCreateTriggerRequest(&req); p != nil {
+		api.WriteProblem(w, p)
 		return
 	}
 	app, err := s.store.AppByID(r.Context(), req.AppID)
@@ -207,6 +213,12 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, p)
 		return
 	}
+	sealedConfig, p := sealTriggerConfig(req.Kind, req.Config)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	req.Config = sealedConfig
 	t, problem := s.persistCreatedTrigger(w, r.Context(), &req, acct, app.ID, enabled,
 		batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, limits)
 	if problem != nil {
@@ -335,16 +347,15 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 // TLSSkipVerifyAllowed gates live here alongside the original
 // batch_size_max / max_attempts / payload_max_bytes gates.
 //
-// Field defaults (batch_size_max=64, batch_window_ms=1000,
-// max_attempts=5, payload_max_bytes=6 MiB, broker_poison_strategy
-// ="commit") match the pre-MED-5 handler exactly so behaviour
-// stays unchanged for callers that omit the optional fields.
+// Omitted delivery fields use the platform defaults capped to values
+// legal for the caller's plan. Explicit values are never clamped: an
+// over-cap request still returns the corresponding plan problem.
 func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limits api.Limits) (
 	batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32,
 	brokerPoisonStrategy string,
 	problem *api.Problem,
 ) {
-	batchSizeMax = int32(64)
+	batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes = triggerDeliveryDefaults(limits)
 	if v := intFrom(req.BatchSizeMax); v > 0 {
 		batchSizeMax = int32(v)
 	}
@@ -352,7 +363,6 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 		return batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy,
 			api.ErrPlanTriggerQuota(plan, "batch_size_max", limits.TriggerBatchSizeMax, int(batchSizeMax))
 	}
-	batchWindowMs = int32(1000)
 	if v := intFrom(req.BatchWindowMs); v > 0 {
 		batchWindowMs = int32(v)
 	}
@@ -363,7 +373,7 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 	// could legally request 600s and pin 10× the broker dwell
 	// window the per-app rate-limit is sized for.
 	if limits.TriggerBatchWindowMaxSec > 0 {
-		observedSec := int(batchWindowMs / 1000)
+		observedSec := int((batchWindowMs + 999) / 1000)
 		if observedSec > limits.TriggerBatchWindowMaxSec {
 			return batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy,
 				api.ErrTriggerBatchWindowTooLarge(plan, limits.TriggerBatchWindowMaxSec, observedSec)
@@ -386,7 +396,6 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 				api.ErrTriggerTLSSkipVerifyNotAllowed(plan)
 		}
 	}
-	maxAttempts = int32(5)
 	if v := intFrom(req.MaxAttempts); v > 0 {
 		maxAttempts = int32(v)
 	}
@@ -399,7 +408,6 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 	// the field. Surface a plan-level 403 (rather than letting
 	// the SQL CHECK 422 the request) so the response carries
 	// the plan cap + the observed value.
-	payloadMaxBytes = int32(6291456)
 	if req.PayloadMaxBytes != nil && *req.PayloadMaxBytes > 0 {
 		payloadMaxBytes = int32(*req.PayloadMaxBytes)
 	}
@@ -414,6 +422,48 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 		brokerPoisonStrategy = *req.BrokerPoisonStrategy
 	}
 	return batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, nil
+}
+
+func cappedTriggerDefault(platformDefault, planCap int) int32 {
+	if planCap > 0 && planCap < platformDefault {
+		return int32(planCap)
+	}
+	return int32(platformDefault)
+}
+
+func triggerDeliveryDefaults(limits api.Limits) (batchSize, batchWindow, attempts, payload int32) {
+	return cappedTriggerDefault(64, limits.TriggerBatchSizeMax),
+		cappedTriggerDefault(1000, limits.TriggerBatchWindowMaxSec*1000),
+		cappedTriggerDefault(5, limits.TriggerMaxAttemptsMax),
+		cappedTriggerDefault(6*1024*1024, limits.TriggerPayloadMaxBytes)
+}
+
+func enforceUpdateTriggerCaps(req *api.UpdateTriggerRequest, kind api.TriggerKind, plan api.Plan, limits api.Limits, config json.RawMessage) *api.Problem {
+	createShape := api.CreateTriggerRequest{
+		Kind:                 kind,
+		Config:               config,
+		BatchSizeMax:         req.BatchSizeMax,
+		BatchWindowMs:        req.BatchWindowMs,
+		MaxAttempts:          req.MaxAttempts,
+		PayloadMaxBytes:      req.PayloadMaxBytes,
+		BrokerPoisonStrategy: req.BrokerPoisonStrategy,
+	}
+	_, _, _, _, _, problem := enforceCreateTriggerCaps(&createShape, plan, limits)
+	return problem
+}
+
+func positiveIntPointer(value int) *int {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+func nonEmptyStringPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // --- listTriggers ----------------------------------------------------------
@@ -548,16 +598,6 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
 		return
 	}
-	if req.Config != nil && t.Kind != string(api.TriggerKindCron) {
-		// Re-validate the per-kind config when the customer is
-		// changing the broker fingerprint — a kafka role-arn swap
-		// to a new account should fail at update time, not at the
-		// next poll.
-		if err := validateTriggerConfig(api.TriggerKind(t.Kind), req.Config); err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger config", err.Error()))
-			return
-		}
-	}
 	// PR #993 / issue #757 review MED-4: mirror createTrigger's
 	// plan gates for PATCH. A Hobby customer upgrading their
 	// batch_window from 5s to 600s after the fact, or flipping
@@ -570,23 +610,31 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		limits, _ = api.LimitsFor(api.PlanFree)
 	}
-	if req.BatchWindowMs != nil && limits.TriggerBatchWindowMaxSec > 0 {
-		observedSec := int(*req.BatchWindowMs / 1000)
-		if observedSec > limits.TriggerBatchWindowMaxSec {
-			api.WriteProblem(w, api.ErrTriggerBatchWindowTooLarge(acct.Plan, limits.TriggerBatchWindowMaxSec, observedSec))
+	var configBytes []byte
+	var mergedConfig json.RawMessage
+	if req.Config != nil && t.Kind != string(api.TriggerKindCron) {
+		merged, problem := mergeTriggerConfigForUpdate(api.TriggerKind(t.Kind), t.Config, req.Config)
+		if problem != nil {
+			api.WriteProblem(w, problem)
 			return
 		}
+		if err := validateTriggerConfig(api.TriggerKind(t.Kind), merged); err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger config", err.Error()))
+			return
+		}
+		mergedConfig = merged
 	}
-	if req.Config != nil && !acct.Plan.TLSSkipVerifyAllowed() {
-		skip, err := kafkaSkipVerifyRequested(api.TriggerKind(t.Kind), req.Config)
-		if err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "invalid trigger config: "+err.Error()))
+	if problem := enforceUpdateTriggerCaps(&req, api.TriggerKind(t.Kind), acct.Plan, limits, mergedConfig); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if mergedConfig != nil {
+		sealed, problem := sealTriggerConfig(api.TriggerKind(t.Kind), mergedConfig)
+		if problem != nil {
+			api.WriteProblem(w, problem)
 			return
 		}
-		if skip {
-			api.WriteProblem(w, api.ErrTriggerTLSSkipVerifyNotAllowed(acct.Plan))
-			return
-		}
+		configBytes = sealed
 	}
 	var batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes *int32
 	if req.BatchSizeMax != nil {
@@ -615,10 +663,6 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	if req.BrokerPoisonStrategy != nil && *req.BrokerPoisonStrategy != "" {
 		bps := *req.BrokerPoisonStrategy
 		brokerPoisonStrategy = &bps
-	}
-	var configBytes []byte
-	if req.Config != nil {
-		configBytes = []byte(req.Config)
 	}
 	// REVIEW-FIX MED-1 (PR #993 / issue #757 closure):
 	// marshal filter_criteria to JSONB bytes if the customer is
@@ -959,51 +1003,38 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 			errs = append(errs, batchError{Slug: t.Slug, Message: "kind=cron triggers must be created via POST /v1/crons"})
 			continue
 		}
+		kind := api.TriggerKind(t.Kind)
+		if !acct.Plan.AllowsTriggerKind(kind) {
+			errs = append(errs, batchError{Slug: t.Slug, Message: api.ErrTriggerKindNotAllowed(acct.Plan, kind).Detail})
+			continue
+		}
 		if t.Slug == "" {
 			errs = append(errs, batchError{Slug: t.Slug, Message: "slug is required"})
 			continue
 		}
-		bsm := int32(64)
-		if t.BatchSizeMax > 0 {
-			bsm = int32(t.BatchSizeMax)
+		config := marshalConfig(t.Config)
+		createReq := api.CreateTriggerRequest{
+			Kind:                 kind,
+			Config:               config,
+			BatchSizeMax:         positiveIntPointer(t.BatchSizeMax),
+			BatchWindowMs:        positiveIntPointer(t.BatchWindowMs),
+			MaxAttempts:          positiveIntPointer(t.MaxAttempts),
+			PayloadMaxBytes:      positiveIntPointer(t.PayloadMaxBytes),
+			BrokerPoisonStrategy: nonEmptyStringPointer(t.BrokerPoisonStrategy),
 		}
-		bwm := int32(1000)
-		if t.BatchWindowMs > 0 {
-			bwm = int32(t.BatchWindowMs)
-		}
-		ma := int32(5)
-		if t.MaxAttempts > 0 {
-			ma = int32(t.MaxAttempts)
-		}
-		pmb := int32(6291456)
-		if t.PayloadMaxBytes > 0 {
-			pmb = int32(t.PayloadMaxBytes)
-		}
-		// Audit #10 (migration 00279): kafka-only broker-poison
-		// handling strategy. The YAML validator at
-		// pkg/gregalemanifest/manifest.go:Validate rejects
-		// anything outside the closed vocab; an empty string
-		// falls through to "commit" (the previous hardcoded
-		// behaviour).
-		bps := api.BrokerPoisonStrategyCommit
-		if t.BrokerPoisonStrategy != "" {
-			bps = t.BrokerPoisonStrategy
-		}
-		if limits.TriggerBatchSizeMax > 0 && bsm > int32(limits.TriggerBatchSizeMax) {
-			errs = append(errs, batchError{Slug: t.Slug, Message: "batch_size_max exceeds plan cap"})
+		bsm, bwm, ma, pmb, bps, problem := enforceCreateTriggerCaps(&createReq, acct.Plan, limits)
+		if problem != nil {
+			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue
 		}
-		if limits.TriggerMaxAttemptsMax > 0 && ma > int32(limits.TriggerMaxAttemptsMax) {
-			errs = append(errs, batchError{Slug: t.Slug, Message: "max_attempts exceeds plan cap"})
-			continue
-		}
-		if limits.TriggerPayloadMaxBytes > 0 && pmb > int32(limits.TriggerPayloadMaxBytes) {
-			errs = append(errs, batchError{Slug: t.Slug, Message: "payload_max_bytes exceeds plan cap"})
+		sealedConfig, problem := sealTriggerConfig(kind, config)
+		if problem != nil {
+			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue
 		}
 		created, err := s.store.CreateTriggerIfUnderQuota(r.Context(),
 			req.AppID,
-			string(t.Kind), t.Slug, t.IsEnabled(), marshalConfig(t.Config),
+			string(t.Kind), t.Slug, t.IsEnabled(), sealedConfig,
 			bsm, bwm, ma, pmb, bps, limits)
 		if err != nil {
 			var qe *state.TriggerQuotaError
@@ -1161,7 +1192,8 @@ func intFrom(p *int) int {
 func validateTriggerConfig(kind api.TriggerKind, raw json.RawMessage) error {
 	probe := &gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{{
 		Kind: gregalemanifest.TriggerKind(kind),
-		Slug: "_",
+		App:  "probe-app",
+		Slug: "probe-trigger",
 	}}}
 	if raw != nil {
 		var anyMap map[string]any
@@ -1171,6 +1203,44 @@ func validateTriggerConfig(kind api.TriggerKind, raw json.RawMessage) error {
 		probe.Triggers[0].Config = anyMap
 	}
 	return probe.Validate()
+}
+
+func triggerConfigIdentities() []*age.X25519Identity {
+	if mfaIdentities != nil {
+		if identities := mfaIdentities(); len(identities) > 0 {
+			return append([]*age.X25519Identity(nil), identities...)
+		}
+	}
+	if mfaIdentity != nil {
+		if identity := mfaIdentity(); identity != nil {
+			return []*age.X25519Identity{identity}
+		}
+	}
+	return nil
+}
+
+func sealTriggerConfig(kind api.TriggerKind, raw json.RawMessage) (json.RawMessage, *api.Problem) {
+	var recipient *age.X25519Recipient
+	if setSecretRecipient != nil {
+		recipient = setSecretRecipient()
+	}
+	sealed, err := triggerconfig.Seal(kind, raw, recipient)
+	if err == nil {
+		return sealed, nil
+	}
+	var problem *api.Problem
+	if errors.As(err, &problem) {
+		return nil, problem
+	}
+	return nil, api.ErrSecretStoreUnavailable()
+}
+
+func mergeTriggerConfigForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage) (json.RawMessage, *api.Problem) {
+	merged, err := triggerconfig.MergeForUpdate(kind, stored, incoming, triggerConfigIdentities())
+	if err != nil {
+		return nil, api.ErrSecretStoreUnavailable()
+	}
+	return merged, nil
 }
 
 // kafkaSkipVerifyRequested returns true iff the trigger Config

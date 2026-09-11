@@ -71,6 +71,9 @@ func cmdInvoke(args []string) int {
 		if len(resp.Result) > 0 {
 			_, _ = fmt.Fprintln(os.Stdout, string(resp.Result))
 		}
+		if resp.Error != "" {
+			_, _ = fmt.Fprintln(os.Stderr, resp.Error)
+		}
 	}
 	// A synchronous invoke that came back `failed` is a failed smoke
 	// test, so it must not exit 0. The HTTP call succeeded (the

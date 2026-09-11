@@ -52,10 +52,11 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	if prNumber <= 0 && previewPRNumber > 0 {
 		prNumber = previewPRNumber
 	}
-	if commitSHA == "" || repo == "" || installationID <= 0 {
-		return fmt.Errorf("githubd: deployment check %s missing commit, repo, or installation", deploymentID)
+	project, err := validateDeploymentCheckTarget(deploymentID, kind, commitSHA, repo, installationID)
+	if err != nil {
+		return err
 	}
-	if kind != string(state.DeploymentKindGitHub) && kind != string(state.DeploymentKindPreview) {
+	if !project {
 		return nil
 	}
 	phase, ok := checkPhaseForDeploymentStatusForRollout(status, rolloutState, canaryTotalSteps)
@@ -151,6 +152,24 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return nil
 	}
 	return checks.WriteScopedAppCheck(ctx, installationID, repo, commitSHA, appSlug, scope, phase, "", summary)
+}
+
+func validateDeploymentCheckTarget(deploymentID, kind, commitSHA, repo string, installationID int64) (bool, error) {
+	if kind != string(state.DeploymentKindGitHub) && kind != string(state.DeploymentKindPreview) {
+		return false, nil
+	}
+	if commitSHA == "" {
+		return false, fmt.Errorf("githubd: deployment check %s missing commit", deploymentID)
+	}
+	// Disconnecting a repository clears its repo and installation metadata.
+	// Historical deployment transitions can still leave a coalesced outbox row,
+	// but there is no external Check Run target to update. Completing that row as
+	// a no-op prevents a permanent retry/dead-letter loop after an intentional
+	// disconnect. A missing commit remains an invalid deployment record above.
+	if repo == "" || installationID <= 0 {
+		return false, nil
+	}
+	return true, nil
 }
 
 func githubDeploymentEnvironment(kind, scope, appSlug string) string {

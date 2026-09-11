@@ -38,9 +38,27 @@ import (
 type ObsOverviewResponse struct {
 	GeneratedAt               time.Time                `json:"generated_at"`
 	Totals                    ObsOverviewTotals        `json:"totals"`
+	BetaFunnel14d             ObsBetaFunnel            `json:"beta_funnel_14d"`
 	TopRateLimitedAccounts24h []ObsOverviewRateLimited `json:"top_rate_limited_accounts_24h"`
 	NodeHealth                []ObsOverviewNodeHealth  `json:"node_health"`
 	RecentFailures1h          []ObsOverviewFailureKind `json:"recent_failures_1h"`
+}
+
+// ObsBetaFunnel is the privacy-safe activation funnel for accounts created in
+// the trailing 14-day window. Each stage describes the account's current
+// progression and never exceeds the preceding stage. First-success latency is
+// derived from the first successful public request persisted on an instance;
+// no account IDs, emails, app slugs, or request metadata leave this aggregate.
+type ObsBetaFunnel struct {
+	WindowStartedAt                time.Time `json:"window_started_at"`
+	AccountsCreated                int       `json:"accounts_created"`
+	EmailVerified                  int       `json:"email_verified"`
+	WithApp                        int       `json:"with_app"`
+	WithLiveDeployment             int       `json:"with_live_deployment"`
+	WithSuccessfulRequest          int       `json:"with_successful_request"`
+	SignupToFirstSuccessSamples    int       `json:"signup_to_first_success_samples"`
+	SignupToFirstSuccessP50Seconds int64     `json:"signup_to_first_success_p50_seconds"`
+	SignupToFirstSuccessP95Seconds int64     `json:"signup_to_first_success_p95_seconds"`
 }
 
 // ObsOverviewTotals is the headline KPI block. The numbers are

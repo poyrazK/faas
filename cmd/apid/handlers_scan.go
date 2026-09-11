@@ -38,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -132,8 +133,34 @@ func (s *server) scanResponse(d state.Deployment) *api.ScanResult {
 		// Re-pin Status from the column — the column is
 		// authoritative; the jsonb payload is data only.
 		out.Status = d.ScanStatus
+		// Older imaged builds embedded severity fields at the JSON root,
+		// while the public DTO has always documented severity_counts. When
+		// detailed findings are present, derive the histogram from that
+		// canonical evidence so stored legacy rows and new nested rows agree.
+		if len(out.Vulnerabilities) > 0 {
+			out.SeverityCounts = severityCountsForVulnerabilities(out.Vulnerabilities)
+		}
 	}
 	return &out
+}
+
+func severityCountsForVulnerabilities(vulnerabilities []api.Vulnerability) api.SeverityCounts {
+	var counts api.SeverityCounts
+	for _, vulnerability := range vulnerabilities {
+		switch strings.ToUpper(vulnerability.Severity) {
+		case "CRITICAL":
+			counts.Critical++
+		case "HIGH":
+			counts.High++
+		case "MEDIUM":
+			counts.Medium++
+		case "LOW", "NEGLIGIBLE":
+			counts.Low++
+		default:
+			counts.Unknown++
+		}
+	}
+	return counts
 }
 
 // getDeploymentSecretScan is the GET

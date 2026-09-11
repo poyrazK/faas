@@ -106,6 +106,11 @@ type SBOMBaseline struct {
 	CreatedAt string     `json:"created_at"` // RFC 3339; stringly-typed to dodge the wire-format drift around time.Time JSON shape.
 }
 
+// SBOMBaselineName is the mutable, operator-owned KGV sidecar stored beside
+// an immutable release bundle. It is deliberately excluded from the signed
+// deployment manifest and validated through ReadBaseline instead.
+const SBOMBaselineName = "sbom-baseline.json"
+
 // CVERegression is one CRITICAL/HIGH bucket that grew between
 // the prior baseline and the new SBoM. Operator-facing error
 // messages sort by severity so the worst regression is at the
@@ -336,7 +341,7 @@ func WriteBaseline(root string, b SBOMBaseline) error {
 // KGV rotate subcommand (PR-B) can read it without duplicating
 // the path-string.
 func SBOMBaselinePath(bundleRoot string) string {
-	return bundleRoot + "/sbom-baseline.json"
+	return bundleRoot + "/" + SBOMBaselineName
 }
 
 // ReadBaseline loads + validates the on-disk SBoM baseline at

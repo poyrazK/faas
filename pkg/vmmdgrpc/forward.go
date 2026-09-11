@@ -1480,7 +1480,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		}
 		transport := newStreamBridgeH2CTransport(sockPath)
 		defer transport.CloseIdleConnections()
-		client = &http.Client{Transport: transport}
+		client = newGuestHTTPClient(transport)
 	}
 	if s.ops != nil {
 		s.ops.Observe("stream_bridge_acquire", time.Since(start), nil)
@@ -1675,18 +1675,16 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	// on httpResp.Body until EOF before unblocking
 	// httpResp.Body.Close() above, and httpResp.Trailer is populated
 	// at that EOF.
-	initTrailers := make([]*vmmdpb.Header, 0)
-	for k, vs := range httpResp.Trailer {
-		for _, v := range vs {
-			initTrailers = append(initTrailers, &vmmdpb.Header{Name: k, Value: v})
-		}
+	declaredTrailers := make([]*vmmdpb.Header, 0, len(httpResp.Trailer))
+	for k := range httpResp.Trailer {
+		declaredTrailers = append(declaredTrailers, &vmmdpb.Header{Name: k})
 	}
 	if err := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
 		Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{
 			Init: &vmmdpb.ForwardHTTPResponseInit{
 				Status:   int32(httpResp.StatusCode),
 				Headers:  initHeaders,
-				Trailers: initTrailers,
+				Trailers: declaredTrailers,
 			},
 		},
 	}); err != nil {
@@ -1725,6 +1723,21 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	// Order mirrors v1 (forward.go:391-432).
 	bodyErr := <-bodyErrCh
 	streamErr := <-streamErrCh
+	if streamErr == nil && len(httpResp.Trailer) > 0 {
+		finalTrailers := make([]*vmmdpb.Header, 0, len(httpResp.Trailer))
+		for k, vs := range httpResp.Trailer {
+			for _, v := range vs {
+				finalTrailers = append(finalTrailers, &vmmdpb.Header{Name: k, Value: v})
+			}
+		}
+		if err := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
+			Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{
+				Init: &vmmdpb.ForwardHTTPResponseInit{Trailers: finalTrailers},
+			},
+		}); err != nil {
+			streamErr = status.Errorf(codes.Internal, "send response trailers: %v", err)
+		}
+	}
 
 	// The rollback bridge is a long-running HTTP server, so it must be
 	// explicitly stopped after the response. Persistent mode releases the
@@ -1755,6 +1768,18 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		return streamErr
 	}
 	return nil
+}
+
+// newGuestHTTPClient returns guest redirects to the customer unchanged.
+// Following Location inside the microVM changes both status and destination
+// before public ingress can deliver the guest response.
+func newGuestHTTPClient(transport http.RoundTripper) *http.Client {
+	return &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 // streamBridgePathEnv lets the test suite point at an alternate

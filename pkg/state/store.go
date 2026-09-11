@@ -141,6 +141,12 @@ var ErrCorsWildcardWithCredentials = errors.New("state: cors action cannot combi
 // HTTP response uses the canonical RFC 7807 code.
 var ErrInvalidTrafficPercent = errors.New("state: invalid traffic_percent")
 
+// ErrDeploymentNotLive is returned when a traffic mutation targets a
+// deployment whose lifecycle state no longer accepts public traffic. It is
+// separate from ErrInvalidTrafficPercent because a legal percentage cannot
+// repair a superseded, failed, or pending target.
+var ErrDeploymentNotLive = errors.New("state: deployment is not live")
+
 // ErrCanaryStepConflict is returned by AdvanceCanary when the deployment's
 // current step differs from the caller's expected step. The compare-and-swap
 // is checked while the deployment row is locked, so this is the safe race
@@ -1324,6 +1330,16 @@ type Store interface {
 	// time equal — see api.ConstantTimeEqualHash).
 	ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appID, prefix string) (ConsumerKey, error)
 
+	// API consumers (stable customer identities). A consumer is scoped to
+	// one application and identified externally by externalRef. Consumer
+	// credentials should be created with CreateConsumerKeyForConsumer so
+	// key rotation preserves this identity for throttling and billing.
+	CreateAPIConsumer(ctx context.Context, accountID, appID, externalRef, name string) (APIConsumer, error)
+	GetAPIConsumerByID(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
+	ListAPIConsumersForApp(ctx context.Context, accountID, appID string) ([]APIConsumer, error)
+	RevokeAPIConsumer(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
+	CreateConsumerKeyForConsumer(ctx context.Context, accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error)
+
 	// Login tokens (M7.5 magic-link, spec §14 + ADR-011).
 	//
 	// IssueLoginToken persists a freshly-minted token's SHA-256 hash
@@ -1809,17 +1825,21 @@ type Store interface {
 	// so a future re-attempt at migration mints a fresh one.
 	CancelInstanceMigration(ctx context.Context, instanceID, originalNodeID, leaseToken string) error
 
-	// ListExpiredMigrations returns every instance row in
-	// state='migrating' (Tier A6 / ADR-067). The watchdog is
-	// the only writer that can move a row out of 'migrating'
-	// without a peer commit, so the unresolved row is the
-	// input set. Sorted by instance id ASC for determinism.
+	// ListExpiredMigrations returns instance rows in state='migrating'
+	// whose durable migration lease has expired (Tier A6 / ADR-067). The
+	// watchdog is the only writer that can move a row out of 'migrating'
+	// without a peer commit, so the unresolved row is the input set. Sorted
+	// by migration start time and instance id for deterministic draining.
+	// The optional olderThan argument is the lease age. Omitting it keeps the
+	// legacy all-migrating view used by compatibility tooling; production
+	// callers must pass the lease duration so an in-flight handoff is never
+	// reconciled early.
 	// maxPerTick caps the result set (the caller passes
 	// api.MigratingWatchdogTickLimit via pkg/api/limits.go).
 	// Returns an empty slice (not ErrNotFound) when no rows
 	// match; callers treat that as "nothing to reconcile this
 	// tick".
-	ListExpiredMigrations(ctx context.Context, maxPerTick int) ([]Instance, error)
+	ListExpiredMigrations(ctx context.Context, maxPerTick int, olderThan ...time.Duration) ([]Instance, error)
 	// ReinviteMigratingInstance is the active-owner ack gate of
 	// the Tier A6 / ADR-067 watchdog. Conditional UPDATE that
 	// flips state='migrating' → 'running', stamps
@@ -2145,22 +2165,14 @@ type Store interface {
 
 	// Deployments.
 	// CreateDeployment atomically inserts a new pending deployment row
-	// for the given app. When the app already has a pending or live
-	// deployment row, the SAME transaction flips that prior row's
-	// status to 'superseded' before INSERTing the new one. A
-	// building/imaging/snapshotting row is left untouched — its
-	// pipeline (vmmd VM, builderd, imaged ext4 conversion) is still
-	// running and we must not orphan it; the second deploy then
-	// creates a parallel row, and schedd's watchdog reaps the loser
-	// on the next idle window.
+	// for the given app. When the app already has a pending replacement,
+	// the SAME transaction supersedes that pending row before inserting
+	// the new one. Live and in-progress deployments remain untouched:
+	// MarkDeploymentLive performs the same-scope live cutover only after
+	// the replacement has completed its build and readiness pipeline.
 	//
 	// Callers that need to surface a NotifyDeploymentChanged for the
-	// just-superseded row use LatestDeployment(ctx, appID) AFTER
-	// CreateDeployment returns — the in-tx supersede means the prior
-	// row is already visible as 'superseded' to the next read. The
-	// two-step read avoids turning CreateDeployment into a 3-return
-	// signature that breaks every pre-PR-B call site (notably the
-	// slice-3 cascade test on main).
+	// just-superseded pending row may read it after CreateDeployment.
 	//
 	// AppDeleted apps must accept neither deployments nor supersedes;
 	// the parent-app gate is the same FOR UPDATE as PR-A's
@@ -2438,6 +2450,10 @@ type Store interface {
 	// bound). MemStore sorts in memory; PgStore uses a LIMIT/OFFSET or
 	// keyset pagination (deferred — LIMIT/OFFSET is fine at one-box scale).
 	ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error)
+	// ListLatestDeploymentPerApp returns at most one deployment for each
+	// non-deleted app the account owns. Newness is ordered by created_at and
+	// then deployment ID so equal timestamps have a stable winner.
+	ListLatestDeploymentPerApp(ctx context.Context, accountID string) (map[string]Deployment, error)
 	// ListDeploymentsForAccountPage is the stable keyset-paginated form used
 	// by account export. The ID tie-breaker prevents rows with identical
 	// created_at values from being skipped at a page boundary.
@@ -3636,6 +3652,11 @@ type Store interface {
 	// DELETE on /v1/delayed-tasks/{id}; the drain skips cancelled rows.
 	// Returns ErrNotFound if the row is already terminal.
 	CancelInvocation(ctx context.Context, id string) error
+	// CancelPendingInvocation atomically cancels only a pending row and
+	// returns the row's resulting state. Dispatching and terminal rows are
+	// left unchanged so a caller never claims that in-flight or completed
+	// work was prevented.
+	CancelPendingInvocation(ctx context.Context, id string) (InvocationState, error)
 	// ListInvocationsForAccount is the dashboard's "recent invocations"
 	// view; pagination cursor is the same opaque `before` convention used
 	// by ListDeployments. The cursor is an Invocation.ID (uuid) — the
@@ -3821,6 +3842,11 @@ type Store interface {
 	// construction (invariant §6.2-4). The partial index
 	// `instances_reaper_state_idx` (migration 00009) covers this query.
 	ListAllInstances(ctx context.Context) ([]Instance, error)
+	// ListFirstSuccessfulRequestsForAccountsCreatedSince returns one row per
+	// account whose signup and first successful public request are inside the
+	// operator's cohort window. The query is a single aggregate scan so polling
+	// the beta overview never creates a per-account query fan-out.
+	ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, since time.Time) ([]AccountFirstSuccess, error)
 	// ListInstancesForAccount returns every live instance belonging to an
 	// account. Used by the meterd quota loop to park everything when a Free
 	// account crosses 100 % (spec §4.7). Per-account scan is O(instances);
@@ -4011,9 +4037,12 @@ type Store interface {
 	// calls this between a successful vmmd boot and the RUNNING transition so the
 	// gateway can route to host_ip:8080 (spec §7).
 	SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error
-	// RunningInstanceForApp returns the newest RUNNING instance for an app, or
-	// ErrNotFound when none is live. schedd uses it to make Wake idempotent and
-	// the gateway to seed its route target on startup.
+	// RunningInstanceForApp returns the newest RUNNING instance attached to a
+	// currently live deployment with positive traffic, or ErrNotFound when none
+	// is routable. A VM on a superseded or zero-weight generation must not make
+	// a replacement wake look satisfied.
+	// schedd uses it to make Wake idempotent and the gateway to seed its route
+	// target on startup.
 	RunningInstanceForApp(ctx context.Context, appID string) (Instance, error)
 	// TouchInstancesLastSeen batches last_request_at updates the gateway flushes
 	// every 15 s (spec §4.1). schedd is the sole writer to instances, so the

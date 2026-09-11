@@ -30,7 +30,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -46,7 +48,7 @@ func cmdRegistry(args []string) int {
 	switch args[0] {
 	case subList:
 		return cmdRegistryList(args[1:])
-	case subAdd: // "set" surfaces as the `add` verb for grep-friendly parallelism with cmdAlertAdd.
+	case "set", subAdd:
 		return cmdRegistrySet(args[1:])
 	case subRm:
 		return cmdRegistryRm(args[1:])
@@ -114,11 +116,15 @@ func cmdRegistrySet(args []string) int {
 	if !validateRegistrySetFlags(slug, registry, username, password) {
 		return 1
 	}
+	registryAPI, err := registryInputForAPI(*registry)
+	if err != nil {
+		return printErr("Invalid --registry", err)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.SetAppRegistryCredential(context.Background(), *slug, *registry, *username, *password)
+	resp, err := client.SetAppRegistryCredential(context.Background(), *slug, registryAPI, *username, *password)
 	if err != nil {
 		return printErr("Set failed", err)
 	}
@@ -148,14 +154,15 @@ func cmdRegistryRm(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale registry rm --app <slug> --registry <h>", "registry")
 		return 1
 	}
-	if !api.RegistryHostRe().MatchString(*registry) {
-		return printErr("Invalid --registry", fmt.Errorf("must match lowercase DNS[:port]; got %q", *registry))
+	registryAPI, normErr := registryInputForAPI(*registry)
+	if normErr != nil {
+		return printErr("Invalid --registry", normErr)
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := client.DeleteAppRegistryCredential(context.Background(), *slug, *registry); err != nil {
+	if err := client.DeleteAppRegistryCredential(context.Background(), *slug, registryAPI); err != nil {
 		return printErr("Delete failed", err)
 	}
 	if jsonOutput {
@@ -174,8 +181,8 @@ func validateRegistrySetFlags(slug, registry, username, password *string) bool {
 		PrintUsage(os.Stderr, "usage: gregale registry set --app <slug> --registry <h> --user <u> --password <p>", "registry")
 		return false
 	}
-	if !api.RegistryHostRe().MatchString(*registry) {
-		printErr("Invalid --registry", fmt.Errorf("must match lowercase DNS[:port]; got %q", *registry))
+	if _, err := registryInputForAPI(*registry); err != nil {
+		printErr("Invalid --registry", err)
 		return false
 	}
 	if len(*username) > api.MaxRegistryUsernameLen {
@@ -187,4 +194,17 @@ func validateRegistrySetFlags(slug, registry, username, password *string) bool {
 		return false
 	}
 	return true
+}
+
+func registryInputForAPI(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil || (u.Path != "" && u.Path != "/") ||
+		u.RawQuery != "" || u.Fragment != "" || !api.RegistryHostRe().MatchString(u.Host) {
+		return "", fmt.Errorf("must be an HTTPS registry URL or lowercase DNS[:port]; got %q", raw)
+	}
+	return "https://" + u.Host, nil
 }

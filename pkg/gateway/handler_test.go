@@ -1774,6 +1774,48 @@ type nopFlusher struct{}
 
 func (nopFlusher) Flush() {}
 
+type countingFlushWriter struct {
+	*httptest.ResponseRecorder
+	flushes int
+}
+
+func (w *countingFlushWriter) Flush() { w.flushes++ }
+
+type forwardingFlushWriter struct{ http.ResponseWriter }
+
+func (w *forwardingFlushWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func TestSetupStreamingWriterFlushesOriginalWriterWithoutCycle(t *testing.T) {
+	underlying := &countingFlushWriter{ResponseRecorder: httptest.NewRecorder()}
+	rec := &statusRecorder{ResponseWriter: underlying, status: http.StatusOK}
+	outer := &forwardingFlushWriter{ResponseWriter: rec}
+
+	w := (&Handler{}).setupStreamingWriter(outer, rec, App{ID: "app", Plan: api.PlanPro}, Target{}, 1024, time.Second)
+	cap, ok := w.(*capWriter)
+	if !ok {
+		t.Fatalf("writer type = %T, want *capWriter", w)
+	}
+	if cap.ResponseWriter != outer {
+		t.Fatal("streaming cap writer did not preserve the outer response writer")
+	}
+	if rec.flusher != underlying {
+		t.Fatalf("recorder flusher = %T, want original client writer", rec.flusher)
+	}
+	if _, err := w.Write([]byte("hello")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if underlying.flushes != 1 {
+		t.Fatalf("flushes = %d, want 1", underlying.flushes)
+	}
+	if got := underlying.Body.String(); got != "hello" {
+		t.Fatalf("body = %q, want hello", got)
+	}
+}
+
 // stubEdgeRuleMatcher is a hand-rolled EdgeRuleMatcher that returns
 // pre-seeded rules for a single host. Used by the PR 4 review-fix
 // regression tests to exercise matchAndApplyRewrite / ServeHTTP

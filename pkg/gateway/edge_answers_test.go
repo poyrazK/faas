@@ -90,6 +90,42 @@ func TestParkedHeadUsesLastLiveHeadersWithoutWake(t *testing.T) {
 	}
 }
 
+func TestParkedHeadDoesNotReplayOperationalHeaders(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	h.proxyFor = func(addr string, _ int64) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("ETag", "\"live\"")
+			w.Header().Set("X-Faas-Request-Id", "old-request")
+			w.Header().Set("X-Faas-Wake", "hot")
+			w.Header().Set("Strict-Transport-Security", "old-policy")
+			w.WriteHeader(http.StatusOK)
+		})
+	}
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/cached", nil))
+
+	b.mu.Lock()
+	b.targets = nil
+	b.running = false
+	b.mu.Unlock()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodHead, "http://jane-api.apps.dom/", nil)
+	req.Header.Set("X-Faas-Request-Id", "current-request")
+	h.ServeHTTP(rec, req)
+
+	if got := rec.Header().Values("X-Faas-Request-Id"); len(got) != 1 || got[0] != "current-request" {
+		t.Fatalf("request IDs = %v, want only current-request", got)
+	}
+	if got := rec.Header().Values("X-Faas-Wake"); len(got) != 0 {
+		t.Fatalf("replayed wake headers = %v", got)
+	}
+	if got := rec.Header().Get("Strict-Transport-Security"); got != "" {
+		t.Fatalf("replayed platform security header = %q", got)
+	}
+	if got := rec.Header().Get("ETag"); got != "\"live\"" {
+		t.Fatalf("ETag = %q, want retained content metadata", got)
+	}
+}
+
 func TestParkedHeadWithoutCacheReturns204(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	rec := httptest.NewRecorder()

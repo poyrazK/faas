@@ -8,27 +8,26 @@
 //   recorder's ringbuffer (in-process, O(1) append)
 //       ↓ drainBatch on FlushInterval / FlushBatchSize
 //   publisher's flush loop (separate goroutine)
-//       ↓ open / reuse streaming RPC
+//       ↓ open one streaming RPC per batch
 //   apid gRPC handler (the dedupe-merge INSERT)
 //
 // The publisher's hot path NEVER blocks the request handler:
 // ringbuffer append is O(1) under a single mutex; the flush
 // loop runs on a separate goroutine. A stuck apid connection
-// is handled by:
-//   1. per-call context timeout (FlushRPCTimeout)
-//   2. retry backoff capped at 8s
-//   3. 5th-consecutive-failure → drop the batch + emit db_error
-//      (dropping is preferable to blocking the request path).
+// is handled by a per-call timeout and a db_error observation for every
+// row in the failed batch. A fifth consecutive failure emits an additional
+// high-signal warning while the periodic loop continues with fresh batches.
 //
-// The publisher holds ONE long-lived streaming RPC (re-opened
-// when the apid side closes it). A new batch reuses the same
-// stream when possible; a closed stream is re-opened on the
-// next tick.
+// Each batch owns one streaming RPC. IncrementAppError requires a
+// client half-close before the server can finish and acknowledge the
+// batch, so that stream cannot be reused by a later flush.
 
 package main
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -59,10 +58,10 @@ const AppErrorsFlushBatchSize = 256
 // cold-start tail latency).
 const AppErrorsFlushRPCTimeout = 30 * time.Second
 
-// AppErrorsFlushMaxConsecutiveFailures is the drop threshold.
-// Past this many consecutive failures, the publisher drops
-// the batch (counter increment: faas_gateway_app_errors_recorded_total{outcome="db_error"}).
-// Dropping is preferable to blocking the request path.
+// AppErrorsFlushMaxConsecutiveFailures is the high-signal warning threshold.
+// Every failed batch is already dropped and counted in
+// faas_gateway_app_errors_recorded_total{outcome="db_error"}; this threshold
+// controls the additional warning and counter reset.
 const AppErrorsFlushMaxConsecutiveFailures = 5
 
 // appErrorsPublisher is the drain loop + RPC owner.
@@ -72,13 +71,9 @@ type appErrorsPublisher struct {
 	ops    *wire.OpsMetrics
 	log    *slog.Logger
 
-	// stream + streamMu guard the in-flight streaming RPC.
-	// stream is nil when no RPC is open.
-	streamMu sync.Mutex
-	stream   apidgrpc.AppErrorStream
-
 	// consecutiveFailures is reset on every successful flush.
-	// Read + written under streamMu.
+	// Read + written under stateMu.
+	stateMu             sync.Mutex
 	consecutiveFailures int
 
 	// NotifyEnqueued is called by the recorder after every
@@ -170,7 +165,7 @@ func (p *appErrorsPublisher) tryFlush(parent context.Context) {
 	p.recordSuccess()
 }
 
-// flushBatch opens (or reuses) the streaming RPC and ships
+// flushBatch opens a streaming RPC and ships
 // every row in batch. Per-row failures are observed but do
 // NOT abort the stream (mirrors the apid handler's
 // per-record commit semantics).
@@ -207,10 +202,11 @@ func (p *appErrorsPublisher) flushBatch(ctx context.Context, batch []appErrorRow
 	// is the dedupe-merge / inserted signal).
 	for {
 		resp, err := stream.Recv()
-		if err != nil {
-			// io.EOF on success.
-			//nolint:nilerr // io.EOF is the canonical end-of-stream signal — surfacing it as an error would alarm the operator without cause.
+		if errors.Is(err, io.EOF) {
 			return nil
+		}
+		if err != nil {
+			return err
 		}
 		if resp == nil {
 			return nil
@@ -221,21 +217,11 @@ func (p *appErrorsPublisher) flushBatch(ctx context.Context, batch []appErrorRow
 	}
 }
 
-// openStream returns the in-flight streaming RPC, opening a
-// new one if necessary. Single-flight: only one RPC is open
-// at a time; concurrent callers serialise on streamMu.
+// openStream opens a fresh RPC for one batch. flushBatch half-closes
+// every stream before draining acknowledgements, so retaining it would
+// make the next batch fail with SendMsg called after CloseSend.
 func (p *appErrorsPublisher) openStream(ctx context.Context) (apidgrpc.AppErrorStream, error) {
-	p.streamMu.Lock()
-	defer p.streamMu.Unlock()
-	if p.stream != nil {
-		return p.stream, nil
-	}
-	stream, err := p.client.IncrementAppError(ctx)
-	if err != nil {
-		return nil, err
-	}
-	p.stream = stream
-	return stream, nil
+	return p.client.IncrementAppError(ctx)
 }
 
 // recordFailure increments the consecutive-failure counter AND
@@ -250,13 +236,11 @@ func (p *appErrorsPublisher) openStream(ctx context.Context) (apidgrpc.AppErrorS
 // at the rate panel sees a clean signal right up until the
 // tripwire fires — by which point 5×256 rows have been lost.
 //
-// At AppErrorsFlushMaxConsecutiveFailures the publisher also
-// drops the stream so the next flush opens a fresh RPC; the
-// counter is reset so a single successful flush clears the
-// tripwire.
+// At AppErrorsFlushMaxConsecutiveFailures the publisher emits a
+// high-signal batch-loss warning and resets the tripwire counter.
 func (p *appErrorsPublisher) recordFailure(err error, batch []appErrorRow) {
-	p.streamMu.Lock()
-	defer p.streamMu.Unlock()
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
 	p.consecutiveFailures++
 	p.log.Warn("app_errors flush failed", "consecutive_failures", p.consecutiveFailures, "err", err)
 	if p.ops != nil {
@@ -265,22 +249,19 @@ func (p *appErrorsPublisher) recordFailure(err error, batch []appErrorRow) {
 		}
 	}
 	if p.consecutiveFailures >= AppErrorsFlushMaxConsecutiveFailures {
-		// Drop the stream — the next flush opens a fresh RPC.
-		// The batch is already gone (drained in tryFlush);
-		// the per-row db_error observes above are the data-
-		// loss signal.
-		p.log.Warn("app_errors flush dropped stream after consecutive failures",
+		// The batch is gone (drained in tryFlush); the per-row
+		// db_error observations above are the data-loss signal.
+		p.log.Warn("app_errors flush consecutive-failure threshold reached",
 			"batch_size", len(batch),
 			"consecutive_failures", p.consecutiveFailures)
-		p.stream = nil
 		p.consecutiveFailures = 0
 	}
 }
 
 // recordSuccess resets the consecutive-failure counter.
 func (p *appErrorsPublisher) recordSuccess() {
-	p.streamMu.Lock()
-	defer p.streamMu.Unlock()
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
 	p.consecutiveFailures = 0
 }
 
@@ -292,15 +273,8 @@ func (p *appErrorsPublisher) ringLen() int {
 	return p.rec.len
 }
 
-// Close releases the streaming RPC + the underlying client
-// connection. Safe to call multiple times.
+// Close releases the underlying client connection. Safe to call multiple times.
 func (p *appErrorsPublisher) Close() error {
-	p.streamMu.Lock()
-	if p.stream != nil {
-		_ = p.stream.CloseSend()
-		p.stream = nil
-	}
-	p.streamMu.Unlock()
 	if p.client != nil {
 		return p.client.Close()
 	}

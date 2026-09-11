@@ -189,6 +189,9 @@ func (r *CreateCorsPresetRequest) Validate() *Problem {
 			}
 		}
 	}
+	if problem := validateCORSAllowHeaders("cors preset", r.AllowHeaders, r.AllowCredentials); problem != nil {
+		return problem
+	}
 	return nil
 }
 

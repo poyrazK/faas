@@ -2507,13 +2507,10 @@ func TestPg_ClaimQueuedBuild(t *testing.T) {
 	}
 }
 
-// TestPg_CreateDeployment_SupersedesPriorLive pins the at-rest happy
-// path: a second deploy against an app that already has a `live`
-// deployment row gets the prior row flipped to `superseded` inside the
-// same tx, and the new row is inserted with `pending`. The returned
-// new row carries the just-created identity; the prior is read back
-// via DeploymentByID to assert (2-return CreateDeployment shape).
-func TestPg_CreateDeployment_SupersedesPriorLive(t *testing.T) {
+// TestPg_CreateDeployment_CutsOverOnlyOnPromotion pins the stable promotion
+// boundary: creating a replacement leaves the serving row live, and promoting
+// the ready replacement supersedes the old row atomically.
+func TestPg_CreateDeployment_CutsOverOnlyOnPromotion(t *testing.T) {
 	s, ctx := pgStore(t)
 
 	_, appID, priorDepID := seedLiveDeploy(t, s, ctx)
@@ -2530,13 +2527,22 @@ func TestPg_CreateDeployment_SupersedesPriorLive(t *testing.T) {
 		t.Errorf("created.Status = %q, want pending", created.Status)
 	}
 
-	// The DB must agree: the prior row is superseded.
 	got, err := s.DeploymentByID(ctx, priorDepID)
 	if err != nil {
 		t.Fatalf("DeploymentByID(prior): %v", err)
 	}
-	if got.Status != state.DeploySuperseded {
-		t.Errorf("DB prior.Status = %q, want superseded", got.Status)
+	if got.Status != state.DeployLive {
+		t.Errorf("prior status after replacement creation = %q, want live", got.Status)
+	}
+	if err := s.MarkDeploymentLive(ctx, created.ID); err != nil {
+		t.Fatalf("promote replacement: %v", err)
+	}
+	got, err = s.DeploymentByID(ctx, priorDepID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(prior after promotion): %v", err)
+	}
+	if got.Status != state.DeploySuperseded || got.TrafficPercent != 0 {
+		t.Errorf("prior after replacement promotion = %+v, want superseded/0", got)
 	}
 }
 
@@ -3011,16 +3017,23 @@ func TestPg_CreateDeployment_SupersedeZeroesPriorTrafficPercent(t *testing.T) {
 		t.Errorf("created.TrafficPercent = %d, want 100", created.TrafficPercent)
 	}
 
-	// Prior row was zeroed by the supersede branch.
+	// Creation leaves the prior row serving until the replacement is ready.
 	prior, err := s.DeploymentByID(ctx, priorID)
 	if err != nil {
 		t.Fatalf("DeploymentByID(prior): %v", err)
 	}
-	if prior.TrafficPercent != 0 {
-		t.Errorf("prior.TrafficPercent = %d, want 0 (supersede zeroes it)", prior.TrafficPercent)
+	if prior.TrafficPercent != 100 || prior.Status != state.DeployLive {
+		t.Errorf("prior before promotion = %+v, want live/100", prior)
 	}
-	if prior.Status != state.DeploySuperseded {
-		t.Errorf("prior.Status = %q, want superseded", prior.Status)
+	if err := s.MarkDeploymentLive(ctx, created.ID); err != nil {
+		t.Fatalf("promote replacement: %v", err)
+	}
+	prior, err = s.DeploymentByID(ctx, priorID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(prior after promotion): %v", err)
+	}
+	if prior.TrafficPercent != 0 || prior.Status != state.DeploySuperseded {
+		t.Errorf("prior after promotion = %+v, want superseded/0", prior)
 	}
 }
 
@@ -3366,7 +3379,7 @@ func TestPg_UpdateDeploymentTraffic_RejectsBogusRange(t *testing.T) {
 
 // TestPg_UpdateDeploymentTraffic_RejectsNonLive (issue #556 PR-A)
 // pins the status guard: traffic_percent can only be moved to a
-// `live` row. A superseded row trips ErrInvalidTrafficPercent.
+// `live` row. A superseded row trips ErrDeploymentNotLive.
 func TestPg_UpdateDeploymentTraffic_RejectsNonLive(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, depA := seedLiveDeploy(t, s, ctx, "traffic-non-live")
@@ -3385,9 +3398,65 @@ func TestPg_UpdateDeploymentTraffic_RejectsNonLive(t *testing.T) {
 	}
 
 	// Stamping the superseded row should fail with
-	// ErrInvalidTrafficPercent (the status guard).
-	if _, err := s.UpdateDeploymentTraffic(ctx, depA, 100); !errors.Is(err, state.ErrInvalidTrafficPercent) {
-		t.Errorf("UpdateDeploymentTraffic(superseded dep, 100) err = %v, want ErrInvalidTrafficPercent", err)
+	// ErrDeploymentNotLive (the lifecycle guard).
+	if _, err := s.UpdateDeploymentTraffic(ctx, depA, 100); !errors.Is(err, state.ErrDeploymentNotLive) {
+		t.Errorf("UpdateDeploymentTraffic(superseded dep, 100) err = %v, want ErrDeploymentNotLive", err)
+	}
+}
+
+func TestPg_ExplicitZeroTrafficPreservesStableRevision(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, stableID := seedLiveDeploy(t, s, ctx, "traffic-explicit-zero")
+	candidate, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: strings.Repeat("d", 64), Status: state.DeployPending,
+		TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(candidate): %v", err)
+	}
+	if candidate.TrafficPercent != 0 || !candidate.TrafficPercentExplicit {
+		t.Fatalf("candidate policy = %d explicit=%t, want 0/true", candidate.TrafficPercent, candidate.TrafficPercentExplicit)
+	}
+	if err := s.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(candidate): %v", err)
+	}
+	stable, err := s.DeploymentByID(ctx, stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err = s.DeploymentByID(ctx, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stable.Status != state.DeployLive || stable.TrafficPercent != 100 {
+		t.Fatalf("stable = %s/%d, want live/100", stable.Status, stable.TrafficPercent)
+	}
+	if candidate.Status != state.DeployLive || candidate.TrafficPercent != 0 {
+		t.Fatalf("candidate = %s/%d, want live/0", candidate.Status, candidate.TrafficPercent)
+	}
+}
+
+func TestPg_RunningInstanceForAppIgnoresZeroTrafficGeneration(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx, "running-zero-traffic")
+	candidate, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: strings.Repeat("e", 64), Status: state.DeployPending,
+		TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateInstance(ctx, appID, candidate.ID, string(state.StateRunning), 128, resolveDefaultLocal(t, ctx, s), uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.RunningInstanceForApp(ctx, appID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("RunningInstanceForApp returned zero-traffic generation: %v", err)
 	}
 }
 

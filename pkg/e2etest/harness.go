@@ -167,6 +167,9 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	if which&GatewaySynthStub != 0 {
+		startGatewaySynthStub(t, h)
+	}
 
 	// DB URL — pgtest opened the test pool with search_path=<schema>,public.
 	// The daemon subprocess must use the SAME schema so its reads/writes
@@ -191,7 +194,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	if which&Schedd != 0 {
 		sockPath := filepath.Join(h.SockDir, "schedd.sock")
 		vmmdSock := filepath.Join(h.SockDir, "vmmd.sock")
-		cfgPath := writeScheddConfig(t, h, tmp, which&Gatewayd != 0)
+		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
 		signPubPath := writeScheddSignPub(t, h)
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
@@ -368,6 +371,10 @@ const (
 	Gatewayd
 	Meterd
 	Builderd
+	// GatewaySynthStub serves a successful invocation-dispatch response on
+	// the per-test Unix socket. It lets CI exercise the durable drain without
+	// pretending a missing vmmd bridge is a successful customer response.
+	GatewaySynthStub
 )
 
 // DeployWake is the daemon set the image deploy → snapshot → park → wake
@@ -680,6 +687,9 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	if which&GatewaySynthStub != 0 {
+		startGatewaySynthStub(t, h)
+	}
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -728,7 +738,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	if which&Schedd != 0 {
 		sockPath := filepath.Join(h.SockDir, "schedd.sock")
 		vmmdSock := filepath.Join(h.SockDir, "vmmd.sock")
-		cfgPath := writeScheddConfig(t, h, tmp, which&Gatewayd != 0)
+		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
 		signPubPath := writeScheddSignPub(t, h)
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
@@ -899,6 +909,32 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	h.GatewayURL = "http://" + addr
 	h.GatewayControlURL = "http://" + controlAddr
 	waitTCP(t, controlAddr, 10*time.Second)
+}
+
+func startGatewaySynthStub(t *testing.T, h *Harness) {
+	t.Helper()
+	if h.SockDir == "" {
+		t.Fatal("e2etest: gateway synth stub requires a socket directory")
+	}
+	path := filepath.Join(h.SockDir, "gatewayd-internal.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("e2etest: listen gateway synth stub: %v", err)
+	}
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/invocations:dispatch" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"state":"dispatching","status_code":200,"result":{"ok":true}}`)
+	})}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		_ = server.Close()
+	})
 }
 
 // testEnvCommon returns the env every daemon gets in the harness:

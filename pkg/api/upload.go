@@ -189,14 +189,7 @@ func (c *Client) doResumableUpload(ctx context.Context, method, path string, bod
 		if start && resp.StatusCode == http.StatusNotFound {
 			return nil, nil, ErrResumableUploadUnsupported
 		}
-		var p Problem
-		if json.Unmarshal(data, &p) == nil && p.Code != "" {
-			if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
-				p = *p.WithHeader("Retry-After", retryAfter)
-			}
-			return nil, nil, &APIError{Problem: p}
-		}
-		return nil, nil, fmt.Errorf("API error: %s", resp.Status)
+		return nil, nil, apiErrorFromResponse(resp, data)
 	}
 
 	responseHeaders := resp.Header.Clone()

@@ -56,7 +56,7 @@
     {{if eq .Data.Action "created"}}<div class="flash ok" role="status">Webhook created.</div>{{end}}
     {{if eq .Data.Action "toggled"}}<div class="flash ok" role="status">Webhook status updated.</div>{{end}}
     {{if eq .Data.Action "deleted"}}<div class="flash ok" role="status">Webhook deleted.</div>{{end}}
-    {{if eq .Data.Action "rotated"}}<div class="flash ok" role="status">Webhook secret rotated. Update the receiver with its new secret.</div>{{end}}
+    {{if eq .Data.Action "rotated"}}<div class="flash ok" role="status">Webhook signing secret updated.</div>{{end}}
     {{if eq .Data.Action "replayed"}}<div class="flash ok" role="status">Dead delivery returned to the retry queue.</div>{{end}}
     {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The webhook action could not be completed. Refresh and try again.</div>{{end}}
     {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
@@ -82,7 +82,7 @@
             <p class="muted">Events: {{if .EventFilter}}<code>{{range .EventFilter}}{{.}} {{end}}</code>{{else}}all events{{end}} · created {{.CreatedAt}} · updated {{.UpdatedAt}}</p>
             <div class="actions">
               <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">{{if .Enabled}}Disable{{else}}Enable{{end}}</button></form>
-              <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{.ID}}/rotate-secret"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Rotate secret</button></form>
+              <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{.ID}}/rotate-secret"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><label>Replacement secret <input name="webhook_secret" type="password" required maxlength="256" autocomplete="new-password" size="24"></label><button type="submit">Rotate secret</button></form>
               <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/webhooks/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Delete</button></form>
             </div>
             <details>

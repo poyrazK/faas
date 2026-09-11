@@ -86,10 +86,11 @@ export class DelayedTasksService {
   }
   /**
    * Cancel a pending delayed task.
-   * Idempotent: a re-cancel (or a cancel of an already-fired row)
-   * is a 204. The drain ignores cancelled rows at dispatch.
+   * Atomically cancels a pending row. A re-cancel is idempotent.
+   * Dispatching or terminal rows are left unchanged and their actual
+   * state is returned, so clients never claim completed work was stopped.
    *
-   * @returns void
+   * @returns DelayedTaskResponse The task with its authoritative resulting state.
    * @throws ApiError
    */
   public static delayedTaskCancel({
@@ -99,7 +100,7 @@ export class DelayedTasksService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<DelayedTaskResponse> {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/delayed-tasks/{id}',

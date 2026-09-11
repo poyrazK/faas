@@ -785,17 +785,18 @@ func (b *PGBackend) Pick(appID string) PickResult {
 	}
 	// Single-deployment fast path: byte-identical to pre-PR-B.
 	if len(picker.weights) == 1 {
-		set := picker.sets[picker.weights[0].DeploymentID]
+		deploymentID := picker.weights[0].DeploymentID
+		set := picker.sets[deploymentID]
 		if set == nil {
 			b.tgtMu.RUnlock()
-			return PickResult{}
+			return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
 		}
 		t, ok := set.pick(warmHint)
 		b.tgtMu.RUnlock()
 		if !ok {
-			return PickResult{}
+			return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
 		}
-		return PickResult{Target: t, OK: true, Picked: picker.weights[0].DeploymentID}
+		return PickResult{Target: t, OK: true, Picked: deploymentID}
 	}
 	// Multi-deployment weighted stride.
 	slot := int(picker.cursor.Add(1)-1) % 100
@@ -887,8 +888,10 @@ func (b *PGBackend) targetCountLocked(appID string) int {
 		return 0
 	}
 	n := 0
-	for _, set := range picker.sets {
-		n += len(set.entries)
+	for _, weight := range picker.weights {
+		if set := picker.sets[weight.DeploymentID]; set != nil {
+			n += len(set.entries)
+		}
 	}
 	return n
 }

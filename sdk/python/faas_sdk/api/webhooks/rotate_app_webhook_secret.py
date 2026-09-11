@@ -7,6 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
+from ...models.rotate_app_webhook_secret_request import RotateAppWebhookSecretRequest
 from ...models.rotate_app_webhook_secret_response import RotateAppWebhookSecretResponse
 from ...types import Response
 
@@ -14,7 +15,10 @@ from ...types import Response
 def _get_kwargs(
     slug: str,
     id: str,
+    *,
+    body: RotateAppWebhookSecretRequest,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -24,6 +28,11 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -77,17 +86,22 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateAppWebhookSecretRequest,
 ) -> Response[Problem | RotateAppWebhookSecretResponse]:
-    """Server-mint a new webhook HMAC secret.
+    """Replace a webhook HMAC secret.
 
-     Server-mints a 32-byte secret, seals it, and overwrites the
-    row's sealed ciphertext in place. The plaintext is NEVER
-    returned in the response — the body carries the masked
-    constant + rotated_at only.
+     Seals the caller-supplied replacement and overwrites the row's
+    ciphertext in place. Supply the same value to the receiver. The
+    plaintext is never returned; the response carries the masked
+    constant and rotated_at only.
 
     Args:
         slug (str):
         id (str):
+        body (RotateAppWebhookSecretRequest): Caller-supplied replacement signing secret. The
+            value is sealed at
+            rest and never returned in a response.
+             Example: {'webhook_secret': 'replacement-secret-from-manager'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -100,6 +114,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         id=id,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -114,17 +129,22 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateAppWebhookSecretRequest,
 ) -> Problem | RotateAppWebhookSecretResponse | None:
-    """Server-mint a new webhook HMAC secret.
+    """Replace a webhook HMAC secret.
 
-     Server-mints a 32-byte secret, seals it, and overwrites the
-    row's sealed ciphertext in place. The plaintext is NEVER
-    returned in the response — the body carries the masked
-    constant + rotated_at only.
+     Seals the caller-supplied replacement and overwrites the row's
+    ciphertext in place. Supply the same value to the receiver. The
+    plaintext is never returned; the response carries the masked
+    constant and rotated_at only.
 
     Args:
         slug (str):
         id (str):
+        body (RotateAppWebhookSecretRequest): Caller-supplied replacement signing secret. The
+            value is sealed at
+            rest and never returned in a response.
+             Example: {'webhook_secret': 'replacement-secret-from-manager'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,6 +158,7 @@ def sync(
         slug=slug,
         id=id,
         client=client,
+        body=body,
     ).parsed
 
 
@@ -146,17 +167,22 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateAppWebhookSecretRequest,
 ) -> Response[Problem | RotateAppWebhookSecretResponse]:
-    """Server-mint a new webhook HMAC secret.
+    """Replace a webhook HMAC secret.
 
-     Server-mints a 32-byte secret, seals it, and overwrites the
-    row's sealed ciphertext in place. The plaintext is NEVER
-    returned in the response — the body carries the masked
-    constant + rotated_at only.
+     Seals the caller-supplied replacement and overwrites the row's
+    ciphertext in place. Supply the same value to the receiver. The
+    plaintext is never returned; the response carries the masked
+    constant and rotated_at only.
 
     Args:
         slug (str):
         id (str):
+        body (RotateAppWebhookSecretRequest): Caller-supplied replacement signing secret. The
+            value is sealed at
+            rest and never returned in a response.
+             Example: {'webhook_secret': 'replacement-secret-from-manager'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,6 +195,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         id=id,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -181,17 +208,22 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateAppWebhookSecretRequest,
 ) -> Problem | RotateAppWebhookSecretResponse | None:
-    """Server-mint a new webhook HMAC secret.
+    """Replace a webhook HMAC secret.
 
-     Server-mints a 32-byte secret, seals it, and overwrites the
-    row's sealed ciphertext in place. The plaintext is NEVER
-    returned in the response — the body carries the masked
-    constant + rotated_at only.
+     Seals the caller-supplied replacement and overwrites the row's
+    ciphertext in place. Supply the same value to the receiver. The
+    plaintext is never returned; the response carries the masked
+    constant and rotated_at only.
 
     Args:
         slug (str):
         id (str):
+        body (RotateAppWebhookSecretRequest): Caller-supplied replacement signing secret. The
+            value is sealed at
+            rest and never returned in a response.
+             Example: {'webhook_secret': 'replacement-secret-from-manager'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -206,5 +238,6 @@ async def asyncio(
             slug=slug,
             id=id,
             client=client,
+            body=body,
         )
     ).parsed

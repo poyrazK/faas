@@ -168,20 +168,6 @@ func (l *LocalStorageBackend) Put(ctx context.Context, key string, r io.Reader) 
 		return fmt.Errorf("storage: put %q: open tmp: %w", key, err)
 	}
 	tmp := f.Name()
-	// CreateTemp returns a 0600 file; we want 0644 to match the prior
-	// contract and the published-file mode. Close and reopen with the
-	// correct mode + truncate (the CreateTemp handle is fresh but a
-	// O_TRUNC round-trip is the documented pattern from the builderd
-	// sibling).
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("storage: put %q: close tmp: %w", key, err)
-	}
-	f, err = os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("storage: put %q: open tmp: %w", key, err)
-	}
 	closed := false
 	defer func() {
 		if !closed {
@@ -196,6 +182,14 @@ func (l *LocalStorageBackend) Put(ctx context.Context, key string, r io.Reader) 
 	if err := f.Sync(); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("storage: put %q: fsync: %w", key, err)
+	}
+	// CreateTemp returns a 0600 file. Reopening that existing path with a
+	// 0644 creation mode does not change its permissions, so explicitly chmod
+	// only after the complete artifact is durable. The atomic rename then
+	// publishes it with the shared-read contract builderd relies on.
+	if err := f.Chmod(0o644); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("storage: put %q: chmod tmp: %w", key, err)
 	}
 	if err := f.Close(); err != nil {
 		_ = os.Remove(tmp)

@@ -1011,18 +1011,18 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	h.ops.ObserveDeployScanDuration(app.Slug, "complete", time.Since(start))
 	h.ops.ObserveDeployScanTotal(app.Slug, "complete")
 	for sev, n := range map[string]int{
-		"CRITICAL": result.Critical,
-		"HIGH":     result.High,
-		"MEDIUM":   result.Medium,
-		"LOW":      result.Low,
-		"UNKNOWN":  result.Unknown,
+		"CRITICAL": result.SeverityCounts.Critical,
+		"HIGH":     result.SeverityCounts.High,
+		"MEDIUM":   result.SeverityCounts.Medium,
+		"LOW":      result.SeverityCounts.Low,
+		"UNKNOWN":  result.SeverityCounts.Unknown,
 	} {
 		h.ops.ObserveDeployScanVulns(app.Slug, sev, n)
 	}
 	h.log.Info("imaged: per-deploy scan stamped",
 		"deployment", dep.ID, "app", app.Slug,
-		"critical", result.Critical, "high", result.High,
-		"medium", result.Medium, "low", result.Low, "unknown", result.Unknown)
+		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
+		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown)
 }
 
 // errImageSecretDetected is the typed sentinel runDeployLayerSecretScan
@@ -2603,8 +2603,29 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 		return fmt.Errorf("imaged: api contract gate: %w", contractErr)
 	}
 
+	// Public hosting smoke needs the candidate to be routable. Remember the
+	// current same-scope deployment so a failed smoke can restore service
+	// instead of leaving the app with no live target.
+	var previousLiveID string
+	if previous, liveErr := h.store.LiveDeploymentForScope(ctx, dep.AppID, dep.Scope); liveErr == nil {
+		if previous.ID != dep.ID {
+			previousLiveID = previous.ID
+		}
+	} else if !errors.Is(liveErr, state.ErrNotFound) {
+		return fmt.Errorf("imaged: load current live deployment: %w", liveErr)
+	}
 	if err := h.store.MarkDeploymentLive(ctx, dep.ID); err != nil {
 		return fmt.Errorf("imaged: mark live: %w", err)
+	}
+	restorePrevious := func(reason string) {
+		if previousLiveID == "" {
+			return
+		}
+		if restoreErr := h.store.MarkDeploymentLive(ctx, previousLiveID); restoreErr != nil {
+			h.log.Error("imaged: restore previous deployment after verification failure",
+				"deployment_id", dep.ID, "previous_deployment_id", previousLiveID,
+				"reason", reason, "err", restoreErr)
+		}
 	}
 
 	if hostingReceiptEnabled {
@@ -2623,6 +2644,7 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
 				}
 				_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
+				restorePrevious("post-readiness smoke failed")
 				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
 				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
 				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
@@ -2632,6 +2654,7 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 			if h.ops != nil {
 				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
 			}
+			restorePrevious("hosting receipt persistence failed")
 			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "hosting receipt persistence failed: "+err.Error())
 			_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "hosting receipt persistence failed")
 			return fmt.Errorf("imaged: hosting receipt: %w", err)
@@ -2865,7 +2888,7 @@ func (h *Handler) releaseBuildCacheLease(parent context.Context, dep state.Deplo
 		h.log.Warn("imaged: check build cache lease", "deployment", dep.ID, "err", err)
 		return
 	}
-	if current.RootfsPath == dep.RootfsPath && current.Status != state.DeployFailed {
+	if current.RootfsPath == dep.RootfsPath && current.Status != state.DeployFailed && current.Status != state.DeployCancelled {
 		return
 	}
 	if err := buildcache.Release(dep.RootfsPath); err != nil {
@@ -3095,7 +3118,7 @@ func (h *Handler) markFailedOnUnhandledError(ctx context.Context, depID string, 
 		return
 	}
 	switch current.Status {
-	case state.DeployFailed, state.DeployLive, state.DeploySuperseded:
+	case state.DeployFailed, state.DeployLive, state.DeploySuperseded, state.DeployCancelled:
 		// Inner path already handled it (or it's a success). The
 		// catch-all must NEVER clobber a terminal-good row.
 		return

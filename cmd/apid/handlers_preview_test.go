@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -79,6 +80,51 @@ func TestDestroyPreview_HappyPath(t *testing.T) {
 	}
 	if len(previews) != 0 {
 		t.Errorf("PreviewAppsByParent returned %d rows post-destroy; want 0 (the soft-deleted preview must not appear in the customer-facing list)", len(previews))
+	}
+}
+
+// spec: preview teardown is a terminal cancellation barrier for its pipeline.
+func TestDestroyPreview_CancelsDeploymentAndRejectsLatePromotion(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedPreviewAppForTest(t, e, "pr-43-acme", "acme", 43)
+	dep, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, ImageDigest: "sha256:preview-cancel",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatal(err)
+	}
+	build, err := e.store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 128, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.ClaimQueuedBuild(context.Background(), build.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, "POST", "/v1/preview/pr-43-acme/destroy", nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	gotDep, _ := e.store.DeploymentByID(context.Background(), dep.ID)
+	if gotDep.Status != state.DeployCancelled {
+		t.Fatalf("deployment status = %q, want cancelled", gotDep.Status)
+	}
+	gotBuild, _ := e.store.BuildByID(context.Background(), build.ID)
+	if gotBuild.Status != state.BuildCancelled {
+		t.Fatalf("build status = %q, want cancelled", gotBuild.Status)
+	}
+	if err := e.store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, ""); !errors.Is(err, state.ErrInvalidStateTransition) {
+		t.Fatalf("late snapshot transition = %v, want ErrInvalidStateTransition", err)
+	}
+	if err := e.store.MarkDeploymentLive(context.Background(), dep.ID); !errors.Is(err, state.ErrInvalidStateTransition) {
+		t.Fatalf("late live promotion = %v, want ErrInvalidStateTransition", err)
+	}
+	gotDep, _ = e.store.DeploymentByID(context.Background(), dep.ID)
+	if gotDep.Status != state.DeployCancelled {
+		t.Fatalf("late writers changed deployment status to %q", gotDep.Status)
 	}
 }
 

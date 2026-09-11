@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { DebugEvidenceExplanation } from './DebugEvidenceExplanation.js';
 import type { DebugRegressionItem } from './DebugRegressionItem.js';
+import type { DebugRequestCorrelation } from './DebugRequestCorrelation.js';
 import type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 import type { DebugTelemetrySpan } from './DebugTelemetrySpan.js';
 import type { DebugTimelineEvent } from './DebugTimelineEvent.js';
@@ -14,6 +15,7 @@ export type DebugRequestEvidenceResponse = {
   request: DebugTelemetryRequestItem;
   regression?: (DebugRegressionItem | null);
   timeline: Array<DebugTimelineEvent>;
+  correlation: DebugRequestCorrelation;
   spans: Array<DebugTelemetrySpan>;
   spans_truncated: boolean;
   explanation: DebugEvidenceExplanation;

@@ -545,7 +545,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
     post:
       operationId: createObjectBucket
-      summary: Create a private bucket on the region's current default backend
+      summary: Create a bucket on the region's current default backend
       description: |
         Requires storage:manage or admin. Idempotent by app, scope and name, not
         by Idempotency-Key. Retry provisioning by submitting the same name and
@@ -563,6 +563,8 @@ paths:
                 name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
                 scope: { type: string, default: default }
                 region: { type: string, description: 'Gregale region, not upstream signing region. Omit to use the configured default.' }
+                public: { type: boolean, default: false, description: 'Serve objects anonymously on the app hostname.' }
+                serve_at: { type: string, pattern: '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$', description: 'Immutable app path mounted when public is true.' }
       responses:
         '201':
           description: Bucket created
@@ -6089,6 +6091,26 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/latest-by-app:
+    get:
+      tags: [deployments]
+      operationId: listLatestDeploymentsByApp
+      summary: List the latest deployment for each app on the account.
+      description: |
+        Returns at most one deployment for every non-deleted app owned by the
+        authenticated account. Items are ordered newest first by `created_at`,
+        with deployment ID as the stable tie-breaker.
+      responses:
+        '200':
+          description: The latest deployment for each deployed app.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestDeploymentsByAppResponse'
+              example: {"items":[]}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/deployments/{id}:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -7968,8 +7990,10 @@ paths:
       summary: Create a trigger.
       description: |
         Idempotent via Idempotency-Key header. Returns 402
-        `triggers_not_allowed` for Free plan, 403 `trigger_quota_exceeded`
-        on per-app or per-account cap; see ADR-100.
+        `plan_triggers_not_allowed` for Free plan. A 403 may be
+        `trigger_kind_not_allowed`, `plan_trigger_quota`,
+        `trigger_batch_window_too_large`, or
+        `trigger_tls_skip_verify_not_allowed`; see ADR-100.
       requestBody:
         required: true
         content:
@@ -7989,6 +8013,7 @@ paths:
         '403': { $ref: '#/components/responses/TriggerQuotaExceeded' }
         '422': { $ref: '#/components/responses/TriggerImmutable' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/TriggerSecretUnavailable' }
 
   /v1/triggers:batch_create:
     post:
@@ -8054,6 +8079,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/TriggerImmutable' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/TriggerSecretUnavailable' }
     delete:
       tags: [triggers]
       operationId: deleteTrigger
@@ -9700,12 +9726,17 @@ paths:
     post:
       tags: [webhooks]
       operationId: rotateAppWebhookSecret
-      summary: Server-mint a new webhook HMAC secret.
+      summary: Replace a webhook HMAC secret.
       description: |
-        Server-mints a 32-byte secret, seals it, and overwrites the
-        row's sealed ciphertext in place. The plaintext is NEVER
-        returned in the response — the body carries the masked
-        constant + rotated_at only.
+        Seals the caller-supplied replacement and overwrites the row's
+        ciphertext in place. Supply the same value to the receiver. The
+        plaintext is never returned; the response carries the masked
+        constant and rotated_at only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateAppWebhookSecretRequest' }
       responses:
         '200':
           description: Webhook secret rotation succeeded.
@@ -10428,10 +10459,15 @@ paths:
       operationId: delayedTaskCancel
       summary: Cancel a pending delayed task.
       description: |
-        Idempotent: a re-cancel (or a cancel of an already-fired row)
-        is a 204. The drain ignores cancelled rows at dispatch.
+        Atomically cancels a pending row. A re-cancel is idempotent.
+        Dispatching or terminal rows are left unchanged and their actual
+        state is returned, so clients never claim completed work was stopped.
       responses:
-        '204': { description: 'Cron disabled (no body).' }
+        '200':
+          description: The task with its authoritative resulting state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DelayedTaskResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -13309,15 +13345,17 @@ components:
         access: { type: string, enum: [read_write, read_only] }
 
     ObjectBucket:
-      description: Private logical bucket metadata without upstream credentials or placement details.
+      description: Logical bucket metadata without upstream credentials or placement details.
       type: object
-      required: [id, name, scope, region, state, created_at]
+      required: [id, name, scope, region, state, public, created_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         scope: { type: string }
         region: { type: string }
         state: { type: string, enum: [provisioning, ready, deleting] }
+        public: { type: boolean }
+        serve_at: { type: string }
         created_at: { type: string, format: date-time }
     ObjectBucketList:
       description: App bucket catalog and operator-configured preview capabilities.
@@ -13912,9 +13950,9 @@ components:
         effective_at: { type: string, format: date-time }
 
     AccountLimits:
-      description: "Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and writable ephemeral app-disk capacity."
+      description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
       type: object
-      required: [plan, ram_mb, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb]
+      required: [plan, ram_mb, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
@@ -13924,6 +13962,18 @@ components:
         included_gb_hours: { type: integer, format: int64 }
         app_layer_max_mb: { type: integer }
         ephemeral_disk_max_mb: { type: integer, description: "Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb." }
+        triggers_allowed: { type: boolean, description: "Whether the plan permits external event triggers." }
+        trigger_kinds:
+          type: array
+          description: "External trigger kinds this plan may create. Cron schedules use the dedicated crons API and are not included."
+          items: { $ref: '#/components/schemas/TriggerKind' }
+        trigger_limit_per_app: { type: integer, minimum: 0 }
+        trigger_limit_per_account: { type: integer, minimum: 0 }
+        trigger_batch_size_max: { type: integer, minimum: 0 }
+        trigger_batch_window_max_ms: { type: integer, minimum: 0, description: "Maximum batching window in milliseconds." }
+        trigger_max_attempts_max: { type: integer, minimum: 0 }
+        trigger_payload_max_bytes: { type: integer, minimum: 0 }
+        trigger_tls_skip_verify_allowed: { type: boolean, description: "Whether Kafka tls.skip_verify=true is permitted." }
 
     ChangePlanRequest:
       description: "Target plan for the change."
@@ -16052,6 +16102,16 @@ components:
           type: integer
           minimum: 1
           description: "Pull-request number that drove this tarball deploy request (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."
+        traffic_percent:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: "Explicit initial traffic weight for this source-tarball deployment. Omitted uses the normal stable rollout; zero stages a dark live revision."
+        canary:
+          oneOf:
+            - $ref: '#/components/schemas/CanaryPresetSpec'
+            - type: 'null'
+          description: "Canary rollout policy for this source-tarball deployment. Mutually exclusive with traffic_percent."
 
     UpdateDeploymentRequest:
 
@@ -16167,6 +16227,15 @@ components:
           type: array
           items: { $ref: '#/components/schemas/DeploymentResponse' }
         next_before: { type: [string, "null"], format: date-time }
+
+    LatestDeploymentsByAppResponse:
+      description: "At most one newest deployment for each non-deleted app owned by the authenticated account."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentResponse' }
 
     DeploymentSummaryResponse:
       description: "App-scoped release cockpit: selected deployment, immediate predecessor, non-secret field-level diff, and eligible rollback target."
@@ -17925,8 +17994,10 @@ components:
         Read shape returned by GET / POST / PATCH on /v1/triggers.
         The `config` blob is opaque at the wire level — each kind
         decodes its own per-shape struct lazily. The SDK round-trip
-        preserves the raw JSON so unknown fields survive client
-        versions older than the server.
+        preserves unknown fields across client versions. Kafka
+        credentials are never returned: `password_set` and
+        `client_key_set` report their presence without exposing
+        plaintext or the internal sealed envelope.
       type: object
       required:
         [id, account_id, app_id, kind, config, batch_size_max, batch_window_ms,
@@ -17948,22 +18019,25 @@ components:
           description: |
             Per-kind opaque configuration. Decode with the per-kind
             struct (KafkaTriggerConfig, NATSTriggerConfig, etc).
+            Kafka responses replace write-only password/client-key
+            leaves with boolean `password_set`/`client_key_set` markers.
           example:
             {brokers: ["broker:9092"], topic: orders.v1, group: faas-orders}
         batch_size_max:
           type: integer
           minimum: 1
           maximum: 5000
-          description: "Records per batch upper bound (per-plan cap in /v1/limits)."
+          description: "Records per batch upper bound. Omitted create values use min(64, the account plan cap)."
         batch_window_ms:
           type: integer
           minimum: 10
           maximum: 600000
-          description: "Milliseconds a partial batch may wait before dispatch."
+          description: "Milliseconds a partial batch may wait before dispatch. Omitted create values use min(1000, the account plan cap)."
         max_attempts:
           type: integer
           minimum: 1
           maximum: 25
+          description: "Omitted create values use min(5, the account plan cap)."
         payload_max_bytes:
           type: integer
           minimum: 1024
@@ -17973,7 +18047,7 @@ components:
             Records above this size are DLQ'd at insert time with
             reason='payload_too_large' rather than silently truncated.
             Plan-level ceiling in /v1/limits TriggerPayloadMaxBytes.
-            Default 6291456 (6 MiB) when omitted on create.
+            Omitted create values use min(6291456, the account plan cap).
         broker_poison_strategy:
           type: string
           enum: [commit, seek-to-offset]
@@ -18019,6 +18093,8 @@ components:
         gating mirrors pkg/gregalemanifest.validateKindConfig:
           - cron: requires schedule + path (slug ignored)
           - non-cron: requires slug + config
+        Omitted delivery settings use the platform default capped to the
+        selected account plan; explicit over-cap values are rejected.
       type: object
       required: [app_id, kind]
       properties:
@@ -18031,7 +18107,7 @@ components:
         config:
           type: object
           additionalProperties: true
-          description: "Per-kind opaque config blob."
+          description: "Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence."
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
@@ -18058,7 +18134,9 @@ components:
         Partial trigger update. nil means "leave unchanged" (same
         semantics as UpdateCronRequest). Kind is NOT a member — it
         is immutable. To change kind, create a new trigger and
-        delete the old one.
+        delete the old one. Inside a supplied Kafka sasl/tls block,
+        omitting the write-only credential preserves its stored value;
+        omitting the whole block removes that block and its credential.
       type: object
       properties:
         enabled: { type: [boolean, "null"] }
@@ -18106,15 +18184,21 @@ components:
         SCRAM client keypairs from Username + Password at dial
         time.
       type: object
-      required: [mechanism, username, password]
+      required: [mechanism, username]
       properties:
         mechanism: { $ref: '#/components/schemas/KafkaSASLMechanism' }
         username: { type: string, minLength: 1, maxLength: 256 }
         password:
           type: string
           format: password
+          writeOnly: true
           minLength: 1
-          maxLength: 1024
+          maxLength: 4096
+          description: "Plaintext-on-write only. Omit inside a supplied SASL block to preserve the stored password."
+        password_set:
+          type: boolean
+          readOnly: true
+          description: "Response-only marker indicating that a password is configured; no credential material is returned."
 
     KafkaTLSConfig:
       description: |
@@ -18136,7 +18220,13 @@ components:
         client_key:
           type: string
           format: password
-          description: "PEM-encoded client key for mTLS."
+          writeOnly: true
+          maxLength: 65536
+          description: "PEM-encoded client key for mTLS, accepted only on writes. Omit inside a supplied TLS block to preserve the stored key."
+        client_key_set:
+          type: boolean
+          readOnly: true
+          description: "Response-only marker indicating that a client key is configured; no credential material is returned."
         skip_verify:
           type: boolean
           default: false
@@ -18424,6 +18514,16 @@ components:
           type: integer
           minimum: 1
           description: "Pull-request number when the wire offers it (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."
+        traffic_percent:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: "Explicit initial traffic weight for this source-ref deployment. Omitted uses the normal stable rollout; zero stages a dark live revision."
+        canary:
+          oneOf:
+            - $ref: '#/components/schemas/CanaryPresetSpec'
+            - type: 'null'
+          description: "Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent."
 
     DiffRequest:
       description: |
@@ -22780,13 +22880,14 @@ components:
         status_url: { type: string, example: "/v1/invocations/0123456789abcdef0123456789abcdef" }
 
     InvokeResponse:
-      description: "Sync-invoke result. Status is the drain-driven terminal state (`completed` | `failed` | `cancelled`). Result is the original row's payload cast to JSON (omitted while still pending)."
+      description: "Sync-invoke result. Status is the drain-driven terminal state (`completed` | `failed` | `cancelled`). Result is the handler response. Error contains the terminal delivery error when status is failed."
       type: object
       required: [id, status]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         status: { type: string, enum: [pending, dispatching, completed, failed, cancelled] }
         result: { type: object, additionalProperties: true }
+        error: { type: string }
 
     QueueSendResponse:
       description: "201 — body of a freshly-enqueued queue row."
@@ -22870,7 +22971,7 @@ components:
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         scheduled_at: { type: string, format: date-time }
-        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled] }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
 
     Invocation:
       description: "A single invocations row. Account-scoped; cross-account reads return 404."
@@ -24124,8 +24225,7 @@ components:
       description: |
         Subscribe a target URL to events emitted by the app. The
         webhook_secret is HMAC-SHA256 sealed at rest with the host
-        X25519 recipient (namespace `APP_WEBHOOK`); apid mints a fresh
-        32-byte secret if omitted.
+        X25519 recipient (namespace `APP_WEBHOOK`).
       required: [target_url, webhook_secret]
       properties:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
@@ -24180,6 +24280,17 @@ components:
       example:
         rotated_at: "2026-08-06T12:00:00Z"
         webhook_secret_sealed_masked: "***"
+
+    RotateAppWebhookSecretRequest:
+      type: object
+      description: |
+        Caller-supplied replacement signing secret. The value is sealed at
+        rest and never returned in a response.
+      required: [webhook_secret]
+      properties:
+        webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+      example:
+        webhook_secret: "replacement-secret-from-manager"
 
     AppWebhookDeliveryResponse:
       type: object
@@ -24318,10 +24429,36 @@ components:
         status: { type: integer, minimum: 100, maximum: 599 }
         approximate: { type: boolean, description: "True when the marker is derived from a collapsed minute bucket rather than an exact request timestamp." }
 
+    DebugRequestCorrelationStage:
+      type: object
+      description: "One bounded edge-to-billing request stage. Missing and partial signals are explicit and are never rendered as zero latency."
+      required: [phase, status]
+      properties:
+        phase: { type: string, enum: [edge, queue, wake, guest, downstream, billing] }
+        status: { type: string, enum: [observed, partial, missing, not_applicable] }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        evidence_count: { type: integer, minimum: 0 }
+        reason: { type: string, maxLength: 256 }
+        approximate: { type: boolean, description: "True when the stage is derived from a collapsed request bucket rather than an exact request timestamp." }
+
+    DebugRequestCorrelation:
+      type: object
+      description: "Fixed-shape edge-to-billing correlation for a retained request. Every stage is present so unavailable telemetry is visible."
+      required: [stages, complete]
+      properties:
+        stages:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items: { $ref: '#/components/schemas/DebugRequestCorrelationStage' }
+        complete: { type: boolean, description: "True only when every applicable stage has complete retained evidence." }
+
     DebugRequestEvidenceResponse:
       type: object
       description: "Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."
-      required: [request, timeline, spans, spans_truncated, explanation, generated_at]
+      required: [request, timeline, correlation, spans, spans_truncated, explanation, generated_at]
       properties:
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
         regression:
@@ -24332,6 +24469,7 @@ components:
           type: array
           maxItems: 200
           items: { $ref: '#/components/schemas/DebugTimelineEvent' }
+        correlation: { $ref: '#/components/schemas/DebugRequestCorrelation' }
         spans:
           type: array
           maxItems: 100
@@ -24700,13 +24838,19 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
     TriggerNotAllowed:
-      description: 'code: triggers_not_allowed — Free plan cannot create triggers; upgrade required.'
+      description: 'code: plan_triggers_not_allowed — Free plan cannot create triggers; upgrade required.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
 
     TriggerQuotaExceeded:
-      description: 'code: trigger_quota_exceeded — per-app or per-account trigger cap reached (see TriggerLimitPerApp / TriggerLimitPerAccount in /v1/limits).'
+      description: 'code: trigger_kind_not_allowed | plan_trigger_quota | trigger_batch_window_too_large | trigger_tls_skip_verify_not_allowed — source-kind or delivery configuration exceeds the account plan capabilities returned by GET /v1/account.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    TriggerSecretUnavailable:
+      description: 'code: secret_store_unavailable — Kafka credentials could not be sealed or opened safely because host age key material is unavailable.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

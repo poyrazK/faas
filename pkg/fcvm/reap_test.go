@@ -210,6 +210,98 @@ func TestReapOrphanedJails_MissingJailRootIsNotAnError(t *testing.T) {
 	}
 }
 
+// TestReapOrphanedJails_ReapsProcessWithoutChroot covers the production leak
+// found on 2026-09-11: a failed teardown had removed the jail directory but
+// left Firecracker and its tenant cgroup resident. Directory-only discovery
+// could never find it on the next vmmd startup.
+// spec: §6.2
+// Acceptance item 4 requires a parked app to consume zero resident RAM.
+func TestReapOrphanedJails_ReapsProcessWithoutChroot(t *testing.T) {
+	root := t.TempDir()
+	proc := fakeProc(t, map[int][]string{
+		42: {"/firecracker-v1.7.0-x86_64", "--id", idDead, "--uid", fmt.Sprint(JailUIDBase + 7)},
+	})
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(proc, "42"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	killed := 0
+	rep, err := ReapOrphanedJails(context.Background(), ReapOptions{
+		JailRoot: root,
+		ProcRoot: proc,
+		Runner:   runner,
+		IsLive:   alwaysDead,
+		killProcess: func(pid int, _ os.Signal) error {
+			killed = pid
+			return os.RemoveAll(filepath.Join(proc, fmt.Sprint(pid)))
+		},
+	})
+	if err != nil {
+		t.Fatalf("ReapOrphanedJails: %v", err)
+	}
+	if rep.Scanned != 1 || rep.Reaped != 1 || rep.ProcessOnly != 1 || killed != 42 {
+		t.Fatalf("report = %+v killed=%d", rep, killed)
+	}
+	if !runner.ran("ip", "netns", "del", "fc-"+idDead) || !runner.ran("ip", "link", "del", "vh7") {
+		t.Fatalf("incomplete resource cleanup: %v", runner.cmds)
+	}
+}
+
+func TestReapOrphanedJails_SparesLiveProcessWithoutChroot(t *testing.T) {
+	root := t.TempDir()
+	proc := fakeProc(t, map[int][]string{
+		42: {"/firecracker", "--id", idLive, "--uid", fmt.Sprint(JailUIDBase + 7)},
+	})
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(proc, "42"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	killed := false
+	rep, err := ReapOrphanedJails(context.Background(), ReapOptions{
+		JailRoot: root,
+		ProcRoot: proc,
+		Runner:   &recordingRunner{},
+		IsLive: func(context.Context, string) (bool, error) {
+			return true, nil
+		},
+		killProcess: func(int, os.Signal) error {
+			killed = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("ReapOrphanedJails: %v", err)
+	}
+	if rep.SkippedLive != 1 || rep.ProcessOnly != 1 || killed {
+		t.Fatalf("report = %+v killed=%v", rep, killed)
+	}
+}
+
+func TestReapOrphanedJails_SkipsYoungProcessWithoutChroot(t *testing.T) {
+	root := t.TempDir()
+	proc := fakeProc(t, map[int][]string{
+		42: {"/firecracker", "--id", idDead, "--uid", fmt.Sprint(JailUIDBase + 7)},
+	})
+	killed := false
+	rep, err := ReapOrphanedJails(context.Background(), ReapOptions{
+		JailRoot: root,
+		ProcRoot: proc,
+		Runner:   &recordingRunner{},
+		IsLive:   alwaysDead,
+		killProcess: func(int, os.Signal) error {
+			killed = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("ReapOrphanedJails: %v", err)
+	}
+	if rep.SkippedYoung != 1 || rep.ProcessOnly != 1 || killed {
+		t.Fatalf("report = %+v killed=%v", rep, killed)
+	}
+}
+
 func TestReapOrphanedLayerClones_UsesDurableLivenessGate(t *testing.T) {
 	root := t.TempDir()
 	bucket := filepath.Join(root, "a3")
@@ -318,6 +410,8 @@ func TestFindFirecrackerPID_MatchesArgumentPairNotSubstring(t *testing.T) {
 	proc := fakeProc(t, map[int][]string{
 		// Mentions idDead only inside an unrelated path argument.
 		41: {"/usr/bin/imaged", "--cache", "/var/lib/faas/cache/" + idDead + ".ext4"},
+		// Carries the exact pair but is not Firecracker.
+		40: {"/usr/bin/not-firecracker", "--id", idDead, "--uid", "20006"},
 		// The real one.
 		42: {"/firecracker", "--id", idDead, "--uid", "20007", "--api-sock", "api.sock"},
 	})

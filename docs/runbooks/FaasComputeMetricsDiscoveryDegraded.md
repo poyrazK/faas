@@ -5,8 +5,8 @@
 The control-plane Prometheus HTTP service-discovery producer is stale, is
 returning fewer compute targets than the active registry expects, or is
 returning healthy targets that Prometheus cannot scrape. Prometheus itself may
-still be up while remote `gatewayd-internal` or Promtail metrics are frozen,
-incomplete, or absent.
+still be up while remote `gatewayd-internal`, vmmd, imaged, builderd or
+Promtail metrics are frozen, incomplete, or absent.
 
 The producer is apid's loopback-only endpoint. It reads active
 `compute_nodes` rows with a configured `gateway_target_url`; it does not read
@@ -26,7 +26,8 @@ time() - apid_metrics_discovery_last_success_timestamp_seconds{job="gatewayd-int
 rate(apid_metrics_discovery_requests_total{outcome=~"error|unavailable"}[10m])
 ```
 
-Repeat with `job="promtail-compute"` when the Promtail scrape is affected.
+Repeat with `job="vmmd"`, `job="imaged"`, `job="builderd"`, or
+`job="promtail-compute"` for the affected compute scrape.
 The expected state is:
 
 - `last_success` age below 120 seconds;
@@ -64,6 +65,9 @@ from the Prometheus user. The endpoint is deliberately loopback-only:
 
 ```sh
 curl -fsS http://127.0.0.1:8081/v1/internal/metrics/targets
+curl -fsS http://127.0.0.1:8081/v1/internal/metrics/vmmd-targets
+curl -fsS http://127.0.0.1:8081/v1/internal/metrics/imaged-targets
+curl -fsS http://127.0.0.1:8081/v1/internal/metrics/builderd-targets
 curl -fsS http://127.0.0.1:8081/v1/internal/metrics/promtail-targets
 ```
 

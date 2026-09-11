@@ -27,9 +27,8 @@
   - Two new conditional-UPDATE predicates on `instances`:
     `ReinviteMigratingInstance` (active-owner-ack path) and
     `AbortMigratingInstance` (dead-owner hard-delete path).
-  - Slot-neutral — **zero new migrations** (the A5 migrations
-    00103/00104 already carry the lineage columns the watchdog
-    reads).
+  - One additive column migration persists the Phase-2 start time so
+    lease age remains durable across schedd restarts.
 
 ## Architectural decisions
 
@@ -38,13 +37,12 @@
    `runDiskDrift`). The watchdog is NOT notified by `pg_notify`
    because the failure mode is "the new owner died silently" —
    there is no peer to emit a notify.
-2. **Input set.** `Store.ListExpiredMigrations(ctx, maxPerTick)`
-   returns every `state='migrating'` row. The WHERE clause includes
-   `now() - updated_at >= MigratingWatchdogScanSeconds` (default 0;
-   the watchdog reconciles every tick) so a peer that's actively
-   racing the phase-3 commit isn't double-counted. The watchdog is
-   a sweeper, not a verifier — race-safety lives in the
-   conditional-UPDATE predicates, not in the input filter.
+2. **Input set.** `Store.ListExpiredMigrations(ctx, maxPerTick, leaseAge)`
+   returns only `state='migrating'` rows whose persisted
+   `migration_started_at` is at least `leaseAge` old. The one-second
+   ticker remains responsive, but an in-flight handoff is protected from
+   premature reconciliation even across a schedd restart. Race-safety
+   still lives in the conditional-UPDATE predicates.
 3. **Eligibility.** `state='migrating' AND lease_token IS NOT NULL`
    (every migrating row carries a lease token stamped at Phase 2;
    the watchdog needs the lease to drive the gRPC re-invite).
@@ -126,12 +124,12 @@ table; never inline a limit per CLAUDE.md).
 
 ## State surface
 
-- New `Store.ListExpiredMigrations(ctx, maxPerTick int) ([]Instance, error)`
-  — returns every `state='migrating'` row (the watchdog is the
-  only writer that can move rows out of `migrating` without a peer
-  commit, so the unresolved row is the input set). Implements the
-  existing `InstancingStore` interface; mirrored in `pgstore` and
-  `memstore`.
+- New `Store.ListExpiredMigrations(ctx, maxPerTick int, leaseAge ...time.Duration) ([]Instance, error)`
+  — returns leased `state='migrating'` rows older than the lease age.
+  The optional form preserves the existing inspection surface; the
+  production engine always passes the configured live-migration lease.
+  Implements the existing `InstancingStore` interface; mirrored in
+  `pgstore` and `memstore`.
 - New `Store.ReinviteMigratingInstance(ctx, instanceID, leaseToken string) error`
   — conditional UPDATE that flips `state='running'`, stamps
   `migrated_at`, clears `lease_token`. Used by the active-owner
@@ -140,9 +138,9 @@ table; never inline a limit per CLAUDE.md).
   — conditional UPDATE that flips `state='parked'`, restores
   `node_id=migrated_from_node_id`, clears `lease_token`. Used by
   the dead-owner path. Returns `ErrConflict` on `RowsAffected()==0`.
-- **Zero new migrations / columns.** The A5 lineage columns
-  (00103 `migrated_from_node_id`, `migrated_at`, `lease_token`)
-  carry everything the watchdog needs.
+- **Migration.** `instances.migration_started_at` is stamped atomically
+  with the Phase-2 `state='migrating'` transition and cleared by every
+  terminal path. The existing A5 lineage columns remain unchanged.
 
 ## Engine surface
 

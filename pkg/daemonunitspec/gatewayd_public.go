@@ -44,13 +44,16 @@ func UnitGatewaydPublic() daemonunit.Unit {
 		RestartSec:         "2s",
 		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
 
-		Slice:     "faas-cp.slice",
-		MemoryMax: "512M",
+		Slice:           "faas-cp.slice",
+		MemoryMax:       "512M",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/object-storage/provider.env",
 
 		AmbientCapabilities: []string{""}, // explicit empty body: "no caps elevated"
 
 		Environment: []daemonunit.KV{
+			{Key: "FAAS_OBJECT_STORAGE_CONFIG", Value: "/etc/faas/object-storage.json"},
 			{Key: "FAAS_PUBLIC_CONTROL_ADDR", Value: "127.0.0.1:9092"},
+			{Key: "FAAS_TRUSTED_INGRESS_CIDRS", Value: "127.0.0.0/8,::1/128"},
 			{Key: "FAAS_INTERNAL_TARGET", Value: ""},
 			{Key: "FAAS_COMPUTE_GATEWAY_DISCOVERY", Value: "database"},
 			{Key: "FAAS_CONTROL_PLANE_API_TARGET", Value: "http://127.0.0.1:8081"},

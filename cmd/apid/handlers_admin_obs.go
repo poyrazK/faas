@@ -97,35 +97,27 @@ func (s *server) obsOverview(w http.ResponseWriter, r *http.Request, acct state.
 		return
 	}
 	now := time.Now().UTC()
-	accounts, err := s.store.ListAllAccounts(r.Context())
+	snapshot, err := loadObsOverviewSnapshot(r.Context(), s.store, now)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list accounts"))
+		api.WriteProblem(w, api.ErrCapacity("could not load observability overview"))
 		return
 	}
-	totals := summariseAccounts(accounts)
+	totals := summariseAccounts(snapshot.accounts)
+	totals.AppsTotal = len(snapshot.apps)
 	// Live + waking instance counts come from the canonical fleet
 	// read; schedd is the writer of record (CLAUDE.md ownership
 	// rules) and the obs read is a snapshot. The numbers are
 	// point-in-time; the operator UI re-polls every 30s.
-	instances, err := s.store.ListAllInstances(r.Context())
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list instances"))
-		return
-	}
-	totals.InstancesLive, totals.InstancesWaking = summariseInstances(instances)
-	nodes, err := s.store.ListComputeNodes(r.Context(), true /* includeInactive */)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list compute nodes"))
-		return
-	}
-	totals.NodesActive, totals.NodesInactive = summariseNodes(nodes)
+	totals.InstancesLive, totals.InstancesWaking = summariseInstances(snapshot.instances)
+	totals.NodesActive, totals.NodesInactive = summariseNodes(snapshot.nodes)
 	topRL := summariseTopRateLimited(r, now)
 	failures := summariseRecentFailures(r, now)
 	writeJSON(w, http.StatusOK, api.ObsOverviewResponse{
 		GeneratedAt:               now,
 		Totals:                    totals,
+		BetaFunnel14d:             summariseBetaFunnel(now, snapshot.accounts, snapshot.apps, snapshot.deployments, snapshot.firstSuccessByAcct),
 		TopRateLimitedAccounts24h: topRL,
-		NodeHealth:                toNodeHealthRows(nodes, now),
+		NodeHealth:                toNodeHealthRows(snapshot.nodes, now),
 		RecentFailures1h:          failures,
 	})
 }
@@ -560,8 +552,10 @@ func (s *server) obsNodeWakeLatency(w http.ResponseWriter, r *http.Request, acct
 	}
 	// Fleet p95 — same window so the per-node numbers are
 	// directly comparable to the fleet number.
-	fleetV, err := s.promqlClient.QueryScalar(r.Context(),
-		fmt.Sprintf(`histogram_quantile(0.95, sum by (le)(rate(gateway_wake_latency_seconds_bucket[%s]))) * 1000`, window))
+	fleetV, err := s.promqlClient.QueryScalar(r.Context(), appmetrics.HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le)(rate(gateway_wake_latency_seconds_bucket[%s]))`, window),
+		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, window)))
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not evaluate fleet wake p95"))
 		return

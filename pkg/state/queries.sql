@@ -129,6 +129,13 @@ select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        status, coalesce(error, ''), created_at
 from deployments where app_id = $1 order by created_at desc limit $2 offset $3;
 
+-- name: ListLatestDeploymentPerApp :many
+select distinct on (d.app_id) d.*
+from deployments d
+join apps a on a.id = d.app_id
+where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
+order by d.app_id, d.created_at desc, d.id desc;
+
 -- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -349,6 +356,20 @@ from instances where id = $1;
 select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid, 0),
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at
 from instances where app_id = $1 order by started_at desc;
+
+-- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
+-- Operator beta funnel: one bounded aggregate read replaces an N+1
+-- ListInstancesForAccount loop. last_request_at is stamped only after a
+-- successful public request and terminal instances remain for 30 days, which
+-- fully covers the 14-day beta cohort window.
+select a.account_id, min(i.last_request_at)::timestamptz as first_success_at
+from instances i
+join apps a on a.id = i.app_id
+join accounts acct on acct.id = a.account_id
+where acct.created_at >= $1
+  and i.last_request_at is not null
+group by a.account_id
+order by a.account_id;
 
 -- name: UpdateInstanceState :exec
 update instances set state = $2 where id = $1;
@@ -2665,8 +2686,8 @@ SELECT count(*) FROM object_buckets WHERE account_id = $1 AND state <> 'deleted'
 DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
 
 -- name: ObjectBucketInsert :one
-INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *;
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *;
 
 -- name: ObjectBucketList :many
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id;
@@ -2814,9 +2835,16 @@ VALUES ($1, $2, 1)
 ON CONFLICT (bucket_id, period_start) DO UPDATE
 SET request_count = object_storage_request_metrics.request_count + 1;
 
+-- name: ObjectStorageProviderEgressIncrement :exec
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, egress_bytes)
+VALUES ($1, $2, $3)
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET egress_bytes = object_storage_request_metrics.egress_bytes + EXCLUDED.egress_bytes;
+
 -- name: ObjectStorageProviderRequestMetrics :many
 SELECT b.id, b.account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
-       sqlc.arg(period_start)::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count
+       sqlc.arg(period_start)::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count,
+       COALESCE(m.egress_bytes, 0)::bigint AS egress_bytes
 FROM object_buckets b
 LEFT JOIN object_storage_request_metrics m
   ON m.bucket_id = b.id AND m.period_start = sqlc.arg(period_start)

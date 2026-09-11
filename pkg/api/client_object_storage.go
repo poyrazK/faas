@@ -24,9 +24,11 @@ func (c *Client) RecordObjectStorageUsage(ctx context.Context, report ObjectStor
 // CreateObjectBucketRequest describes logical placement. Empty scope/region
 // select the server defaults; retries use the same app, scope and name.
 type CreateObjectBucketRequest struct {
-	Name   string `json:"name"`
-	Scope  string `json:"scope,omitempty"`
-	Region string `json:"region,omitempty"`
+	Name    string `json:"name"`
+	Scope   string `json:"scope,omitempty"`
+	Region  string `json:"region,omitempty"`
+	Public  bool   `json:"public,omitempty"`
+	ServeAt string `json:"serve_at,omitempty"`
 }
 
 // BucketObject is one item from the upstream object listing, not a usage bill.

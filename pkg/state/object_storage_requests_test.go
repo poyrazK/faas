@@ -18,11 +18,14 @@ func TestMemObjectStorageProviderRequestMetricsAreCumulative(t *testing.T) {
 	if err := store.RecordObjectStorageProviderRequest(context.Background(), "bucket", period.Add(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.RecordObjectStorageProviderEgress(context.Background(), "bucket", 42, period.Add(3*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	metrics, err := store.ListObjectStorageProviderRequestMetrics(context.Background(), "ovh", "fingerprint", period)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(metrics) != 1 || metrics[0].PhysicalName != "physical" || metrics[0].RequestCount != 2 {
+	if len(metrics) != 1 || metrics[0].PhysicalName != "physical" || metrics[0].RequestCount != 2 || metrics[0].EgressBytes != 42 {
 		t.Fatalf("metrics = %+v, want one physical bucket with count 2", metrics)
 	}
 	buckets, err := store.ListObjectStorageProviderBuckets(context.Background(), "ovh", "fingerprint")

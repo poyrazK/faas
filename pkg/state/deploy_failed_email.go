@@ -32,7 +32,7 @@ func (s *PgStore) ClaimDeployFailedEmail(ctx context.Context, appID string, at t
 		 WHERE id = $1
 		   AND status <> 'deleted'
 		   AND (last_deploy_failed_email_at IS NULL
-		        OR last_deploy_failed_email_at < $2 - interval '1 hour')
+		        OR last_deploy_failed_email_at < $2::timestamptz - interval '1 hour')
 		 RETURNING id`, appID, at.UTC()).Scan(&claimed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil

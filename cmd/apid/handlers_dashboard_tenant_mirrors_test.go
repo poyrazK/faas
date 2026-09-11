@@ -93,7 +93,7 @@ func TestDashboardHandler_MirrorsFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment first: %v", err)
 	}
-	second, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:second", Status: state.DeployPending})
+	second, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:second", Status: state.DeployPending, Scope: "mirror"})
 	if err != nil {
 		t.Fatalf("CreateDeployment second: %v", err)
 	}

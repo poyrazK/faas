@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -110,6 +111,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		sourceAccepted bool
 		workflows      []api.WorkflowSpec
 		devSource      devSourceMetadata
+		trafficPercent *int
+		canarySpec     *api.CanaryPresetSpec
+		ann            annotationForm
 	)
 	defer func() {
 		if sourcePath != "" && !sourceAccepted {
@@ -181,6 +185,39 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, prob)
 				return
 			}
+		case "traffic_percent":
+			b, readErr := io.ReadAll(io.LimitReader(part, 8))
+			value, parseErr := strconv.Atoi(strings.TrimSpace(string(b)))
+			if readErr != nil || parseErr != nil {
+				api.WriteProblem(w, api.ErrValidation("traffic_percent must be an integer"))
+				return
+			}
+			trafficPercent = &value
+		case "canary":
+			b, readErr := io.ReadAll(io.LimitReader(part, 64<<10))
+			var spec api.CanaryPresetSpec
+			if readErr != nil || json.Unmarshal(b, &spec) != nil {
+				api.WriteProblem(w, api.ErrValidation("canary must be a valid rollout object"))
+				return
+			}
+			canarySpec = &spec
+		case "reason":
+			b, _ := io.ReadAll(io.LimitReader(part, 2048))
+			ann.Reason = string(b)
+		case "tag":
+			b, _ := io.ReadAll(io.LimitReader(part, 128))
+			ann.Tag = string(b)
+		case "deployed_by":
+			b, _ := io.ReadAll(io.LimitReader(part, 512))
+			ann.DeployedBy = string(b)
+		case "pr_number":
+			b, readErr := io.ReadAll(io.LimitReader(part, 24))
+			value, parseErr := strconv.Atoi(strings.TrimSpace(string(b)))
+			if readErr != nil || parseErr != nil {
+				api.WriteProblem(w, api.ErrValidation("pr_number must be an integer"))
+				return
+			}
+			ann.PRNumber = value
 		case "dev_source_base", "dev_source_target", "dev_source_deleted":
 			if !developerSource {
 				_, _ = io.Copy(io.Discard, part)
@@ -200,6 +237,20 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	if sourcePath == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Source required", "multipart deploys require a 'source' file field"))
+		return
+	}
+	rolloutReq := &api.CreateDeploymentRequest{TrafficPercent: trafficPercent, Canary: canarySpec}
+	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := validateAnnotationForm(ann); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	rollout, prob := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	if developerSource {
@@ -297,21 +348,32 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// dockerfile deploys and produced misleading split-by-source
 		// dashboards.
 		_, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-			AppID:           app.ID,
-			Kind:            kind,
-			SourcePath:      sourcePath,
-			SourceBytes:     sourceBytes,
-			SourceRoot:      sourceRoot,
-			Handler:         handler,
-			LogSpool:        spoolRoot(),
-			Log:             s.log,
-			ActorUserID:     acct.ID,
-			ActorVia:        routeKindForRequest(r),
-			ActorFromIP:     middleware.ClientIP(r),
-			Workflows:       marshalWorkflowDefinitions(workflows),
-			HostingObserver: s.ops,
-			HostingFlow:     hostingFlow,
-			ServiceRollout:  app.Manifest.ExecutionMode == api.ExecutionModeService,
+			AppID:                  app.ID,
+			Kind:                   kind,
+			SourcePath:             sourcePath,
+			SourceBytes:            sourceBytes,
+			SourceRoot:             sourceRoot,
+			Handler:                handler,
+			LogSpool:               spoolRoot(),
+			Log:                    s.log,
+			ActorUserID:            acct.ID,
+			ActorVia:               routeKindForRequest(r),
+			ActorFromIP:            middleware.ClientIP(r),
+			Workflows:              marshalWorkflowDefinitions(workflows),
+			Reason:                 ann.Reason,
+			Tag:                    ann.Tag,
+			DeployedBy:             ann.DeployedBy,
+			PRNumber:               ann.PRNumber,
+			TrafficPercent:         rollout.TrafficPercent,
+			TrafficPercentExplicit: rollout.TrafficPercentExplicit,
+			CanaryPreset:           rollout.CanaryPreset,
+			CanaryStep:             rollout.CanaryStep,
+			CanaryTotalSteps:       rollout.CanaryTotalSteps,
+			CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
+			CanaryStages:           rollout.CanaryStages,
+			HostingObserver:        s.ops,
+			HostingFlow:            hostingFlow,
+			ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && trafficPercent == nil && canarySpec == nil,
 		})
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not create deployment"))

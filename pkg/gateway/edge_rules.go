@@ -333,10 +333,13 @@ type EdgeRuleGeoResolved struct {
 
 // EdgeRuleCache is the in-memory per-host LRU (PR 3 shape; PR 4
 // widens the entry to a HostEntry carrying four compiled slices —
-// one per kind). Wholesale `Reset()` on `db.NotifyEdgeRuleChanged`
-// is the only invalidation — single-box scale assumption per
-// spec §4.3. Mirrors `RouteCache` at `pkg/gateway/routes.go:11-96`.
-const edgeRuleNegativeTTL = 30 * time.Second
+// one per kind). `Reset()` on `db.NotifyEdgeRuleChanged` is the fast
+// invalidation path. Every entry also has a bounded lifetime so a listener
+// reconnect or lost notification cannot leave a serving gateway stale
+// indefinitely.
+const edgeRuleCacheTTL = 30 * time.Second
+
+const edgeRuleNegativeTTL = edgeRuleCacheTTL
 
 type EdgeRuleCache struct {
 	generation uint64
@@ -836,10 +839,7 @@ func (c *EdgeRuleCache) putLocked(host string, entry *HostEntry) {
 	// Cache metadata belongs to this insertion, not to the loader's result.
 	cached := *entry
 	cached.Host = host
-	cached.expiresAt = time.Time{}
-	if !cached.hasRules() {
-		cached.expiresAt = c.now().Add(edgeRuleNegativeTTL)
-	}
+	cached.expiresAt = c.now().Add(edgeRuleCacheTTL)
 	if el, ok := c.byID[host]; ok {
 		el.Value = &cached
 		c.ll.MoveToFront(el)
@@ -850,12 +850,6 @@ func (c *EdgeRuleCache) putLocked(host string, entry *HostEntry) {
 	if c.ll.Len() > c.cap {
 		c.evictLRU()
 	}
-}
-
-func (e *HostEntry) hasRules() bool {
-	return len(e.Route)+len(e.Rewrite)+len(e.Redirect)+len(e.Headers)+
-		len(e.CORS)+len(e.JWT)+len(e.IP)+len(e.Validate)+len(e.Limit)+
-		len(e.Maintenance)+len(e.Geo)+len(e.Throttle)+len(e.Budget)+len(e.Cache) > 0
 }
 
 // Reset drops every cached entry. gatewayd-internal calls this on
