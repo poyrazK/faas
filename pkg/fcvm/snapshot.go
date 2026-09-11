@@ -214,6 +214,12 @@ type SnapshotSpec struct {
 	// VMStatePath host-file path (single-box behaviour, unchanged);
 	// non-empty ⇒ the VMM publishes via Storage.Put at this key.
 	VMStateStorageKey string
+	// ResumeBeforePublish is set only by the warm-snapshot path. Once
+	// Firecracker has atomically created the local snapshot files, resume
+	// the guest before slower shared-storage uploads so ordinary traffic is
+	// paused for snapshot creation rather than registry latency. Migration
+	// and terminal park captures leave this false and remain paused.
+	ResumeBeforePublish bool
 }
 
 // SnapshotInfo is the result of a snapshot create.

@@ -77,6 +77,10 @@ func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrPlanWorkflowsNotAllowed(acct.Plan))
 		return
 	}
+	if !s.workflowRuntimeEnabled {
+		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
+		return
+	}
 
 	// Runs must snapshot a definition from the current live deployment.
 	// This keeps a run deterministic even when a later deployment changes

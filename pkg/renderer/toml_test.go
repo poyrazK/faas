@@ -151,6 +151,37 @@ func TestRenderTOML_GatewaydInternal(t *testing.T) {
 	if !strings.Contains(string(body), "metrics_addr = \"127.0.0.1:9090\"") {
 		t.Errorf("gatewayd-internal body missing metrics_addr 9090\nbody:\n%s", body)
 	}
+	for _, want := range []string{
+		"route_metrics_enabled = true",
+		"streaming_enabled = true",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("gatewayd-internal body missing production default %q\nbody:\n%s", want, body)
+		}
+	}
+}
+
+func TestRenderTOML_GatewaydInternalExplicitFeatureDisable(t *testing.T) {
+	disabled := false
+	body, _, err := renderTOML(tomlRenderCtx{
+		Daemon: "gatewayd-internal",
+		DC: &manifest.DaemonConfig{
+			Bind:                "tcp://0.0.0.0:8080",
+			RouteMetricsEnabled: &disabled,
+			StreamingEnabled:    &disabled,
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTOML: %v", err)
+	}
+	for _, want := range []string{
+		"route_metrics_enabled = false",
+		"streaming_enabled = false",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("gatewayd-internal body missing explicit override %q\nbody:\n%s", want, body)
+		}
+	}
 }
 
 func TestRenderTOML_GatewaydInternalPeerTLS(t *testing.T) {

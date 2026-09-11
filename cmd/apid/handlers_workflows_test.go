@@ -91,6 +91,30 @@ func TestCreateWorkflowRun_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateWorkflowRun_RuntimeDisabledRejectsBeforePersistence(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedWorkflowApp(t, e, "runtime-disabled-app")
+	e.s.WithWorkflowRuntimeEnabled(false)
+
+	rec := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{
+		"order_id": "ord_disabled",
+	}, nil)
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501 Not Implemented, got %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), api.CodeWorkflowDeploymentUnavailable) {
+		t.Fatalf("expected error code %s in body: %s", api.CodeWorkflowDeploymentUnavailable, rec.Body.String())
+	}
+	active, err := e.store.CountActiveRunsByApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("CountActiveRunsByApp: %v", err)
+	}
+	if active != 0 {
+		t.Fatalf("active workflow runs = %d, want 0 after runtime rejection", active)
+	}
+}
+
 func TestListWorkflowRuns_And_GetWorkflowRun(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "list-app")

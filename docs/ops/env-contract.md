@@ -342,7 +342,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMM_TLS_CERT_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_VMM_TLS_KEY_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` |  |  | `` | deprecated fallback delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
-| `FAAS_WORKFLOWS_ENABLED` | schedd | `unit` |  |  | `` | explicit 0 in faas-schedd.service; set to 1 to activate durable workflow dispatch |
+| `FAAS_WORKFLOWS_ENABLED` | apid, schedd | `unit` |  |  | `` | explicit 0 in apid and schedd units; set both to 1 to activate durable workflow dispatch and run creation |
 | `FAAS_WORKLOAD_` | guest | `guest` |  |  | `` | guest-init injects per-task loopback endpoint metadata for the main workload and declared sidecars |
 | `FAAS_WORKLOAD_IDENTITY_ISSUER` | vmmd | `default` |  |  | `` | optional vmmd workload-identity issuer override; config TOML is the primary deployment setting |
 | `FAAS_WORKLOAD_IDENTITY_KEY_ID` | vmmd | `default` |  |  | `` | optional vmmd workload-identity key ID override; config TOML is the primary deployment setting |

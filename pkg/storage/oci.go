@@ -252,6 +252,7 @@ const (
 	repoScans   = "scans"
 	repoSigs    = "sigs"
 	repoSources = "sources"
+	repoSBOMs   = "sboms"
 )
 
 // defaultRepoPrefix is the per-namespace repo prefix the driver uses
@@ -386,6 +387,18 @@ func (o *OCIRegistryStorageBackend) plan(key string) (repo, ref string, err erro
 		}
 		tag := parts[1]
 		return repoSources, tag, nil
+	case repoSBOMs:
+		// sboms/<build>.cdx.json → repo "sboms", tag
+		// "<build>.cdx.json". Build IDs are canonical UUIDs and the
+		// suffix keeps the artifact format explicit on round-trip.
+		if len(parts) != 2 || !strings.HasSuffix(parts[1], ".cdx.json") {
+			return "", "", fmt.Errorf("%w: %q does not match sboms/<build>.cdx.json", ErrInvalidKey, key)
+		}
+		buildID := strings.TrimSuffix(parts[1], ".cdx.json")
+		if !depIDCharset.MatchString(buildID) || !tagCharset.MatchString(parts[1]) {
+			return "", "", fmt.Errorf("%w: sboms build %q fails UUID or tag charset", ErrInvalidKey, buildID)
+		}
+		return repoSBOMs, parts[1], nil
 	default:
 		return "", "", fmt.Errorf("%w: %q has unknown namespace %q", ErrInvalidKey, key, parts[0])
 	}
@@ -700,6 +713,8 @@ func (o *OCIRegistryStorageBackend) reposForPrefix(prefix string) []string {
 		return out
 	case repoSources:
 		return []string{repoSources}
+	case repoSBOMs:
+		return []string{repoSBOMs}
 	default:
 		parts := strings.Split(prefix, "/")
 		if len(parts) >= 2 && parts[0] == repoSnap && depIDCharset.MatchString(parts[1]) {
@@ -750,6 +765,15 @@ func (o *OCIRegistryStorageBackend) unplan(repo, tag string) (string, bool) {
 			return "", false
 		}
 		return "sources/" + tag, true
+	case repoSBOMs:
+		if !strings.HasSuffix(tag, ".cdx.json") || !tagCharset.MatchString(tag) {
+			return "", false
+		}
+		buildID := strings.TrimSuffix(tag, ".cdx.json")
+		if !depIDCharset.MatchString(buildID) {
+			return "", false
+		}
+		return "sboms/" + tag, true
 	default:
 		if strings.HasPrefix(repo, repoSigs+"/") && tagCharset.MatchString(tag) {
 			return repo + "/" + tag, true

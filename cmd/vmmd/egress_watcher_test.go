@@ -131,7 +131,7 @@ func TestEgressWatcher_Reload_HappyPath(t *testing.T) {
 	}
 }
 
-// Production starts with no /tmp/vmmd-egress-staging directory. Reload owns
+// Production starts with no /run/faas/vmmd-egress-staging directory. Reload owns
 // that process-local path and must recreate it after boot or tmpfiles cleanup.
 func TestEgressWatcher_Reload_CreatesMissingStagingDirectory(t *testing.T) {
 	nft := &stubNftExec{}

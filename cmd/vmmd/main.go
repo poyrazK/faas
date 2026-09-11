@@ -1597,16 +1597,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// already drops the policy file into place. The watcher is the
 	// multi-box hot-reload path.
 	//
-	// Staging defaults: /tmp/vmmd-egress-staging (mode 0755, owned
-	// by the daemon's process uid). /etc/nftables.conf is the
-	// canonical live path; cross-fs renames fall through atomicReplace's
-	// copy+rename fallback so the daemon does not silently fail on a
-	// host where /tmp is tmpfs and /etc is on ext4.
+	// Runtime policy files live below /run/faas, which is already the
+	// vmmd unit's writable runtime directory. ProtectSystem=strict makes
+	// /tmp and /etc read-only for this service; the former hard-coded
+	// /tmp staging path therefore prevented every live SMTP/egress policy
+	// refresh before nft was even invoked. The boot-time baseline remains
+	// /etc/nftables.conf; runtime refreshes validate and load the complete
+	// rendered ruleset from /run/faas/nftables.conf.
 	// Construct the watcher on every host so Manager cache mutations can
 	// use it as the HostRenderer seam. Only the pg_notify drain loop is
 	// gated on nodeID; default-local still needs live policy writes when a
 	// Hobby app changes its SMTP destination allowlist.
-	w := newEgressWatcher(log, "/tmp/vmmd-egress-staging", "/etc/nftables.conf")
+	const (
+		egressStagingDir = "/run/faas/vmmd-egress-staging"
+		egressLivePath   = "/run/faas/nftables.conf"
+	)
+	w := newEgressWatcher(log, egressStagingDir, egressLivePath)
 	deps.egressWatcher = w
 	mgr.SetHostRenderer(w)
 	if nodeID != "" {
@@ -1619,7 +1625,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}()
 		}
-		log.Info("vmmd: egress watcher wired", "node_id", nodeID, "staging", "/tmp/vmmd-egress-staging", "live", "/etc/nftables.conf")
+		log.Info("vmmd: egress watcher wired", "node_id", nodeID, "staging", egressStagingDir, "live", egressLivePath)
 	}
 
 	// Issue #679 / PR-A: install the SIGHUP-driven egress

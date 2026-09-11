@@ -60,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -157,6 +158,13 @@ func dataPlacementEnabledFromEnv(getenv func(string) string) bool {
 		}
 	}
 	return false
+}
+
+// workflowsEnabledFromEnv is shared with schedd's durable-dispatch gate.
+// Keeping apid on the same opt-in prevents it from accepting workflow runs
+// that no runtime will ever execute.
+func workflowsEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_WORKFLOWS_ENABLED")) == "1"
 }
 
 // resolveMetricsAddr reads FAAS_APID_METRICS_ADDR via the test seam
@@ -1269,7 +1277,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"github_enabled", oauthCfg.GitHub.Enabled())
 	}
 	srv := newServerWithDeps(store, log, cfg.GetAppsDomain(deps.getenv), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv)).
-		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv))
+		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv)).
+		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv))
 	objectRegistry, err := objectstorage.Load(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
@@ -1358,17 +1367,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	log.Info("billing provider loaded", "provider", provName)
 
-	// Issue #299 / ADR-038 Phase 3: SBOM root directory. imagd's syft
-	// populator writes CycloneDX JSON to <root>/sboms/<buildID>.cdx.json
-	// and stores the relative path in build_provenance.sbom_storage_key.
-	// apid joins the relative path against this root at GET
-	// /v1/builds/{id}/sbom time. Default is the single-box deploy root
-	// (/srv/fc, FAAS_STORAGE_ROOT for the local storage backend); on a
-	// remote-storage deploy the operator sets FAAS_SBOM_ROOT to the
-	// mirror mount. Empty disables the route — the handler returns 503
-	// build_sbom_unavailable (issue #299: "may exist later, retry") so
-	// the CLI/SDK can distinguish from 404 "no such build".
-	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT"))
+	// Issue #299 / ADR-038 Phase 3: imagd stores CycloneDX JSON under
+	// sboms/<buildID>.cdx.json and records that storage key in provenance.
+	// Read through the same storage backend here so OCI-backed deployments
+	// do not depend on an apid-local mirror. FAAS_SBOM_ROOT remains the
+	// compatibility path for older single-box artifacts.
+	sbomStorage, err := artifactstorage.BackendFromEnv()
+	if err != nil {
+		return fmt.Errorf("apid: load SBOM storage backend: %w", err)
+	}
+	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage)
 
 	// Issue #98 / ADR-028: admin allowlist for /v1/compute-nodes.
 	// Empty in dev = all admin routes 403 with code admin_required;

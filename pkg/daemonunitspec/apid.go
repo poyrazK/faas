@@ -61,7 +61,7 @@ func UnitApid() daemonunit.Unit {
 
 		AmbientCapabilities: []string{"CAP_NET_BIND_SERVICE"},
 
-		EnvironmentFile: "/etc/faas/sealed.env",
+		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_SESSION_KEY", Value: "%d/faas_session_key"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
@@ -69,6 +69,7 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 			{Key: "FAAS_APID_ADVISORY_SOCK", Value: "/run/faas/apid.sock"},
 			{Key: "FAAS_STATUSPAGE_PATH", Value: "/etc/faas/statuspage/index.html"},
+			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "0"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "faas_session_key", Path: "/etc/faas/secrets/session.key"},

@@ -465,6 +465,22 @@ func TestPlan_SourceKey(t *testing.T) {
 	}
 }
 
+func TestPlan_SBOMKey(t *testing.T) {
+	o := &OCIRegistryStorageBackend{prefix: "faas"}
+	buildUUID := "550e8400-e29b-41d4-a716-446655440000"
+	key := "sboms/" + buildUUID + ".cdx.json"
+	repo, tag, err := o.plan(key)
+	if err != nil {
+		t.Fatalf("plan SBOM key: %v", err)
+	}
+	if repo != "sboms" || tag != buildUUID+".cdx.json" {
+		t.Fatalf("got (%q,%q), want (sboms,%s.cdx.json)", repo, tag, buildUUID)
+	}
+	if got, ok := o.unplan(repo, tag); !ok || got != key {
+		t.Fatalf("unplan = (%q,%t), want (%q,true)", got, ok, key)
+	}
+}
+
 func TestPlan_InvalidKeys(t *testing.T) {
 	o := &OCIRegistryStorageBackend{prefix: "faas"}
 	tests := []string{
@@ -1352,6 +1368,7 @@ func TestOCIUnplanInverse(t *testing.T) {
 		"layers/" + depUUID + ".ext4",
 		"kernel/v1.10.0",
 		"sources/" + depUUID + ".tar.gz",
+		"sboms/" + depUUID + ".cdx.json",
 		"sigs/apps/slug-1/" + depUUID + ".ext4.sig",
 		"sigs/base/amd64/runner-builder-amd64.ext4.sig",
 	}

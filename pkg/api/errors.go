@@ -3299,9 +3299,8 @@ func ErrPlanWorkflowsQuota(plan Plan, limit, observed int) *Problem {
 		WithDocs(docsBase + "/plans#workflows")
 }
 
-// ErrWorkflowDeploymentUnavailable is retained for clients that may still
-// recognize the pre-activation error code. New deployment requests persist
-// workflow definitions and no longer return this problem.
+// ErrWorkflowDeploymentUnavailable reports that definitions may be deployed,
+// but the durable workflow execution runtime is not active on this platform.
 func ErrWorkflowDeploymentUnavailable() *Problem {
 	return NewProblem(http.StatusNotImplemented, CodeWorkflowDeploymentUnavailable,
 		"Workflow deployment unavailable",
