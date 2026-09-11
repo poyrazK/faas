@@ -1410,14 +1410,8 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 | `--repo <OWNER/NAME>` | scan a GitHub repo |  |
 | `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
 | `--show-affected` | render the WillDeploy + Unaffected tables (ADR-124) |  |
-| `--explain` | show each workload's detector, source marker, priority, and any merged detectors |  |
+| `--explain` | show why each workload was detected (detector, marker, priority) |  |
 | `--persist-exclude` | record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3) |  |
-
-Use `--explain` when a monorepo has more than one possible convention for a
-service name. The human-readable output shows the winning detector and its
-priority, the source marker that matched, and any lower-priority detectors
-merged into the same workload. Machine-readable `gregale scan --json` output
-exposes the same data in each workload's `detected_by` object.
 
 
 ## secrets
@@ -1770,3 +1764,4 @@ Print the powershell completion snippet
 Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg)
 
 `gregale man <command>`
+
