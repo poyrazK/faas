@@ -470,12 +470,13 @@ var methodRouteMap = map[string]string{
 
 	// Issue #1398 O4 — customer runtime log destinations. Hyphenated path
 	// segments need explicit noun-oriented SDK names.
-	"GET /v1/apps/{slug}/log-drains":             "ListAppLogDrains",
-	"POST /v1/apps/{slug}/log-drains":            "CreateAppLogDrain",
-	"GET /v1/apps/{slug}/log-drains/{id}":        "GetAppLogDrain",
-	"GET /v1/apps/{slug}/log-drains/{id}/health": "GetAppLogDrainHealth",
-	"PATCH /v1/apps/{slug}/log-drains/{id}":      "UpdateAppLogDrain",
-	"DELETE /v1/apps/{slug}/log-drains/{id}":     "DeleteAppLogDrain",
+	"GET /v1/apps/{slug}/log-drains":                "ListAppLogDrains",
+	"POST /v1/apps/{slug}/log-drains":               "CreateAppLogDrain",
+	"GET /v1/apps/{slug}/log-drains/{id}":           "GetAppLogDrain",
+	"GET /v1/apps/{slug}/log-drains/{id}/health":    "GetAppLogDrainHealth",
+	"GET /v1/apps/{slug}/log-drains/{id}/analytics": "GetAppLogDrainAnalytics",
+	"PATCH /v1/apps/{slug}/log-drains/{id}":         "UpdateAppLogDrain",
+	"DELETE /v1/apps/{slug}/log-drains/{id}":        "DeleteAppLogDrain",
 
 	// ADR-098 §9.A — connection-aware data upstreams (PR-B hand-off).
 	// The auto-derivation would produce Swagger-style names
