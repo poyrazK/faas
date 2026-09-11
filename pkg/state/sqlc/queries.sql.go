@@ -5821,7 +5821,7 @@ func (q *Queries) ObjectBucketAccessGrantUpsert(ctx context.Context, db DBTX, ar
 }
 
 const objectBucketByName = `-- name: ObjectBucketByName :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
 `
 
 type ObjectBucketByNameParams struct {
@@ -5857,6 +5857,8 @@ func (q *Queries) ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.AttemptCount,
 		&i.RetryAt,
 		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
 	)
 	return i, err
 }
@@ -5873,7 +5875,7 @@ AND ($1 <> 'deleting' OR NOT EXISTS (
   AND m.state IN ('initiating','active','completing','aborting')
 ))
 AND (NOT $7::boolean OR object_buckets.state = $1)
-AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code
+AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at
 `
 
 type ObjectBucketClaimParams struct {
@@ -5915,6 +5917,8 @@ func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBuck
 		&i.AttemptCount,
 		&i.RetryAt,
 		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
 	)
 	return i, err
 }
@@ -5961,7 +5965,7 @@ func (q *Queries) ObjectBucketFinish(ctx context.Context, db DBTX, arg ObjectBuc
 }
 
 const objectBucketGet = `-- name: ObjectBucketGet :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
 `
 
 type ObjectBucketGetParams struct {
@@ -5991,13 +5995,15 @@ func (q *Queries) ObjectBucketGet(ctx context.Context, db DBTX, arg ObjectBucket
 		&i.AttemptCount,
 		&i.RetryAt,
 		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
 	)
 	return i, err
 }
 
 const objectBucketInsert = `-- name: ObjectBucketInsert :one
-INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at
 `
 
 type ObjectBucketInsertParams struct {
@@ -6010,6 +6016,8 @@ type ObjectBucketInsertParams struct {
 	BackendID          string
 	BackendFingerprint string
 	PhysicalName       string
+	PublicRead         bool
+	ServeAt            pgtype.Text
 }
 
 func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBucketInsertParams) (ObjectBucket, error) {
@@ -6023,6 +6031,8 @@ func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBuc
 		arg.BackendID,
 		arg.BackendFingerprint,
 		arg.PhysicalName,
+		arg.PublicRead,
+		arg.ServeAt,
 	)
 	var i ObjectBucket
 	err := row.Scan(
@@ -6043,12 +6053,14 @@ func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.AttemptCount,
 		&i.RetryAt,
 		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
 	)
 	return i, err
 }
 
 const objectBucketList = `-- name: ObjectBucketList :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
 `
 
 type ObjectBucketListParams struct {
@@ -6083,6 +6095,8 @@ func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucke
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -6095,7 +6109,7 @@ func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucke
 }
 
 const objectBucketListForKey = `-- name: ObjectBucketListForKey :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at
 FROM object_buckets b
 JOIN object_storage_access_grants g
   ON g.bucket_id = b.id AND g.account_id = b.account_id
@@ -6138,6 +6152,8 @@ func (q *Queries) ObjectBucketListForKey(ctx context.Context, db DBTX, arg Objec
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -6201,7 +6217,7 @@ func (q *Queries) ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBuck
 }
 
 const objectBucketsDue = `-- name: ObjectBucketsDue :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets
 WHERE (state = 'deleting' OR ($1::boolean AND state = 'provisioning'))
 AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
 ORDER BY retry_at, id LIMIT $2::int
@@ -6239,6 +6255,8 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -6251,7 +6269,7 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 }
 
 const objectInventoriesDue = `-- name: ObjectInventoriesDue :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
 WHERE b.state='ready' AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
 AND (u.lease_until IS NULL OR u.lease_until < now())
 ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1
@@ -6284,6 +6302,8 @@ func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -7182,7 +7202,7 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectStorageProviderBuckets = `-- name: ObjectStorageProviderBuckets :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets
 WHERE backend_id = $1 AND backend_fingerprint = $2
 ORDER BY physical_name, id
 `
@@ -7219,6 +7239,8 @@ func (q *Queries) ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -7228,6 +7250,24 @@ func (q *Queries) ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg
 		return nil, err
 	}
 	return items, nil
+}
+
+const objectStorageProviderEgressIncrement = `-- name: ObjectStorageProviderEgressIncrement :exec
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, egress_bytes)
+VALUES ($1, $2, $3)
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET egress_bytes = object_storage_request_metrics.egress_bytes + EXCLUDED.egress_bytes
+`
+
+type ObjectStorageProviderEgressIncrementParams struct {
+	BucketID    pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	EgressBytes int64
+}
+
+func (q *Queries) ObjectStorageProviderEgressIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderEgressIncrementParams) error {
+	_, err := db.Exec(ctx, objectStorageProviderEgressIncrement, arg.BucketID, arg.PeriodStart, arg.EgressBytes)
+	return err
 }
 
 const objectStorageProviderRequestIncrement = `-- name: ObjectStorageProviderRequestIncrement :exec
@@ -7249,7 +7289,8 @@ func (q *Queries) ObjectStorageProviderRequestIncrement(ctx context.Context, db 
 
 const objectStorageProviderRequestMetrics = `-- name: ObjectStorageProviderRequestMetrics :many
 SELECT b.id, b.account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
-       $3::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count
+       $3::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count,
+       COALESCE(m.egress_bytes, 0)::bigint AS egress_bytes
 FROM object_buckets b
 LEFT JOIN object_storage_request_metrics m
   ON m.bucket_id = b.id AND m.period_start = $3
@@ -7271,6 +7312,7 @@ type ObjectStorageProviderRequestMetricsRow struct {
 	PhysicalName       string
 	PeriodStart        pgtype.Timestamptz
 	RequestCount       int64
+	EgressBytes        int64
 }
 
 func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestMetricsParams) ([]ObjectStorageProviderRequestMetricsRow, error) {
@@ -7290,6 +7332,7 @@ func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DB
 			&i.PhysicalName,
 			&i.PeriodStart,
 			&i.RequestCount,
+			&i.EgressBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -7344,7 +7387,7 @@ func (q *Queries) ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgty
 }
 
 const objectUsageBuckets = `-- name: ObjectUsageBuckets :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 WHERE b.account_id = $1
@@ -7368,6 +7411,8 @@ type ObjectUsageBucketsRow struct {
 	AttemptCount        int32
 	RetryAt             pgtype.Timestamptz
 	LastErrorCode       string
+	PublicRead          bool
+	ServeAt             pgtype.Text
 	BaselineBytes       pgtype.Int8
 	BaselineKeys        pgtype.Int8
 	GrantedBytes        pgtype.Int8
@@ -7407,6 +7452,8 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgt
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 			&i.BaselineBytes,
 			&i.BaselineKeys,
 			&i.GrantedBytes,

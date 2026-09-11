@@ -1195,6 +1195,8 @@ type ObjectBucket struct {
 	AttemptCount       int32
 	RetryAt            pgtype.Timestamptz
 	LastErrorCode      string
+	PublicRead         bool
+	ServeAt            pgtype.Text
 }
 
 type ObjectStorageAccessGrant struct {
@@ -1287,6 +1289,7 @@ type ObjectStorageRequestMetric struct {
 	BucketID     pgtype.UUID
 	PeriodStart  pgtype.Timestamptz
 	RequestCount int64
+	EgressBytes  int64
 }
 
 type ObjectStorageS3Credential struct {

@@ -51,7 +51,7 @@ export class StorageService {
     });
   }
   /**
-   * Create a private bucket on the region's current default backend
+   * Create a bucket on the region's current default backend
    * Requires storage:manage or admin. Idempotent by app, scope and name, not
    * by Idempotency-Key. Retry provisioning by submitting the same name and
    * scope. Existing buckets retain their backend when the default changes.
@@ -75,6 +75,14 @@ export class StorageService {
        * Gregale region, not upstream signing region. Omit to use the configured default.
        */
       region?: string;
+      /**
+       * Serve objects anonymously on the app hostname.
+       */
+      public?: boolean;
+      /**
+       * Immutable app path mounted when public is true.
+       */
+      serve_at?: string;
     },
   }): CancelablePromise<ObjectBucket | Problem> {
     return __request(OpenAPI, {

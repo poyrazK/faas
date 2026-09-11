@@ -38,7 +38,7 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 	}
 	for _, r := range rows {
 		out.Buckets = append(out.Buckets, ObjectBucketUsage{
-			Bucket:        ObjectBucket{ID: pgUUIDString(r.ID), AccountID: account, AppID: pgUUIDString(r.AppID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, PhysicalName: r.PhysicalName, State: r.State, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time},
+			Bucket:        ObjectBucket{ID: pgUUIDString(r.ID), AccountID: account, AppID: pgUUIDString(r.AppID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, PhysicalName: r.PhysicalName, State: r.State, PublicRead: r.PublicRead, ServeAt: r.ServeAt.String, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time},
 			BaselineBytes: r.BaselineBytes.Int64, BaselineKeys: r.BaselineKeys.Int64, GrantedBytes: r.GrantedBytes.Int64, GrantedKeys: r.GrantedKeys.Int64,
 			ObservedBytes: r.ObservedBytes.Int64, ObservedKeys: r.ObservedKeys.Int64, ObservedAt: r.ObservedAt.Time, AttemptAt: r.AttemptAt.Time, LeaseUntil: r.InventoryLeaseUntil.Time, Token: r.Token.String,
 		})

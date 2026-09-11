@@ -47,7 +47,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_ROLE` | apid, shared | `dropin` |  |  | `` |  |
 | `FAAS_API_CONTRACT_DIFF_ENABLED` | shared | `default` |  |  | `` |  |
 | `FAAS_API_HOSTING_SMOKE_URL` | imaged | `default` |  |  | `` | optional public origin for post-readiness API hosting smoke verification |
-| `FAAS_APPS_DOMAIN` | apid, gatewayd-internal, githubd, imaged, shared | `envfile` |  |  | `` |  |
+| `FAAS_APPS_DOMAIN` | apid, gatewayd-internal, gatewayd-public, githubd, imaged, shared | `envfile` |  |  | `` |  |
 | `FAAS_APPS_ROOT` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_APP_ERRORS_ENABLED` | apid, gatewayd-internal | `runtime-config` |  |  | `` |  |
 | `FAAS_ARTIFACT_REPLICATOR` | imaged | `envfile` |  |  | `` |  |
@@ -204,7 +204,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |  | `` |  |
-| `FAAS_OBJECT_STORAGE_CONFIG` | apid, s3-gatewayd, shared | `unit` |  |  | `` | s3-gatewayd unit and opt-in apid drop-in use /etc/faas/object-storage.json; s3_enabled runtime config separately defaults off |
+| `FAAS_OBJECT_STORAGE_CONFIG` | apid, gatewayd-public, s3-gatewayd, shared | `unit` |  |  | `` | gatewayd-public and s3-gatewayd read /etc/faas/object-storage.json; apid uses the same optional drop-in; s3_enabled runtime config separately defaults off |
 | `FAAS_OCI_BLOB_CACHE_DIR` | imaged | `default` |  |  | `` | defaults to <FAAS_STORAGE_CACHE_DIR>/oci-blobs for OCI-backed deployments; local-storage deployments may opt in explicitly |
 | `FAAS_OCI_BLOB_CACHE_MAX_BYTES` | imaged | `default` |  |  | `` | 8 GiB byte budget for the node-local OCI blob cache; override when sizing compute-node disks |
 | `FAAS_OCI_INSECURE` | imaged | `dev-only` |  |  | `` | must never be set on a production host |

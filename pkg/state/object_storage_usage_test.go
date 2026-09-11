@@ -219,6 +219,24 @@ func TestObjectStorageProviderBudgetDimensionsPG(t *testing.T) {
 	objectProviderBudgetDimensions(t, st)
 }
 
+func TestObjectStorageProviderEgressPG(t *testing.T) {
+	st, _ := pgStore(t)
+	b, _ := seedAccounting(t, st)
+	usage := state.ObjectStorageProviderUsageStore(st)
+	egress := state.ObjectStorageProviderEgressStore(st)
+	period := state.ObjectStoragePeriod(time.Now())
+	if err := egress.RecordObjectStorageProviderEgress(context.Background(), b.ID, 42, period); err != nil {
+		t.Fatal(err)
+	}
+	metrics, err := usage.ListObjectStorageProviderRequestMetrics(context.Background(), b.BackendID, b.BackendFingerprint, period)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics) != 1 || metrics[0].EgressBytes != 42 {
+		t.Fatalf("provider egress metrics = %+v, want 42 bytes", metrics)
+	}
+}
+
 func objectProviderBudgetDimensions(t *testing.T, st accountingStore) {
 	for _, kind := range []string{"cost_millicents", "requests", "egress_bytes"} {
 		t.Run(kind, func(t *testing.T) {

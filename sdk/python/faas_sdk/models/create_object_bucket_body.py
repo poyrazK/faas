@@ -16,6 +16,10 @@ class CreateObjectBucketBody:
     scope: str | Unset = "default"
     region: str | Unset = UNSET
     """Gregale region, not upstream signing region. Omit to use the configured default."""
+    public: bool | Unset = False
+    """Serve objects anonymously on the app hostname."""
+    serve_at: str | Unset = UNSET
+    """Immutable app path mounted when public is true."""
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
@@ -23,6 +27,10 @@ class CreateObjectBucketBody:
         scope = self.scope
 
         region = self.region
+
+        public = self.public
+
+        serve_at = self.serve_at
 
         field_dict: dict[str, Any] = {}
 
@@ -35,6 +43,10 @@ class CreateObjectBucketBody:
             field_dict["scope"] = scope
         if region is not UNSET:
             field_dict["region"] = region
+        if public is not UNSET:
+            field_dict["public"] = public
+        if serve_at is not UNSET:
+            field_dict["serve_at"] = serve_at
 
         return field_dict
 
@@ -47,10 +59,16 @@ class CreateObjectBucketBody:
 
         region = d.pop("region", UNSET)
 
+        public = d.pop("public", UNSET)
+
+        serve_at = d.pop("serve_at", UNSET)
+
         create_object_bucket_body = cls(
             name=name,
             scope=scope,
             region=region,
+            public=public,
+            serve_at=serve_at,
         )
 
         return create_object_bucket_body

@@ -2686,8 +2686,8 @@ SELECT count(*) FROM object_buckets WHERE account_id = $1 AND state <> 'deleted'
 DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
 
 -- name: ObjectBucketInsert :one
-INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *;
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *;
 
 -- name: ObjectBucketList :many
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id;
@@ -2835,9 +2835,16 @@ VALUES ($1, $2, 1)
 ON CONFLICT (bucket_id, period_start) DO UPDATE
 SET request_count = object_storage_request_metrics.request_count + 1;
 
+-- name: ObjectStorageProviderEgressIncrement :exec
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, egress_bytes)
+VALUES ($1, $2, $3)
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET egress_bytes = object_storage_request_metrics.egress_bytes + EXCLUDED.egress_bytes;
+
 -- name: ObjectStorageProviderRequestMetrics :many
 SELECT b.id, b.account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
-       sqlc.arg(period_start)::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count
+       sqlc.arg(period_start)::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count,
+       COALESCE(m.egress_bytes, 0)::bigint AS egress_bytes
 FROM object_buckets b
 LEFT JOIN object_storage_request_metrics m
   ON m.bucket_id = b.id AND m.period_start = sqlc.arg(period_start)

@@ -10,6 +10,8 @@ type ObjectBucket struct {
 	Scope     string    `json:"scope"`
 	Region    string    `json:"region"`
 	State     string    `json:"state"`
+	Public    bool      `json:"public"`
+	ServeAt   string    `json:"serve_at,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

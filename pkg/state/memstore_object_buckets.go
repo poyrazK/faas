@@ -21,6 +21,9 @@ func (m *MemStore) ReserveObjectBucket(_ context.Context, b ObjectBucket, limit 
 			continue
 		}
 		if row.Name == b.Name && row.Scope == b.Scope {
+			if row.PublicRead != b.PublicRead || row.ServeAt != b.ServeAt {
+				return ObjectBucket{}, ErrConflict
+			}
 			return row, nil
 		}
 		count++

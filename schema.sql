@@ -8300,6 +8300,8 @@ CREATE TABLE public.object_buckets (
     attempt_count integer DEFAULT 0 NOT NULL,
     retry_at timestamp with time zone DEFAULT now() NOT NULL,
     last_error_code text DEFAULT '' NOT NULL,
+    public_read boolean DEFAULT false NOT NULL,
+    serve_at text,
     CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -8308,7 +8310,8 @@ CREATE TABLE public.object_buckets (
     CONSTRAINT object_buckets_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT object_buckets_region_check CHECK (((length(region) >= 1) AND (length(region) <= 63))),
     CONSTRAINT object_buckets_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
-    CONSTRAINT object_buckets_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'deleting'::text, 'deleted'::text])))
+    CONSTRAINT object_buckets_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'deleting'::text, 'deleted'::text]))),
+    CONSTRAINT object_buckets_serve_at_check CHECK (((NOT public_read AND serve_at IS NULL) OR (public_read AND (serve_at ~ '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$'::text) AND (serve_at !~ '//'::text) AND (serve_at !~ '/\.$'::text) AND (serve_at !~ '(^|/)\.\.($|/)'::text) AND (right(serve_at, 1) <> '/'::text))))
 );
 
 
@@ -8433,6 +8436,8 @@ CREATE INDEX object_buckets_recovery_idx ON public.object_buckets USING btree (r
 
 CREATE UNIQUE INDEX object_buckets_name_idx ON public.object_buckets USING btree (app_id, scope, name) WHERE (state <> 'deleted'::text);
 
+CREATE UNIQUE INDEX object_buckets_public_serve_at_idx ON public.object_buckets USING btree (app_id, serve_at) WHERE (public_read AND (state <> 'deleted'::text) AND (serve_at IS NOT NULL));
+
 
 --
 -- Name: apps app_object_buckets_guard; Type: TRIGGER; Schema: public; Owner: -
@@ -8501,6 +8506,7 @@ CREATE TABLE IF NOT EXISTS object_storage_request_metrics (
     bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
     period_start timestamptz NOT NULL CHECK (period_start = date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),
     request_count bigint NOT NULL DEFAULT 0 CHECK (request_count BETWEEN 0 AND 1152921504606846976),
+    egress_bytes bigint NOT NULL DEFAULT 0 CHECK (egress_bytes BETWEEN 0 AND 1152921504606846976),
     PRIMARY KEY (bucket_id, period_start)
 );
 CREATE INDEX IF NOT EXISTS object_storage_request_metrics_period_idx

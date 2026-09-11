@@ -545,7 +545,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
     post:
       operationId: createObjectBucket
-      summary: Create a private bucket on the region's current default backend
+      summary: Create a bucket on the region's current default backend
       description: |
         Requires storage:manage or admin. Idempotent by app, scope and name, not
         by Idempotency-Key. Retry provisioning by submitting the same name and
@@ -563,6 +563,8 @@ paths:
                 name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
                 scope: { type: string, default: default }
                 region: { type: string, description: 'Gregale region, not upstream signing region. Omit to use the configured default.' }
+                public: { type: boolean, default: false, description: 'Serve objects anonymously on the app hostname.' }
+                serve_at: { type: string, pattern: '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$', description: 'Immutable app path mounted when public is true.' }
       responses:
         '201':
           description: Bucket created
@@ -13343,15 +13345,17 @@ components:
         access: { type: string, enum: [read_write, read_only] }
 
     ObjectBucket:
-      description: Private logical bucket metadata without upstream credentials or placement details.
+      description: Logical bucket metadata without upstream credentials or placement details.
       type: object
-      required: [id, name, scope, region, state, created_at]
+      required: [id, name, scope, region, state, public, created_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         scope: { type: string }
         region: { type: string }
         state: { type: string, enum: [provisioning, ready, deleting] }
+        public: { type: boolean }
+        serve_at: { type: string }
         created_at: { type: string, format: date-time }
     ObjectBucketList:
       description: App bucket catalog and operator-configured preview capabilities.

@@ -621,6 +621,8 @@ type StorageBucketPageItem struct {
 	Scope     string
 	Region    string
 	State     string
+	Public    bool
+	ServeAt   string
 	CreatedAt string
 }
 

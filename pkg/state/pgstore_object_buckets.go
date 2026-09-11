@@ -12,7 +12,7 @@ import (
 var _ ObjectBucketStore = (*PgStore)(nil)
 
 func objectBucketFromSQL(b sqlc.ObjectBucket) ObjectBucket {
-	return ObjectBucket{ID: pgUUIDString(b.ID), AccountID: pgUUIDString(b.AccountID), AppID: pgUUIDString(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, State: b.State, CreatedAt: b.CreatedAt.Time, UpdatedAt: b.UpdatedAt.Time, LeaseToken: b.LeaseToken.String, LeaseUntil: b.LeaseUntil.Time, AttemptCount: b.AttemptCount, RetryAt: b.RetryAt.Time, LastErrorCode: b.LastErrorCode}
+	return ObjectBucket{ID: pgUUIDString(b.ID), AccountID: pgUUIDString(b.AccountID), AppID: pgUUIDString(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, State: b.State, PublicRead: b.PublicRead, ServeAt: b.ServeAt.String, CreatedAt: b.CreatedAt.Time, UpdatedAt: b.UpdatedAt.Time, LeaseToken: b.LeaseToken.String, LeaseUntil: b.LeaseUntil.Time, AttemptCount: b.AttemptCount, RetryAt: b.RetryAt.Time, LastErrorCode: b.LastErrorCode}
 }
 
 func (s *PgStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, error) {
@@ -29,6 +29,9 @@ func (s *PgStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit
 	}
 	old, err := q.ObjectBucketByName(ctx, tx, sqlc.ObjectBucketByNameParams{AppID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID), Name: b.Name, Scope: b.Scope})
 	if err == nil {
+		if old.PublicRead != b.PublicRead || old.ServeAt.String != b.ServeAt {
+			return ObjectBucket{}, ErrConflict
+		}
 		return objectBucketFromSQL(old), tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -41,7 +44,7 @@ func (s *PgStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit
 	if count >= int64(limit) {
 		return ObjectBucket{}, ErrConflict
 	}
-	out, err := q.ObjectBucketInsert(ctx, tx, sqlc.ObjectBucketInsertParams{ID: mustPgUUID(b.ID), AccountID: mustPgUUID(b.AccountID), AppID: mustPgUUID(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName})
+	out, err := q.ObjectBucketInsert(ctx, tx, sqlc.ObjectBucketInsertParams{ID: mustPgUUID(b.ID), AccountID: mustPgUUID(b.AccountID), AppID: mustPgUUID(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, PublicRead: b.PublicRead, ServeAt: pgtype.Text{String: b.ServeAt, Valid: b.ServeAt != ""}})
 	if err != nil {
 		return ObjectBucket{}, mapErr(err)
 	}
