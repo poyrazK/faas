@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	builderdpkg "github.com/onebox-faas/faas/pkg/builderd"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -101,6 +103,10 @@ type Config struct {
 	// customer's deploy burst can't starve a quieter customer past
 	// the §14 queue-wait SLO.
 	FairnessWindow time.Duration `toml:"fairness_window"`
+	// WarmIdle is the paused-builder reuse window. The environment override
+	// FAAS_BUILDER_WARM_IDLE_MS accepts a positive integer number of
+	// milliseconds and wins over this TOML value.
+	WarmIdle time.Duration `toml:"warm_idle"`
 	// StuckBuildSweepInterval is the cadence of the stuck-running
 	// build reaper (issue #195 B1.4). Zero falls back to 10 minutes
 	// in main.go — slow enough to not hammer the DB, fast enough to
@@ -223,6 +229,27 @@ func (c *Config) normalizeConfig() {
 	if c.StuckBuildThreshold < minimum {
 		c.StuckBuildThreshold = minimum
 	}
+	if c.WarmIdle <= 0 {
+		c.WarmIdle = builderdpkg.DefaultWarmIdle
+	}
+}
+
+// warmIdleWithEnv resolves the warm-builder idle window without allowing an
+// invalid or overflowing environment value to disable the safe default.
+func warmIdleWithEnv(configured time.Duration, env func(string) string) time.Duration {
+	if v := env("FAAS_BUILDER_WARM_IDLE_MS"); v != "" {
+		if millis, err := strconv.ParseInt(v, 10, 64); err == nil && millis > 0 && millis <= int64((1<<63-1)/int64(time.Millisecond)) {
+			return time.Duration(millis) * time.Millisecond
+		}
+	}
+	if configured > 0 {
+		return configured
+	}
+	return builderdpkg.DefaultWarmIdle
+}
+
+func (c *Config) applyEnvironmentOverrides() {
+	c.WarmIdle = warmIdleWithEnv(c.WarmIdle, os.Getenv)
 }
 
 // LoadConfig reads a TOML file at path with defaults filled in. A missing
@@ -277,6 +304,7 @@ func LoadConfig(path string) (*Config, error) {
 					c.BuilderNodeID = v
 				}
 			}
+			c.applyEnvironmentOverrides()
 			c.normalizeConfig()
 			return c, nil
 		}
@@ -288,6 +316,7 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_SPOOL_ROOT"); v != "" {
 		c.SourceSpoolDir = v
 	}
+	c.applyEnvironmentOverrides()
 	c.normalizeConfig()
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
 	// c.Role is consulted against FAAS_BUILDERD_ROLE. Setting Role

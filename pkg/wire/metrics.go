@@ -1137,6 +1137,11 @@ type OpsMetrics struct {
 	// It is registered on every daemon's registry for a stable scrape shape;
 	// only builderd records samples.
 	buildCacheOutcome *prometheus.CounterVec
+	// builderWarmRestoreTotal is the closed-set hit/miss/stale outcome
+	// counter for the guaranteed builder warm-slot lifecycle. It is
+	// registered on every daemon registry for a stable scrape shape; only
+	// builderd records samples.
+	builderWarmRestoreTotal *prometheus.CounterVec
 	// cpuStatsCollectDur: introduced for issue #279 / PR-B / ADR-039.
 	// Wall-clock duration of the CPU-rate-and-accumulator read path
 	// on the vmmd and schedd wires. Stored as prometheus.Histogram
@@ -2560,6 +2565,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, outcome := range []string{"hit", "miss", "invalidated"} {
 		buildCacheOutcome.WithLabelValues(outcome)
 	}
+	builderWarmRestoreTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_warm_restore_total",
+		Help: "Count of builder warm-slot restore decisions, labelled by result {hit,miss,stale}.",
+	}, []string{"result"})
+	for _, result := range []string{"hit", "miss", "stale"} {
+		builderWarmRestoreTotal.WithLabelValues(result)
+	}
 	buildQueueWait := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: prefix + "_build_queue_wait_seconds",
 		Help: "Seconds a build waited between enqueue (apid) and dequeue (builderd start), spec §12 target < 60 s, warn > 300 s (ADR-030).",
@@ -3249,7 +3261,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
-		buildDur, buildQueueWait, buildCacheOutcome, residentGBPerCustomer, billingCapExceededTotal,
+		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal, residentGBPerCustomer, billingCapExceededTotal,
 		meterdFloorAppliedTotal, meteredMBSecondsTotal,
 		// ADR-123 alert-preset signal series — PR-A (3) + PR-B (2). Each
 		// backs one of the 8 alert_presets catalog rows. Without
@@ -4592,6 +4604,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		buildDur:                                              buildDur,
 		buildQueueWait:                                        buildQueueWait,
 		buildCacheOutcome:                                     buildCacheOutcome,
+		builderWarmRestoreTotal:                               builderWarmRestoreTotal,
 		residentGBPerCustomer:                                 residentGBPerCustomer,
 		billingCapExceededTotal:                               billingCapExceededTotal,
 		meterdFloorAppliedTotal:                               meterdFloorAppliedTotal,
@@ -4668,7 +4681,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditLogWriteTotal:                                    auditLogWriteTotal,
 		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,
-		operatorActionTraceCompletenessFirstTickCompleted:   operatorActionTraceCompletenessFirstTickCompleted,
+		operatorActionTraceCompletenessFirstTickCompleted:     operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp: operatorActionTraceCompletenessLastSuccessTimestamp,
 		uploadSessionCreatedTotal:                           uploadSessionCreatedTotal,
 		uploadSessionCommittedTotal:                         uploadSessionCommittedTotal,
@@ -6705,6 +6718,20 @@ func (m *OpsMetrics) ObserveBuildCacheOutcome(outcome string) {
 	switch outcome {
 	case "hit", "miss", "invalidated":
 		m.buildCacheOutcome.WithLabelValues(outcome).Inc()
+	}
+}
+
+// ObserveBuilderWarmRestore records one guaranteed-slot warm restore
+// decision. The label is closed so malformed or future values cannot create
+// unbounded metric series. Safe on a nil receiver and on metrics bundles
+// created by older callers.
+func (m *OpsMetrics) ObserveBuilderWarmRestore(result string) {
+	if m == nil || m.builderWarmRestoreTotal == nil {
+		return
+	}
+	switch result {
+	case "hit", "miss", "stale":
+		m.builderWarmRestoreTotal.WithLabelValues(result).Inc()
 	}
 }
 

@@ -140,6 +140,15 @@ func boot() error {
 			return writeAndPoweroff(buildManifest, fmt.Errorf("builder cgroup2 mount: %w", err), "")
 		}
 		guestStage("after-builder-cgroup")
+		if buildManifest.KeepWarm {
+			// A warm builder restore has no application listener to probe. The
+			// host resumes it through this listener, and the successful resume
+			// request is also the next-build handoff.
+			enableWarmBuilderResume()
+			if err := listenResumeHook(slog.Default()); err != nil {
+				return writeAndPoweroff(buildManifest, fmt.Errorf("warm builder vsock listener: %w", err), "")
+			}
+		}
 		return runBuild(buildManifest)
 	}
 
@@ -655,12 +664,36 @@ func stageExecutable(source, target string) error {
 	return nil
 }
 
-// runBuild is the builder-VM path (M6). It extracts the source tarball,
-// invokes the chosen build engine (Railpack / buildctl / auto), writes
-// build-done.json with the outcome, and powers off. poweroff is what makes
-// firecracker exit cleanly with the build's exit code (vmmd's
-// DestroyResponse.exit_code on the wire — see pkg/vmmdgrpc/server.go).
+// runBuild is the builder-VM path (M6). A normal build runs once and powers
+// off. An opt-in warm build returns to the host-controlled wait state after a
+// successful build; the next vmmd resume request loads the refreshed manifest
+// and starts another build in the same guest.
 func runBuild(m api.BuildManifest) error {
+	for {
+		err := runBuildOnce(m)
+		if err != nil || !m.KeepWarm {
+			return err
+		}
+		waitWarmBuilderResume()
+
+		data, readErr := os.ReadFile(api.BuildManifestPath)
+		if readErr != nil {
+			return writeAndPoweroff(m, fmt.Errorf("read warm builder manifest: %w", readErr), "")
+		}
+		var next api.BuildManifest
+		if unmarshalErr := json.Unmarshal(data, &next); unmarshalErr != nil {
+			return writeAndPoweroff(m, fmt.Errorf("parse warm builder manifest: %w", unmarshalErr), "")
+		}
+		if next.BuildID == "" {
+			return writeAndPoweroff(m, errors.New("warm builder manifest has empty build_id"), "")
+		}
+		m = next
+	}
+}
+
+// runBuildOnce executes one build attempt. It leaves the VM alive only when
+// the attempt succeeded and the manifest opted into the warm handoff.
+func runBuildOnce(m api.BuildManifest) error {
 	if m.BuildContext == "" {
 		m.BuildContext = "/build/src"
 	}
@@ -669,6 +702,11 @@ func runBuild(m api.BuildManifest) error {
 	}
 	if m.OutDir == "" {
 		m.OutDir = "/build/out"
+	}
+	if m.KeepWarm {
+		if err := resetWarmBuilderWorkspace(m.BuildContext, m.OutDir); err != nil {
+			return writeAndPoweroff(m, err, "")
+		}
 	}
 	if err := os.MkdirAll(m.BuildContext, 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir build context: %w", err), "")
@@ -1052,7 +1090,39 @@ func runBuild(m api.BuildManifest) error {
 			}
 		}
 	}
+	if err == nil && m.KeepWarm {
+		// The direct ext4 mount is needed while BuildKit runs, but it must
+		// be released before vmmd pauses the guest and exports the drive.
+		// A subsequent restored build mounts the same guest device again.
+		if unmountErr := syscall.Unmount(builderDriveMount, 0); unmountErr != nil {
+			return finish(fmt.Errorf("unmount builder scratch: %w", unmountErr), combined.String())
+		}
+		writeBuildDone(m, nil, combined.String())
+		guestStage("build-ready")
+		return nil
+	}
 	return finish(err, combined.String())
+}
+
+// resetWarmBuilderWorkspace removes only the per-build source/output trees.
+// The BuildKit root and /build/cache stay in place so a restored builder keeps
+// its dependency state. Paths are constrained below /build because this is a
+// guest-side manifest boundary and RemoveAll must never accept an arbitrary
+// path.
+func resetWarmBuilderWorkspace(buildContext, outDir string) error {
+	for _, path := range []string{buildContext, outDir} {
+		clean := filepath.Clean(path)
+		if clean == "/build" || !strings.HasPrefix(clean, "/build/") {
+			return fmt.Errorf("warm builder workspace %q is outside /build", path)
+		}
+		if err := os.RemoveAll(clean); err != nil {
+			return fmt.Errorf("reset warm builder workspace %s: %w", clean, err)
+		}
+	}
+	if err := os.Remove(api.BuildDonePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale build result: %w", err)
+	}
+	return nil
 }
 
 func removeOversizedDependencyCache(root string, maxBytes int64) (bool, error) {
@@ -1650,11 +1720,10 @@ func tailOf(data []byte, n int) string {
 	return string(data[len(data)-n:])
 }
 
-// writeAndPoweroff writes /etc/faas/build-done.json (vmmd's Destroy loopback-
-// mounts the chroot drive1 to copy it out) and powers off the VM. Any
-// failure here is logged but doesn't prevent the poweroff — vmmd will
-// surface a fallback exit-code classification via the watch-dog capture.
-func writeAndPoweroff(m api.BuildManifest, runErr error, logTail string) error {
+// writeBuildDone writes /etc/faas/build-done.json (vmmd's Destroy loopback-
+// mounts the chroot drive1 to copy it out). Warm builders call this while the
+// guest remains alive; ordinary builders call it immediately before poweroff.
+func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 	exitCode := 0
 	if runErr != nil {
 		var ee *exec.ExitError
@@ -1701,11 +1770,18 @@ func writeAndPoweroff(m api.BuildManifest, runErr error, logTail string) error {
 	if runErr != nil {
 		fmt.Fprintf(os.Stderr, "guest-init: build failed: %v\n", runErr)
 	}
+	_ = exec.Command("/bin/sync").Run()
+}
+
+// writeAndPoweroff writes the durable build result and powers off the VM.
+// Any write failure is logged but doesn't prevent the poweroff — vmmd will
+// surface a fallback exit-code classification via the watchdog capture.
+func writeAndPoweroff(m api.BuildManifest, runErr error, logTail string) error {
+	writeBuildDone(m, runErr, logTail)
 	// Flush all overlay upper metadata/data before the forced poweroff. The
 	// host exports the ext4 immediately after Firecracker exits; without an
 	// explicit sync, the manifest and image can still be only in guest page
 	// cache when the image is loop-mounted on the host.
-	_ = exec.Command("/bin/sync").Run()
 	// poweroff -f so vmmd's Destroy sees the exit code via firecracker's
 	// natural exit. exec.CommandContext's timeout doesn't trigger poweroff —
 	// we always get here.

@@ -47,8 +47,7 @@ type WarmSnapshot struct {
 
 func (s WarmSnapshot) valid() bool {
 	return s.StorageKey != "" &&
-		s.VMStateStorageKey != "" &&
-		s.VMStatePath != "" &&
+		(s.VMStateStorageKey != "" || s.VMStatePath != "") &&
 		s.FCVersion != ""
 }
 
@@ -92,30 +91,42 @@ func (l *WarmLifecycle) Snapshot() (WarmSnapshot, bool) {
 // snapshot is consumed on a hit so a second build cannot restore it
 // concurrently.
 func (l *WarmLifecycle) Start(now time.Time, currentFCVersion string) (WarmRestoreResult, error) {
+	result, _, err := l.StartWithSnapshot(now, currentFCVersion)
+	return result, err
+}
+
+// StartWithSnapshot reserves the slot for a build and returns the consumed
+// snapshot, when one existed. The caller must delete the returned snapshot
+// from its backing store after a miss or stale result. On a hit, the caller
+// uses it to restore the builder before completing the build.
+func (l *WarmLifecycle) StartWithSnapshot(now time.Time, currentFCVersion string) (WarmRestoreResult, WarmSnapshot, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if l.state == WarmRunning {
-		return "", ErrWarmAlreadyRunning
+		return "", WarmSnapshot{}, ErrWarmAlreadyRunning
 	}
 	if l.state == WarmCold {
 		l.state = WarmRunning
-		return WarmRestoreMiss, nil
+		return WarmRestoreMiss, WarmSnapshot{}, nil
 	}
 
 	snapshot := l.snapshot
 	l.snapshot = nil
 	l.state = WarmRunning
 	if snapshot == nil || !snapshot.valid() {
-		return WarmRestoreMiss, nil
+		if snapshot == nil {
+			return WarmRestoreMiss, WarmSnapshot{}, nil
+		}
+		return WarmRestoreMiss, *snapshot, nil
 	}
 	if currentFCVersion == "" || snapshot.FCVersion != currentFCVersion {
-		return WarmRestoreStale, nil
+		return WarmRestoreStale, *snapshot, nil
 	}
 	if now.Sub(snapshot.LastUsedAt) >= l.idle {
-		return WarmRestoreMiss, nil
+		return WarmRestoreMiss, *snapshot, nil
 	}
-	return WarmRestoreHit, nil
+	return WarmRestoreHit, *snapshot, nil
 }
 
 // Complete publishes a paused snapshot after a successful build. Missing
@@ -143,25 +154,45 @@ func (l *WarmLifecycle) Complete(now time.Time, snapshot WarmSnapshot) error {
 
 // Expire evicts a paused snapshot once its idle window has elapsed.
 func (l *WarmLifecycle) Expire(now time.Time) bool {
+	_, expired := l.ExpireSnapshot(now)
+	return expired
+}
+
+// ExpireSnapshot evicts an idle paused snapshot and returns its metadata so
+// the caller can remove the corresponding memory and vmstate objects.
+func (l *WarmLifecycle) ExpireSnapshot(now time.Time) (WarmSnapshot, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if l.state != WarmPaused || l.snapshot == nil {
-		return false
+		return WarmSnapshot{}, false
 	}
 	if now.Sub(l.snapshot.LastUsedAt) < l.idle {
-		return false
+		return WarmSnapshot{}, false
 	}
+	snapshot := *l.snapshot
 	l.snapshot = nil
 	l.state = WarmCold
-	return true
+	return snapshot, true
 }
 
 // Invalidate returns the slot to cold after a build failure, an operator
 // shutdown, or any driver error that makes the paused snapshot unusable.
 func (l *WarmLifecycle) Invalidate() {
+	_, _ = l.InvalidateSnapshot()
+}
+
+// InvalidateSnapshot returns the retained snapshot while returning the slot
+// to cold. The caller can use the metadata to delete backing-store objects.
+func (l *WarmLifecycle) InvalidateSnapshot() (WarmSnapshot, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	var snapshot WarmSnapshot
+	if l.snapshot != nil {
+		snapshot = *l.snapshot
+	}
+	retained := l.snapshot != nil
 	l.snapshot = nil
 	l.state = WarmCold
+	return snapshot, retained
 }

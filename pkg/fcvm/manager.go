@@ -3983,6 +3983,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// <HostIP>:8080 and accepts 2xx as ready.
 			HealthcheckPath:  req.HealthcheckPath,
 			StartupDeadlineS: req.StartupDeadlineS,
+			SkipReady:        req.ExportDir != "",
 			// Issue #463 / ADR-069 / PR-B: per-workload drives
 			// (main + sidecars). Empty = legacy single-workload
 			// path. Non-empty → Restore stages one extra drive
