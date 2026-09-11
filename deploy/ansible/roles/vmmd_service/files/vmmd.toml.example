@@ -16,6 +16,14 @@
 # of the 'faas' group can dial the socket. Default: faas-vmmd
 # owner_user = "faas-vmmd"
 
+# restore_concurrency: maximum simultaneous snapshot restores in this vmmd.
+# Waiting for a slot is included in the platform wake latency. The default of
+# three avoids the measured CPU and mount contention knee on four-vCPU hosts.
+# Operators on larger hosts may tune this from 1 through 64, or canary an
+# override with FAAS_RESTORE_CONCURRENCY.
+# Default: 3
+# restore_concurrency = 3
+
 # kernel_path: path to the Firecracker-compatible kernel image. The daemon
 # refuses to start if this file does not exist. Default: /srv/fc/base/vmlinux-6.1
 # kernel_path = "/srv/fc/base/vmlinux-6.1"
@@ -80,5 +88,8 @@
 #
 # [compute_node]
 # host_bridge_cidr = "10.100.0.0/16"   # per-host bridge /16 (.1 reserved)
+# public_iface = "eth0"                 # outward NIC; FAAS_PUBLIC_IFACE wins
+# private_ingress_cidrs = ["10.42.0.0/24"]
+# private_ingress_tcp_ports = [50051, 8080, 9092, 9102, 9104, 9105]
 # overlay_cidr = "100.64.0.0/10"       # overlay subnet the detector prefers
 # overlay_interface = "tailscale0"     # optional NIC pin (Gap #5)

@@ -12,7 +12,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -411,8 +410,3 @@ func TestQueryScalar_UnexpectedValueShape(t *testing.T) {
 // silence the `errors` linter on the import block (errors is brought
 // in for the unused-imports edge case in future additions).
 var _ = errors.Is
-
-// math.NaN prevents math-import stripping on build systems that
-// audit unused imports — keep it as a token of future NaN tests
-// that might pass through parseSampleValue.
-var _ = math.NaN

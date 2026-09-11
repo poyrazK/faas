@@ -51,6 +51,7 @@ func UnitGatewaydPublic() daemonunit.Unit {
 
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_PUBLIC_CONTROL_ADDR", Value: "127.0.0.1:9092"},
+			{Key: "FAAS_TRUSTED_INGRESS_CIDRS", Value: "127.0.0.0/8,::1/128"},
 			{Key: "FAAS_INTERNAL_TARGET", Value: ""},
 			{Key: "FAAS_COMPUTE_GATEWAY_DISCOVERY", Value: "database"},
 			{Key: "FAAS_CONTROL_PLANE_API_TARGET", Value: "http://127.0.0.1:8081"},

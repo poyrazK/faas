@@ -174,12 +174,13 @@ func inferNode(fsys fs.FS, profile *Profile) {
 func inferPython(fsys fs.FS, profile *Profile) {
 	var content strings.Builder
 	for _, name := range []string{"requirements.txt", "pyproject.toml", "Pipfile", "setup.py"} {
-		content.WriteString(strings.ToLower(readFile(fsys, name)))
+		content.WriteString(stripPythonDependencyComments(readFile(fsys, name)))
+		content.WriteByte('\n')
 	}
-	all := content.String()
+	all := strings.ToLower(content.String())
 	profile.PackageManager = pythonPackageManager(fsys)
 	switch {
-	case strings.Contains(all, "fastapi"):
+	case pythonDependencyNamed(all, "fastapi"):
 		profile.Framework = "fastapi"
 		module, symbol, ok := findPythonApplication(fsys, `FastAPI\s*\(`)
 		if ok {
@@ -188,7 +189,7 @@ func inferPython(fsys fs.FS, profile *Profile) {
 			profile.StartCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
 			profile.Warnings = append(profile.Warnings, pythonEntrypointWarning("FastAPI", "app:app"))
 		}
-	case strings.Contains(all, "django") || fileExists(fsys, "manage.py"):
+	case pythonDependencyNamed(all, "django") || fileExists(fsys, "manage.py"):
 		profile.Framework = "django"
 		module, ok := findDjangoWSGI(fsys)
 		if !ok {
@@ -196,7 +197,7 @@ func inferPython(fsys fs.FS, profile *Profile) {
 			profile.Warnings = append(profile.Warnings, pythonEntrypointWarning("Django", "app.wsgi:application"))
 		}
 		profile.StartCommand = "gunicorn " + module + ":application --bind 0.0.0.0:$PORT"
-	case strings.Contains(all, "flask"):
+	case pythonDependencyNamed(all, "flask"):
 		profile.Framework = "flask"
 		module, symbol, ok := findPythonApplication(fsys, `Flask\s*\(`)
 		if ok {
@@ -209,6 +210,27 @@ func inferPython(fsys fs.FS, profile *Profile) {
 		profile.Framework = "python"
 		profile.Warnings = append(profile.Warnings, Warning{Code: "python_framework_not_detected", Message: "Python was detected but no FastAPI, Flask, or Django dependency was found; configure an explicit command.", Sources: []string{"requirements.txt", "pyproject.toml"}})
 	}
+}
+
+// Python dependency manifests commonly contain prose comments. Framework
+// inference must inspect declared packages, not words that happen to occur in
+// those comments (for example "functions do not pull Flask"). A leading or
+// whitespace-delimited '#' starts a comment in the supported manifest forms.
+func stripPythonDependencyComments(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if cut := strings.IndexByte(line, '#'); cut >= 0 &&
+			(cut == 0 || line[cut-1] == ' ' || line[cut-1] == '\t') {
+			line = line[:cut]
+		}
+		lines[i] = line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func pythonDependencyNamed(content, name string) bool {
+	pattern := `(?i)(^|[^a-z0-9_.-])` + regexp.QuoteMeta(name) + `([^a-z0-9_.-]|$)`
+	return regexp.MustCompile(pattern).MatchString(content)
 }
 
 func inferGo(fsys fs.FS, profile *Profile) {

@@ -293,16 +293,16 @@ tests:
       # Path A (poller alive, all probes fail) from Path B (poller
       # stalled — would have all outcomes at 0).
       - series: 'meterd_data_upstream_probes_total{outcome="ok"}'
-        # 128 samples × 30s = 64m — long enough for the [30m]
+        # 131 samples × 30s > 60m — long enough for the [30m]
         # rate window to fill by eval_time=30m AND for the alert's
         # `for: 30m` clause to be satisfied (expr must be true for
         # the entire 30m window before eval_time).
-        values: '0x80'
+        values: '0x130'
       - series: 'meterd_data_upstream_probes_total{outcome="timeout"}'
         # Poller alive — non-ok probes still landing.
-        values: '0+3x80'
+        values: '0+3x130'
       - series: 'meterd_data_upstream_probes_total{outcome="refused"}'
-        values: '0+2x80'
+        values: '0+2x130'
     alert_rule_test:
       - eval_time: 60m
         alertname: FaasUpstreamProbeOutcomeSilent
@@ -314,10 +314,21 @@ tests:
               outcome: ok
             exp_annotations:
               summary: "Data-placement probe loop silent for 30m"
-              description: "Zero ok-probes landed over 30m. The probe loop has gone silent — typically a stalled meterd poller, a missing upstream manifest, or a complete outbound network partition. Per-(kind, region) localization is not possible here because the counter is fleet-wide (the canonical cardinality-bounded shape — pkg/wire/metrics.go:2554). To localize, cross-reference `FaasUpstreamRttDegraded` for the per-(kind, region) connectivity view (the histogram carries the labels the counter doesn't). This is informational (severity info) until the silent condition chains with `FaasUpstreamRttDegraded`; at that point the degradation is connectivity-bound rather than poller-bound. Runbook at docs/runbooks/FaasUpstreamProbeOutcomeSilent.md."
+              description: "A previously active probe surface produced zero ok-probes over 30m. The probe loop has gone silent — typically a stalled meterd poller, a removed upstream manifest, or a complete outbound network partition. A platform with no configured or attempted upstream probes does not fire. Per-(kind, region) localization is not possible here because the counter is fleet-wide (the canonical cardinality-bounded shape — pkg/wire/metrics.go:2554). To localize, cross-reference `FaasUpstreamRttDegraded` for the per-(kind, region) connectivity view (the histogram carries the labels the counter doesn't). This is informational (severity info) until the silent condition chains with `FaasUpstreamRttDegraded`; at that point the degradation is connectivity-bound rather than poller-bound. Runbook at docs/runbooks/FaasUpstreamProbeOutcomeSilent.md."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUpstreamProbeOutcomeSilent.md"
 
   # ──────────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "no attempted upstream probes → no silent alert"
+    input_series:
+      - series: 'meterd_data_upstream_probes_total{outcome="ok"}'
+        values: '0x130'
+      - series: 'meterd_data_upstream_probes_total{outcome="timeout"}'
+        values: '0x130'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: FaasUpstreamProbeOutcomeSilent
+
   # issue #957 — classifier failures are partial-success env writes,
   # so the alert must fire only when the apid counter keeps moving.
   # The reason label is a closed set; this fixture exercises the

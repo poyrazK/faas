@@ -200,6 +200,7 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		ID:     final.ID,
 		Status: string(final.State),
 		Result: final.Result,
+		Error:  final.LastError,
 	})
 }
 
@@ -272,8 +273,12 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 			// Canonical match on app_id — substring tests would let a
 			// 32-char id tail collide with an unrelated id (review
 			// finding on PR #191).
-			_, got := extractNotifyFields(p)
-			return got == app.ID
+			invocationID, got := extractNotifyFields(p)
+			if got != app.ID || invocationID == "" {
+				return false
+			}
+			inv, err := s.store.InvocationByID(waitCtx, invocationID)
+			return err == nil && inv.AccountID == acct.ID && inv.AppID == app.ID && inv.Source == state.InvocationQueue
 		},
 		30*time.Second)
 	if errors.Is(err, db.ErrWaitTimeout) {
@@ -286,7 +291,7 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 	}
 	invID := extractInvocationID(payload)
 	inv, ferr := s.store.InvocationByID(r.Context(), invID)
-	if ferr != nil || inv.AccountID != acct.ID || inv.AppID != app.ID {
+	if ferr != nil || inv.AccountID != acct.ID || inv.AppID != app.ID || inv.Source != state.InvocationQueue {
 		// Don't leak ownership — the predicate matches on app_id, but
 		// cross-account reads must surface 404, not 200 with a foreign
 		// row.
@@ -308,9 +313,13 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 //
 // Idempotent: a re-ack is a 204.
 func (s *server) queueAck(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
 	inv, err := s.store.InvocationByID(r.Context(), id)
-	if err != nil || inv.AccountID != acct.ID {
+	if err != nil || inv.AccountID != acct.ID || inv.AppID != app.ID || inv.Source != state.InvocationQueue {
 		api.WriteProblem(w, api.ErrInvocationNotFound(id))
 		return
 	}
@@ -427,10 +436,9 @@ func (s *server) delayedTaskGet(w http.ResponseWriter, r *http.Request, acct sta
 	})
 }
 
-// delayedTaskCancel moves a pending delayed_task row to cancelled.
-// The drain ignores cancelled rows. Idempotent: a re-cancel is 204
-// (the row may have already fired — that's a "we did the work", not
-// an error).
+// delayedTaskCancel moves a pending delayed_task row to cancelled and
+// returns the resulting state. Dispatching and terminal rows are left
+// unchanged so clients can distinguish prevention from observation.
 func (s *server) delayedTaskCancel(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
 	inv, err := s.store.InvocationByID(r.Context(), id)
@@ -438,7 +446,8 @@ func (s *server) delayedTaskCancel(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrInvocationNotFound(id))
 		return
 	}
-	if err := s.store.CancelInvocation(r.Context(), id); err != nil {
+	result, err := s.store.CancelPendingInvocation(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrInvocationNotFound(id))
 			return
@@ -446,7 +455,11 @@ func (s *server) delayedTaskCancel(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("cancel delayed task"))
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, api.DelayedTaskResponse{
+		ID:          inv.ID,
+		ScheduledAt: ptrTime(inv.ScheduledAt),
+		State:       string(result),
+	})
 }
 
 // ptrTime is a tiny adapter so delayedTaskGet can format *time.Time

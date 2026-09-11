@@ -245,6 +245,58 @@ func TestGetAppOpenAPI_Auto_WithImport_CacheMiss(t *testing.T) {
 	}
 }
 
+func TestRenderOpenAPISpecJSONPreservesImportedContract(t *testing.T) {
+	baseline := []byte(`{
+		"openapi":"3.0.3",
+		"info":{"title":"contract","version":"1.0.0"},
+		"paths":{"/hello/{id}":{"get":{
+			"operationId":"getHello",
+			"parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
+			"responses":{"200":{"description":"Found","headers":{"X-Result":{"schema":{"type":"string"}}},"content":{"application/json":{"schema":{"type":"object","required":["message","items"],"properties":{"message":{"oneOf":[{"type":"string"},{"$ref":"#/components/schemas/Message"}]},"items":{"type":"array","items":{"$ref":"#/components/schemas/Message"}}}}}}}}
+		}}},
+		"components":{"schemas":{"Message":{"type":"object","additionalProperties":false,"properties":{"text":{"type":"string","enum":["ok"]}}}}}
+	}`)
+	spec, err := openapidiff.LoadBytes(baseline)
+	if err != nil {
+		t.Fatalf("load baseline: %v", err)
+	}
+	rendered := renderOpenAPISpecJSON(spec, openapidiff.GenerateFromAppMeta{}, state.App{Slug: "contract-app"})
+
+	var doc map[string]any
+	if err := json.Unmarshal(rendered, &doc); err != nil {
+		t.Fatalf("rendered document is invalid JSON: %v; body=%s", err, rendered)
+	}
+	paths := doc["paths"].(map[string]any)
+	op := paths["/hello/{id}"].(map[string]any)["get"].(map[string]any)
+	if got := op["operationId"]; got != "getHello" {
+		t.Fatalf("operationId = %v, want getHello", got)
+	}
+	params := op["parameters"].([]any)
+	if len(params) != 1 || params[0].(map[string]any)["name"] != "id" {
+		t.Fatalf("path parameters = %#v, want id", params)
+	}
+	response := op["responses"].(map[string]any)["200"].(map[string]any)
+	schema := response["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	if _, bad := schema["Type"]; bad {
+		t.Fatalf("schema used Go field names: %#v", schema)
+	}
+	if schema["type"] != "object" || response["description"] != "Found" {
+		t.Fatalf("response contract changed: %#v", response)
+	}
+	components := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	if _, ok := components["Message"]; !ok {
+		t.Fatalf("components missing Message: %#v", components)
+	}
+
+	proposed, err := openapidiff.LoadBytes(rendered)
+	if err != nil {
+		t.Fatalf("reload auto document: %v", err)
+	}
+	if breaks := openapidiff.Compare(spec, proposed); len(breaks) != 0 {
+		t.Fatalf("unchanged import became breaking after auto render: %+v", breaks)
+	}
+}
+
 // TestGetAppOpenAPI_Auto_WithImport_CacheHit verifies the
 // auto-gen path returns X-Faas-Cache: hit on the second read.
 func TestGetAppOpenAPI_Auto_WithImport_CacheHit(t *testing.T) {

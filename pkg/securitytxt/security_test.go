@@ -18,7 +18,7 @@ func TestHandlerServesRFC9116Document(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
 		t.Fatalf("Content-Type = %q, want text/plain; charset=utf-8", got)
 	}
-	for _, field := range []string{"Contact:", "Expires:", "Preferred-Languages:", "Canonical:"} {
+	for _, field := range []string{"Contact:", "Expires:", "Preferred-Languages:", "Canonical:", "Encryption:", "Acknowledgments:"} {
 		if !strings.Contains(rec.Body.String(), field) {
 			t.Errorf("body missing required RFC 9116 field %q:\n%s", field, rec.Body.String())
 		}

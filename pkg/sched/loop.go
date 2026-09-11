@@ -17,11 +17,15 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -69,6 +73,10 @@ type Loop struct {
 	// cache is invalidated by NotifyTriggerChanged (commit #16);
 	// for now we never rebuild within a process lifetime.
 	triggerPollers map[string]triggerSource
+	// triggerSecretIdentities opens Kafka credentials only in the
+	// short-lived trigger copy passed to a poller factory. Current and
+	// previous identities coexist here during host-key rotation.
+	triggerSecretIdentities []*age.X25519Identity
 	// rateLimiter is the per-app wake rate limiter (shared with
 	// cron dispatch via pkg/sched/rate_limit.go).
 	rateLimiter *WakeRateLimiter
@@ -330,6 +338,11 @@ func (l *Loop) WithGatewaySynth(g GatewaySynth) *Loop {
 func (l *Loop) WithGatewayHTTPClient(client *http.Client, baseURL string) *Loop {
 	l.gatewayHTTPClient = client
 	l.gatewayBaseURL = baseURL
+	return l
+}
+
+func (l *Loop) WithTriggerSecretIdentities(identities []*age.X25519Identity) *Loop {
+	l.triggerSecretIdentities = append([]*age.X25519Identity(nil), identities...)
 	return l
 }
 
@@ -1471,6 +1484,20 @@ func (l *Loop) runRecentLoad(ctx context.Context) {
 // keeps goroutine growth from a notify burst bounded.
 const maxConcurrentPrimes = 4
 
+const maxSnapshotPrimeAttempts = 2
+
+func retryableSnapshotPrimeError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.DeadlineExceeded, codes.Unavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // dispatchPrime runs Engine.Prime off the loop's select goroutine.
 //
 // Prime does real VM work — cold boot then snapshot — so it can occupy
@@ -1502,8 +1529,22 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 		l.primeSlots = make(chan struct{}, maxConcurrentPrimes)
 	})
 	run := func() {
-		if err := l.engine.Prime(ctx, appID, deploymentID); err != nil {
-			l.log.Warn("sched: prime failed", "app", appID, "deployment", deploymentID, "err", err)
+		var err error
+		attempts := 0
+		for attempt := 1; attempt <= maxSnapshotPrimeAttempts; attempt++ {
+			attempts = attempt
+			err = l.engine.Prime(ctx, appID, deploymentID)
+			if err == nil {
+				return
+			}
+			if attempt == maxSnapshotPrimeAttempts || !retryableSnapshotPrimeError(err) || ctx.Err() != nil {
+				break
+			}
+			l.log.Warn("sched: transient snapshot prime failure; retrying",
+				"app", appID, "deployment", deploymentID, "attempt", attempt, "err", err)
+		}
+		if err != nil {
+			l.log.Warn("sched: prime failed", "app", appID, "deployment", deploymentID, "attempts", attempts, "err", err)
 			l.engine.markPrimeFailed(ctx, deploymentID, err)
 		}
 	}
@@ -2814,7 +2855,22 @@ func (h *httpGatewaySynth) InvokeWithWake(ctx context.Context, appID string, inv
 }
 
 func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, error) {
-	out, _, err := h.invokeWithStatus(ctx, appID, inv, wake)
+	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, wake)
+	if err == nil && out.State == state.InvocationFailed {
+		detail := strings.TrimSpace(string(out.Result))
+		if len(detail) > 512 {
+			detail = detail[:512] + "…"
+		}
+		if detail == "" {
+			detail = http.StatusText(statusCode)
+		}
+		err = fmt.Errorf("%w: application returned HTTP %d: %s", ErrPermanentInvoke, statusCode, detail)
+	} else if err == nil && statusCode >= http.StatusInternalServerError {
+		// An ordinary 5xx is retryable under the durable invocation contract.
+		// Runner-caught exceptions are marked InvocationFailed above and take
+		// the permanent branch instead.
+		err = fmt.Errorf("application or gateway returned retryable HTTP %d", statusCode)
+	}
 	return out, err
 }
 
@@ -2896,7 +2952,11 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return inv, 0, fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
+		err := fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
+		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
+			err = fmt.Errorf("%w: %w", ErrPermanentInvoke, err)
+		}
+		return inv, 0, err
 	}
 	var out struct {
 		State      string          `json:"state"`
@@ -3235,8 +3295,12 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)
 	if err != nil {
 		l.log.Warn("cron: enqueue invocation", "cron_id", c.ID, "err", err)
-		// Continue past — legacy wake-only path is still safe.
+		return CronRun{}, true
 	}
+	// Enqueue mints the durable invocation ID. Dispatch that persisted row;
+	// sending the pre-insert value leaves invocation_id empty and the gateway
+	// correctly rejects the synthetic envelope with HTTP 400.
+	inv = enq
 	// Walk the row through pending → dispatching BEFORE calling
 	// Invoke. The store's Claim only accepts state=pending, and
 	// StampInstanceInvocation only accepts state=dispatching — so

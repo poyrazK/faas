@@ -423,6 +423,46 @@ func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
 	}
 }
 
+func TestHandleSnapshotWritten_FailedSmokeRestoresPreviousLive(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "hosting-smoke-rollback", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	previous, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:previous", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope, Status: state.DeployLive,
+	})
+	candidate, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:candidate", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope,
+	})
+	_ = store.UpdateDeploymentStatus(context.Background(), candidate.ID, state.DeploySnapshotting, "")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
+		func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeFailed, StatusCode: http.StatusBadGateway}, errors.New("candidate unhealthy")
+		},
+	)
+
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID +
+			`/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	})
+
+	failed, _ := store.DeploymentByID(context.Background(), candidate.ID)
+	if failed.Status != state.DeployFailed {
+		t.Fatalf("candidate status = %s, want failed", failed.Status)
+	}
+	live, err := store.LiveDeploymentForScope(context.Background(), app.ID, state.DefaultEnvScope)
+	if err != nil {
+		t.Fatalf("LiveDeploymentForScope: %v", err)
+	}
+	if live.ID != previous.ID {
+		t.Fatalf("live deployment = %s, want previous %s", live.ID, previous.ID)
+	}
+}
+
 // TestHandleSnapshotWritten_Tier (issue #470 / PR #470-FU-B)
 // exercises the warm-tier payload path: when schedd's
 // captureWarmSnapshot emits a snapshot_written with tier="warm",

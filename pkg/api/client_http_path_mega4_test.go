@@ -220,14 +220,44 @@ func TestClient_DoReq_NoProblemBodyFallsBackToStatus_Mega4(t *testing.T) {
 	if err == nil {
 		t.Fatal("want err")
 	}
-	// Should NOT be a *APIError (no problem was decodable) — fall through
-	// to a fmt.Errorf with the status text.
 	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		t.Errorf("err = %v, want plain-text fallback (not *APIError)", err)
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want typed *APIError", err)
 	}
-	if !strings.Contains(err.Error(), "502") && !strings.Contains(err.Error(), "Bad Gateway") {
-		t.Errorf("err = %v, want status text", err)
+	if apiErr.Problem.Status != http.StatusBadGateway || apiErr.Problem.Code != "http_error" {
+		t.Errorf("problem = %+v, want status 502/http_error", apiErr.Problem)
+	}
+}
+
+func TestClient_DoReq_UnstructuredErrorsPreserveStatusAndRetryAfter(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		status := status
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", "7")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte("<html>untrusted intermediary response</html>"))
+			}))
+			defer srv.Close()
+
+			c := NewClient(srv.URL, "t")
+			err := c.do(context.Background(), http.MethodGet, "/v1/test", nil, nil)
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("err = %v, want *APIError", err)
+			}
+			if apiErr.Problem.Status != status || apiErr.Problem.Code != "http_error" {
+				t.Fatalf("problem = %+v", apiErr.Problem)
+			}
+			if strings.Contains(apiErr.Problem.Detail, "html") {
+				t.Fatalf("untrusted body leaked into detail: %q", apiErr.Problem.Detail)
+			}
+			if got := apiErr.Problem.HasHeader("Retry-After"); len(got) != 1 || got[0] != "7" {
+				t.Fatalf("Retry-After = %v", got)
+			}
+		})
 	}
 }
 
@@ -351,7 +381,7 @@ func TestClient_DoBytes_MarshalFail_Mega4(t *testing.T) {
 
 // --- JSON decode of error response missing 'code' falls through -
 
-func TestClient_DoReq_ProblemMissingCode_FallsThrough_Mega4(t *testing.T) {
+func TestClient_DoReq_ProblemMissingCode_PreservesStatus_Mega4(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -365,10 +395,12 @@ func TestClient_DoReq_ProblemMissingCode_FallsThrough_Mega4(t *testing.T) {
 	if err == nil {
 		t.Fatal("want err")
 	}
-	// Code is "" → falls through to fmt.Errorf("API error: ...").
 	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		t.Errorf("err = %v, want plain status fallback (no code in problem)", err)
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want typed status fallback", err)
+	}
+	if apiErr.Problem.Status != http.StatusBadRequest || apiErr.Problem.Code != "http_error" {
+		t.Errorf("problem = %+v", apiErr.Problem)
 	}
 }
 

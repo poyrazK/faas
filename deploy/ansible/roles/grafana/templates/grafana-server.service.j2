@@ -13,8 +13,8 @@ EnvironmentFile=-{{ gv_loki_credentials_file }}
 ExecStart=/usr/sbin/grafana-server \
     --homepath=/usr/share/grafana \
     --config=/etc/grafana/grafana.ini \
-    cfg:default.server.http_addr=10.0.0.1 \
-    cfg:default.server.http_port=3000
+    cfg:default.server.http_addr={{ gv_listen_addr.split(':')[0] }} \
+    cfg:default.server.http_port={{ gv_listen_addr.split(':')[1] }}
 Restart=on-failure
 RestartSec=10s
 

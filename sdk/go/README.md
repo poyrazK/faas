@@ -26,7 +26,7 @@ go get github.com/poyrazK/faas/sdk/go
 ```
 
 The SDK targets `go 1.23` (the floor of the daemon's own toolchain
-at the moment of extraction). The daemon's `go.mod` is `go 1.25.7`,
+at the moment of extraction). The daemon's `go.mod` is `go 1.25.13`,
 but the SDK stays on 1.23 so a customer pinned to an older Go
 toolchain can still consume it.
 

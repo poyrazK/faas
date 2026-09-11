@@ -519,7 +519,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(gateway_requests_total{code=~\"2..\"}[5m])) / sum(rate(gateway_requests_total[5m])) * 100",
+          "expr": "sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..\"}[5m])) / sum(rate(gateway_requests_total{app!=\"-\"}[5m])) * 100",
           "refId": "A"
         }
       ],
@@ -2260,6 +2260,74 @@
       "options": {
         "legend": {"displayMode": "table", "placement": "right", "showLegend": true},
         "tooltip": {"mode": "multi", "sort": "desc"}
+      }
+    },
+    {
+      "id": 415,
+      "type": "heatmap",
+      "title": "Request latency distribution (trace exemplars)",
+      "description": "Raw request-duration buckets retain trace_id exemplars. Hover an exemplar marker to open the configured Grafana trace destination; if no destination is configured, use the displayed trace_id with the observer endpoint.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 254},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (le) (rate(gateway_request_duration_seconds_bucket[$__rate_interval]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "exemplars": {"color": "rgba(255,0,255,0.7)"},
+        "filterValues": {"le": 1e-9},
+        "legend": {"show": true},
+        "rowsFrame": {"layout": "auto"},
+        "tooltip": {"show": true, "yHistogram": false},
+        "yAxis": {"axisPlacement": "left", "reverse": false, "unit": "s"}
+      }
+    },
+    {
+      "id": 416,
+      "type": "heatmap",
+      "title": "Wake latency distribution (trace exemplars)",
+      "description": "Raw wake-latency buckets retain trace_id exemplars. Hover an exemplar marker to open the configured Grafana trace destination; if no destination is configured, use the displayed trace_id with the observer endpoint.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 254},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (le) (rate(gateway_wake_latency_seconds_bucket[$__rate_interval]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "exemplars": {"color": "rgba(255,0,255,0.7)"},
+        "filterValues": {"le": 1e-9},
+        "legend": {"show": true},
+        "rowsFrame": {"layout": "auto"},
+        "tooltip": {"show": true, "yHistogram": false},
+        "yAxis": {"axisPlacement": "left", "reverse": false, "unit": "s"}
       }
     }
   ],

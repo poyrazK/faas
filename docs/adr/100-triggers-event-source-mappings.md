@@ -120,3 +120,30 @@ is the superset (this ADR); the ESM operator vocabulary is the
 prefix alias (ADR-118). Customers see both surfaces. SDKs and
 the OpenAPI document both. New triggers can be created via
 either surface; the wire is the same row.
+
+## Security and plan-policy addendum (2026-09-09)
+
+The account response is the canonical console capability handshake. Free
+accounts may not create external triggers; Hobby accounts may create only
+`sqs_compat` and `queue`; Pro and Scale accounts may create all five
+non-cron kinds. Both single-create and manifest batch-create enforce this
+matrix. Omitted delivery settings resolve to the smaller of the platform
+default and the account plan cap, while explicit over-cap values fail.
+
+Kafka `sasl.password` and `tls.client_key` are write-only credentials. Apid
+seals each leaf independently with the host X25519 recipient before writing
+JSONB, under the namespaces `trigger_kafka_sasl_password` and
+`trigger_kafka_tls_client_key`. Customer responses expose only
+`password_set` and `client_key_set`; neither plaintext nor the internal
+ciphertext field names cross the response boundary.
+
+Schedd opens credentials only in a copied trigger row immediately before
+poller construction. It loads the current and `.previous` host identities so
+rows remain readable during the rotation overlap. Legacy plaintext rows are
+accepted temporarily for rollout compatibility; every new or updated secret
+is sealed. Missing key material or corrupt envelopes fail closed with a
+sanitized error and no credential or ciphertext content in logs or responses.
+
+Kafka config replacement preserves a stored secret only when its containing
+`sasl` or `tls` block is supplied without the secret leaf. Omitting the whole
+block removes it and its credential. Supplying a new secret rotates it.

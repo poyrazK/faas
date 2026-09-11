@@ -11,6 +11,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -92,16 +93,6 @@ func init() {
 }
 
 func run(args []string) (status int) {
-	helpRequested := hasHelpFlag(args)
-	defer func() {
-		// The standard flag package returns flag.ErrHelp, which legacy
-		// command handlers historically mapped to exit 1. Help is a
-		// successful request at the process boundary.
-		if helpRequested && status != 0 {
-			status = 0
-		}
-	}()
-
 	// Issue #64 D1: every command accepts --json (top-level). Strip
 	// it before dispatch and set jsonOutput so per-command printers
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
@@ -109,6 +100,16 @@ func run(args []string) (status int) {
 	if len(args) == 0 {
 		fmt.Print(topLevelUsage(false))
 		return 0
+	}
+	// Resolve parent-command help before dispatch. These commands otherwise
+	// interpret --help as a subcommand or resource identifier and may perform
+	// authentication or a resource lookup. Nested help remains with the leaf
+	// dispatcher so it can render its more specific usage.
+	if len(args) == 2 && hasHelpFlag(args[1:]) {
+		if command, ok := lookupCliCommand(args[0]); ok {
+			printLocalCommandHelp(osStdout, command)
+			return 0
+		}
 	}
 	switch args[0] {
 	case "version", "--version", "-v":
@@ -403,9 +404,9 @@ func run(args []string) (status int) {
 		// ADR-081: durable execution workflows (list|run|status|steps|cancel|events).
 		return cmdWorkflows(args[1:])
 	case "debug":
-		// ADR-127 PR-B: production debugger (regression banner,
-		// compare panel, replay stub). Mirrors `invocations` for
-		// dispatcher shape.
+		// ADR-127: production debugger (request evidence, regression
+		// watch, deployment compare, safe replay, and incident bundles).
+		// Mirrors `invocations` for dispatcher shape.
 		return cmdDebug(args[1:])
 	case "billing":
 		// Issue #253: dashboard's "Open Stripe billing portal"
@@ -487,4 +488,31 @@ func run(args []string) (status int) {
 		fmt.Fprintf(os.Stderr, "gregale: unknown command %q\nRun 'gregale help' for usage.\n", args[0])
 		return 1
 	}
+}
+
+func printLocalCommandHelp(w io.Writer, command cliCommand) {
+	usage := "gregale " + command.Name
+	for _, positional := range command.Positionals {
+		usage += " " + positional
+	}
+	if len(command.Subcommands) > 0 {
+		usage += " <command>"
+	}
+	if len(command.Flags) > 0 {
+		usage += " [flags]"
+	}
+	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, usage)
+	if len(command.Subcommands) > 0 {
+		_, _ = fmt.Fprintln(w, "\nCommands:")
+		for _, sub := range command.Subcommands {
+			_, _ = fmt.Fprintf(w, "  %-18s %s\n", sub.Name, sub.Short)
+		}
+	}
+	if len(command.Flags) > 0 {
+		_, _ = fmt.Fprintln(w, "\nFlags:")
+		for _, flag := range command.Flags {
+			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
+		}
+	}
+	_, _ = fmt.Fprintf(w, "\nDocs: %s/%s\n", docsURL, command.DocSlug)
 }

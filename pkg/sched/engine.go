@@ -1317,7 +1317,8 @@ type WakeResult struct {
 	// path is the only short-circuit there).
 	AtCapacity bool
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment
-	// override port copied from dep.OverridePort. 0 = legacy 8080.
+	// runtime port resolved from an explicit override or a persisted
+	// source profile. 0 = legacy 8080.
 	// On the Phase-1 fast path this comes from a LiveDeployment
 	// lookup so the gateway sees the same value AdmitInstance would
 	// have produced; on the admit path it comes from bootInput.spec.
@@ -1443,7 +1444,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		//  2. Otherwise resolve from LiveDeployment — legacy
 		//     single-deployment behaviour, unchanged.
 		//
-		// The LiveDeployment lookup also feeds `port` (OverridePort);
+		// The LiveDeployment lookup also feeds the effective runtime port;
 		// when the caller passes a non-empty deploymentID we still
 		// need the lookup unless port defaults are acceptable. vmmd
 		// defaults to 8080 when port=0, so a transient lookup failure
@@ -1464,7 +1465,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 			dep, depErr = e.store.LiveDeploymentForScope(ctx, appID, scope)
 		}
 		if depErr == nil {
-			port = dep.OverridePort
+			port = deploymentRuntimePort(dep)
 			if resolvedDeploymentID == "" {
 				resolvedDeploymentID = dep.ID
 			}
@@ -2674,13 +2675,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// fires UpdateStaticEgressIP gRPC to patch them
 		// (pkg/sched/egress_drift.go).
 		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
-		// Issue #460 / ADR-053 (PR-C): per-deployment override
-		// port the customer's app binds inside the guest. 0 =
-		// legacy 8080 (vmmd's wire-level default). The host's
-		// waitReady + DNAT stay fixed on 8080 (ADR-009 +
-		// guest/init/portnorm_linux.go); only vmmd's ForwardHTTP
-		// bridge uses this port to dial the guest.
-		Port: dep.OverridePort,
+		// Issue #460 / ADR-053 (PR-C): per-deployment runtime port
+		// resolved from the explicit override or persisted source
+		// profile. The host-facing readiness port stays on 8080;
+		// vmmd DNATs it to this guest port and the request bridge
+		// dials the same target.
+		Port: deploymentRuntimePort(dep),
 		// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment
 		// override readiness probe path. Empty = legacy TCP-accept
 		// on :8080 (pre-PR-D default). Non-empty → vmmd's
@@ -4244,9 +4244,9 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
 		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
-		// Issue #460 / ADR-053 (PR-C): per-deployment override
+		// Issue #460 / ADR-053 (PR-C): effective deployment runtime
 		// port. 0 = legacy 8080 (vmmd wire default).
-		Port: dep.OverridePort,
+		Port: deploymentRuntimePort(dep),
 		// Issue #460 / ADR-053, ADR-057 (PR-D): per-deployment
 		// override readiness probe path. "" = legacy TCP-accept.
 		HealthcheckPath: healthcheckPathFromDep(dep),
@@ -4507,7 +4507,11 @@ func (e *Engine) ReconcileExpiredMigrations(ctx context.Context) (int, error) {
 	if e.migratingWatchdogTickLimit > 0 {
 		maxPerTick = e.migratingWatchdogTickLimit
 	}
-	rows, err := e.store.ListExpiredMigrations(ctx, maxPerTick)
+	leaseSeconds := api.MigrateLiveLeaseSeconds
+	if e.migrateLiveLeaseSeconds > 0 {
+		leaseSeconds = e.migrateLiveLeaseSeconds
+	}
+	rows, err := e.store.ListExpiredMigrations(ctx, maxPerTick, time.Duration(leaseSeconds)*time.Second)
 	if err != nil {
 		return 0, fmt.Errorf("sched: reconcile expired migrations: list: %w", err)
 	}
@@ -4884,6 +4888,12 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// onto the vmmd AppSpec so the per-netns renderer
 		// emits the SNAT-to-customer sibling rule.
 		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
+		// ADR-053: snapshot priming is the first cold boot for a source
+		// deployment, so it must use the same resolved guest port as later
+		// wakes. Without this field vmmd falls back to guest :8080 while the
+		// inferred profile starts Node/Python apps on their framework port.
+		Port:            deploymentRuntimePort(dep),
+		HealthcheckPath: healthcheckPathFromDep(dep),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -5868,34 +5878,6 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: storageKey})
 	vmstate := filepath.Join(SnapDir(), strings.TrimPrefix(vmstateKey, "snap/"))
 	vmstateStorageKey := vmstateKey
-	e.ledger.BeginSnapshot(ins.ID) // drops concurrency, keeps RAM (§6.2-1 excludes snapshotting)
-	// Stamp parked_at on entry into SNAPSHOTTING so the §6.1 watchdog
-	// (commit 3) has an "age of state" anchor for the row.
-	now := time.Now()
-	if err := e.store.UpdateInstanceStateWithTimestamp(ctx, ins.ID, string(state.StateSnapshotting), now); err != nil {
-		e.log.Warn("snapshotAndPark: stamp parked_at", "instance", ins.ID, "err", err)
-		// Fall through to the normal path — the watchdog's beginSnapshot
-		// anchor being lost is recoverable (it'll trip after
-		// started_at + 20s, slightly inflating the budget).
-	}
-	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting, ins.WakeID)
-	// issue #517 / PR-C / ADR-064 — emit wake.park_started at the
-	// RUNNING→SNAPSHOTTING transition. Pairs with wake.park_completed
-	// below under the same wake_id so the timeline endpoint can
-	// surface "park took N ms" without joining the legacy
-	// state_transition rows. The wake_id is the one the just-finished
-	// boot produced (ins.WakeID), per ADR-035 the audit join key.
-	if e.events != nil {
-		e.events.Emit(ctx, events.ParkStarted{
-			EmitAt:       now.UTC(),
-			WakeID:       ins.WakeID,
-			AppID:        ins.AppID,
-			DeploymentID: ins.DeploymentID,
-			InstanceID:   ins.ID,
-			NodeID:       ins.NodeID,
-			StartedAt:    now.UTC(),
-		})
-	}
 
 	// issue #470 / PR A / ADR-070 — warm capture runs FIRST, while
 	// the VM is still live (RUNNING). The init tier's trailing Kill
@@ -5917,6 +5899,47 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 		return warmErr
 	}
 	_ = warmInfo
+	if warmInfo.MemBytes > 0 {
+		// Shared-storage publication can take seconds. The warm capture
+		// resumes the guest immediately after Firecracker creates its local
+		// files, so keep the row routable during that upload and abandon
+		// this park if fresh traffic arrived in the meantime.
+		fresh, freshErr := e.store.InstanceByID(ctx, ins.ID)
+		if freshErr != nil {
+			return fmt.Errorf("sched: park: refresh after warm capture: %w", freshErr)
+		}
+		if fresh.State != string(state.StateRunning) {
+			return nil
+		}
+		if fresh.LastRequestAt.After(ins.LastRequestAt) || fresh.RequestCount > ins.RequestCount {
+			e.log.Info("sched: park: fresh activity canceled park after warm capture",
+				"instance", ins.ID,
+				"request_count_before", ins.RequestCount,
+				"request_count_after", fresh.RequestCount)
+			return nil
+		}
+		ins = fresh
+	}
+
+	e.ledger.BeginSnapshot(ins.ID) // drops concurrency, keeps RAM (§6.2-1 excludes snapshotting)
+	// Stamp parked_at only once terminal capture starts. Warm publication
+	// above keeps the resumed guest routable and is canceled by activity.
+	now := time.Now()
+	if err := e.store.UpdateInstanceStateWithTimestamp(ctx, ins.ID, string(state.StateSnapshotting), now); err != nil {
+		e.log.Warn("snapshotAndPark: stamp parked_at", "instance", ins.ID, "err", err)
+	}
+	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting, ins.WakeID)
+	if e.events != nil {
+		e.events.Emit(ctx, events.ParkStarted{
+			EmitAt:       now.UTC(),
+			WakeID:       ins.WakeID,
+			AppID:        ins.AppID,
+			DeploymentID: ins.DeploymentID,
+			InstanceID:   ins.ID,
+			NodeID:       ins.NodeID,
+			StartedAt:    now.UTC(),
+		})
+	}
 
 	snapBudget := SnapshotBudgetFor(ins.RAMMB)
 	snapCtx, snapCancel := context.WithTimeout(ctx, snapBudget)

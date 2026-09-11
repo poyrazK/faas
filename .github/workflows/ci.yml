@@ -40,7 +40,7 @@ permissions:
 
 env:
   # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
-  # and the go.mod `go 1.25.7` directive resolve to the same Go runtime.
+  # and the go.mod `go 1.25.13` directive resolve to the same Go runtime.
   # go1.25.12 carries 7 stdlib vulnerabilities (GO-2026-5026/5972/6088/
   # 6089/6090/6091/6218) fixed in go1.25.13 — the supply-chain gate fails
   # closed when the runner resolves "1.25" to a vulnerable patch. Bump
@@ -133,6 +133,8 @@ jobs:
         run: make fix-has-test-check
       - name: fix-has-test checker tests
         run: make fix-has-test-check-test
+      - name: CVE monitor parser and issue-payload tests
+        run: scripts/ci/cve-monitor_test.sh
 
       - uses: actions/setup-go@v7
         with:
@@ -212,6 +214,8 @@ jobs:
         run: make lint-drill
       - name: forbid mutating SQL in normal runbooks
         run: make runbook-sql-check
+      - name: post-mortem artifact check
+        run: make test-postmortems
       - name: restore-drill evidence freshness (M8 claim)
         if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'm8-done') }}
         run: make m8-evidence-check
@@ -221,6 +225,16 @@ jobs:
       # PR so a release tag cannot discover template drift for the first time.
       - name: release manifest materialization
         run: bash scripts/materialize-release-manifest_test.sh
+
+      # The public CLI distribution channels (ADR-172). install.sh runs as
+      # `curl | sh` on machines we do not control, so its checksum
+      # enforcement and platform detection are gated on every PR, not just
+      # exercised at release time when a mistake is already public.
+      - name: CLI installer
+        run: bash scripts/install_test.sh
+
+      - name: npm package staging
+        run: bash scripts/build-npm-packages_test.sh
 
       # Provider-created machines hand their one-time connection details to
       # the provider-neutral adoption pipeline through ComputeNodeClaim files.
@@ -274,11 +288,11 @@ jobs:
       - name: install nftables
         run: |
           set -euo pipefail
-          # The hosted image can carry a stale Google Chrome index. It is not
-          # needed by this job, and a hash mismatch there would abort apt
-          # before nftables can be installed.
+          # Hosted images can carry stale third-party apt indexes. They are
+          # not needed by this job and can abort apt before nftables installs.
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
-            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update -qq
           sudo apt-get install -y -qq nftables
       - name: egress check (Go renderer ↔ Jinja2 + nft syntax + bridge-name guard)
@@ -1101,10 +1115,29 @@ jobs:
           ansible control_plane -i inventory/hosts.ini -c local \
             -e @roles/prometheus/defaults/main.yml \
             -e ansible_hostname=ci-control-plane \
+            -e prom_promtail_enabled=true \
+            -m ansible.builtin.template \
+            -a "src=$(pwd)/roles/prometheus/templates/prometheus.yml.j2 dest=$RUNNER_TEMP/prometheus-with-promtail.yml"
+          ansible control_plane -i inventory/hosts.ini -c local \
+            -e @roles/prometheus/defaults/main.yml \
+            -e ansible_hostname=ci-control-plane \
             -m ansible.builtin.template \
             -a "src=$(pwd)/roles/prometheus/templates/prometheus.service.j2 dest=$RUNNER_TEMP/prometheus.service"
           grep -q 'job_name: "gatewayd-internal"' "$RUNNER_TEMP/prometheus.yml"
           grep -q 'http://127.0.0.1:8081/v1/internal/metrics/targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'job_name: "vmmd"' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/vmmd-targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'job_name: "imaged"' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/imaged-targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'job_name: "builderd"' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/builderd-targets' "$RUNNER_TEMP/prometheus.yml"
+          if grep -q 'job_name: "promtail' "$RUNNER_TEMP/prometheus.yml"; then
+            echo 'default Prometheus config scrapes Promtail without an enabled Loki transport' >&2
+            exit 1
+          fi
+          grep -q 'job_name: "promtail"' "$RUNNER_TEMP/prometheus-with-promtail.yml"
+          grep -q 'job_name: "promtail-compute"' "$RUNNER_TEMP/prometheus-with-promtail.yml"
+          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/promtail-targets' "$RUNNER_TEMP/prometheus-with-promtail.yml"
           grep -q 'target_limit: 1000' "$RUNNER_TEMP/prometheus.yml"
           grep -q -- '--web.listen-address=127.0.0.1:9095' "$RUNNER_TEMP/prometheus.service"
           if grep -q '{{' "$RUNNER_TEMP/prometheus.service"; then
@@ -1644,7 +1677,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
-            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -1728,7 +1762,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
-            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -1802,7 +1837,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
-            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -1876,7 +1912,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
-            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \) -delete
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)

@@ -293,12 +293,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// the split-box TCP listener uses the ordinary HTTP/1.1 server unless
 	// an operator explicitly enables H2C after both ends are configured.
 	h2cEnabled := envBoolOr("FAAS_INTERNAL_H2C", internalTarget == "" && computeDiscovery != "database")
+	trustedIngressCIDRs, err := gateway.ParseTrustedIngressCIDRs(os.Getenv("FAAS_TRUSTED_INGRESS_CIDRS"))
+	if err != nil {
+		return fmt.Errorf("gatewayd-public: trusted ingress config: %w", err)
+	}
 	proxy := gateway.NewInternalReverseProxy(
 		internalDialer,
 		internalURL,
 		log,
 		h2cEnabled,
-	)
+	).WithTrustedIngressCIDRs(trustedIngressCIDRs)
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.

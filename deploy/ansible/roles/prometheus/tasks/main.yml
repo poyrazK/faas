@@ -30,6 +30,15 @@
   ansible.builtin.debug:
     var: prom_version
 
+- name: prometheus — assert exemplar buffer is positive
+  ansible.builtin.assert:
+    that:
+      - prom_exemplar_max_size is defined
+      - prom_exemplar_max_size | int > 0
+    fail_msg: >-
+      prom_exemplar_max_size must be a positive integer so the bounded
+      exemplar buffer cannot be accidentally disabled or rendered invalid.
+
 # Loopback bind discipline (CLAUDE.md §Component ownership). The
 # alertmanager target must not be reachable off-box: alert payloads
 # contain operational labels (component, family, severity) that the
@@ -51,10 +60,13 @@
   ansible.builtin.assert:
     that:
       - prom_compute_metrics_discovery_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?/v1/internal/metrics/targets$')
+      - prom_compute_vmmd_discovery_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?/v1/internal/metrics/vmmd-targets$')
+      - prom_compute_imaged_discovery_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?/v1/internal/metrics/imaged-targets$')
+      - prom_compute_builderd_discovery_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?/v1/internal/metrics/builderd-targets$')
     fail_msg: >-
-      prom_compute_metrics_discovery_url={{ prom_compute_metrics_discovery_url }}
-      must remain the loopback apid HTTP-SD endpoint. Compute registry
-      metadata must not be fetched over a public or provider-specific URL.
+      Compute daemon discovery URLs must remain their loopback apid HTTP-SD
+      endpoints. Compute registry metadata must not be fetched over a public
+      or provider-specific URL.
 
 - name: prometheus — assert Promtail discovery URL is loopback
   ansible.builtin.assert:
@@ -64,6 +76,7 @@
       prom_compute_promtail_discovery_url={{ prom_compute_promtail_discovery_url }}
       must remain the loopback apid HTTP-SD endpoint. Promtail target
       metadata must not be fetched over a public or provider-specific URL.
+  when: prom_promtail_enabled | bool
 
 - name: prometheus — assert compute target limit is bounded
   ansible.builtin.assert:

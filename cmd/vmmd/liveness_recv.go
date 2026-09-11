@@ -57,6 +57,7 @@ const VsockLivenessHostPort uint32 = 1028
 // Mirrors guest/init/livenessReq.
 type livenessRequestBody struct {
 	Path      string `json:"path"`
+	Port      int    `json:"port,omitempty"`
 	TimeoutMs int    `json:"timeout_ms"`
 }
 
@@ -465,6 +466,7 @@ func (l *livenessProbeLoop) dialAndProbe(ctx context.Context, timeoutMs int) str
 
 	body, err := json.Marshal(livenessRequestBody{
 		Path:      l.cfg.Path,
+		Port:      l.cfg.Port,
 		TimeoutMs: timeoutMs,
 	})
 	if err != nil {

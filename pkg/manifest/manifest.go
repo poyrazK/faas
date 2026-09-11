@@ -334,6 +334,13 @@ type DaemonConfig struct {
 	// its own loopback.
 	APIDLoopback string `yaml:"apid_loopback,omitempty"`
 
+	// RouteMetricsEnabled and StreamingEnabled are gatewayd-internal
+	// runtime switches. Pointers preserve the distinction between an
+	// omitted production default (enabled) and an explicit operator
+	// override to false.
+	RouteMetricsEnabled *bool `yaml:"route_metrics_enabled,omitempty"`
+	StreamingEnabled    *bool `yaml:"streaming_enabled,omitempty"`
+
 	// GatewaySynthTarget is schedd's optional remote gatewayd-internal
 	// synthesis endpoint. It is separate from Outbound because schedd has
 	// two remote peers in a split-box fleet: vmmd for placement and

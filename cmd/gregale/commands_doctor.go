@@ -137,7 +137,7 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 				_, _ = fmt.Fprintf(osStderr, "    sources: %s\n", strings.Join(warning.Sources, ", "))
 			}
 		}
-		_, _ = fmt.Fprintln(osStderr, "  Deploy continues; pass --doctor-strict to fail before upload.")
+		_, _ = fmt.Fprintln(osStderr, "  Profile warnings are advisory; --doctor-strict blocks error-class checks only.")
 	}
 }
 
@@ -212,11 +212,15 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 // become a "warn" with the why= field populated — a hard error
 // here would block the deploy on infrastructure noise.
 func runDoctorChecks(path string) doctorReport {
+	return runDoctorChecksForShape(path, detectShape(path))
+}
+
+func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
 	rep := doctorReport{Path: path}
 	// Framework profiles describe app-shaped deployments. A single
 	// handler.* tree is a valid zero-config function and should not be
 	// reported as an "unknown framework" during its automatic preflight.
-	if detectShape(path) != shapeFunction {
+	if deploymentShape != shapeFunction {
 		if profile, err := frameworkprofile.AnalyzeDir(path); err == nil {
 			rep.Profile = &profile
 		}

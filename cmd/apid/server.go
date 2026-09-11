@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
+	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -217,6 +218,9 @@ type server struct {
 	// — the SBOM populator hadn't landed yet so the storage key is
 	// empty for every pre-PR build).
 	sbomRoot string
+	// sbomStorage reads the same logical artifact keys imaged writes. It
+	// is required on split-node/OCI deployments where /srv/fc is not shared.
+	sbomStorage artifactstorage.StorageBackend
 	// billingProvider is the per-deployment Provider apid's webhook
 	// + changePlan handlers dispatch through. Wired via WithBillingProvider
 	// from cmd/apid/main.go::LoadProviderForAPID. nil = "Stripe path
@@ -270,6 +274,10 @@ type server struct {
 	// from it. Wired via WithDataPlacement from
 	// cmd/apid/main.go::dataPlacementEnabledFromEnv.
 	dataPlacementEnabled bool
+	// workflowRuntimeEnabled mirrors the schedd workflow dispatcher gate.
+	// The create-run handler rejects before persistence while the runtime is
+	// disabled, so customers never receive a permanently pending run.
+	workflowRuntimeEnabled bool
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
 	// Postgres and the notification reconciler refreshes this snapshot.
@@ -450,6 +458,13 @@ func (s *server) WithSBOMRoot(root string) *server {
 	return s
 }
 
+// WithSBOMStorage wires the shared artifact backend used by imaged. The
+// filesystem root remains as a compatibility fallback for single-box tests.
+func (s *server) WithSBOMStorage(backend artifactstorage.StorageBackend) *server {
+	s.sbomStorage = backend
+	return s
+}
+
 // WithBillingProvider attaches the per-deployment billing.Provider.
 // Called from cmd/apid/main.go after LoadProviderForAPID. When non-nil
 // the /v1/webhooks/paddle route is mounted and the changePlan 402 path
@@ -566,6 +581,13 @@ func (s *server) WithDataPlacement(enabled bool) *server {
 		s.runtimeConfig = newRuntimeConfigManager(nil)
 	}
 	_ = s.runtimeConfig.apply(runtimeConfigDataPlacement, boolJSON(enabled))
+	return s
+}
+
+// WithWorkflowRuntimeEnabled attaches the boot-time runtime availability
+// gate shared with schedd's FAAS_WORKFLOWS_ENABLED setting.
+func (s *server) WithWorkflowRuntimeEnabled(enabled bool) *server {
+	s.workflowRuntimeEnabled = enabled
 	return s
 }
 
@@ -854,6 +876,9 @@ func newServerWithDeps(
 		dashboardExportLimiter: dashboardExportLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),
+		// Unit tests exercise the workflow engine by default. Production
+		// overwrites this from FAAS_WORKFLOWS_ENABLED before serving.
+		workflowRuntimeEnabled: true,
 		// pkg/auth.Middleware backs the s.requireMFA + s.requireScope
 		// facade (cmd/apid/auth_facade.go). The auditor's Emit is
 		// nil-safe so the auth.mfa_gate_hit audit row fires when the
@@ -1121,6 +1146,9 @@ func (s *server) handler() http.Handler {
 	// active control-plane registry. This internal route is loopback-only;
 	// gatewayd-internal rejects the same path before its public /v1 proxy.
 	mux.HandleFunc("GET /v1/internal/metrics/targets", s.computeMetricsDiscovery)
+	mux.HandleFunc("GET /v1/internal/metrics/vmmd-targets", s.vmmdMetricsDiscovery)
+	mux.HandleFunc("GET /v1/internal/metrics/imaged-targets", s.imagedMetricsDiscovery)
+	mux.HandleFunc("GET /v1/internal/metrics/builderd-targets", s.builderdMetricsDiscovery)
 	// Issue #274: Promtail metrics are discovered from the same active
 	// compute-node registry, but use a separate HTTP-SD endpoint so the
 	// gateway and shipper jobs never scrape each other's ports.
@@ -1360,6 +1388,9 @@ func (s *server) handler() http.Handler {
 	// gatewayd-observed routes and matching edge rules. It deliberately stays
 	// on the read-scope chain with no MFA because it performs no writes.
 	mux.HandleFunc("GET /v1/apps/{slug}/openapi/preview", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPIPolicyPreview)))
+	// ADR-121: read-only declared contract diff. The endpoint is registered
+	// even while dark-launched so clients receive the stable 503 feature code.
+	mux.HandleFunc("GET /v1/apps/{slug}/openapi/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPIContractDiff)))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.postAppOpenAPIImport))))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi/dry-run", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postAppOpenAPIImportDryRun)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppOpenAPIImport))))
@@ -2017,14 +2048,15 @@ func (s *server) handler() http.Handler {
 	// in-flight builds.
 	mux.HandleFunc("POST /v1/admin/builds/sweep-stuck",
 		s.authLimited(s.requireAdminMutation(s.postSweepStuckBuilds)))
-	// Compute-node lifecycle controls. They are deliberately separate from
-	// the read-only /obs namespace and require both MFA and confirm=true.
-	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/suspend",
-		s.authLimited(s.requireAdminMutation(s.postObsAccountSuspend)))
-	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/restore",
-		s.authLimited(s.requireAdminMutation(s.postObsAccountRestore)))
-	mux.HandleFunc("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
-		s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions)))
+	// Account and compute-node lifecycle controls. They are deliberately
+	// separate from the read-only /obs namespace and require strict admin
+	// mutation authentication plus confirm=true.
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/suspend",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountSuspend))))
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/restore",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRestore))))
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/drain",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeDrain))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/force-drain",
@@ -2208,6 +2240,7 @@ func (s *server) handler() http.Handler {
 
 	// Account-scoped deployments list (M7.5 dashboard).
 	mux.HandleFunc("GET /v1/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeployments))))
+	mux.HandleFunc("GET /v1/deployments/latest-by-app", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listLatestDeploymentsByApp))))
 
 	// MFA (IAM-2, issue #186). Five POST endpoints; all on the
 	// admin-only scope set because the dashboard never exposes

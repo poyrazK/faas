@@ -1,3 +1,4 @@
+// adr: 156
 // issue #517 / PR-B (AC3 + AC4) whitebox tests for Engine.StreamAppLogs.
 // The handler fan-out has two new PR-B behaviours that warrant direct
 // coverage at the engine seam (the gRPC handler is covered by the
@@ -22,6 +23,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/netip"
 	"sync"
@@ -76,6 +78,15 @@ func (r *deploymentFilterFakeVMM) dialed() []recordedDial {
 	out := make([]recordedDial, len(r.dials))
 	copy(out, r.dials)
 	return out
+}
+
+func (r *deploymentFilterFakeVMM) setStream(nodeID, instanceID string, stream LogStream) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.perInstanceStream == nil {
+		r.perInstanceStream = make(map[string]LogStream)
+	}
+	r.perInstanceStream[nodeID+"/"+instanceID] = stream
 }
 
 func (r *deploymentFilterFakeVMM) CreateColdBoot(context.Context, string, string, AppSpec) (*WakeOutcome, error) {
@@ -211,10 +222,10 @@ func (s *frameSink) snapshot() []LogFrame {
 // The test asserts that the VMM fake only saw two Logs dials
 // (A + B), with the right sinceSeq + sinceWrittenAt args. The
 // per-instance streams close immediately so the fan-out
-// goroutines exit before the test returns (otherwise the writer
-// goroutine would hang on wg.Wait() forever).
+// goroutines exit before the test returns.
 func TestEngineStreamAppLogs_DeploymentFilterScopesFanout(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 5)
 
@@ -279,9 +290,10 @@ func TestEngineStreamAppLogs_DeploymentFilterScopesFanout(t *testing.T) {
 	streamA.close()
 	streamB.close()
 	streamC.close()
+	cancel()
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Fatalf("StreamAppLogs: %v", err)
 		}
 	case <-time.After(2 * time.Second):
@@ -325,7 +337,8 @@ func TestEngineStreamAppLogs_DeploymentFilterScopesFanout(t *testing.T) {
 // before the sink call, so the wire payload can't accidentally
 // leak stale values into a gap event.
 func TestEngineStreamAppLogs_GapForwardedFromVMM(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 5)
 	ins, err := store.CreateInstance(ctx, app.ID, "", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
@@ -362,9 +375,10 @@ func TestEngineStreamAppLogs_GapForwardedFromVMM(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	stream.close()
+	cancel()
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Fatalf("StreamAppLogs: %v", err)
 		}
 	case <-time.After(2 * time.Second):
@@ -401,5 +415,54 @@ func TestEngineStreamAppLogs_GapForwardedFromVMM(t *testing.T) {
 	// Frame 2: line frame.
 	if frames[2].Seq != 8 || frames[2].Line != "second" {
 		t.Errorf("frames[2] = %+v, want seq=8 line=second", frames[2])
+	}
+}
+
+func TestEngineStreamAppLogs_AttachesInstanceCreatedAfterFollowStarts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 5)
+	vmm := &deploymentFilterFakeVMM{perInstanceStream: make(map[string]LogStream)}
+	eng := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	sink := &frameSink{}
+	done := make(chan error, 1)
+	go func() {
+		done <- eng.StreamAppLogs(ctx, app.ID, 0, time.Time{}, "", sink.sink())
+	}()
+
+	// A follow stream can begin while the app is parked. A later wake creates
+	// a new instance ID; schedd must discover its vmmd ring without requiring
+	// the customer to restart `gregale logs --follow`.
+	ins, err := store.CreateInstance(ctx, app.ID, "", string(state.StateColdBooting), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	stream := newProgrammableLogStream(LogLine{Seq: 1, Stream: "stderr", Line: "after wake", WrittenAt: time.Now()})
+	vmm.setStream(state.DefaultLocalNodeName, ins.ID, stream)
+	if err := store.UpdateInstanceState(ctx, ins.ID, string(state.StateRunning)); err != nil {
+		t.Fatalf("UpdateInstanceState: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if frames := sink.snapshot(); len(frames) == 1 && frames[0].Line == "after wake" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	frames := sink.snapshot()
+	if len(frames) != 1 || frames[0].InstanceID != ins.ID || frames[0].Line != "after wake" {
+		t.Fatalf("frames after wake = %+v", frames)
+	}
+	stream.close()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("StreamAppLogs: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("StreamAppLogs did not stop after cancellation")
 	}
 }

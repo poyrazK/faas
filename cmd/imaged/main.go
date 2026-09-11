@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -223,6 +224,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	store := state.NewPgStore(pool)
+	// Register the same canonical OpenAPI projector as apid. imaged owns the
+	// snapshot_written → live transition, so the capture and the contract gate
+	// must be wired in this process too.
+	openapidiff.RegisterStateCapture()
 	builder := rootfs.NewBuilder(wire.ExecRunner{})
 
 	// ADR-038 / Tier 3 phase 3: validate the build-attestation
@@ -596,6 +601,20 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		"assigned_minimal", assignedBases.Minimal,
 	)
 
+	// Issue #571 PR-A2: construct the daemon-level readiness probe
+	// independently of the optional metrics listener. systemd's
+	// Type=notify state must use the same storage/cache signal as
+	// /readyz even when metrics are disabled.
+	cacheRoot := ""
+	if cache := storage.AsCacheBackend(storageBackend); cache != nil {
+		cacheRoot = cache.Root()
+	}
+	imagedProbe := buildImageReadinessProbe(envOr("FAAS_STORAGE_BACKEND", "local"), envOr("FAAS_STORAGE_ROOT", defaultStorageRoot), cacheRoot)
+	imagedProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("imaged", ready, reason)
+	})
+	defer imagedProbe.Drain("imaged", log)
+
 	// Optional /metrics listener (this PR). Mirrors cmd/apid/main.go
 	// and cmd/builderd/main.go:146-157 — separate bind so a port
 	// collision can't take the daemon down. Defaults to 127.0.0.1:9102
@@ -621,20 +640,6 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// cmd/imaged/config.go::LoadConfig.
 	metricsAddr := imgCfg.GetMetricsAddr(os.Getenv)
 	if metricsAddr != "" {
-		// Issue #571 PR-A2: /readyz probe (storage root +
-		// cache dir writability). Built before the metrics
-		// listener so the ControlMuxLite registration below
-		// can wire /readyz on the same mux as /metrics. defer
-		// stop so the SIGTERM drain window surfaces in
-		// daemon_ready as 0.
-		cacheRoot := ""
-		if cache := storage.AsCacheBackend(storageBackend); cache != nil {
-			cacheRoot = cache.Root()
-		}
-		imagedProbe := buildImageReadinessProbe(envOr("FAAS_STORAGE_BACKEND", "local"), envOr("FAAS_STORAGE_ROOT", defaultStorageRoot), cacheRoot)
-		imagedProbe.SetReadyObserver(func(ready bool, reason string) {
-			ops.MarkReady("imaged", ready, reason)
-		})
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", ops.Handler())
 		wire.ControlMuxLite(mux, imagedProbe.ReadyFunc(), imagedProbe.ReasonFunc())
@@ -679,7 +684,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}()
 
 	// All boot-critical storage and runtime bases are staged before this point.
-	notifyStop := daemonunit.NotifyReadyWhen(ctx, func() bool { return true })
+	notifyStop := daemonunit.NotifyReadyWhen(ctx, imagedProbe.ReadyFunc())
 	defer notifyStop()
 
 	return loop.Run(ctx)

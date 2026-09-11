@@ -76,7 +76,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_CERT_EXPIRY_REFRESHER_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_CLI_AUTH_URL_BASE` | apid | `default` |  |  | `` |  |
 | `FAAS_COMPLETION_CACHE_PATH` | shared | `client` |  |  | `` | read by the CLI/SDK on the operator's machine, never by a daemon |
+| `FAAS_COMPUTE_ADMISSION_CEILING_MB` | vmmd | `dropin` |  |  | `` | host-fact-derived RAM admission ceiling installed by node_join |
 | `FAAS_COMPUTE_GATEWAY_DISCOVERY` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_COMPUTE_MAX_CONCURRENCY` | vmmd | `dropin` |  |  | `` | host-fact-derived live-instance ceiling installed by node_join |
+| `FAAS_COMPUTE_MEM_MB` | vmmd | `dropin` |  |  | `` | host memory reported by node_join |
+| `FAAS_COMPUTE_VCPUS` | vmmd | `dropin` |  |  | `` | host vCPU count reported by node_join |
 | `FAAS_CONTROL_PLANE_API_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
 | `FAAS_DATABASE_URL` | shared | `default` | yes |  | `url` | DATABASE_URL from compute-db.env is the production DSN; this is the legacy alias; DATABASE_URL satisfies this requirement |
 | `FAAS_DATA_PLACEMENT` | apid | `runtime-config` |  |  | `` |  |
@@ -147,7 +151,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH` | s3-gatewayd | `unit` |  |  | `` | optional systemd credential path during host-age rotation overlap |
 | `FAAS_HOST_AGE_PUB` | githubd | `default` |  |  | `` |  |
 | `FAAS_HOST_AGE_RECIPIENT_PATH` | apid, vmmd, shared | `unit` |  |  | `` |  |
-| `FAAS_HOST_BRIDGE_CIDR` | vmmd | `default` |  |  | `` |  |
+| `FAAS_HOST_BRIDGE_CIDR` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; same tenant bridge network used by the Ansible nftables policy |
 | `FAAS_HOST_HMAC_KEY_PATH` | apid, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_KEY_PATH` | gatewayd-internal, gatewayd-public, vmmd | `default` |  |  | `` |  |
 | `FAAS_HSTS_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
@@ -242,8 +246,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PREVIEW_JANITOR_INTERVAL_SECONDS` | apid | `default` |  |  | `` |  |
 | `FAAS_PREVIEW_JANITOR_STARTUP_DELAY_SECONDS` | apid | `default` |  |  | `` |  |
 | `FAAS_PREWARM_ENABLED` | schedd | `default` |  |  | `` | exact opt-in (`1`) for scheduled prewarm; disabled by default; ADR-160 |
+| `FAAS_PRIVATE_INGRESS_CIDRS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; private control-plane source CIDRs from the generated host inventory |
+| `FAAS_PRIVATE_INGRESS_TCP_PORTS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; exact compute service ports reachable from the control plane |
 | `FAAS_PROMETHEUS_URL` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_PUBLIC_CONTROL_ADDR` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_PUBLIC_IFACE` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible |
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `envfile` |  |  | `` |  |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_COOLDOWN_SECONDS` | schedd | `default` |  |  | `` |  |
@@ -256,6 +263,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REQUEST_TELEMETRY_ENABLED` | apid, gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_REQUIRE_SHARED_ARTIFACTS` | shared | `envfile` |  |  | `` |  |
 | `FAAS_RESIDENCY_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_RESTORE_CONCURRENCY` | vmmd | `default` |  |  | `` | optional snapshot-restore concurrency override (1–64); production default is 3 |
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
@@ -315,6 +323,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TOKEN` | shared | `client` |  |  | `` | read by the CLI/SDK on the operator's machine, never by a daemon |
 | `FAAS_TRACE_OBSERVER_TOKEN` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACE_RING_CAP` | shared | `default` |  |  | `` |  |
+| `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | TLS terminator CIDRs allowed to provide canonical forwarding context |
 | `FAAS_TRUSTED_PUBLISHERS_DIR` | apid, imaged | `default` |  |  | `` |  |
 | `FAAS_UPSTREAM_AFFINITY` | schedd | `default` |  |  | `` | off by design until the §9.A rollout gate (spec) |
 | `FAAS_UPSTREAM_AFFINITY_TTL` | schedd | `default` |  |  | `` |  |
@@ -337,7 +346,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMM_TLS_CERT_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_VMM_TLS_KEY_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` |  |  | `` | deprecated fallback delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
-| `FAAS_WORKFLOWS_ENABLED` | schedd | `unit` |  |  | `` | explicit 0 in faas-schedd.service; set to 1 to activate durable workflow dispatch |
+| `FAAS_WORKFLOWS_ENABLED` | apid, schedd | `unit` |  |  | `` | explicit 0 in apid and schedd units; set both to 1 to activate durable workflow dispatch and run creation |
 | `FAAS_WORKLOAD_` | guest | `guest` |  |  | `` | guest-init injects per-task loopback endpoint metadata for the main workload and declared sidecars |
 | `FAAS_WORKLOAD_IDENTITY_ISSUER` | vmmd | `default` |  |  | `` | optional vmmd workload-identity issuer override; config TOML is the primary deployment setting |
 | `FAAS_WORKLOAD_IDENTITY_KEY_ID` | vmmd | `default` |  |  | `` | optional vmmd workload-identity key ID override; config TOML is the primary deployment setting |

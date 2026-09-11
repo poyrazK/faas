@@ -24,5 +24,13 @@ faas_verify_readyz_retries: 30
 faas_verify_readyz_retries_by_unit:
   faas-imaged.service: 600
 faas_verify_readyz_delay_s: 2
+# The manifest renderer binds compute daemon metrics/readiness to the node's
+# private transport address so Prometheus can scrape it without exposing the
+# port publicly. fleet_verify runs on that same node, but must still use the
+# private address; the registry's loopback URL is only the single-box default.
+faas_verify_private_readyz_units:
+  - faas-vmmd.service
+  - faas-imaged.service
+  - faas-builderd.service
 faas_verify_run_doctor: true
 faas_verify_gregalectl: /usr/local/bin/gregalectl

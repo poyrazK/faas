@@ -11,7 +11,10 @@ T = TypeVar("T", bound="CreateTriggerRequestConfig")
 
 @_attrs_define
 class CreateTriggerRequestConfig:
-    """Per-kind opaque config blob."""
+    """Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before
+    persistence.
+
+    """
 
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

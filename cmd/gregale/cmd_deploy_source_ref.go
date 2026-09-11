@@ -87,13 +87,15 @@ func cmdDeployRepoSourceRefContextWithJSONWait(ctx context.Context, slug, repo, 
 		return printErr("Not logged in", err)
 	}
 	req := api.SourceRefDeployRequest{
-		Repo:       repo,
-		Ref:        ref,
-		Format:     "tarball",
-		Reason:     ann.Reason,
-		Tag:        ann.Tag,
-		DeployedBy: ann.DeployedBy,
-		PRNumber:   ann.PRNumber,
+		Repo:           repo,
+		Ref:            ref,
+		Format:         "tarball",
+		Reason:         ann.Reason,
+		Tag:            ann.Tag,
+		DeployedBy:     ann.DeployedBy,
+		PRNumber:       ann.PRNumber,
+		TrafficPercent: ann.TrafficPercent,
+		Canary:         ann.Canary,
 	}
 	dep, err := client.DeployFromSourceRef(ctx, slug, req)
 	if err != nil {

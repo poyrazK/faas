@@ -33,7 +33,9 @@ class UpdateTriggerRequest:
     """Partial trigger update. nil means "leave unchanged" (same
     semantics as UpdateCronRequest). Kind is NOT a member — it
     is immutable. To change kind, create a new trigger and
-    delete the old one.
+    delete the old one. Inside a supplied Kafka sasl/tls block,
+    omitting the write-only credential preserves its stored value;
+    omitting the whole block removes that block and its credential.
 
     """
 

@@ -566,7 +566,37 @@ const (
 	APIKeyStatusRevoked APIKeyStatus = "revoked"
 )
 
-// ConsumerKey is a hashed, per-(account, app) credential for the
+// APIConsumerStatus is the lifecycle state for an application's API
+// consumer. Revocation is terminal in v1; credentials can be rotated
+// without changing the consumer's stable identity.
+type APIConsumerStatus string
+
+const (
+	APIConsumerStatusActive  APIConsumerStatus = "active"
+	APIConsumerStatusRevoked APIConsumerStatus = "revoked"
+)
+
+// APIConsumer is the stable identity of one customer of an application.
+// Credentials (ConsumerKey) are attached to this row so key rotation does
+// not change the identity used for throttling, usage attribution, or billing.
+type APIConsumer struct {
+	ID          string
+	AccountID   string
+	AppID       string
+	ExternalRef string
+	Name        string
+	Status      APIConsumerStatus
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	RevokedAt   *time.Time
+}
+
+// Active reports whether the consumer can authenticate requests.
+func (c APIConsumer) Active() bool {
+	return c.Status == APIConsumerStatusActive && c.RevokedAt == nil
+}
+
+// ConsumerKey is a hashed, per-consumer credential for the
 // application's customers (ADR-120 / issue #975 item #5). Distinct
 // from APIKey because it is scoped to a single (AccountID, AppID)
 // pair (a leaked key affects only one app) and exposed to the
@@ -585,9 +615,12 @@ const (
 // TouchConsumerKeyLastUsed with a 60s debouncer — never a billing
 // signal.
 type ConsumerKey struct {
-	ID         string
-	AccountID  string
-	AppID      string
+	ID        string
+	AccountID string
+	AppID     string
+	// ConsumerID is the stable APIConsumer identity. It is nullable for
+	// legacy rows created before consumer identities were introduced.
+	ConsumerID string
 	Name       string
 	Prefix     string
 	Hash       []byte
@@ -1587,6 +1620,10 @@ type Deployment struct {
 	// UpdateDeploymentTraffic transaction live in pgstore.go, not
 	// here — this struct just carries the field.
 	TrafficPercent int `json:"traffic_percent,omitempty"`
+	// TrafficPercentExplicit distinguishes an omitted traffic policy from an
+	// explicitly requested zero. It is persisted for activation semantics but
+	// remains internal; TrafficPercent is the customer-visible value.
+	TrafficPercentExplicit bool `json:"-"`
 	// Scan columns (issue #464 / ADR-055 / PR-3). Per-deploy grype
 	// scan result, status, and scanned_at. Mirror the deployments
 	// table columns added by migrations/00135. The pgstore reads
@@ -3104,6 +3141,13 @@ type GdprRequest struct {
 	RequestID    string    // optional X-Request-Id from the inbound request (PR-5.2)
 }
 
+// AccountFirstSuccess is the privacy-safe aggregate used by the operator beta
+// funnel. It intentionally carries no app, instance, request, or email data.
+type AccountFirstSuccess struct {
+	AccountID string
+	At        time.Time
+}
+
 // Instance mirrors the instances row; schedd is the sole writer (spec §6).
 type Instance struct {
 	ID            string
@@ -3177,6 +3221,10 @@ type Instance struct {
 	// expiry. Mirrors the A4 `apps.reassigned_at` schema
 	// discipline. Nullable forever.
 	LeaseToken string
+	// MigrationStartedAt is stamped when Phase 2 moves the instance into
+	// state='migrating'. It is the durable watchdog age anchor; MigratedAt
+	// is intentionally reserved for the successful Phase-3 commit.
+	MigrationStartedAt *time.Time
 	// FrameworkReadyAt is the wall-clock stamp the vmmd records
 	// when the guest-init signals "framework ready" via vsock DGRAM
 	// port 1027 (msg=4). Two-tier snapshot (issue #470, PR

@@ -49,6 +49,11 @@ type JailerVMM struct {
 	readyTimeout   time.Duration // WAKING/cold-boot readiness budget (spec §6)
 	destroyWait    time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
 	exportMaxBytes int64         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
+	// restoreSlots bounds the expensive Firecracker snapshot-load window. A
+	// small gate prevents admitted wake bursts from making every restore miss
+	// its latency SLO through CPU and mount contention. nil preserves the
+	// unbounded legacy behavior for direct test constructors.
+	restoreSlots chan struct{}
 	// storage is the artifact backend where snapshot blobs live per
 	// #96 / ADR-025 axis 2. Restore resolves StorageKey → local tmp;
 	// Snapshot Streams the produced mem blob back through Storage.Put.
@@ -130,6 +135,7 @@ type bindSourceMode struct {
 // only when the wake-timeline event is emitted; keeping the struct in
 // durations avoids making the restore path depend on the event wire shape.
 type restoreTimingBreakdown struct {
+	RestoreGateWaitMs    int64
 	ChrootMs             int64
 	MaterializeMemMs     int64
 	MaterializeVMStateMs int64
@@ -373,6 +379,32 @@ func (v *JailerVMM) PrepareJailHelper() error {
 func (v *JailerVMM) WithStorage(s storage.StorageBackend) *JailerVMM {
 	v.storage = s
 	return v
+}
+
+// WithRestoreConcurrency bounds concurrent snapshot restores in this vmmd.
+// Waiting for a slot remains inside Restore's measured interval, so the gate
+// cannot hide queueing from the platform wake SLI. Values below one disable
+// the gate for backwards-compatible test seams; production config rejects
+// them before constructing the VMM.
+func (v *JailerVMM) WithRestoreConcurrency(limit int) *JailerVMM {
+	if limit < 1 {
+		v.restoreSlots = nil
+		return v
+	}
+	v.restoreSlots = make(chan struct{}, limit)
+	return v
+}
+
+func (v *JailerVMM) acquireRestoreSlot(ctx context.Context) (func(), error) {
+	if v == nil || v.restoreSlots == nil {
+		return func() {}, nil
+	}
+	select {
+	case v.restoreSlots <- struct{}{}:
+		return func() { <-v.restoreSlots }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("vmm: wait for snapshot restore slot: %w", ctx.Err())
+	}
 }
 
 // WithEvents stamps the wake-timeline fan-out (issue #517 / PR-C /
@@ -627,12 +659,12 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	boundTunAt := time.Now()
-	var coldBootCPU coldBootCPUProfile
+	var coldBootCPU startupCPUProfile
 	trackColdBootCPU := !skipReady && !l.IsBuilder && l.Plan.Valid()
 	if l.IsBuilder || l.Plan.Valid() {
 		fenceLease := l
 		if trackColdBootCPU {
-			coldBootCPU, err = resolveColdBootCPUProfile(l.Plan, l.CPUMillicores)
+			coldBootCPU, err = resolveStartupCPUProfile(l.Plan, l.CPUMillicores)
 			if err != nil {
 				return fmt.Errorf("vmm: resolve cold-boot CPU profile: %w", err)
 			}
@@ -660,7 +692,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		readyAt = time.Now()
 		if trackColdBootCPU {
 			quotaRestoreStartedAt := time.Now()
-			if err = v.restoreColdBootCPUFence(l, workloads, coldBootCPU.ConfiguredMillicores); err != nil {
+			if err = v.restoreConfiguredCPUFence(l, workloads, coldBootCPU.ConfiguredMillicores); err != nil {
 				return fmt.Errorf("vmm: restore configured CPU fence: %w", err)
 			}
 			quotaRestoredAt = time.Now()
@@ -808,12 +840,12 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 	return nil
 }
 
-// restoreColdBootCPUFence lowers the temporary startup allowance after the
-// readiness probe succeeds. The parent scope contains Firecracker and is the
-// enforcement boundary. The optional main-workload child is kept in sync for
-// accurate cgroup inspection even though guest processes do not join that
-// host-side leaf.
-func (v *JailerVMM) restoreColdBootCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
+// restoreConfiguredCPUFence lowers the temporary startup allowance after a
+// cold boot or snapshot restore reaches readiness. The parent scope contains
+// Firecracker and is the enforcement boundary. The optional main-workload
+// child is kept in sync for accurate cgroup inspection even though guest
+// processes do not join that host-side leaf.
+func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
 	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
 	if err := writeAppCPUMaxTo(parentScope, l.Plan, configuredMillicores); err != nil {
 		return err
@@ -837,6 +869,12 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// the same boundary makes its total_ms comparable to that field and keeps
 	// remote memory/vmstate materialisation visible in the breakdown.
 	t0 := time.Now()
+	releaseRestoreSlot, err := v.acquireRestoreSlot(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseRestoreSlot()
+	restoreAdmitted := time.Now()
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
 		return err
@@ -1027,8 +1065,18 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
 		return err
 	}
+	var restoreCPU startupCPUProfile
+	trackRestoreCPU := !l.IsBuilder && l.Plan.Valid()
 	if l.IsBuilder || l.Plan.Valid() {
-		if err = v.applyPreBootCgroupFence(l, spec.Workloads); err != nil {
+		fenceLease := l
+		if trackRestoreCPU {
+			restoreCPU, err = resolveStartupCPUProfile(l.Plan, l.CPUMillicores)
+			if err != nil {
+				return fmt.Errorf("vmm: resolve restore CPU profile: %w", err)
+			}
+			fenceLease.CPUMillicores = restoreCPU.StartupMillicores
+		}
+		if err = v.applyPreBootCgroupFence(fenceLease, spec.Workloads); err != nil {
 			return fmt.Errorf("vmm: apply pre-boot cgroup fence: %w", err)
 		}
 	}
@@ -1054,8 +1102,21 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return fmt.Errorf("vmm: readiness after restore: %w", err)
 	}
 	tReady := time.Now()
+	// Snapshot load, lazy memory faults, and the mandatory guest resume hook
+	// are startup work. Applying a customer's sustained CPU shape before those
+	// phases can exhaust a 250 mCPU cgroup period and hold the resume ACK until
+	// the next period, adding up to 750 ms to an otherwise sub-200 ms SSD wake.
+	// Keep the same bounded one-core allowance used for cold boot until the
+	// guest is ready, then restore the configured quota before publishing it.
+	if trackRestoreCPU {
+		if err = v.restoreConfiguredCPUFence(l, spec.Workloads, restoreCPU.ConfiguredMillicores); err != nil {
+			return fmt.Errorf("vmm: restore configured CPU fence after snapshot restore: %w", err)
+		}
+	}
+	tDone := time.Now()
 	breakdown := restoreTimingBreakdown{
-		ChrootMs:             chrootReady.Sub(t0).Milliseconds(),
+		RestoreGateWaitMs:    restoreAdmitted.Sub(t0).Milliseconds(),
+		ChrootMs:             chrootReady.Sub(restoreAdmitted).Milliseconds(),
 		MaterializeMemMs:     memReady.Sub(chrootReady).Milliseconds(),
 		MaterializeVMStateMs: vmstateReady.Sub(vmstateStart).Milliseconds(),
 		ResolveImagesMs:      tResolve.Sub(vmstateReady).Milliseconds(),
@@ -1067,16 +1128,17 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		LoadSnapshotMs:       tLoad.Sub(tBindTun).Milliseconds(),
 		ResumeHookMs:         tResume.Sub(tLoad).Milliseconds(),
 		WaitReadyMs:          tReady.Sub(tResume).Milliseconds(),
-		TotalMs:              tReady.Sub(t0).Milliseconds(),
+		TotalMs:              tDone.Sub(t0).Milliseconds(),
 		ResolveArtifacts:     restoreArtifactTimings(resolvedArtifacts),
 	}
-	v.emitRestoreBreakdown(ctx, l, tReady, breakdown)
+	v.emitRestoreBreakdown(ctx, l, tDone, breakdown)
 	// The durable wake event above is the operator-facing record. Keep the
 	// duplicate structured log at Debug so a slow journald sink cannot delay
 	// the vmmd RPC after readiness and therefore postpone schedd's RUNNING
 	// transition.
 	slog.Default().Debug("restore timing breakdown",
 		"instance", l.Instance,
+		"restore_gate_wait_ms", breakdown.RestoreGateWaitMs,
 		"chroot_ms", breakdown.ChrootMs,
 		"materialize_mem_ms", breakdown.MaterializeMemMs,
 		"materialize_vmstate_ms", breakdown.MaterializeVMStateMs,
@@ -1508,6 +1570,14 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		// rejection on a bare-metal node.
 		slog.Default().Error("vmm: create snapshot failed", "instance", l.Instance, "err", err)
 		return SnapshotInfo{}, fmt.Errorf("vmm: create snapshot: %w", err)
+	}
+	if spec.ResumeBeforePublish {
+		// The snapshot files are complete once Firecracker returns from
+		// /snapshot/create. Shared OCI publication may take seconds and
+		// does not require the guest to remain paused.
+		if err := v.ResumeVM(ctx, l); err != nil {
+			return SnapshotInfo{}, fmt.Errorf("vmm: resume before snapshot publish: %w", err)
+		}
 	}
 
 	// #96 / ADR-025 axis 2 — after slice 3 the mem destination is
@@ -3668,6 +3738,7 @@ func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.T
 		WakeID:               fields.WakeID,
 		AppID:                fields.AppID,
 		InstanceID:           l.Instance,
+		RestoreGateWaitMs:    b.RestoreGateWaitMs,
 		ChrootMs:             b.ChrootMs,
 		MaterializeMemMs:     b.MaterializeMemMs,
 		MaterializeVMStateMs: b.MaterializeVMStateMs,

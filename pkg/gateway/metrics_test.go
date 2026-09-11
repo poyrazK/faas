@@ -1,5 +1,7 @@
 package gateway
 
+// spec: §6.3
+
 import (
 	"context"
 	"errors"
@@ -10,6 +12,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // TestMetricsWakeQueueWaitRegisters asserts the §12 row name is
@@ -108,6 +114,124 @@ func TestMetricsIssue273Exposition(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("pre-instantiated %s missing:\n%s", want, body)
 		}
+	}
+}
+
+func TestMetricsTraceExemplars(t *testing.T) {
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	m := NewMetrics()
+
+	m.ObserveRequestDurationByDeploymentWithTrace("app-1", "5xx", "deploy-1", 750*time.Millisecond, traceID)
+	requestMetric := &dto.Metric{}
+	requestObserver := m.requestDuration.WithLabelValues("app-1", "5xx", "deploy-1")
+	if err := requestObserver.(prometheus.Metric).Write(requestMetric); err != nil {
+		t.Fatalf("request histogram write: %v", err)
+	}
+	if got := histogramExemplarTraceID(t, requestMetric); got != traceID {
+		t.Fatalf("request exemplar trace_id = %q, want %q", got, traceID)
+	}
+
+	m.ObserveColdBootWithTrace("app-1", 2*time.Second, "node-1", traceID)
+	for name, observer := range map[string]prometheus.Observer{
+		"aggregate wake latency": m.wakeLatency,
+		"per-node wake latency":  m.wakeLatencyByNode.WithLabelValues("node-1"),
+	} {
+		gotMetric := &dto.Metric{}
+		metric, ok := observer.(prometheus.Metric)
+		if !ok {
+			t.Fatalf("%s does not implement prometheus.Metric", name)
+		}
+		if err := metric.Write(gotMetric); err != nil {
+			t.Fatalf("%s write: %v", name, err)
+		}
+		if got := histogramExemplarTraceID(t, gotMetric); got != traceID {
+			t.Errorf("%s exemplar trace_id = %q, want %q", name, got, traceID)
+		}
+	}
+
+	// The legacy helpers must continue to emit an ordinary observation without
+	// manufacturing an exemplar when no sampled request trace is available.
+	m.ObserveRequestDurationByDeployment("app-1", "2xx", "deploy-1", 10*time.Millisecond)
+	legacyMetric := &dto.Metric{}
+	if err := m.requestDuration.WithLabelValues("app-1", "2xx", "deploy-1").(prometheus.Metric).Write(legacyMetric); err != nil {
+		t.Fatalf("legacy histogram write: %v", err)
+	}
+	if got := histogramExemplarTraceID(t, legacyMetric); got != "" {
+		t.Errorf("legacy exemplar trace_id = %q, want empty", got)
+	}
+}
+
+func histogramExemplarTraceID(t *testing.T, metric *dto.Metric) string {
+	t.Helper()
+	if metric.Histogram == nil {
+		return ""
+	}
+	for _, bucket := range metric.Histogram.GetBucket() {
+		for _, label := range bucket.GetExemplar().GetLabel() {
+			if label.GetName() == "trace_id" {
+				return label.GetValue()
+			}
+		}
+	}
+	return ""
+}
+
+func TestTraceIDFromContextRequiresSampledValidSpan(t *testing.T) {
+	traceID, err := oteltrace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	if err != nil {
+		t.Fatalf("trace id: %v", err)
+	}
+	spanID, err := oteltrace.SpanIDFromHex("00f067aa0ba902b7")
+	if err != nil {
+		t.Fatalf("span id: %v", err)
+	}
+
+	sampled := oteltrace.ContextWithSpanContext(context.Background(), oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: oteltrace.FlagsSampled,
+	}))
+	if got := traceIDFromContext(sampled); got != traceID.String() {
+		t.Fatalf("sampled trace id = %q, want %q", got, traceID)
+	}
+
+	unsampled := oteltrace.ContextWithSpanContext(context.Background(), oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+		TraceID: traceID,
+		SpanID:  spanID,
+	}))
+	if got := traceIDFromContext(unsampled); got != "" {
+		t.Fatalf("unsampled trace id = %q, want empty", got)
+	}
+}
+
+func TestHandlerObserveAttachesTraceExemplar(t *testing.T) {
+	traceID, err := oteltrace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	if err != nil {
+		t.Fatalf("trace id: %v", err)
+	}
+	spanID, err := oteltrace.SpanIDFromHex("00f067aa0ba902b7")
+	if err != nil {
+		t.Fatalf("span id: %v", err)
+	}
+	ctx := oteltrace.ContextWithSpanContext(context.Background(), oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: oteltrace.FlagsSampled,
+	}))
+
+	m := NewMetrics()
+	h := &Handler{metrics: m}
+	r := httptest.NewRequestWithContext(ctx, "GET", "http://app-1.apps.dom/", nil)
+	r = r.WithContext(WithStartTime(r.Context(), time.Now().Add(-250*time.Millisecond)))
+	h.observe(r, 503, "app-1", "pro", false, Target{DeploymentID: "deploy-1"})
+
+	metric := &dto.Metric{}
+	observer := m.requestDuration.WithLabelValues("app-1", "5xx", "deploy-1")
+	if err := observer.(prometheus.Metric).Write(metric); err != nil {
+		t.Fatalf("request histogram write: %v", err)
+	}
+	if got := histogramExemplarTraceID(t, metric); got != traceID.String() {
+		t.Fatalf("handler exemplar trace_id = %q, want %q", got, traceID)
 	}
 }
 

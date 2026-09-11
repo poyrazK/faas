@@ -23,8 +23,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -135,14 +137,30 @@ func TestTierD_RegistrySet_HappyPath(t *testing.T) {
 	if err := json.Unmarshal(f.sawBody, &got); err != nil {
 		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
 	}
-	if got["registry"] != "docker.io" {
-		t.Errorf("registry = %v, want docker.io", got["registry"])
+	if got["registry"] != "https://docker.io" {
+		t.Errorf("registry = %v, want https://docker.io", got["registry"])
 	}
 	if got["username"] != "u" {
 		t.Errorf("username = %v, want u", got["username"])
 	}
 	if got["password"] != "p" {
 		t.Errorf("password = %v, want p", got["password"])
+	}
+}
+
+func TestTierD_RegistrySetDocumentedVerbAndHTTPSInput(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"registry":"ghcr.io","username":"u","created_at":"2026-08-07T00:00:00Z","updated_at":"2026-08-07T00:00:00Z"}`
+	f := authedFakeAPI(t, body, http.StatusOK)
+	if code := cmdRegistry([]string{"set", "--app", "demo", "--registry", "https://ghcr.io", "--user", "u", "--password", "p"}); code != 0 {
+		t.Fatalf("registry set exit = %d", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["registry"] != "https://ghcr.io" {
+		t.Fatalf("registry body = %v", got["registry"])
 	}
 }
 
@@ -454,12 +472,31 @@ func TestTierD_DelayedTaskCancel_NoArgExitsOne(t *testing.T) {
 
 func TestTierD_DelayedTaskCancel_HappyPath(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, "", http.StatusOK)
+	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"cancelled"}`, http.StatusOK)
 	if code := cmdDelayedTaskCancel([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	if f.sawMethod != "DELETE" || f.sawPath != "/v1/delayed-tasks/0123456789abcdef0123456789abcdef" {
 		t.Errorf("route = %s %s, want DELETE /v1/delayed-tasks/<id>", f.sawMethod, f.sawPath)
+	}
+}
+
+// spec: delayed task cancellation reports the authoritative terminal state.
+func TestTierD_DelayedTaskCancel_CompletedIsNotReportedCancelled(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"completed"}`, http.StatusOK)
+	var stderr bytes.Buffer
+	oldErr := osStderr
+	osStderr = &stderr
+	t.Cleanup(func() { osStderr = oldErr })
+	if code := cmdDelayedTaskCancel([]string{"0123456789abcdef0123456789abcdef"}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if f.sawMethod != "DELETE" {
+		t.Fatalf("method = %s, want DELETE", f.sawMethod)
+	}
+	if !strings.Contains(stderr.String(), "completed") || !strings.Contains(stderr.String(), "execution was not cancelled") {
+		t.Fatalf("stderr misreported result: %q", stderr.String())
 	}
 }
 

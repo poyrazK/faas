@@ -50,6 +50,15 @@ route:
   group_interval: 5m
   repeat_interval: 4h
   routes:
+{% if not am_email_customer_alert_presets | default(false) | bool %}
+    # Customer-configured alert rules are delivered by meterd's signed webhook
+    # path. Keep the Prometheus mirrors visible without duplicating them into the
+    # shared platform inbox.
+    - matchers:
+        - family =~ "alert_preset_(signals|correlation)"
+      receiver: faas-silent
+      continue: false
+{% endif %}
     # page-severity: full notify (email + Pushover).
     - matchers:
         - severity = "page"

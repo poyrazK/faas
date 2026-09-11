@@ -267,6 +267,45 @@ func TestVerify_AllowsVerifiedControllerDeploymentBundle(t *testing.T) {
 	}
 }
 
+func TestVerify_AllowsOperatorSBOMBaselineSidecar(t *testing.T) {
+	root := t.TempDir()
+	gitSHA := "0123456789abcdef0123456789abcdef01234567"
+	bin := filepath.Join(root, gitSHA, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	for _, name := range manifest.SortedHostKeys() {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("fake-"+name), 0o755); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	m, err := Build(root, gitSHA, "sha256:"+strings.Repeat("a", 64), time.Now())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	deploymentRoot := BundleRoot(root, gitSHA)
+	deployment, err := releasebundle.Build(deploymentRoot, gitSHA, gitSHA, "linux/amd64", time.Now())
+	if err != nil {
+		t.Fatalf("releasebundle.Build: %v", err)
+	}
+	if err := releasebundle.Write(deploymentRoot, deployment); err != nil {
+		t.Fatalf("releasebundle.Write: %v", err)
+	}
+	if err := WriteBaseline(root, KGVZero(gitSHA)); err != nil {
+		t.Fatalf("WriteBaseline: %v", err)
+	}
+	if err := Verify(root, m); err != nil {
+		t.Fatalf("Verify after KGV rotation: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(deploymentRoot, "rogue"), []byte("unexpected"), 0o644); err != nil {
+		t.Fatalf("write rogue file: %v", err)
+	}
+	if err := Verify(root, m); err == nil || !strings.Contains(err.Error(), "unexpected files: rogue") {
+		t.Fatalf("Verify with KGV sidecar and rogue file = %v, want rogue-file error", err)
+	}
+}
+
 func TestVerify_RejectsTamperedControllerDeploymentBundle(t *testing.T) {
 	root := t.TempDir()
 	gitSHA := "0123456789abcdef0123456789abcdef01234567"

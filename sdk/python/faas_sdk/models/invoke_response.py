@@ -19,13 +19,14 @@ T = TypeVar("T", bound="InvokeResponse")
 @_attrs_define
 class InvokeResponse:
     """Sync-invoke result. Status is the drain-driven terminal state (`completed` | `failed` | `cancelled`). Result is the
-    original row's payload cast to JSON (omitted while still pending).
+    handler response. Error contains the terminal delivery error when status is failed.
 
     """
 
     id: str
     status: InvokeResponseStatus
     result: InvokeResponseResult | Unset = UNSET
+    error: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +38,8 @@ class InvokeResponse:
         if not isinstance(self.result, Unset):
             result = self.result.to_dict()
 
+        error = self.error
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -47,6 +50,8 @@ class InvokeResponse:
         )
         if result is not UNSET:
             field_dict["result"] = result
+        if error is not UNSET:
+            field_dict["error"] = error
 
         return field_dict
 
@@ -66,10 +71,13 @@ class InvokeResponse:
         else:
             result = InvokeResponseResult.from_dict(_result)
 
+        error = d.pop("error", UNSET)
+
         invoke_response = cls(
             id=id,
             status=status,
             result=result,
+            error=error,
         )
 
         invoke_response.additional_properties = d

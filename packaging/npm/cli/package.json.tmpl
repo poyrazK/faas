@@ -1,0 +1,47 @@
+{
+  "name": "gregale",
+  "version": "__VERSION__",
+  "description": "Gregale CLI — deploy and operate scale-to-zero apps on Firecracker microVMs",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://github.com/poyrazK/faas",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/poyrazK/faas.git"
+  },
+  "bugs": {
+    "url": "https://github.com/poyrazK/faas/issues"
+  },
+  "keywords": [
+    "gregale",
+    "faas",
+    "serverless",
+    "firecracker",
+    "deploy",
+    "cli"
+  ],
+  "bin": {
+    "gregale": "bin/gregale.js"
+  },
+  "files": [
+    "bin/gregale.js",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "optionalDependencies": {
+    "@gregale/cli-darwin-amd64": "__VERSION__",
+    "@gregale/cli-darwin-arm64": "__VERSION__",
+    "@gregale/cli-linux-amd64": "__VERSION__",
+    "@gregale/cli-linux-arm64": "__VERSION__"
+  }
+}

@@ -542,6 +542,12 @@ type DeploymentListResponse struct {
 	NextBefore string               `json:"next_before,omitempty"`
 }
 
+// LatestDeploymentsByAppResponse is the account-scoped batch shape returned
+// by GET /v1/deployments/latest-by-app.
+type LatestDeploymentsByAppResponse struct {
+	Items []DeploymentResponse `json:"items"`
+}
+
 // --- Dashboard auth (issue #165, ADR-032 PR #2) ----------------------------
 
 // OAuthProvider is the issuer name used by the dashboard OAuth flows
@@ -1347,6 +1353,12 @@ type UpdateAppWebhookRequest struct {
 	Enabled       *bool     `json:"enabled,omitempty"`
 }
 
+// RotateAppWebhookSecretRequest carries the replacement signing secret. The
+// response never echoes this value.
+type RotateAppWebhookSecretRequest struct {
+	WebhookSecret string `json:"webhook_secret"`
+}
+
 // AppWebhookResponse is the read shape for a single subscription.
 // WebhookSecretSealedMasked is always the literal "***"; the
 // plaintext never appears here.
@@ -1364,12 +1376,8 @@ type AppWebhookResponse struct {
 }
 
 // RotateAppWebhookSecretResponse is the body of POST
-// /v1/apps/{slug}/webhooks/{id}/rotate-secret. The server mints
-// the new plaintext internally and persists it sealed; the wire
-// carries only the masked constant and the rotated_at timestamp.
-// Per ADR-076 §3.7, the plaintext is NEVER returned over the wire
-// — the caller has no way to retrieve it, so it must be fetched
-// out-of-band from the original provisioning flow.
+// /v1/apps/{slug}/webhooks/{id}/rotate-secret. The wire carries only the
+// masked constant and the rotated_at timestamp.
 type RotateAppWebhookSecretResponse struct {
 	WebhookSecretSealedMasked string    `json:"webhook_secret_sealed_masked"`
 	RotatedAt                 time.Time `json:"rotated_at"`

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -210,11 +209,7 @@ func (c *Client) stream(ctx context.Context, path string) (io.ReadCloser, error)
 	if resp.StatusCode >= 300 {
 		defer func() { _ = resp.Body.Close() }()
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		var p Problem
-		if err := json.Unmarshal(data, &p); err == nil && p.Code != "" {
-			return nil, &APIError{Problem: p}
-		}
-		return nil, fmt.Errorf("API error: %s", resp.Status)
+		return nil, apiErrorFromResponse(resp, data)
 	}
 	return resp.Body, nil
 }

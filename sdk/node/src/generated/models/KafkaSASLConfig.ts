@@ -13,6 +13,13 @@ import type { KafkaSASLMechanism } from './KafkaSASLMechanism.js';
 export type KafkaSASLConfig = {
   mechanism: KafkaSASLMechanism;
   username: string;
-  password: string;
+  /**
+   * Plaintext-on-write only. Omit inside a supplied SASL block to preserve the stored password.
+   */
+  password?: string;
+  /**
+   * Response-only marker indicating that a password is configured; no credential material is returned.
+   */
+  readonly password_set?: boolean;
 };
 

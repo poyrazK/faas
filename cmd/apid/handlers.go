@@ -476,6 +476,10 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 			return
 		}
 	}
+	if p := validateDeploymentTrafficOptions(&req, acct.Plan); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if !isDigestPinned(req.Image) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
 			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))
@@ -527,15 +531,14 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, p)
 		return
 	}
-	// PR-B: prior-deployment supersede is in store.CreateDeployment's tx;
-	// we read prev BEFORE the call so the supersede-notify can carry
-	// its id (LatestDeployment returns the post-supersede row).
-	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
 	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
 		return
 	}
+	// Capture the current predecessor for audit. It remains live until the
+	// replacement passes readiness and MarkDeploymentLive cuts traffic over.
+	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
 	// Issue #606 / SAFE-RELEASES-E.1: server-side actor
 	// attribution. Stamped AFTER buildDeploymentForInsert so the
 	// pure-struct helper stays free of HTTP context (the helper
@@ -904,14 +907,23 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		Plan:          string(acct.Plan),
 		Status:        string(acct.Status),
 		Limits: api.AccountLimits{
-			Plan:               string(acct.Plan),
-			RAMMB:              l.RAMMB,
-			MaxConcurrency:     l.MaxConcurrency,
-			DeployedApps:       l.DeployedApps,
-			DeveloperApps:      l.DeveloperApps,
-			IncludedGBHours:    int64(l.IncludedGBHours),
-			AppLayerMaxMB:      l.AppLayerMaxMB,
-			EphemeralDiskMaxMB: l.EphemeralDiskMaxMB(),
+			Plan:                        string(acct.Plan),
+			RAMMB:                       l.RAMMB,
+			MaxConcurrency:              l.MaxConcurrency,
+			DeployedApps:                l.DeployedApps,
+			DeveloperApps:               l.DeveloperApps,
+			IncludedGBHours:             int64(l.IncludedGBHours),
+			AppLayerMaxMB:               l.AppLayerMaxMB,
+			EphemeralDiskMaxMB:          l.EphemeralDiskMaxMB(),
+			TriggersAllowed:             l.TriggersAllowed,
+			TriggerKinds:                acct.Plan.AllowedTriggerKinds(),
+			TriggerLimitPerApp:          l.TriggerLimitPerApp,
+			TriggerLimitPerAccount:      l.TriggerLimitPerAccount,
+			TriggerBatchSizeMax:         l.TriggerBatchSizeMax,
+			TriggerBatchWindowMaxMs:     l.TriggerBatchWindowMaxSec * 1000,
+			TriggerMaxAttemptsMax:       l.TriggerMaxAttemptsMax,
+			TriggerPayloadMaxBytes:      l.TriggerPayloadMaxBytes,
+			TriggerTLSSkipVerifyAllowed: l.TLSSkipVerifyAllowed,
 		},
 	}
 	if !acct.EmailVerified() {

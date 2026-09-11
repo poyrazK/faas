@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
 	"time"
 
@@ -198,6 +199,34 @@ func TestObsAccountSuspend_UpdatesStatus(t *testing.T) {
 	}
 	if current.Status != state.AccountSuspended {
 		t.Fatalf("account status: got %q, want %q", current.Status, state.AccountSuspended)
+	}
+}
+
+func TestObsAccountMutation_PropagatesTraceToAuditEvent(t *testing.T) {
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	target, err := e.store.CreateAccount(context.Background(), "tenant-trace@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("create target account: %v", err)
+	}
+	rec := e.doAdmin(t, http.MethodPost, "/v1/admin/ops/accounts/"+target.ID+"/suspend?confirm=true&reason=security_incident", nil, map[string]string{
+		"X-Trace-Id": traceID,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("account suspend: got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Trace-Id"); got != traceID {
+		t.Fatalf("response trace id = %q, want %q", got, traceID)
+	}
+	events, err := e.store.ListEvents(context.Background(), target.ID, 10)
+	if err != nil {
+		t.Fatalf("list target events: %v", err)
+	}
+	if len(events) == 0 || events[0].Kind != "operator.action.account_suspend" {
+		t.Fatalf("account audit events = %+v", events)
+	}
+	if events[0].TraceID == nil || *events[0].TraceID != traceID {
+		t.Fatalf("audit trace id = %v, want %q", events[0].TraceID, traceID)
 	}
 }
 

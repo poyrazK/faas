@@ -1,0 +1,72 @@
+{
+  "release_tag": "v0.1.18-rc.119",
+  "release_commit": "bca75d649ffabe5d40c466c246ed60dacad3bcc6",
+  "project": "project-5ae37259-04cf-4070-bef",
+  "node": "faas-compute-node-1",
+  "node_id_counts": {
+    "cc461882-cba6-4182-8f26-e67c314361dc": 30
+  },
+  "disk": {
+    "device": "sdb",
+    "rotational": 0,
+    "class": "pd-ssd"
+  },
+  "fixture": "beta-burst-h-0911,beta-burst-i-0911",
+  "load_shape": "15 waves of two simultaneous in-capacity public restores after natural idle parking",
+  "slo_interval": "schedd wake.boot_started.at -> schedd wake.boot_completed.at",
+  "n": 30,
+  "unique_wake_ids": 30,
+  "platform_ms": {
+    "min": 189.81799999999998,
+    "avg": 267.07343333333336,
+    "p50": 260.923,
+    "p90": 324.507,
+    "p95": 335.219,
+    "p99": 366.242,
+    "max": 366.242
+  },
+  "vmmd_total_ms": {
+    "min": 175,
+    "avg": 252.5,
+    "p50": 244,
+    "p90": 310,
+    "p95": 320,
+    "p99": 351,
+    "max": 351
+  },
+  "restore_breakdown_total_ms": {
+    "min": 100,
+    "avg": 155.06666666666666,
+    "p50": 148,
+    "p90": 201,
+    "p95": 224,
+    "p99": 239,
+    "max": 239
+  },
+  "restore_gate_wait_ms": {
+    "min": 0,
+    "avg": 0.0,
+    "p50": 0,
+    "p90": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 0
+  },
+  "methods": [
+    "restore"
+  ],
+  "http_status_counts": {
+    "200": 30
+  },
+  "release_counts": {
+    "bca75d649ffabe5d40c466c246ed60dacad3bcc6": 30
+  },
+  "over_or_equal_350_ms": 1,
+  "artifact_source_counts": {
+    "base:cache_hit": 30,
+    "kernel:cache_hit": 30,
+    "main:cache_hit": 30
+  },
+  "max_concurrency_at_admit": 0,
+  "max_queued_count": 0
+}

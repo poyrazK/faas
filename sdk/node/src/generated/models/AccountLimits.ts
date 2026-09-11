@@ -2,8 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TriggerKind } from './TriggerKind.js';
 /**
- * Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and writable ephemeral app-disk capacity.
+ * Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account.
  */
 export type AccountLimits = {
   plan: 'free' | 'hobby' | 'pro' | 'scale';
@@ -20,5 +21,26 @@ export type AccountLimits = {
    * Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb.
    */
   ephemeral_disk_max_mb: number;
+  /**
+   * Whether the plan permits external event triggers.
+   */
+  triggers_allowed: boolean;
+  /**
+   * External trigger kinds this plan may create. Cron schedules use the dedicated crons API and are not included.
+   */
+  trigger_kinds: Array<TriggerKind>;
+  trigger_limit_per_app: number;
+  trigger_limit_per_account: number;
+  trigger_batch_size_max: number;
+  /**
+   * Maximum batching window in milliseconds.
+   */
+  trigger_batch_window_max_ms: number;
+  trigger_max_attempts_max: number;
+  trigger_payload_max_bytes: number;
+  /**
+   * Whether Kafka tls.skip_verify=true is permitted.
+   */
+  trigger_tls_skip_verify_allowed: boolean;
 };
 

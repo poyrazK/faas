@@ -24,7 +24,16 @@ The check verifies all of the following:
 - the URL is HTTPS and the certificate/hostname validates through curl;
 - the configured probe path (default `/status`) returns 2xx;
 - `Strict-Transport-Security` is present with `max-age >= 31536000`;
+- a representative standard-library API client user agent (`Python-urllib/3.13`)
+  receives the same 2xx response instead of a CDN browser-integrity block;
 - optional HTTP traffic redirects to HTTPS.
+
+The Cloudflare zone keeps Browser Integrity Check enabled on the apex and
+reserved platform hosts. A Configuration Rule named
+`Allow API clients on customer app hosts` disables that setting only for
+`*.gregale.dev` hostnames outside the reserved host list. If the API-client
+probe fails with Cloudflare error 1010, inspect that rule before changing any
+zone-wide security setting.
 
 For a site whose authenticated status page is not public, choose another
 unauthenticated 2xx path:

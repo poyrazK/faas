@@ -19,7 +19,7 @@ case "${runtime_image}" in
     required=(etc/passwd usr/bin/sh)
     ;;
   base-minimal)
-    required=(etc/passwd bin/busybox bin/sh)
+    required=(etc/passwd bin/busybox bin/sh usr/bin/env usr/bin/dirname usr/bin/basename)
     ;;
   runner-node22|runner-node24)
     required=(etc/passwd usr/local/bin/node)
@@ -95,6 +95,28 @@ docker run --rm --platform "${expected_platform}" --entrypoint /bin/sh "${image_
 # Execute Bash to check its loader and shared libraries as well as its path.
 docker run --rm --platform "${expected_platform}" --entrypoint /bin/bash "${image_ref}" \
   -ceu 'test -n "${BASH_VERSION}"'
+if [[ "${runtime_image}" == base-minimal ]]; then
+  # Railpack's npm and other managed executables use an env shebang. Exercise
+  # the full env -> bash exec chain so a present but unusable path also fails CI.
+  docker run --rm --platform "${expected_platform}" --entrypoint /usr/bin/env "${image_ref}" \
+    bash -ceu 'test -n "${BASH_VERSION}"'
+  # mise's npm wrapper invokes dirname before starting Node. Check the actual
+  # applet so a copied but incorrectly dispatched BusyBox binary also fails CI.
+  dirname_output=$(docker run --rm --platform "${expected_platform}" \
+    --entrypoint /usr/bin/dirname "${image_ref}" \
+    /mise/installs/node/22.23.2/bin/npm)
+  if [[ "${dirname_output}" != /mise/installs/node/22.23.2/bin ]]; then
+    echo "::error::${image_ref} has unusable /usr/bin/dirname: ${dirname_output}" >&2
+    exit 1
+  fi
+  basename_output=$(docker run --rm --platform "${expected_platform}" \
+    --entrypoint /usr/bin/basename "${image_ref}" \
+    /mise/installs/node/22.23.2)
+  if [[ "${basename_output}" != 22.23.2 ]]; then
+    echo "::error::${image_ref} has unusable /usr/bin/basename: ${basename_output}" >&2
+    exit 1
+  fi
+fi
 if [[ "${runtime_image}" == runner-python313 ]]; then
   python_minor=$(docker run --rm --platform "${expected_platform}" \
     --entrypoint /usr/local/bin/python3 "${image_ref}" \

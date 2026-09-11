@@ -201,6 +201,9 @@ func TestUnitBuilderd_Shape(t *testing.T) {
 
 func TestUnitGatewaydInternal_Shape(t *testing.T) {
 	u := UnitGatewaydInternal()
+	if !hasEnvironment(u, "FAAS_HOST_KEY_PATH", "/etc/faas/secrets/host.age") {
+		t.Fatal("gatewayd-internal must receive the host identity used to unseal public Basic auth")
+	}
 	assertBasicShape(t, "gatewayd-internal", u)
 	if u.Slice != FaasCPSlice {
 		t.Errorf("gatewayd-internal: Slice = %q, want %q", u.Slice, FaasCPSlice)
@@ -218,6 +221,9 @@ func TestUnitGatewaydPublic_Shape(t *testing.T) {
 	assertBasicShape(t, "gatewayd-public", u)
 	if u.Slice != FaasCPSlice {
 		t.Errorf("gatewayd-public: Slice = %q, want %q", u.Slice, FaasCPSlice)
+	}
+	if !hasEnvironment(u, "FAAS_TRUSTED_INGRESS_CIDRS", "127.0.0.0/8,::1/128") {
+		t.Error("gatewayd-public: missing loopback TLS terminator trust boundary")
 	}
 }
 
@@ -276,6 +282,18 @@ func TestUnitMeterd_Shape(t *testing.T) {
 	}
 	if !hasReadWrite(u, "/var/log/faas") {
 		t.Errorf("meterd: missing ReadWritePaths=/var/log/faas")
+	}
+	if !hasEnvironment(u, "FAAS_PROMETHEUS_URL", "http://127.0.0.1:9095") {
+		t.Error("meterd: missing local Prometheus endpoint for alert evaluation")
+	}
+	if !hasEnvironment(u, "FAAS_HOST_AGE_IDENTITY_PATH", "%d/faas_host_age_identity") {
+		t.Error("meterd: missing host age credential path for webhook secret decryption")
+	}
+	if !hasLoadCredential(u, "faas_host_age_identity", "/etc/faas/secrets/host.age") {
+		t.Error("meterd: missing current host age identity LoadCredential")
+	}
+	if !hasOptionalLoadCredential(u, "faas_host_age_identity_previous", "/etc/faas/secrets/host.age.previous") {
+		t.Error("meterd: missing optional previous host age identity LoadCredential")
 	}
 }
 

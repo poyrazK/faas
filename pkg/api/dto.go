@@ -2273,14 +2273,23 @@ type AccountResponse struct {
 // serialization. Stripped of fields the dashboard doesn't need
 // (eg. internal ops); mirror pkg/api/limits.go for the wiring.
 type AccountLimits struct {
-	Plan               string `json:"plan"`
-	RAMMB              int    `json:"ram_mb"`
-	MaxConcurrency     int    `json:"max_concurrency"`
-	DeployedApps       int    `json:"deployed_apps"`
-	DeveloperApps      int    `json:"developer_apps"`
-	IncludedGBHours    int64  `json:"included_gb_hours"`
-	AppLayerMaxMB      int    `json:"app_layer_max_mb"`
-	EphemeralDiskMaxMB int    `json:"ephemeral_disk_max_mb"`
+	Plan                        string        `json:"plan"`
+	RAMMB                       int           `json:"ram_mb"`
+	MaxConcurrency              int           `json:"max_concurrency"`
+	DeployedApps                int           `json:"deployed_apps"`
+	DeveloperApps               int           `json:"developer_apps"`
+	IncludedGBHours             int64         `json:"included_gb_hours"`
+	AppLayerMaxMB               int           `json:"app_layer_max_mb"`
+	EphemeralDiskMaxMB          int           `json:"ephemeral_disk_max_mb"`
+	TriggersAllowed             bool          `json:"triggers_allowed"`
+	TriggerKinds                []TriggerKind `json:"trigger_kinds"`
+	TriggerLimitPerApp          int           `json:"trigger_limit_per_app"`
+	TriggerLimitPerAccount      int           `json:"trigger_limit_per_account"`
+	TriggerBatchSizeMax         int           `json:"trigger_batch_size_max"`
+	TriggerBatchWindowMaxMs     int           `json:"trigger_batch_window_max_ms"`
+	TriggerMaxAttemptsMax       int           `json:"trigger_max_attempts_max"`
+	TriggerPayloadMaxBytes      int           `json:"trigger_payload_max_bytes"`
+	TriggerTLSSkipVerifyAllowed bool          `json:"trigger_tls_skip_verify_allowed"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext
@@ -2733,6 +2742,13 @@ func (u UsageResponse) TotalEgressGB() float64 {
 type DeploymentListResponse struct {
 	Items      []DeploymentResponse `json:"items"`
 	NextBefore string               `json:"next_before,omitempty"`
+}
+
+// LatestDeploymentsByAppResponse is the account-scoped batch shape returned
+// by GET /v1/deployments/latest-by-app. Items contains at most one newest
+// deployment for each non-deleted app the authenticated account owns.
+type LatestDeploymentsByAppResponse struct {
+	Items []DeploymentResponse `json:"items"`
 }
 
 // DeploymentSummaryResponse is the app-scoped release cockpit returned by
@@ -3379,10 +3395,11 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
-	// Degraded is true when at least one page- or warn-severity alert
-	// is currently firing on the local Prometheus. The public status
-	// page renders a "degraded" pill when this is true so prospects
-	// and customers see the same picture the operator's pager sees.
+	// Degraded is true when at least one fleet/platform page- or warn-severity
+	// alert is currently firing on the local Prometheus. Per-account alert
+	// preset signals stay private to their customer and do not change the
+	// fleet-wide public status. The public status page renders a "degraded"
+	// pill when this is true.
 	//
 	// The flag is intentionally conservative: a transient PromQL
 	// error against ALERTS{} is treated as "no firing alerts" rather
@@ -3426,6 +3443,7 @@ type InvokeResponse struct {
 	ID     string          `json:"id"`
 	Status string          `json:"status"`
 	Result json.RawMessage `json:"result,omitempty"`
+	Error  string          `json:"error,omitempty"`
 }
 
 // QueueSendResponse is returned on POST /v1/apps/{slug}/queues/invocations:send.
@@ -4473,10 +4491,12 @@ type SourceRefDeployRequest struct {
 	// defaults to ${{ github.event.pull_request.number }} on the
 	// Action side. All four are optional; the apid handler stamps
 	// them onto the deployment row + the audit data{} payload.
-	Reason     string `json:"reason,omitempty"`
-	Tag        string `json:"tag,omitempty"`
-	DeployedBy string `json:"deployed_by,omitempty"`
-	PRNumber   int    `json:"pr_number,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Tag            string            `json:"tag,omitempty"`
+	DeployedBy     string            `json:"deployed_by,omitempty"`
+	PRNumber       int               `json:"pr_number,omitempty"`
+	TrafficPercent *int              `json:"traffic_percent,omitempty"`
+	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -4495,10 +4515,12 @@ type SourceTarballDeployRequest struct {
 	// come from --reason / --tag; PRNumber is not normally
 	// supplied on a tarball deploy (it would be inferred from
 	// a paired GitHub Action, not the tarball CLI).
-	Reason     string `json:"reason,omitempty"`
-	Tag        string `json:"tag,omitempty"`
-	DeployedBy string `json:"deployed_by,omitempty"`
-	PRNumber   int    `json:"pr_number,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Tag            string            `json:"tag,omitempty"`
+	DeployedBy     string            `json:"deployed_by,omitempty"`
+	PRNumber       int               `json:"pr_number,omitempty"`
+	TrafficPercent *int              `json:"traffic_percent,omitempty"`
+	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).
@@ -5419,6 +5441,23 @@ type EdgeRuleCORSAction struct {
 // guard is intentionally narrow.
 var CorsOriginPattern = regexp.MustCompile(`^(?:\*|https?://(?:\*\.[a-zA-Z0-9.\-]+|localhost)(?::\*|\:[0-9]+)?|https?://[a-zA-Z0-9.\-]+(?::\*|\:[0-9]+)?)$`)
 
+// CorsHeaderNamePattern accepts an HTTP field-name token or the CORS wildcard.
+// The wildcard is valid only when credentials are disabled; callers enforce
+// that cross-field rule separately.
+var CorsHeaderNamePattern = regexp.MustCompile("^(?:\\*|[!#$%&'*+\\-.^_`|~0-9A-Za-z]+)$")
+
+func validateCORSAllowHeaders(subject string, headers []string, allowCredentials bool) *Problem {
+	for _, header := range headers {
+		if !CorsHeaderNamePattern.MatchString(header) {
+			return ErrValidation(subject + " allow_header " + strconv.Quote(header) + " is not a valid HTTP header name")
+		}
+		if allowCredentials && header == "*" {
+			return ErrValidation(subject + " cannot combine AllowCredentials: true with AllowHeaders: [\"*\"] (browsers require explicit header names for credentialed requests)")
+		}
+	}
+	return nil
+}
+
 func (a *EdgeRuleCORSAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("cors action is required")
@@ -5494,6 +5533,9 @@ func (a *EdgeRuleCORSAction) Validate() *Problem {
 				return ErrValidation("cors action cannot combine AllowCredentials: true with AllowOrigins: [\"*\"] (browsers reject this combination)")
 			}
 		}
+	}
+	if problem := validateCORSAllowHeaders("cors action", a.AllowHeaders, a.AllowCredentials); problem != nil {
+		return problem
 	}
 	return nil
 }

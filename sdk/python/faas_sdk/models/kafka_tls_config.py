@@ -28,7 +28,10 @@ class KafkaTLSConfig:
     client_cert: str | Unset = UNSET
     """PEM-encoded client cert for mTLS."""
     client_key: str | Unset = UNSET
-    """PEM-encoded client key for mTLS."""
+    """PEM-encoded client key for mTLS, accepted only on writes. Omit inside a supplied TLS block to preserve the
+    stored key."""
+    client_key_set: bool | Unset = UNSET
+    """Response-only marker indicating that a client key is configured; no credential material is returned."""
     skip_verify: bool | Unset = False
     """Skip TLS verification. Hobby plan rejects this
     (TLSSkipVerifyAllowed=false in pkg/api/limits.go);
@@ -43,6 +46,8 @@ class KafkaTLSConfig:
 
         client_key = self.client_key
 
+        client_key_set = self.client_key_set
+
         skip_verify = self.skip_verify
 
         field_dict: dict[str, Any] = {}
@@ -54,6 +59,8 @@ class KafkaTLSConfig:
             field_dict["client_cert"] = client_cert
         if client_key is not UNSET:
             field_dict["client_key"] = client_key
+        if client_key_set is not UNSET:
+            field_dict["client_key_set"] = client_key_set
         if skip_verify is not UNSET:
             field_dict["skip_verify"] = skip_verify
 
@@ -68,12 +75,15 @@ class KafkaTLSConfig:
 
         client_key = d.pop("client_key", UNSET)
 
+        client_key_set = d.pop("client_key_set", UNSET)
+
         skip_verify = d.pop("skip_verify", UNSET)
 
         kafka_tls_config = cls(
             ca_cert=ca_cert,
             client_cert=client_cert,
             client_key=client_key,
+            client_key_set=client_key_set,
             skip_verify=skip_verify,
         )
 

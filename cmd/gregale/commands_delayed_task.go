@@ -162,8 +162,8 @@ func cmdDelayedTaskGet(args []string) int {
 
 // cmdDelayedTaskCancel implements `gregale delayed-task cancel <id>`
 // (DELETE /v1/delayed-tasks/{id}). Idempotent — a second cancel is
-// a no-op 200 on the server; we mirror that posture by returning
-// 0 in both the success and the already-cancelled cases.
+// a no-op 200 on the server. The returned state is authoritative:
+// only "cancelled" means execution was prevented.
 func cmdDelayedTaskCancel(args []string) int {
 	if len(args) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale delayed-task cancel <id>", "delayed-task")
@@ -177,14 +177,26 @@ func cmdDelayedTaskCancel(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := client.CancelDelayedTask(context.Background(), id); err != nil {
+	resp, err := client.CancelDelayedTask(context.Background(), id)
+	if err != nil {
 		return printErr("Cancel failed", err)
 	}
+	cancelled := resp.State == "cancelled"
 	if jsonOutput {
-		return jsonOut(writeJSON(map[string]any{"id": id, "cancelled": true}))
+		if err := writeJSON(map[string]any{"id": id, "cancelled": cancelled, "state": resp.State}); err != nil {
+			return printErr("Could not encode JSON", err)
+		}
+		if cancelled {
+			return 0
+		}
+		return 1
 	}
-	PrintOK(osStdout, "Delayed task %s cancelled.", id)
-	return 0
+	if cancelled {
+		PrintOK(osStdout, "Delayed task %s cancelled.", id)
+		return 0
+	}
+	_, _ = fmt.Fprintf(osStderr, "Delayed task %s is %s; execution was not cancelled.\n", id, resp.State)
+	return 1
 }
 
 // validateDelayedTaskAddFlags enforces the per-field presence gate

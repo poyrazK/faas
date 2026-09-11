@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -60,6 +61,13 @@ const metricsPath = "/metrics"
 
 func main() {
 	wire.Daemon("schedd", run)
+}
+
+func loadHostAgeIdentities(path string) ([]*age.X25519Identity, error) {
+	if path == "" {
+		path = secretbox.DefaultHostKeyPath
+	}
+	return secretbox.LoadHostKeys(filepath.Dir(path))
 }
 
 // runDeps is the dependency-injection seam for testing. Production uses the
@@ -1279,6 +1287,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// floor trigger can share the same actor="schedd" instance
 	// and emit `floor.wake` audit rows on every proactive admit.
 	schedulerAuditor := audit.New(store, log, ops, "schedd")
+	hostAgePath := cfg.HostAgeIdentityPath
+	if hostAgePath == "" {
+		hostAgePath = secretbox.DefaultHostKeyPath
+	}
+	hostAgeIdentities, hostAgeErr := loadHostAgeIdentities(hostAgePath)
+	if hostAgeErr != nil {
+		log.Warn("trigger credentials: host age identities unavailable", "path", hostAgePath, "err", hostAgeErr)
+	}
 	// ADR-098: app-delete handler. Built here (not via the
 	// runDeps.subscribeAppDelete seam — that seam's now a stub
 	// retained only for the main_coverage_smoke_test defaultDeps
@@ -1289,6 +1305,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	appDeleteSub := sched.NewAppDeleteSubscriber(engine, log)
 	loop := sched.NewLoop(pool, engine, log).
 		WithAppDeleteSubscriber(appDeleteSub).
+		WithTriggerSecretIdentities(hostAgeIdentities).
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).
@@ -1811,15 +1828,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// dispatcher's drain.
 	webhookDispatcher := webhook.NewDispatcher(store, schedulerAuditor, log)
 	webhookDispatcher.IdentityLoader = func() []*age.X25519Identity {
-		path := cfg.HostAgeIdentityPath
-		if path == "" {
-			path = secretbox.DefaultHostKeyPath
-		}
-		ident, err := secretbox.LoadHostKey(path)
-		if err != nil || ident == nil {
-			return nil
-		}
-		return []*age.X25519Identity{ident}
+		return append([]*age.X25519Identity(nil), hostAgeIdentities...)
 	}
 	// Propagate the dispatcher's lifecycle error through loopErr so
 	// a non-context-canceled exit (e.g. a poisoned row) tears down

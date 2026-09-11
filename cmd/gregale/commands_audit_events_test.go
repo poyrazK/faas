@@ -162,3 +162,30 @@ func TestCmdAuditEvents_DefaultShapeUnchanged(t *testing.T) {
 		t.Errorf("default 4-col line missing\nfull: %s", out)
 	}
 }
+
+func TestCmdAuditEvents_JSONEmitsCompleteNDJSONRows(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = false })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.ListAuditEventsResponse{Events: []api.AuditEventResponse{{
+			ID: "event-1", At: "2026-09-10T17:51:28Z", Actor: "schedd",
+			Kind: "wake.admitted", Subject: "account-1", Data: json.RawMessage(`{"app_id":"app-1"}`),
+		}}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	out, restore := swapStdout(t)
+	defer restore()
+	if code := cmdAuditEvents([]string{"list"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	var row api.AuditEventResponse
+	if err := json.Unmarshal(out.Bytes(), &row); err != nil {
+		t.Fatalf("NDJSON row: %v; output=%q", err, out.String())
+	}
+	if row.ID != "event-1" || !strings.Contains(string(row.Data), "app-1") {
+		t.Fatalf("row = %+v", row)
+	}
+}

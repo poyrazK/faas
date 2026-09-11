@@ -19,10 +19,10 @@ configured `for:` window:
 
 | Alert | Mode | Direction | Trigger |
 |---|---|---|---|
-| `FaasTrafficSpike` | fleet | spike | `max(faas_apid_request_rate_ratio:by_route) > 3` for 10m |
+| `FaasTrafficSpike` | fleet | spike | a route > 3x its 3d baseline AND > 1 rps for 10m |
 | `FaasTrafficDrop` | fleet | drop | a route < 0.2x its 3d baseline AND > 0.1 rps for 15m |
-| `FaasErrorRateSpike` | fleet | spike (error_rate) | `max(faas_apid_error_rate_ratio:by_route) > 2` for 10m |
-| `FaasErrorRateDrop` | fleet | drop (error_rate) | a route < 0.5x its 3d baseline AND > 0.001 err/s for 15m |
+| `FaasErrorRateSpike` | fleet | spike (error_rate) | a matched route > 2x its 3d baseline for 10m |
+| `FaasErrorRateDrop` | fleet | drop (error_rate) | a matched route < 0.5x its 3d baseline AND > 0.001 err/s for 15m |
 | `FaasTrafficAnomaly` | platform | drift | 10+ accounts simultaneously > 2× their 3d baseline for 10m |
 | `FaasTrafficSpikeAccount` | account | spike | a customer > 10x its own 3d baseline for 15m |
 | `FaasTrafficDropAccount` | account | drop | a customer < 0.1x its own 3d baseline AND > 0.1 rps for 30m |
@@ -31,6 +31,10 @@ The 3d baseline is calculated by the `faas_anomaly_baseline` recording-rule
 group; the alert rules read the recording rules for the fleet-wide
 variants and inline `avg_over_time` for the per-account variants
 (see ADR-039 §Consequences for why).
+
+The fleet error-rate alerts exclude `route="unmatched"`. That bucket is
+anonymous Internet scanning and invalid paths that correctly return 404; it
+does not indicate that a customer-facing API route regressed.
 
 `account_id="__other__"` is the bounded overflow bucket (issue #278)
 — drill-down on this means the customer is past the 10 000 admission

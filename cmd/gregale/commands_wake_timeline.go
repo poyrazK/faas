@@ -341,6 +341,7 @@ func renderRestoreBreakdown(ev api.WakeTimelineEvent) string {
 		key   string
 	}{
 		{label: "total", key: "total_ms"},
+		{label: "restore_gate_wait", key: "restore_gate_wait_ms"},
 		{label: "chroot", key: "chroot_ms"},
 		{label: "materialize_mem", key: "materialize_mem_ms"},
 		{label: "materialize_vmstate", key: "materialize_vmstate_ms"},

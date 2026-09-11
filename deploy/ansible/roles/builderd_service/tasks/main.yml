@@ -156,11 +156,25 @@
 # vmmd /srv/fc/parent dir that the imaged role also reads.
 - name: builderd_service — ensure /srv/fc/builder exists (ADR-053 build staging)
   ansible.builtin.file:
-    path: /srv/fc/builder
+    path: "{{ builderd_build_staging_root }}"
     state: directory
     owner: faas-builderd
     group: faas
     mode: "0750"
+
+# A replacement node reaches builderd readiness before it has accepted its
+# first build. Create both configured staging children during convergence so
+# the readiness write probe and the first build do not depend on prior state.
+- name: builderd_service — create clean-node build staging directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: faas-builderd
+    group: faas
+    mode: "0755"
+  loop:
+    - "{{ builderd_build_drive_dir }}"
+    - "{{ builderd_build_export_dir }}"
 
 # OCI storage uses the shared read-through cache for source archives and
 # produced layers. builderd is a writer, so the path must exist before

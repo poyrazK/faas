@@ -22,7 +22,6 @@ package main
 // handlers_ext.go (ListCronRunsResponse).
 
 import (
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -435,11 +434,15 @@ func (s *server) deleteAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// rotateAppWebhookSecret server-mints a 32-byte secret, seals it,
-// and overwrites the row's sealed ciphertext in place. The
-// plaintext is NEVER returned — only the masked constant + the
-// rotated_at timestamp.
+// rotateAppWebhookSecret seals a caller-supplied replacement and overwrites
+// the row in place. The caller can install the same value in its receiver;
+// reads and responses still expose only the masked constant.
 func (s *server) rotateAppWebhookSecret(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	var req api.RotateAppWebhookSecretRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeAppWebhookInvalid, "Bad request", err.Error()))
+		return
+	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || limits.WebhookPerApp == 0 {
 		api.WriteProblem(w, api.ErrPlanWebhooksNotAllowed(acct.Plan))
@@ -460,17 +463,16 @@ func (s *server) rotateAppWebhookSecret(w http.ResponseWriter, r *http.Request, 
 		s.notFound(w, "webhook not found")
 		return
 	}
+	if prob := validateWebhookSecret(req.WebhookSecret); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	recipient := setSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 		return
 	}
-	plaintext, err := mintWebhookSecret(32)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not mint webhook secret"))
-		return
-	}
-	sealed, err := secretbox.SealBytes(recipient, appWebhookSecretSealLabel, plaintext, api.AppWebhookSecretMaxBytes)
+	sealed, err := secretbox.SealBytes(recipient, appWebhookSecretSealLabel, []byte(req.WebhookSecret), api.AppWebhookSecretMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			api.WriteProblem(w, prob)
@@ -494,7 +496,6 @@ func (s *server) rotateAppWebhookSecret(w http.ResponseWriter, r *http.Request, 
 		"app_id":     app.ID,
 		"rotated_at": row.UpdatedAt,
 	})
-	_ = plaintext // never logged; the plaintext is destroyed at function exit
 	writeJSON(w, http.StatusOK, api.RotateAppWebhookSecretResponse{
 		RotatedAt:                 api.FormatAlertTime(row.UpdatedAt),
 		WebhookSecretSealedMasked: api.AppWebhookSecretMasked,
@@ -642,20 +643,6 @@ func appWebhookDeliveryResponse(r state.AppWebhookDelivery) api.AppWebhookDelive
 		CreatedAt:        r.CreatedAt,
 		UpdatedAt:        r.UpdatedAt,
 	})
-}
-
-// mintWebhookSecret is a crypto/rand-backed helper that mints a
-// fresh HMAC secret. Mirrors mintAlertRuleSecret
-// (handlers_alerts.go:860).
-func mintWebhookSecret(byteLen int) ([]byte, error) {
-	if byteLen <= 0 || byteLen > 1024 {
-		return nil, fmt.Errorf("webhook: secret byte length %d out of bounds", byteLen)
-	}
-	buf := make([]byte, byteLen)
-	if _, err := rand.Read(buf); err != nil {
-		return nil, err
-	}
-	return buf, nil
 }
 
 // timeNow is the time.Now seam for the deliveries handler's

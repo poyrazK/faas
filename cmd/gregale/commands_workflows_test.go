@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -102,5 +104,34 @@ func TestCmdWorkflowsEvents_MissingArgs(t *testing.T) {
 	}
 	if !strings.Contains(captured, "gregale workflows events send") {
 		t.Errorf("usage must mention 'events send'; got: %s", captured)
+	}
+}
+
+func TestCmdWorkflowsEvents_TrailingPayloadIsSent(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"status":"received","event_name":"audit.ready"}`, http.StatusOK)
+	runID := "00000000-0000-4000-8000-000000000005"
+	if code := cmdWorkflowsEvents([]string{"send", runID, "audit.ready", "--payload", `{"marker":"must-survive"}`}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	var got struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Payload) != `{"marker":"must-survive"}` {
+		t.Fatalf("payload = %s", got.Payload)
+	}
+}
+
+func TestCmdWorkflowsEvents_TrailingMalformedPayloadFailsBeforeRequest(t *testing.T) {
+	resetJSONOut(t)
+	runID := "00000000-0000-4000-8000-000000000005"
+	code, output := runWithStderr(t, func() int {
+		return cmdWorkflowsEvents([]string{"send", runID, "audit.ready", "--payload", "{bad"})
+	})
+	if code != 1 || !strings.Contains(output, "must be valid JSON") {
+		t.Fatalf("exit=%d stderr=%q", code, output)
 	}
 }

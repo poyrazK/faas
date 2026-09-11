@@ -1,3 +1,4 @@
+// adr: 053
 package fcvm
 
 import (
@@ -1101,6 +1102,32 @@ func TestDestroyCancelsLivenessLoop(t *testing.T) {
 	}
 }
 
+func TestLivenessLoopUsesInstanceRuntimePort(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	registry := NewLivenessRegistry()
+	var got LivenessProbeConfig
+	m.WithLivenessProbes(registry, LivenessProbeConfig{
+		Path:                "/healthz",
+		PeriodSeconds:       5,
+		ConsecutiveFailures: 3,
+	}).WithLivenessProbeStarter(func(_ context.Context, _ string, _ int, _ string, cfg LivenessProbeConfig) context.CancelFunc {
+		got = cfg
+		return func() {}
+	})
+	m.mu.Lock()
+	m.live["i-custom-port"] = &Instance{
+		Lease: Lease{Instance: "i-custom-port", Slot: 1},
+		Port:  3000,
+	}
+	m.mu.Unlock()
+
+	m.startLivenessLoop(context.Background(), "i-custom-port", 1, nil)
+	t.Cleanup(func() { m.cancelLivenessLoop("i-custom-port") })
+	if got.Port != 3000 {
+		t.Fatalf("liveness port = %d, want 3000", got.Port)
+	}
+}
+
 func TestParkCancelsLivenessLoop(t *testing.T) {
 	run, vmm := &fakeRunner{}, &fakeVMM{}
 	m := newTestManager(run, vmm)
@@ -1730,6 +1757,18 @@ func TestSetupNetworkRunsNftBeforeVMBoot(t *testing.T) {
 	// VMM.Boot runs after setupNetwork returns (Wake's call sequence). bootCount
 	// is asserted at the top of this test via `vmm.boots() != 1`; the order
 	// between tap-create < DNAT < Boot is the load-bearing #30 invariant.
+}
+
+func TestSetupNetworkDNATsStableHostPortToDeploymentPort(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+
+	if _, err := m.ColdBoot(context.Background(), reqWithPort("dnat-custom", 3000)); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	if !run.ran("tcp dport 8080 dnat to 10.0.0.2:3000") {
+		t.Fatalf("custom deployment port was not applied to readiness DNAT: %v", run.commands)
+	}
 }
 
 func TestRunNftCommandsUsesSingleAtomicBatch(t *testing.T) {

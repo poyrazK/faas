@@ -1,3 +1,4 @@
+// adr: 053
 package fcvm
 
 import (
@@ -120,7 +121,8 @@ func TestPreparedNetworkPolicyAndExpiry(t *testing.T) {
 	}
 	for _, req := range []WakeRequest{
 		{Plan: "scale", ExportDir: "/builder"}, {Plan: "scale", StaticEgressIP: "1.2.3.4"},
-		{Plan: "scale", EgressAllowlist: []string{"1.2.3.4/32"}}, {Plan: "invalid"},
+		{Plan: "scale", EgressAllowlist: []string{"1.2.3.4/32"}}, {Plan: "scale", Port: 3000},
+		{Plan: "invalid"},
 	} {
 		if _, ok := m.preparedPolicy(req); ok {
 			t.Fatalf("unsupported policy eligible: %+v", req)

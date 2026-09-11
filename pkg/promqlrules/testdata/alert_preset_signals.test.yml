@@ -2,7 +2,8 @@
 # signal rules (issue #1233 follow-up to PR-B migration 00516).
 #
 # What this exercises:
-#   1. FaasApiDownAccount — `meterd_api_reachable < 1` for 5m.
+#   1. FaasApiDownAccount — active public traffic without a 2xx
+#      response for 5m. Idle apps do not alert.
 #   2. FaasSpendEur20Account — `meterd_account_spend_eur > 20`
 #      for 1h.
 #   3. FaasDeployFailedAccount —
@@ -40,17 +41,19 @@ evaluation_interval: 30s
 
 tests:
   # ──────────────────────────────────────────────────────────────
-  # Test 1 — api_down signal fires when reachability drops to 0.
+  # Test 1 — api_down fires when active public traffic has no 2xx.
+  # meterd_api_reachable only supplies the account/app label map.
   # The 5m `for:` window must elapse before the alert is active.
   # ──────────────────────────────────────────────────────────────
   - interval: 30s
-    name: "api_reachable=0 → FaasApiDownAccount fires"
+    name: "active failing public traffic → FaasApiDownAccount fires"
     input_series:
-      # Healthy for 1h, then drops to 0 for 30m. The 5m `for:`
-      # window elapsed from the first expression-true eval at
-      # t=1h+5m; alert active at t=1h+15m.
+      # The gauge value is deliberately 0 throughout: the recording
+      # rule uses only its labels and derives health from the gateway.
       - series: 'meterd_api_reachable{account_id="acct-down",app_id="app-1"}'
-        values: '1+0x120 0+0x60'
+        values: '0+0x180'
+      - series: 'gateway_requests_total{app="app-1",plan="free",code="503"}'
+        values: '0+1x180'
     alert_rule_test:
       - eval_time: 1h15m
         alertname: FaasApiDownAccount
@@ -64,8 +67,20 @@ tests:
               app_id: "app-1"
             exp_annotations:
               summary: "API reachability below 1.0 for app app-1 (account acct-down)"
-              description: "meterd_api_reachable{account_id=\"acct-down\",app_id=\"app-1\"} has been < 1.0 (i.e. no successful invocation in the last 5 min) for 5m. This is the alert_preset catalog `api_down` signal. Cross-check `meterd_account_spend_eur` and `meterd_api_reachable` panels; common causes: customer app crashed and is restarting, gatewayd queue saturated, or the customer's app slug was typo'd at deploy time."
+              description: "Public traffic for app app-1 (account acct-down) has completed without any 2xx response in each rolling 5m window for 5m. Idle apps do not fire. This is the alert_preset catalog `api_down` signal. Cross-check gateway request status and queue panels; common causes: customer app crashes, repeated wake failures, or gateway queue saturation."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiDown.md"
+
+  # Idle scale-to-zero apps are healthy by absence of demand. The
+  # meterd sweep may report 0 because no async invocation exists;
+  # without public gateway traffic the recording rule emits no row.
+  - interval: 30s
+    name: "idle app → no FaasApiDownAccount alert"
+    input_series:
+      - series: 'meterd_api_reachable{account_id="acct-idle",app_id="app-idle"}'
+        values: '0+0x120'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: FaasApiDownAccount
 
   # ──────────────────────────────────────────────────────────────
   # Test 2 — spend_eur_20 fires when 24h spend crosses 20 EUR.
@@ -220,7 +235,18 @@ tests:
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSLOBurnRateHigh.md"
 
   # ──────────────────────────────────────────────────────────────
-  # Test 6 — correlation rule fires when at least one of the
+  # Unknown-host traffic uses app="-". Internet scanners and stale DNS must
+  # not consume a customer's error budget or create a customer-facing alert.
+  - interval: 30s
+    name: "unknown-host failures → no FaasSLOBurnRateHigh alert"
+    input_series:
+      - series: 'gateway_requests_total{app="-",plan="-",code="404"}'
+        values: '0+100x750'
+    alert_rule_test:
+      - eval_time: 6h15m
+        alertname: FaasSLOBurnRateHigh
+
+  # Test 7 — correlation rule fires when at least one of the
   # 5 account-labeled signals is firing for the same account.
   # ──────────────────────────────────────────────────────────────
   - interval: 30s
@@ -248,7 +274,7 @@ tests:
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertPresetAnyFiringAccount.md"
 
   # ──────────────────────────────────────────────────────────────
-  # Test 7 — correlation rule fires when ONLY the queue signal is
+  # Test 8 — correlation rule fires when ONLY the queue signal is
   # firing (the other 4 account-labeled signals are healthy). Pre-
   # PR-D this case would NOT fire — the queue signal was excluded
   # from the correlation. Post-PR-D it fires because queue now
@@ -286,13 +312,15 @@ tests:
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertPresetAnyFiringAccount.md"
 
   # ──────────────────────────────────────────────────────────────
-  # Test 8 — negative case. All signals within bounds → no alerts.
+  # Test 9 — negative case. All signals within bounds → no alerts.
   # ──────────────────────────────────────────────────────────────
   - interval: 30s
     name: "all signals OK → no alert_preset alert fires"
     input_series:
       - series: 'meterd_api_reachable{account_id="acct-ok",app_id="app-ok"}'
         values: '1+0x120'
+      - series: 'gateway_requests_total{app="app-ok",plan="free",code="200"}'
+        values: '0+1x120'
       - series: 'meterd_account_spend_eur{account_id="acct-ok"}'
         values: '5+0x120'
       - series: 'meterd_deployment_failed_total{account_id="acct-ok",app_id="app-ok"}'

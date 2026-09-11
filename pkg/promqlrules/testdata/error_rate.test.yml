@@ -143,3 +143,23 @@ tests:
       - eval_time: 10h15m
         alertname: FaasErrorRateDrop
         # No exp_alerts → assert the alert is NOT active.
+
+  # ──────────────────────────────────────────────────────────────
+  # Test 4 — anonymous Internet scans. An unmatched-route error
+  # burst has the same shape as Test 1, but expected 404 probing must
+  # not turn the public platform status red.
+  # ──────────────────────────────────────────────────────────────
+  - interval: 30s
+    name: "unmatched-route burst → neither fleet error-rate alert fires"
+    input_series:
+      - series: 'apid_request_total{account_id="anonymous",route="unmatched",code="err"}'
+        values: '0+0x1200 0+0.3x50'
+      - series: 'apid_request_total{account_id="anonymous",route="unmatched",code="ok"}'
+        values: '0+0x1250'
+    alert_rule_test:
+      - eval_time: 10h15m
+        alertname: FaasErrorRateSpike
+        # No exp_alerts → unmatched scans are excluded.
+      - eval_time: 10h15m
+        alertname: FaasErrorRateDrop
+        # No exp_alerts → unmatched scans are excluded.

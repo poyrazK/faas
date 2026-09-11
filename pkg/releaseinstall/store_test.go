@@ -200,6 +200,8 @@ func (s *fakeStore) UpsertComputeNode(_ context.Context, name, gitSHA, manifestH
 		Name:         name,
 		ReleaseID:    gitSHA,
 		ManifestHash: manifestHash,
+		Lifecycle:    "active",
+		Active:       true,
 	}
 	return id, nil
 }

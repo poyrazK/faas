@@ -1011,15 +1011,19 @@ Production debugger (ADR-127)
 
 ### debug requests
 
-Per-request telemetry (list|get|show|evidence|replay)
+Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])
 
 ### debug regressions
 
-Active regression observations
+Active regression observations (list|watch [--interval D] [--once])
 
 ### debug compare
 
 Per-route deployment-vs-deployment compare
+
+### debug bundle
+
+Export a redacted incident investigation bundle (bundle &lt;slug&gt; &lt;req_id&gt; [--output PATH])
 
 
 ## invitations
@@ -1326,9 +1330,13 @@ Enqueue a wake request
 
 Receive a wake request
 
-### queue status
+### queue state
 
 Show queue state
+
+### queue status
+
+Alias for queue state
 
 ### queue peek
 
@@ -1712,6 +1720,12 @@ Retry a failed delivery
 ### webhooks rotate-secret
 
 Rotate the webhook signing secret
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--secret <VALUE>` | replacement HMAC-SHA256 secret |  |
+| `--from-stdin` | read the replacement secret from stdin |  |
 
 
 ## whoami

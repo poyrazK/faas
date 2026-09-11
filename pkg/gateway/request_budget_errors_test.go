@@ -1,3 +1,4 @@
+// spec: §4.1
 package gateway
 
 import (
@@ -54,5 +55,24 @@ func TestRequestBudgetExpiredUsesBudgetClockWhenContextErrorLags(t *testing.T) {
 	})
 	if !requestBudgetExpired(ctx) {
 		t.Fatal("requestBudgetExpired = false, want true for an elapsed budget")
+	}
+}
+
+func TestHandleForwardRequestCancellationUsesBudgetClockWhenContextErrorLags(t *testing.T) {
+	ctx := reqbudget.NewContext(context.Background(), reqbudget.Budget{
+		Total:   time.Second,
+		Started: time.Now().Add(-2 * time.Second),
+	})
+	r := httptest.NewRequest("GET", "http://example.test", nil).WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	if !handleForwardRequestCancellation(rr, r, true) {
+		t.Fatal("handleForwardRequestCancellation returned false for an elapsed budget")
+	}
+	if rr.Code != 504 {
+		t.Fatalf("status = %d, want 504", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), api.CodeRequestBudgetExceeded) {
+		t.Fatalf("body = %q, missing code %q", rr.Body.String(), api.CodeRequestBudgetExceeded)
 	}
 }

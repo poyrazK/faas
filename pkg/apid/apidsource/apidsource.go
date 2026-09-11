@@ -191,7 +191,14 @@ type EnqueueParams struct {
 	PRNumber   int
 	// Workflows is the validated definition set carried by a multipart source
 	// deploy and stored with the deployment for run snapshotting.
-	Workflows json.RawMessage
+	Workflows              json.RawMessage
+	TrafficPercent         int
+	TrafficPercentExplicit bool
+	CanaryPreset           string
+	CanaryStep             int
+	CanaryTotalSteps       int
+	CanaryStepStartedAt    *time.Time
+	CanaryStages           json.RawMessage
 	// HostingObserver and HostingFlow are optional. They let HTTP source paths
 	// report privacy-safe source-detection timing without adding customer,
 	// repository, path, URL, or environment labels.
@@ -408,12 +415,19 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		// the upstream caller (CLI multipart, JSON body, githubd
 		// bridge). pgstore.CreateDeployment collapses "" to NULL
 		// via nullString and PRNumber=0 to NULL via nullif(0).
-		Reason:          p.Reason,
-		Tag:             p.Tag,
-		DeployedBy:      p.DeployedBy,
-		PRNumber:        p.PRNumber,
-		Workflows:       append(json.RawMessage(nil), p.Workflows...),
-		InferredProfile: append(json.RawMessage(nil), inferredProfile...),
+		Reason:                 p.Reason,
+		Tag:                    p.Tag,
+		DeployedBy:             p.DeployedBy,
+		PRNumber:               p.PRNumber,
+		Workflows:              append(json.RawMessage(nil), p.Workflows...),
+		InferredProfile:        append(json.RawMessage(nil), inferredProfile...),
+		TrafficPercent:         p.TrafficPercent,
+		TrafficPercentExplicit: p.TrafficPercentExplicit,
+		CanaryPreset:           p.CanaryPreset,
+		CanaryStep:             p.CanaryStep,
+		CanaryTotalSteps:       p.CanaryTotalSteps,
+		CanaryStepStartedAt:    p.CanaryStepStartedAt,
+		CanaryStages:           append(json.RawMessage(nil), p.CanaryStages...),
 	}
 	if p.ServiceRollout {
 		// Keep the predecessor live until schedd observes the new service

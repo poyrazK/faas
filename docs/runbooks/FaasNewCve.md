@@ -1,7 +1,7 @@
 # Runbook · FaasNewCve
 
-> **Alert:** `FaasNewCve` (severity: page, family: cve).
-> **Source:** `increase(meterd_cve_check_total{result="new_cve", severity=~"medium|high|critical"}[1h]) > 0` for 1m.
+> **Beta alert:** GitHub Actions failure or an issue with the `security` label.
+> **Deferred alert:** `FaasNewCve` remains dormant until workflow-result metrics are ingested.
 > **Workflow:** `.github/workflows/cve-check.yml` runs daily at 06:00 UTC.
 > **ADR:** ADR-131.
 
@@ -10,9 +10,9 @@
 The nightly cve-check workflow has detected a new CVE ≥ medium
 severity in the SBOM (grype) or the Go code (govulncheck) that
 was NOT present in the previous day's run. A GitHub Issue titled
-"New CVE detected YYYY-MM-DD" with the `security` + `cve` labels
-has been opened automatically. The alert fires when meterd pushes
-the per-run counter (`meterd_cve_check_total{result="new_cve"}`).
+"New CVE detected YYYY-MM-DD" with the `security` label
+has been opened automatically. A scanner or vulnerability-database failure
+keeps the workflow red and opens one deduplicated scanner-failure issue.
 
 ## Why now?
 
@@ -29,7 +29,7 @@ the per-run counter (`meterd_cve_check_total{result="new_cve"}`).
 
 1. **Read the GitHub Issue.** The body lists the CVE id, the
    affected package + version, and the severity tier.
-   `gh issue list --label cve --state open --limit 5`.
+   `gh issue list --label security --state open --limit 5`.
 2. **Verify the CVE.** Cross-reference with
    https://deps.dev/ and https://nvd.nist.gov/ for the affected
    versions + the fixed-in version.
@@ -61,3 +61,6 @@ the per-run counter (`meterd_cve_check_total{result="new_cve"}`).
   bug + consider a temporary fork pin.
 - Add a regression test that pins the dep bump (closes the
   issue + prevents re-introduction).
+
+The public-beta runtime/image review from 2026-09-10 is recorded in
+[`docs/ops/runtime-scan-triage-20260910.md`](../ops/runtime-scan-triage-20260910.md).

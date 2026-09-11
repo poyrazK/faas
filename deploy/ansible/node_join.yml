@@ -482,6 +482,20 @@
           # /usr/local/bin/faas-guest-init override to survive node adoption.
           Environment=FAAS_GUEST_INIT=/opt/faas/current/bin/init
 
+    - name: Install the hardware-derived vmmd capacity contract
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-vmmd.service.d/zz-faas-capacity.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_COMPUTE_VCPUS={{ ansible_processor_vcpus }}
+          Environment=FAAS_COMPUTE_MEM_MB={{ ansible_memtotal_mb }}
+          Environment=FAAS_COMPUTE_MAX_CONCURRENCY={{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}
+          Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}
+          Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((ansible_processor_vcpus | int) * 8, true) }}
+
     - name: Pre-register the adopted node as drained before release installation
       ansible.builtin.command:
         argv:
@@ -499,7 +513,7 @@
           - --mem-mb
           - "{{ ansible_memtotal_mb }}"
           - --max-concurrency
-          - "{{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 50, true) }}"
+          - "{{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}"
           - --admission-ceiling-mb
           - "{{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}"
           - --defer-activation

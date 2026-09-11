@@ -83,7 +83,7 @@ func normalizeDeployPreviewFlags(dryRun, diff bool) (bool, error) {
 // into the diff CLI options. Called from cmdDeployTarball's
 // --diff short-circuit path so the diff sees the same flags a real
 // deploy would.
-func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string, requireAuthnPtr *bool, appProtocolPtr *string) diffCLIOptions {
+func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string, requireAuthnPtr *bool, appProtocolPtr *string, resourceProfile string) diffCLIOptions {
 	opts := diffCLIOptions{
 		Slug:     slug,
 		AppShape: sh,
@@ -99,6 +99,13 @@ func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string
 	if appProtocolPtr != nil {
 		v := *appProtocolPtr
 		opts.AppConfig.AppProtocol = &v
+	}
+	if resourceProfile != "" {
+		if profile, ok := api.ResourceProfileSpecFor(resourceProfile); ok {
+			memory, cpu := profile.MemoryMB, profile.CPUMillicores
+			opts.AppConfig.RAMMB = &memory
+			opts.AppConfig.CPUMillicores = &cpu
+		}
 	}
 	return opts
 }

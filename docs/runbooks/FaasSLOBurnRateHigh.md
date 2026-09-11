@@ -2,7 +2,9 @@
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml` and the
 `slo_burn_rate` alert preset.
-Metric: `gateway_requests_total` non-2xx requests versus total requests.
+Metric: `gateway_requests_total{app!="-"}` non-2xx requests versus total
+requests. The `app="-"` unknown-host sentinel is excluded so scanners and
+stale DNS do not consume a customer's error budget.
 SLO: ADR-082 API availability 99.5% (0.5% error budget).
 Severity: warn.
 

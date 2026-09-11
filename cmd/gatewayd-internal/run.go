@@ -580,14 +580,22 @@ func debugReplayMetadata(inv state.Invocation) (map[string]string, error) {
 // Wake RPC for the same invocation. The target is forwarded directly to the
 // existing node-client path, so the handler needs no second app lookup.
 func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, error) {
+	out, _, err := a.InvokeWithTargetStatus(ctx, appID, inv, target)
+	return out, err
+}
+
+// InvokeWithTargetStatus is the pre-woken status-preserving path. The synth
+// server echoes the status to schedd so a runner-generated handler error is
+// reported with its real HTTP code and retryable 5xx responses remain distinct.
+func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, int, error) {
 	if target.InstanceID == "" || target.NodeID == "" {
-		return inv, fmt.Errorf("gateway synth: pre-woken target is incomplete")
+		return inv, 0, fmt.Errorf("gateway synth: pre-woken target is incomplete")
 	}
 	if a.forward == nil {
-		return inv, fmt.Errorf("gateway synth: invocation forwarder is not wired")
+		return inv, 0, fmt.Errorf("gateway synth: invocation forwarder is not wired")
 	}
 	inv.InstanceID = target.InstanceID
-	return a.forwardInvocation(ctx, target, inv)
+	return a.forwardInvocationWithStatus(ctx, target, inv)
 }
 
 // forwardInvocation delivers a synthetic invocation through the same
@@ -663,8 +671,22 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 	} else {
 		inv.Result = nil
 	}
-	inv.State = state.InvocationDispatching
+	if (rec.Code >= http.StatusBadRequest && rec.Code < http.StatusInternalServerError) ||
+		(rec.Code == http.StatusInternalServerError && isHandlerErrorResult(body)) {
+		// A 4xx or the runner's explicit handler_error means the invocation
+		// reached customer code and cannot recover by moving to another VM.
+		inv.State = state.InvocationFailed
+	} else {
+		inv.State = state.InvocationDispatching
+	}
 	return inv, rec.Code, nil
+}
+
+func isHandlerErrorResult(body []byte) bool {
+	var envelope struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &envelope) == nil && envelope.Error == "handler_error"
 }
 
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
@@ -875,6 +897,13 @@ type runDeps struct {
 	// path unseals per-request. Production wires a single
 	// gateway.NewPublicAuthCache() constructed in run().
 	publicAuthCache *gateway.PublicAuthCache
+	// responseCache is the one process-local response cache shared by the
+	// request handler and PGBackend invalidation subscriber. Both consumers
+	// must receive the same instance: the handler serves and stores entries,
+	// while app/deployment/edge-rule notifications remove stale entries.
+	// Production creates it in run(); nil keeps cache rules disabled in tests
+	// that do not opt into this surface.
+	responseCache *gateway.ResponseCache
 	// publicAuthUnsealer (issue #477 / ADR-079) is the
 	// gateway.PublicAuthUnsealer the basic-auth branch uses
 	// to convert the secretbox-sealed BasicSealed blob into
@@ -1085,6 +1114,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// scoring, identical to a fresh install (ADR-005 cold boot must
 	// always work).
 	warmHintCache := gateway.NewWarmHintCache()
+	// ADR-122: keep one cache instance for both the request path and the
+	// notification invalidator. The cache implementation and metrics were
+	// previously present, but production never attached a cache to Handler,
+	// so every configured cache rule silently fell through to a wake and all
+	// response-cache counters remained zero.
+	responseCache := gateway.NewResponseCache()
+	deps.responseCache = responseCache
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithWarmHint(warmHintCache.HintFunc()).
 		WithAppResolver(func(ctx context.Context, appID string) (gateway.App, bool, error) {
@@ -1111,10 +1147,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return nil, err
 			}
-			live := make(map[string]struct{}, len(liveDeployments))
+			live := make(map[string]int, len(liveDeployments))
 			for _, deployment := range liveDeployments {
 				if deployment.ID != "" {
-					live[deployment.ID] = struct{}{}
+					live[deployment.ID] = schedpkg.DeploymentRuntimePort(deployment)
 				}
 			}
 			instances, err := pgStore.ListInstancesForApp(ctx, appID)
@@ -1126,7 +1162,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 				if instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
 					continue
 				}
-				if _, ok := live[instance.DeploymentID]; !ok {
+				port, ok := live[instance.DeploymentID]
+				if !ok {
 					continue
 				}
 				targets = append(targets, gateway.Target{
@@ -1134,6 +1171,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 					NodeID:       instance.NodeID,
 					WakeID:       instance.WakeID,
 					DeploymentID: instance.DeploymentID,
+					Port:         port,
 				})
 			}
 			return targets, nil
@@ -1146,6 +1184,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return cli, true, nil
 		}).
 		WithPublicAuthCache(deps.publicAuthCache).
+		WithResponseCache(responseCache).
 		// ADR-089 / issue #561 PR 3: arm the per-host edge-rule
 		// matcher the invalidator resets on db.NotifyEdgeRuleChanged.
 		// Nil-safe; production always wires a real *gatewaydEdgeRules
@@ -1852,6 +1891,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	// The backend above owns invalidation; the handler owns lookup/store. Both
+	// sides intentionally share deps.responseCache so a deploy or rule update
+	// invalidates the exact cache serving customer traffic.
+	handler.WithResponseCache(deps.responseCache)
 	// ADR-104 amendment 5 / issue #881 Phase 4 C3: opt-in
 	// central-mode rate-limit counter (the [ratelimit] mode TOML
 	// knob added in C2). mode = "local" (default) leaves every

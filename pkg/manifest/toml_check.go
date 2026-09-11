@@ -230,6 +230,8 @@ var HostKeys = map[string]HostBlock{
 			"listen_addr",
 			"apps_domain",
 			"apid_loopback",
+			"route_metrics_enabled",
+			"streaming_enabled",
 			"schedd_tls_cert_path",
 			"schedd_tls_key_path",
 			"schedd_tls_ca_path",

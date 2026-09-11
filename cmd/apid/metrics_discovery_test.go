@@ -253,6 +253,56 @@ func TestPromtailMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 	}
 }
 
+func TestComputeDaemonMetricsDiscoveryUsesCanonicalPorts(t *testing.T) {
+	store := state.NewMemStore()
+	target := "tcp://192.0.2.2:8080"
+	if _, err := store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name:               "compute-a.faas",
+		TargetURL:          "tcp://192.0.2.2:50051",
+		GatewayTargetURL:   &target,
+		VPCPUs:             4,
+		MemMB:              8192,
+		MaxConcurrency:     16,
+		AdmissionCeilingMB: 4096,
+	}); err != nil {
+		t.Fatalf("upsert active node: %v", err)
+	}
+
+	srv := newServer(store, nil, "gregale.dev", nil)
+	tests := []struct {
+		name    string
+		path    string
+		handler http.HandlerFunc
+		want    string
+		job     string
+	}{
+		{name: "vmmd", path: vmmdMetricsDiscoveryPath, handler: srv.vmmdMetricsDiscovery, want: "192.0.2.2:9104", job: "vmmd"},
+		{name: "imaged", path: imagedMetricsDiscoveryPath, handler: srv.imagedMetricsDiscovery, want: "192.0.2.2:9102", job: "imaged"},
+		{name: "builderd", path: builderdMetricsDiscoveryPath, handler: srv.builderdMetricsDiscovery, want: "192.0.2.2:9105", job: "builderd"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.RemoteAddr = "127.0.0.1:9099"
+			rec := httptest.NewRecorder()
+			tc.handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var got []prometheusTargetGroup
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode discovery response: %v", err)
+			}
+			if len(got) != 1 || got[0].Targets[0] != tc.want {
+				t.Fatalf("targets=%v, want %s", got, tc.want)
+			}
+			if got[0].Labels["job"] != tc.job {
+				t.Fatalf("job label=%q, want %q", got[0].Labels["job"], tc.job)
+			}
+		})
+	}
+}
+
 func TestComputeMetricsDiscoveryRecordsProducerHealth(t *testing.T) {
 	store := state.NewMemStore()
 	validTarget := "tcp://fsn-2.gregale.dev:8080"

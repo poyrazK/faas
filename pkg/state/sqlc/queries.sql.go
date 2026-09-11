@@ -4124,6 +4124,46 @@ func (q *Queries) ListEventsByWakeID(ctx context.Context, db DBTX, arg ListEvent
 	return items, nil
 }
 
+const listFirstSuccessfulRequestsForAccountsCreatedSince = `-- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
+select a.account_id, min(i.last_request_at)::timestamptz as first_success_at
+from instances i
+join apps a on a.id = i.app_id
+join accounts acct on acct.id = a.account_id
+where acct.created_at >= $1
+  and i.last_request_at is not null
+group by a.account_id
+order by a.account_id
+`
+
+type ListFirstSuccessfulRequestsForAccountsCreatedSinceRow struct {
+	AccountID      pgtype.UUID
+	FirstSuccessAt pgtype.Timestamptz
+}
+
+// Operator beta funnel: one bounded aggregate read replaces an N+1
+// ListInstancesForAccount loop. last_request_at is stamped only after a
+// successful public request and terminal instances remain for 30 days, which
+// fully covers the 14-day beta cohort window.
+func (q *Queries) ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, db DBTX, createdAt pgtype.Timestamptz) ([]ListFirstSuccessfulRequestsForAccountsCreatedSinceRow, error) {
+	rows, err := db.Query(ctx, listFirstSuccessfulRequestsForAccountsCreatedSince, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFirstSuccessfulRequestsForAccountsCreatedSinceRow{}
+	for rows.Next() {
+		var i ListFirstSuccessfulRequestsForAccountsCreatedSinceRow
+		if err := rows.Scan(&i.AccountID, &i.FirstSuccessAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInstancesForApp = `-- name: ListInstancesForApp :many
 select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid, 0),
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at
@@ -4165,6 +4205,116 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 			&i.StartedAt,
 			&i.LastRequestAt,
 			&i.ParkedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_root, d.source_bytes, d.source_sha256, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.api_hosting_receipt, d.inferred_profile
+from deployments d
+join apps a on a.id = d.app_id
+where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
+order by d.app_id, d.created_at desc, d.id desc
+`
+
+func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error) {
+	rows, err := db.Query(ctx, listLatestDeploymentPerApp, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Deployment{}
+	for rows.Next() {
+		var i Deployment
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.BuildID,
+			&i.ImageDigest,
+			&i.RootfsPath,
+			&i.RootfsBytes,
+			&i.Status,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Kind,
+			&i.SourcePath,
+			&i.SourceRoot,
+			&i.SourceBytes,
+			&i.SourceSha256,
+			&i.Handler,
+			&i.LogPath,
+			&i.ErrorCode,
+			&i.RootfsKey,
+			&i.SourceUrl,
+			&i.CommitSha,
+			&i.OverrideEntrypoint,
+			&i.OverrideCmd,
+			&i.OverrideEnv,
+			&i.OverrideEnvSecrets,
+			&i.OverridePort,
+			&i.OverrideHealthcheck,
+			&i.Sidecars,
+			&i.MinInstances,
+			&i.ScanResult,
+			&i.ScanStatus,
+			&i.ScannedAt,
+			&i.OverrideLivenessProbe,
+			&i.ParkedReason,
+			&i.ParkedAt,
+			&i.TrafficPercent,
+			&i.Scope,
+			&i.SecretFindings,
+			&i.SecretScannedAt,
+			&i.ErrorHint,
+			&i.ErrorWhy,
+			&i.ErrorFix,
+			&i.ErrorRelevantLogs,
+			&i.StageState,
+			&i.DeployedByUserID,
+			&i.DeployedVia,
+			&i.DeployedFromIp,
+			&i.PusherLogin,
+			&i.Reason,
+			&i.Tag,
+			&i.DeployedBy,
+			&i.PrNumber,
+			&i.RollbackOn5xx,
+			&i.FirstWakeAt,
+			&i.First5xxWindowEndsAt,
+			&i.First5xxCount,
+			&i.LastAutoRollbackAt,
+			&i.LastAutoRollbackReason,
+			&i.LivenessRestartCount,
+			&i.CanaryPreset,
+			&i.CanaryStep,
+			&i.CanaryTotalSteps,
+			&i.CanaryStepStartedAt,
+			&i.RolloutState,
+			&i.RolloutStartedAt,
+			&i.RolloutCompletedAt,
+			&i.RolloutAbortedAt,
+			&i.RolloutAbortedReason,
+			&i.CancelledAt,
+			&i.CancelledByPrincipal,
+			&i.CancelReason,
+			&i.DeletedAt,
+			&i.DeletedByPrincipal,
+			&i.Priority,
+			&i.ReorderedAt,
+			&i.ReorderedByPrincipal,
+			&i.CanaryStages,
+			&i.SnapshotMissCount,
+			&i.SnapshotMissLastAt,
+			&i.SnapshotMissBackoffUntil,
+			&i.ApiHostingReceipt,
+			&i.InferredProfile,
 		); err != nil {
 			return nil, err
 		}

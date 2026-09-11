@@ -760,13 +760,22 @@ func checkNodeHashes(ctx context.Context, deps *doctorDeps) ([]doctorFinding, er
 	}
 	cache := make(map[string]bundleVer, len(nodes))
 	var findings []doctorFinding
+	checked := 0
 	for _, n := range nodes {
 		if deps.nodeFilter != "" && n.Name != deps.nodeFilter {
+			continue
+		}
+		// A default fleet audit verifies nodes that can currently admit
+		// work. Historical and unavailable rows legitimately reference
+		// releases that have already been pruned from this host. Operators
+		// can still inspect one explicitly with --node.
+		if deps.nodeFilter == "" && !n.Active {
 			continue
 		}
 		if deps.releaseFilter != "" && n.ReleaseID != deps.releaseFilter {
 			continue
 		}
+		checked++
 		if _, ok := cache[n.ReleaseID]; !ok {
 			m, err := releaseinstall.Read(deps.releasesRoot, n.ReleaseID)
 			if err != nil {
@@ -815,7 +824,7 @@ func checkNodeHashes(ctx context.Context, deps *doctorDeps) ([]doctorFinding, er
 		return []doctorFinding{{
 			Check:    doctorCheckNodeHashes,
 			Severity: doctorSeverityOK,
-			Message:  fmt.Sprintf("deep hash verified for %d nodes", len(nodes)),
+			Message:  fmt.Sprintf("deep hash verified for %d active nodes", checked),
 		}}, nil
 	}
 	return findings, nil

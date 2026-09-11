@@ -314,6 +314,21 @@ func applyOverridesToDeployment(dep *state.Deployment, o *api.CreateDeploymentOv
 //
 // Extracted from createDeployment (handlers.go) so the handler stays
 // under the CLAUDE.md 50-line cap.
+func validateDeploymentTrafficOptions(req *api.CreateDeploymentRequest, plan api.Plan) *api.Problem {
+	if req.TrafficPercent != nil && (*req.TrafficPercent < 0 || *req.TrafficPercent > 100) {
+		return api.ErrInvalidTrafficPercent(*req.TrafficPercent)
+	}
+	if req.TrafficPercent != nil && req.Canary != nil {
+		return api.ErrValidation("traffic_percent and canary are mutually exclusive rollout policies")
+	}
+	usesSplit := req.TrafficPercent != nil && *req.TrafficPercent != 100
+	usesCanary := req.Canary != nil && req.Canary.Preset != "" && req.Canary.Preset != "none"
+	if (usesSplit || usesCanary) && !plan.TrafficSplitAllowed() {
+		return api.ErrPlanTrafficSplitNotAllowed(plan)
+	}
+	return nil
+}
+
 func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, overrides *api.CreateDeploymentOverrides, limits api.Limits, planOpt ...api.Plan) (state.Deployment, *api.Problem) {
 	plan := api.PlanFree
 	if len(planOpt) > 0 {
@@ -334,6 +349,7 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	// the account's plan allows traffic splitting.
 	if req.TrafficPercent != nil {
 		dep.TrafficPercent = *req.TrafficPercent
+		dep.TrafficPercentExplicit = true
 	}
 	// Issue #976 / ADR-122 / SAFE-RELEASES-A: stamp the canary
 	// ladder at deploy time. nil req.Canary → fast-default zero
@@ -510,17 +526,6 @@ func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Accoun
 	// first hop (submitted); later hops land in cmd/apid/deploy_steps.go.
 	_ = s.notif.Notify(ctxr, db.NotifyDeploymentChanged,
 		fmt.Sprintf(`{"kind":"image","status":"pending","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, d.ID, d.ID))
-	// PR-B: if a prior row was just superseded inside the same tx,
-	// fire a second NotifyDeploymentChanged so imaged's F5 cleanup
-	// handler (handleDeploymentChanged) can drop the prior snapshot.
-	// The notify carries status="superseded" + to=prev.ID; if no prev
-	// existed (first deploy on this app), skip the second notify. A
-	// canary deliberately keeps its prior live revision as the
-	// residual traffic bucket, so it must not emit this cleanup signal.
-	if prev.ID != "" && d.CanaryTotalSteps <= 0 && !state.IsServiceRollout(d) {
-		_ = s.notif.Notify(ctxr, db.NotifyDeploymentChanged,
-			fmt.Sprintf(`{"kind":"image","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, prev.ID, prev.ID))
-	}
 	// Sanitize req.Image at the log sink — CodeQL go/log-injection
 	// (CWE-117). isDigestPinned already rejects malformed refs with
 	// 400 before this line, but a future field/wrapper change would
@@ -552,12 +557,9 @@ func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Accoun
 	// without a schema migration. Omit-when-zero rule matches
 	// the PR #984 annotation-merge helper.
 	resolvedActor := resolvedActorString(d.DeployedVia, d.DeployedByUserID, d.PusherLogin)
+	// This records the intended predecessor. The row remains live until the
+	// replacement passes readiness and MarkDeploymentLive performs cutover.
 	supersedes := prev.ID
-	if d.CanaryTotalSteps > 0 || state.IsServiceRollout(d) {
-		// The prior revision remains live until the terminal canary
-		// transition; it is not superseded at deployment creation.
-		supersedes = ""
-	}
 	appDeployedData := map[string]any{
 		"app_id":        app.ID,
 		"deployment_id": d.ID,
