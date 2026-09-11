@@ -23,8 +23,10 @@ type fakeGCSStore struct {
 	createdSpec                                               gcsBucketSpec
 	bucketState                                               gcsBucketState
 	objects                                                   []gcsObjectState
+	prefixes                                                  []string
 	next                                                      string
 	object                                                    gcsObjectState
+	copyObjectErr                                             error
 	reconciled                                                bool
 }
 
@@ -45,8 +47,8 @@ func (s *fakeGCSStore) ReconcileBucket(_ context.Context, _ string, spec gcsBuck
 
 func (s *fakeGCSStore) DeleteBucket(context.Context, string) error { return s.deleteBucketErr }
 
-func (s *fakeGCSStore) ListObjects(context.Context, string, string, string, int32) ([]gcsObjectState, string, error) {
-	return s.objects, s.next, nil
+func (s *fakeGCSStore) ListObjects(context.Context, string, string, string, string, int32) ([]gcsObjectState, []string, string, error) {
+	return s.objects, s.prefixes, s.next, nil
 }
 
 func (s *fakeGCSStore) DeleteObject(context.Context, string, string) error {
@@ -55,6 +57,10 @@ func (s *fakeGCSStore) DeleteObject(context.Context, string, string) error {
 
 func (s *fakeGCSStore) ObjectState(context.Context, string, string) (gcsObjectState, error) {
 	return s.object, nil
+}
+
+func (s *fakeGCSStore) CopyObject(context.Context, string, string, string, ObjectMetadata, string) (gcsObjectState, error) {
+	return s.object, s.copyObjectErr
 }
 
 func testGCS(endpoint string, store gcsStore) *GCS {

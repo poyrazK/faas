@@ -286,6 +286,59 @@ func TestS3ProtocolAndErrors(t *testing.T) {
 	}
 }
 
+func TestS3CopyObjectAndDelimitedListing(t *testing.T) {
+	var copyHeader string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2":
+			if r.URL.Query().Get("delimiter") != "/" {
+				t.Errorf("delimiter not forwarded: %s", r.URL.RawQuery)
+			}
+			_, _ = io.WriteString(w, `<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>root.txt</Key><Size>4</Size><LastModified>2026-09-05T00:00:00Z</LastModified></Contents><CommonPrefixes><Prefix>photos/</Prefix></CommonPrefixes></ListBucketResult>`)
+		case r.Method == http.MethodPut && r.Header.Get("X-Amz-Copy-Source") != "":
+			copyHeader = r.Header.Get("X-Amz-Copy-Source")
+			_, _ = io.WriteString(w, `<CopyObjectResult><LastModified>2026-09-07T00:00:00Z</LastModified><ETag>&quot;copy-etag&quot;</ETag></CopyObjectResult>`)
+		case r.Method == http.MethodHead:
+			w.Header().Set("Content-Length", "12")
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer upstream.Close()
+	c := testBackend()
+	c.Endpoint = upstream.URL
+	p, err := NewS3(c, testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lister, ok := p.(DelimitedObjectLister)
+	if !ok {
+		t.Fatal("S3 provider does not expose delimiter listing")
+	}
+	page, err := lister.ListObjectsDelimited(context.Background(), "gregale-test", "", "/", "", 10)
+	if err != nil || len(page.Items) != 1 || len(page.CommonPrefixes) != 1 || page.CommonPrefixes[0] != "photos/" {
+		t.Fatalf("delimited page = %+v err=%v", page, err)
+	}
+	copier, ok := p.(ObjectCopier)
+	if !ok {
+		t.Fatal("S3 provider does not expose CopyObject")
+	}
+	result, err := copier.CopyObject(context.Background(), "gregale-test", CopyObjectRequest{SourceKey: "source.txt", DestinationKey: "copy.txt", MetadataDirective: "REPLACE", Metadata: ObjectMetadata{ContentType: "text/plain", Metadata: map[string]string{"owner": "platform"}}})
+	if err != nil || result.ETag != `"copy-etag"` || !strings.Contains(copyHeader, "gregale-test") || !strings.Contains(copyHeader, "source.txt") {
+		t.Fatalf("copy result = %+v err=%v header=%q", result, err, copyHeader)
+	}
+	sizer, ok := p.(ObjectSizer)
+	if !ok {
+		t.Fatal("S3 provider does not expose object sizing")
+	}
+	size, err := sizer.ObjectSize(context.Background(), "gregale-test", "copy.txt")
+	if err != nil || size != 12 {
+		t.Fatalf("size = %d err=%v", size, err)
+	}
+}
+
 func TestRegistryProviderSwitch(t *testing.T) {
 	a := testBackend()
 	b := a
