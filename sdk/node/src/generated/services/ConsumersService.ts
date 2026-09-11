@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { APIConsumerListResponse } from '../models/APIConsumerListResponse.js';
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
+import type { APIConsumerUsageResponse } from '../models/APIConsumerUsageResponse.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
 import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerRequest.js';
@@ -123,6 +124,57 @@ export class ConsumersService {
         'consumer_id': consumerId,
       },
       errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read durable minute usage for one API consumer.
+   * Returns idempotent request, error, and billable-unit counters for the
+   * selected stable consumer. The ledger is independent from sampled
+   * request telemetry. Anonymous traffic is retained separately and is
+   * not charged to this consumer identity.
+   *
+   * @returns APIConsumerUsageResponse Durable API consumer usage over the requested window.
+   * @throws ApiError
+   */
+  public static getApiConsumerUsage({
+    slug,
+    consumerId,
+    since,
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Target API consumer identity UUID.
+     */
+    consumerId: string,
+    /**
+     * RFC3339 lower bound. Defaults to the trailing 30 days.
+     */
+    since?: string,
+    /**
+     * RFC3339 exclusive upper bound. Defaults to UTC midnight today.
+     */
+    until?: string,
+  }): CancelablePromise<APIConsumerUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
       },

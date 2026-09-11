@@ -2753,6 +2753,43 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose durable minute usage is returned.
+        schema: { type: string, format: uuid }
+      - name: since
+        in: query
+        required: false
+        description: RFC3339 lower bound. Defaults to the trailing 30 days.
+        schema: { type: string, format: date-time }
+      - name: until
+        in: query
+        required: false
+        description: RFC3339 exclusive upper bound. Defaults to UTC midnight today.
+        schema: { type: string, format: date-time }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsage
+      summary: Read durable minute usage for one API consumer.
+      description: |
+        Returns idempotent request, error, and billable-unit counters for the
+        selected stable consumer. The ledger is independent from sampled
+        request telemetry. Anonymous traffic is retained separately and is
+        not charged to this consumer identity.
+      responses:
+        '200':
+          description: Durable API consumer usage over the requested window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/consumers/{consumer_id}/keys:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -15570,6 +15607,32 @@ components:
         keys:
           type: array
           items: { $ref: '#/components/schemas/ConsumerKeyResponse' }
+
+    APIConsumerUsageBucketResponse:
+      description: "One UTC minute of durable API consumer usage."
+      type: object
+      required: [window_start, request_count, error_count, billable_units]
+      properties:
+        window_start: { type: string, format: date-time }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        error_count: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerUsageResponse:
+      description: "Durable minute usage for one stable API consumer."
+      type: object
+      required: [consumer_id, period_start, period_end, request_count, error_count, billable_units, buckets, as_of]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        error_count: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerUsageBucketResponse' }
+        as_of: { type: string, format: date-time }
 
     AppRestartResponse:
       description: "Correlation handle for an accepted app restart."

@@ -309,6 +309,24 @@ func (c *Client) GetAPIConsumer(ctx context.Context, slug, consumerID string) (A
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID, nil, &out)
 }
 
+// GetAPIConsumerUsage returns the durable minute usage projection for one
+// stable API consumer. Empty bounds use the server's trailing-30d default.
+func (c *Client) GetAPIConsumerUsage(ctx context.Context, slug, consumerID string, since, until string) (APIConsumerUsageResponse, error) {
+	var out APIConsumerUsageResponse
+	path := "/v1/apps/" + slug + "/consumers/" + consumerID + "/usage"
+	q := url.Values{}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if until != "" {
+		q.Set("until", until)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // RevokeAPIConsumer revokes an end-customer identity and all future key issuance for it.
 func (c *Client) RevokeAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
 	var out APIConsumerResponse

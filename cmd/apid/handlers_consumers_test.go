@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestConsumerControlPlaneLifecycle(t *testing.T) {
@@ -95,6 +99,42 @@ func TestConsumerControlPlaneFreePlanGate(t *testing.T) {
 	e := setup(t, api.PlanFree)
 	rec := e.do(t, http.MethodGet, "/v1/apps/missing/consumers", nil, nil)
 	assertProblem(t, rec, http.StatusPaymentRequired, api.CodeConsumerKeysNotAllowed)
+}
+
+func TestAPIConsumerUsageReadSurface(t *testing.T) {
+	// ADR-120 monetization target: usage is read from the durable ledger,
+	// not from sampled request_telemetry rows.
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "consumer-usage-app")
+	created := e.do(t, http.MethodPost, "/v1/apps/consumer-usage-app/consumers", api.CreateAPIConsumerRequest{
+		ExternalRef: "customer-usage", Name: "Customer Usage",
+	}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create consumer: %d %s", created.Code, created.Body)
+	}
+	var consumer api.APIConsumerResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &consumer); err != nil {
+		t.Fatalf("decode consumer: %v", err)
+	}
+	window := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
+	if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+		ConsumerKey: consumer.ID, WindowStart: window,
+		RequestCount: 7, ErrorCount: 2, BillableUnits: 7,
+	}); err != nil {
+		t.Fatalf("record usage: %v", err)
+	}
+	read := e.do(t, http.MethodGet, "/v1/apps/consumer-usage-app/consumers/"+consumer.ID+"/usage", nil, nil)
+	if read.Code != http.StatusOK {
+		t.Fatalf("read usage: %d %s", read.Code, read.Body)
+	}
+	var usage api.APIConsumerUsageResponse
+	if err := json.Unmarshal(read.Body.Bytes(), &usage); err != nil {
+		t.Fatalf("decode usage: %v", err)
+	}
+	if usage.ConsumerID != consumer.ID || usage.RequestCount != 7 || usage.ErrorCount != 2 || usage.BillableUnits != 7 || len(usage.Buckets) != 1 {
+		t.Fatalf("usage response = %+v", usage)
+	}
 }
 
 func TestUpdateAppConsumerAuthMode(t *testing.T) {

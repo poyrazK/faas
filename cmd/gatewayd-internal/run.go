@@ -2255,6 +2255,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			for i := range rows {
 				row := rows[i]
 				req := &apidpb.IncrementRequestTelemetryRequest{
+					EventId:          row.EventID.String(),
 					AccountId:        row.AccountID.String(),
 					AppId:            row.AppID.String(),
 					DeploymentId:     row.DeploymentID.String(),
@@ -2314,6 +2315,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				if resp.GetOutcome() == "rate_limited" {
 					log.Debug("request_telemetry: row rate_limited",
 						"retry_after_ms", resp.GetRetryAfterMs())
+				}
+				if resp.GetOutcome() == "db_error" {
+					// The usage ledger is idempotent by event_id, so retrying
+					// this collapsed row is safe even if the response arrived
+					// after the apid transaction committed. A database error
+					// must not be counted as shipped merely because the stream
+					// itself stayed open.
+					return errors.New("request_telemetry receiver rejected row: db_error")
 				}
 			}
 			for _, row := range rows {

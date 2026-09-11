@@ -71,6 +71,17 @@ func TestRequestTelemetryRecorder_RecordFromObserve_DisabledIsNoOp(t *testing.T)
 	}
 }
 
+func TestRequestTelemetryRecorder_AssignsStableUsageEventID(t *testing.T) {
+	// ADR-120 follow-up: retries of a collapsed usage bucket need a durable
+	// event identity that is independent from the debug row's database ID.
+	rec := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 4}, nopLog())
+	rec.RecordFromObserve(makeRow())
+	rows := rec.DrainBatch(1)
+	if len(rows) != 1 || rows[0].EventID == uuid.Nil {
+		t.Fatalf("recorded event id = %v, want non-nil UUID", rows)
+	}
+}
+
 func TestRequestTelemetryRecorder_RingFIFOOrder(t *testing.T) {
 	rec := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 8}, nopLog())
 	for i := 0; i < 5; i++ {

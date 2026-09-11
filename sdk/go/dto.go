@@ -26,14 +26,16 @@ type (
 	AppConfiguredResources = api.AppConfiguredResources
 
 	// End-customer consumers and credentials (ADR-120).
-	CreateAPIConsumerRequest = api.CreateAPIConsumerRequest
-	APIConsumerResponse      = api.APIConsumerResponse
-	APIConsumerListResponse  = api.APIConsumerListResponse
-	CreateConsumerKeyRequest = api.CreateConsumerKeyRequest
-	ConsumerKeyResponse      = api.ConsumerKeyResponse
-	ConsumerKeyListResponse  = api.ConsumerKeyListResponse
-	ResourceProfile          = api.ResourceProfile
-	ResourceProfileSpec      = api.ResourceProfileSpec
+	CreateAPIConsumerRequest       = api.CreateAPIConsumerRequest
+	APIConsumerResponse            = api.APIConsumerResponse
+	APIConsumerListResponse        = api.APIConsumerListResponse
+	CreateConsumerKeyRequest       = api.CreateConsumerKeyRequest
+	ConsumerKeyResponse            = api.ConsumerKeyResponse
+	ConsumerKeyListResponse        = api.ConsumerKeyListResponse
+	APIConsumerUsageBucketResponse = api.APIConsumerUsageBucketResponse
+	APIConsumerUsageResponse       = api.APIConsumerUsageResponse
+	ResourceProfile                = api.ResourceProfile
+	ResourceProfileSpec            = api.ResourceProfileSpec
 
 	// Deployments.
 	CreateDeploymentRequest        = api.CreateDeploymentRequest

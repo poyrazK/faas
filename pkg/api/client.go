@@ -561,6 +561,33 @@ func (c *Client) GetAPIConsumer(ctx context.Context, slug, consumerID string) (A
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID, nil, &out)
 }
 
+// APIConsumerUsageOptions controls the optional RFC3339 window for
+// GetAPIConsumerUsage. Empty bounds use the server's trailing-30d default.
+type APIConsumerUsageOptions struct {
+	Since string
+	Until string
+}
+
+// GetAPIConsumerUsage returns durable minute usage for one stable API
+// consumer. The ledger's billable_units field is a raw request-unit count;
+// pricing and customer rate cards are intentionally applied by a later
+// billing layer.
+func (c *Client) GetAPIConsumerUsage(ctx context.Context, slug, consumerID string, opts APIConsumerUsageOptions) (APIConsumerUsageResponse, error) {
+	var out APIConsumerUsageResponse
+	path := "/v1/apps/" + slug + "/consumers/" + consumerID + "/usage"
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		q.Set("until", opts.Until)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // RevokeAPIConsumer revokes an end-customer identity and all future key issuance for it.
 func (c *Client) RevokeAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
 	var out APIConsumerResponse

@@ -645,6 +645,41 @@ type ConsumerKey struct {
 	RevokedAt  *time.Time
 }
 
+// APIConsumerUsageEvent is the durable, billing-oriented usage increment
+// emitted by the gateway for one collapsed minute bucket. EventID is stable
+// across retries; the state implementations use it as an idempotency key
+// before applying the increment to the minute aggregate. ConsumerKey is the
+// stable API consumer UUID in canonical text form, or "__anonymous__" for
+// traffic that did not present a consumer credential.
+//
+// RequestCount is the number of completed gateway requests represented by the
+// event. ErrorCount is the subset whose HTTP status was 4xx/5xx. BillableUnits
+// intentionally mirrors RequestCount for now; pricing and rate cards are a
+// follow-up, while this ledger preserves the raw facts needed to reconcile a
+// customer invoice.
+type APIConsumerUsageEvent struct {
+	EventID       string
+	AccountID     string
+	AppID         string
+	ConsumerKey   string
+	WindowStart   time.Time
+	RequestCount  int64
+	ErrorCount    int64
+	BillableUnits int64
+}
+
+// APIConsumerUsageBucket is the read-side aggregate for one app, consumer,
+// and UTC minute. It is returned in chronological order by the state layer.
+type APIConsumerUsageBucket struct {
+	AccountID     string
+	AppID         string
+	ConsumerKey   string
+	WindowStart   time.Time
+	RequestCount  int64
+	ErrorCount    int64
+	BillableUnits int64
+}
+
 // Active reports whether the key is in an authentication-eligible
 // state (not revoked, not expired). The gatewayd-internal
 // middleware reads this on every inbound request.
