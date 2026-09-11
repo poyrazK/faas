@@ -5461,10 +5461,7 @@ haveApp:
 		// shouldWake predicate runs HealthyCount against the plan's
 		// effective max_concurrency, so a burst of N requests admits up to
 		// N instances before short-circuiting.
-		maxInstances := limits.MaxConcurrency
-		if app.MaxConcurrency > 0 && app.MaxConcurrency < maxInstances {
-			maxInstances = app.MaxConcurrency
-		}
+		maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
 		// Browser requests get a short edge wait so a long cold boot can
 		// render a useful page while the WakeGate's detached leader keeps
 		// booting. API clients retain the plan-derived wait budget.
@@ -5593,7 +5590,7 @@ haveApp:
 		// ensureCapacity returning and our Pick. Surface the observed
 		// (current) HealthyCount so the operator's metrics panel
 		// shows 0 vs the cap (was 1+ microseconds ago).
-		wakeErr := api.ErrAppConcurrencyReached(limits, h.backend.HealthyCount(app.ID))
+		wakeErr := api.ErrAppConcurrencyReachedAt(limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), h.backend.HealthyCount(app.ID))
 		h.markHealthFailure(app.ID, wakeErr)
 		writeWakeError(w, wakeErr)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

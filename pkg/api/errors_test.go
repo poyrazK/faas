@@ -163,6 +163,20 @@ func TestErrPlanLimitConcurrency(t *testing.T) {
 	}
 }
 
+func TestErrPlanLimitConcurrencyAtUsesEffectiveAppLimit(t *testing.T) {
+	l := MustLimitsFor(PlanScale)
+	p := ErrPlanLimitConcurrencyAt(l, 1, 1)
+	if p.Status != http.StatusTooManyRequests || p.Code != CodePlanLimitConcur {
+		t.Fatalf("problem = %#v, want 429 plan_limit_concurrency", p)
+	}
+	if p.Limit == nil || *p.Limit != 1 {
+		t.Errorf("Limit = %v, want 1", p.Limit)
+	}
+	if !strings.Contains(p.Detail, "app max_concurrency is 1") || !strings.Contains(p.Detail, "1 already live") {
+		t.Errorf("Detail = %q, want effective app limit and observed count", p.Detail)
+	}
+}
+
 func TestErrCapacity(t *testing.T) {
 	p := ErrCapacity("no RAM headroom")
 	if p.Status != http.StatusServiceUnavailable {
