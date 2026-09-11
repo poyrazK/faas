@@ -446,6 +446,11 @@ from .get_deployment_stages_response_200_history_item_status import GetDeploymen
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .git_hub_install_mutation_request import GitHubInstallMutationRequest
+from .git_hub_install_status import GitHubInstallStatus
+from .git_hub_install_status_health import GitHubInstallStatusHealth
+from .git_hub_install_status_state import GitHubInstallStatusState
+from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
 from .github_check_update_record import GithubCheckUpdateRecord
 from .github_check_update_record_status import GithubCheckUpdateRecordStatus
 from .github_recovery_retry_response import GithubRecoveryRetryResponse
@@ -1375,6 +1380,11 @@ __all__ = (
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
+    "GitHubInstallMutationRequest",
+    "GitHubInstallStatus",
+    "GitHubInstallStatusHealth",
+    "GitHubInstallStatusState",
+    "GitHubInstallStatusSyncResult",
     "GithubCheckUpdateRecord",
     "GithubCheckUpdateRecordStatus",
     "GithubRecoveryRetryResponse",

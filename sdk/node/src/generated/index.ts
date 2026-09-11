@@ -214,6 +214,8 @@ export type { FireCronRequestResponse } from './models/FireCronRequestResponse.j
 export type { FireCronResponse } from './models/FireCronResponse.js';
 export type { GdprAuditExportResponse } from './models/GdprAuditExportResponse.js';
 export type { GithubCheckUpdateRecord } from './models/GithubCheckUpdateRecord.js';
+export type { GitHubInstallMutationRequest } from './models/GitHubInstallMutationRequest.js';
+export type { GitHubInstallStatus } from './models/GitHubInstallStatus.js';
 export type { GithubRecoveryRetryResponse } from './models/GithubRecoveryRetryResponse.js';
 export type { GithubRecoveryStatusResponse } from './models/GithubRecoveryStatusResponse.js';
 export type { GithubWebhookDeliveryRecord } from './models/GithubWebhookDeliveryRecord.js';

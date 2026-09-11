@@ -5292,6 +5292,28 @@ paths:
   /v1/apps/{slug}/install/bind:
     parameters:
       - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [github]
+      operationId: getGitHubInstallBinding
+      summary: Inspect the app's GitHub repository binding.
+      description: |
+        Cookie-session-authenticated (NOT API-key). Returns the durable
+        GitHub installation metadata and the app's repository binding without
+        exposing installation credentials. The response also carries the
+        named CSRF token required by the sync and disconnect actions.
+      responses:
+        '200':
+          description: Current installation and binding state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubInstallStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: 'code: capacity — the installation and binding state could not be loaded.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
     post:
       tags: [github]
       operationId: bindAppInstall
@@ -5338,6 +5360,108 @@ paths:
           $ref: '#/components/responses/NotFound'
         '502':
           description: 'code: github_unreachable — githubd could not reach api.github.com when persisting the bind; retry in a minute.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [github]
+      operationId: disconnectGitHubApp
+      summary: Disconnect an app from its GitHub repository.
+      description: |
+        Cookie-session-authenticated and CSRF-protected. Idempotently removes
+        the app's repository binding and invalidates githubd's binding cache.
+        The GitHub App installation remains connected to the account so it can
+        be rebound to another repository.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubInstallMutationRequest' }
+      responses:
+        '200':
+          description: The app is no longer bound to a repository.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubInstallStatus' }
+        '400':
+          description: 'code: validation — missing or invalid CSRF token for disconnect.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: 'code: capacity — githubd could not remove the binding.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/install:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [github]
+      operationId: getGitHubInstallStatus
+      summary: Read the GitHub installation and binding health for an app.
+      description: |
+        Cookie-session-authenticated (NOT API-key). This is the canonical
+        dashboard status endpoint. It returns `not_installed`, `installed`,
+        or `bound` state and never includes sealed installation credentials.
+        A named CSRF token is returned for subsequent sync or disconnect
+        requests.
+      responses:
+        '200':
+          description: Current GitHub connection state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubInstallStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: 'code: capacity — the connection state could not be read.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/install/sync:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [github]
+      operationId: syncGitHubInstall
+      summary: Reconcile an app's GitHub repository access immediately.
+      description: |
+        Cookie-session-authenticated and CSRF-protected. Queries GitHub's
+        current installation repository list and detaches the app only when
+        its bound repository is no longer accessible. The response includes
+        the remote repository count and whether this app was detached.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubInstallMutationRequest' }
+      responses:
+        '200':
+          description: Reconciled connection state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubInstallStatus' }
+        '400':
+          description: 'code: validation — a valid CSRF token is required for GitHub sync.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: 'code: github_not_bound or github_install_not_found — the app or installation must be connected first.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: 'code: github_unreachable — GitHub could not be queried.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: 'code: capacity — the connection state could not be reconciled.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -14447,6 +14571,50 @@ components:
         deploy_branches:
           type: object
           additionalProperties: { type: string }
+
+    GitHubInstallMutationRequest:
+      description: |
+        Double-submit CSRF envelope for customer-facing GitHub connection
+        mutations. The token is returned by GET /v1/apps/{slug}/install or
+        GET /v1/apps/{slug}/install/bind and must match the named
+        `faas_csrf_github_install` cookie.
+      type: object
+      required: [csrf_token]
+      properties:
+        csrf_token: { type: string }
+
+    GitHubInstallStatus:
+      description: |
+        Account-scoped GitHub installation and app binding health. Sealed
+        installation credentials are never returned. `state` is
+        `not_installed`, `installed`, or `bound`; `health` is
+        `not_connected`, `unknown`, `healthy`, or `degraded`.
+      type: object
+      required: [state, health, connected, last_reconcile_repository_count, last_reconcile_detached_count]
+      properties:
+        state: { type: string, enum: [not_installed, installed, bound] }
+        health: { type: string, enum: [not_connected, unknown, healthy, degraded] }
+        connected: { type: boolean }
+        installation_id: { type: integer, format: int64 }
+        github_login: { type: string }
+        default_branch: { type: string }
+        repo_full_name: { type: string }
+        production_branch: { type: string }
+        binding_id: { type: string }
+        linked_at: { type: [string, "null"], format: date-time }
+        last_reconciled_at: { type: [string, "null"], format: date-time }
+        last_reconcile_error: { type: string }
+        last_reconcile_repository_count: { type: integer, minimum: 0 }
+        last_reconcile_detached_count: { type: integer, minimum: 0 }
+        csrf_token:
+          type: string
+          description: CSRF token for sync and disconnect mutations.
+        sync_result:
+          type: object
+          properties:
+            detached: { type: boolean }
+            remote_repository_count: { type: integer, minimum: 0 }
+            synced_at: { type: string, format: date-time }
 
     RepoResponse:
       description: |
