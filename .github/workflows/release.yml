@@ -303,28 +303,7 @@ jobs:
       # the hermetic unit test cannot do. A glob that silently excludes
       # bin/gregale would otherwise publish an empty package.
       - name: Verify each package actually contains its payload
-        run: |
-          set -euo pipefail
-          # Pack for real and read the tarball. This resolves the package's
-          # own `files` globs, which the hermetic unit test cannot do — a
-          # glob that silently excluded bin/gregale would otherwise publish
-          # an empty package that installs cleanly and then cannot run.
-          while IFS= read -r dir; do
-            name="$(node -p "require('$dir/package.json').name")"
-            if [ "$name" = "gregale" ]; then
-              want="package/bin/gregale.js"
-            else
-              want="package/bin/gregale"
-            fi
-            tarball="$( (cd "$dir" && npm pack --silent </dev/null) )"
-            if ! tar -tzf "$dir/$tarball" | grep -Fqx "$want"; then
-              echo "::error::$name would publish without $want" >&2
-              tar -tzf "$dir/$tarball" >&2
-              exit 1
-            fi
-            rm -f "$dir/$tarball"
-            echo "ok: $name contains ${want#package/}"
-          done < "$RUNNER_TEMP/npm/publish-order.txt"
+        run: bash scripts/verify-npm-package-payloads.sh "$RUNNER_TEMP/npm/publish-order.txt"
 
       - name: Resolve publish preconditions
         id: guard
