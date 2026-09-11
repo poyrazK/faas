@@ -57,6 +57,8 @@ from .app_error_sample_response_headers_sample import AppErrorSampleResponseHead
 from .app_error_summary_item import AppErrorSummaryItem
 from .app_error_summary_item_error_class import AppErrorSummaryItemErrorClass
 from .app_errors_summary_response import AppErrorsSummaryResponse
+from .app_log_drain_health_response import AppLogDrainHealthResponse
+from .app_log_drain_health_response_status import AppLogDrainHealthResponseStatus
 from .app_log_drain_response import AppLogDrainResponse
 from .app_log_drain_response_auth_header_masked import AppLogDrainResponseAuthHeaderMasked
 from .app_log_drain_response_kind import AppLogDrainResponseKind
@@ -157,7 +159,6 @@ from .build_plan_class_type_3_type_1 import BuildPlanClassType3Type1
 from .build_plan_framework import BuildPlanFramework
 from .build_provenance_response import BuildProvenanceResponse
 from .build_response import BuildResponse
-from .build_response_cache_status import BuildResponseCacheStatus
 from .build_response_cache_status import BuildResponseCacheStatus
 from .build_response_failure_class import BuildResponseFailureClass
 from .build_response_kind import BuildResponseKind
@@ -657,6 +658,9 @@ from .payment_method_summary import PaymentMethodSummary
 from .plan_affected_app import PlanAffectedApp
 from .plan_affected_app_action import PlanAffectedAppAction
 from .plan_cron import PlanCron
+from .plan_detected_by import PlanDetectedBy
+from .plan_detected_by_detector import PlanDetectedByDetector
+from .plan_detected_by_merged_from_item import PlanDetectedByMergedFromItem
 from .plan_managed import PlanManaged
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
@@ -670,6 +674,10 @@ from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
+from .prewarm_intent_response import PrewarmIntentResponse
+from .prewarm_intent_response_status import PrewarmIntentResponseStatus
+from .prewarm_intent_response_trigger import PrewarmIntentResponseTrigger
+from .prewarm_request import PrewarmRequest
 from .problem import Problem
 from .programmatic_api_key import ProgrammaticAPIKey
 from .programmatic_auth_response import ProgrammaticAuthResponse
@@ -969,6 +977,8 @@ __all__ = (
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
     "AppliedBuild",
+    "AppLogDrainHealthResponse",
+    "AppLogDrainHealthResponseStatus",
     "AppLogDrainResponse",
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
@@ -1068,7 +1078,6 @@ __all__ = (
     "BuildPlanFramework",
     "BuildProvenanceResponse",
     "BuildResponse",
-    "BuildResponseCacheStatus",
     "BuildResponseCacheStatus",
     "BuildResponseFailureClass",
     "BuildResponseKind",
@@ -1239,10 +1248,10 @@ __all__ = (
     "DeploymentResponseRolloutState",
     "DeploymentResponseStageState",
     "DeploymentResponseTag",
+    "DeploymentSummaryResponse",
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
     "DeployTokenResponseStatus",
-    "DeploymentSummaryResponse",
     "DevSessionResponse",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
@@ -1558,6 +1567,9 @@ __all__ = (
     "PlanAffectedApp",
     "PlanAffectedAppAction",
     "PlanCron",
+    "PlanDetectedBy",
+    "PlanDetectedByDetector",
+    "PlanDetectedByMergedFromItem",
     "PlanManaged",
     "PlanResponse",
     "PlanResponseScanSource",
@@ -1571,6 +1583,10 @@ __all__ = (
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
     "PreviewCreatedWebhookPayload",
+    "PrewarmIntentResponse",
+    "PrewarmIntentResponseStatus",
+    "PrewarmIntentResponseTrigger",
+    "PrewarmRequest",
     "Problem",
     "ProgrammaticAPIKey",
     "ProgrammaticAuthResponse",

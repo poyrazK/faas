@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ConsumerKeyListResponse")
 
 @_attrs_define
 class ConsumerKeyListResponse:
+    """Credential metadata for an API consumer."""
+
     keys: list[ConsumerKeyResponse]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

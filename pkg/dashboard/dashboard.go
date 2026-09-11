@@ -510,6 +510,38 @@ type AppWebhooksData struct {
 	ErrorMessage  string
 }
 
+// AppLogDrainsData is the customer-facing delivery-health projection for one
+// app. It intentionally contains only the masked destination and sanitized
+// health summary; credentials and raw transport errors never reach a
+// template.
+type AppLogDrainsData struct {
+	App          AppListItem
+	PlanAllowed  bool
+	Drains       []LogDrainPageItem
+	ErrorMessage string
+}
+
+type LogDrainPageItem struct {
+	ID                    string
+	Kind                  string
+	TargetURL             string
+	Enabled               bool
+	Status                string
+	Active                bool
+	QueueDepth            int
+	QueueCapacity         int
+	DeliveredTotal        int64
+	FailedTotal           int64
+	DroppedTotal          int64
+	RetriesTotal          int64
+	StreamReconnectsTotal int64
+	GapsTotal             int64
+	LastSuccessAt         string
+	LastFailureAt         string
+	LastError             string
+	UpdatedAt             string
+}
+
 // TenantSurfacesData is the customer-facing projection for the per-app
 // tenant-surface page (issue #1397 / G9). Hostname verification and durable
 // certificate state are kept as display fields so the template never needs

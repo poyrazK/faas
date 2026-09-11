@@ -1,36 +1,41 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-if TYPE_CHECKING:
-    from ..models.api_consumer_response import APIConsumerResponse
-
-
-T = TypeVar("T", bound="APIConsumerListResponse")
+T = TypeVar("T", bound="PrewarmRequest")
 
 
 @_attrs_define
-class APIConsumerListResponse:
-    """Stable API consumer identities for an app."""
+class PrewarmRequest:
+    """Schedule temporary capacity restoration ahead of a demand window."""
 
-    consumers: list[APIConsumerResponse]
+    count: int
+    """Desired number of live instances during the window; normal plan and ledger caps still apply."""
+    wake_at: datetime.datetime
+    """Start of the expected demand window."""
+    expires_at: datetime.datetime
+    """End of the temporary intent; must be after wake_at."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        consumers = []
-        for consumers_item_data in self.consumers:
-            consumers_item = consumers_item_data.to_dict()
-            consumers.append(consumers_item)
+        count = self.count
+
+        wake_at = self.wake_at.isoformat()
+
+        expires_at = self.expires_at.isoformat()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "consumers": consumers,
+                "count": count,
+                "wake_at": wake_at,
+                "expires_at": expires_at,
             }
         )
 
@@ -38,22 +43,21 @@ class APIConsumerListResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.api_consumer_response import APIConsumerResponse
-
         d = dict(src_dict)
-        consumers = []
-        _consumers = d.pop("consumers")
-        for consumers_item_data in _consumers:
-            consumers_item = APIConsumerResponse.from_dict(consumers_item_data)
+        count = d.pop("count")
 
-            consumers.append(consumers_item)
+        wake_at = datetime.datetime.fromisoformat(d.pop("wake_at"))
 
-        api_consumer_list_response = cls(
-            consumers=consumers,
+        expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
+
+        prewarm_request = cls(
+            count=count,
+            wake_at=wake_at,
+            expires_at=expires_at,
         )
 
-        api_consumer_list_response.additional_properties = d
-        return api_consumer_list_response
+        prewarm_request.additional_properties = d
+        return prewarm_request
 
     @property
     def additional_keys(self) -> list[str]:

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1280px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    .muted { color: #6b7280; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.9rem; margin: 1rem 0; }
+    .flash { padding: 0.55rem 0.75rem; border-radius: 4px; margin: 0.75rem 0; }
+    .flash.error { background: #fee2e2; color: #991b1b; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.8rem; white-space: nowrap; }
+    .badge.healthy { background: #d1fae5; color: #065f46; }
+    .badge.degraded { background: #fee2e2; color: #991b1b; }
+    .badge.unknown, .badge.inactive { background: #f3f4f6; color: #6b7280; }
+    .nowrap { white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/jobs">Jobs &amp; queues</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p><a href="/dashboard/apps/{{.Data.App.Slug}}">← Back to {{.Data.App.Slug}}</a></p>
+    <h1>Log-drain health for <code>{{.Data.App.Slug}}</code></h1>
+    <p class="muted">Delivery state is durable and safe to share with the account owner. Credentials and raw transport errors are never shown.</p>
+
+    {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
+    {{if not .Data.PlanAllowed}}
+      <section class="card" role="status">
+        <h2>Runtime log drains require a paid plan</h2>
+        <p class="muted">Upgrade this account to export runtime logs to an HTTP or OTLP-compatible destination.</p>
+        <a href="/dashboard/upgrade">View upgrade options →</a>
+      </section>
+    {{else if .Data.Drains}}
+      <table aria-label="Customer log-drain health">
+        <thead><tr><th>Destination</th><th>Status</th><th>Queue</th><th>Delivery totals</th><th>Last success</th><th>Last failure</th><th>Last summary</th><th>Updated</th></tr></thead>
+        <tbody>
+          {{range .Data.Drains}}
+            <tr>
+              <td><strong>{{.Kind}}</strong><br><code>{{.TargetURL}}</code><br><small class="muted">{{if .Enabled}}enabled{{else}}disabled{{end}} · <code>{{.ID}}</code></small></td>
+              <td><span class="badge {{.Status}}">{{.Status}}</span><br><small class="muted">{{if .Active}}worker active{{else}}worker inactive{{end}}</small></td>
+              <td class="nowrap">{{.QueueDepth}} / {{.QueueCapacity}}</td>
+              <td>delivered {{.DeliveredTotal}}<br>failed {{.FailedTotal}}<br>dropped {{.DroppedTotal}}<br>retries {{.RetriesTotal}}<br>reconnects {{.StreamReconnectsTotal}}<br>gaps {{.GapsTotal}}</td>
+              <td>{{if .LastSuccessAt}}{{.LastSuccessAt}}{{else}}—{{end}}</td>
+              <td>{{if .LastFailureAt}}{{.LastFailureAt}}{{else}}—{{end}}</td>
+              <td>{{if .LastError}}{{.LastError}}{{else}}—{{end}}</td>
+              <td>{{if .UpdatedAt}}{{.UpdatedAt}}{{else}}—{{end}}</td>
+            </tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{else if not .Data.ErrorMessage}}
+      <section class="card" role="status">
+        <p>No runtime log drains are configured for this app.</p>
+        <p class="muted">Configure one with <code>gregale log-drains</code> or the log-drain API.</p>
+      </section>
+    {{end}}
+  </main>
+  <footer>onebox faas · customer log-drain health</footer>
+</body>
+</html>

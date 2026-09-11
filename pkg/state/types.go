@@ -6577,6 +6577,28 @@ type AppLogDrain struct {
 	UpdatedAt        time.Time
 }
 
+// AppLogDrainHealth is the durable, customer-safe delivery snapshot for one
+// log drain. Counters are periodically flushed by gatewayd-internal rather
+// than written once per log record, so the health surface cannot add a
+// database round-trip to the application request path.
+type AppLogDrainHealth struct {
+	DrainID               string
+	Status                string
+	Active                bool
+	QueueDepth            int
+	QueueCapacity         int
+	DeliveredTotal        int64
+	FailedTotal           int64
+	DroppedTotal          int64
+	RetriesTotal          int64
+	StreamReconnectsTotal int64
+	GapsTotal             int64
+	LastSuccessAt         time.Time
+	LastFailureAt         time.Time
+	LastError             string
+	UpdatedAt             time.Time
+}
+
 // UpdateAppLogDrainParams carries the optional fields of UpdateAppLogDrain.
 // A nil pointer means the existing value remains unchanged.
 type UpdateAppLogDrainParams struct {

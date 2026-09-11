@@ -196,6 +196,45 @@ func (s *server) getAppLogDrain(w http.ResponseWriter, r *http.Request, acct sta
 	writeJSON(w, http.StatusOK, appLogDrainResponse(row))
 }
 
+func (s *server) getAppLogDrainHealth(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if _, ok := s.logDrainsAllowed(w, acct); !ok {
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	drain, err := s.store.AppLogDrainByID(r.Context(), r.PathValue("id"))
+	if err != nil || drain.AppID != app.ID || drain.AccountID != acct.ID {
+		s.notFound(w, "log drain not found")
+		return
+	}
+	health, err := s.store.AppLogDrainHealthByDrainID(r.Context(), drain.ID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			s.log.WarnContext(r.Context(), "read app log drain health", slog.String("err", err.Error()))
+			api.WriteProblem(w, api.ErrCapacity("could not read log drain health"))
+			return
+		}
+		health = state.AppLogDrainHealth{
+			DrainID: drain.ID,
+			Status:  api.AppLogDrainHealthStatusUnknown,
+			Active:  false,
+			// The health row is written asynchronously by gatewayd. Use the
+			// drain's creation/update stamp until the first snapshot exists so
+			// the required wire timestamp remains a valid date-time.
+			UpdatedAt: drain.UpdatedAt,
+		}
+	}
+	// A disabled configuration is authoritative even if the last gateway
+	// snapshot was written before the disable took effect or before a restart.
+	if !drain.Enabled {
+		health.Active = false
+		health.Status = api.AppLogDrainHealthStatusInactive
+	}
+	writeJSON(w, http.StatusOK, appLogDrainHealthResponse(health))
+}
+
 func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.UpdateAppLogDrainRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -307,4 +346,24 @@ func sealAppLogDrainAuthHeader(plaintext string) ([]byte, error) {
 		return nil, errors.New("host age recipient not loaded")
 	}
 	return secretbox.SealBytes(recipient, appLogDrainSecretSealLabel, []byte(plaintext), api.AppLogDrainAuthHeaderMaxBytes)
+}
+
+func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHealthResponse {
+	return api.AppLogDrainHealthResponse{
+		LogDrainID:            health.DrainID,
+		Status:                api.NormalizeAppLogDrainHealthStatus(health.Status),
+		Active:                health.Active,
+		QueueDepth:            health.QueueDepth,
+		QueueCapacity:         health.QueueCapacity,
+		DeliveredTotal:        health.DeliveredTotal,
+		FailedTotal:           health.FailedTotal,
+		DroppedTotal:          health.DroppedTotal,
+		RetriesTotal:          health.RetriesTotal,
+		StreamReconnectsTotal: health.StreamReconnectsTotal,
+		GapsTotal:             health.GapsTotal,
+		LastSuccessAt:         api.FormatAlertTime(health.LastSuccessAt),
+		LastFailureAt:         api.FormatAlertTime(health.LastFailureAt),
+		LastError:             api.SanitizeAppLogDrainHealthError(health.LastError),
+		UpdatedAt:             api.FormatAlertTime(health.UpdatedAt),
+	}
 }

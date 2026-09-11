@@ -39,6 +39,7 @@ export type { AppErrorSampleResponse } from './models/AppErrorSampleResponse.js'
 export type { AppErrorsSummaryResponse } from './models/AppErrorsSummaryResponse.js';
 export type { AppErrorSummaryItem } from './models/AppErrorSummaryItem.js';
 export type { AppliedBuild } from './models/AppliedBuild.js';
+export type { AppLogDrainHealthResponse } from './models/AppLogDrainHealthResponse.js';
 export type { AppLogDrainResponse } from './models/AppLogDrainResponse.js';
 export type { ApplyResponse } from './models/ApplyResponse.js';
 export type { AppManifest } from './models/AppManifest.js';

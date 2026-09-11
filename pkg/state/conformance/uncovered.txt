@@ -28,6 +28,7 @@ AppByID
 AppBySlug
 AppBySlugIncludingDeleted
 AppLogDrainByID
+AppLogDrainHealthByDrainID
 AppWebhookByID
 AppWebhookDeliveryByID
 AppendBuilderUsage
@@ -360,6 +361,7 @@ ListAppEnvInScope
 ListAppErrorFingerprintsForPurge
 ListAppErrorGroups
 ListAppErrorRequests
+ListAppLogDrainHealthForApp
 ListAppLogDrainsForApp
 ListAppRegistryCredentials
 ListAppSecrets
@@ -697,6 +699,7 @@ UpdateTrigger
 UpsertAccountSpendSnapshot
 UpsertAppEnv
 UpsertAppEnvInScope
+UpsertAppLogDrainHealth
 UpsertAppOpenAPIDoc
 UpsertAppOpenAPIDocIfUnderQuota
 UpsertAppRegistryCredential
