@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1205,6 +1206,10 @@ func cmdQueuePeek(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale queue peek <slug> [--limit N] [--before C]", "queue")
 		return 1
 	}
+	if err := validateCLILimit("limit", *limit, 100); err != nil {
+		PrintUsage(os.Stderr, "usage: gregale queue peek <slug> [--limit N] (1 <= N <= 100)", "queue")
+		return 1
+	}
 	slug := pos[0]
 	client, err := authedClient()
 	if err != nil {
@@ -1364,7 +1369,17 @@ func splitArgsForFlags(args []string, boolFlags ...string) (flags, pos []string)
 // whether the token after `--flag` is the flag's value or the next
 // flag.
 func looksLikeFlag(s string) bool {
-	return len(s) >= 2 && s[0] == '-'
+	if len(s) < 2 || s[0] != '-' {
+		return false
+	}
+	// A negative numeric token is a value for the preceding flag (for
+	// example, --limit -1), not another flag. Let the command's range
+	// validation produce the useful bounds error instead of reporting a
+	// misleading missing-argument parse failure.
+	if _, err := strconv.ParseFloat(s, 64); err == nil {
+		return false
+	}
+	return true
 }
 
 // indexByte is a strings.IndexByte alias kept local to this file to
