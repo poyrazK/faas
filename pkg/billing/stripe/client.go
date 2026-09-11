@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -253,6 +254,14 @@ func (c *Client) VerifyWebhook(payload []byte, headers map[string]string, tolera
 				AmountRefunded int64  `json:"amount_refunded"`
 				Currency       string `json:"currency"`
 				Refunded       bool   `json:"refunded"`
+				Refunds        struct {
+					Data []struct {
+						ID       string `json:"id"`
+						Amount   int64  `json:"amount"`
+						Currency string `json:"currency"`
+						Status   string `json:"status"`
+					} `json:"data"`
+				} `json:"refunds"`
 			} `json:"object"`
 		} `json:"data"`
 	}
@@ -273,13 +282,20 @@ func (c *Client) VerifyWebhook(payload []byte, headers map[string]string, tolera
 	}
 	// For charge.refunded the Object IS the charge (Stripe's payload
 	// shape: data.object.{id, amount_refunded, currency, refunded}).
-	// amount_refunded is in millicents — convert to cents for the
-	// billing.Event (which is always in cents; CLAUDE.md "no float on
-	// money"). Integer math only.
+	// Stripe amounts are already expressed in the currency's smallest unit
+	// (cents for EUR/USD), which is also billing.Event's money unit.
 	if ev.Type == "charge.refunded" {
 		out.ChargeID = ev.Data.Object.ID
 		out.Currency = ev.Data.Object.Currency
-		out.AmountCents = ev.Data.Object.AmountRefunded / 10
+		if len(ev.Data.Object.Refunds.Data) > 0 {
+			refund := ev.Data.Object.Refunds.Data[0]
+			out.ProviderRefundID = refund.ID
+			out.RefundStatus = strings.ToLower(refund.Status)
+			out.AmountCents = refund.Amount
+			if refund.Currency != "" {
+				out.Currency = refund.Currency
+			}
+		}
 	}
 	return out, nil
 }
@@ -300,10 +316,9 @@ func (c *Client) CreateUpgradeTransaction(_ context.Context, _ state.Account, _ 
 	return "", "", nil
 }
 
-// Refund issues a refund against the named charge. amountCents is
-// converted to millicents (×10) before being handed to the Stripe SDK
-// because Stripe's Amount field is millicents (CLAUDE.md: integer
-// cents/millicents; no float on money). The Idempotency-Key, if
+// Refund issues a refund against the named charge. amountCents is handed to
+// Stripe unchanged because RefundParams.Amount uses the currency's smallest
+// unit (cents for EUR/USD). The Idempotency-Key, if
 // present on the context, is forwarded to Refunds.New so a network
 // retry returns the same `re_…` id rather than creating a duplicate
 // refund. apid stamps the operator's request's Idempotency-Key
@@ -316,7 +331,7 @@ func (c *Client) CreateUpgradeTransaction(_ context.Context, _ state.Account, _ 
 func (c *Client) Refund(ctx context.Context, chargeID string, amountCents int64) (*billing.RefundResult, error) {
 	params := &stripe.RefundParams{
 		Charge: stripe.String(chargeID),
-		Amount: stripe.Int64(centsToMillicents(amountCents)),
+		Amount: stripe.Int64(centsToStripeMinorUnits(amountCents)),
 	}
 	if k, ok := idempotencyKeyFromContext(ctx); ok {
 		params.IdempotencyKey = stripe.String(k)
@@ -330,29 +345,14 @@ func (c *Client) Refund(ctx context.Context, chargeID string, amountCents int64)
 		ChargeID:         chargeID,
 		AmountCents:      amountCents,
 		Currency:         string(r.Currency),
+		Status:           string(r.Status),
 	}, nil
 }
 
-// ReconcileUsage queries Stripe for the mb_seconds total pushed in
-// the [start, end) window via stripe.UsageRecordSummaries.List and
-// returns it as int64 mb_seconds. ADR-049 §B.1.
-//
-// Read-only against Stripe — does NOT mutate customer /
-// subscription state. Returns (0, err) on any SDK error so the
-// reconciler can fail-soft log-and-skip the account.
-//
-// The actual Stripe SDK call is intentionally a stub for this PR.
-// The interface contract is the load-bearing seam — wiring the
-// SDK's TotalUsage summation lands in a follow-up PR against the
-// stripe sandbox. Today we return (0, nil) so the reconciler's
-// local-only drift signal (usage_minutes total) drives the
-// BillingDrift alert. The reconciler skips Stripe on the
-// "0 returned" path; the alert is gated on ratio > 0.005 so a
-// non-Stripe provider drift is still detected via the Paddle path
-// when that lands.
-//
-// Returns ErrNotImplemented until the SDK summation lands in a
-// follow-up PR. Returning (0, nil) here would make the reconciler
+// ReconcileUsage returns ErrNotImplemented because Stripe v70 usage summaries
+// are billing-period aggregates and cannot truthfully answer the reconciler's
+// arbitrary rolling [start,end) query. Returning (0, nil) here would make it
+// compute drift_ratio = abs(local − 0) / max(local, 0) = 1.0 for
 // compute drift_ratio = abs(local − 0) / max(local, 0) = 1.0 for
 // every paying account and page the BillingDrift alert from the
 // moment this PR ships. ErrNotImplemented is the documented
@@ -392,18 +392,16 @@ func StripeCapabilities() billing.CapabilitySet {
 	return billing.CapabilitySet(billing.CapRefund | billing.CapUsageMetered | billing.CapSandbox)
 }
 
-// centsToMillicents converts integer EUR cents to Stripe's native
-// millicents (×10). CLAUDE.md invariant: integer cents/millicents
-// only; never float on money. The factor is fixed (Stripe's wire
-// format uses 10 millicents per cent across every supported currency);
-// any drift here would silently bill customers the wrong amount.
+// centsToStripeMinorUnits documents the wire boundary. Gregale's billing
+// amounts and Stripe's EUR/USD amounts use the same integer minor unit, so no
+// scaling is permitted here; multiplying would over-refund customers.
 //
 // Extracted as a pure helper so the conversion is unit-testable
 // without standing up the stripe-go SDK / a live sandbox. The
 // caller (Client.Refund) hands the result straight to
 // stripe.Int64, which accepts int64.
-func centsToMillicents(cents int64) int64 {
-	return cents * 10
+func centsToStripeMinorUnits(cents int64) int64 {
+	return cents
 }
 
 // idempotencyKeyContextKey is retained for compatibility with the package's

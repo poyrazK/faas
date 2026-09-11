@@ -26,15 +26,21 @@ func TestVerifyWebhook_ChargeRefunded(t *testing.T) {
 	store := state.NewMemStore()
 	c := stripe.NewClient(store, store, "sk_test_dummy", testSecret, discardLog())
 
-	// 5000 cents = €50.00. Stripe uses millicents: 5000 * 10 = 50000.
+	// 5000 cents = €50.00. Stripe sends the amount in EUR's smallest unit.
 	payload := []byte(`{
 		"type": "charge.refunded",
 		"data": {"object": {
 			"id": "ch_test_123",
 			"customer": "cus_test_alice",
-			"amount_refunded": 50000,
+			"amount_refunded": 5000,
 			"currency": "eur",
-			"refunded": true
+			"refunded": true,
+			"refunds": {"data": [{
+				"id": "re_test_123",
+				"amount": 5000,
+				"currency": "eur",
+				"status": "succeeded"
+			}]}
 		}}
 	}`)
 	headers := map[string]string{
@@ -53,39 +59,39 @@ func TestVerifyWebhook_ChargeRefunded(t *testing.T) {
 	if ev.ChargeID != "ch_test_123" {
 		t.Errorf("ChargeID = %q, want ch_test_123", ev.ChargeID)
 	}
+	if ev.ProviderRefundID != "re_test_123" || ev.RefundStatus != "succeeded" {
+		t.Errorf("refund identity/status = %q/%q, want re_test_123/succeeded", ev.ProviderRefundID, ev.RefundStatus)
+	}
 	if ev.AmountCents != 5000 {
-		t.Errorf("AmountCents = %d, want 5000 (50000 millicents → 5000 cents)", ev.AmountCents)
+		t.Errorf("AmountCents = %d, want 5000", ev.AmountCents)
 	}
 	if ev.Currency != "eur" {
 		t.Errorf("Currency = %q, want eur", ev.Currency)
 	}
 }
 
-// TestCentsToMillicents pins the outbound conversion at the
-// stripe.Refund call site (client.go::centsToMillicents). The
-// wire-quantity contract is fixed across every Stripe currency:
-// 1 cent = 10 millicents. A drift here would silently bill customers
-// the wrong amount and is unrecoverable at this layer — Stripe's
-// Amount field is millicents and the SDK accepts the int64 raw.
+// TestCentsToStripeMinorUnits pins the outbound conversion at the Refund call
+// site. Stripe accepts integer minor units, so EUR/USD cents must remain
+// unchanged. A scaling factor here would silently refund the wrong amount.
 // Pinned as a pure helper so the test runs without standing up the
 // stripe-go SDK or a live sandbox.
-func TestCentsToMillicents(t *testing.T) {
+func TestCentsToStripeMinorUnits(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name       string
 		cents      int64
-		milliCents int64 // wire-format value Stripe's Amount expects
+		minorUnits int64
 	}{
 		{"zero", 0, 0},
-		{"one cent", 1, 10},
-		{"common goodwill credit", 500, 5000},
-		{"euro", 5000, 50000}, // 5000 cents = €50.00
-		{"largest plausible single-call refund", 100_000_00, 1_000_000_00}, // €100,000.00
+		{"one cent", 1, 1},
+		{"common goodwill credit", 500, 500},
+		{"euro", 5000, 5000},
+		{"largest plausible single-call refund", 100_000_00, 100_000_00}, // €100,000.00
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := stripe.CentsToMillicentsForTest(tc.cents); got != tc.milliCents {
-				t.Errorf("centsToMillicents(%d) = %d, want %d", tc.cents, got, tc.milliCents)
+			if got := stripe.CentsToStripeMinorUnitsForTest(tc.cents); got != tc.minorUnits {
+				t.Errorf("centsToStripeMinorUnits(%d) = %d, want %d", tc.cents, got, tc.minorUnits)
 			}
 		})
 	}

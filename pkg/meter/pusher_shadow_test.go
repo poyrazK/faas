@@ -59,6 +59,7 @@ func makeBillableAccount(t *testing.T, ctx context.Context, s *state.MemStore, p
 	for _, provider := range []string{"stripe", "paddle", "polar"} {
 		if err := s.UpsertBillingIdentity(ctx, state.BillingIdentity{
 			AccountID: acct.ID, Provider: provider, CustomerID: customerID, SubscriptionID: subscriptionID,
+			BillingFrom: time.Unix(0, 0).UTC(),
 		}); err != nil {
 			t.Fatalf("stamp %s billing identity: %v", provider, err)
 		}

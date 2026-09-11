@@ -433,6 +433,7 @@ type BillingIdentity struct {
 	Provider       string
 	CustomerID     string
 	SubscriptionID string
+	BillingFrom    pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 }
@@ -619,6 +620,7 @@ type CreditLedger struct {
 	Actor             string
 	CreatedAt         pgtype.Timestamptz
 	ProviderInvoiceID pgtype.Text
+	RefundReversalID  pgtype.UUID
 }
 
 type Cron struct {
@@ -1081,29 +1083,30 @@ type InvocationsPendingPerApp struct {
 }
 
 type Invoice struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	Provider            string
-	ProviderInvoiceID   string
-	ProviderChargeID    string
-	Number              string
-	Status              string
-	PeriodStart         pgtype.Timestamptz
-	PeriodEnd           pgtype.Timestamptz
-	SubtotalCents       int64
-	TaxCents            int64
-	TotalCents          int64
-	AmountPaidCents     int64
-	Plan                string
-	AmountRefundedCents int64
-	CreditsAppliedCents int64
-	Currency            string
-	PdfAvailable        bool
-	HostedUrl           string
-	Raw                 []byte
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	OrgID               pgtype.UUID
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	Provider                 string
+	ProviderInvoiceID        string
+	ProviderChargeID         string
+	Number                   string
+	Status                   string
+	PeriodStart              pgtype.Timestamptz
+	PeriodEnd                pgtype.Timestamptz
+	SubtotalCents            int64
+	TaxCents                 int64
+	TotalCents               int64
+	AmountPaidCents          int64
+	Plan                     string
+	AmountRefundedCents      int64
+	AmountRefundPendingCents int64
+	CreditsAppliedCents      int64
+	Currency                 string
+	PdfAvailable             bool
+	HostedUrl                string
+	Raw                      []byte
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	OrgID                    pgtype.UUID
 }
 
 type InvoiceRefund struct {
@@ -1115,6 +1118,7 @@ type InvoiceRefund struct {
 	Source           string
 	Status           string
 	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type Job struct {

@@ -14,6 +14,7 @@ package state_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -407,6 +408,77 @@ func TestPgStoreConsumeAccountCredit_FIFOAndIdempotent(t *testing.T) {
 	}
 	if len(second.PerCredit) != 0 {
 		t.Fatalf("PerCredit on replay = %d, want 0", len(second.PerCredit))
+	}
+}
+
+// TestPgStoreConsumeAccountCredit_ConcurrentReplayNeverDoubleDebits pins the
+// zero-row race: before the provider-invoice advisory lock, both transactions
+// could observe an empty ledger, then the loser of ON CONFLICT would retain a
+// balance decrement that had no matching ledger row.
+func TestPgStoreConsumeAccountCredit_ConcurrentReplayNeverDoubleDebits(t *testing.T) {
+	store, _, ctx := pgStoreAccountCreditsWithPool(t)
+	acct, err := store.CreateAccount(ctx, "credit-race@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := store.CreateAccountCredit(ctx, state.AccountCredit{
+		AccountID: acct.ID, CentsRemaining: 150, Reason: "credit",
+	}); err != nil {
+		t.Fatalf("credit: %v", err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan state.ConsumeAccountCreditResult, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			res, err := store.ConsumeAccountCredit(ctx, state.ConsumeAccountCreditParams{
+				AccountID:         acct.ID,
+				TargetCents:       100,
+				Provider:          "stripe",
+				ProviderInvoiceID: "in_pg_race_001",
+				Reason:            "concurrent replay",
+				Actor:             "apid",
+			})
+			results <- res
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent consume: %v", err)
+		}
+	}
+	var fresh, replay int
+	for res := range results {
+		if res.ConsumedCents != 100 {
+			t.Errorf("ConsumedCents = %d, want stable result 100", res.ConsumedCents)
+		}
+		if res.AlreadyConsumedForInvoice {
+			replay++
+		} else {
+			fresh++
+		}
+	}
+	if fresh != 1 || replay != 1 {
+		t.Fatalf("fresh=%d replay=%d, want one of each", fresh, replay)
+	}
+
+	active, err := store.ListActiveCreditsForConsumption(ctx, acct.ID)
+	if err != nil {
+		t.Fatalf("list active: %v", err)
+	}
+	if len(active) != 1 || active[0].CentsRemaining != 50 {
+		t.Fatalf("active credits = %+v, want one credit with 50 cents", active)
 	}
 }
 

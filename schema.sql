@@ -1535,6 +1535,7 @@ CREATE TABLE public.billing_identities (
     provider text NOT NULL,
     customer_id text NOT NULL,
     subscription_id text DEFAULT ''::text NOT NULL,
+    billing_from timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT billing_identities_customer_id_check CHECK ((customer_id <> ''::text)),
@@ -1852,6 +1853,7 @@ CREATE TABLE public.credit_ledger (
     actor text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     provider_invoice_id text,
+    refund_reversal_id uuid,
     CONSTRAINT credit_ledger_delta_cents_check CHECK ((delta_cents <> 0))
 );
 
@@ -2594,6 +2596,7 @@ CREATE TABLE public.invoices (
     amount_paid_cents bigint DEFAULT 0 NOT NULL,
     plan text DEFAULT 'free'::text NOT NULL,
     amount_refunded_cents bigint DEFAULT 0 NOT NULL,
+    amount_refund_pending_cents bigint DEFAULT 0 NOT NULL,
     credits_applied_cents bigint DEFAULT 0 NOT NULL,
     currency text DEFAULT 'eur'::text NOT NULL,
     pdf_available boolean DEFAULT false NOT NULL,
@@ -2603,11 +2606,13 @@ CREATE TABLE public.invoices (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,
     CONSTRAINT invoices_amount_paid_cents_check CHECK ((amount_paid_cents >= 0)),
+    CONSTRAINT invoices_amount_refund_pending_cents_check CHECK ((amount_refund_pending_cents >= 0)),
     CONSTRAINT invoices_amount_refunded_cents_check CHECK ((amount_refunded_cents >= 0)),
     CONSTRAINT invoices_credits_applied_cents_check CHECK (((credits_applied_cents >= 0) AND (credits_applied_cents <= amount_refunded_cents))),
     CONSTRAINT invoices_currency_check CHECK ((currency = 'eur'::text)),
     CONSTRAINT invoices_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT invoices_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
+    CONSTRAINT invoices_refund_totals_within_paid_check CHECK (((amount_refunded_cents + amount_refund_pending_cents) <= GREATEST(amount_paid_cents, total_cents))),
     CONSTRAINT invoices_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'uncollectible'::text, 'void'::text]))),
     CONSTRAINT invoices_subtotal_cents_check CHECK ((subtotal_cents >= 0)),
     CONSTRAINT invoices_tax_cents_check CHECK ((tax_cents >= 0)),
@@ -2628,6 +2633,7 @@ CREATE TABLE public.invoice_refunds (
     source text NOT NULL,
     status text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT invoice_refunds_amount_cents_check CHECK ((amount_cents > 0)),
     CONSTRAINT invoice_refunds_idempotency_key_check CHECK ((idempotency_key <> ''::text)),
     CONSTRAINT invoice_refunds_provider_refund_id_check CHECK ((provider_refund_id <> ''::text)),
@@ -5677,7 +5683,14 @@ CREATE INDEX credit_ledger_account_created_idx ON public.credit_ledger USING btr
 -- Name: credit_ledger_invoice_credit_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX credit_ledger_invoice_credit_idx ON public.credit_ledger USING btree (provider_invoice_id, credit_id) WHERE (provider_invoice_id IS NOT NULL);
+CREATE UNIQUE INDEX credit_ledger_invoice_credit_idx ON public.credit_ledger USING btree (provider_invoice_id, credit_id) WHERE ((provider_invoice_id IS NOT NULL) AND (delta_cents < 0));
+
+
+--
+-- Name: credit_ledger_refund_reversal_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX credit_ledger_refund_reversal_idx ON public.credit_ledger USING btree (refund_reversal_id, credit_id) WHERE (refund_reversal_id IS NOT NULL);
 
 
 --
@@ -7807,6 +7820,14 @@ ALTER TABLE ONLY public.credit_ledger
 
 ALTER TABLE ONLY public.credit_ledger
     ADD CONSTRAINT credit_ledger_credit_id_fkey FOREIGN KEY (credit_id) REFERENCES public.account_credits(id) ON DELETE CASCADE;
+
+
+--
+-- Name: credit_ledger credit_ledger_refund_reversal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_ledger
+    ADD CONSTRAINT credit_ledger_refund_reversal_id_fkey FOREIGN KEY (refund_reversal_id) REFERENCES public.invoice_refunds(id) ON DELETE SET NULL;
 
 
 --

@@ -84,6 +84,7 @@ func parsePaddleEvent(payload []byte, provider *Provider) (billing.Event, error)
 		event.ChargeID = paddleString(data, "transaction_id", "charge_id")
 		event.AmountCents = paddleAmountAt(data, []string{"totals", "total"}, []string{"amount"})
 		event.Currency = strings.ToUpper(paddleString(data, "currency_code", "currency"))
+		event.RefundStatus = strings.ToLower(paddleString(data, "status"))
 	}
 	return event, nil
 }

@@ -92,9 +92,9 @@ type Config struct {
 	// means the production default (1 h); each pass scans all retained windows
 	// without a delivery receipt, and provider idempotency keys make replay safe.
 	StripeInterval time.Duration
-	// BillingLookback is deprecated and retained for config compatibility.
-	// Durable delivery receipts now make the replay horizon equal to usage
-	// retention, so an outage longer than this value cannot strand usage.
+	// BillingLookback bounds each provider replay scan. Delivery receipts make
+	// retries within the horizon idempotent; older retained usage is deliberately
+	// excluded so a stale backlog cannot produce an unbounded surprise charge.
 	BillingLookback time.Duration
 	// DunningInterval is how often the dunning timer sweeps accounts
 	// for the past_due → 7d → suspended and suspended → 21d →

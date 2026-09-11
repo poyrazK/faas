@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -38,6 +39,89 @@ func TestPushPendingRetriesFailedWindowsFromDurableUsage(t *testing.T) {
 	}
 	if got := len(provider.Calls()); got != 4 {
 		t.Fatalf("provider calls = %d, want 4 (two failed + two replayed windows)", got)
+	}
+}
+
+func TestPushPendingLeavesPeerHeldWindowUndelivered(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "instance-a", now.Add(-time.Hour), 100, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingStripe{err: billing.ErrUsageDeliveryInProgress}
+	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); pushed != 0 || err != nil {
+		t.Fatalf("held PushPending = (%d, %v), want quiet pending result", pushed, err)
+	}
+	provider.err = nil
+	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); pushed != 1 || err != nil {
+		t.Fatalf("retry PushPending = (%d, %v), want window to remain deliverable", pushed, err)
+	}
+}
+
+func TestPushPendingHonorsLookback(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "old", now.Add(-25*time.Hour), 100, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "recent", now.Add(-time.Hour), 200, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &recordingStripe{}
+	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	pushed, err := pusher.PushPending(ctx, 24*time.Hour)
+	if err != nil || pushed != 1 {
+		t.Fatalf("PushPending = (%d, %v), want one in-range window", pushed, err)
+	}
+	calls := provider.Calls()
+	if len(calls) != 1 || calls[0].MBSeconds != 200 {
+		t.Fatalf("provider calls = %+v, want only recent usage", calls)
+	}
+}
+
+func TestPushPendingDoesNotRebillUsageBeforeProviderIdentity(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct := makeAccount(t, ctx, store, api.PlanHobby)
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	switchAt := now.Add(-90 * time.Minute)
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "before-switch", now.Add(-105*time.Minute), 100, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "after-switch", now.Add(-75*time.Minute), 200, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	// recordingStripe is a provider test double, so the pusher retains the
+	// legacy account cache while PendingBillingUsageWindows uses the explicit
+	// Stripe identity below.
+	if err := store.UpdateAccountProviderCustomerID(ctx, acct.ID, "ctm_legacy_cache"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, "si_switch"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertBillingIdentity(ctx, state.BillingIdentity{
+		AccountID: acct.ID, Provider: "stripe", CustomerID: "cus_switch",
+		SubscriptionID: "si_switch", BillingFrom: switchAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &recordingStripe{}
+	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	pushed, err := pusher.PushPending(ctx, 24*time.Hour)
+	if err != nil || pushed != 1 {
+		t.Fatalf("PushPending = (%d, %v), want one post-switch window", pushed, err)
+	}
+	calls := provider.Calls()
+	if len(calls) != 1 || calls[0].MBSeconds != 200 {
+		t.Fatalf("provider calls = %+v, want only post-switch usage", calls)
 	}
 }
 

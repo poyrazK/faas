@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -39,6 +40,9 @@ func (d *fakeDedupePaddle) HasPaddleOverageMonth(context.Context, string, time.T
 }
 func (d *fakeDedupePaddle) RecordPaddleOverageMonth(context.Context, string, time.Time) error {
 	return nil
+}
+func (d *fakeDedupePaddle) PaddleOverageWindowExists(context.Context, string, time.Time) (bool, error) {
+	return false, nil
 }
 func (d *fakeDedupePaddle) ClaimPaddleOverageWindow(_ context.Context, _ string, _ time.Time, _ string, _ time.Duration) (bool, error) {
 	d.mu.Lock()
@@ -142,7 +146,7 @@ func TestPaddle_FlushOverageLocked_ZeroFastPath(t *testing.T) {
 
 // TestPaddle_FlushOverageLocked_DedupeAlreadyClaimed — when the
 // dedupe gate says another pod owns this window, the flushFn is NOT
-// invoked and no error is returned. This pins the cross-pod
+// invoked and the delivery remains pending. This pins the cross-pod
 // coordination contract.
 func TestPaddle_FlushOverageLocked_DedupeAlreadyClaimed(t *testing.T) {
 	t.Parallel()
@@ -155,8 +159,8 @@ func TestPaddle_FlushOverageLocked_DedupeAlreadyClaimed(t *testing.T) {
 		return nil
 	})
 	err := p.flushOverageLocked(context.Background(), state.Account{ID: "a"}, time.Now(), 1024)
-	if err != nil {
-		t.Fatalf("flushOverageLocked: %v", err)
+	if !errors.Is(err, billing.ErrUsageDeliveryInProgress) {
+		t.Fatalf("flushOverageLocked error = %v, want ErrUsageDeliveryInProgress", err)
 	}
 	if called {
 		t.Error("flushFn called despite dedupe saying claimed=false")

@@ -1764,9 +1764,13 @@ func (m *MemStore) UpsertBillingIdentity(_ context.Context, identity BillingIden
 	key := billingIdentityKey(identity.AccountID, identity.Provider)
 	if existing, ok := m.billingIdentities[key]; ok {
 		identity.CreatedAt = existing.CreatedAt
+		identity.BillingFrom = existing.BillingFrom
 	}
 	if identity.CreatedAt.IsZero() {
 		identity.CreatedAt = time.Now().UTC()
+	}
+	if identity.BillingFrom.IsZero() {
+		identity.BillingFrom = identity.CreatedAt
 	}
 	identity.UpdatedAt = time.Now().UTC()
 	m.billingIdentities[key] = identity
@@ -12677,6 +12681,7 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 				inv.ProviderChargeID = existing.ProviderChargeID
 			}
 			inv.AmountRefundedCents = existing.AmountRefundedCents
+			inv.AmountRefundPendingCents = existing.AmountRefundPendingCents
 			inv.CreditsAppliedCents = existing.CreditsAppliedCents
 			inv.Plan = existing.Plan
 			if inv.CreatedAt.IsZero() {
@@ -12724,32 +12729,135 @@ func (m *MemStore) RecordInvoiceRefund(_ context.Context, refund InvoiceRefund) 
 	if !ok {
 		return ErrNotFound
 	}
-	for _, existing := range m.invoiceRefunds {
-		if existing.InvoiceID == refund.InvoiceID &&
-			(existing.ProviderRefundID == refund.ProviderRefundID || existing.IdempotencyKey == refund.IdempotencyKey) {
-			return nil
+	var existingKey string
+	var existing InvoiceRefund
+	for key, candidate := range m.invoiceRefunds {
+		if candidate.InvoiceID == refund.InvoiceID &&
+			(candidate.ProviderRefundID == refund.ProviderRefundID || candidate.IdempotencyKey == refund.IdempotencyKey) {
+			existingKey, existing = key, candidate
+			break
 		}
 	}
 	paid := inv.AmountPaidCents
 	if paid <= 0 {
 		paid = inv.TotalCents
 	}
-	if paid <= 0 || inv.AmountRefundedCents+refund.AmountCents > paid {
+	refund.Status = normalizeInvoiceRefundStatus(refund.Status)
+	newState := classifyInvoiceRefundStatus(refund.Status)
+	var settledDelta, pendingDelta, creditDelta int64
+	var reverseCredit bool
+	storedRefund := refund
+	storedRefundKey := existingKey
+	if existingKey == "" {
+		if newState != invoiceRefundFailed && (paid <= 0 || inv.AmountRefundedCents+inv.AmountRefundPendingCents+refund.AmountCents > paid) {
+			return ErrConflict
+		}
+		if refund.ID == "" {
+			refund.ID = uuid.NewString()
+		}
+		if refund.CreatedAt.IsZero() {
+			refund.CreatedAt = time.Now().UTC()
+		}
+		storedRefund = refund
+		storedRefundKey = refund.ID
+		if newState == invoiceRefundSettled {
+			settledDelta = refund.AmountCents
+			if refund.Source == "credit" {
+				creditDelta = refund.AmountCents
+			}
+		} else if newState == invoiceRefundPending {
+			pendingDelta = refund.AmountCents
+		} else if refund.Source == "credit" {
+			reverseCredit = true
+		}
+	} else {
+		if existing.AmountCents != refund.AmountCents ||
+			(existing.ProviderRefundID != refund.ProviderRefundID && existing.IdempotencyKey == refund.IdempotencyKey) {
+			return ErrConflict
+		}
+		oldState := classifyInvoiceRefundStatus(existing.Status)
+		if existing.Source == "webhook" && refund.Source != "webhook" {
+			existing.Source = refund.Source
+			if oldState == invoiceRefundSettled && refund.Source == "credit" {
+				creditDelta = refund.AmountCents
+			} else if oldState == invoiceRefundFailed && refund.Source == "credit" {
+				reverseCredit = true
+			}
+		}
+		if oldState == invoiceRefundPending && newState != oldState {
+			pendingDelta = -refund.AmountCents
+			if newState == invoiceRefundSettled {
+				settledDelta = refund.AmountCents
+				if existing.Source == "credit" {
+					creditDelta = refund.AmountCents
+				}
+			} else if newState == invoiceRefundFailed && existing.Source == "credit" {
+				reverseCredit = true
+			}
+			existing.Status = refund.Status
+		} else if oldState == invoiceRefundPending {
+			existing.Status = refund.Status
+		}
+		storedRefund = existing
+	}
+	newSettled := inv.AmountRefundedCents + settledDelta
+	newPending := inv.AmountRefundPendingCents + pendingDelta
+	newCredits := inv.CreditsAppliedCents + creditDelta
+	if newSettled < 0 || newPending < 0 || newCredits < 0 || newCredits > newSettled || newSettled+newPending > paid {
 		return ErrConflict
 	}
-	if refund.ID == "" {
-		refund.ID = uuid.NewString()
+	if reverseCredit {
+		if err := m.reverseInvoiceCreditConsumptionLocked(inv.AccountID, inv.ProviderInvoiceID, storedRefund.ID, refund.AmountCents); err != nil {
+			return err
+		}
 	}
-	if refund.CreatedAt.IsZero() {
-		refund.CreatedAt = time.Now().UTC()
-	}
-	m.invoiceRefunds[refund.ID] = refund
-	inv.AmountRefundedCents += refund.AmountCents
-	if refund.Source == "credit" {
-		inv.CreditsAppliedCents += refund.AmountCents
-	}
+	m.invoiceRefunds[storedRefundKey] = storedRefund
+	inv.AmountRefundedCents = newSettled
+	inv.AmountRefundPendingCents = newPending
+	inv.CreditsAppliedCents = newCredits
 	inv.UpdatedAt = time.Now().UTC()
 	m.invoices[invoiceKey] = inv
+	return nil
+}
+
+func (m *MemStore) reverseInvoiceCreditConsumptionLocked(accountID, providerInvoiceID, refundID string, expectedCents int64) error {
+	var alreadyReversed int64
+	for _, entry := range m.creditLedger {
+		if entry.RefundReversalID != nil && *entry.RefundReversalID == refundID {
+			alreadyReversed += entry.DeltaCents
+		}
+	}
+	if alreadyReversed > 0 {
+		if alreadyReversed != expectedCents {
+			return ErrConflict
+		}
+		return nil
+	}
+	var consumed int64
+	for _, entry := range m.creditLedger {
+		if entry.ProviderInvoiceID != nil && *entry.ProviderInvoiceID == providerInvoiceID && entry.DeltaCents < 0 {
+			consumed -= entry.DeltaCents
+		}
+	}
+	if consumed != expectedCents {
+		return ErrConflict
+	}
+	now := time.Now().UTC()
+	for _, entry := range append([]CreditLedgerEntry(nil), m.creditLedger...) {
+		if entry.ProviderInvoiceID == nil || *entry.ProviderInvoiceID != providerInvoiceID || entry.DeltaCents >= 0 {
+			continue
+		}
+		credit := m.accountCredits[entry.CreditID]
+		credit.CentsRemaining -= entry.DeltaCents
+		m.accountCredits[entry.CreditID] = credit
+		invoiceID, reversalID := providerInvoiceID, refundID
+		m.creditLedger = append(m.creditLedger, CreditLedgerEntry{
+			ID: uuid.NewString(), AccountID: accountID, CreditID: entry.CreditID,
+			DeltaCents: -entry.DeltaCents, Reason: "provider refund failed",
+			Actor: "apid-refund-reversal", CreatedAt: now,
+			ProviderInvoiceID: &invoiceID, RefundReversalID: &reversalID,
+		})
+	}
 	return nil
 }
 
@@ -12935,16 +13043,17 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 	// AFTER the first call would be drained on replay, double-
 	// decrementing the active credit balance.
 	priorCents := int64(0)
-	priorCreditIDs := make(map[string]struct{})
+	hasPrior := false
 	for _, le := range m.creditLedger {
 		if le.ProviderInvoiceID != nil && *le.ProviderInvoiceID == p.ProviderInvoiceID {
-			if le.DeltaCents < 0 {
-				priorCents += -le.DeltaCents
-			}
-			priorCreditIDs[le.CreditID] = struct{}{}
+			priorCents += -le.DeltaCents
+			hasPrior = hasPrior || le.DeltaCents < 0
 		}
 	}
-	if priorCents > 0 {
+	if hasPrior {
+		if priorCents < 0 {
+			priorCents = 0
+		}
 		// Re-derive ConsumedCents from the prior rows so the operator
 		// sees the same total across calls (PgStore mirrors this).
 		remaining := m.sumActive(p.AccountID, time.Now().UTC())
@@ -13055,9 +13164,9 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 		// original ConsumedCents for this invoice is the sum of the
 		// seen entries — re-derive it so the operator sees the same
 		// total regardless of which call they inspect.
-		for _, delta := range seen {
-			if delta < 0 {
-				res.ConsumedCents += -delta
+		for _, le := range m.creditLedger {
+			if le.ProviderInvoiceID != nil && *le.ProviderInvoiceID == p.ProviderInvoiceID {
+				res.ConsumedCents -= le.DeltaCents
 			}
 		}
 		res.AlreadyConsumedForInvoice = true
@@ -13296,16 +13405,19 @@ func billingUsageDeliveryKey(provider, accountID string, hour time.Time) string 
 	return provider + "\x00" + accountID + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
 }
 
-func (m *MemStore) PendingBillingUsageWindows(_ context.Context, provider string, end time.Time) ([]UsageWindow, error) {
+func (m *MemStore) PendingBillingUsageWindows(_ context.Context, provider string, start, end time.Time) ([]UsageWindow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	start = start.UTC()
+	end = end.UTC()
 	type key struct {
 		account string
 		hour    time.Time
 	}
 	agg := make(map[key]int64)
 	for _, row := range m.usage {
-		if !row.Minute.Before(end.UTC()) {
+		identity, ok := m.billingIdentities[billingIdentityKey(row.AccountID, provider)]
+		if !ok || row.Minute.Before(start) || !row.Minute.Before(end) || row.Minute.Before(identity.BillingFrom) {
 			continue
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
@@ -13702,6 +13814,15 @@ func (m *MemStore) ClaimPaddleOverageWindow(_ context.Context, accountID string,
 	state.claimedAt = now
 	m.paddleOverageWindows[key] = state
 	return true, nil
+}
+
+func (m *MemStore) PaddleOverageWindowExists(_ context.Context, accountID string, windowStart time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.paddleOverageWindows[paddleOverageWindowKey{
+		accountID: accountID, windowStart: windowStart.UTC(),
+	}]
+	return ok, nil
 }
 
 // CompletePaddleOverageWindow mirrors PgStore.CompletePaddleOverageWindow.

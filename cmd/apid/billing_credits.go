@@ -55,7 +55,7 @@ func (s *server) consumeAndRefundInvoiceCredits(ctx context.Context, inv state.I
 	if paid <= 0 {
 		paid = inv.TotalCents
 	}
-	refundable := paid - inv.AmountRefundedCents
+	refundable := paid - inv.AmountRefundedCents - inv.AmountRefundPendingCents
 	if refundable < 0 {
 		refundable = 0
 	}

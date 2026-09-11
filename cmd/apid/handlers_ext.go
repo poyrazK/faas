@@ -3573,21 +3573,31 @@ type stripeWebhookEnvelope struct {
 }
 
 type stripeWebhookObject struct {
-	ID           string          `json:"id"`
-	Customer     string          `json:"customer"`
-	Status       string          `json:"status"`
-	Plan         json.RawMessage `json:"plan"`
-	Subscription json.RawMessage `json:"subscription"`
-	Charge       json.RawMessage `json:"charge"`
-	Number       string          `json:"number"`
-	Currency     string          `json:"currency"`
-	Subtotal     int64           `json:"subtotal"`
-	Tax          int64           `json:"tax"`
-	Total        int64           `json:"total"`
-	AmountPaid   int64           `json:"amount_paid"`
-	PeriodStart  int64           `json:"period_start"`
-	PeriodEnd    int64           `json:"period_end"`
-	InvoicePDF   string          `json:"invoice_pdf"`
+	ID             string          `json:"id"`
+	Customer       string          `json:"customer"`
+	Status         string          `json:"status"`
+	Plan           json.RawMessage `json:"plan"`
+	Subscription   json.RawMessage `json:"subscription"`
+	Charge         json.RawMessage `json:"charge"`
+	Number         string          `json:"number"`
+	Currency       string          `json:"currency"`
+	Subtotal       int64           `json:"subtotal"`
+	Tax            int64           `json:"tax"`
+	Total          int64           `json:"total"`
+	AmountPaid     int64           `json:"amount_paid"`
+	AmountRefunded int64           `json:"amount_refunded"`
+	Refunded       bool            `json:"refunded"`
+	Refunds        struct {
+		Data []struct {
+			ID       string `json:"id"`
+			Amount   int64  `json:"amount"`
+			Status   string `json:"status"`
+			Currency string `json:"currency"`
+		} `json:"data"`
+	} `json:"refunds"`
+	PeriodStart int64  `json:"period_start"`
+	PeriodEnd   int64  `json:"period_end"`
+	InvoicePDF  string `json:"invoice_pdf"`
 }
 
 // stripeWebhook accepts signed Stripe events. M7 enforces the v1 HMAC
@@ -3728,6 +3738,14 @@ func stripeUnixTime(value int64) time.Time {
 	return time.Unix(value, 0).UTC()
 }
 
+func normalizedRefundStatus(status string) string {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "" {
+		return "succeeded"
+	}
+	return status
+}
+
 func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event {
 	obj := ev.Data.Object
 	normalized := billing.Event{
@@ -3754,12 +3772,25 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			Status:            status,
 			PeriodStart:       stripeUnixTime(obj.PeriodStart),
 			PeriodEnd:         stripeUnixTime(obj.PeriodEnd),
-			SubtotalCents:     obj.Subtotal / 10,
-			TaxCents:          obj.Tax / 10,
-			TotalCents:        obj.Total / 10,
-			AmountPaidCents:   amountPaid / 10,
+			SubtotalCents:     obj.Subtotal,
+			TaxCents:          obj.Tax,
+			TotalCents:        obj.Total,
+			AmountPaidCents:   amountPaid,
 			Currency:          strings.ToLower(obj.Currency),
 			PDFAvailable:      obj.InvoicePDF != "",
+		}
+	}
+	if ev.Type == "charge.refunded" && obj.ID != "" {
+		normalized.ChargeID = obj.ID
+		normalized.Currency = strings.ToLower(obj.Currency)
+		if len(obj.Refunds.Data) > 0 {
+			refund := obj.Refunds.Data[0]
+			normalized.ProviderRefundID = refund.ID
+			normalized.RefundStatus = strings.ToLower(refund.Status)
+			normalized.AmountCents = refund.Amount
+			if refund.Currency != "" {
+				normalized.Currency = strings.ToLower(refund.Currency)
+			}
 		}
 	}
 	return normalized
@@ -4161,7 +4192,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 				IdempotencyKey:   "webhook-" + ev.ProviderRefundID,
 				AmountCents:      ev.AmountCents,
 				Source:           "webhook",
-				Status:           "confirmed",
+				Status:           normalizedRefundStatus(ev.RefundStatus),
 			}); err != nil {
 				return fmt.Errorf("record refund webhook: %w", err)
 			}
@@ -4225,6 +4256,8 @@ func mapStripeTypeToEventType(t string) billing.EventType {
 		return billing.EventPaymentFailed
 	case "invoice.payment_succeeded":
 		return billing.EventPaymentSucceeded
+	case "charge.refunded":
+		return billing.EventRefundProcessed
 	default:
 		return billing.EventUnknown
 	}
