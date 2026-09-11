@@ -66,15 +66,23 @@ type inspectHealthSummary struct {
 }
 
 type inspectResourceSummary struct {
-	Profile           string             `json:"profile"`
-	MemoryMB          int                `json:"memory_mb"`
-	CPUMillicores     int                `json:"cpu_millicores"`
-	ScaleToZero       bool               `json:"scale_to_zero"`
-	MinInstances      int                `json:"min_instances"`
-	MaxInstances      int                `json:"max_instances"`
-	Target            *api.ScalingTarget `json:"target,omitempty"`
-	ScaleOutCooldownS int                `json:"scale_out_cooldown_s,omitempty"`
-	ScaleInCooldownS  int                `json:"scale_in_cooldown_s,omitempty"`
+	Profile       string             `json:"profile"`
+	MemoryMB      int                `json:"memory_mb"`
+	CPUMillicores int                `json:"cpu_millicores"`
+	ScaleToZero   bool               `json:"scale_to_zero"`
+	MinInstances  int                `json:"min_instances"`
+	MaxInstances  int                `json:"max_instances"`
+	Target        *api.ScalingTarget `json:"target,omitempty"`
+	// AutoscaleTargetRPS and AutoscaleTargetCPUPct are the legacy reactive
+	// scale-up targets returned by GET /v1/apps/{slug}. They remain effective
+	// when the newer ScalingPolicy.Target is unset, so inspect must not infer
+	// "request-driven" from a nil policy target alone. When both legacy
+	// targets are set, the scheduler triggers on either signal and uses the
+	// RPS signal for replica sizing; CPU contributes a one-instance bump.
+	AutoscaleTargetRPS    int `json:"autoscale_target_rps,omitempty"`
+	AutoscaleTargetCPUPct int `json:"autoscale_target_cpu_pct,omitempty"`
+	ScaleOutCooldownS     int `json:"scale_out_cooldown_s,omitempty"`
+	ScaleInCooldownS      int `json:"scale_in_cooldown_s,omitempty"`
 }
 
 type inspectAPISummary struct {
@@ -211,6 +219,7 @@ func inspectResources(app api.AppResponse) inspectResourceSummary {
 	out := inspectResourceSummary{
 		Profile: profile, MemoryMB: app.RAMMB, CPUMillicores: app.CPUMillicores,
 		MinInstances: app.MinInstances, MaxInstances: app.MaxConcurrency,
+		AutoscaleTargetRPS: app.AutoscaleTargetRPS, AutoscaleTargetCPUPct: app.AutoscaleTargetCPUPct,
 	}
 	if app.ScalingPolicy != nil {
 		out.MinInstances = app.ScalingPolicy.MinInstances
@@ -476,11 +485,28 @@ func renderInspectRuntime(w io.Writer, runtime inspectRuntimeSummary) {
 
 func renderInspectResources(w io.Writer, resources inspectResourceSummary) {
 	_, _ = fmt.Fprintf(w, "  resources: %s · %d MB · %d mCPU\n", resources.Profile, resources.MemoryMB, resources.CPUMillicores)
-	target := "request-driven"
-	if resources.Target != nil && resources.Target.Metric != "" {
-		target = fmt.Sprintf("%s=%g", resources.Target.Metric, resources.Target.Value)
-	}
+	target := inspectScalingTargetLabel(resources)
 	_, _ = fmt.Fprintf(w, "  scaling:   %d→%d instances · %s\n", resources.MinInstances, resources.MaxInstances, target)
+}
+
+func inspectScalingTargetLabel(resources inspectResourceSummary) string {
+	labels := make([]string, 0, 3)
+	if resources.Target != nil && resources.Target.Metric != "" {
+		labels = append(labels, fmt.Sprintf("%s=%g", resources.Target.Metric, resources.Target.Value))
+	}
+	if resources.AutoscaleTargetRPS > 0 {
+		labels = append(labels, fmt.Sprintf("rps=%d", resources.AutoscaleTargetRPS))
+	}
+	if resources.AutoscaleTargetCPUPct > 0 {
+		labels = append(labels, fmt.Sprintf("cpu_pct=%d%%", resources.AutoscaleTargetCPUPct))
+	}
+	if len(labels) == 0 {
+		return "request-driven"
+	}
+	if resources.AutoscaleTargetRPS > 0 && resources.AutoscaleTargetCPUPct > 0 {
+		return strings.Join(labels, " OR ") + " (RPS sizing)"
+	}
+	return strings.Join(labels, " OR ")
 }
 
 func renderInspectSignals(w io.Writer, summary inspectSummary) {
