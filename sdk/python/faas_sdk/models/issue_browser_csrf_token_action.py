@@ -6,6 +6,8 @@ IssueBrowserCSRFTokenAction = Literal[
     "auth.sessions.revoke_all",
     "mfa_confirm",
     "mfa_disable",
+    "mfa_disable_email",
+    "mfa_disable_email_confirm",
     "mfa_recover",
     "set_password",
 ]
@@ -16,6 +18,8 @@ ISSUE_BROWSER_CSRF_TOKEN_ACTION_VALUES: set[IssueBrowserCSRFTokenAction] = {
     "auth.sessions.revoke_all",
     "mfa_confirm",
     "mfa_disable",
+    "mfa_disable_email",
+    "mfa_disable_email_confirm",
     "mfa_recover",
     "set_password",
 }

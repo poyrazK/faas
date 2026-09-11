@@ -9,6 +9,10 @@ import type { TriggerKind } from './TriggerKind.js';
 export type AccountLimits = {
   plan: 'free' | 'hobby' | 'pro' | 'scale';
   ram_mb: number;
+  /**
+   * Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account reads.
+   */
+  vcpu: number;
   max_concurrency: number;
   deployed_apps: number;
   /**

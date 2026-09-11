@@ -50,6 +50,9 @@ class CreateAppRequest:
     type_: CreateAppRequestType | Unset = UNSET
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET
+    vcpu: int | Unset = UNSET
+    """Optional guest vCPU assertion. When supplied with ram_mb, the pair must match the plan shape: Free (128
+    MB/2), Hobby (256 MB/2), Pro (512 MB/2), or Scale (1024 MB/4). Omit to use the plan default."""
     cpu_millicores: CreateAppRequestCpuMillicores | Unset = 1000
     """Sustained CPU allowance per instance. Omit for 1000 millicores."""
     resource_profile: ResourceProfile | Unset = UNSET
@@ -132,6 +135,8 @@ class CreateAppRequest:
             runtime = self.runtime
 
         ram_mb = self.ram_mb
+
+        vcpu = self.vcpu
 
         cpu_millicores: int | Unset = UNSET
         if not isinstance(self.cpu_millicores, Unset):
@@ -222,6 +227,8 @@ class CreateAppRequest:
             field_dict["runtime"] = runtime
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
+        if vcpu is not UNSET:
+            field_dict["vcpu"] = vcpu
         if cpu_millicores is not UNSET:
             field_dict["cpu_millicores"] = cpu_millicores
         if resource_profile is not UNSET:
@@ -299,6 +306,8 @@ class CreateAppRequest:
             runtime = check_create_app_request_runtime(_runtime)
 
         ram_mb = d.pop("ram_mb", UNSET)
+
+        vcpu = d.pop("vcpu", UNSET)
 
         _cpu_millicores = d.pop("cpu_millicores", UNSET)
         cpu_millicores: CreateAppRequestCpuMillicores | Unset
@@ -411,6 +420,7 @@ class CreateAppRequest:
             type_=type_,
             runtime=runtime,
             ram_mb=ram_mb,
+            vcpu=vcpu,
             cpu_millicores=cpu_millicores,
             resource_profile=resource_profile,
             max_concurrency=max_concurrency,

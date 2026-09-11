@@ -546,6 +546,10 @@ from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsag
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
+from .mfa_disable_email_confirm_request import MFADisableEmailConfirmRequest
+from .mfa_disable_email_confirm_response import MFADisableEmailConfirmResponse
+from .mfa_disable_email_request import MFADisableEmailRequest
+from .mfa_disable_email_response import MFADisableEmailResponse
 from .mfa_disable_request import MFADisableRequest
 from .mfa_disable_response import MFADisableResponse
 from .mfa_enroll_request import MFAEnrollRequest
@@ -1445,6 +1449,10 @@ __all__ = (
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
+    "MFADisableEmailConfirmRequest",
+    "MFADisableEmailConfirmResponse",
+    "MFADisableEmailRequest",
+    "MFADisableEmailResponse",
     "MFADisableRequest",
     "MFADisableResponse",
     "MFAEnrollRequest",

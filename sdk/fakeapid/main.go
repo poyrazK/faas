@@ -47,6 +47,7 @@ func accountLimits() map[string]any {
 	return map[string]any{
 		"plan":                            "hobby",
 		"ram_mb":                          256,
+		"vcpu":                            2,
 		"max_concurrency":                 2,
 		"deployed_apps":                   3,
 		"developer_apps":                  2,
@@ -82,6 +83,7 @@ func appResponse(slug string) []byte {
 		"slug":                     slug,
 		"type":                     "app",
 		"ram_mb":                   256,
+		"vcpu":                     2,
 		"cpu_millicores":           1000,
 		"configured_resources":     appConfiguredResources(),
 		"max_concurrency":          2,
@@ -274,6 +276,7 @@ func (f *fixture) handler() http.Handler {
 					"slug":                     "hello-world",
 					"type":                     "app",
 					"ram_mb":                   256,
+					"vcpu":                     2,
 					"cpu_millicores":           1000,
 					"configured_resources":     appConfiguredResources(),
 					"max_concurrency":          2,

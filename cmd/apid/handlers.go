@@ -219,7 +219,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if req.MaxConcurrency == 0 && lifecycle.EffectiveExecutionMode() == api.ExecutionModeService && lifecycle.ServiceReplicas != nil && lifecycle.ServiceReplicas.Desired > mc {
 		mc = lifecycle.ServiceReplicas.Desired
 	}
-	if prob := api.ValidateAppConfig(limits, ram, mc); prob != nil {
+	if prob := api.ValidateAppConfig(limits, ram, mc, req.VCPU); prob != nil {
 		return state.App{}, prob
 	}
 	if prob := lifecycleProblem(acct.Plan, lifecycle, mc); prob != nil {
@@ -634,7 +634,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 	ea := egressStringList(a.EgressAllowlist)
 	return api.AppResponse{
 		ID: a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
-		RAMMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan),
+		RAMMB: a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
 		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
 		// Issue #559: platform-advertised per-VM concurrency cap
@@ -914,6 +914,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		Limits: api.AccountLimits{
 			Plan:                        string(acct.Plan),
 			RAMMB:                       l.RAMMB,
+			VCPU:                        l.VCPU,
 			MaxConcurrency:              l.MaxConcurrency,
 			DeployedApps:                l.DeployedApps,
 			DeveloperApps:               l.DeveloperApps,

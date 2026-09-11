@@ -18,6 +18,9 @@ class AccountLimits:
 
     plan: AccountLimitsPlan
     ram_mb: int
+    vcpu: int
+    """Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account
+    reads."""
     max_concurrency: int
     deployed_apps: int
     developer_apps: int
@@ -47,6 +50,8 @@ class AccountLimits:
         plan: str = self.plan
 
         ram_mb = self.ram_mb
+
+        vcpu = self.vcpu
 
         max_concurrency = self.max_concurrency
 
@@ -87,6 +92,7 @@ class AccountLimits:
             {
                 "plan": plan,
                 "ram_mb": ram_mb,
+                "vcpu": vcpu,
                 "max_concurrency": max_concurrency,
                 "deployed_apps": deployed_apps,
                 "developer_apps": developer_apps,
@@ -113,6 +119,8 @@ class AccountLimits:
         plan = check_account_limits_plan(d.pop("plan"))
 
         ram_mb = d.pop("ram_mb")
+
+        vcpu = d.pop("vcpu")
 
         max_concurrency = d.pop("max_concurrency")
 
@@ -152,6 +160,7 @@ class AccountLimits:
         account_limits = cls(
             plan=plan,
             ram_mb=ram_mb,
+            vcpu=vcpu,
             max_concurrency=max_concurrency,
             deployed_apps=deployed_apps,
             developer_apps=developer_apps,

@@ -50,6 +50,25 @@ func TestLimitsEphemeralDiskMaxAliasesAppLayerCap(t *testing.T) {
 	}
 }
 
+func TestPlanResourceShapesMatchLimits(t *testing.T) {
+	if len(PlanResourceShapes) != len(Plans) {
+		t.Fatalf("plan resource shape count = %d, want %d", len(PlanResourceShapes), len(Plans))
+	}
+	for _, plan := range Plans {
+		shape, ok := PlanResourceShapeFor(plan)
+		if !ok {
+			t.Fatalf("missing resource shape for %s", plan)
+		}
+		limits := MustLimitsFor(plan)
+		if shape.RAMMB != limits.RAMMB {
+			t.Errorf("%s shape RAM = %d, want limits RAM %d", plan, shape.RAMMB, limits.RAMMB)
+		}
+		if shape.VCPU != limits.VCPU || VCPUPerPlan[plan] != limits.VCPU {
+			t.Errorf("%s shape vCPU = %d/map %d, want limits vCPU %d", plan, shape.VCPU, VCPUPerPlan[plan], limits.VCPU)
+		}
+	}
+}
+
 func TestPlanMaxRequestBodyBytes(t *testing.T) {
 	want := map[Plan]int64{
 		PlanFree:  10 * 1024 * 1024,

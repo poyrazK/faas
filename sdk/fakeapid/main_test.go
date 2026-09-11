@@ -82,7 +82,7 @@ func TestAccount_OK(t *testing.T) {
 	if !ok {
 		t.Fatalf("limits not an object: %+v", body["limits"])
 	}
-	for _, k := range []string{"plan", "ram_mb", "max_concurrency", "deployed_apps", "developer_apps", "included_gb_hours", "app_layer_max_mb", "ephemeral_disk_max_mb", "triggers_allowed", "trigger_kinds", "trigger_limit_per_app", "trigger_limit_per_account", "trigger_batch_size_max", "trigger_batch_window_max_ms", "trigger_max_attempts_max", "trigger_payload_max_bytes", "trigger_tls_skip_verify_allowed"} {
+	for _, k := range []string{"plan", "ram_mb", "vcpu", "max_concurrency", "deployed_apps", "developer_apps", "included_gb_hours", "app_layer_max_mb", "ephemeral_disk_max_mb", "triggers_allowed", "trigger_kinds", "trigger_limit_per_app", "trigger_limit_per_account", "trigger_batch_size_max", "trigger_batch_window_max_ms", "trigger_max_attempts_max", "trigger_payload_max_bytes", "trigger_tls_skip_verify_allowed"} {
 		if _, ok := limits[k]; !ok {
 			t.Errorf("missing required AccountLimits field %q in limits: %+v", k, limits)
 		}
@@ -197,7 +197,7 @@ func TestListApps_OK(t *testing.T) {
 	}
 	app := body[0]
 	for _, k := range []string{
-		"id", "slug", "type", "ram_mb", "cpu_millicores", "configured_resources", "max_concurrency", "concurrency_per_vm",
+		"id", "slug", "type", "ram_mb", "vcpu", "cpu_millicores", "configured_resources", "max_concurrency", "concurrency_per_vm",
 		"effective_limits", "min_instances", "status", "build_cache_hit_rate_pct", "url", "manifest",
 		"autoscale_target_rps", "autoscale_target_cpu_pct",
 		"require_authn",
@@ -235,7 +235,7 @@ func TestCreateApp_OK(t *testing.T) {
 		t.Errorf("slug: got %v, want hello", got["slug"])
 	}
 	for _, k := range []string{
-		"id", "type", "ram_mb", "cpu_millicores", "configured_resources", "max_concurrency", "concurrency_per_vm",
+		"id", "type", "ram_mb", "vcpu", "cpu_millicores", "configured_resources", "max_concurrency", "concurrency_per_vm",
 		"effective_limits", "min_instances", "status", "build_cache_hit_rate_pct", "url", "manifest", "egress_allowlist",
 		"autoscale_target_rps", "autoscale_target_cpu_pct",
 		"require_authn",

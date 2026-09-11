@@ -2627,6 +2627,7 @@ paths:
                 $ref: '#/components/schemas/AppResponse'
                 example: {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"concurrency_per_vm":5,"idle_timeout_s":60,"min_instances":0,"state":"running","last_deployment_id":"0123456789abcdef0123456789abcdef","created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z","require_authn":false}
         '400': { $ref: '#/components/responses/ValidationFailed' }
+        '422': { $ref: '#/components/responses/InvalidCPURAMPair' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/AppCreateForbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -14294,10 +14295,11 @@ components:
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
       type: object
-      required: [plan, ram_mb, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
+      required: [plan, ram_mb, vcpu, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
+        vcpu: { type: integer, minimum: 1, maximum: 4, description: "Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account reads." }
         max_concurrency: { type: integer }
         deployed_apps: { type: integer }
         developer_apps: { type: integer, description: "Maximum live `gregale dev` environments for this plan." }
@@ -14948,7 +14950,7 @@ components:
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
-      required: [id, slug, type, ram_mb, cpu_millicores, configured_resources, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, build_cache_hit_rate_pct, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
+      required: [id, slug, type, ram_mb, vcpu, cpu_millicores, configured_resources, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, build_cache_hit_rate_pct, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
@@ -14960,6 +14962,7 @@ components:
           example: http
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
         ram_mb: { type: integer , example: 256}
+        vcpu: { type: integer, minimum: 1, maximum: 4, description: "Plan-derived guest vCPU count. Present on read responses; explicit create-time values must match the canonical plan RAM/vCPU pair." }
         cpu_millicores: { type: integer, enum: [250, 500, 1000], example: 500 }
         resource_profile:
           $ref: '#/components/schemas/ResourceProfile'
@@ -15338,6 +15341,7 @@ components:
         type: { type: string, enum: [app, function] , example: "app"}
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
         ram_mb: { type: integer , example: 256}
+        vcpu: { type: integer, minimum: 1, maximum: 4, description: "Optional guest vCPU assertion. When supplied with ram_mb, the pair must match the plan shape: Free (128 MB/2), Hobby (256 MB/2), Pro (512 MB/2), or Scale (1024 MB/4). Omit to use the plan default." }
         cpu_millicores:
           type: integer
           enum: [250, 500, 1000]
@@ -25299,6 +25303,12 @@ components:
 
     ValidationFailed:
       description: 'code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    InvalidCPURAMPair:
+      description: 'code: invalid_cpu_ram_pair — explicit ram_mb and vcpu do not match the canonical shape for the account plan.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

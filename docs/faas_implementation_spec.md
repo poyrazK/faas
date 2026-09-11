@@ -392,7 +392,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - API: gRPC `CreateFromSnapshot(app, instance)`, `CreateColdBoot(app, instance)`, `Pause+Snapshot(instance)`, `Destroy(instance)`, `Stats()`.
 - Snapshot create: pause VM → `PUT /snapshot/create` (full; memory file + vmstate) → fsync → destroy VM → record `snapshot_bytes`. Diff snapshots: not v1.
 - Restore: create netns + TAP (§7) → jailer spawn → `PUT /snapshot/load` (`mem_backend: File`) → resume → guest agent re-seeds entropy + steps clock (§4.8) → readiness.
-- Boot config (cold path): kernel 6.1 LTS from Firecracker CI artifacts, `console=off quiet`, **two virtio-blk drives** (drive0 shared base rootfs read-only; drive1 app layer — §4.6), one virtio-net, `mem_size_mib = plan`, `vcpu_count` = 2 (Scale: 4), MMDS off, balloon off (v1), entropy: virtio-rng.
+- Boot config (cold path): kernel 6.1 LTS from Firecracker CI artifacts, `console=off quiet`, **two virtio-blk drives** (drive0 shared base rootfs read-only; drive1 app layer — §4.6), one virtio-net, `mem_size_mib = plan`, `vcpu_count` = 2 (Scale: 4), MMDS off, balloon off (v1), entropy: virtio-rng. The canonical plan RAM/vCPU pairs are Free `(128, 2)`, Hobby `(256, 2)`, Pro `(512, 2)`, and Scale `(1024, 4)`; see ADR-173. `POST /v1/apps` may assert this pair with `vcpu`, but vCPU remains plan-derived and is not a per-app override.
 - **Firecracker version pinning:** snapshots are only guaranteed to load on the Firecracker version that made them. `snapshots.fc_version` column; on FC upgrade, mark all snapshots stale — apps lazily re-snapshot via cold boot on next wake (this is why ADR-005 requires cold boot to always work).
 
 ### 4.5 `builderd` — build orchestrator

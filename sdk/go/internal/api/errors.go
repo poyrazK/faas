@@ -179,6 +179,7 @@ const (
 	CodePlanLimitRAM           = "plan_limit_ram"
 	CodePlanLimitConcur        = "plan_limit_concurrency"
 	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidCPURAMPair      = "invalid_cpu_ram_pair"
 	CodeInvalidResourceProfile = "invalid_resource_profile"
 	CodeSourceTooLarge         = "source_too_large"
 	CodeSourceInvalid          = "source_invalid"
