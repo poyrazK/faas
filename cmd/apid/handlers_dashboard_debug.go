@@ -112,6 +112,20 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 	data.WindowStart = now.Add(-since).Format(time.RFC3339)
 	data.WindowEnd = now.Format(time.RFC3339)
 
+	coverage, coverageErr := s.store.RequestTelemetryCoverage(ctx, sqlc.RequestTelemetryCoverageParams{
+		AppID:        stringToPgUUID(app.ID),
+		AccountID:    stringToPgUUID(acct.ID),
+		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-since), Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+	})
+	if coverageErr != nil {
+		// Coverage is an enrichment card. Keep the request investigation
+		// usable when an older database has not applied the aggregate query.
+		log.Warn("dashboard renderAppDebug: coverage", "account_id", acct.ID, "app_id", app.ID, "err", coverageErr)
+	} else {
+		data.Coverage = dashboardDebugCoverageView(coverage, data.Since, data.WindowStart, data.WindowEnd, limits.DebugTelemetryRetentionDays)
+	}
+
 	rows, err := s.store.ListRequestTelemetryByApp(ctx, sqlc.ListRequestTelemetryByAppParams{
 		AppID:        stringToPgUUID(app.ID),
 		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-since), Valid: true},
@@ -315,6 +329,32 @@ func renderAppDebugPage(w http.ResponseWriter, r *http.Request, log *slog.Logger
 		Account: dashboardAccountView(view, appCount),
 		Data:    data,
 	})
+}
+
+func dashboardDebugCoverageView(row sqlc.RequestTelemetryCoverageRow, since, windowStart, windowEnd string, retentionDays int) *dashboard.DebugCoverageView {
+	return &dashboard.DebugCoverageView{
+		Since:               since,
+		WindowStart:         windowStart,
+		WindowEnd:           windowEnd,
+		PlanRetentionDays:   retentionDays,
+		TelemetryRows:       row.TelemetryRows,
+		RepresentedRequests: row.RepresentedRequests,
+		ErrorRequests:       row.ErrorRequests,
+		TraceLinked:         dashboardDebugCoverageSignalView(row.TraceLinkedRows, row.TraceLinkedRequests, row.RepresentedRequests),
+		SpanEvidence:        dashboardDebugCoverageSignalView(row.SpanEvidenceRows, row.SpanEvidenceRequests, row.RepresentedRequests),
+		WakeEvidence:        dashboardDebugCoverageSignalView(row.WakeEvidenceRows, row.WakeEvidenceRequests, row.RepresentedRequests),
+		GuestEvidence:       dashboardDebugCoverageSignalView(row.GuestEvidenceRows, row.GuestEvidenceRequests, row.RepresentedRequests),
+		OldestTelemetryAt:   debugCoverageTimestamp(row.OldestTelemetryAt),
+		LatestTelemetryAt:   debugCoverageTimestamp(row.LatestTelemetryAt),
+	}
+}
+
+func dashboardDebugCoverageSignalView(rows, requests, total int64) dashboard.DebugCoverageSignalView {
+	rate := float64(0)
+	if total > 0 {
+		rate = float64(requests) * 100 / float64(total)
+	}
+	return dashboard.DebugCoverageSignalView{Rows: rows, Requests: requests, RatePct: rate}
 }
 
 func dashboardDebugRequestView(item api.DebugTelemetryRequestItem, slug, since, route string) dashboard.DebugRequestView {

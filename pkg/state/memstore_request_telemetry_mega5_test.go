@@ -38,6 +38,18 @@ func TestMemStore_ListRequestTelemetryByApp_Mega5(t *testing.T) {
 	}
 }
 
+func TestMemStore_RequestTelemetryCoverage_Mega5(t *testing.T) {
+	t.Parallel()
+	m := NewMemStore()
+	row, err := m.RequestTelemetryCoverage(t.Context(), sqlc.RequestTelemetryCoverageParams{})
+	if row != (sqlc.RequestTelemetryCoverageRow{}) {
+		t.Errorf("row = %+v, want zero row", row)
+	}
+	if !errors.Is(err, errMemStoreRequestTelemetry) {
+		t.Errorf("err = %v, want errMemStoreRequestTelemetry", err)
+	}
+}
+
 func TestMemStore_RequestTelemetryByDeployment_Mega5(t *testing.T) {
 	t.Parallel()
 	m := NewMemStore()

@@ -3766,6 +3766,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/debug/coverage:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppDebugCoverage
+      summary: Observed debugger signal coverage (ADR-127 follow-up).
+      description: |
+        Returns bounded, weighted coverage for the debugger signals
+        attached to retained request telemetry in the requested window.
+        Counts are split between stored aggregate rows and the original
+        requests those rows represent. Rates are relative to represented
+        requests only; the platform does not infer a capture denominator for
+        requests dropped before persistence. Plan-gated by
+        `DebugTelemetryEnabled` and clamped to `DebugTelemetryRetentionDays`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: [string, 'null'] }
+          description: "Lookback duration (e.g. 30m, 24h, 3d). Defaults to 24h and is clamped by plan retention."
+      responses:
+        '200':
+          description: Observed debugger signal coverage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugCoverageResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/debug/requests/{req_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25270,6 +25304,38 @@ components:
       required: [delivery]
       properties:
         delivery: { $ref: '#/components/schemas/AppWebhookDeliveryResponse' }
+
+    DebugCoverageSignal:
+      type: object
+      description: "Observed coverage for one debugger signal. Requests are weighted by collapsed-row count."
+      required: [rows, requests, rate_pct]
+      properties:
+        rows: { type: integer, format: int64, minimum: 0 }
+        requests: { type: integer, format: int64, minimum: 0 }
+        rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+
+    DebugCoverageResponse:
+      type: object
+      description: |
+        Customer-safe debugger coverage summary. This is observed coverage
+        of retained telemetry, not a claim that every gateway request was
+        persisted.
+      required: [app_id, since, window_start, window_end, plan_retention_days, telemetry_rows, represented_requests, error_requests, trace_linked, span_evidence, wake_evidence, guest_evidence]
+      properties:
+        app_id: { type: string, format: uuid }
+        since: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        plan_retention_days: { type: integer, minimum: 0 }
+        telemetry_rows: { type: integer, format: int64, minimum: 0 }
+        represented_requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        trace_linked: { $ref: '#/components/schemas/DebugCoverageSignal' }
+        span_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
+        wake_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
+        guest_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
+        oldest_telemetry_at: { type: string, format: date-time }
+        latest_telemetry_at: { type: string, format: date-time }
 
     DebugTelemetryListResponse:
       type: object

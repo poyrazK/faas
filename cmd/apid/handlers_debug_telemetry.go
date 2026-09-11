@@ -97,6 +97,81 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// debugTelemetryCoverageHandler — GET /v1/apps/{slug}/debug/coverage
+//
+// Returns a bounded, weighted view of which debugger signals are present in
+// the requested retention window. This is deliberately an observed-coverage
+// endpoint: the durable table cannot tell us how many requests were dropped
+// before persistence, so the response never presents represented_requests as
+// a platform-wide capture denominator.
+func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	if !limits.DebugTelemetryEnabled {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
+		return
+	}
+
+	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
+	since := parseDebugSinceFromString(sinceRaw, 24*time.Hour)
+	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	if retention > 0 && since > retention {
+		since = retention
+	}
+	now := time.Now().UTC()
+	from := now.Add(-since)
+	row, err := s.store.RequestTelemetryCoverage(r.Context(), sqlc.RequestTelemetryCoverageParams{
+		AppID:        stringToPgUUID(app.ID),
+		AccountID:    stringToPgUUID(acct.ID),
+		ReceivedAt:   pgtype.Timestamptz{Time: from, Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+	})
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get debug coverage"))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, api.DebugCoverageResponse{
+		AppID:               app.ID,
+		Since:               echoDebugSince(sinceRaw, since),
+		WindowStart:         from.Format(time.RFC3339Nano),
+		WindowEnd:           now.Format(time.RFC3339Nano),
+		PlanRetentionDays:   limits.DebugTelemetryRetentionDays,
+		TelemetryRows:       row.TelemetryRows,
+		RepresentedRequests: row.RepresentedRequests,
+		ErrorRequests:       row.ErrorRequests,
+		TraceLinked:         debugCoverageSignal(row.TraceLinkedRows, row.TraceLinkedRequests, row.RepresentedRequests),
+		SpanEvidence:        debugCoverageSignal(row.SpanEvidenceRows, row.SpanEvidenceRequests, row.RepresentedRequests),
+		WakeEvidence:        debugCoverageSignal(row.WakeEvidenceRows, row.WakeEvidenceRequests, row.RepresentedRequests),
+		GuestEvidence:       debugCoverageSignal(row.GuestEvidenceRows, row.GuestEvidenceRequests, row.RepresentedRequests),
+		OldestTelemetryAt:   debugCoverageTimestamp(row.OldestTelemetryAt),
+		LatestTelemetryAt:   debugCoverageTimestamp(row.LatestTelemetryAt),
+	})
+}
+
+func debugCoverageSignal(rows, requests, total int64) api.DebugCoverageSignal {
+	rate := float64(0)
+	if total > 0 {
+		rate = float64(requests) * 100 / float64(total)
+	}
+	return api.DebugCoverageSignal{Rows: rows, Requests: requests, RatePct: rate}
+}
+
+// sqlc represents MIN/MAX timestamptz expressions as interface{} because
+// they are nullable for an empty window. PostgreSQL returns time.Time for a
+// non-empty result; keep the projection defensive so an empty window remains
+// a valid 200 response rather than a type assertion failure.
+func debugCoverageTimestamp(value interface{}) string {
+	t, ok := value.(time.Time)
+	if !ok {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
 // debugTelemetryGetHandler — GET /v1/apps/{slug}/debug/requests/{req_id}
 //
 // Direct lookup for a single request. Unlike the list endpoint, this

@@ -16,6 +16,7 @@ def _get_kwargs(
     *,
     account_id: UUID | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
+    before: str | Unset = UNSET,
     kind_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
     include_anonymous: bool | Unset = False,
@@ -32,6 +33,8 @@ def _get_kwargs(
     if not isinstance(since, Unset):
         json_since = since.isoformat()
     params["since"] = json_since
+
+    params["before"] = before
 
     params["kind_prefix"] = kind_prefix
 
@@ -100,6 +103,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     account_id: UUID | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
+    before: str | Unset = UNSET,
     kind_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
     include_anonymous: bool | Unset = False,
@@ -121,6 +125,7 @@ def sync_detailed(
     Args:
         account_id (UUID | Unset):
         since (datetime.datetime | Unset):
+        before (str | Unset):
         kind_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
         include_anonymous (bool | Unset):  Default: False.
@@ -136,6 +141,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         account_id=account_id,
         since=since,
+        before=before,
         kind_prefix=kind_prefix,
         limit=limit,
         include_anonymous=include_anonymous,
@@ -153,6 +159,7 @@ def sync(
     client: AuthenticatedClient | Client,
     account_id: UUID | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
+    before: str | Unset = UNSET,
     kind_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
     include_anonymous: bool | Unset = False,
@@ -174,6 +181,7 @@ def sync(
     Args:
         account_id (UUID | Unset):
         since (datetime.datetime | Unset):
+        before (str | Unset):
         kind_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
         include_anonymous (bool | Unset):  Default: False.
@@ -190,6 +198,7 @@ def sync(
         client=client,
         account_id=account_id,
         since=since,
+        before=before,
         kind_prefix=kind_prefix,
         limit=limit,
         include_anonymous=include_anonymous,
@@ -201,6 +210,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     account_id: UUID | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
+    before: str | Unset = UNSET,
     kind_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
     include_anonymous: bool | Unset = False,
@@ -222,6 +232,7 @@ async def asyncio_detailed(
     Args:
         account_id (UUID | Unset):
         since (datetime.datetime | Unset):
+        before (str | Unset):
         kind_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
         include_anonymous (bool | Unset):  Default: False.
@@ -237,6 +248,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         account_id=account_id,
         since=since,
+        before=before,
         kind_prefix=kind_prefix,
         limit=limit,
         include_anonymous=include_anonymous,
@@ -252,6 +264,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     account_id: UUID | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
+    before: str | Unset = UNSET,
     kind_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
     include_anonymous: bool | Unset = False,
@@ -273,6 +286,7 @@ async def asyncio(
     Args:
         account_id (UUID | Unset):
         since (datetime.datetime | Unset):
+        before (str | Unset):
         kind_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
         include_anonymous (bool | Unset):  Default: False.
@@ -290,6 +304,7 @@ async def asyncio(
             client=client,
             account_id=account_id,
             since=since,
+            before=before,
             kind_prefix=kind_prefix,
             limit=limit,
             include_anonymous=include_anonymous,

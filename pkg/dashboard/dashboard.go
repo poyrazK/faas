@@ -1649,6 +1649,32 @@ type DebugPageData struct {
 	ReplayPoll          int
 	ReplayPollActive    bool
 	ReplayPollExhausted bool
+	Coverage            *DebugCoverageView
+}
+
+// DebugCoverageView is the template-safe projection of observed debugger
+// signal coverage. It reports retained evidence availability, not an
+// inferred percentage of all gateway requests.
+type DebugCoverageView struct {
+	Since               string
+	WindowStart         string
+	WindowEnd           string
+	PlanRetentionDays   int
+	TelemetryRows       int64
+	RepresentedRequests int64
+	ErrorRequests       int64
+	TraceLinked         DebugCoverageSignalView
+	SpanEvidence        DebugCoverageSignalView
+	WakeEvidence        DebugCoverageSignalView
+	GuestEvidence       DebugCoverageSignalView
+	OldestTelemetryAt   string
+	LatestTelemetryAt   string
+}
+
+type DebugCoverageSignalView struct {
+	Rows     int64
+	Requests int64
+	RatePct  float64
 }
 
 // DebugDeploymentView is a bounded deployment option for the dashboard

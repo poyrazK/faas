@@ -138,11 +138,15 @@ def sync_detailed(
 
     Two modes share this URL:
 
-    - **Live (default)** — `?follow=1` holds the connection open and
-      streams new entries from the per-instance ring buffer. The
-      stream terminates with `event: end` when the backstop fires
-      (10 minutes idle), the schedd returns NotFound (parked app), or
-      the connection closes.
+    - **Snapshot (default)** — `?follow=0` replays the retained entries
+      from each live instance and closes with `event: end`. This is the
+      mode used by `gregale logs` for a finite command that can be piped
+      into other tools.
+
+    - **Live** — `?follow=1` holds the connection open and streams new
+      entries from the per-instance ring buffer. The stream terminates
+      with `event: end` when the backstop fires (10 minutes idle), the
+      schedd returns NotFound (parked app), or the connection closes.
 
     - **Archive (`?archive=1`)** — fetches a single day's
       per-instance log batch from the S3 bucket the apid shipper
@@ -218,11 +222,15 @@ def sync(
 
     Two modes share this URL:
 
-    - **Live (default)** — `?follow=1` holds the connection open and
-      streams new entries from the per-instance ring buffer. The
-      stream terminates with `event: end` when the backstop fires
-      (10 minutes idle), the schedd returns NotFound (parked app), or
-      the connection closes.
+    - **Snapshot (default)** — `?follow=0` replays the retained entries
+      from each live instance and closes with `event: end`. This is the
+      mode used by `gregale logs` for a finite command that can be piped
+      into other tools.
+
+    - **Live** — `?follow=1` holds the connection open and streams new
+      entries from the per-instance ring buffer. The stream terminates
+      with `event: end` when the backstop fires (10 minutes idle), the
+      schedd returns NotFound (parked app), or the connection closes.
 
     - **Archive (`?archive=1`)** — fetches a single day's
       per-instance log batch from the S3 bucket the apid shipper
@@ -293,11 +301,15 @@ async def asyncio_detailed(
 
     Two modes share this URL:
 
-    - **Live (default)** — `?follow=1` holds the connection open and
-      streams new entries from the per-instance ring buffer. The
-      stream terminates with `event: end` when the backstop fires
-      (10 minutes idle), the schedd returns NotFound (parked app), or
-      the connection closes.
+    - **Snapshot (default)** — `?follow=0` replays the retained entries
+      from each live instance and closes with `event: end`. This is the
+      mode used by `gregale logs` for a finite command that can be piped
+      into other tools.
+
+    - **Live** — `?follow=1` holds the connection open and streams new
+      entries from the per-instance ring buffer. The stream terminates
+      with `event: end` when the backstop fires (10 minutes idle), the
+      schedd returns NotFound (parked app), or the connection closes.
 
     - **Archive (`?archive=1`)** — fetches a single day's
       per-instance log batch from the S3 bucket the apid shipper
@@ -371,11 +383,15 @@ async def asyncio(
 
     Two modes share this URL:
 
-    - **Live (default)** — `?follow=1` holds the connection open and
-      streams new entries from the per-instance ring buffer. The
-      stream terminates with `event: end` when the backstop fires
-      (10 minutes idle), the schedd returns NotFound (parked app), or
-      the connection closes.
+    - **Snapshot (default)** — `?follow=0` replays the retained entries
+      from each live instance and closes with `event: end`. This is the
+      mode used by `gregale logs` for a finite command that can be piped
+      into other tools.
+
+    - **Live** — `?follow=1` holds the connection open and streams new
+      entries from the per-instance ring buffer. The stream terminates
+      with `event: end` when the backstop fires (10 minutes idle), the
+      schedd returns NotFound (parked app), or the connection closes.
 
     - **Archive (`?archive=1`)** — fetches a single day's
       per-instance log batch from the S3 bucket the apid shipper

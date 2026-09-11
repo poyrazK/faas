@@ -5702,6 +5702,12 @@ type Store interface {
 	// be pre-clamped to api.DebugTelemetryMaxLimit by the handler.
 	ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error)
 
+	// RequestTelemetryCoverage backs GET /v1/apps/{slug}/debug/coverage.
+	// It reports weighted observed rows and the optional debugger signals
+	// attached to them. The query intentionally has no inferred denominator
+	// for requests lost before persistence.
+	RequestTelemetryCoverage(ctx context.Context, arg sqlc.RequestTelemetryCoverageParams) (sqlc.RequestTelemetryCoverageRow, error)
+
 	// GetRequestTelemetryByAppAndID backs GET
 	// /v1/apps/{slug}/debug/requests/{req_id}. The app_id and bounded
 	// received_at predicates keep the direct lookup tenant-scoped and

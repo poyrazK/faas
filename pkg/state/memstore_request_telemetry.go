@@ -39,6 +39,12 @@ func (m *MemStore) ListRequestTelemetryByApp(_ context.Context, _ sqlc.ListReque
 	return nil, errMemStoreRequestTelemetry
 }
 
+// RequestTelemetryCoverage (customer debugger coverage) — MemStore stub.
+// Postgres-only because request_telemetry is a partitioned SQL table.
+func (m *MemStore) RequestTelemetryCoverage(_ context.Context, _ sqlc.RequestTelemetryCoverageParams) (sqlc.RequestTelemetryCoverageRow, error) {
+	return sqlc.RequestTelemetryCoverageRow{}, errMemStoreRequestTelemetry
+}
+
 // GetRequestTelemetryByAppAndID (ADR-127) — MemStore stub.
 // Postgres-only.
 func (m *MemStore) GetRequestTelemetryByAppAndID(_ context.Context, _ sqlc.GetRequestTelemetryByAppAndIDParams) (sqlc.GetRequestTelemetryByAppAndIDRow, error) {

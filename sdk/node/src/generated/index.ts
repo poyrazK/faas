@@ -148,6 +148,8 @@ export type { DataUpstreamResponse } from './models/DataUpstreamResponse.js';
 export type { DebugCompareRequest } from './models/DebugCompareRequest.js';
 export type { DebugCompareResponse } from './models/DebugCompareResponse.js';
 export type { DebugCompareRouteStats } from './models/DebugCompareRouteStats.js';
+export type { DebugCoverageResponse } from './models/DebugCoverageResponse.js';
+export type { DebugCoverageSignal } from './models/DebugCoverageSignal.js';
 export type { DebugEvidenceExplanation } from './models/DebugEvidenceExplanation.js';
 export type { DebugGuestExecutionEvidence } from './models/DebugGuestExecutionEvidence.js';
 export type { DebugRegressionItem } from './models/DebugRegressionItem.js';

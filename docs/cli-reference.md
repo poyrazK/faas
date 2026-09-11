@@ -1031,6 +1031,10 @@ Production debugger (ADR-127)
 
 Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])
 
+### debug coverage
+
+Observed debugger signal coverage (coverage &lt;slug&gt; [--since D])
+
 ### debug regressions
 
 Active regression observations (list|watch [--interval D] [--once])

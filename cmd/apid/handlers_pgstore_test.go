@@ -244,6 +244,21 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 	}
 	reqID := listed.Requests[0].ID
 
+	coverageRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/coverage?since=24h", nil, nil)
+	if coverageRec.Code != http.StatusOK {
+		t.Fatalf("debug coverage status = %d: %s", coverageRec.Code, coverageRec.Body.String())
+	}
+	var coverage api.DebugCoverageResponse
+	if err := json.Unmarshal(coverageRec.Body.Bytes(), &coverage); err != nil {
+		t.Fatalf("decode debug coverage: %v", err)
+	}
+	if coverage.AppID != app.ID || coverage.RepresentedRequests != 1 || coverage.TelemetryRows != 1 {
+		t.Fatalf("debug coverage = %+v, want one represented request and one row", coverage)
+	}
+	if coverage.TraceLinked.Requests != 0 || coverage.SpanEvidence.Requests != 0 || coverage.WakeEvidence.Requests != 0 || coverage.GuestEvidence.Requests != 0 {
+		t.Fatalf("debug coverage optional signals = %+v, want zero for fixture", coverage)
+	}
+
 	getRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/requests/"+reqID, nil, nil)
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("debug request get status = %d: %s", getRec.Code, getRec.Body.String())
