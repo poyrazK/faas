@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestAddrOrEmpty(t *testing.T) {
@@ -109,11 +110,9 @@ func TestExecutionWakeRequestFromProto(t *testing.T) {
 	if got.Snapshot.StorageKey != req.Snapshot.StorageKey || got.Snapshot.VMStateStorageKey != req.Snapshot.VmstateStorageKey {
 		t.Fatalf("snapshot locators = %#v", got.Snapshot)
 	}
-	if _, err := executionWakeRequestFromProto(func() *vmmdpb.RestoreExecutionRequest {
-		copy := *req
-		copy.Snapshot = &vmmdpb.SnapshotRef{StorageKey: "snap/app/mem", VmstateStorageKey: "snap/app/vmstate"}
-		return &copy
-	}()); err == nil {
+	ordinary := proto.Clone(req).(*vmmdpb.RestoreExecutionRequest)
+	ordinary.Snapshot.Networkless = false
+	if _, err := executionWakeRequestFromProto(ordinary); err == nil {
 		t.Fatal("ordinary snapshot accepted by execution restore converter")
 	}
 }
