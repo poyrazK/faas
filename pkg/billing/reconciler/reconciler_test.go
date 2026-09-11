@@ -1,3 +1,4 @@
+// adr: 049 §B.1 billing usage reconciliation.
 // Package reconciler tests (ADR-049 §B.1). Pure unit tests —
 // uses stub Provider + state.MemStore so pkg/billing/reconciler
 // stays pgxpool-free. The full Store integration is exercised by
@@ -76,6 +77,14 @@ func seedMemStore(t *testing.T, label string, plan api.Plan, mbSeconds int64) (*
 		t.Fatalf("ListAllAccounts: %v (got %d)", err, len(accts))
 	}
 	id := accts[0].ID
+	for _, provider := range []string{"stripe", "paddle", "polar"} {
+		if err := store.UpsertBillingIdentity(context.Background(), state.BillingIdentity{
+			AccountID: id, Provider: provider, CustomerID: provider + "-customer-" + id,
+			SubscriptionID: provider + "-subscription-" + id,
+		}); err != nil {
+			t.Fatalf("UpsertBillingIdentity(%s): %v", provider, err)
+		}
+	}
 	// AppendUsage is a pure write — MemStore does not cross-check
 	// against accounts. We seed a row in the reconciler's 24h
 	// window (now - 30 min, well inside [now-24h, now]) so

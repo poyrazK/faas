@@ -699,6 +699,12 @@ func (s *server) billingPortalURLFor(acct state.Account) string {
 // used by the legacy Stripe path. The short timeout keeps plan-change and
 // billing reads from hanging on a provider outage.
 func (s *server) billingPortalURLForProvider(ctx context.Context, acct state.Account) string {
+	resolved, err := s.accountForActiveBillingProvider(ctx, acct)
+	if err != nil {
+		s.log.Warn("billing portal identity unavailable", "account", acct.ID, "err", err)
+		return s.billingPortalURLFor(acct)
+	}
+	acct = resolved
 	if acct.ProviderCustomerID != "" {
 		if provider, ok := s.billingProvider.(billing.CustomerPortalProvider); ok {
 			portalCtx, cancel := context.WithTimeout(ctx, 2*time.Second)

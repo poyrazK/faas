@@ -218,7 +218,11 @@ func paddleInvoice(eventType string, data map[string]any) *billing.InvoiceData {
 	// refundable charge identity) and, when an invoice exists, an invoice ID.
 	// Invoice history must use the latter so it can be joined to Paddle's
 	// invoice/credit-note surfaces; older/test payloads may only have id.
-	id := paddleString(data, "invoice_id", "id", "transaction_id")
+	transactionID := paddleString(data, "id", "transaction_id")
+	id := paddleString(data, "invoice_id")
+	if id == "" {
+		id = transactionID
+	}
 	if id == "" {
 		return nil
 	}
@@ -243,6 +247,7 @@ func paddleInvoice(eventType string, data map[string]any) *billing.InvoiceData {
 	invoiceNumber := paddleString(data, "invoice_number", "number")
 	return &billing.InvoiceData{
 		ProviderInvoiceID: id,
+		ProviderChargeID:  transactionID,
 		Number:            invoiceNumber,
 		Status:            status,
 		PeriodStart:       periodStart,

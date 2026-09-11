@@ -715,7 +715,6 @@ UpsertDoctorObservation
 UpsertGitHubInstall
 UpsertGithubInstallBinding
 UpsertGithubWebhookSecret
-UpsertInvoice
 UpsertNodeKey
 UpsertOAuthLink
 UpsertOIDCTrustPolicy

@@ -4199,18 +4199,55 @@ type Invoice struct {
 	AccountID         string
 	Provider          string // "stripe" | "paddle" | "polar"
 	ProviderInvoiceID string
-	Number            string
-	Status            string // "draft" | "open" | "paid" | "uncollectible" | "void"
-	PeriodStart       time.Time
-	PeriodEnd         time.Time
-	SubtotalCents     int64
-	TaxCents          int64
-	TotalCents        int64
-	AmountPaidCents   int64
-	Currency          string
-	PDFAvailable      bool
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// ProviderChargeID is the refundable payment/transaction handle. It is
+	// distinct from an invoice document ID on Stripe and Paddle.
+	ProviderChargeID string
+	Number           string
+	Status           string // "draft" | "open" | "paid" | "uncollectible" | "void"
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	SubtotalCents    int64
+	TaxCents         int64
+	TotalCents       int64
+	AmountPaidCents  int64
+	// Plan snapshots the entitlement whose included allowance applies to
+	// this invoice period. Historical credit/refund math must never consult
+	// the account's mutable current plan.
+	Plan                api.Plan
+	AmountRefundedCents int64
+	CreditsAppliedCents int64
+	Currency            string
+	PDFAvailable        bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+// InvoiceRefund is the durable local projection of a provider refund. The
+// provider handle and caller idempotency key are independently unique per
+// invoice so both webhook redelivery and an ambiguous API response collapse
+// to one cumulative amount.
+type InvoiceRefund struct {
+	ID               string
+	InvoiceID        string
+	ProviderRefundID string
+	IdempotencyKey   string
+	AmountCents      int64
+	Source           string // operator | credit | webhook
+	Status           string
+	CreatedAt        time.Time
+}
+
+// BillingIdentity binds one account to one provider. Account's historical
+// ProviderCustomerID/StripeSubscriptionItem fields remain the compatibility
+// cache for the currently active provider; this row is the authoritative,
+// provider-qualified identity used during switches and usage delivery.
+type BillingIdentity struct {
+	AccountID      string
+	Provider       string // stripe | paddle | polar
+	CustomerID     string
+	SubscriptionID string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // AccountCredit is one positive-cents balance issued by an operator

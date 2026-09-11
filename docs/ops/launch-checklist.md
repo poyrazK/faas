@@ -53,7 +53,7 @@ production deployment.
   `meterd_billing_drift_reconcile_failures_total` alongside the drift gauges.
 - **Exercise:** temporarily make the Polar API unavailable, confirm the
   meterd health/log surface records a failed push, restore access, and confirm
-  the hourly durable lookback replays the pending usage exactly once.
+  the receipt-backed replay delivers the pending usage exactly once.
 - **Pass criterion:** no usage window is silently discarded, provider failures
   are visible to operators, and the failure counter returns to a zero rate
   after recovery.

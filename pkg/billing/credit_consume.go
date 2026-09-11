@@ -41,9 +41,14 @@ func ComputeInvoiceOverageCents(ctx context.Context, store state.Store, inv stat
 	if inv.PeriodEnd.Before(inv.PeriodStart) {
 		return 0, fmt.Errorf("billing: invoice %s has PeriodEnd %v before PeriodStart %v", inv.ID, inv.PeriodEnd, inv.PeriodStart)
 	}
-	acct, err := store.AccountByID(ctx, inv.AccountID)
-	if err != nil {
-		return 0, fmt.Errorf("billing: invoice account fetch: %w", err)
+	plan := inv.Plan
+	if !plan.Valid() {
+		// Compatibility for invoice rows created before plan snapshots shipped.
+		acct, err := store.AccountByID(ctx, inv.AccountID)
+		if err != nil {
+			return 0, fmt.Errorf("billing: invoice account fetch: %w", err)
+		}
+		plan = acct.Plan
 	}
 	if inv.PeriodStart.IsZero() && inv.PeriodEnd.IsZero() {
 		// Older operator-created invoice fixtures omitted the period. Preserve
@@ -59,14 +64,14 @@ func ComputeInvoiceOverageCents(ctx context.Context, store state.Store, inv stat
 		}
 		var billableMBSeconds int64
 		for _, total := range byMonth {
-			billableMBSeconds += api.BillableMBSeconds(acct.Plan, total)
+			billableMBSeconds += api.BillableMBSeconds(plan, total)
 		}
 		return api.OverageCentsForBillableMBSeconds(billableMBSeconds), nil
 	}
 	if inv.PeriodStart.IsZero() || inv.PeriodEnd.IsZero() {
 		return 0, fmt.Errorf("billing: invoice %s requires both PeriodStart and PeriodEnd", inv.ID)
 	}
-	billableMBSeconds, err := OverageMBSecondsForRange(ctx, store, acct, inv.PeriodStart, inv.PeriodEnd)
+	billableMBSeconds, err := OverageMBSecondsForRange(ctx, store, state.Account{ID: inv.AccountID, Plan: plan}, inv.PeriodStart, inv.PeriodEnd)
 	if err != nil {
 		return 0, fmt.Errorf("billing: invoice overage usage fetch: %w", err)
 	}
@@ -95,6 +100,13 @@ func ComputeInvoiceOverageCents(ctx context.Context, store state.Store, inv stat
 // (future), PR-B webhook Tx (future). The function never mutates
 // the invoice row.
 func ConsumeCreditsForInvoice(ctx context.Context, store state.Store, invoiceID, actor, reason string) (state.ConsumeAccountCreditResult, state.Invoice, error) {
+	return ConsumeCreditsForInvoiceUpTo(ctx, store, invoiceID, -1, actor, reason)
+}
+
+// ConsumeCreditsForInvoiceUpTo applies the invoice's computed overage but caps
+// the drain at maxCents when positive. Webhook finalization uses the paid,
+// still-refundable amount as the cap before issuing a provider refund.
+func ConsumeCreditsForInvoiceUpTo(ctx context.Context, store state.Store, invoiceID string, maxCents int64, actor, reason string) (state.ConsumeAccountCreditResult, state.Invoice, error) {
 	if invoiceID == "" {
 		return state.ConsumeAccountCreditResult{}, state.Invoice{}, errors.New("billing: ConsumeCreditsForInvoice: invoiceID required")
 	}
@@ -106,6 +118,9 @@ func ConsumeCreditsForInvoice(ctx context.Context, store state.Store, invoiceID,
 	target, err := ComputeInvoiceOverageCents(ctx, store, inv)
 	if err != nil {
 		return state.ConsumeAccountCreditResult{}, state.Invoice{}, fmt.Errorf("billing: compute overage: %w", err)
+	}
+	if maxCents >= 0 && target > maxCents {
+		target = maxCents
 	}
 
 	res, err := store.ConsumeAccountCredit(ctx, state.ConsumeAccountCreditParams{

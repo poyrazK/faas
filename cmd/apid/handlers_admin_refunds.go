@@ -127,14 +127,24 @@ func (s *server) refundAccount(w http.ResponseWriter, r *http.Request, acct stat
 			"Invoice cannot be refunded", "the invoice has no paid amount"))
 		return
 	}
-	if req.AmountCents > paidCents {
+	remainingRefundable := paidCents - invoice.AmountRefundedCents
+	if remainingRefundable <= 0 {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Invoice cannot be refunded", "the invoice has already been fully refunded"))
+		return
+	}
+	if req.AmountCents > remainingRefundable {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Bad amount", fmt.Sprintf("amount_cents cannot exceed the paid invoice amount of %d", paidCents)))
+			"Bad amount", fmt.Sprintf("amount_cents cannot exceed the remaining refundable amount of %d", remainingRefundable)))
 		return
 	}
 
 	refundCtx := billing.ContextWithIdempotencyKey(r.Context(), key)
-	result, err := s.billingProvider.Refund(refundCtx, invoice.ProviderInvoiceID, req.AmountCents)
+	chargeID := invoice.ProviderChargeID
+	if chargeID == "" {
+		chargeID = invoice.ProviderInvoiceID // Polar orders are refundable directly.
+	}
+	result, err := s.billingProvider.Refund(refundCtx, chargeID, req.AmountCents)
 	if err != nil {
 		s.log.Error("billing refund failed",
 			"account_id", targetID,
@@ -149,6 +159,19 @@ func (s *server) refundAccount(w http.ResponseWriter, r *http.Request, acct stat
 	if result == nil || result.ProviderRefundID == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "billing_refund_failed",
 			"Billing refund failed", "the provider returned no refund identifier"))
+		return
+	}
+	if err := s.store.RecordInvoiceRefund(r.Context(), state.InvoiceRefund{
+		InvoiceID:        invoice.ID,
+		ProviderRefundID: result.ProviderRefundID,
+		IdempotencyKey:   key,
+		AmountCents:      result.AmountCents,
+		Source:           "operator",
+		Status:           result.Status,
+	}); err != nil {
+		s.log.Error("billing refund local projection failed",
+			"invoice_id", invoice.ID, "provider_refund_id", result.ProviderRefundID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("refund succeeded but local billing state is still reconciling; retry with the same Idempotency-Key"))
 		return
 	}
 

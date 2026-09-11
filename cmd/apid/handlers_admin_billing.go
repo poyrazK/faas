@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
 	"github.com/onebox-faas/faas/pkg/billing/polar"
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -80,6 +81,22 @@ func providerName(p billing.Provider) string {
 	// When a future provider (LemonSqueezy stub in PR-P5) joins, add
 	// its type assertion here.
 	return "stripe"
+}
+
+// providerIdentityName returns only names backed by a production provider
+// type. Tests and third-party providers retain the legacy Account fields until
+// they opt into a stable provider-name contract.
+func providerIdentityName(p billing.Provider) (string, bool) {
+	switch p.(type) {
+	case *stripe.Client:
+		return "stripe", true
+	case *paddle.Provider:
+		return "paddle", true
+	case *polar.Provider:
+		return "polar", true
+	default:
+		return "", false
+	}
 }
 
 // nowUTC is the local time helper. cmd/apid's handlers_ext.go:1637
@@ -318,6 +335,11 @@ func (s *server) reconcileAccount(w http.ResponseWriter, r *http.Request, acct s
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"Account not found", err.Error()))
+		return
+	}
+	target, err = s.accountForActiveBillingProvider(r.Context(), target)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("billing identity temporarily unavailable"))
 		return
 	}
 	// [start, end) window: rolling 30 days. The reconciler
