@@ -566,7 +566,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 				"a live deployment already targets this scope on this app; supersede it before creating another"))
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+		s.writeDeploymentCreateError(w, err)
 		return
 	}
 	notifyAndAuditDeployment(r.Context(), s, acct, app, d, prev, &req)

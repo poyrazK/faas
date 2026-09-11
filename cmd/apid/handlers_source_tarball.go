@@ -232,7 +232,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && sidecar.TrafficPercent == nil && sidecar.Canary == nil,
 	})
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+		s.writeDeploymentCreateError(w, err)
 		return
 	}
 	sourceAccepted = true

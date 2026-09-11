@@ -646,7 +646,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,
 	})
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+		s.writeDeploymentCreateError(w, err)
 		return
 	}
 

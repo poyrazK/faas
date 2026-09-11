@@ -4744,9 +4744,10 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 
 // --- Deployments ------------------------------------------------------------
 
-// CreateDeployment mirrors PgStore.CreateDeployment's active-app gate
-// (PR-A). Both stores must reject deployments against AppDeleted or
-// missing apps with ErrNotFound — apid's s.notFound relies on this
+// CreateDeployment mirrors PgStore.CreateDeployment's app gate (PR-A).
+// Active and intentionally parked apps accept deployments. Both stores
+// reject deployments against AppDeleted or missing apps with ErrNotFound;
+// apid's s.notFound relies on this
 // to return 404. The mutex already serialises the check + insert
 // together, so the gate is race-free here without a tx.
 //
