@@ -24383,6 +24383,18 @@ components:
         received_at: { type: string, format: date-time }
         wake_id: { type: string, description: "Opaque wake identifier when this request admitted a wake; omitted for warm requests." }
         instance_id: { type: string, description: "Opaque instance identifier that served the request; omitted when no target was reached." }
+        guest:
+          $ref: '#/components/schemas/DebugGuestExecutionEvidence'
+
+    DebugGuestExecutionEvidence:
+      type: object
+      description: "Bounded, platform-owned runtime execution evidence. Omitted when the runner signal was unavailable."
+      required: [runtime, duration_ms, outcome]
+      properties:
+        runtime: { type: string, enum: [node22, node24, python312, python313, go124] }
+        duration_ms: { type: integer, minimum: 0, maximum: 86400000 }
+        outcome: { type: string, enum: [ok, http_error, handler_error, timeout, canceled] }
+        error_class: { type: string, enum: [http_5xx, handler_exec, handler_protocol, timeout, canceled] }
 
     DebugTelemetrySpan:
       type: object
@@ -24416,7 +24428,7 @@ components:
       required: [at, phase, kind, summary]
       properties:
         at: { type: string, format: date-time }
-        phase: { type: string, enum: [request, wake, error, regression] }
+        phase: { type: string, enum: [request, wake, guest, error, regression] }
         kind: { type: string, maxLength: 128 }
         actor: { type: string, maxLength: 128 }
         summary: { type: string, maxLength: 256 }

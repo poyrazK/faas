@@ -199,23 +199,44 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 	if country == "" {
 		country = "__unknown__"
 	}
+	guestRuntime := req.GetGuestRuntime()
+	if guestRuntime == "" {
+		guestRuntime = "__unknown__"
+	}
+	guestOutcome := req.GetGuestOutcome()
+	if guestOutcome == "" {
+		guestOutcome = "missing"
+	}
+	guestErrorClass := req.GetGuestErrorClass()
+	if req.GetGuestDurationMs() < 0 || req.GetGuestDurationMs() > 86400000 ||
+		!validRequestTelemetryGuestRuntime(guestRuntime) ||
+		!validRequestTelemetryGuestOutcome(guestOutcome) ||
+		!validRequestTelemetryGuestErrorClass(guestErrorClass) {
+		r.observe(rtOutcomeDBError)
+		out.Outcome = rtOutcomeDBError
+		return out
+	}
 	insertErr := r.store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
-		AccountID:    state.NewPgtypeUUID(accountID),
-		AppID:        state.NewPgtypeUUID(appID),
-		DeploymentID: state.NewPgtypeUUID(deploymentID),
-		Route:        req.GetRouteTemplate(),
-		Method:       req.GetMethod(),
-		Status:       int32(req.GetHttpStatus()),
-		LatencyMs:    int32(req.GetLatencyMs()),
-		ColdBoot:     req.GetColdBoot(),
-		TraceID:      pgtype.Text{String: req.GetTraceId(), Valid: req.GetTraceId() != ""},
-		ReceivedAt:   state.NewPgtypeTime(msToTime(req.GetReceivedAtUnixMs())),
-		Count:        int32(count),
-		UaFamily:     uaFamily,
-		ReferrerHost: referrerHost,
-		Country:      country,
-		WakeID:       pgtype.Text{String: req.GetWakeId(), Valid: req.GetWakeId() != ""},
-		InstanceID:   pgtype.Text{String: req.GetInstanceId(), Valid: req.GetInstanceId() != ""},
+		AccountID:       state.NewPgtypeUUID(accountID),
+		AppID:           state.NewPgtypeUUID(appID),
+		DeploymentID:    state.NewPgtypeUUID(deploymentID),
+		Route:           req.GetRouteTemplate(),
+		Method:          req.GetMethod(),
+		Status:          int32(req.GetHttpStatus()),
+		LatencyMs:       int32(req.GetLatencyMs()),
+		ColdBoot:        req.GetColdBoot(),
+		TraceID:         pgtype.Text{String: req.GetTraceId(), Valid: req.GetTraceId() != ""},
+		ReceivedAt:      state.NewPgtypeTime(msToTime(req.GetReceivedAtUnixMs())),
+		Count:           int32(count),
+		UaFamily:        uaFamily,
+		ReferrerHost:    referrerHost,
+		Country:         country,
+		WakeID:          pgtype.Text{String: req.GetWakeId(), Valid: req.GetWakeId() != ""},
+		InstanceID:      pgtype.Text{String: req.GetInstanceId(), Valid: req.GetInstanceId() != ""},
+		GuestDurationMs: int32(req.GetGuestDurationMs()),
+		GuestRuntime:    guestRuntime,
+		GuestOutcome:    guestOutcome,
+		GuestErrorClass: guestErrorClass,
 	})
 	if insertErr != nil {
 		if isConstraintViolation(insertErr) {
@@ -239,6 +260,33 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 	r.observe(rtOutcomeInserted)
 	out.Outcome = rtOutcomeInserted
 	return out
+}
+
+func validRequestTelemetryGuestRuntime(value string) bool {
+	switch value {
+	case "node22", "node24", "python312", "python313", "go124", "__unknown__":
+		return true
+	default:
+		return false
+	}
+}
+
+func validRequestTelemetryGuestOutcome(value string) bool {
+	switch value {
+	case "ok", "http_error", "handler_error", "timeout", "canceled", "missing":
+		return true
+	default:
+		return false
+	}
+}
+
+func validRequestTelemetryGuestErrorClass(value string) bool {
+	switch value {
+	case "", "http_5xx", "handler_exec", "handler_protocol", "timeout", "canceled":
+		return true
+	default:
+		return false
+	}
 }
 
 // observe is a nil-safe wrapper around the recorded counter.

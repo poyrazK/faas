@@ -176,3 +176,28 @@ func TestHandlerTelemetryAcceptsCustomRequestIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestHandlerObservePersistsGuestEvidence(t *testing.T) {
+	h := &Handler{requestTelemetry: makeTestRecorder()}
+	acct, app, deployment := uuid.New(), uuid.New(), uuid.New()
+	r := httptest.NewRequest(http.MethodGet, "/checkout", nil)
+	r = withAppAndAccount(r, acct, app)
+	r = withGuestExecutionEvidence(r)
+	for _, header := range []struct{ name, value string }{
+		{"X-Faas-Guest-Runtime", "node24"},
+		{"X-Faas-Guest-Duration-Ms", "125"},
+		{"X-Faas-Guest-Outcome", "ok"},
+	} {
+		if !recordGuestExecutionEvidence(r.Context(), header.name, header.value) {
+			t.Fatalf("failed to record %s", header.name)
+		}
+	}
+	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{DeploymentID: deployment.String()})
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].GuestRuntime != "node24" || rows[0].GuestDurationMS != 125 || rows[0].GuestOutcome != "ok" {
+		t.Fatalf("guest evidence = (%q, %d, %q)", rows[0].GuestRuntime, rows[0].GuestDurationMS, rows[0].GuestOutcome)
+	}
+}

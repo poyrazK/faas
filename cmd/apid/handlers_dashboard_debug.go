@@ -324,20 +324,52 @@ func dashboardDebugRequestView(item api.DebugTelemetryRequestItem, slug, since, 
 	}
 	values.Set("request_id", item.ID)
 	return dashboard.DebugRequestView{
-		ID:           item.ID,
-		DeploymentID: item.DeploymentID,
-		Route:        item.Route,
-		Method:       item.Method,
-		Status:       item.Status,
-		LatencyMS:    item.LatencyMS,
-		Count:        item.Count,
-		ColdBoot:     item.ColdBoot,
-		TraceID:      valueOrEmpty(item.TraceID),
-		WakeID:       item.WakeID,
-		InstanceID:   item.InstanceID,
-		ReceivedAt:   item.ReceivedAt,
-		DetailURL:    "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode(),
+		ID:              item.ID,
+		DeploymentID:    item.DeploymentID,
+		Route:           item.Route,
+		Method:          item.Method,
+		Status:          item.Status,
+		LatencyMS:       item.LatencyMS,
+		Count:           item.Count,
+		ColdBoot:        item.ColdBoot,
+		TraceID:         valueOrEmpty(item.TraceID),
+		WakeID:          item.WakeID,
+		InstanceID:      item.InstanceID,
+		ReceivedAt:      item.ReceivedAt,
+		GuestRuntime:    valueOrEmptyGuestRuntime(item.Guest),
+		GuestDurationMS: valueOrGuestDuration(item.Guest),
+		GuestOutcome:    valueOrEmptyGuestOutcome(item.Guest),
+		GuestErrorClass: valueOrEmptyGuestErrorClass(item.Guest),
+		DetailURL:       "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode(),
 	}
+}
+
+func valueOrEmptyGuestRuntime(guest *api.DebugGuestExecutionEvidence) string {
+	if guest == nil {
+		return ""
+	}
+	return guest.Runtime
+}
+
+func valueOrGuestDuration(guest *api.DebugGuestExecutionEvidence) int {
+	if guest == nil {
+		return 0
+	}
+	return guest.DurationMS
+}
+
+func valueOrEmptyGuestOutcome(guest *api.DebugGuestExecutionEvidence) string {
+	if guest == nil {
+		return ""
+	}
+	return guest.Outcome
+}
+
+func valueOrEmptyGuestErrorClass(guest *api.DebugGuestExecutionEvidence) string {
+	if guest == nil {
+		return ""
+	}
+	return guest.ErrorClass
 }
 
 func dashboardDebugRegressionView(item api.DebugRegressionItem, slug, since string) dashboard.DebugRegressionView {

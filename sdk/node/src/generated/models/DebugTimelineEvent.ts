@@ -7,7 +7,7 @@
  */
 export type DebugTimelineEvent = {
   at: string;
-  phase: 'request' | 'wake' | 'error' | 'regression';
+  phase: 'request' | 'wake' | 'guest' | 'error' | 'regression';
   kind: string;
   actor?: string;
   summary: string;

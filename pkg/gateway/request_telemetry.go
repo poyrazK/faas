@@ -76,6 +76,12 @@ type RequestTelemetryRow struct {
 	UAFamily     string // normalized family, e.g. chrome, safari, bot
 	ReferrerHost string // lower-case hostname only; __none__ when absent
 	Country      string // ISO alpha-2 uppercase; __unknown__ when unavailable
+	// Guest execution evidence is emitted by the platform-owned runtime
+	// runner. Values are closed/bounded and contain no customer payload.
+	GuestDurationMS int
+	GuestRuntime    string
+	GuestOutcome    string
+	GuestErrorClass string
 }
 
 // RequestTelemetryConfig bundles the knobs the recorder reads at
