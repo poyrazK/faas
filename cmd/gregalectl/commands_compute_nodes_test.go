@@ -24,11 +24,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -465,7 +468,7 @@ func TestCmdComputeNodesList_Empty(t *testing.T) {
 	}
 
 	stdout, restore := captureOsStdoutComputeNodes(t)
-	code := cmdComputeNodesList([]string{})
+	code := cmdComputeNodesList([]string{"--break-glass-db"})
 	restore()
 	if code != 0 {
 		t.Fatalf("cmdComputeNodesList(empty) = %d, want 0", code)
@@ -493,7 +496,7 @@ func TestCmdComputeNodesList_JSON_HappyPath(t *testing.T) {
 	seedNode(t, "bravo", "unix:///run/faas/bravo.sock")
 
 	stdout, restore := captureOsStdoutComputeNodes(t)
-	code := cmdComputeNodesList([]string{"--json"})
+	code := cmdComputeNodesList([]string{"--json", "--break-glass-db"})
 	restore()
 	if code != 0 {
 		t.Fatalf("cmdComputeNodesList(--json) = %d, want 0", code)
@@ -555,7 +558,7 @@ func TestCmdComputeNodesList_ActiveOnly(t *testing.T) {
 	// Default path: both visible (alpha + bravo; bravo is drained
 	// but still in compute_nodes with active=false).
 	stdoutAll, restoreAll := captureOsStdoutComputeNodes(t)
-	if code := cmdComputeNodesList([]string{"--json"}); code != 0 {
+	if code := cmdComputeNodesList([]string{"--json", "--break-glass-db"}); code != 0 {
 		t.Fatalf("list default = %d, want 0", code)
 	}
 	restoreAll()
@@ -569,7 +572,7 @@ func TestCmdComputeNodesList_ActiveOnly(t *testing.T) {
 
 	// --active-only: bravo excluded.
 	stdoutActive, restoreActive := captureOsStdoutComputeNodes(t)
-	if code := cmdComputeNodesList([]string{"--active-only", "--json"}); code != 0 {
+	if code := cmdComputeNodesList([]string{"--active-only", "--json", "--break-glass-db"}); code != 0 {
 		t.Fatalf("list --active-only = %d, want 0", code)
 	}
 	restoreActive()
@@ -585,6 +588,76 @@ func TestCmdComputeNodesList_ActiveOnly(t *testing.T) {
 	}
 }
 
+func TestComputeNodeReadsUseAuthenticatedAPI(t *testing.T) {
+	role := "compute-only"
+	live := 2
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cookie, err := r.Cookie("faas_sid"); err != nil || cookie.Value != "opaque-session" {
+			t.Errorf("session cookie = %v, %v", cookie, err)
+		}
+		node := api.ComputeNodeOperatorResponse{
+			ID: "11111111-1111-1111-1111-111111111111", Name: "alpha", Role: &role,
+			TargetURL: "tcp://alpha.internal:50051", GatewayTargetURL: "tcp://alpha.internal:8080",
+			VPCPUs: 8, MemMB: 4096, MaxConcurrency: 20, AdmissionCeilingMB: 3500,
+			Active: true, LiveInstanceCount: &live,
+		}
+		switch r.URL.Path {
+		case "/v1/compute-nodes":
+			if r.URL.Query().Get("include_inactive") != "1" {
+				t.Errorf("list query = %q", r.URL.RawQuery)
+			}
+			writeTestJSON(w, http.StatusOK, []api.ComputeNodeOperatorResponse{node})
+		case "/v1/compute-nodes/alpha":
+			writeTestJSON(w, http.StatusOK, node)
+		case "/v1/compute-nodes/ghost":
+			writeTestJSON(w, http.StatusNotFound, api.Problem{Status: http.StatusNotFound, Code: api.CodeNotFound})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	installTestOperatorSession(t, server.URL, "opaque-session")
+
+	previousOpener := computeNodesStoreOpener
+	computeNodesStoreOpener = func() (state.Store, func(), error) {
+		t.Fatal("default read path opened the database")
+		return nil, func() {}, nil
+	}
+	t.Cleanup(func() { computeNodesStoreOpener = previousOpener })
+
+	out, stderr, restore := captureOperatorIO()
+	defer restore()
+	if code := cmdComputeNodesList([]string{"--json"}); code != 0 {
+		t.Fatalf("list exit = %d stderr=%s", code, stderr.String())
+	}
+	var listed computeNodesListJSON
+	if err := json.Unmarshal(out.Bytes(), &listed); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if listed.Count != 1 || listed.Nodes[0].Name != "alpha" || listed.Nodes[0].Role == nil {
+		t.Fatalf("list = %+v", listed)
+	}
+
+	out.Reset()
+	stderr.Reset()
+	if code := cmdComputeNodesShow([]string{"--node=alpha", "--json"}); code != 0 {
+		t.Fatalf("show exit = %d stderr=%s", code, stderr.String())
+	}
+	var shown computeNodeShowJSON
+	if err := json.Unmarshal(out.Bytes(), &shown); err != nil {
+		t.Fatalf("decode show: %v", err)
+	}
+	if shown.Name != "alpha" || shown.LiveInstanceCount != 2 || shown.TargetURL == "" {
+		t.Fatalf("show = %+v", shown)
+	}
+
+	out.Reset()
+	stderr.Reset()
+	if code := cmdComputeNodesShow([]string{"--node=ghost", "--json"}); code != 3 {
+		t.Fatalf("missing show exit = %d stderr=%s", code, stderr.String())
+	}
+}
+
 // TestCmdComputeNodesShow_Missing pins the not-found exit code:
 // an unknown --node value must exit 3 (the "row not found"
 // convention that state.Store.ComputeNodeByName surfaces), NOT
@@ -592,7 +665,7 @@ func TestCmdComputeNodesList_ActiveOnly(t *testing.T) {
 // unreachable" and confuse the upgrade orchestrator's loop).
 func TestCmdComputeNodesShow_Missing(t *testing.T) {
 	resetMemStore(t)
-	code := cmdComputeNodesShow([]string{"--node=ghost"})
+	code := cmdComputeNodesShow([]string{"--node=ghost", "--break-glass-db"})
 	if code != 3 {
 		t.Errorf("cmdComputeNodesShow(ghost) = %d, want 3", code)
 	}
@@ -613,7 +686,7 @@ func TestCmdComputeNodesShow_JSON_HappyPath(t *testing.T) {
 	seedNode(t, "alpha", "unix:///run/faas/alpha.sock")
 
 	stdout, restore := captureOsStdoutComputeNodes(t)
-	code := cmdComputeNodesShow([]string{"--node=alpha", "--json"})
+	code := cmdComputeNodesShow([]string{"--node=alpha", "--json", "--break-glass-db"})
 	restore()
 	if code != 0 {
 		t.Fatalf("cmdComputeNodesShow(--json) = %d, want 0", code)
@@ -694,7 +767,7 @@ func TestCmdComputeNodesShow_JSON_LiveInstanceCount(t *testing.T) {
 	}
 
 	stdout, restore := captureOsStdoutComputeNodes(t)
-	code := cmdComputeNodesShow([]string{"--node=alpha", "--json"})
+	code := cmdComputeNodesShow([]string{"--node=alpha", "--json", "--break-glass-db"})
 	restore()
 	if code != 0 {
 		t.Fatalf("cmdComputeNodesShow(--json) = %d, want 0", code)

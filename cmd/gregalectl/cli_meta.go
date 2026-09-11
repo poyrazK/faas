@@ -211,6 +211,7 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "active-only", Short: "filter to active=true rows only"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
+					{Name: "break-glass-db", Short: "read directly during an apid outage"},
 				},
 			},
 			{
@@ -219,6 +220,7 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "node", Short: "fqdn / short-hostname of the node to show (required)"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
+					{Name: "break-glass-db", Short: "read directly during an apid outage"},
 				},
 			},
 			{

@@ -76,6 +76,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/webhooks/polar":                   true, // Standard Webhooks-signed webhook
 	"POST /v1/webhooks/resend":                  true, // Svix-signed webhook (issue #246 / ADR-115)
 	"GET /v1/compute-nodes":                     true, // operator-only (ADR-029)
+	"GET /v1/compute-nodes/{name}":              true, // operator-only node detail
 	"POST /v1/compute-nodes":                    true, // operator-only
 	"DELETE /v1/compute-nodes/{name}":           true, // operator-only
 	"GET /v1/compute-nodes/{name}/heartbeats":   true, // CP-1: operator-only (heartbeat history; schedd-owned)
@@ -259,6 +260,7 @@ var dtoExclude = map[string]bool{
 	"CliAuthExchangeRequest":       true, // POST /v1/cli-auth/exchange
 	"CliAuthExchangeResponse":      true, // POST /v1/cli-auth/exchange
 	"CliAuthStatus":                true, // enum used by CLI auth
+	"ComputeNodeOperatorResponse":  true, // authenticated operator-only compute-node projection
 	"StatusPage":                   true, // GET /status/slo.json (public status)
 	"SessionsRevokeRequest":        true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
 	"ManagedPostgresPlanLimits":    true, // internal plan policy, not a wire DTO

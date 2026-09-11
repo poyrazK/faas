@@ -6813,6 +6813,32 @@ type RekeyProgress struct {
 	LastID  string `json:"last_id,omitempty"`
 }
 
+// ComputeNodeOperatorResponse is the authenticated operator projection used by
+// GET /v1/compute-nodes and GET /v1/compute-nodes/{name}. It exposes the
+// routing and release metadata needed for fleet diagnosis, but never returns
+// the node's host certificate.
+type ComputeNodeOperatorResponse struct {
+	ID                 string  `json:"id"`
+	Name               string  `json:"name"`
+	TargetURL          string  `json:"target_url"`
+	GatewayTargetURL   string  `json:"gateway_target_url,omitempty"`
+	VPCPUs             int     `json:"vpcpus"`
+	MemMB              int     `json:"mem_mb"`
+	MaxConcurrency     int     `json:"max_concurrency"`
+	AdmissionCeilingMB int     `json:"admission_ceiling_mb"`
+	Active             bool    `json:"active"`
+	Role               *string `json:"role,omitempty"`
+	Region             *string `json:"region,omitempty"`
+	Zone               *string `json:"zone,omitempty"`
+	ReleaseID          *string `json:"release_id,omitempty"`
+	ManifestHash       *string `json:"manifest_hash,omitempty"`
+	CertFingerprint    *string `json:"cert_fingerprint,omitempty"`
+	Generation         *int    `json:"generation,omitempty"`
+	LastHeartbeatAt    string  `json:"last_heartbeat_at,omitempty"`
+	CreatedAt          string  `json:"created_at"`
+	LiveInstanceCount  *int    `json:"live_instance_count,omitempty"`
+}
+
 // OperatorIntentAcceptedResponse is the wire shape returned by
 // POST /v1/admin/instances/{id}/force-park,
 // POST /v1/admin/apps/{slug}/force-cold-boot, and

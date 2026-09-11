@@ -132,6 +132,44 @@ func TestComputeNodes_AllowlistHitUpsertsAndLists(t *testing.T) {
 	if !found {
 		t.Errorf("posted row missing from list: %+v", listed)
 	}
+
+	resp = doJSON(t, "GET", "/v1/compute-nodes/box-east-1", "", tok, ts)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET detail: status=%d", resp.StatusCode)
+	}
+	var detailed computeNodeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&detailed); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if detailed.ID != posted.ID || detailed.Name != posted.Name || detailed.LiveInstanceCount == nil || *detailed.LiveInstanceCount != 0 {
+		t.Errorf("detail = %+v, posted = %+v", detailed, posted)
+	}
+
+	resp = doJSON(t, "GET", "/v1/compute-nodes/missing-node", "", tok, ts)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET missing detail: status=%d, want 404", resp.StatusCode)
+	}
+}
+
+func TestComputeNodeResponseOmitsHostCertificate(t *testing.T) {
+	certificate := "private-node-certificate"
+	fingerprint := "sha256:public-fingerprint"
+	body, err := json.Marshal(toComputeNodeResponse(state.ComputeNode{
+		Name:            "box-east-1",
+		HostCertificate: &certificate,
+		CertFingerprint: &fingerprint,
+	}))
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	if bytes.Contains(body, []byte("host_certificate")) || bytes.Contains(body, []byte(certificate)) {
+		t.Fatalf("response leaked host certificate: %s", body)
+	}
+	if !bytes.Contains(body, []byte(fingerprint)) {
+		t.Fatalf("response omitted diagnostic fingerprint: %s", body)
+	}
 }
 
 func TestComputeNodes_RejectsUnreachableGatewayMetricsTarget(t *testing.T) {
