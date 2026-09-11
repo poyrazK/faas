@@ -479,11 +479,14 @@ jobs:
           IMAGE_RUN_URL=""
           IMAGE_RUN_SUCCEEDED=false
           for attempt in $(seq 1 "$IMAGE_WAIT_ATTEMPTS"); do
+            # Keep enough history to find the immutable publisher run for
+            # long-lived release lines. A busy main branch can push the
+            # source commit beyond the default 100-run window.
             IMAGE_RUNS="$(gh run list \
               --workflow images.yml \
               --event push \
               --branch main \
-              --limit 100 \
+              --limit 1000 \
               --json databaseId,headSha,status,conclusion,url)"
             IMAGE_RUN_URL="$(jq -r --arg sha "$BUILDER_SOURCE_SHA" '
               [.[] | select(.headSha == $sha and .conclusion == "success")]
@@ -585,11 +588,14 @@ jobs:
           IMAGE_RUN_URL=""
           IMAGE_RUN_SUCCEEDED=false
           for attempt in $(seq 1 "$IMAGE_WAIT_ATTEMPTS"); do
+            # Keep enough history to find the immutable publisher run for
+            # long-lived release lines. A busy main branch can push the
+            # source commit beyond the default 100-run window.
             IMAGE_RUNS="$(gh run list \
               --workflow images.yml \
               --event push \
               --branch main \
-              --limit 100 \
+              --limit 1000 \
               --json databaseId,headSha,status,conclusion,url)"
             IMAGE_RUN_URL="$(jq -r --arg sha "$RUNTIME_SOURCE_SHA" '
               [.[] | select(.headSha == $sha and .conclusion == "success")]
