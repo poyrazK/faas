@@ -1,3 +1,4 @@
+// spec: §10
 // Tests for pkg/billing/loader/config.go — LoadBillingConfig +
 // ApplyBillingEnvOverlay. Uses inline-string TOML fixtures (no
 // testdata/*.toml) per cmd/schedd/config_test.go:42-73 precedent.

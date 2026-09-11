@@ -1,3 +1,4 @@
+// spec: §10
 // Issue #279 PR A — overage cap gate inside the meterd quota tick.
 //
 // The cap is layered on top of the existing free/paid ladder:
