@@ -49,22 +49,32 @@ func (s *server) beginHostedCheckout(ctx context.Context, acct state.Account, pl
 	if !s.hostedCheckoutAvailable(acct, plan) {
 		return "", "", errNoHostedCheckout
 	}
-	provider := providerName(s.billingProvider)
-	identity, identityErr := s.store.BillingIdentity(ctx, acct.ID, provider)
-	if identityErr != nil && !errors.Is(identityErr, state.ErrNotFound) {
-		return "", "", fmt.Errorf("load provider billing identity: %w", identityErr)
-	}
-	if identityErr == nil {
-		if identity.SubscriptionID != "" {
-			return "", "", errNoHostedCheckout
+	provider, qualified := providerIdentityName(s.billingProvider)
+	if qualified {
+		identity, identityErr := s.store.BillingIdentity(ctx, acct.ID, provider)
+		if identityErr != nil && !errors.Is(identityErr, state.ErrNotFound) {
+			return "", "", fmt.Errorf("load provider billing identity: %w", identityErr)
 		}
-		acct.ProviderCustomerID = identity.CustomerID
-		acct.StripeSubscriptionItem = identity.SubscriptionID
-	} else {
+		if identityErr == nil {
+			if identity.SubscriptionID != "" {
+				return "", "", errNoHostedCheckout
+			}
+			acct.ProviderCustomerID = identity.CustomerID
+			acct.StripeSubscriptionItem = identity.SubscriptionID
+		} else {
+			// Clear another provider's compatibility-cache handles before asking
+			// this backend to resolve/create by Gregale external account ID.
+			acct.ProviderCustomerID = ""
+			acct.StripeSubscriptionItem = ""
+		}
+	} else if acct.StripeSubscriptionItem != "" {
+		// Test and third-party providers without a stable identity namespace
+		// retain the legacy Account-field contract.
+		return "", "", errNoHostedCheckout
+	}
+	if acct.ProviderCustomerID == "" {
 		// Clear another provider's compatibility-cache handles before asking
 		// this backend to resolve/create by Gregale external account ID.
-		acct.ProviderCustomerID = ""
-		acct.StripeSubscriptionItem = ""
 		custID, cerr := s.billingProvider.CreateCustomer(ctx, acct)
 		if cerr != nil {
 			s.log.Error("create_customer",
@@ -73,9 +83,11 @@ func (s *server) beginHostedCheckout(ctx context.Context, acct state.Account, pl
 				"err", cerr)
 			return "", "", fmt.Errorf("create provider customer: %w", cerr)
 		}
-		identity = state.BillingIdentity{AccountID: acct.ID, Provider: provider, CustomerID: custID}
-		if err := s.store.UpsertBillingIdentity(ctx, identity); err != nil {
-			return "", "", fmt.Errorf("stamp provider-qualified customer id: %w", err)
+		if qualified {
+			identity := state.BillingIdentity{AccountID: acct.ID, Provider: provider, CustomerID: custID}
+			if err := s.store.UpsertBillingIdentity(ctx, identity); err != nil {
+				return "", "", fmt.Errorf("stamp provider-qualified customer id: %w", err)
+			}
 		}
 		if err := s.store.UpdateAccountProviderCustomerID(ctx, acct.ID, custID); err != nil {
 			// The provider-side customer exists but the local binding

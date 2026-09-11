@@ -245,6 +245,7 @@ func TestPGHandler_DeploymentHistoryPaginates(t *testing.T) {
 func TestPGHandler_AdminCreditIdempotency(t *testing.T) {
 	e := setupPGHandler(t, api.PlanPro)
 	e.s.WithAdminAllowlist(e.acct.Email)
+	e.s.WithBillingProvider(&consumeRefundProvider{})
 	target, err := e.store.CreateAccount(context.Background(), "pg-credit-target-"+uuid.NewString()+"@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatalf("CreateAccount target: %v", err)
