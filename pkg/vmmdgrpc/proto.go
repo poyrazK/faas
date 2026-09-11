@@ -213,6 +213,13 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// scope. Empty slice = legacy single-workload path
 		// (pre-PR-B callers). Additive per ADR-016.
 		Sidecars: sidecarsFromProto(app.GetSidecars()),
+		// BuildSpec (issue #473 / warm builder restore) marks a
+		// snapshot restore as a builder VM and carries the export
+		// directory + timeout through the same WakeRequest fields used
+		// by CreateColdBoot. Without this, a restored builder would be
+		// tracked as an app VM and Destroy could not export its result.
+		ExportDir:       buildSpecExportDir(req.GetBuild()),
+		BuildTimeoutSec: buildSpecTimeoutSec(req.GetBuild()),
 	}
 	if snap != nil {
 		// #96 / ADR-025 axis 2 (slice 3) — mem_path is gone from the

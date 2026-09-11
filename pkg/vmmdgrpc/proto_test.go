@@ -89,6 +89,44 @@ func TestToWakeRequest_NoSnapshot(t *testing.T) {
 	}
 }
 
+// TestToWakeRequest_BuildSpecExportDir pins the builder-VM contract for
+// snapshot restore (issue #473): the restore envelope must carry the same
+// export directory and timeout as the cold-boot envelope so vmmd retains
+// build-aware teardown state across a warm-builder restore.
+func TestToWakeRequest_BuildSpecExportDir(t *testing.T) {
+	req := &vmmdpb.CreateFromSnapshotRequest{
+		Instance: "inst-build",
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l"},
+		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/inst-build/mem"},
+		Build:    &vmmdpb.BuildSpec{ExportDir: "/var/lib/faas/build-out/b1", TimeoutSec: 1800},
+	}
+	wr, err := toWakeRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("toWakeRequest: %v", err)
+	}
+	if wr.ExportDir != "/var/lib/faas/build-out/b1" {
+		t.Errorf("ExportDir = %q, want /var/lib/faas/build-out/b1", wr.ExportDir)
+	}
+	if wr.BuildTimeoutSec != 1800 {
+		t.Errorf("BuildTimeoutSec = %d, want 1800", wr.BuildTimeoutSec)
+	}
+}
+
+func TestToWakeRequest_NilBuildSpecIsAppRestore(t *testing.T) {
+	req := &vmmdpb.CreateFromSnapshotRequest{
+		Instance: "inst-app",
+		App:      &vmmdpb.AppSpec{BaseKey: "/b"},
+		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/inst-app/mem"},
+	}
+	wr, err := toWakeRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("toWakeRequest: %v", err)
+	}
+	if wr.ExportDir != "" || wr.BuildTimeoutSec != 0 {
+		t.Errorf("app restore carried builder fields: export_dir=%q timeout=%d", wr.ExportDir, wr.BuildTimeoutSec)
+	}
+}
+
 func TestToWakeRequest_EmptySnapshotStorageKey(t *testing.T) {
 	// #96 slice 3 — mem_path is gone from the wire. The empty-storage-key
 	// case now signals a snapshot-with-no-blob-locator and the proto
