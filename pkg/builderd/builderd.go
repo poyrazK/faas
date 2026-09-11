@@ -595,7 +595,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, err
 	}
 
-	fw, ver := FrameworkUnknown, ""
+	var fw Framework
+	var ver string
 	if functionFW, ok := functionRuntimeFramework(app); ok {
 		// Function runtime is explicit app configuration, so it wins over a
 		// stale or misleading source marker/profile. This also keeps legacy
