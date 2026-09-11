@@ -97,12 +97,15 @@ jobs:
             CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
               go build -trimpath -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
               -o "$stage/gregale" ./cmd/gregale
-            # Pin sort order, ownership, and mtime so re-running this
-            # workflow on the same commit produces byte-identical
-            # archives, and therefore identical SHA256SUMS.
-            tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="$MTIME" \
-              -czf "/tmp/gregale-build/archives/gregale_${SEMVER}_${GOOS}_${GOARCH}.tar.gz" \
-              -C "$stage" gregale
+            # Archiving lives in a script so its reproducibility is gated by
+            # scripts/archive-cli-binary_test.sh on every PR. Inline, the
+            # claim was only a comment — and it was wrong: `tar -czf` writes
+            # the current wall-clock time into the gzip header, so two runs
+            # produced different bytes and different SHA256SUMS.
+            bash scripts/archive-cli-binary.sh \
+              --binary "$stage/gregale" \
+              --output "/tmp/gregale-build/archives/gregale_${SEMVER}_${GOOS}_${GOARCH}.tar.gz" \
+              --mtime "$MTIME"
           done
           # Historical asset layout, preserved verbatim: the bare
           # linux-amd64 binary is what the deploy action vendors below,
