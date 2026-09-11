@@ -130,6 +130,60 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
 
   # ────────────────────────────────────────────────────────────────────
+  # Customer runtime log-drain health. These alerts are intentionally
+  # warning-tier: the customer application remains available, but an
+  # external log destination may be stale or losing records.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_customer_log_drains
+    interval: 30s
+    rules:
+      - alert: FaasCustomerLogDrainBacklog
+        expr: |
+          gateway_log_drain_queue_capacity > 0
+          and gateway_log_drain_queue_depth / gateway_log_drain_queue_capacity > 0.8
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: customer_log_drain
+        annotations:
+          summary: "Customer log-drain queue is saturated for {{ $labels.app }}"
+          description: "The {{ $labels.kind }} runtime log drain for app {{ $labels.app }} has remained above 80% queue utilization for 10m. The destination is applying backpressure; records may be dropped once the bounded queue fills. Check delivery latency, retries, and the destination endpoint."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerLogDrainDegraded.md"
+
+      - alert: FaasCustomerLogDrainDeliveryFailed
+        expr: |
+          increase(gateway_log_drain_failed_total[10m]) > 0
+          and on (app, kind)
+          (
+            gateway_log_drain_last_success_timestamp_seconds == 0
+            or time() - gateway_log_drain_last_success_timestamp_seconds > 600
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: customer_log_drain
+        annotations:
+          summary: "Customer log-drain delivery is failing for {{ $labels.app }}"
+          description: "The {{ $labels.kind }} runtime log drain for app {{ $labels.app }} exhausted delivery attempts during the last 10m and has no successful response in the last 10m. Check the destination status, credentials, TLS path, and gatewayd logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerLogDrainDegraded.md"
+
+      - alert: FaasCustomerLogDrainDataLoss
+        expr: |
+          increase(gateway_log_drain_dropped_total[10m]) > 0
+          or increase(gateway_log_drain_gaps_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: customer_log_drain
+        annotations:
+          summary: "Customer runtime log records were lost for {{ $labels.app }}"
+          description: "The {{ $labels.kind }} runtime log drain for app {{ $labels.app }} observed dropped records or a source-ring gap during the last 10m. A gap indicates the source ring no longer retains the missing lines; fixing the destination cannot recover them."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerLogDrainDegraded.md"
+
+  # ────────────────────────────────────────────────────────────────────
   # Compute metrics HTTP-SD health (issue #1219 follow-up).
   # Prometheus can remain scrapeable while apid serves an old, empty, or
   # partially filtered target snapshot, so these rules use producer-side

@@ -92,6 +92,7 @@ When you receive a page:
 | `stuck_activating` | warn | [`FaasStuckActivating.md`](FaasStuckActivating.md) | (See `daemon_stuck_activating` above.) |
 | `pg_backup` | page | [`PostgresBackup.md`](../runbooks/PostgresBackup.md) | Network blip on the off-host push channel; check `journalctl -u faas-pg-basebackup-push`. |
 | `loki_pipeline` | page/warn | [`FaasLokiPipelineDegraded.md`](../runbooks/FaasLokiPipelineDegraded.md) | Promtail or Loki maintenance can temporarily pause shipping; confirm dropped entries and backend reachability before escalating. |
+| `customer_log_drain` | warn | [`FaasCustomerLogDrainDegraded.md`](../runbooks/FaasCustomerLogDrainDegraded.md) | A customer-managed destination can be intentionally paused or rate-limited; confirm the configured endpoint and recent delivery timestamps before escalating. |
 | `compute_metrics_discovery` | warn | [`FaasComputeMetricsDiscoveryDegraded.md`](../runbooks/FaasComputeMetricsDiscoveryDegraded.md) | A planned compute-node drain can make the registry and target snapshot differ briefly; check the latest discovery timestamp first. |
 | `compute_metrics_scrape` | warn | [`FaasComputeMetricsDiscoveryDegraded.md`](../runbooks/FaasComputeMetricsDiscoveryDegraded.md) | A node listener restart or private-route flap can reduce coverage while discovery remains fresh. |
 | `log_archive` | page/warn | [`FaasLogArchiveShipperDegraded.md`](../runbooks/FaasLogArchiveShipperDegraded.md) | An intentional object-store maintenance window may create bounded local spool growth; verify capacity and failure reason. |

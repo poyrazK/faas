@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -62,15 +63,32 @@ type Config struct {
 	OnDropped      func(Record)
 	OnDelivered    func(Record)
 	OnFailed       func(Record, error)
+	// OnQueueDepth is called after queue mutations and once at construction.
+	// The capacity is fixed for the sender lifetime, while depth is the
+	// current number of records waiting for delivery.
+	OnQueueDepth func(depth, capacity int)
+	// OnRetry is called before each retry attempt. attempt is one-based and
+	// is greater than one for retries.
+	OnRetry func(record Record, attempt int)
+	// OnDeliveredLatency reports end-to-end time from enqueue to a successful
+	// response. It includes queue wait and endpoint latency.
+	OnDeliveredLatency func(record Record, latency time.Duration)
 }
 
 // Sender is an asynchronous, bounded log delivery queue.
 type Sender struct {
-	cfg    Config
-	client *http.Client
-	queue  chan Record
-	done   chan struct{}
-	header http.Header
+	cfg      Config
+	client   *http.Client
+	queue    chan queuedRecord
+	done     chan struct{}
+	header   http.Header
+	queueMu  sync.Mutex
+	doneOnce sync.Once
+}
+
+type queuedRecord struct {
+	record     Record
+	enqueuedAt time.Time
 }
 
 // New validates configuration and creates a sender. Run must be called by
@@ -102,13 +120,15 @@ func New(cfg Config) (*Sender, error) {
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{Timeout: cfg.RequestTimeout}
 	}
-	return &Sender{
+	sender := &Sender{
 		cfg:    cfg,
 		client: cfg.HTTPClient,
-		queue:  make(chan Record, cfg.QueueSize),
+		queue:  make(chan queuedRecord, cfg.QueueSize),
 		done:   make(chan struct{}),
 		header: header,
-	}, nil
+	}
+	sender.observeQueueDepth()
+	return sender, nil
 }
 
 // Enqueue adds a record without blocking. False means the bounded queue was
@@ -116,19 +136,30 @@ func New(cfg Config) (*Sender, error) {
 func (s *Sender) Enqueue(record Record) bool {
 	select {
 	case <-s.done:
-		if s.cfg.OnDropped != nil {
-			s.cfg.OnDropped(record)
-		}
+		s.drop(record)
+		return false
+	default:
+	}
+
+	s.queueMu.Lock()
+	// Run can close the sender after the first check above. Re-check while
+	// holding the queue lock so a concurrent shutdown cannot enqueue after
+	// the queue has been drained.
+	select {
+	case <-s.done:
+		s.queueMu.Unlock()
+		s.drop(record)
 		return false
 	default:
 	}
 	select {
-	case s.queue <- record:
+	case s.queue <- queuedRecord{record: record, enqueuedAt: time.Now()}:
+		s.observeQueueDepthLocked()
+		s.queueMu.Unlock()
 		return true
 	default:
-		if s.cfg.OnDropped != nil {
-			s.cfg.OnDropped(record)
-		}
+		s.queueMu.Unlock()
+		s.drop(record)
 		return false
 	}
 }
@@ -136,26 +167,35 @@ func (s *Sender) Enqueue(record Record) bool {
 // Run drains queued records until ctx is cancelled. It closes the sender so
 // later Enqueue calls fail fast.
 func (s *Sender) Run(ctx context.Context) {
-	defer close(s.done)
+	defer s.closeDone()
 	for {
 		select {
 		case <-ctx.Done():
+			s.dropQueued()
 			return
-		case record := <-s.queue:
-			s.deliver(ctx, record)
+		case item := <-s.queue:
+			s.queueMu.Lock()
+			s.observeQueueDepthLocked()
+			s.queueMu.Unlock()
+			s.deliver(ctx, item)
 		}
 	}
 }
 
-func (s *Sender) deliver(ctx context.Context, record Record) {
+func (s *Sender) deliver(ctx context.Context, item queuedRecord) {
+	record := item.record
 	var lastErr error
-	for attempt := 0; attempt < s.cfg.MaxAttempts; attempt++ {
-		if attempt > 0 {
-			backoff := time.Duration(attempt) * 100 * time.Millisecond
+	for attempt := 1; attempt <= s.cfg.MaxAttempts; attempt++ {
+		if attempt > 1 {
+			if s.cfg.OnRetry != nil {
+				s.cfg.OnRetry(record, attempt)
+			}
+			backoff := time.Duration(attempt-1) * 100 * time.Millisecond
 			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
+				s.drop(record)
 				return
 			case <-timer.C:
 			}
@@ -164,6 +204,9 @@ func (s *Sender) deliver(ctx context.Context, record Record) {
 		if err == nil && status >= 200 && status < 300 {
 			if s.cfg.OnDelivered != nil {
 				s.cfg.OnDelivered(record)
+			}
+			if s.cfg.OnDeliveredLatency != nil && !item.enqueuedAt.IsZero() {
+				s.cfg.OnDeliveredLatency(record, time.Since(item.enqueuedAt))
 			}
 			return
 		}
@@ -177,10 +220,52 @@ func (s *Sender) deliver(ctx context.Context, record Record) {
 		}
 	}
 	if ctx.Err() != nil {
+		s.drop(record)
 		return
 	}
 	if s.cfg.OnFailed != nil && lastErr != nil {
 		s.cfg.OnFailed(record, lastErr)
+	}
+}
+
+func (s *Sender) closeDone() {
+	s.doneOnce.Do(func() { close(s.done) })
+}
+
+func (s *Sender) observeQueueDepth() {
+	s.queueMu.Lock()
+	defer s.queueMu.Unlock()
+	s.observeQueueDepthLocked()
+}
+
+func (s *Sender) observeQueueDepthLocked() {
+	if s.cfg.OnQueueDepth != nil {
+		s.cfg.OnQueueDepth(len(s.queue), cap(s.queue))
+	}
+}
+
+func (s *Sender) drop(record Record) {
+	if s.cfg.OnDropped != nil {
+		s.cfg.OnDropped(record)
+	}
+}
+
+func (s *Sender) dropQueued() {
+	s.queueMu.Lock()
+	s.doneOnce.Do(func() { close(s.done) })
+	dropped := make([]Record, 0, len(s.queue))
+	for {
+		select {
+		case item := <-s.queue:
+			dropped = append(dropped, item.record)
+		default:
+			s.observeQueueDepthLocked()
+			s.queueMu.Unlock()
+			for _, record := range dropped {
+				s.drop(record)
+			}
+			return
+		}
 	}
 }
 
