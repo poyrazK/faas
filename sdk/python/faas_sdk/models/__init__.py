@@ -77,6 +77,7 @@ from .app_open_api_import_dry_run_response import AppOpenAPIImportDryRunResponse
 from .app_open_api_import_response import AppOpenAPIImportResponse
 from .app_open_api_import_response_openapi_version import AppOpenAPIImportResponseOpenapiVersion
 from .app_open_api_import_response_source import AppOpenAPIImportResponseSource
+from .app_open_api_policy_apply_response import AppOpenAPIPolicyApplyResponse
 from .app_open_api_policy_preview_response import AppOpenAPIPolicyPreviewResponse
 from .app_open_api_policy_preview_route import AppOpenAPIPolicyPreviewRoute
 from .app_open_api_policy_preview_route_method import AppOpenAPIPolicyPreviewRouteMethod
@@ -125,6 +126,7 @@ from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
 from .applied_build import AppliedBuild
+from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
 from .apply_response import ApplyResponse
 from .apply_response_apps_item import ApplyResponseAppsItem
 from .apps_metrics_response import AppsMetricsResponse
@@ -674,6 +676,10 @@ from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
+from .prewarm_intent_response import PrewarmIntentResponse
+from .prewarm_intent_response_status import PrewarmIntentResponseStatus
+from .prewarm_intent_response_trigger import PrewarmIntentResponseTrigger
+from .prewarm_request import PrewarmRequest
 from .problem import Problem
 from .programmatic_api_key import ProgrammaticAPIKey
 from .programmatic_auth_response import ProgrammaticAuthResponse
@@ -976,6 +982,7 @@ __all__ = (
     "AppLogDrainResponse",
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
+    "ApplyAppOpenAPIPolicyRequest",
     "ApplyResponse",
     "ApplyResponseAppsItem",
     "AppManifest",
@@ -995,6 +1002,7 @@ __all__ = (
     "AppOpenAPIImportResponse",
     "AppOpenAPIImportResponseOpenapiVersion",
     "AppOpenAPIImportResponseSource",
+    "AppOpenAPIPolicyApplyResponse",
     "AppOpenAPIPolicyPreviewResponse",
     "AppOpenAPIPolicyPreviewRoute",
     "AppOpenAPIPolicyPreviewRouteMethod",
@@ -1247,10 +1255,10 @@ __all__ = (
     "DeploymentResponseRolloutState",
     "DeploymentResponseStageState",
     "DeploymentResponseTag",
+    "DeploymentSummaryResponse",
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
     "DeployTokenResponseStatus",
-    "DeploymentSummaryResponse",
     "DevSessionResponse",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
@@ -1579,6 +1587,10 @@ __all__ = (
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
     "PreviewCreatedWebhookPayload",
+    "PrewarmIntentResponse",
+    "PrewarmIntentResponseStatus",
+    "PrewarmIntentResponseTrigger",
+    "PrewarmRequest",
     "Problem",
     "ProgrammaticAPIKey",
     "ProgrammaticAuthResponse",

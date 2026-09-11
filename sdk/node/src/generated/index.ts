@@ -40,12 +40,14 @@ export type { AppErrorsSummaryResponse } from './models/AppErrorsSummaryResponse
 export type { AppErrorSummaryItem } from './models/AppErrorSummaryItem.js';
 export type { AppliedBuild } from './models/AppliedBuild.js';
 export type { AppLogDrainResponse } from './models/AppLogDrainResponse.js';
+export type { ApplyAppOpenAPIPolicyRequest } from './models/ApplyAppOpenAPIPolicyRequest.js';
 export type { ApplyResponse } from './models/ApplyResponse.js';
 export type { AppManifest } from './models/AppManifest.js';
 export type { AppManifestHealthcheck } from './models/AppManifestHealthcheck.js';
 export type { AppMetricsResponse } from './models/AppMetricsResponse.js';
 export type { AppOpenAPIImportDryRunResponse } from './models/AppOpenAPIImportDryRunResponse.js';
 export type { AppOpenAPIImportResponse } from './models/AppOpenAPIImportResponse.js';
+export type { AppOpenAPIPolicyApplyResponse } from './models/AppOpenAPIPolicyApplyResponse.js';
 export type { AppOpenAPIPolicyPreviewResponse } from './models/AppOpenAPIPolicyPreviewResponse.js';
 export type { AppOpenAPIPolicyPreviewRoute } from './models/AppOpenAPIPolicyPreviewRoute.js';
 export type { AppOpenAPIPolicyPreviewRule } from './models/AppOpenAPIPolicyPreviewRule.js';
