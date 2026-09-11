@@ -118,6 +118,15 @@ func TestUnitVmmd_Shape(t *testing.T) {
 	if len(u.AmbientCapabilities) == 0 {
 		t.Error("vmmd: AmbientCapabilities empty (CAP_NET_BIND_SERVICE expected)")
 	}
+	if len(u.CapabilityBoundingSet) == 0 {
+		t.Error("vmmd: CapabilityBoundingSet empty (root service must not inherit the full host capability set)")
+	}
+	if u.RestrictNamespaces {
+		t.Error("vmmd: RestrictNamespaces enabled (vmmd must create tenant namespaces)")
+	}
+	if u.ProtectProc != "" {
+		t.Errorf("vmmd: ProtectProc = %q, want empty (vmmd inspects cross-UID jailer children)", u.ProtectProc)
+	}
 	// ExecStartPre must include the /run/faas chown/chmod
 	// re-assertion (load-bearing — wipes any hand-edit drift).
 	found := false

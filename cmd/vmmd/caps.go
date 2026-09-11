@@ -34,6 +34,11 @@
 //     instance.
 //   - cap_setgid      — same, group dimension.
 //   - cap_sys_chroot  — jailer chroot.
+//   - cap_setpcap     — jailer drops its bounding set before execing
+//     firecracker.
+//   - cap_sys_ptrace  — vmmd enters and inspects the mount namespace of
+//     the cross-UID jailer child while repairing its device tree.
+//   - cap_mknod       — the in-jail mount helper provisions /dev/kvm.
 //
 // Deny list is the full set of caps vmmd doesn't use. The Deny
 // list is the more important side of the contract: a future
@@ -63,7 +68,10 @@ var capsDecl = capdecl.Declaration{
 		"cap_fowner",
 		"cap_setuid",
 		"cap_setgid",
+		"cap_setpcap",
 		"cap_sys_chroot",
+		"cap_sys_ptrace",
+		"cap_mknod",
 	},
 	// Deny is empty by intent. vmmd's contract is "we have the
 	// caps we need; deny lists on root components have caused

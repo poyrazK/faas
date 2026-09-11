@@ -149,6 +149,25 @@ func UnitVmmd() daemonunit.Unit {
 			{Name: "faas_archive_creds", Path: "/etc/faas/secrets/storage-box/archive-creds.json", Optional: true},
 		},
 
+		// Keep this list in lockstep with cmd/vmmd/caps.go. vmmd still needs
+		// broad host-management privileges to build namespaces, mounts, device
+		// nodes and delegated cgroups, but it must not inherit every capability
+		// merely because it is the fleet's sole root daemon.
+		CapabilityBoundingSet: []string{
+			"cap_chown",
+			"cap_dac_override",
+			"cap_fowner",
+			"cap_kill",
+			"cap_setgid",
+			"cap_setuid",
+			"cap_setpcap",
+			"cap_net_bind_service",
+			"cap_net_admin",
+			"cap_sys_chroot",
+			"cap_sys_ptrace",
+			"cap_sys_admin",
+			"cap_mknod",
+		},
 		AmbientCapabilities: []string{"CAP_NET_BIND_SERVICE"},
 
 		NoNewPrivileges: true,
@@ -167,6 +186,17 @@ func UnitVmmd() daemonunit.Unit {
 		ProtectKernelTunables: false,
 		ProtectKernelModules:  true,
 		ProtectControlGroups:  false,
+		// RestrictNamespaces and ProtectProc are deliberately absent: vmmd
+		// creates tenant namespaces and inspects its cross-UID jailer children
+		// through /proc. AF_NETLINK is used by ip/nft/tc and AF_VSOCK by the
+		// host-side guest signal receivers.
+		SystemCallArchitectures: "native",
+		LockPersonality:         true,
+		RestrictRealtime:        true,
+		RestrictSUIDSGID:        true,
+		RestrictAddressFamilies: []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK", "AF_VSOCK"},
+		ProtectHostname:         true,
+		ProtectClock:            true,
 
 		ReadWritePaths: []string{"/etc/faas/secrets", "/run/faas", "/run/netns", "/srv/fc", "/var/log/faas", "/var/lib/faas/cache"},
 
