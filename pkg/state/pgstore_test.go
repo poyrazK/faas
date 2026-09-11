@@ -3035,7 +3035,14 @@ func TestPg_CreateDeployment_PreservesCanaryPolicy(t *testing.T) {
 	if got.CanaryStepStartedAt == nil || !got.CanaryStepStartedAt.Equal(started) {
 		t.Fatalf("canary step timestamp = %v; want %v", got.CanaryStepStartedAt, started)
 	}
-	if string(got.CanaryStages) != string(stages) {
+	var gotStages, wantStages any
+	if err := json.Unmarshal(got.CanaryStages, &gotStages); err != nil {
+		t.Fatalf("decode returned canary stages: %v", err)
+	}
+	if err := json.Unmarshal(stages, &wantStages); err != nil {
+		t.Fatalf("decode fixture canary stages: %v", err)
+	}
+	if !reflect.DeepEqual(gotStages, wantStages) {
 		t.Fatalf("canary stages = %s; want %s", got.CanaryStages, stages)
 	}
 }
