@@ -141,13 +141,15 @@ package. WSL2 works today (it is linux/amd64).
 
 One-time steps behind these channels, for whoever owns the release:
 
-1. **`get.gregale.dev`** must serve `scripts/install.sh`. Until DNS exists,
-   the working URL is
+1. **`get.gregale.dev`** must serve `scripts/install.sh`. The Worker that
+   does it, plus its deploy and pinning steps, lives in
+   [`deploy/cloudflare/get-gregale-dev/`](../deploy/cloudflare/get-gregale-dev/README.md).
+   Note the ordering: it can only be pinned to a **tag that contains the
+   installer**, and the newest tag predates ADR-172 — so cut a release
+   first. Until the Worker is deployed the hostname resolves to
+   `gatewayd-public` through the `gregale.dev` wildcard and answers with
+   `no app is routed to "get.gregale.dev"`; the working URL meanwhile is
    `https://raw.githubusercontent.com/poyrazK/faas/main/scripts/install.sh`.
-   The script is identical either way, so the cutover is a DNS record plus
-   a docs edit. A Cloudflare Worker or Pages redirect to the raw URL is
-   enough; point it at a tag rather than `main` if you want the installer
-   itself versioned.
 2. **npm** needs an org named `gregale` and an automation token in the
    `NPM_TOKEN` repository secret. Without the secret the `publish-npm` job
    still stages and validates all five packages, then skips publishing with

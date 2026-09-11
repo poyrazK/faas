@@ -1,0 +1,24 @@
+name = "gregale-get-installer"
+main = "worker.mjs"
+compatibility_date = "2026-09-11"
+workers_dev = false
+
+# Both values are pinned by pin.sh and must move together: the ref decides
+# what is fetched, the digest decides whether it is served. A stale digest
+# fails closed with 503 rather than serving an unexpected script.
+#
+# INSTALLER_REF is a TAG, never "main" — this is what `curl | sh` executes on
+# other people's machines, so a merge must not be able to change it.
+#
+#   deploy/cloudflare/get-gregale-dev/pin.sh v0.1.19
+[vars]
+INSTALLER_REF = "REPLACE_ME_RUN_PIN_SH"
+INSTALLER_SHA256 = "REPLACE_ME_RUN_PIN_SH"
+
+# Configure the route in the Cloudflare dashboard or your deployment pipeline:
+#   get.gregale.dev/*
+# gregale.dev's wildcard record points at gatewayd-public, so without this
+# route the hostname reaches the platform and answers with the RFC 7807
+# "no app is routed to get.gregale.dev" 404. A Worker route takes precedence
+# over that origin, so the wildcard does not need removing — but the hostname
+# does need a proxied DNS record for the route to attach.
