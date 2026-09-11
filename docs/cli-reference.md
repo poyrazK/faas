@@ -924,6 +924,16 @@ Preview routes, edge policies, and the read-only OpenAPI contract diff
 |---|---|---|
 | `--scope <scope>` | deployment scope to compare |  |
 
+### openapi apply
+
+Plan or apply generated validation edge rules
+
+| Flag | Meaning | |
+|---|---|---|
+| `--confirm` | apply the reviewed plan |  |
+| `--preview-sha256 <SHA256>` | approval hash from the plan |  |
+| `--match-host <HOST>` | hostname for generated rules |  |
+
 ### openapi rm
 
 Remove the imported app OpenAPI document

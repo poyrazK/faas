@@ -1384,6 +1384,12 @@ const (
 	// CodeAPIContractBreakingChange is stamped on deployments rejected by
 	// the production OpenAPI contract gate.
 	CodeAPIContractBreakingChange = "api_contract_breaking_change"
+	// CodeOpenAPIPolicyConfirmationRequired means a policy apply request
+	// omitted the approval token returned by the preceding plan.
+	CodeOpenAPIPolicyConfirmationRequired = "openapi_policy_confirmation_required"
+	// CodeOpenAPIPolicyStale means the policy changed after the caller
+	// planned it, so the caller must fetch a fresh plan before applying.
+	CodeOpenAPIPolicyStale = "openapi_policy_stale"
 
 	// CLI auth (spec §2.2 device-code flow). Pending is the "user has
 	// not yet approved" signal the CLI's poll loop keys off; the CLI
@@ -1641,7 +1647,8 @@ func StatusForCode(code string) int {
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
 		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
-		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist:
+		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
+		CodeOpenAPIPolicyConfirmationRequired:
 		return http.StatusBadRequest
 	case CodeWorkflowDefinitionNotFound, CodeWorkflowRunNotFound, CodeWorkflowStepNotFound,
 		CodeWorkflowEventNotFound:
@@ -1686,7 +1693,7 @@ func StatusForCode(code string) int {
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
-		CodeWildcardDomainTenantSurfaceOverlap:
+		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale:
 		return http.StatusConflict
 	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict, CodeDeploymentNotLive:
 		// 409 — issue #556. Σ(traffic_percent WHERE status='live')

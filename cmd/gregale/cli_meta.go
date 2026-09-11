@@ -729,6 +729,11 @@ var cliCommands = []cliCommand{
 			{Name: "preview", Short: "Preview routes, edge policies, and the read-only OpenAPI contract diff", Flags: []cliFlag{
 				{Name: "scope", Short: "deployment scope to compare", Value: "scope"},
 			}},
+			{Name: "apply", Short: "Plan or apply generated validation edge rules", Flags: []cliFlag{
+				{Name: "confirm", Short: "apply the reviewed plan"},
+				{Name: "preview-sha256", Short: "approval hash from the plan", Value: "SHA256"},
+				{Name: "match-host", Short: "hostname for generated rules", Value: "HOST"},
+			}},
 			{Name: "rm", Short: "Remove the imported app OpenAPI document"},
 		},
 	},

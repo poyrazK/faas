@@ -451,6 +451,30 @@ func TestComputeDryRun_SuggestionsSorted(t *testing.T) {
 	}
 }
 
+func TestPolicySuggestionsSHA256_DeterministicAndScoped(t *testing.T) {
+	suggestions := []EdgeRuleSuggestion{{
+		Path: "/users", Methods: []string{"get"}, Kind: "validate",
+		Action: map[string]any{"kind": "validate", "validate": map[string]any{
+			"schema": map[string]any{"type": "object"}, "validate_mode": "observe",
+		}},
+	}}
+	one, err := PolicySuggestionsSHA256("api.example.com", suggestions)
+	if err != nil {
+		t.Fatalf("PolicySuggestionsSHA256: %v", err)
+	}
+	two, err := PolicySuggestionsSHA256("api.example.com", suggestions)
+	if err != nil || one != two {
+		t.Fatalf("hash is not deterministic: %q vs %q (err=%v)", one, two, err)
+	}
+	if len(one) != 64 {
+		t.Fatalf("hash length=%d, want 64", len(one))
+	}
+	otherHost, err := PolicySuggestionsSHA256("other.example.com", suggestions)
+	if err != nil || one == otherHost {
+		t.Fatalf("host is not scoped: %q vs %q (err=%v)", one, otherHost, err)
+	}
+}
+
 // TestLowerASCII pins the helper.
 func TestLowerASCII(t *testing.T) {
 	cases := map[string]string{

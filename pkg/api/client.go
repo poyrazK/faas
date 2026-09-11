@@ -4455,6 +4455,17 @@ func (c *Client) DryRunAppOpenAPI(ctx context.Context, slug string, doc map[stri
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/openapi/dry-run", doc, &out)
 }
 
+// ApplyAppOpenAPIPolicy plans or applies validation edge rules derived from
+// the persisted app-level OpenAPI document. Call with Confirm=false first;
+// the returned PreviewSHA256 is an approval token for a subsequent
+// Confirm=true call. A stale token is rejected so concurrent policy changes
+// cannot be accidentally overwritten. MatchHost is optional and defaults to
+// the app's platform hostname.
+func (c *Client) ApplyAppOpenAPIPolicy(ctx context.Context, slug string, req ApplyAppOpenAPIPolicyRequest) (AppOpenAPIPolicyApplyResponse, error) {
+	var out AppOpenAPIPolicyApplyResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/openapi/apply", req, &out)
+}
+
 // DeleteAppOpenAPI wipes the imported OpenAPI document for an app.
 // Idempotent: returns 204 even if no row existed. Emits
 // app.openapi_import.deleted audit + pg_notify on

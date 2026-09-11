@@ -320,6 +320,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/openapi":                               "DeleteAppOpenAPI",               // idempotent wipe of the imported doc (item #2 D5 emits pg_notify)
 	"POST /v1/apps/{slug}/openapi/dry-run":                         "DryRunAppOpenAPI",               // read-only edge-rule suggestions (item #2 D3)
 	"GET /v1/apps/{slug}/openapi/preview":                          "PreviewAppOpenAPIPolicy",        // read-only declared-vs-observed route-policy preview (roadmap item 11)
+	"POST /v1/apps/{slug}/openapi/apply":                           "ApplyAppOpenAPIPolicy",          // explicit plan/confirm policy apply
 	"GET /v1/apps/{slug}/openapi/diff":                             "DiffAppOpenAPIContract",         // ADR-121 production contract gate preview
 	"GET /v1/deployments/{id}":                                     "GetDeployment",
 	"PATCH /v1/deployments/{id}":                                   "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override

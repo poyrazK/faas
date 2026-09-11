@@ -107,6 +107,60 @@ func printOpenapiContractPreview(resp api.OpenAPIContractDiffResponse) {
 	}
 }
 
+// cmdOpenapiApply plans or applies validation edge rules generated from the
+// app's persisted OpenAPI document. The command intentionally separates the
+// two phases: run without --confirm to inspect the deterministic plan, then
+// pass its --preview-sha256 back with --confirm to authorize the write.
+func cmdOpenapiApply(args []string) int {
+	flags, pos := splitArgsForFlags(args)
+	fs := newOpenapiFlagSet("openapi apply")
+	confirm := fs.Bool("confirm", false, "apply the plan (requires --preview-sha256)")
+	previewSHA256 := fs.String("preview-sha256", "", "approval hash returned by the plan")
+	matchHost := fs.String("match-host", "", "hostname for generated rules (defaults to the app hostname)")
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(pos) != 1 {
+		PrintUsage(osStderr, "usage: gregale openapi apply <slug> [--confirm --preview-sha256 <sha256>] [--match-host <host>]", "openapi")
+		return 1
+	}
+	if !validCLISlug(pos[0]) {
+		return printErr("Invalid app slug", fmt.Errorf("invalid slug %q", pos[0]))
+	}
+	if *confirm && *previewSHA256 == "" {
+		return printErr("Missing preview hash", fmt.Errorf("--confirm requires --preview-sha256"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.ApplyAppOpenAPIPolicy(context.Background(), pos[0], api.ApplyAppOpenAPIPolicyRequest{
+		Confirm: *confirm, PreviewSHA256: *previewSHA256, MatchHost: *matchHost,
+	})
+	if err != nil {
+		return printErr("Could not apply OpenAPI policy", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	if resp.Planned {
+		_, _ = fmt.Fprintf(osStdout, "OpenAPI policy plan for %s (host=%s)\n", pos[0], resp.MatchHost)
+		_, _ = fmt.Fprintf(osStdout, "  preview_sha256: %s\n", resp.PreviewSHA256)
+		if len(resp.Suggestions) == 0 {
+			_, _ = fmt.Fprintln(osStdout, "  (no changes)")
+			return 0
+		}
+		_, _ = fmt.Fprintf(osStdout, "  rules to create: %d\n", len(resp.Suggestions))
+		for _, suggestion := range resp.Suggestions {
+			_, _ = fmt.Fprintf(osStdout, "    %-32s %-20s %s\n", suggestion.Path, joinOpenapiMethods(suggestion.Methods), suggestion.Kind)
+		}
+		_, _ = fmt.Fprintln(osStdout, "Run again with --confirm --preview-sha256 <hash> to apply.")
+		return 0
+	}
+	PrintOK(osStdout, "OpenAPI policy applied for %s (%d rule(s)).", pos[0], resp.AppliedCount)
+	return 0
+}
+
 // cmdOpenapiGet fetches the app-level OpenAPI document. The response is
 // deliberately written as raw JSON so it can be saved directly or piped to
 // jq; --source=auto returns the platform-merged document.

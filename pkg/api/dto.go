@@ -7146,6 +7146,31 @@ type AppOpenAPIPolicyPreviewResponse struct {
 	Suggestions       []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
 }
 
+// ApplyAppOpenAPIPolicyRequest controls the explicit OpenAPI policy apply
+// workflow. With Confirm=false (the default), the endpoint is a read-only
+// plan. Confirm=true requires PreviewSHA256 to match the plan currently
+// derived by the server; this prevents approving a stale or altered policy.
+// MatchHost optionally overrides the app's platform hostname for the rules.
+type ApplyAppOpenAPIPolicyRequest struct {
+	Confirm       bool   `json:"confirm,omitempty"`
+	PreviewSHA256 string `json:"preview_sha256,omitempty"`
+	MatchHost     string `json:"match_host,omitempty"`
+}
+
+// AppOpenAPIPolicyApplyResponse is returned by POST
+// /v1/apps/{slug}/openapi/apply. A response with Planned=true is a
+// read-only plan. A confirmed response reports the rules created during this
+// call; AppliedCount is zero for an idempotent no-op.
+type AppOpenAPIPolicyApplyResponse struct {
+	AppID         string               `json:"app_id"`
+	MatchHost     string               `json:"match_host"`
+	PreviewSHA256 string               `json:"preview_sha256"`
+	Suggestions   []EdgeRuleSuggestion `json:"suggestions"`
+	Planned       bool                 `json:"planned"`
+	Applied       []EdgeRuleResponse   `json:"applied"`
+	AppliedCount  int                  `json:"applied_count"`
+}
+
 // AppOpenAPIPolicyPreviewRoute is one path/method row in the policy preview.
 // Status is one of matched, declared_only, or observed_only.
 type AppOpenAPIPolicyPreviewRoute struct {

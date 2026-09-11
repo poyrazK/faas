@@ -8,6 +8,7 @@ package main
 //   POST   /v1/apps/{slug}/openapi
 //   POST   /v1/apps/{slug}/openapi/dry-run
 //   GET    /v1/apps/{slug}/openapi/preview
+//   POST   /v1/apps/{slug}/openapi/apply
 //   DELETE /v1/apps/{slug}/openapi
 //
 // Test surface (table-driven where applicable):
@@ -20,6 +21,8 @@ package main
 //     many endpoints, 403 per-account quota
 //   - POST dry-run: 200 happy path, 422 invalid
 //   - GET preview: declared-vs-observed route and policy coverage
+//   - POST apply: deterministic plan, hash-confirmed writes, stale rejection,
+//     and idempotent no-op
 //   - DELETE: 204 happy path, 204 idempotent
 //
 // The MemStore seeds the imported doc directly via
@@ -513,6 +516,89 @@ func TestPostAppOpenAPI_DryRun_Invalid(t *testing.T) {
 	rec := e.do(t, "POST", "/v1/apps/post-dry-run-invalid/openapi/dry-run", json.RawMessage(invalidOpenAPIDoc), nil)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPostAppOpenAPIPolicyApply_PlanConfirmAndNoop pins the approval-token
+// contract: planning never writes, confirmation creates exactly the planned
+// rule, and a fresh plan after that apply is an idempotent no-op.
+func TestPostAppOpenAPIPolicyApply_PlanConfirmAndNoop(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedApp(t, e, "policy-apply")
+	seedImport(t, e, app.ID, []byte(sampleOpenAPIDoc), 1, "3.1.0")
+
+	planRec := e.do(t, "POST", "/v1/apps/policy-apply/openapi/apply", map[string]any{}, nil)
+	if planRec.Code != http.StatusOK {
+		t.Fatalf("plan status %d, want 200; body=%s", planRec.Code, planRec.Body.String())
+	}
+	var plan api.AppOpenAPIPolicyApplyResponse
+	if err := json.Unmarshal(planRec.Body.Bytes(), &plan); err != nil {
+		t.Fatalf("decode plan: %v", err)
+	}
+	if !plan.Planned || plan.PreviewSHA256 == "" || len(plan.Suggestions) != 1 || plan.AppliedCount != 0 {
+		t.Fatalf("unexpected plan: %+v", plan)
+	}
+	if rules, err := e.store.ListEdgeRulesForApp(t.Context(), app.ID); err != nil || len(rules) != 0 {
+		t.Fatalf("plan wrote rules: len=%d err=%v", len(rules), err)
+	}
+
+	applyRec := e.do(t, "POST", "/v1/apps/policy-apply/openapi/apply", api.ApplyAppOpenAPIPolicyRequest{
+		Confirm: true, PreviewSHA256: plan.PreviewSHA256,
+	}, nil)
+	if applyRec.Code != http.StatusOK {
+		t.Fatalf("apply status %d, want 200; body=%s", applyRec.Code, applyRec.Body.String())
+	}
+	var applied api.AppOpenAPIPolicyApplyResponse
+	if err := json.Unmarshal(applyRec.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("decode apply: %v", err)
+	}
+	if applied.Planned || applied.AppliedCount != 1 || len(applied.Applied) != 1 {
+		t.Fatalf("unexpected apply: %+v", applied)
+	}
+	if applied.Applied[0].MatchHost != "policy-apply.gregale.dev" || applied.Applied[0].ValidateMode != api.ValidateModeObserve {
+		t.Fatalf("generated rule defaults: %+v", applied.Applied[0])
+	}
+
+	noopPlanRec := e.do(t, "POST", "/v1/apps/policy-apply/openapi/apply", map[string]any{}, nil)
+	if noopPlanRec.Code != http.StatusOK {
+		t.Fatalf("noop plan status %d, want 200; body=%s", noopPlanRec.Code, noopPlanRec.Body.String())
+	}
+	var noopPlan api.AppOpenAPIPolicyApplyResponse
+	if err := json.Unmarshal(noopPlanRec.Body.Bytes(), &noopPlan); err != nil {
+		t.Fatalf("decode noop plan: %v", err)
+	}
+	if len(noopPlan.Suggestions) != 0 {
+		t.Fatalf("noop plan suggestions=%d, want 0", len(noopPlan.Suggestions))
+	}
+	noopApplyRec := e.do(t, "POST", "/v1/apps/policy-apply/openapi/apply", api.ApplyAppOpenAPIPolicyRequest{
+		Confirm: true, PreviewSHA256: noopPlan.PreviewSHA256,
+	}, nil)
+	if noopApplyRec.Code != http.StatusOK {
+		t.Fatalf("noop apply status %d, want 200; body=%s", noopApplyRec.Code, noopApplyRec.Body.String())
+	}
+	var noopApply api.AppOpenAPIPolicyApplyResponse
+	if err := json.Unmarshal(noopApplyRec.Body.Bytes(), &noopApply); err != nil {
+		t.Fatalf("decode noop apply: %v", err)
+	}
+	if noopApply.AppliedCount != 0 || noopApply.Planned {
+		t.Fatalf("unexpected noop apply: %+v", noopApply)
+	}
+}
+
+func TestPostAppOpenAPIPolicyApply_RejectsMissingOrStaleConfirmation(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedApp(t, e, "policy-apply-errors")
+	seedImport(t, e, app.ID, []byte(sampleOpenAPIDoc), 1, "3.1.0")
+
+	missing := e.do(t, "POST", "/v1/apps/policy-apply-errors/openapi/apply", api.ApplyAppOpenAPIPolicyRequest{Confirm: true}, nil)
+	if missing.Code != http.StatusBadRequest || !strings.Contains(missing.Body.String(), api.CodeOpenAPIPolicyConfirmationRequired) {
+		t.Fatalf("missing confirmation: status=%d body=%s", missing.Code, missing.Body.String())
+	}
+	stale := e.do(t, "POST", "/v1/apps/policy-apply-errors/openapi/apply", api.ApplyAppOpenAPIPolicyRequest{
+		Confirm: true, PreviewSHA256: strings.Repeat("0", 64),
+	}, nil)
+	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), api.CodeOpenAPIPolicyStale) {
+		t.Fatalf("stale confirmation: status=%d body=%s", stale.Code, stale.Body.String())
 	}
 }
 

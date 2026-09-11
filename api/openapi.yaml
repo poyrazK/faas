@@ -4737,6 +4737,45 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/openapi/apply:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [openapi_import]
+      operationId: applyAppOpenAPIPolicy
+      summary: Plan or explicitly apply generated OpenAPI validation rules.
+      description: |
+        The default request is a read-only plan. It returns a deterministic
+        `preview_sha256` approval token and the validation rules that would be
+        created for uncovered OpenAPI operations. To mutate policy, repeat the
+        request with `confirm=true` and the exact token. If the document or
+        edge rules changed in the meantime, the server returns 409
+        `openapi_policy_stale` and no writes occur. Applying an already-covered
+        document is an idempotent no-op. A missing match_host defaults to the
+        app's platform hostname. Requires MFA and deploy-write scope.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyAppOpenAPIPolicyRequest'
+      responses:
+        '200':
+          description: Policy plan or applied rules.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOpenAPIPolicyApplyResponse'
+        '400':
+          description: "code: validation or openapi_policy_confirmation_required."
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: "code: openapi_policy_stale. The approval token no longer matches the current plan."
+        '422':
+          description: "code: validation. A generated rule failed edge-rule validation."
+        '500': { description: "Internal server error." }
+
   /v1/apps/{slug}/openapi/diff:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -22194,6 +22233,51 @@ components:
         status: { type: string }
         path_in_schema: { type: string }
         field: { type: string }
+
+    ApplyAppOpenAPIPolicyRequest:
+      description: |
+        Controls the explicit OpenAPI policy plan/apply workflow. Omit the
+        body (or set confirm=false) to request a read-only plan. A confirmed
+        apply must include the preview_sha256 returned by that plan.
+      type: object
+      additionalProperties: false
+      properties:
+        confirm:
+          type: boolean
+          default: false
+          description: "Authorize creation of the generated validation rules."
+        preview_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: "Approval token returned by the current plan."
+        match_host:
+          type: string
+          maxLength: 253
+          description: "Hostname for generated rules; defaults to the app hostname."
+
+    AppOpenAPIPolicyApplyResponse:
+      description: |
+        Deterministic OpenAPI policy plan or the result of an explicit apply.
+        Planned=true means no mutation occurred. AppliedCount is zero for an
+        idempotent no-op.
+      type: object
+      required: [app_id, match_host, preview_sha256, suggestions, planned, applied, applied_count]
+      properties:
+        app_id: { type: string, format: uuid }
+        match_host: { type: string }
+        preview_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        suggestions:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleSuggestion' }
+        planned: { type: boolean }
+        applied:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleResponse' }
+        applied_count:
+          type: integer
+          minimum: 0
 
     AppOpenAPIPolicyPreviewResponse:
       description: |

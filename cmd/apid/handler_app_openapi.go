@@ -2,15 +2,16 @@ package main
 
 // ADR-126 / issue #975 item #2 — OpenAPI Import + Auto-Generation.
 //
-// Five app-scoped routes:
+// Six app-scoped routes:
 //
 //   GET    /v1/apps/{slug}/openapi?source=manual_import|auto
 //   POST   /v1/apps/{slug}/openapi                          (import)
 //   POST   /v1/apps/{slug}/openapi/dry-run                  (suggestions)
 //   GET    /v1/apps/{slug}/openapi/preview                  (contract + policy preview)
+//   POST   /v1/apps/{slug}/openapi/apply                    (plan + explicit apply)
 //   DELETE /v1/apps/{slug}/openapi
 //
-// All four flow through authLimited → (requireMFA on writes) →
+// All routes flow through authLimited → (requireMFA on writes) →
 // requireScope → loadApp. The GET surface is read-only and
 // accepts two source modes:
 //
@@ -27,8 +28,8 @@ package main
 //
 // The dry-run route takes the same body shape as the import
 // route but does NOT persist — it returns EdgeRuleSuggestion
-// rows the customer pastes into the existing create-edge-rule
-// endpoint (item #2 D3).
+// rows for inspection. The apply route builds on the persisted
+// document and requires an explicit preview hash before writing.
 //
 // Plan-tier gate is gone for these surfaces — every plan
 // including Free can import (item #2 D6: limits are abuse-
@@ -43,6 +44,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -196,6 +198,182 @@ func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// postAppOpenAPIPolicyApply implements the explicit plan/apply workflow for
+// OpenAPI-generated validation rules. The first call (confirm=false) is
+// read-only and returns a deterministic preview_sha256. A mutation requires
+// that exact token, so a concurrent document or rule change cannot be
+// silently folded into an approval. Rules are created one at a time through
+// the existing quota-checked store path; if a later write fails, rules
+// created by this request are removed before the error is returned.
+func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	slug := r.PathValue("slug")
+	app, ok := s.loadApp(w, r, acct, slug)
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+
+	var req api.ApplyAppOpenAPIPolicyRequest
+	if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid OpenAPI policy apply request", "request body must be valid JSON"))
+		return
+	}
+
+	raw, _, err := s.store.GetAppOpenAPIDoc(r.Context(), app.ID, acct.ID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no OpenAPI document imported for this app")
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+			"failed to read imported OpenAPI document", err.Error()))
+		return
+	}
+	rules, err := s.store.ListEdgeRulesForApp(r.Context(), app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+			"failed to read app edge rules", err.Error()))
+		return
+	}
+	dryRun, err := openapidiff.ComputeDryRun(raw, rules)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "openapi_import_invalid",
+			"persisted OpenAPI document could not be analyzed", err.Error()))
+		return
+	}
+	suggestions := make([]api.EdgeRuleSuggestion, 0, len(dryRun.Suggestions))
+	for _, suggestion := range dryRun.Suggestions {
+		suggestions = append(suggestions, api.EdgeRuleSuggestion{
+			Path: suggestion.Path, Methods: suggestion.Methods,
+			Kind: suggestion.Kind, Action: suggestion.Action,
+		})
+	}
+	matchHost := strings.ToLower(strings.TrimSpace(req.MatchHost))
+	if matchHost == "" {
+		matchHost = strings.ToLower(appHostForDomain(app.Slug, s.domain))
+	}
+	previewSHA256, err := openapidiff.PolicySuggestionsSHA256(matchHost, dryRun.Suggestions)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+			"failed to fingerprint OpenAPI policy plan", err.Error()))
+		return
+	}
+	resp := api.AppOpenAPIPolicyApplyResponse{
+		AppID: app.ID, MatchHost: matchHost, PreviewSHA256: previewSHA256,
+		Suggestions: suggestions, Planned: !req.Confirm,
+		Applied: make([]api.EdgeRuleResponse, 0),
+	}
+	if !req.Confirm {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	if req.PreviewSHA256 == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeOpenAPIPolicyConfirmationRequired,
+			"OpenAPI policy confirmation is required", "set confirm=true together with the preview_sha256 returned by a plan request"))
+		return
+	}
+	if req.PreviewSHA256 != previewSHA256 {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeOpenAPIPolicyStale,
+			"OpenAPI policy plan is stale", "the OpenAPI document or edge rules changed; fetch a new plan before applying"))
+		return
+	}
+
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("plan limits not loaded"))
+		return
+	}
+	created := make([]state.EdgeRule, 0, len(suggestions))
+	rollback := func() {
+		for i := len(created) - 1; i >= 0; i-- {
+			row := created[i]
+			if deleteErr := s.store.DeleteEdgeRule(r.Context(), row.ID); deleteErr == nil || errors.Is(deleteErr, state.ErrNotFound) {
+				if s.notif != nil {
+					_ = s.notif.Notify(r.Context(), db.NotifyEdgeRuleChanged,
+						fmt.Sprintf(`{"app_id":%q,"rule_id":%q,"op":"deleted"}`, app.ID, row.ID))
+				}
+			}
+		}
+	}
+	for _, suggestion := range suggestions {
+		// Dry-run suggestions expose the kind-tagged action union so the
+		// dashboard can render it. The edge-rule create endpoint accepts
+		// the kind-specific action body itself (for validate, `schema` and
+		// `validate_mode` are top-level), so unwrap the matching member
+		// before passing it through the existing validator.
+		actionPayload := any(suggestion.Action)
+		if nested, exists := suggestion.Action[suggestion.Kind]; exists {
+			actionPayload = nested
+		}
+		actionRaw, marshalErr := json.Marshal(actionPayload)
+		if marshalErr != nil {
+			rollback()
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+				"failed to encode OpenAPI policy action", marshalErr.Error()))
+			return
+		}
+		createReq := api.CreateEdgeRuleRequest{
+			MatchHost: matchHost, MatchPath: suggestion.Path,
+			MatchMethods: suggestion.Methods, Kind: suggestion.Kind,
+			ValidateMode: api.ValidateModeObserve, Action: actionRaw,
+		}
+		if prob := validateEdgeRuleBody(&createReq, acct.Plan); prob != nil {
+			rollback()
+			api.WriteProblem(w, prob)
+			return
+		}
+		row, createErr := s.store.CreateEdgeRuleIfUnderQuota(r.Context(), state.CreateEdgeRuleParams{
+			AccountID: acct.ID, AppID: app.ID, MatchHost: matchHost,
+			MatchPath: suggestion.Path, MatchMethods: suggestion.Methods,
+			Priority: 100, Enabled: true, Kind: state.EdgeRuleKind(suggestion.Kind),
+			Action: actionFromBody(suggestion.Kind, actionRaw), ValidateMode: api.ValidateModeObserve,
+		}, limits)
+		if createErr != nil {
+			rollback()
+			var qe *state.EdgeRuleQuotaError
+			switch {
+			case errors.As(createErr, &qe):
+				if qe.PerKind {
+					api.WriteProblem(w, api.ErrPlanEdgeRuleKindQuotaReached(acct.Plan, qe.Kind, qe.Limit, qe.Observed))
+				} else {
+					api.WriteProblem(w, api.ErrPlanLimitEdgeRules(acct.Plan, qe.Limit, qe.Observed))
+				}
+			case errors.Is(createErr, state.ErrNotFound):
+				s.notFound(w, "no such app")
+			case errors.Is(createErr, state.ErrConflict):
+				api.WriteProblem(w, api.ErrEdgeRuleConflict(createErr.Error()))
+			default:
+				api.WriteProblem(w, api.ErrCapacity("could not apply OpenAPI policy"))
+			}
+			return
+		}
+		created = append(created, row)
+		if s.notif != nil {
+			_ = s.notif.Notify(r.Context(), db.NotifyEdgeRuleChanged,
+				fmt.Sprintf(`{"app_id":%q,"rule_id":%q,"op":"created"}`, app.ID, row.ID))
+		}
+		s.audit.Emit(r.Context(), "edge_rule.created", &acct.ID, map[string]any{
+			auditKeyRuleID: row.ID, auditKeyAppID: row.AppID,
+			auditKeyMatchHost: row.MatchHost, auditKeyMatchPath: row.MatchPath,
+			auditKeyMatchMethods: row.MatchMethods, auditKeyPriority: row.Priority,
+			auditKeyEnabled: row.Enabled, auditKeyKind: row.Kind,
+			"source": "openapi_policy_apply",
+		})
+	}
+	resp.Planned = false
+	resp.Applied = make([]api.EdgeRuleResponse, 0, len(created))
+	for _, row := range created {
+		resp.Applied = append(resp.Applied, edgeRuleResponse(row))
+	}
+	resp.AppliedCount = len(created)
+	s.audit.Emit(r.Context(), "app.openapi_policy.applied", &acct.ID, map[string]any{
+		"app_id": app.ID, "match_host": matchHost, "preview_sha256": previewSHA256,
+		"applied_count": len(created),
+	})
 	writeJSON(w, http.StatusOK, resp)
 }
 
