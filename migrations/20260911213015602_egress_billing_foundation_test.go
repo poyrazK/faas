@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	egressBillingFoundationPrevious int64 = 20260911191442727
+	egressBillingFoundationPrevious int64 = 20260911212130123
 	egressBillingFoundationVersion  int64 = 20260911213015602
 )
 
