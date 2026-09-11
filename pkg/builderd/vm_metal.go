@@ -181,6 +181,7 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		Framework:      MapFramework(req.Framework),
 		Runtime:        req.Runtime,
 		RuntimeBaseRef: req.RuntimeBaseRef,
+		KeepWarm:       req.KeepWarm,
 		TimeoutSec:     timeoutSec,
 		LogTailBytes:   64 * 1024,
 	}

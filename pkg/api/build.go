@@ -62,8 +62,12 @@ type BuildManifest struct {
 	// this otherwise-ephemeral builder VM. Production builds leave both false.
 	DependencyCache       bool `json:"dependency_cache,omitempty"`
 	DependencyCacheImport bool `json:"dependency_cache_import,omitempty"`
-	TimeoutSec            int  `json:"timeout_sec"`
-	LogTailBytes          int  `json:"log_tail_bytes"` // default 64 KiB
+	// KeepWarm leaves a successful builder guest alive in a host-controlled
+	// wait state so vmmd can capture a paused snapshot. Failed builds still
+	// power off immediately; the warm path is only a successful-build handoff.
+	KeepWarm     bool `json:"keep_warm,omitempty"`
+	TimeoutSec   int  `json:"timeout_sec"`
+	LogTailBytes int  `json:"log_tail_bytes"` // default 64 KiB
 }
 
 // BuildDone is the /etc/faas/build-done.json contract — what guest-init

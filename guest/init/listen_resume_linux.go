@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"golang.org/x/sys/unix"
 )
@@ -58,6 +59,31 @@ const (
 	// capping it at encoded entropy + 64 rejected valid packets.
 	VsockResumeMaxBodyBytes = 8 * 1024
 )
+
+// warmBuilderResume is signalled after a successful resume-hook request. A
+// builder guest uses the same host→guest vsock handshake as app restores, but
+// consumes the successful request as permission to start the next build.
+// The buffer prevents the short-lived gRPC restore call from racing the
+// builder's wait loop.
+var warmBuilderResume = make(chan struct{}, 1)
+var warmBuilderEnabled atomic.Bool
+
+func enableWarmBuilderResume() {
+	warmBuilderEnabled.Store(true)
+}
+
+func signalWarmBuilderResume() {
+	select {
+	case warmBuilderResume <- struct{}{}:
+	default:
+		// A duplicate resume is harmless; one pending wake is enough to
+		// release the builder wait loop.
+	}
+}
+
+func waitWarmBuilderResume() {
+	<-warmBuilderResume
+}
 
 // VsockResumeBindCID is the CID the guest's listener binds on. We use
 // VMADDR_CID_ANY (0xffffffff) so the listener accepts inbound on whatever
@@ -224,4 +250,7 @@ func handleResumeConn(f *os.File, log *slog.Logger) {
 	// without a refactor that breaks the test fixture.
 	SetResumeTraceparent(req.Traceparent)
 	_, _ = f.Write([]byte{VsockResumeAckOK})
+	if warmBuilderEnabled.Load() {
+		signalWarmBuilderResume()
+	}
 }

@@ -44,6 +44,10 @@ type VMRequest struct {
 	// into the per-plan cgroup sub-slice. Empty = legacy path that
 	// vmmd now rejects; the orchestrator always populates it.
 	Plan string
+	// KeepWarm asks the guest to remain in a host-controlled wait state after
+	// a successful build so vmmd can capture a reusable builder snapshot.
+	// It is deliberately opt-in until the warm-slot orchestrator is wired.
+	KeepWarm bool
 }
 
 // VMResult is the legacy single-step result — kept for backwards compat

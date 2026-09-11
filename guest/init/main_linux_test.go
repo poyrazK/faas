@@ -78,6 +78,14 @@ func TestDecideMode_BuildOnly(t *testing.T) {
 	}
 }
 
+func TestResetWarmBuilderWorkspaceRejectsUnsafePath(t *testing.T) {
+	for _, path := range []string{"/build", "/etc", "/build/../etc"} {
+		if err := resetWarmBuilderWorkspace(path, "/build/out"); err == nil {
+			t.Errorf("path %q was accepted; want rejection", path)
+		}
+	}
+}
+
 func TestDecideMode_BadJSONFallsBackToApp(t *testing.T) {
 	fsys := fstest.MapFS{
 		"etc/faas/build.json": &fstest.MapFile{Data: []byte(`{not json`)},

@@ -185,6 +185,10 @@ type RestoreSpec struct {
 	// StartupDeadlineS is the per-app readiness budget. 0 means use the
 	// vmmd default, preserving restores from pre-M3 callers.
 	StartupDeadlineS int
+	// SkipReady is set for builder restores. Builder guests do not expose the
+	// application HTTP readiness port; their readiness is the builder-specific
+	// resume handoff instead. App restores keep the normal probe.
+	SkipReady bool
 }
 
 // SnapshotSpec is where to write a new snapshot's files (spec §4.4).

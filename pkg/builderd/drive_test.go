@@ -23,6 +23,7 @@ func TestWriteBuildManifest_RoundTrip(t *testing.T) {
 		Framework:             api.FrameworkRailpackNode,
 		DependencyCache:       true,
 		DependencyCacheImport: true,
+		KeepWarm:              true,
 		TimeoutSec:            600,
 		LogTailBytes:          4096,
 	}
@@ -38,7 +39,8 @@ func TestWriteBuildManifest_RoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if got.BuildID != m.BuildID || got.Framework != m.Framework || got.TimeoutSec != m.TimeoutSec ||
-		got.DependencyCache != m.DependencyCache || got.DependencyCacheImport != m.DependencyCacheImport {
+		got.DependencyCache != m.DependencyCache || got.DependencyCacheImport != m.DependencyCacheImport ||
+		got.KeepWarm != m.KeepWarm {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", got, m)
 	}
 }

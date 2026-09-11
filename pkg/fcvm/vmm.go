@@ -1098,8 +1098,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return fmt.Errorf("vmm: resume hook: %w", err)
 	}
 	tResume := time.Now()
-	if err = v.waitReady(ctx, l, spec.HealthcheckPath, spec.StartupDeadlineS); err != nil {
-		return fmt.Errorf("vmm: readiness after restore: %w", err)
+	if !spec.SkipReady {
+		if err = v.waitReady(ctx, l, spec.HealthcheckPath, spec.StartupDeadlineS); err != nil {
+			return fmt.Errorf("vmm: readiness after restore: %w", err)
+		}
 	}
 	tReady := time.Now()
 	// Snapshot load, lazy memory faults, and the mandatory guest resume hook

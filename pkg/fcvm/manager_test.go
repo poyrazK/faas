@@ -108,15 +108,16 @@ func (f *fakeRunner) ran(substr string) bool {
 
 // fakeVMM records calls and can be told to fail Boot/Restore/Snapshot.
 type fakeVMM struct {
-	mu          sync.Mutex
-	bootErr     error
-	restoreErr  error
-	snapErr     error
-	killErr     error
-	killed      []string
-	restored    []string
-	snapshotted []string
-	bootCount   int
+	mu           sync.Mutex
+	bootErr      error
+	restoreErr   error
+	snapErr      error
+	killErr      error
+	killed       []string
+	restored     []string
+	restoreSpecs []RestoreSpec
+	snapshotted  []string
+	bootCount    int
 	// resumeHookErr is returned from TriggerResumeHook when non-nil; the
 	// default (nil) matches production-success semantics. V6 tests that need
 	// the dial-failure path flip this.
@@ -330,9 +331,14 @@ func (v *fakeVMM) WaitJobExit(_ context.Context, l Lease, _ time.Duration) (JobE
 func (v *fakeVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) error {
 	v.mu.Lock()
 	v.restored = append(v.restored, l.Instance)
+	v.restoreSpecs = append(v.restoreSpecs, spec)
 	v.mu.Unlock()
 	// Same scope-create as Boot — jailer creates the scope on restore too.
-	if err := os.MkdirAll(filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance)), 0o755); err != nil {
+	parent := ParentCgroupFor(l.Plan)
+	if l.IsBuilder {
+		parent = BuilderCgroupParent
+	}
+	if err := os.MkdirAll(filepath.Join(cgroupRoot, parent, PerInstanceScope(l.Instance)), 0o755); err != nil {
 		return err
 	}
 	// Mirror the production JailerVMM.Restore: after /snapshot/load, dial the
@@ -345,6 +351,36 @@ func (v *fakeVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) error 
 		}
 	}
 	return v.restoreErr
+}
+
+// TestWakeBuilderRestoreSkipsAppReadiness pins the builder-specific restore
+// contract. Builder snapshots resume through the guest handoff and have no
+// customer HTTP listener, so Manager must not send them through waitReady.
+func TestWakeBuilderRestoreSkipsAppReadiness(t *testing.T) {
+	vmm := &fakeVMM{}
+	mgr := NewManager(&fakeRunner{}, vmm, Paths{Kernel: "/k"}, testFCVersion, nil, nil)
+	_, err := mgr.Wake(context.Background(), WakeRequest{
+		Instance:   "builder-restore",
+		BaseKey:    "/base.ext4",
+		LayerKey:   "/layer.ext4",
+		VcpuCount:  2,
+		MemSizeMiB: 128,
+		Plan:       api.PlanHobby,
+		ExportDir:  "/var/lib/faas/build-out/builder-restore",
+		Snapshot:   usableSnapshot(),
+	})
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	defer func() { _ = mgr.Destroy(context.Background(), "builder-restore") }()
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	if len(vmm.restoreSpecs) != 1 {
+		t.Fatalf("restore calls = %d, want 1", len(vmm.restoreSpecs))
+	}
+	if !vmm.restoreSpecs[0].SkipReady {
+		t.Fatal("builder restore SkipReady = false, want true")
+	}
 }
 
 func (v *fakeVMM) TriggerResumeHook(_ context.Context, l Lease, hostTimeUnixNano int64) error {
