@@ -245,9 +245,11 @@ customer bucket; the cleanup trap removes the temporary object, bindings,
 credential, and bucket even when a check fails.
 
 This first endpoint slice supports ListBuckets for the credential's one bucket,
-HeadBucket, GetBucketLocation, ListObjectsV2 without delimiters,
+HeadBucket, GetBucketLocation, ListObjectsV2 with delimiter/common-prefix
+listing,
 GetObject/HeadObject/PutObject/DeleteObject, and the standard multipart
-initiate/list-parts/upload-part/complete/abort operations. It validates AWS
+initiate/list-parts/upload-part/complete/abort operations, plus CopyObject with
+COPY/REPLACE metadata directives. It validates AWS
 Signature V4 in both the `Authorization` header and presigned query form.
 Presigned GET, HEAD, PUT, and DELETE capabilities are limited to seven days and
 remain subject to credential revocation when a request arrives. Uploads
@@ -260,10 +262,9 @@ provider and are limited by the configured per-part upload ceiling. Use
 `s3api put-object` for simple uploads; the high-level `aws s3 cp` command can
 automatically select multipart uploads.
 
-SigV4 streaming/chunked uploads,
-delimiter/common-prefix listing, CopyObject, object metadata/tags, bucket
-lifecycle APIs, versioning, ACLs, and bucket create/delete through the S3
-protocol are explicit `NotImplemented` gaps. Bucket lifecycle remains on the
+SigV4 streaming/chunked uploads, object tags and metadata on ordinary PUT/GET,
+bucket lifecycle APIs, versioning, ACLs, and bucket create/delete through the
+S3 protocol are explicit `NotImplemented` gaps. Bucket lifecycle remains on the
 authenticated Gregale API so a customer credential cannot escape its assigned
 logical bucket.
 

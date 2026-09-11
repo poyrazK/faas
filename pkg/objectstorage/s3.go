@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -100,10 +101,14 @@ func (p *S3) DeleteBucket(ctx context.Context, bucket string) error {
 }
 
 func (p *S3) ListObjects(ctx context.Context, bucket, prefix, cursor string, limit int32) (ObjectPage, error) {
+	return p.ListObjectsDelimited(ctx, bucket, prefix, "", cursor, limit)
+}
+
+func (p *S3) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimiter, cursor string, limit int32) (ObjectPage, error) {
 	if limit < 1 || limit > 1000 {
 		return ObjectPage{}, ErrInvalid
 	}
-	in := &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix), MaxKeys: aws.Int32(limit)}
+	in := &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix), Delimiter: aws.String(delimiter), MaxKeys: aws.Int32(limit)}
 	if cursor != "" {
 		in.ContinuationToken = aws.String(cursor)
 	}
@@ -111,9 +116,14 @@ func (p *S3) ListObjects(ctx context.Context, bucket, prefix, cursor string, lim
 	if err != nil {
 		return ObjectPage{}, normalize(err)
 	}
-	page := ObjectPage{Items: make([]Object, 0, len(out.Contents))}
+	page := ObjectPage{Items: make([]Object, 0, len(out.Contents)), CommonPrefixes: make([]string, 0, len(out.CommonPrefixes))}
 	for _, o := range out.Contents {
 		page.Items = append(page.Items, Object{Key: aws.ToString(o.Key), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
+	}
+	for _, prefix := range out.CommonPrefixes {
+		if value := aws.ToString(prefix.Prefix); value != "" {
+			page.CommonPrefixes = append(page.CommonPrefixes, value)
+		}
 	}
 	if aws.ToBool(out.IsTruncated) {
 		page.NextCursor = aws.ToString(out.NextContinuationToken)
@@ -126,6 +136,65 @@ func (p *S3) DeleteObject(ctx context.Context, bucket, key string) error {
 	return normalize(err)
 }
 
+func (p *S3) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest) (CopyObjectResult, error) {
+	if !ValidKey(r.SourceKey) || !ValidKey(r.DestinationKey) {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	if r.MetadataDirective == "" {
+		r.MetadataDirective = "COPY"
+	}
+	if r.MetadataDirective != "COPY" && r.MetadataDirective != "REPLACE" {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	if err := validateObjectMetadata(r.Metadata); err != nil {
+		return CopyObjectResult{}, err
+	}
+	in := &s3.CopyObjectInput{
+		Bucket:             aws.String(bucket),
+		CopySource:         aws.String(url.PathEscape(bucket + "/" + r.SourceKey)),
+		Key:                aws.String(r.DestinationKey),
+		Metadata:           r.Metadata.Metadata,
+		ContentType:        stringPtrOrNil(r.Metadata.ContentType),
+		CacheControl:       stringPtrOrNil(r.Metadata.CacheControl),
+		ContentDisposition: stringPtrOrNil(r.Metadata.ContentDisposition),
+		ContentEncoding:    stringPtrOrNil(r.Metadata.ContentEncoding),
+		ContentLanguage:    stringPtrOrNil(r.Metadata.ContentLanguage),
+		MetadataDirective:  types.MetadataDirective(r.MetadataDirective),
+	}
+	out, err := p.client.CopyObject(ctx, in)
+	if err != nil {
+		return CopyObjectResult{}, normalize(err)
+	}
+	if out == nil || out.CopyObjectResult == nil || aws.ToString(out.CopyObjectResult.ETag) == "" {
+		return CopyObjectResult{}, ErrUnavailable
+	}
+	return CopyObjectResult{ETag: aws.ToString(out.CopyObjectResult.ETag), LastModified: aws.ToTime(out.CopyObjectResult.LastModified)}, nil
+}
+
+func validateObjectMetadata(metadata ObjectMetadata) error {
+	for _, value := range []string{metadata.CacheControl, metadata.ContentDisposition, metadata.ContentEncoding, metadata.ContentLanguage, metadata.ContentType} {
+		if err := ValidateContentType(value); err != nil {
+			return err
+		}
+	}
+	if len(metadata.Metadata) > 90 {
+		return ErrInvalid
+	}
+	for key, value := range metadata.Metadata {
+		if key == "" || len(key) > 128 || len(value) > 2048 || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
+			return ErrInvalid
+		}
+	}
+	return nil
+}
+
+func stringPtrOrNil(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return aws.String(value)
+}
+
 // ReadObject is intentionally not part of the customer-facing Provider
 // interface. It is used only by the operator-owned OVH access-log collector.
 func (p *S3) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
@@ -134,6 +203,20 @@ func (p *S3) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser,
 		return nil, normalize(err)
 	}
 	return out.Body, nil
+}
+
+func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) {
+	if !ValidKey(key) {
+		return 0, ErrInvalid
+	}
+	out, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		return 0, normalize(err)
+	}
+	if aws.ToInt64(out.ContentLength) < 0 {
+		return 0, ErrUnavailable
+	}
+	return aws.ToInt64(out.ContentLength), nil
 }
 
 func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {

@@ -9,7 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type fakeStore struct {
@@ -144,5 +148,93 @@ func TestTickFiresLateIntentBeforeExpiry(t *testing.T) {
 	}
 	if engine.calls != 1 || store.completed["late"] != "admitted:1" {
 		t.Fatalf("late intent was not fired: calls=%d completed=%#v", engine.calls, store.completed)
+	}
+}
+
+func TestTickMemStorePersistsLifecycleAndAdmissionMetrics(t *testing.T) {
+	ctx := context.Background()
+	m := state.NewMemStore()
+	account, err := m.CreateAccount(ctx, "prewarm-e2e@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "prewarm-e2e"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(time.Minute)
+	intent, err := m.CreatePrewarmIntent(ctx, app.ID, account.ID, 3,
+		base.Add(30*time.Second), base.Add(5*time.Minute), state.PrewarmTriggerCalendar)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	metrics := wire.NewPrewarmMetrics(prometheus.NewRegistry())
+	engine := &fakeEngine{}
+	tr := New(m, engine, Options{
+		Clock:   func() time.Time { return base },
+		Metrics: metrics,
+	})
+	if err := tr.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := m.PrewarmIntentByID(ctx, intent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.PrewarmStatusSucceeded || got.AdmittedCount != 3 || got.Outcome != "admitted:3" {
+		t.Fatalf("persisted intent = %#v", got)
+	}
+	if got.ClaimedAt == nil || got.FiredAt == nil || engine.calls != 1 || engine.appID != app.ID || engine.count != 3 {
+		t.Fatalf("scheduler lifecycle = intent %#v engine %#v", got, engine)
+	}
+	if got := testutil.ToFloat64(metrics.IntentEventsTotal.WithLabelValues("succeeded")); got != 1 {
+		t.Fatalf("succeeded metric = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(metrics.AdmittedInstancesTotal); got != 3 {
+		t.Fatalf("admitted metric = %v, want 3", got)
+	}
+}
+
+func TestTickMemStoreTerminalizesExpiredIntent(t *testing.T) {
+	ctx := context.Background()
+	m := state.NewMemStore()
+	account, err := m.CreateAccount(ctx, "prewarm-expired@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "prewarm-expired"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(time.Minute)
+	intent, err := m.CreatePrewarmIntent(ctx, app.ID, account.ID, 1,
+		base.Add(30*time.Second), base.Add(time.Minute), state.PrewarmTriggerCalendar)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	metrics := wire.NewPrewarmMetrics(prometheus.NewRegistry())
+	engine := &fakeEngine{}
+	tr := New(m, engine, Options{
+		Clock:   func() time.Time { return base.Add(2 * time.Minute) },
+		Metrics: metrics,
+	})
+	if err := tr.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.PrewarmIntentByID(ctx, intent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.PrewarmStatusFailed || got.Outcome != "expired" || got.LastError != "expired" {
+		t.Fatalf("expired intent = %#v", got)
+	}
+	if engine.calls != 0 {
+		t.Fatalf("expired intent triggered admission: %#v", engine)
+	}
+	if got := testutil.ToFloat64(metrics.IntentEventsTotal.WithLabelValues("expired")); got != 1 {
+		t.Fatalf("expired metric = %v, want 1", got)
 	}
 }

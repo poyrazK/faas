@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DebugGuestExecutionEvidence } from './DebugGuestExecutionEvidence.js';
 /**
  * One bounded latency-bucket row representing gateway-served requests, persisted by the recorder/publisher.
  */
@@ -36,5 +37,6 @@ export type DebugTelemetryRequestItem = {
    * Opaque instance identifier that served the request; omitted when no target was reached.
    */
   instance_id?: string;
+  guest?: DebugGuestExecutionEvidence;
 };
 

@@ -191,6 +191,10 @@ type App struct {
 	// false in fakeBackend unit tests (the in-memory
 	// backend doesn't populate the column).
 	RequireAuthn bool
+	// ConsumerAuthMode (ADR-120) controls end-customer API-key
+	// authentication on this app's public path. Empty is treated as
+	// optional for legacy/fake app rows; required rejects anonymous traffic.
+	ConsumerAuthMode string
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth mode (open|bearer|basic). When
 	// mode='open' (the pre-#477 default), ServeHTTP
@@ -372,11 +376,11 @@ type AppSidecar struct {
 // RequireAuthnAuthenticator (issue #560) is the narrow slice of
 // pkg/auth.Middleware.Authenticator the per-deployment authz
 // branch consumes — AuthenticateKey alone, returning
-// (account, key, error). Declaring it locally keeps pkg/gateway
-// free of any import dependency on pkg/auth or pkg/state
-// (cmd/gatewayd-internal/wires the *authmw.Middleware, which satisfies
-// this interface through its exported Authn field; the
-// compile-time assertion at the call site pins the contract).
+// (account, key, error). Declaring it locally keeps the existing
+// require_authn path free of a direct pkg/auth or pkg/state dependency
+// (cmd/gatewayd-internal wires the *authmw.Middleware). The separate
+// ADR-120 consumer-key carrier lives in pkg/auth/middleware/context.go
+// because downstream metering needs one canonical request getter.
 type RequireAuthnAuthenticator interface {
 	AuthenticateKey(ctx context.Context, hash []byte) (RequireAuthnAccount, RequireAuthnKey, error)
 }
@@ -876,6 +880,13 @@ type Handler struct {
 	// audit emitter so the rows land in the same events table
 	// every other gatewayd-scope row uses (cmd/gatewayd-internal/audit.go).
 	requireAuthnAudit RequireAuthnAuditor
+	// consumerAuthStore resolves app-scoped end-customer keys. nil keeps the
+	// legacy anonymous path for apps in optional mode; required mode fails
+	// closed when production wiring is missing.
+	consumerAuthStore ConsumerAuthStore
+	// consumerKeyTouches coalesces best-effort last_used_at writes so a hot
+	// customer key does not turn every request into a database update.
+	consumerKeyTouches *consumerKeyToucher
 	// publicAuthCache is the unsealed basic-auth credential
 	// cache (issue #477 / ADR-079). Nil = no caching; the
 	// basic-auth path falls back to per-request unsealing
@@ -1064,11 +1075,12 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 				}
 			},
 		),
-		burstPressure:  &burstPressure{},
-		metrics:        m,
-		headHeaders:    newEdgeHeadHeaderCache(),
-		log:            log,
-		wakePageCycles: make(map[string]*wakePageCycle),
+		burstPressure:      &burstPressure{},
+		metrics:            m,
+		headHeaders:        newEdgeHeadHeaderCache(),
+		log:                log,
+		wakePageCycles:     make(map[string]*wakePageCycle),
+		consumerKeyTouches: newConsumerKeyToucher(),
 		// mirrorSlots is sync.Map (zero value ready); the cap is
 		// loaded from api.MirrorMaxConcurrentPerRule (default 5)
 		// so the per-rule VM cost circuit matches the MirrorMaxLifetimeSeconds
@@ -1333,16 +1345,27 @@ func (h *Handler) WithRouteMetricsEnabled(enabled bool) *Handler {
 // production passes the *pkg/auth.Middleware from cmd/gatewayd-internal/
 // (which exposes its Authn field). audit may be nil (audit-
 // disabled mode); the authz branch still fires but the
-// instances.authn_* rows are dropped. nil authn = the authz
-// branch is silently disabled (matches the pre-issue behaviour
-// where every app is public-by-default) so unit tests that
-// don't exercise require_authn don't have to wire the chain.
+// instances.authn_* rows are dropped. A nil authenticator is tolerated only
+// for apps that do not request the gate; protected apps receive 503 so a
+// wiring regression cannot make them public.
 //
 // The setter returns *Handler for fluent chaining (same shape as
 // every other Handler.With*).
 func (h *Handler) WithRequireAuthn(authn RequireAuthnAuthenticator, audit RequireAuthnAuditor) *Handler {
 	h.requireAuthnAuthn = authn
 	h.requireAuthnAudit = audit
+	return h
+}
+
+// WithConsumerAuth arms the app consumer-key gate. store may be nil in unit
+// tests or in a legacy deployment; optional apps remain backwards-compatible,
+// while required apps fail closed with a service-unavailable response rather
+// than silently accepting anonymous traffic.
+func (h *Handler) WithConsumerAuth(store ConsumerAuthStore) *Handler {
+	h.consumerAuthStore = store
+	if store != nil && h.consumerKeyTouches == nil {
+		h.consumerKeyTouches = newConsumerKeyToucher()
+	}
 	return h
 }
 
@@ -1482,12 +1505,20 @@ func (h *Handler) WithMirrorRoundTripper(rt MirrorRoundTripper) *Handler {
 // stamp). Best-effort — a failed emit never blocks the deny
 // response (matches the gatewaydAuditor.Emit contract).
 func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
-	// Disabled path: not gated, or no auth chain wired.
-	// Both branches preserve the pre-issue "public by default"
-	// behaviour so unit tests + dev boxes don't need to set
-	// up a fake authenticator.
-	if !app.RequireAuthn || h.requireAuthnAuthn == nil {
+	if !app.RequireAuthn {
 		return true
+	}
+	if h.requireAuthnAuthn == nil {
+		rec.status = http.StatusServiceUnavailable
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Authentication unavailable", "this app requires authentication, but the gateway verifier is unavailable"))
+		h.emitAuthnAudit(r, app, nil, "instances.authn_unavailable", map[string]any{
+			"app_id": app.ID,
+			"slug":   r.Host,
+			"reason": "authenticator_not_configured",
+		})
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
 	}
 	// (1) Bearer extraction — fail-fast at 401 if no token.
 	tok := bearerTokenFromHeader(r.Header.Get("Authorization"))
@@ -1556,9 +1587,9 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 	// audit boundary; Phase 3 keeps it via withAuthenticated. The
 	// context.Value setter is a single map insertion — no
 	// measurable cost on the authn hot path.
-	*r = *r.WithContext(withAuthenticated(r.Context(), Authenticated{
-		APIKeyID: key.ID,
-	}))
+	authenticated := authenticatedFrom(r.Context())
+	authenticated.APIKeyID = key.ID
+	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
 	return true
 }
 
@@ -2197,10 +2228,10 @@ func corsResponseOps(rule *EdgeRuleCORSResolved, allowedOrigin string) []EdgeRul
 //     also have require_authn=true which is enforced downstream).
 //
 // Returns true if the helper wrote a 401 (caller must `return`).
-// nil-safe: h.edgeRules nil OR h.jwtVerifier nil short-circuit to
-// fall-through. Same-account posture mirrors matchAndSubstituteRoute.
+// A missing matcher means the feature is disabled. Once a JWT rule matches,
+// a missing verifier is a 503 rather than an authentication bypass.
 func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app App) bool {
-	if h.edgeRules == nil || h.jwtVerifier == nil {
+	if h.edgeRules == nil {
 		return false
 	}
 	rule := h.edgeRules.MatchJWT(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
@@ -2224,6 +2255,10 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 		})
 		return false
 	}
+	if h.jwtVerifier == nil {
+		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_verifier_not_configured")
+		return true
+	}
 	raw := bearerTokenFromHeader(r.Header.Get("Authorization"))
 	if raw == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
@@ -2235,7 +2270,7 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, rule)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
-			api.CodeUnauthorized, "JWT verification failed", err.Error()))
+			api.CodeUnauthorized, "JWT verification failed", "the bearer token did not satisfy this edge rule"))
 		h.jwtEmit(r.Context(), "jwt", "failed", rule.ID, r.Host, nil, map[string]any{"err": err.Error()})
 		return true
 	}
@@ -2247,10 +2282,10 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// key_by="jwt_claim". Claims.Custom is the string→string
 	// subset the verifier extracted from rule.RequiredClaims — no
 	// extra parse cost on the hot path.
-	*r = *r.WithContext(withAuthenticated(r.Context(), Authenticated{
-		JWTSubject: claims.Subject,
-		JWTClaims:  claims.Custom,
-	}))
+	authenticated := authenticatedFrom(r.Context())
+	authenticated.JWTSubject = claims.Subject
+	authenticated.JWTClaims = claims.Custom
+	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
 	return false
 }
 
@@ -2291,6 +2326,22 @@ func (h *Handler) jwtEmit(ctx context.Context, kind, outcome, ruleID, fromHost s
 		case "blocked":
 			h.metrics.ObserveEdgeRuleApply(kind, "success")
 		}
+	}
+}
+
+func (h *Handler) rejectUnavailableEdgeRule(w http.ResponseWriter, r *http.Request, kind, ruleID, reason string) {
+	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+		"Edge security unavailable", "a configured edge security dependency is temporarily unavailable"))
+	if h.edgeRuleAudit != nil {
+		h.edgeRuleAudit.Emit(r.Context(), "edge_rule."+kind+"_unavailable", nil, map[string]any{
+			"rule_id":   ruleID,
+			"from_host": r.Host,
+			"reason":    reason,
+		})
+	}
+	if h.metrics != nil {
+		h.metrics.ObserveEdgeRuleMatch(kind, "failed")
+		h.metrics.ObserveEdgeRuleApply(kind, "error")
 	}
 }
 
@@ -2778,7 +2829,8 @@ func (h *Handler) applyEdgeRuleMaintenance(w http.ResponseWriter, r *http.Reques
 // Returns false on a clean match (audit + metric "match"), a
 // rule miss ("miss"), a same-account mismatch ("blocked"), a
 // streaming skip (rule.ApplyWhileStreaming=false + upgrade request),
-// or when both h.edgeRules and h.validator are nil (dev mode).
+// or when h.edgeRules is nil (dev mode). A matched rule with no validator is
+// rejected with 503.
 //
 // Body restore: the buffered body is re-installed as r.Body so
 // the downstream proxy leg reads the same bytes. This is the
@@ -2787,7 +2839,7 @@ func (h *Handler) applyEdgeRuleMaintenance(w http.ResponseWriter, r *http.Reques
 // pkg/gateway/dns01_provider_hetzner_test.go:48-49 informed the choice of
 // io.NopCloser(bytes.NewReader(buf)).
 func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) bool {
-	if h.edgeRules == nil || h.validator == nil {
+	if h.edgeRules == nil {
 		return false
 	}
 	rule := h.edgeRules.MatchValidate(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
@@ -2816,6 +2868,11 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 			h.metrics.ObserveEdgeRuleApply("validate", "success")
 		}
 		return false
+	}
+	if h.validator == nil {
+		rec.status = http.StatusServiceUnavailable
+		h.rejectUnavailableEdgeRule(w, r, "validate", rule.ID, "schema_validator_not_configured")
+		return true
 	}
 	// Upgrade / streaming short-circuit: the body for an
 	// upgraded request is read by the proxy leg's hijacker,
@@ -3531,18 +3588,14 @@ func contentTypeAllowed(ct string, allowed []string) bool {
 // against the trusted XFF client IP via the configured
 // pkg/geoip.Reader.
 //
-// Failure mode (§11 spirit): the lookup is fail-open. A missing
-// DB, a corrupt file, an IP outside the dataset, or a decode
-// error returns ("", false, err_or_nil) from the reader; the rule
-// does not fire (we increment "failed" and emit a Warn log, but
-// the request flows through). The operator sees the metric tick
-// + the audit + the log so a missing-DB incident is detectable
-// even though traffic is unaffected.
+// Failure mode: a missing/corrupt DB, an address outside the dataset, or a
+// decode error returns 503. A configured access rule must never disappear
+// because an optional runtime dependency is unavailable.
 //
-// nil-safe: h.edgeRules nil OR h.geoReader nil short-circuits to
-// fall-through. Same-account posture mirrors applyEdgeRuleIP.
+// A nil matcher disables the feature; a matched rule with no reader fails
+// closed. Same-account posture mirrors applyEdgeRuleIP.
 func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app App) bool {
-	if h.edgeRules == nil || h.geoReader == nil {
+	if h.edgeRules == nil {
 		return false
 	}
 	rule := h.edgeRules.MatchGeo(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
@@ -3565,6 +3618,10 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 			h.metrics.ObserveEdgeRuleMatch("geo", "blocked")
 		}
 		return false
+	}
+	if h.geoReader == nil {
+		h.rejectUnavailableEdgeRule(w, r, "geo", rule.ID, "geo_reader_not_configured")
+		return true
 	}
 	clientIP, ok := clientIPFromTrustedXFF(r)
 	if !ok {
@@ -3598,20 +3655,8 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 		}
 	}
 	if lerr != nil || !found {
-		// Fail-open: the rule does not fire. The metric + audit
-		// surface lets the operator see the failure rate and
-		// the customer is not affected.
-		if h.edgeRuleAudit != nil {
-			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_failed", nil, map[string]any{
-				"rule_id":   rule.ID,
-				"from_host": r.Host,
-				"reason":    geoFailReason(lerr, found),
-			})
-		}
-		if h.metrics != nil {
-			h.metrics.ObserveEdgeRuleMatch("geo", "failed")
-		}
-		return false
+		h.rejectUnavailableEdgeRule(w, r, "geo", rule.ID, geoFailReason(lerr, found))
+		return true
 	}
 	// Deny walks first.
 	if _, denied := rule.Deny[country]; denied {
@@ -4890,6 +4935,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// being effectively zero).
 	start := time.Now()
 	r = r.WithContext(WithStartTime(r.Context(), start)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+	// Keep a request-local sink for platform-owned runner execution markers.
+	// The forwarder consumes and redacts the headers; observe persists the
+	// bounded values with the request telemetry row.
+	r = withGuestExecutionEvidence(r)
 
 	// Request ID is generated once per request and set on the response BEFORE
 	// any error path so even 4xx responses are correlatable. Inbound
@@ -5003,10 +5052,17 @@ haveApp:
 		}
 		r = withAppAndAccount(r, accountUUID, appUUID)
 	}
+	// ADR-120: resolve end-customer identity before any edge rewrite, body
+	// buffering, throttling, or wake work. This keeps invalid credentials from
+	// consuming downstream resources and makes the same stable consumer ID
+	// available to later rate-limit and metering stages.
+	if !h.enforceConsumerAuth(w, r, rec, app) {
+		return
+	}
 	// M1 wake hygiene: answer static browser/crawler paths directly at the
-	// edge. This runs immediately after host resolution and before edge-rule,
-	// auth, limiter, or wake work, so these paths cannot create an instance or
-	// accrue resident usage while an app is parked.
+	// edge. This runs after the app-level consumer gate and before edge-rule,
+	// operator-auth, limiter, or wake work, so these paths cannot create an
+	// instance or accrue resident usage while an app is parked.
 	if h.serveEdgeAnswer(w, r, app) {
 		return
 	}
@@ -5461,10 +5517,7 @@ haveApp:
 		// shouldWake predicate runs HealthyCount against the plan's
 		// effective max_concurrency, so a burst of N requests admits up to
 		// N instances before short-circuiting.
-		maxInstances := limits.MaxConcurrency
-		if app.MaxConcurrency > 0 && app.MaxConcurrency < maxInstances {
-			maxInstances = app.MaxConcurrency
-		}
+		maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
 		// Browser requests get a short edge wait so a long cold boot can
 		// render a useful page while the WakeGate's detached leader keeps
 		// booting. API clients retain the plan-derived wait budget.
@@ -5593,7 +5646,7 @@ haveApp:
 		// ensureCapacity returning and our Pick. Surface the observed
 		// (current) HealthyCount so the operator's metrics panel
 		// shows 0 vs the cap (was 1+ microseconds ago).
-		wakeErr := api.ErrAppConcurrencyReached(limits, h.backend.HealthyCount(app.ID))
+		wakeErr := api.ErrAppConcurrencyReachedAt(limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), h.backend.HealthyCount(app.ID))
 		h.markHealthFailure(app.ID, wakeErr)
 		writeWakeError(w, wakeErr)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -6226,22 +6279,27 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				telemetryRoute = otherRouteLabel
 			}
 			uaFamily, referrerHost, country := h.requestTelemetryDimensions(r)
+			guestEvidence, _ := guestExecutionEvidenceFromContext(r.Context())
 			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
-				AccountID:    acctUUID,
-				AppID:        appUUID,
-				DeploymentID: deploymentUUID,
-				Route:        telemetryRoute,
-				Method:       r.Method,
-				Status:       status,
-				LatencyMS:    int(elapsed / time.Millisecond),
-				ColdBoot:     cold,
-				TraceID:      telemetryTraceID(requestID),
-				ReceivedAt:   time.Now(),
-				WakeID:       target.WakeID,
-				InstanceID:   target.InstanceID,
-				UAFamily:     uaFamily,
-				ReferrerHost: referrerHost,
-				Country:      country,
+				AccountID:       acctUUID,
+				AppID:           appUUID,
+				DeploymentID:    deploymentUUID,
+				Route:           telemetryRoute,
+				Method:          r.Method,
+				Status:          status,
+				LatencyMS:       int(elapsed / time.Millisecond),
+				ColdBoot:        cold,
+				TraceID:         telemetryTraceID(requestID),
+				ReceivedAt:      time.Now(),
+				WakeID:          target.WakeID,
+				InstanceID:      target.InstanceID,
+				UAFamily:        uaFamily,
+				ReferrerHost:    referrerHost,
+				Country:         country,
+				GuestDurationMS: guestEvidence.DurationMS,
+				GuestRuntime:    guestEvidence.Runtime,
+				GuestOutcome:    guestEvidence.Outcome,
+				GuestErrorClass: guestEvidence.ErrorClass,
 			})
 		}
 	}
@@ -7279,6 +7337,12 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	target := &url.URL{Scheme: "http", Host: addr}
 	p := httputil.NewSingleHostReverseProxy(target)
 	p.Transport = sharedUpstreamTransport
+	// Legacy addr-based forwarding uses net/http's ReverseProxy rather than
+	// the gRPC stream, so consume the same runner markers in ModifyResponse.
+	p.ModifyResponse = func(resp *http.Response) error {
+		stripGuestEvidenceResponseHeaders(resp)
+		return nil
+	}
 	// Issue #995 Phase 2 / ADR-121 — the upstream guard. Wrap the
 	// upstream's response body in io.LimitReader(body, cap+1) so a
 	// runaway guest EOFs cleanly at cap+1 bytes instead of
@@ -7294,7 +7358,13 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	// cap has fired.
 	if cap > 0 {
 		limit := cap + 1
+		previousModifyResponse := p.ModifyResponse
 		p.ModifyResponse = func(resp *http.Response) error {
+			if previousModifyResponse != nil {
+				if err := previousModifyResponse(resp); err != nil {
+					return err
+				}
+			}
 			if resp.Body != nil {
 				resp.Body = struct {
 					io.Reader

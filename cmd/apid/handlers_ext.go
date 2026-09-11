@@ -3603,6 +3603,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 			"stripe webhook not configured", "Stripe is not the active billing provider"))
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, api.WebhookMaxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))
@@ -3655,32 +3656,34 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Issue #294: webhook replay dedupe. ev.ID is the Stripe
-	// `event.id` (the delivery UUID). When non-empty, consult the
-	// shared dedupe table; a redelivery within the 5-minute TTL is
+	// `event.id` (the delivery UUID). Consult the durable claim shared by all
+	// apid replicas; a redelivery within the 5-minute TTL is
 	// rejected with 200 (idempotent — Stripe stops retrying) and
-	// the audit row webhook.replay_rejected is emitted. Empty ev.ID
-	// (older Stripe payloads) skips the check — pre-#294 behaviour.
+	// the audit row webhook.replay_rejected is emitted. An empty event ID is
+	// rejected because it cannot be replay-protected safely.
 	//
 	// The replay check runs AFTER the customer lookup so the audit
 	// row carries the resolved account id as the subject (matching
 	// the refund.processed precedent at spec §5.7 line 336).
 	//
-	// Transport / connection errors from the dedupe table fail open
-	// (log WARN + forward) — the dedupe is defence-in-depth, not the
-	// authenticity gate; HMAC was verified above.
-	if ev.ID != "" {
-		if err := webhookdedupe.CheckReplay(r.Context(), webhookdedupe.ProviderStripe, ev.ID); err != nil {
-			if webhookdedupe.IsReplay(err) {
-				acctID := acct.ID
-				s.audit.Emit(r.Context(), "webhook.replay_rejected", &acctID, map[string]any{
-					"provider":    webhookdedupe.ProviderStripe,
-					"delivery_id": logsanitize.Field(ev.ID),
-				})
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-			s.log.Warn("stripe replay-check infra error; forwarding", "event_id", logsanitize.Field(ev.ID), "err", err)
-		}
+	if ev.ID == "" {
+		api.WriteProblem(w, api.ErrValidation("stripe webhook event id is required"))
+		return
+	}
+	claimed, err := s.claimWebhookDelivery(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
+	if err != nil {
+		s.log.Error("stripe replay claim failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		api.WriteProblem(w, api.ErrCapacity("billing webhook replay protection unavailable"))
+		return
+	}
+	if !claimed {
+		acctID := acct.ID
+		s.audit.Emit(r.Context(), "webhook.replay_rejected", &acctID, map[string]any{
+			"provider":    webhookdedupe.ProviderStripe,
+			"delivery_id": logsanitize.Field(ev.ID),
+		})
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 	// Map Stripe's event_type strings to the normalized billing.EventType
 	// the dunning state machine dispatches on. The Paddle webhook (see
@@ -3689,7 +3692,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// handleBillingEvent.
 	if err := s.handleBillingEvent(r.Context(), normalized, acct); err != nil {
 		s.log.Error("stripe webhook state application failed", "event_id", logsanitize.Field(ev.ID), "err", err)
-		webhookdedupe.ReleaseReplay(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
+		s.releaseWebhookDelivery(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
 	}
@@ -3796,6 +3799,7 @@ func (s *server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
 			"FAAS_BILLING_PROVIDER != paddle; refusing to process events"))
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, api.WebhookMaxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))

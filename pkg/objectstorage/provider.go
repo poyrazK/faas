@@ -57,8 +57,54 @@ type Object struct {
 }
 
 type ObjectPage struct {
-	Items      []Object `json:"items"`
-	NextCursor string   `json:"next_cursor,omitempty"`
+	Items          []Object `json:"items"`
+	CommonPrefixes []string `json:"common_prefixes,omitempty"`
+	NextCursor     string   `json:"next_cursor,omitempty"`
+}
+
+// DelimitedObjectLister is an optional provider capability for S3 directory
+// views. Keeping it separate preserves the small inventory/listing contract
+// used by accounting and older drivers.
+type DelimitedObjectLister interface {
+	ListObjectsDelimited(context.Context, string, string, string, string, int32) (ObjectPage, error)
+}
+
+// ObjectMetadata contains the portable HTTP metadata that S3 CopyObject can
+// preserve or replace. Provider-specific headers and ACLs deliberately stay
+// outside this contract.
+type ObjectMetadata struct {
+	CacheControl       string
+	ContentDisposition string
+	ContentEncoding    string
+	ContentLanguage    string
+	ContentType        string
+	Metadata           map[string]string
+}
+
+type CopyObjectRequest struct {
+	SourceKey         string
+	DestinationKey    string
+	MetadataDirective string
+	Metadata          ObjectMetadata
+}
+
+type CopyObjectResult struct {
+	ETag         string
+	LastModified time.Time
+}
+
+// ObjectCopier is an optional provider capability for the branded S3
+// CopyObject operation. It is intentionally separate so a custom driver can
+// opt in without weakening the basic Provider contract.
+type ObjectCopier interface {
+	CopyObject(context.Context, string, CopyObjectRequest) (CopyObjectResult, error)
+}
+
+// ObjectSizer lets the gateway reserve the source object's bytes before a
+// server-side copy. Drivers that cannot cheaply inspect an object may omit it;
+// usage reconciliation remains authoritative in that case.
+type ObjectSizer interface {
+	ObjectSize(context.Context, string, string) (int64, error)
 }
 
 // PUT sizes are signed, not merely advisory client-side limits.

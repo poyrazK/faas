@@ -144,7 +144,7 @@
               <td><strong>{{.LatencyMS}} ms</strong></td>
               <td>{{.Count}}</td>
               <td><code>{{.DeploymentID}}</code></td>
-              <td>{{if .ColdBoot}}<span class="badge cold">cold boot</span>{{end}}{{if .TraceID}} <span class="badge ok">trace linked</span>{{end}}</td>
+              <td>{{if .ColdBoot}}<span class="badge cold">cold boot</span>{{end}}{{if .TraceID}} <span class="badge ok">trace linked</span>{{end}}{{if .GuestRuntime}} <span class="badge ok">guest {{.GuestRuntime}} · {{.GuestDurationMS}} ms</span>{{end}}</td>
             </tr>
           {{end}}
           </tbody>
@@ -160,6 +160,7 @@
           <p><a href="/dashboard/apps/{{.Data.AppSlug}}/debug?since={{.Data.Since}}&amp;route={{.Data.Route}}#requests">← Back to requests</a></p>
           <p><code>{{.Data.Selected.Request.Method}} {{.Data.Selected.Request.Route}}</code> · HTTP {{.Data.Selected.Request.Status}} · <strong>{{.Data.Selected.Request.LatencyMS}} ms</strong> · {{.Data.Selected.Request.ReceivedAt}}</p>
           <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.InstanceID}} · instance <code>{{.Data.Selected.Request.InstanceID}}</code>{{end}}{{if .Data.Selected.Request.WakeID}} · wake <code>{{.Data.Selected.Request.WakeID}}</code>{{end}}{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
+          {{if .Data.Selected.Request.GuestRuntime}}<p class="muted">guest execution <strong>{{.Data.Selected.Request.GuestRuntime}}</strong> · {{.Data.Selected.Request.GuestDurationMS}} ms · outcome <strong>{{.Data.Selected.Request.GuestOutcome}}</strong>{{if .Data.Selected.Request.GuestErrorClass}} · error <code>{{.Data.Selected.Request.GuestErrorClass}}</code>{{end}}</p>{{end}}
           <div class="explanation"><strong>{{.Data.Selected.EvidenceStatus}}</strong>: {{.Data.Selected.Explanation}}</div>
           <h3>Request correlation</h3>
           <p class="muted">The stage view joins retained signals from the edge through billing. Missing signals are shown explicitly; they are not treated as zero latency.</p>

@@ -2290,7 +2290,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				e.IncAtCapacity(appID, "wake")
 				return WakeResult{AtCapacity: true}, nil
 			}
-			return WakeResult{}, api.ErrPlanLimitConcurrency(limits, e.ledger.Concurrency(app.ID))
+			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, effectiveMaxConcurrency(app, limits), e.ledger.Concurrency(app.ID))
 		case wakeCooldownHeld:
 			// PR-D: 503 + Retry-After with the cooldown remaining
 			// seconds. The customer's plan is fine; their
@@ -2307,7 +2307,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			// at the floor). 429 is the right wire shape — the
 			// customer is asking for a wake that the floor already
 			// satisfies. PR-D keeps CodePlanLimitConcur here.
-			return WakeResult{}, api.ErrPlanLimitConcurrency(limits, e.ledger.Concurrency(app.ID))
+			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, effectiveMaxConcurrency(app, limits), e.ledger.Concurrency(app.ID))
 		case wakeOverageCapReached:
 			// Issue #561: customer's spend cap is at/over the
 			// configured monthly ceiling. Lift to
@@ -4832,6 +4832,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		Kind:          KindSnapshotPrime,
 		NodeID:        placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB,
 		VCPUBudget:    placement.VCPUBudget,
@@ -7708,6 +7709,13 @@ const (
 // BootStarted row is emitted on rejection, so the value is moot).
 // Computed alongside `concurrency` to keep the lock footprint the
 // same — no extra ledger / Postgres read.
+func effectiveMaxConcurrency(app state.App, limits api.Limits) int {
+	if app.MaxConcurrency <= 0 || app.MaxConcurrency > limits.MaxConcurrency {
+		return limits.MaxConcurrency
+	}
+	return app.MaxConcurrency
+}
+
 func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limits) (wakeOutcome, int64, int64, int, bool) {
 	concurrency := e.ledger.Concurrency(app.ID)
 	// Mirror admission.go:149-152: apps created via store.CreateApp
@@ -7715,10 +7723,7 @@ func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limit
 	// Clamp against the plan ceiling so legacy / pre-PR-A apps still
 	// admit normally. Without the clamp, an app with MaxConcurrency=0
 	// would always return wakeRejectAtCap and every wake would 429.
-	maxConc := app.MaxConcurrency
-	if maxConc <= 0 || maxConc > limits.MaxConcurrency {
-		maxConc = limits.MaxConcurrency
-	}
+	maxConc := effectiveMaxConcurrency(*app, limits)
 	if concurrency >= maxConc {
 		if e.ops != nil {
 			e.ops.ObserveScaleUp(app.ID, "reject_at_cap")

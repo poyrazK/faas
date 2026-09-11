@@ -169,7 +169,11 @@ func (c *Client) doResumableUpload(ctx context.Context, method, path string, bod
 		}
 	}
 	if method != http.MethodGet && method != http.MethodHead {
-		req.Header.Set("Idempotency-Key", newUUIDv4())
+		idempotencyKey := IdempotencyKeyFromContext(ctx)
+		if idempotencyKey == "" {
+			idempotencyKey = newUUIDv4()
+		}
+		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 
 	cli := c.uploadHTTP()

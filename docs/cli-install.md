@@ -7,7 +7,7 @@ and rejected alternatives: [ADR-172](adr/172-cli-distribution-channels.md).
 |---|---|---|
 | Command | `curl -fsSL https://get.gregale.dev \| sh` | `npm install -g gregale` |
 | Needs | curl/wget, tar, sha256sum | Node ≥ 18 |
-| Verifies checksum | yes, against the release `SHA256SUMS` | yes, npm integrity + provenance |
+| Verifies checksum | yes, against the release `CLI-SHA256SUMS` | yes, npm integrity + provenance |
 | Pin a version | `--version v0.1.18` | `gregale@0.1.18` |
 | Best for | laptops, servers, Dockerfiles | repos that already have a `package.json` |
 
@@ -46,19 +46,20 @@ rm ~/.local/bin/gregale
 
 ### What it verifies
 
-The script downloads the release's `SHA256SUMS` and compares it against
+The script downloads the release's `CLI-SHA256SUMS` and compares it against
 the archive before anything is written to `PATH`. A mismatch, or an archive
-with no entry in `SHA256SUMS`, aborts with a non-zero exit and installs
+with no entry in `CLI-SHA256SUMS`, aborts with a non-zero exit and installs
 nothing. This is covered by `scripts/install_test.sh`, which runs on every
-PR.
+PR. Releases from before the CLI/daemon checksum split remain installable
+through a fallback to their legacy `SHA256SUMS` asset.
 
 To verify by hand instead:
 
 ```bash
 TAG=v0.1.18
 curl -fsSLO "https://github.com/poyrazK/faas/releases/download/$TAG/gregale_${TAG#v}_darwin_arm64.tar.gz"
-curl -fsSLO "https://github.com/poyrazK/faas/releases/download/$TAG/SHA256SUMS"
-sha256sum --ignore-missing -c SHA256SUMS
+curl -fsSLO "https://github.com/poyrazK/faas/releases/download/$TAG/CLI-SHA256SUMS"
+sha256sum --ignore-missing -c CLI-SHA256SUMS
 ```
 
 ### Release candidates
@@ -152,5 +153,5 @@ One-time steps behind these channels, for whoever owns the release:
    still stages and validates all five packages, then skips publishing with
    a workflow warning — releases are never blocked on credentials.
 3. Nothing else is per-release. A `v*.*.*` tag builds the four archives,
-   attaches them plus `install.sh` and `SHA256SUMS` to the GitHub Release,
+   attaches them plus `install.sh` and `CLI-SHA256SUMS` to the GitHub Release,
    and publishes npm under `latest` (stable) or `rc` (prerelease).

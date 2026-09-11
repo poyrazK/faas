@@ -32,18 +32,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // cmdDeployRepoSourceRef posts {repo, ref, format:"tarball"} to the
-// PR-A endpoint and streams the build log. Idempotency-Key is
-// auto-minted by Client.do (pkg/api/client.go:202-208) for any
-// non-GET/HEAD; callers do NOT set one — CI retries with the same
-// wire line still mint a fresh key on each invocation, producing
-// distinct build rows. Customer-side manual idempotency-key plumbing
-// is intentionally out of PR-B scope (documented in
-// docs/source-ref.md failure-modes section).
+// PR-A endpoint and streams the build log. The deploy command supplies
+// a stable logical retry key; the SDK scopes it to the source-ref
+// transport before sending it to apid. Calls through the legacy wrapper
+// retain the SDK's UUID fallback.
 //
 // On 409 source_ref_unavailable the server sets Retry-After:30; we
 // surface the value via printErr + Problem.HasHeader so the operator
@@ -82,6 +80,14 @@ func cmdDeployRepoSourceRefContextWithWait(ctx context.Context, slug, repo, ref 
 // the local/image deploy paths: --json remains an immediate queued receipt,
 // while explicit --json --wait returns the terminal deployment receipt.
 func cmdDeployRepoSourceRefContextWithJSONWait(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool) int {
+	return cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx, slug, repo, ref, ann, waitForDeploy, jsonWait, "", defaultDeployWaitTimeout)
+}
+
+// cmdDeployRepoSourceRefContextWithJSONWaitOptions is the timeout- and
+// retry-aware source-ref entry point used by `gregale deploy`. The legacy
+// wrapper above keeps the helper's default behavior for callers that do not
+// need the deploy-local flags.
+func cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool, idempotencyKey string, waitTimeout time.Duration) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -97,7 +103,11 @@ func cmdDeployRepoSourceRefContextWithJSONWait(ctx context.Context, slug, repo, 
 		TrafficPercent: ann.TrafficPercent,
 		Canary:         ann.Canary,
 	}
-	dep, err := client.DeployFromSourceRef(ctx, slug, req)
+	deployCtx := ctx
+	if idempotencyKey != "" {
+		deployCtx = api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(idempotencyKey, "source-ref"))
+	}
+	dep, err := client.DeployFromSourceRef(deployCtx, slug, req)
 	if err != nil {
 		// errors.As (not type-assert) so a future wrapping in
 		// the SDK chain (e.g. fmt.Errorf("%w: …")) still surfaces
@@ -134,7 +144,7 @@ func cmdDeployRepoSourceRefContextWithJSONWait(ctx context.Context, slug, repo, 
 		return 0
 	}
 	if jsonWait {
-		return writeWaitedDeploymentReceipt(ctx, client, dep, nil, deployedAppURL(slug), "")
+		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", waitTimeout)
 	}
-	return streamDeployLogsContext(ctx, client, dep, slug)
+	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout})
 }

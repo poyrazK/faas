@@ -380,9 +380,10 @@ func (a *AppAuth) VerifyInstallation(ctx context.Context, installationID int64, 
 
 // ListInstallableRepos enumerates the repos the installation has
 // access to. GitHub paginates at 100 per page; we walk pages until
-// the Link header says we're done (or until pageCount cap, whichever
-// comes first — a defensive cap against a misconfigured install
-// that points at a 100k-repo org).
+// the Link header says we're done. A defensive page cap protects the
+// process from a misconfigured install that points at a 100k-repo org;
+// reaching that cap is an error so callers never mistake a truncated list
+// for the complete access set and detach valid bindings.
 //
 // Endpoint: GET https://api.github.com/installation/repositories
 // Auth: Bearer <installation token>
@@ -423,6 +424,9 @@ func (a *AppAuth) ListInstallableRepos(ctx context.Context, installToken string,
 		}
 		repos = append(repos, payload.Repositories...)
 		nextURL = nextLink(linkHdr)
+	}
+	if nextURL != "" {
+		return nil, fmt.Errorf("githubd: list repos page cap %d reached before pagination completed", pageCountCap)
 	}
 	return repos, nil
 }

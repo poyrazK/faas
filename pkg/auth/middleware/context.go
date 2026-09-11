@@ -18,6 +18,46 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ConsumerIdentity is the stable end-customer identity resolved by the
+// gateway's consumer-key gate. It deliberately contains identifiers and the
+// key's scopes only; the plaintext credential is never carried in context.
+//
+// The identity is shared through this package so gatewayd, request telemetry,
+// and future authorization/metering consumers use one canonical context
+// carrier rather than inventing incompatible request-local keys.
+type ConsumerIdentity struct {
+	ID     string
+	AppID  string
+	KeyID  string
+	Scopes []string
+}
+
+type consumerCtxKey struct{}
+
+// WithConsumer stamps a resolved end-customer identity onto ctx. The scopes
+// slice is copied so callers cannot mutate the request identity after it has
+// been installed.
+func WithConsumer(ctx context.Context, identity ConsumerIdentity) context.Context {
+	identity.Scopes = append([]string(nil), identity.Scopes...)
+	return context.WithValue(ctx, consumerCtxKey{}, identity)
+}
+
+// ConsumerFromContext returns the end-customer identity stamped by the
+// gateway consumer-auth gate. ok=false means the request is anonymous or did
+// not pass through the gate. The returned scopes are copied to preserve the
+// read-only context-carrier contract.
+func ConsumerFromContext(r *http.Request) (ConsumerIdentity, bool) {
+	if r == nil {
+		return ConsumerIdentity{}, false
+	}
+	identity, ok := r.Context().Value(consumerCtxKey{}).(ConsumerIdentity)
+	if !ok || identity.ID == "" {
+		return ConsumerIdentity{}, false
+	}
+	identity.Scopes = append([]string(nil), identity.Scopes...)
+	return identity, true
+}
+
 // principal is the authenticated caller. Key is nil when the caller
 // authenticated via the dashboard session cookie (in which case
 // RequireScope treats the caller as implicitly admin). Membership is

@@ -682,6 +682,9 @@ func (t Trigger) validateKindConfig(idx int) error {
 		if err != nil || (u.Scheme != "nats" && u.Scheme != "tls") || u.Host == "" {
 			return fmt.Errorf("trigger[%d]: nats url must be nats:// or tls:// with a host (got %q)", idx, c.URL)
 		}
+		if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("trigger[%d]: nats url must not contain credentials, query parameters, or fragments", idx)
+		}
 		if c.Stream == "" {
 			return fmt.Errorf("trigger[%d]: nats config requires non-empty stream", idx)
 		}
@@ -718,6 +721,9 @@ func (t Trigger) validateKindConfig(idx int) error {
 		u, err := url.Parse(c.QueueURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return fmt.Errorf("trigger[%d]: sqs_compat queue_url must be http:// or https:// with a host (got %q)", idx, c.QueueURL)
+		}
+		if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("trigger[%d]: sqs_compat queue_url must not contain credentials, query parameters, or fragments", idx)
 		}
 		if c.LongPollSecs != 0 && (c.LongPollSecs < 1 || c.LongPollSecs > 20) {
 			return fmt.Errorf("trigger[%d]: sqs_compat long_poll_secs=%d out of range [1, 20]", idx, c.LongPollSecs)

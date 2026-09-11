@@ -281,6 +281,10 @@ from .debug_compare_response import DebugCompareResponse
 from .debug_compare_route_stats import DebugCompareRouteStats
 from .debug_evidence_explanation import DebugEvidenceExplanation
 from .debug_evidence_explanation_status import DebugEvidenceExplanationStatus
+from .debug_guest_execution_evidence import DebugGuestExecutionEvidence
+from .debug_guest_execution_evidence_error_class import DebugGuestExecutionEvidenceErrorClass
+from .debug_guest_execution_evidence_outcome import DebugGuestExecutionEvidenceOutcome
+from .debug_guest_execution_evidence_runtime import DebugGuestExecutionEvidenceRuntime
 from .debug_regression_item import DebugRegressionItem
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_response import DebugReplayResponse
@@ -1188,6 +1192,10 @@ __all__ = (
     "DebugCompareRouteStats",
     "DebugEvidenceExplanation",
     "DebugEvidenceExplanationStatus",
+    "DebugGuestExecutionEvidence",
+    "DebugGuestExecutionEvidenceErrorClass",
+    "DebugGuestExecutionEvidenceOutcome",
+    "DebugGuestExecutionEvidenceRuntime",
     "DebugRegressionItem",
     "DebugRegressionsResponse",
     "DebugReplayResponse",

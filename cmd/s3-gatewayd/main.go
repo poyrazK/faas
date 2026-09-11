@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -146,7 +147,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 	}()
 
-	dataServer := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
+	dataServer := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       api.ObjectTransferTimeout,
+		WriteTimeout:      api.ObjectTransferTimeout,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
+	}
 	controlMux := http.NewServeMux()
 	controlMux.Handle("GET /metrics", ops.Handler())
 	controlMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })

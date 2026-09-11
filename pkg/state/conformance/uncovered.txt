@@ -166,7 +166,6 @@ CreateTenantSurfaceIfUnderQuota
 CreateTriggerIfUnderQuota
 CreateUploadSession
 CreateWorkflowRun
-CreateWorkflowSteps
 CronByID
 CurrentMonthOverageCents
 DailyCostCents
@@ -273,8 +272,6 @@ GetTenantSurfaceByName
 GetUploadCommitOutcome
 GetUploadSession
 GetWorkflowEventsForRun
-GetWorkflowRun
-GetWorkflowSteps
 GitHubBindingForApp
 GitHubInstallForAccount
 GitHubInstallForAccountInstallation

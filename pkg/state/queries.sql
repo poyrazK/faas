@@ -1582,11 +1582,15 @@ delete from oidc_exchanged_tokens where id = $1;
 INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
-    ua_family, referrer_host, country, wake_id, instance_id
+    ua_family, referrer_host, country, wake_id, instance_id,
+    guest_duration_ms, guest_runtime, guest_outcome, guest_error_class
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14, $15, $16
+    $12, $13, $14, $15, $16, $17,
+    COALESCE(NULLIF(sqlc.arg('guest_runtime')::text, ''), '__unknown__'),
+    COALESCE(NULLIF(sqlc.arg('guest_outcome')::text, ''), 'missing'),
+    COALESCE(sqlc.arg('guest_error_class')::text, '')
 );
 
 -- name: ListRequestTelemetryByApp :many
@@ -1596,7 +1600,8 @@ INSERT INTO request_telemetry (
 -- timestamptz; handler-side date parsing is at cmd/apid/
 -- handlers_debug_telemetry.go (parseDebugTelemetryWindow).
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, wake_id, instance_id
+       cold_boot, trace_id, received_at, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
@@ -1610,7 +1615,8 @@ LIMIT $4;
 -- predicate is the database-side tenant boundary; the handler has
 -- already resolved the slug through the caller's account.
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class
 FROM request_telemetry
 WHERE app_id = $1
   AND id = $2

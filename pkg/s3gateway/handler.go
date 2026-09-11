@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"golang.org/x/sys/unix"
 )
 
 const CredentialSecretNamespace = "object_s3_credential"
@@ -55,6 +56,11 @@ type Config struct {
 	// MaxConcurrentPuts bounds local disk consumed by authenticated uploads
 	// waiting to be verified or forwarded. Zero selects a conservative default.
 	MaxConcurrentPuts int
+	// MaxSpoolBytes is an aggregate reservation across in-flight uploads.
+	// MinSpoolFreeBytes is retained after each reservation so staging cannot
+	// consume the host filesystem's final capacity.
+	MaxSpoolBytes     int64
+	MinSpoolFreeBytes int64
 	Now               func() time.Time
 	Log               *slog.Logger
 }
@@ -72,6 +78,10 @@ type Handler struct {
 	spoolDir       string
 	maxPutBytes    int64
 	putSlots       chan struct{}
+	maxSpoolBytes  int64
+	minSpoolFree   int64
+	spoolMu        sync.Mutex
+	spoolReserved  int64
 	now            func() time.Time
 	log            *slog.Logger
 	touchMu        sync.Mutex
@@ -95,6 +105,9 @@ func New(c Config) (*Handler, error) {
 	if c.Host == "" || c.Region == "" || strings.ContainsAny(c.Host, "/\\@") {
 		return nil, errors.New("s3 gateway: host and region are required")
 	}
+	if c.SpoolDir == "" {
+		c.SpoolDir = os.TempDir()
+	}
 	if c.MaxPutBytes == 0 {
 		c.MaxPutBytes = min(c.Registry.MaxUploadBytes, api.MaxObjectSinglePutBytes)
 	}
@@ -107,11 +120,30 @@ func New(c Config) (*Handler, error) {
 	if c.MaxConcurrentPuts < 1 || c.MaxConcurrentPuts > 64 {
 		return nil, errors.New("s3 gateway: invalid concurrent PUT limit")
 	}
+	if c.MaxSpoolBytes == 0 {
+		if c.MaxPutBytes > api.MaxObjectUploadSpoolBytes/int64(c.MaxConcurrentPuts) {
+			c.MaxSpoolBytes = api.MaxObjectUploadSpoolBytes
+		} else {
+			c.MaxSpoolBytes = c.MaxPutBytes * int64(c.MaxConcurrentPuts)
+		}
+		if c.MaxSpoolBytes < c.MaxPutBytes {
+			c.MaxSpoolBytes = c.MaxPutBytes
+		}
+	}
+	if c.MaxSpoolBytes < c.MaxPutBytes || c.MaxSpoolBytes > api.MaxObjectUploadSpoolBytes {
+		return nil, errors.New("s3 gateway: invalid aggregate upload spool limit")
+	}
+	if c.MinSpoolFreeBytes == 0 {
+		c.MinSpoolFreeBytes = api.ObjectUploadSpoolMinFreeBytes
+	}
+	if c.MinSpoolFreeBytes < 0 {
+		return nil, errors.New("s3 gateway: invalid spool free-space reserve")
+	}
 	if c.HTTPClient == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.ResponseHeaderTimeout = 30 * time.Second
 		transport.ExpectContinueTimeout = 5 * time.Second
-		c.HTTPClient = &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		c.HTTPClient = &http.Client{Transport: transport, Timeout: api.ObjectTransferTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	if c.Enabled == nil {
 		c.Enabled = func() bool { return true }
@@ -126,13 +158,47 @@ func New(c Config) (*Handler, error) {
 		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
 		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
-		maxPutBytes: c.MaxPutBytes, putSlots: make(chan struct{}, c.MaxConcurrentPuts), now: c.Now, log: c.Log, lastTouch: map[string]time.Time{},
+		maxPutBytes: c.MaxPutBytes, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
+		maxSpoolBytes: c.MaxSpoolBytes, minSpoolFree: c.MinSpoolFreeBytes,
+		now: c.Now, log: c.Log, lastTouch: map[string]time.Time{},
 	}, nil
 }
 
 func multipartStore(store Store) state.ObjectMultipartUploadStore {
 	storeWithMultipart, _ := store.(state.ObjectMultipartUploadStore)
 	return storeWithMultipart
+}
+
+func (h *Handler) reserveSpool(size int64) bool {
+	if size < 0 {
+		return false
+	}
+	h.spoolMu.Lock()
+	defer h.spoolMu.Unlock()
+	if size > h.maxSpoolBytes-h.spoolReserved {
+		return false
+	}
+	var stat unix.Statfs_t
+	if err := unix.Statfs(h.spoolDir, &stat); err != nil {
+		h.log.Warn("S3 upload spool statfs failed", "err", err)
+		return false
+	}
+	available := uint64(stat.Bavail) * uint64(stat.Bsize)
+	required := uint64(size) + uint64(h.minSpoolFree)
+	if available < required {
+		return false
+	}
+	h.spoolReserved += size
+	return true
+}
+
+func (h *Handler) releaseSpool(size int64) {
+	h.spoolMu.Lock()
+	h.spoolReserved -= size
+	if h.spoolReserved < 0 {
+		h.spoolReserved = 0
+	}
+	h.spoolMu.Unlock()
 }
 
 type requestContext struct {
@@ -295,14 +361,23 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 		if raw := query.Get("max-keys"); raw != "" {
 			limit, err = strconv.ParseInt(raw, 10, 32)
 		}
-		if err != nil || limit < 1 || limit > 1000 || len(prefix) > 1024 || !utf8.ValidString(prefix) || len(cursor) > 8192 || query.Get("delimiter") != "" {
+		delimiter := query.Get("delimiter")
+		if err != nil || limit < 1 || limit > 1000 || len(prefix) > 1024 || !utf8.ValidString(prefix) || len(cursor) > 8192 || !validDelimiter(delimiter) {
 			writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "A query parameter is invalid or unsupported.", r.URL.Path, req.requestID)
 			return
 		}
 		if !h.recordProviderRequest(w, r, req) {
 			return
 		}
-		page, err := req.provider.ListObjects(r.Context(), req.bucket.PhysicalName, prefix, cursor, int32(limit))
+		var page objectstorage.ObjectPage
+		if delimiter == "" {
+			page, err = req.provider.ListObjects(r.Context(), req.bucket.PhysicalName, prefix, cursor, int32(limit))
+		} else if lister, ok := req.provider.(objectstorage.DelimitedObjectLister); ok {
+			page, err = lister.ListObjectsDelimited(r.Context(), req.bucket.PhysicalName, prefix, delimiter, cursor, int32(limit))
+		} else {
+			writeS3Error(w, http.StatusNotImplemented, "NotImplemented", "Delimiter listing is not implemented by this storage provider.", r.URL.Path, req.requestID)
+			return
+		}
 		if err != nil {
 			h.providerError(w, r, req, err, "")
 			return
@@ -311,6 +386,23 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 		return
 	}
 	h.unsupported(w, r, req.requestID)
+}
+
+func validDelimiter(delimiter string) bool {
+	if delimiter == "" {
+		return true
+	}
+	if !utf8.ValidString(delimiter) || len(delimiter) > 4 {
+		return false
+	}
+	count := 0
+	for _, r := range delimiter {
+		if r < 32 || r == 127 {
+			return false
+		}
+		count++
+	}
+	return count == 1
 }
 
 func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
@@ -357,6 +449,10 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 	}
 	if len(query) != 0 {
 		h.unsupported(w, r, req.requestID)
+		return
+	}
+	if r.Method == http.MethodPut && r.Header.Get("X-Amz-Copy-Source") != "" {
+		h.copyObject(w, r, req, key)
 		return
 	}
 	switch r.Method {
@@ -429,6 +525,11 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
 		return
 	}
+	if !h.reserveSpool(r.ContentLength) {
+		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "The upload spool does not have enough reserved capacity.", r.URL.Path, req.requestID)
+		return
+	}
+	defer h.releaseSpool(r.ContentLength)
 	file, err := os.CreateTemp(h.spoolDir, "gregale-s3-put-*")
 	if err != nil {
 		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not stage this upload.", r.URL.Path, req.requestID)
@@ -500,6 +601,119 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		w.Header().Set("ETag", etag)
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req requestContext, destinationKey string) {
+	if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
+		return
+	}
+	if r.ContentLength > 0 {
+		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "CopyObject does not accept a request body.", r.URL.Path, req.requestID)
+		return
+	}
+	copier, ok := req.provider.(objectstorage.ObjectCopier)
+	if !ok {
+		h.unsupported(w, r, req.requestID)
+		return
+	}
+	sourceBucket, sourceKey, err := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
+	if err != nil || sourceBucket != req.bucket.Name {
+		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified copy source does not exist.", r.URL.Path, req.requestID)
+		return
+	}
+	directive := strings.ToUpper(strings.TrimSpace(r.Header.Get("X-Amz-Metadata-Directive")))
+	if directive == "" {
+		directive = "COPY"
+	}
+	if directive != "COPY" && directive != "REPLACE" {
+		writeS3Error(w, http.StatusBadRequest, "InvalidDirective", "The metadata directive is invalid.", r.URL.Path, req.requestID)
+		return
+	}
+	metadata, err := copyMetadata(r, directive)
+	if err != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "The object metadata is invalid.", r.URL.Path, req.requestID)
+		return
+	}
+	size := int64(0)
+	if sizer, ok := req.provider.(objectstorage.ObjectSizer); ok {
+		size, err = sizer.ObjectSize(r.Context(), req.bucket.PhysicalName, sourceKey)
+		if err != nil {
+			h.providerError(w, r, req, err, sourceKey)
+			return
+		}
+	}
+	if !h.admit(w, r, req, destinationKey, size, true) || !h.recordProviderRequest(w, r, req) {
+		return
+	}
+	result, err := copier.CopyObject(r.Context(), req.bucket.PhysicalName, objectstorage.CopyObjectRequest{
+		SourceKey: sourceKey, DestinationKey: destinationKey, MetadataDirective: directive, Metadata: metadata,
+	})
+	if err != nil {
+		h.providerError(w, r, req, err, sourceKey)
+		return
+	}
+	lastModified := ""
+	if !result.LastModified.IsZero() {
+		lastModified = result.LastModified.UTC().Format(time.RFC3339Nano)
+	}
+	writeS3XML(w, http.StatusOK, req.requestID, copyObjectResult{XMLNS: s3XMLNamespace, LastModified: lastModified, ETag: result.ETag})
+}
+
+func parseCopySource(value string) (string, string, error) {
+	if value == "" || strings.ContainsRune(value, '?') {
+		return "", "", objectstorage.ErrInvalid
+	}
+	value = strings.TrimPrefix(value, "/")
+	parts := strings.SplitN(value, "/", 2)
+	if len(parts) != 2 {
+		return "", "", objectstorage.ErrInvalid
+	}
+	bucket, err := url.PathUnescape(parts[0])
+	if err != nil {
+		return "", "", objectstorage.ErrInvalid
+	}
+	key, err := url.PathUnescape(parts[1])
+	if err != nil || !objectstorage.ValidKey(key) {
+		return "", "", objectstorage.ErrInvalid
+	}
+	return bucket, key, nil
+}
+
+func copyMetadata(r *http.Request, directive string) (objectstorage.ObjectMetadata, error) {
+	metadata := objectstorage.ObjectMetadata{}
+	if directive == "COPY" {
+		for name := range r.Header {
+			lower := strings.ToLower(name)
+			if strings.HasPrefix(lower, "x-amz-meta-") || strings.HasPrefix(lower, "x-amz-tag") || name == "Content-Type" || name == "Cache-Control" || name == "Content-Disposition" || name == "Content-Encoding" || name == "Content-Language" {
+				return metadata, objectstorage.ErrInvalid
+			}
+		}
+		return metadata, nil
+	}
+	metadata.ContentType = r.Header.Get("Content-Type")
+	metadata.CacheControl = r.Header.Get("Cache-Control")
+	metadata.ContentDisposition = r.Header.Get("Content-Disposition")
+	metadata.ContentEncoding = r.Header.Get("Content-Encoding")
+	metadata.ContentLanguage = r.Header.Get("Content-Language")
+	metadata.Metadata = make(map[string]string)
+	for name, values := range r.Header {
+		lower := strings.ToLower(name)
+		if strings.HasPrefix(lower, "x-amz-tag") {
+			return objectstorage.ObjectMetadata{}, objectstorage.ErrInvalid
+		}
+		if !strings.HasPrefix(lower, "x-amz-meta-") {
+			continue
+		}
+		if len(values) != 1 {
+			return objectstorage.ObjectMetadata{}, objectstorage.ErrInvalid
+		}
+		key := strings.TrimPrefix(lower, "x-amz-meta-")
+		if key == "" {
+			return objectstorage.ObjectMetadata{}, objectstorage.ErrInvalid
+		}
+		metadata.Metadata[key] = values[0]
+	}
+	return metadata, nil
 }
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestContext, key string) {

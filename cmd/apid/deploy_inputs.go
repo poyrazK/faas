@@ -376,7 +376,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && trafficPercent == nil && canarySpec == nil,
 		})
 		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+			s.writeDeploymentCreateError(w, err)
 			return
 		}
 		if developerSource {

@@ -51,6 +51,24 @@ directory. Both modes keep the repository's `commit_sha` in the JSON
 receipt when Git metadata is available; `dirty: true` indicates that
 the repository had local changes at deploy time.
 
+Deploy waits for readiness by default. Use `--no-wait` for queue-only CI steps,
+or bound the wait explicitly with `--timeout` (seconds):
+
+```bash
+gregale deploy --timeout 900
+gregale deploy --no-wait
+```
+
+The default wait is 300 seconds. A timed-out wait returns a non-zero exit code
+but retains the accepted deployment ID in `--json` output; resume it with
+`gregale deployment wait <deployment-id> --timeout ...`.
+
+Every deploy also has a stable retry key derived from the app, source digest,
+and deploy intent. Pass `--idempotency-key KEY` when an external CI workflow
+needs to reuse one logical key across separate invocations. The CLI scopes the
+logical key per transport and resumable-upload chunk before sending it to the
+API, so unrelated mutations cannot replay one another.
+
 ## Optional hosting overrides
 
 Zero-config inference is the default. If a repository uses a non-standard

@@ -4,6 +4,8 @@
 
 package api
 
+// adr: 120
+
 import (
 	"encoding/json"
 	"errors"
@@ -160,6 +162,20 @@ func TestErrPlanLimitConcurrency(t *testing.T) {
 	}
 	if p.Limit == nil || *p.Limit != 20 {
 		t.Errorf("Limit = %v, want 20", p.Limit)
+	}
+}
+
+func TestErrPlanLimitConcurrencyAtUsesEffectiveAppLimit(t *testing.T) {
+	l := MustLimitsFor(PlanScale)
+	p := ErrPlanLimitConcurrencyAt(l, 1, 1)
+	if p.Status != http.StatusTooManyRequests || p.Code != CodePlanLimitConcur {
+		t.Fatalf("problem = %#v, want 429 plan_limit_concurrency", p)
+	}
+	if p.Limit == nil || *p.Limit != 1 {
+		t.Errorf("Limit = %v, want 1", p.Limit)
+	}
+	if !strings.Contains(p.Detail, "app max_concurrency is 1") || !strings.Contains(p.Detail, "1 already live") {
+		t.Errorf("Detail = %q, want effective app limit and observed count", p.Detail)
 	}
 }
 
@@ -355,6 +371,10 @@ func TestStatusForCode_AuthCodes(t *testing.T) {
 	}{
 		{CodeInvalidCredentials, http.StatusUnauthorized},
 		{CodeEmailNotVerified, http.StatusUnauthorized},
+		{CodeConsumerKeyRequired, http.StatusUnauthorized},
+		{CodeConsumerKeyInvalid, http.StatusUnauthorized},
+		{CodeConsumerKeyInactive, http.StatusUnauthorized},
+		{CodeConsumerScopeMissing, http.StatusForbidden},
 		{CodeEmailVerificationRequired, http.StatusForbidden},
 		{CodePasswordTooWeak, http.StatusBadRequest},
 		{CodeAccountExists, http.StatusBadRequest},

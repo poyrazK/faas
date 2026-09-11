@@ -1155,6 +1155,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// deployment so CI and scripts can continue immediately.
 	waitDeploy := fs.Bool("wait", false, "wait for the deployment to become live (default)")
 	noWaitDeploy := fs.Bool("no-wait", false, "return after the deployment is queued")
+	waitTimeoutSeconds := fs.Int("timeout", int(defaultDeployWaitTimeout/time.Second), "maximum seconds to wait when --wait is used (default 300)")
+	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this deployment (optional)")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS
 	// access keys, OpenAI, Anthropic, Google API, PEM private keys, and
@@ -1223,6 +1225,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
 		return 1
+	}
+	if *waitTimeoutSeconds <= 0 {
+		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
+	}
+	if *waitTimeoutSeconds > int((24*time.Hour)/time.Second) {
+		return printErr("Invalid --timeout", fmt.Errorf("must be at most 86400 seconds"))
+	}
+	if err := validateDeployIdempotencyKey(*idempotencyKey); err != nil {
+		return printErr("Invalid --idempotency-key", err)
 	}
 	// run() consumes the global --json before dispatch. Keep the
 	// deploy-local --json spelling equivalent for the diff path,
@@ -1432,14 +1443,24 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintFail(os.Stderr, "--repo cannot be combined with --only or --project-slug")
 			return 1
 		}
-		return cmdDeployRepoSourceRefContextWithJSONWait(ctx, slug, *repo, *ref, api.DeployAnnotations{
+		refIntent := deployIdempotencyIntent{
+			Slug: slug, Repo: *repo, Ref: *ref, Reason: *reason, Tag: *tag,
+			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
+			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
+			CanaryStages: *canaryStages,
+		}
+		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
+		if keyErr != nil {
+			return printErr("Invalid --idempotency-key", keyErr)
+		}
+		return cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx, slug, *repo, *ref, api.DeployAnnotations{
 			Reason:         *reason,
 			Tag:            *tag,
 			DeployedBy:     resolveDeployedBy(*deployedBy),
 			PRNumber:       *prNumber,
 			TrafficPercent: optTrafficPercent(*trafficPercent),
 			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
-		}, waitForDeploy, jsonWait)
+		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second)
 	}
 
 	// --template materializes an embedded starter project. For function
@@ -1899,6 +1920,38 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	// Fingerprint local source bytes before the first deployment mutation so
+	// the default logical retry key follows the exact archive being shipped.
+	// An explicit key skips this extra read; the receipt still hashes the
+	// archive after upload when JSON output needs the provenance field.
+	sourceSHA256 := ""
+	if *tarball != "" && strings.TrimSpace(*idempotencyKey) == "" {
+		sourceSHA256, err = tarballSHA256(*tarball)
+		if err != nil {
+			// Keep the established CLI error title for invalid customer
+			// tarballs (including symlink rejection); fingerprinting is
+			// a preflight detail, not a new failure category.
+			return printErr("Bad --tarball", err)
+		}
+	}
+	appProtocolIntent := ""
+	if appProtocolPtr != nil {
+		appProtocolIntent = *appProtocolPtr
+	}
+	deployIntent := deployIdempotencyIntent{
+		Slug: slug, Shape: resolvedShape, Runtime: *runtime, Handler: *handler,
+		Image: *image, SourceSHA256: sourceSHA256, SourceRoot: sourceRoot,
+		Profile: *profile, Dockerfile: *dockerfile, RequireAuthn: requireAuthnPtr,
+		AppProtocol: appProtocolIntent, Reason: *reason, Tag: *tag,
+		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
+		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
+		CanaryStages: *canaryStages, NoTriggers: *noTriggers,
+		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
+	}
+	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
+	if keyErr != nil {
+		return printErr("Invalid --idempotency-key", keyErr)
+	}
 	// Deploy preview short-circuit (PR-0 of the deploy-diff cluster).
 	// Runs AFTER authedClient so the SDK reads can resolve, and
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
@@ -2056,7 +2109,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		var (
 			dep           api.DeploymentResponse
-			sourceSHA256  string
 			usedResumable bool
 		)
 		if developerSync != nil {
@@ -2095,9 +2147,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			var uploadErr error
-			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, ctx, slug, *tarball, progress, uploadOptions)
+			uploadCtx := api.ContextWithIdempotencyKey(ctx, deployKey)
+			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, uploadCtx, slug, *tarball, progress, uploadOptions)
 			if uploadErr == nil && !usedResumable {
-				dep, uploadErr = DeployTarballWithSourceRoot(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
+				multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
+				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
 			}
 			if uploadErr != nil {
 				if errors.Is(uploadErr, context.Canceled) || ctx.Err() != nil {
@@ -2111,7 +2165,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		} else {
 			var deployErr error
-			dep, deployErr = DeployTarballWithSourceRoot(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
+			multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
+			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
 			if deployErr != nil {
 				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
 					return 130
@@ -2144,7 +2199,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 0
 		}
 		if jsonWait {
-			return writeWaitedDeploymentReceipt(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256)
+			return writeWaitedDeploymentReceiptUntil(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256, time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
 		return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 			onStage:         execution.onStage,
@@ -2152,6 +2207,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			onFailure:       execution.onFailure,
 			prefixBuildLogs: execution.prefixBuildLogs,
 			quiet:           streamLogsOnJSON,
+			waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 		})
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
@@ -2169,7 +2225,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		return &v
 	}
-	dep, err := client.Deploy(ctx, slug, api.CreateDeploymentRequest{
+	deployCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "json"))
+	dep, err := client.Deploy(deployCtx, slug, api.CreateDeploymentRequest{
 		Image:          *image,
 		Workflows:      workflowDefs,
 		TrafficPercent: optTrafficPercent(*trafficPercent),
@@ -2203,7 +2260,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return 0
 	}
 	if jsonWait {
-		return writeWaitedDeploymentReceipt(ctx, client, dep, nil, deployedAppURL(slug), "")
+		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", time.Duration(*waitTimeoutSeconds)*time.Second)
 	}
 	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 		onStage:         execution.onStage,
@@ -2211,6 +2268,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		onFailure:       execution.onFailure,
 		prefixBuildLogs: execution.prefixBuildLogs,
 		quiet:           streamLogsOnJSON,
+		waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 	})
 }
 
@@ -3738,13 +3796,16 @@ type streamDeployOptions struct {
 	onFailure       func(api.DeploymentResponse, string, string)
 	prefixBuildLogs bool
 	quiet           bool
-}
-
-func streamDeployLogsContext(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string) int {
-	return streamDeployLogsContextWithOptions(ctx, c, dep, appSlug, streamDeployOptions{})
+	waitTimeout     time.Duration
 }
 
 func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) int {
+	waitTimeout := opts.waitTimeout
+	if waitTimeout <= 0 {
+		waitTimeout = defaultDeployWaitTimeout
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
+	defer cancel()
 	if !opts.quiet {
 		PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
 	}
@@ -3774,9 +3835,13 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		}
 		return terminalExitForBuildWithFailureContext(ctx, c, b, appSlug, nil)
 	}
-	body, err := c.StreamDeploymentLogs(ctx, dep.ID, nil, 0, true)
+	body, err := c.StreamDeploymentLogs(waitCtx, dep.ID, nil, 0, true)
 	if err != nil {
-		if ctx.Err() != nil {
+		if waitCtx.Err() != nil {
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+				PrintWarn(osStderr, "deployment wait timed out after %s; follow manually: gregale logs %s --deployment %s --follow", waitTimeout, appSlug, dep.ID)
+				return 3
+			}
 			return 130
 		}
 		// Stream unreachable up front — first try the new
@@ -3786,10 +3851,10 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		// pollDeploymentFinal. A fast tarball deploy on a slow link
 		// is the canonical case where the stream never opened and
 		// the build row is already terminal.
-		if b, ok := pollBuildStatusContext(ctx, c, dep, 5*time.Second); ok {
+		if b, ok := pollBuildStatusContext(waitCtx, c, dep, 5*time.Second); ok {
 			return terminalBuild(b)
 		}
-		if final, ok := pollDeploymentFinalContext(ctx, c, dep); ok {
+		if final, ok := pollDeploymentFinalContext(waitCtx, c, dep); ok {
 			return terminalDeployment(final)
 		}
 		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
@@ -3812,7 +3877,11 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 streamLoop:
 	for {
 		select {
-		case <-ctx.Done():
+		case <-waitCtx.Done():
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+				PrintWarn(osStderr, "deployment wait timed out after %s; follow manually: gregale logs %s --deployment %s --follow", waitTimeout, appSlug, dep.ID)
+				return 3
+			}
 			return 130
 		case e, ok := <-dec.Events():
 			if !ok {
@@ -3895,7 +3964,11 @@ streamLoop:
 				}
 			}
 		case err := <-dec.Errors():
-			if ctx.Err() != nil {
+			if waitCtx.Err() != nil {
+				if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+					PrintWarn(osStderr, "deployment wait timed out after %s; follow manually: gregale logs %s --deployment %s --follow", waitTimeout, appSlug, dep.ID)
+					return 3
+				}
 				return 130
 			}
 			if errors.Is(err, io.EOF) {
@@ -3905,7 +3978,11 @@ streamLoop:
 			return 3
 		}
 	}
-	if ctx.Err() != nil {
+	if waitCtx.Err() != nil {
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			PrintWarn(osStderr, "deployment wait timed out after %s; follow manually: gregale logs %s --deployment %s --follow", waitTimeout, appSlug, dep.ID)
+			return 3
+		}
 		return 130
 	}
 	// Stream ended without a terminal frame — poll the new
@@ -3914,7 +3991,7 @@ streamLoop:
 	// as "follow manually" when we actually have the answer. Only
 	// fall back to pollDeploymentFinal when the new poll reports
 	// the build is still queued or running.
-	if b, ok := pollBuildStatusContext(ctx, c, dep, 60*time.Second); ok {
+	if b, ok := pollBuildStatusContext(waitCtx, c, dep, 60*time.Second); ok {
 		return terminalBuild(b)
 	}
 	// Tarball/function deployments created by older API paths may not carry
@@ -3923,8 +4000,12 @@ streamLoop:
 	// while the scheduler is still priming and parking the VM.  Keep polling
 	// the deployment row through that recovery window so a healthy deployment
 	// is not reported as exit 3 merely because the SSE stream ended first.
-	if final, ok := pollDeploymentFinalUntilContext(ctx, c, dep, 5*time.Minute); ok {
+	if final, ok := pollDeploymentFinalUntilContext(waitCtx, c, dep, waitTimeout); ok {
 		return terminalDeployment(final)
+	}
+	if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+		PrintWarn(osStderr, "deployment wait timed out after %s; follow manually: gregale logs %s --deployment %s --follow", waitTimeout, appSlug, dep.ID)
+		return 3
 	}
 	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 	return 3

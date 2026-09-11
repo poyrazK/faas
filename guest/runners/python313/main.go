@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -131,21 +132,23 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 		TailPipePath: tailPipePath,
 	}
 
+	started := time.Now()
 	resp, err := invokeHandler(r.Context(), handlerPath, env)
 	if err != nil {
+		internal.ObserveGuestExecution(r.Context(), "python313", started, http.StatusInternalServerError, err).ApplyResponseHeaders(w.Header())
 		log.Printf("python313 runner: handler error: %v", err)
 		http.Error(w, "handler error", http.StatusInternalServerError)
 		return
 	}
-	// Issue #667 / ADR-078 (PR 3): drain the tail pipe before
-	// writing the response.
-	drainTailHost(r.Context(), env, &resp)
-	for k, v := range resp.Headers {
-		w.Header().Set(k, v)
-	}
 	if resp.Status == 0 {
 		resp.Status = http.StatusOK
 	}
+	evidence := internal.ObserveGuestExecution(r.Context(), "python313", started, resp.Status, nil)
+	// Issue #667 / ADR-078 (PR 3): drain the tail pipe before
+	// writing the response.
+	drainTailHost(r.Context(), env, &resp)
+	internal.ApplyResponseHeaders(w.Header(), resp.Headers)
+	evidence.ApplyResponseHeaders(w.Header())
 	w.WriteHeader(resp.Status)
 	if resp.BodyB64 != "" {
 		decoded, err := base64.StdEncoding.DecodeString(resp.BodyB64)
@@ -196,6 +199,9 @@ func invokeHandler(ctx context.Context, handlerPath string, env envelope) (respo
 	cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
 
 	if err := cmd.Run(); err != nil {
+		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
+			return response{}, fmt.Errorf("handler timeout: %w", context.DeadlineExceeded)
+		}
 		return response{}, fmt.Errorf("handler exec: %w (stderr=%s)", err, stderr.String())
 	}
 	var resp response

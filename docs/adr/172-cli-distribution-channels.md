@@ -11,7 +11,7 @@ automatically off a `v*.*.*` tag:
 1. **A POSIX `sh` installer** (`scripts/install.sh`), served at
    `https://get.gregale.dev`, that resolves the newest release from the
    GitHub API at *run* time, verifies the archive against the release's
-   `SHA256SUMS`, and installs one binary.
+   `CLI-SHA256SUMS`, and installs one binary.
 2. **npm**, as a root package `gregale` plus four `os`/`cpu`-gated
    platform packages `@gregale/cli-{darwin,linux}-{amd64,arm64}` pulled in
    through `optionalDependencies`.
@@ -50,10 +50,11 @@ nixpkgs, and the distro archives.
 
 - `release.yml` builds **four** targets instead of two. `linux-arm64` and
   `darwin-amd64` are new; both were verified to cross-compile.
-- The release's `SHA256SUMS` gains the four archives. The two existing
-  entries (`gregale`, `gregale-darwin-arm64`) are retained verbatim so the
-  `sha256sum -c SHA256SUMS` recipe in the release notes keeps working for
-  anyone already using it.
+- The release publishes the four CLI archives and compatibility binaries in
+  `CLI-SHA256SUMS`. The canonical daemon bundle keeps the distinct
+  `SHA256SUMS` name, so the two independently generated assets cannot replace
+  each other. The installer falls back to the old name only for releases that
+  have no `CLI-SHA256SUMS` asset.
 - **Windows is not a target.** `cmd/gregale` transitively imports
   `pkg/fcvm`, which needs `syscall.Stat_t`, `syscall.Mkfifo`, and
   `syscall.SYS_IOCTL`. Both channels therefore fail closed on Windows: the
@@ -63,10 +64,9 @@ nixpkgs, and the distro archives.
 - The npm job needs an `NPM_TOKEN` repository secret and a `gregale` npm
   org. Absent the secret the publish steps **skip** rather than fail, so a
   release is never blocked on registry credentials.
-- `get.gregale.dev` needs DNS plus something serving the file. Until that
-  exists the raw `raw.githubusercontent.com/poyrazK/faas/main/scripts/install.sh`
-  URL is the working address; the script is identical either way, so the
-  cutover is a DNS change and a docs edit, not a code change.
+- `get.gregale.dev` is a proxied Cloudflare hostname with a redirect rule to
+  the maintained `scripts/install.sh` on the default branch. The release
+  pipeline also attaches that script to each immutable release.
 - Two new hermetic shell tests run on every PR
   (`scripts/install_test.sh`, `scripts/build-npm-packages_test.sh`)
   alongside the existing `materialize-release-manifest_test.sh`. The

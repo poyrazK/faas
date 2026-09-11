@@ -39,7 +39,13 @@ var (
 	ErrWorkflowInvalidPagination = errors.New("state: workflow pagination cannot be negative")
 	ErrWorkflowInvalidInput      = errors.New("state: workflow JSON payload is invalid")
 	ErrWorkflowInvalidRecord     = errors.New("state: workflow record is invalid")
+	ErrWorkflowRunQuotaExceeded  = errors.New("state: workflow active-run quota exceeded")
 )
+
+// WorkflowRunStaleAfter is longer than the largest plan's two-hour step
+// timeout. A schedd that disappears while owning a run therefore cannot cause
+// concurrent execution, while another schedd will eventually recover it.
+const WorkflowRunStaleAfter = 2*time.Hour + 5*time.Minute
 
 func validateWorkflowRunStatus(status string) error {
 	switch status {
@@ -135,6 +141,9 @@ type ListWorkflowRunsOpts struct {
 type WorkflowStore interface {
 	// Runs
 	CreateWorkflowRun(ctx context.Context, r *WorkflowRun) error
+	// CreateWorkflowRunAdmitted serializes quota admission per app and returns
+	// the observed active count when the quota is already full.
+	CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun, maxActive int) (active int, err error)
 	GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error)
 	ListWorkflowRuns(ctx context.Context, appID string, opts ListWorkflowRunsOpts) ([]*WorkflowRun, int, error)
 	MarkWorkflowRunStatus(ctx context.Context, id, status string, output json.RawMessage, lastErr *string) error
@@ -144,6 +153,8 @@ type WorkflowStore interface {
 	// parked waits are resumed for timeout handling.
 	ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error)
 	ScheduleWorkflowRun(ctx context.Context, id, status string, scheduledFor time.Time) error
+	RecoverWorkflowRun(ctx context.Context, id string) error
+	CancelWorkflowRun(ctx context.Context, id, reason string) (*WorkflowRun, error)
 	CountActiveRunsByApp(ctx context.Context, appID string) (int, error)
 
 	// Steps

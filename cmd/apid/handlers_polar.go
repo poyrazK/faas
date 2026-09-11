@@ -23,6 +23,7 @@ func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
 			"polar webhook not configured", "Polar is not the active billing provider"))
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, api.WebhookMaxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))

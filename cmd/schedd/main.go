@@ -475,6 +475,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
 	workflowMetrics := wire.NewWorkflowMetrics(ops.Registry())
+	prewarmMetrics := wire.NewPrewarmMetrics(ops.Registry())
 	// Dashboard gauges (spec §12): schedd owns the snapshots table and the
 	// admission ledger, so the four fcvm_* gauges live here, not in vmmd.
 	// The DashboardMetrics callbacks close over `store` (PG) and `ledger`
@@ -1525,6 +1526,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		loop.WithPrewarm(prewarm.New(store, engine, prewarm.Options{
 			Logger:  log,
 			Auditor: schedulerAuditor,
+			Metrics: prewarmMetrics,
 		}))
 		log.Info("scheduled prewarm reconciler enabled",
 			"interval", prewarm.DefaultInterval,

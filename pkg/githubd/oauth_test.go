@@ -163,6 +163,20 @@ func TestListInstallableRepos_PaginatesAndStops(t *testing.T) {
 	}
 }
 
+func TestListInstallableRepos_RejectsTruncatedPagination(t *testing.T) {
+	key := newTestKey(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", `<http://`+r.Host+r.URL.Path+`?page=2>; rel="next"`)
+		_ = json.NewEncoder(w).Encode(map[string]any{"repositories": []InstallableRepo{{FullName: "acme/first"}}})
+	}))
+	defer srv.Close()
+
+	a := &AppAuth{AppID: "1", PrivateKey: key, HTTPClient: &singleHostClient{base: srv.Client(), api: srv.URL}}
+	if _, err := a.ListInstallableRepos(context.Background(), "test-token", 1); err == nil || !strings.Contains(err.Error(), "page cap") {
+		t.Fatalf("ListInstallableRepos() error = %v, want page-cap error", err)
+	}
+}
+
 // singleHostClient rewrites every request to the test server's URL
 // before delegating to the base client. The base client (from
 // httptest.Server.Client()) manages the TLS config + transport;

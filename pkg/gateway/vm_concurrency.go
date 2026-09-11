@@ -10,6 +10,16 @@ import (
 
 const vmConcurrencyRetryInterval = 10 * time.Millisecond
 
+// effectiveAppConcurrencyLimit resolves the app's configured instance
+// ceiling against the plan ceiling. Keeping this calculation in one place
+// makes capacity errors describe the same boundary the wake gate enforces.
+func effectiveAppConcurrencyLimit(app App, planLimit int) int {
+	if planLimit <= 0 || app.MaxConcurrency <= 0 || app.MaxConcurrency > planLimit {
+		return planLimit
+	}
+	return app.MaxConcurrency
+}
+
 // effectiveVMConcurrencyLimit keeps the gateway's request slots aligned with
 // the execution capacity inside a function guest. Generated function runners
 // have a fixed-size interpreter pool; admitting more concurrent requests than

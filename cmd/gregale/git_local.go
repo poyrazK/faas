@@ -459,24 +459,16 @@ func gitRelativePath(repoRoot, sourceDir string) (string, error) {
 }
 
 // tarballSHA256 returns the lower-case hex sha256 of the file at
-// path. Called by the receipt wire-up at commands2.go:1638 after
-// gitArchiveHEAD returns (or after a user-supplied --tarball is
-// read) and BEFORE the deferred os.Remove(tmpTar) at line 1364
-// removes the tempfile; on a `deployed` path the file is gone by
-// the time cmdDeployTarball returns so any caller must compute
-// the SHA before returning.
+// path. It uses openCustomerFile so the preflight fingerprint keeps
+// the same symlink and regular-file guarantees as the upload itself.
+// Callers must compute the SHA before a generated tempfile is removed.
 //
 // Reads via io.Copy rather than wrapping the streaming write
 // because the pack pipeline's deferred-close ordering is fragile
 // to a writer injection; for a 250 MB cap tarball this is not a
 // perf concern (≈ 50 ms in the worst case).
-//
-// Returns an empty string + nil error on a missing file so the
-// receipt can still serialise; callers that want strict behavior
-// must check err explicitly.
 func tarballSHA256(path string) (string, error) {
-	//nolint:forbidigo // CLI's own tempfile (post-#1187 zero-config path); not a user-supplied path.
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return "", err
 	}

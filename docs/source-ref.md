@@ -71,12 +71,18 @@ gregale deploy --repo onebox-faas/hello --ref main --no-wait
 | `400 invalid_ref` | `--ref` is not a branch, tag, or 7+/40-char SHA. | Pin to a SHA or a real branch / tag. |
 | `429 plan_limit_*` | Per-plan concurrency / RAM cap reached. | Wait for a slot, or upgrade. |
 
-CI retries of the same `gregale deploy` line mint a fresh
-`Idempotency-Key` on every invocation, so each retry produces
-a distinct build row. If your CI needs a true dedupe (same key
-across retries folds to one row), set `Idempotency-Key` on the
-SDK call directly — `Client.DeployFromSourceRef` accepts the
-underlying HTTP shape.
+The CLI derives a stable retry key from the repo, ref, and deploy intent.
+CI may provide an explicit logical key when several jobs can retry the same
+release:
+
+```bash
+gregale deploy --repo onebox-faas/hello --ref "$GITHUB_SHA" \
+  --idempotency-key "release-$GITHUB_SHA"
+```
+
+The CLI scopes that logical key to the source-ref transport before sending it
+to apid, so a replay folds to the original build row without colliding with a
+different deploy transport.
 
 ## What it is NOT
 

@@ -1669,8 +1669,10 @@ func StatusForCode(code string) int {
 		// fault, and the SDK distinguishes 404 build-not-found
 		// from 503 SBOM-missing so customer agents can branch.
 		return http.StatusServiceUnavailable
-	case CodeUnauthorized:
+	case CodeUnauthorized, CodeConsumerKeyRequired, CodeConsumerKeyInvalid, CodeConsumerKeyInactive:
 		return http.StatusUnauthorized
+	case CodeConsumerScopeMissing:
+		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized
 	case CodeNotFound:
@@ -2138,10 +2140,25 @@ func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 // ErrPlanLimitConcurrency is returned when waking another instance would exceed
 // the app's concurrency (spec §4.3 admission, invariant §6.2-1).
 func ErrPlanLimitConcurrency(l Limits, observed int) *Problem {
+	return ErrPlanLimitConcurrencyAt(l, l.MaxConcurrency, observed)
+}
+
+// ErrPlanLimitConcurrencyAt is the same stable 429 surface as
+// ErrPlanLimitConcurrency, but allows callers to report a tighter per-app
+// max_concurrency instead of repeating the plan ceiling in the customer-facing
+// detail and Limit field.
+func ErrPlanLimitConcurrencyAt(l Limits, effectiveMax, observed int) *Problem {
+	if effectiveMax <= 0 || effectiveMax > l.MaxConcurrency {
+		effectiveMax = l.MaxConcurrency
+	}
+	detail := fmt.Sprintf("%s plan allows %d concurrent instance(s) per app; %d already live.", l.Plan, effectiveMax, observed)
+	if effectiveMax != l.MaxConcurrency {
+		detail = fmt.Sprintf("%s app max_concurrency is %d; %d already live.", l.Plan, effectiveMax, observed)
+	}
 	return NewProblem(http.StatusTooManyRequests, CodePlanLimitConcur,
 		"Concurrency limit reached",
-		fmt.Sprintf("%s plan allows %d concurrent instance(s) per app; %d already live.", l.Plan, l.MaxConcurrency, observed)).
-		WithLimit(int64(l.MaxConcurrency), int64(observed)).
+		detail).
+		WithLimit(int64(effectiveMax), int64(observed)).
 		WithDocs(docsBase + "/plans#concurrency")
 }
 
@@ -2155,10 +2172,24 @@ func ErrPlanLimitConcurrency(l Limits, observed int) *Problem {
 // target; the Wire RPC carries the same information as a typed
 // at_capacity boolean so the gateway never has to parse problems.
 func ErrAppConcurrencyReached(l Limits, observed int) *Problem {
+	return ErrAppConcurrencyReachedAt(l, l.MaxConcurrency, observed)
+}
+
+// ErrAppConcurrencyReachedAt reports the effective app max when a gateway
+// loses its last routable target during an admission race. The legacy wrapper
+// keeps the plan ceiling for callers that do not have the app row available.
+func ErrAppConcurrencyReachedAt(l Limits, effectiveMax, observed int) *Problem {
+	if effectiveMax <= 0 || effectiveMax > l.MaxConcurrency {
+		effectiveMax = l.MaxConcurrency
+	}
+	detail := fmt.Sprintf("%s plan allows %d concurrent instance(s) per app; %d already live.", l.Plan, effectiveMax, observed)
+	if effectiveMax != l.MaxConcurrency {
+		detail = fmt.Sprintf("%s app max_concurrency is %d; %d already live.", l.Plan, effectiveMax, observed)
+	}
 	return NewProblem(http.StatusTooManyRequests, CodeAppConcurReached,
 		"App concurrency reached",
-		fmt.Sprintf("%s plan allows %d concurrent instance(s) per app; %d already live.", l.Plan, l.MaxConcurrency, observed)).
-		WithLimit(int64(l.MaxConcurrency), int64(observed)).
+		detail).
+		WithLimit(int64(effectiveMax), int64(observed)).
 		WithDocs(docsBase + "/plans#concurrency")
 }
 

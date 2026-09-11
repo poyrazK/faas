@@ -331,6 +331,10 @@ func debugTelemetryRowToItem(row sqlc.ListRequestTelemetryByAppRow) api.DebugTel
 		row.ReceivedAt,
 		row.WakeID,
 		row.InstanceID,
+		row.GuestDurationMs,
+		row.GuestRuntime,
+		row.GuestOutcome,
+		row.GuestErrorClass,
 	)
 }
 
@@ -348,6 +352,10 @@ func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIDRow) api.D
 		row.ReceivedAt,
 		row.WakeID,
 		row.InstanceID,
+		row.GuestDurationMs,
+		row.GuestRuntime,
+		row.GuestOutcome,
+		row.GuestErrorClass,
 	)
 }
 
@@ -360,6 +368,7 @@ func debugTelemetryItemFromFields(
 	traceID pgtype.Text,
 	receivedAt pgtype.Timestamptz,
 	wakeID, instanceID pgtype.Text,
+	guestDurationMS int32, guestRuntime, guestOutcome, guestErrorClass string,
 ) api.DebugTelemetryRequestItem {
 	item := api.DebugTelemetryRequestItem{
 		// pgtype.UUID -> hyphenated hex string. Falls back to "" when
@@ -380,6 +389,12 @@ func debugTelemetryItemFromFields(
 	if traceID.Valid {
 		s := traceID.String
 		item.TraceID = &s
+	}
+	if guestRuntime != "" && guestRuntime != "__unknown__" && guestOutcome != "" && guestOutcome != "missing" {
+		item.Guest = &api.DebugGuestExecutionEvidence{
+			Runtime: guestRuntime, DurationMS: int(guestDurationMS),
+			Outcome: guestOutcome, ErrorClass: guestErrorClass,
+		}
 	}
 	return item
 }
@@ -416,6 +431,18 @@ func (s *server) buildDebugRequestTimeline(ctx context.Context, appID string, re
 		// so request markers are intentionally labeled approximate.
 		Approximate: true,
 	})
+	if request.Guest != nil {
+		guestAt := receivedAt.Add(-time.Duration(request.Guest.DurationMS) * time.Millisecond)
+		timeline = append(timeline, api.DebugTimelineEvent{
+			At:          guestAt.UTC().Format(time.RFC3339Nano),
+			Phase:       "guest",
+			Kind:        "guest.execution",
+			Summary:     fmt.Sprintf("%s guest execution observed (%s)", request.Guest.Runtime, request.Guest.Outcome),
+			DurationMS:  int64(request.Guest.DurationMS),
+			Status:      request.Status,
+			Approximate: true,
+		})
+	}
 
 	if request.WakeID != "" {
 		events, listErr := s.store.ListEventsByWakeID(ctx, request.WakeID, time.Time{}, debugTimelineMaxEvents+1)
@@ -486,12 +513,14 @@ func debugTimelinePhaseRank(phase string) int {
 	switch phase {
 	case "request":
 		return 0
-	case "wake":
+	case "guest":
 		return 1
-	case "error":
+	case "wake":
 		return 2
-	case "regression":
+	case "error":
 		return 3
+	case "regression":
+		return 4
 	default:
 		return 4
 	}
@@ -557,7 +586,23 @@ func buildDebugRequestCorrelation(request api.DebugTelemetryRequestItem, timelin
 	}
 
 	guest := &stages[3]
-	if event := firstCorrelationEvent(timeline, "wake.proxy_first_byte"); event != nil {
+	if request.Guest != nil {
+		guest.Status = "observed"
+		guest.DurationMS = int64(request.Guest.DurationMS)
+		guest.EvidenceCount = 1 + countCorrelationKinds(timeline, "wake.proxy_first_byte")
+		guest.Approximate = true
+		if event := firstCorrelationEvent(timeline, "guest.execution"); event != nil {
+			guest.StartedAt = event.At
+			guest.CompletedAt = event.At
+			if at, err := time.Parse(time.RFC3339Nano, event.At); err == nil {
+				guest.CompletedAt = at.Add(time.Duration(request.Guest.DurationMS) * time.Millisecond).UTC().Format(time.RFC3339Nano)
+			}
+		}
+		guest.Reason = fmt.Sprintf("runner observed %s execution (%s)", request.Guest.Runtime, request.Guest.Outcome)
+		if request.Guest.ErrorClass != "" {
+			guest.Reason += "; error class " + request.Guest.ErrorClass
+		}
+	} else if event := firstCorrelationEvent(timeline, "wake.proxy_first_byte"); event != nil {
 		guest.Status = "partial"
 		guest.CompletedAt = event.At
 		guest.EvidenceCount = 1

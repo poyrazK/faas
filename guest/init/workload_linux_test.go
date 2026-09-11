@@ -396,7 +396,7 @@ func TestDiscoverSidecarDevicesCarriesWorkloadNames(t *testing.T) {
 	roster := workloadRoster{
 		Main: workloadSpec{Name: "main", Type: "main"},
 		Sidecars: []workloadSpec{
-			{Name: "metrics", Type: "sidecar"},
+			{Name: "metrics", Type: "sidecar", RamMB: 128},
 			{Name: "migrator", Type: "init"},
 		},
 	}
@@ -416,6 +416,30 @@ func TestDiscoverSidecarDevicesCarriesWorkloadNames(t *testing.T) {
 	}
 	if got[0].workloadName != "metrics" || got[1].workloadName != "migrator" {
 		t.Fatalf("workload names = %q, %q", got[0].workloadName, got[1].workloadName)
+	}
+	if got[0].tmpfsSizeMB != 128 || got[1].tmpfsSizeMB != defaultSidecarTmpfsSizeMB {
+		t.Fatalf("sidecar tmpfs sizes = %d, %d; want 128, %d", got[0].tmpfsSizeMB, got[1].tmpfsSizeMB, defaultSidecarTmpfsSizeMB)
+	}
+}
+
+func TestSidecarTmpfsMountDataClampsInvalidProfiles(t *testing.T) {
+	tests := []struct {
+		name string
+		ram  int
+		want string
+	}{
+		{name: "inherited", ram: 0, want: "mode=1777,size=64M"},
+		{name: "valid minimum", ram: 32, want: "mode=1777,size=32M"},
+		{name: "valid maximum", ram: 512, want: "mode=1777,size=512M"},
+		{name: "too small", ram: 16, want: "mode=1777,size=64M"},
+		{name: "too large", ram: 1024, want: "mode=1777,size=64M"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sidecarTmpfsMountData(tt.ram); got != tt.want {
+				t.Fatalf("sidecarTmpfsMountData(%d) = %q, want %q", tt.ram, got, tt.want)
+			}
+		})
 	}
 }
 

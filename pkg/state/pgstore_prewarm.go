@@ -69,6 +69,20 @@ func (s *PgStore) ListDuePrewarmIntents(ctx context.Context, before, now time.Ti
 	return scanPrewarmRows(rows)
 }
 
+func (s *PgStore) ListExpiredPrewarmIntents(ctx context.Context, now time.Time, limit int) ([]PrewarmIntent, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `select `+prewarmSelect+` from prewarm_intents
+		where status = 'pending' and expires_at <= $1
+		order by expires_at, created_at limit $2`, now.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPrewarmRows(rows)
+}
+
 func (s *PgStore) ActivePrewarmFloor(ctx context.Context, appID string, now time.Time) (int, error) {
 	var floor int
 	if err := s.pool.QueryRow(ctx, `select coalesce(max(case when status = 'succeeded' then admitted_count else count end), 0) from prewarm_intents
@@ -128,6 +142,22 @@ func (s *PgStore) FailPrewarmIntent(ctx context.Context, id string, firedAt time
 		}
 	}
 	return nil
+}
+
+func (s *PgStore) ExpirePrewarmIntent(ctx context.Context, id string, expiredAt time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `update prewarm_intents
+		set status = 'failed', fired_at = $2, outcome = 'expired', last_error = 'expired'
+		where id = $1 and status = 'pending' and expires_at <= $2`, id, expiredAt.UTC())
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() > 0 {
+		return true, nil
+	}
+	if _, lookupErr := s.PrewarmIntentByID(ctx, id); lookupErr != nil {
+		return false, lookupErr
+	}
+	return false, nil
 }
 
 func (s *PgStore) CancelPrewarmIntent(ctx context.Context, id, accountID string) error {

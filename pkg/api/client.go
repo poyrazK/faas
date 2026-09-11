@@ -228,6 +228,9 @@ func (c *Client) doWithIdempotencyKey(ctx context.Context, method, path string, 
 	// already set.
 	if method != http.MethodGet && method != http.MethodHead {
 		if idempotencyKey == "" {
+			idempotencyKey = IdempotencyKeyFromContext(ctx)
+		}
+		if idempotencyKey == "" {
 			idempotencyKey = newUUIDv4()
 		}
 		req.Header.Set("Idempotency-Key", idempotencyKey)
@@ -919,11 +922,15 @@ func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string,
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	// DeployMultipart bypasses Client.do (multipart Content-Type wins
 	// over the JSON default) and routes through the longer-timeout
-	// upload client. Auto-mint Idempotency-Key here so retry-safe
-	// semantics still hold; the file-open guard (if any) runs at the
-	// caller before this mint, so a rejected path never produces an
-	// Idempotency-Key on the wire.
-	req.Header.Set("Idempotency-Key", newUUIDv4())
+	// upload client. Prefer a caller-supplied context key so a CLI retry
+	// replays the same deployment; otherwise preserve the SDK's UUID
+	// default. The file-open guard (if any) runs at the caller before
+	// this mint, so a rejected path never produces a key on the wire.
+	idempotencyKey := IdempotencyKeyFromContext(ctx)
+	if idempotencyKey == "" {
+		idempotencyKey = newUUIDv4()
+	}
+	req.Header.Set("Idempotency-Key", idempotencyKey)
 	var out DeploymentResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
@@ -1037,8 +1044,14 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	// Auto-mint Idempotency-Key (matches DeployFromSourceRef).
-	req.Header.Set("Idempotency-Key", newUUIDv4())
+	// Prefer a caller-supplied context key so a CLI retry replays the
+	// original source-tarball deployment; otherwise preserve the SDK's
+	// UUID default.
+	idempotencyKey := IdempotencyKeyFromContext(ctx)
+	if idempotencyKey == "" {
+		idempotencyKey = newUUIDv4()
+	}
+	req.Header.Set("Idempotency-Key", idempotencyKey)
 
 	var out DeploymentResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
