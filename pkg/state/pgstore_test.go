@@ -3001,7 +3001,9 @@ func TestPg_CreateDeployment_DefaultsTrafficPercent100(t *testing.T) {
 func TestPg_CreateDeployment_PreservesCanaryPolicy(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, _ := seedLiveDeploy(t, s, ctx, "custom-canary")
-	started := time.Now().UTC().Add(-time.Second)
+	// PostgreSQL timestamptz stores microsecond precision; normalize the
+	// fixture so the round-trip assertion matches the database representation.
+	started := time.Now().UTC().Add(-time.Second).Truncate(time.Microsecond)
 	stages := json.RawMessage(`[{"percent":10,"duration":"15s"},{"percent":100,"duration":"0s"}]`)
 
 	created, err := s.CreateDeployment(ctx, state.Deployment{
