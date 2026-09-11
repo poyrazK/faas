@@ -70,7 +70,7 @@ func UnitSchedd() daemonunit.Unit {
 		// Shared OCI storage is the authoritative snapshot/layer source on
 		// multi-box deployments. The optional prefix keeps single-box/local
 		// development bootable when storage.env has not been provisioned yet.
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/schedd/schedd.env -/etc/faas/storage.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/schedd/schedd.env -/etc/faas/storage.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "TMPDIR", Value: "/var/lib/faas/oci-tmp"},
 			// ADR-143: every production gate is declared, never implied.

@@ -20,6 +20,7 @@ MemoryMax=512M
 AmbientCapabilities=
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/object-storage/provider.env
+EnvironmentFile=-/etc/faas/otel.env
 Environment=FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json
 Environment=FAAS_PUBLIC_CONTROL_ADDR=127.0.0.1:9092
 Environment=FAAS_TRUSTED_INGRESS_CIDRS=127.0.0.0/8,::1/128

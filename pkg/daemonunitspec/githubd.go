@@ -57,7 +57,7 @@ func UnitGithubd() daemonunit.Unit {
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
 
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/githubd/githubd.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/githubd/githubd.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
 			{Key: "FAAS_GITHUB_APP_KEY_PATH", Value: "/etc/faas/secrets/githubd/app.pem"},

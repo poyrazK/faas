@@ -658,6 +658,10 @@ public-endpoint-check: ## Validate the public HTTPS/Caddy endpoint (PUBLIC_ENDPO
 systemd-hardening-check: ## Static release gate for production systemd isolation directives
 	bash scripts/ci/check_systemd_hardening.sh $(CURDIR)
 
+.PHONY: otlp-unit-check
+otlp-unit-check: ## Verify every instrumented daemon loads the operator-owned OTLP environment
+	bash scripts/ci/check_otlp_units.sh $(CURDIR)
+
 .PHONY: sealed-env-scope-check
 sealed-env-scope-check: ## Static gate: /etc/faas/sealed.env is loaded only by faas-apid.service (issue #585, ADR-127)
 	@bash scripts/ci/check_sealed_env_scope.sh $(CURDIR)

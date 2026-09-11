@@ -48,6 +48,7 @@ func TestInit_NoEndpointIsNoOp(t *testing.T) {
 	// Ensure the env var is unset for this test even if a parent
 	// process exported it.
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
 
 	var buf bytes.Buffer
 	registry := prometheus.NewRegistry()
@@ -116,10 +117,12 @@ func TestInit_WithEndpoint_WiresProvider(t *testing.T) {
 
 	// Set the env to point at the test server's /v1/traces.
 	var gotBody []byte
+	var gotAuthorization string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/v1/traces") {
 			b, _ := io.ReadAll(r.Body)
 			gotBody = b
+			gotAuthorization = r.Header.Get("Authorization")
 		}
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		w.WriteHeader(http.StatusOK)
@@ -129,6 +132,7 @@ func TestInit_WithEndpoint_WiresProvider(t *testing.T) {
 	// Strip "http://" off the front so the SDK parses it as host:port.
 	endpoint := strings.TrimPrefix(srv.URL, "http://")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "Authorization=Bearer%20trace-test")
 
 	var buf bytes.Buffer
 	h, err := otelinit.Init(context.Background(), otelinit.Config{Name: "test-daemon", Version: "1.0.0"}, captureLogs(&buf))
@@ -153,6 +157,9 @@ func TestInit_WithEndpoint_WiresProvider(t *testing.T) {
 
 	if len(gotBody) == 0 {
 		t.Error("expected OTLP export to land at test server")
+	}
+	if gotAuthorization != "Bearer trace-test" {
+		t.Errorf("Authorization = %q, want decoded bearer header", gotAuthorization)
 	}
 	if !strings.Contains(buf.String(), "wired OTLP/HTTP exporter") {
 		t.Errorf("expected wired-boot log line, got: %s", buf.String())

@@ -2,13 +2,17 @@ package wire_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	collector "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestStartOTLPMetricsHealthSuccess(t *testing.T) {
@@ -84,6 +88,53 @@ func TestStartOTLPMetricsHealthDisabled(t *testing.T) {
 	}
 	if got := gatheredValue(t, registry, "gatewayd_internal_otel_metrics_exporter_up", nil); got != 0 {
 		t.Errorf("exporter_up = %v, want 0", got)
+	}
+}
+
+func TestStartOTLPMetricsUsesStandardHeadersAndResourceAttributes(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer%20test-token")
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=production,faas.node.name=fsn-1")
+
+	var gotAuthorization string
+	var gotBody []byte
+	collectorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuthorization = r.Header.Get("Authorization")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(collectorServer.Close)
+
+	registry := prometheus.NewRegistry()
+	shutdown, err := wire.StartOTLPMetrics(context.Background(), registry, collectorServer.URL, "gatewayd-public", nil)
+	if err != nil {
+		t.Fatalf("StartOTLPMetrics: %v", err)
+	}
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+
+	if gotAuthorization != "Bearer test-token" {
+		t.Fatalf("Authorization = %q, want decoded bearer header", gotAuthorization)
+	}
+	var exported collector.ExportMetricsServiceRequest
+	if err := proto.Unmarshal(gotBody, &exported); err != nil {
+		t.Fatalf("decode OTLP metrics: %v", err)
+	}
+	if len(exported.GetResourceMetrics()) != 1 {
+		t.Fatalf("resource metrics = %d, want 1", len(exported.GetResourceMetrics()))
+	}
+	attrs := exported.GetResourceMetrics()[0].GetResource().GetAttributes()
+	for _, want := range []string{"deployment.environment", "faas.node.name", "service.name", "service.version"} {
+		found := false
+		for _, attr := range attrs {
+			if attr.GetKey() == want {
+				found = true
+				break
+			}
+		}
+		if !found && (want != "service.version" || strings.TrimSpace(wire.Version) != "") {
+			t.Errorf("resource attribute %q missing from OTLP metrics export", want)
+		}
 	}
 }
 

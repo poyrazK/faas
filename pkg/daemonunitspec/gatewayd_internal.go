@@ -77,7 +77,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		// Issue #585 / ADR-127: sealed.env dropped; per-daemon
 		// gatewayd-internal.env (0400 root:root) holds
 		// FAAS_SESSION_KEY + FAAS_TLS_DNS_TOKEN content-shaped vars.
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env -/etc/faas/otel.env",
 
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_GATEWAY_LISTEN", Value: "off"},

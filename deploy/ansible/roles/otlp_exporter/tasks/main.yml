@@ -1,0 +1,47 @@
+# otlp_exporter — converge the shared systemd environment used by the
+# optional daemon-owned OTLP exporters. Export remains disabled when the
+# operator-owned file is absent.
+
+- name: otlp_exporter — ensure shared daemon group exists
+  ansible.builtin.group:
+    name: faas
+    state: present
+    system: true
+
+- name: otlp_exporter — ensure /etc/faas exists
+  ansible.builtin.file:
+    path: /etc/faas
+    state: directory
+    owner: root
+    group: faas
+    mode: "0750"
+
+- name: otlp_exporter — install operator example
+  ansible.builtin.copy:
+    src: otel.env.example
+    dest: "{{ faas_otlp_env_example_path }}"
+    owner: root
+    group: faas
+    mode: "0640"
+
+- name: otlp_exporter — inspect operator configuration
+  ansible.builtin.stat:
+    path: "{{ faas_otlp_env_path }}"
+    follow: false
+  register: faas_otlp_env_stat
+
+# EnvironmentFile is read by PID 1, so a root-only file is both readable by
+# systemd and unavailable to every non-root daemon. Do not relax this to
+# 0440: the file can contain collector bearer tokens.
+- name: otlp_exporter — require root-only operator configuration
+  ansible.builtin.assert:
+    that:
+      - faas_otlp_env_stat.stat.isreg
+      - faas_otlp_env_stat.stat.pw_name == 'root'
+      - faas_otlp_env_stat.stat.gr_name == 'root'
+      - faas_otlp_env_stat.stat.mode == '0400'
+    fail_msg: >-
+      {{ faas_otlp_env_path }} exists but is not a regular root:root 0400
+      file. OTLP headers may contain bearer credentials; fix ownership and
+      permissions before enabling the daemon exporters.
+  when: faas_otlp_env_stat.stat.exists

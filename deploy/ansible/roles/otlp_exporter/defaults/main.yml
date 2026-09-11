@@ -1,0 +1,8 @@
+# otlp_exporter — shared operator configuration for the optional
+# OpenTelemetry exporters used by faas daemons.
+
+# The file is deliberately operator-provisioned. Ansible ships only the
+# example and validates an existing file; telemetry credentials must never
+# enter inventory, rendered templates, or Git.
+faas_otlp_env_path: /etc/faas/otel.env
+faas_otlp_env_example_path: /etc/faas/otel.env.example
