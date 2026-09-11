@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -485,6 +486,87 @@ func TestCmdDeployTarball_JSONFlag(t *testing.T) {
 	}
 	if len(out.Apps) != 3 {
 		t.Errorf("apps: got %d, want 3", len(out.Apps))
+	}
+}
+
+// TestCmdDeployTarball_ProjectDryRunUsesScan verifies that the project
+// preview follows the same ScanProject contract as `gregale scan` and never
+// reaches the transactional apply endpoint. Before issue #1976 was fixed,
+// the generic --diff short-circuit tried to read a single app instead.
+func TestCmdDeployTarball_ProjectDryRunUsesScan(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   goldenApply,
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	prev := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = prev }()
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t),
+		"--project-slug", "fixture",
+		"--only", "api,worker",
+		"--dry-run",
+	}); code != 0 {
+		t.Fatalf("project dry-run exit = %d, want 0", code)
+	}
+	if sink.scanCalls != 1 {
+		t.Fatalf("project dry-run scan calls = %d, want 1", sink.scanCalls)
+	}
+	if sink.applyCalls != 0 {
+		t.Fatalf("project dry-run issued apply call: %d", sink.applyCalls)
+	}
+	var got api.PlanResponse
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &got); err != nil {
+		t.Fatalf("project dry-run output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if !reflect.DeepEqual(got, goldenPlan) {
+		t.Fatalf("project dry-run plan differs from ScanProject response:\n got  %+v\n want %+v", got, goldenPlan)
+	}
+}
+
+// TestCmdDeployTarball_ProjectDryRunHumanRendersPlan keeps the text preview
+// aligned with `gregale scan` as well as the JSON path.
+func TestCmdDeployTarball_ProjectDryRunHumanRendersPlan(t *testing.T) {
+	sink := &decomposeSink{scanStatus: http.StatusOK, scanBody: goldenPlan}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	prev := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = prev }()
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t),
+		"--project-slug", "fixture",
+		"--dry-run",
+	}); code != 0 {
+		t.Fatalf("project dry-run exit = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{"Project: fixture", "can_apply: true", "api", "worker", "postgres"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("project dry-run output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Created project") {
+		t.Errorf("project dry-run rendered apply success: %q", out)
+	}
+	if sink.applyCalls != 0 {
+		t.Fatalf("project dry-run issued apply call: %d", sink.applyCalls)
 	}
 }
 

@@ -1990,6 +1990,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
 	// happen. --diff and --dry-run never ship a deploy.
 	if *diff {
+		// Project deploys have a different preview contract from a
+		// single-app diff: the apply path is driven by ScanProject, so
+		// preview must use that same planner and render the complete
+		// workload/managed/warning response. Keeping this branch ahead
+		// of runDiff prevents a project preview from silently falling
+		// back to the root-app diff (issue #1976).
+		if *deployOnly != "" || *projectSlug != "" {
+			if *profile != "" {
+				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --only or --project-slug"))
+			}
+			return runProjectDeployPreview(ctx, client, *tarball, *projectSlug,
+				*deployOnly, *deployExclude, *deployShowAffected, *diffJSON)
+		}
 		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
