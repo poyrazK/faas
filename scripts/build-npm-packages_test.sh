@@ -94,6 +94,22 @@ if grep -rq '__[A-Z_]\{2,\}__' "$OUT"; then
 	fail "unsubstituted template placeholder survived into the staged packages"
 fi
 
+# Exercise the same npm-pack payload check used by the release workflow. The
+# valid case catches pipefail/SIGPIPE regressions; the negative case proves a
+# missing executable still fails with a useful package listing.
+bash "$REPO_ROOT/scripts/verify-npm-package-payloads.sh" "$OUT/publish-order.txt" >/dev/null ||
+	fail "valid staged packages failed the npm payload check"
+mv "$OUT/@gregale/cli-linux-amd64/bin/gregale" \
+	"$OUT/@gregale/cli-linux-amd64/bin/gregale.missing"
+status=0
+payload_err="$(bash "$REPO_ROOT/scripts/verify-npm-package-payloads.sh" \
+	"$OUT/publish-order.txt" 2>&1)" || status=$?
+[ "$status" -ne 0 ] || fail "payload check accepted a package without its executable"
+grep -Fq '@gregale/cli-linux-amd64 would publish without package/bin/gregale' <<<"$payload_err" ||
+	fail "payload check did not identify the missing executable"
+mv "$OUT/@gregale/cli-linux-amd64/bin/gregale.missing" \
+	"$OUT/@gregale/cli-linux-amd64/bin/gregale"
+
 # Platform packages must publish before the root package that pins them.
 # mapfile is bash 4+; macOS still ships bash 3.2 as /bin/bash, so read the
 # file the portable way.
