@@ -66,6 +66,14 @@ func BuildReadinessProbe(ctx context.Context, pool pgPool, storageRoot, vmmTarge
 }
 
 func buildReadinessProbeForDrive(ctx context.Context, pool pgPool, buildsDir, vmmTarget string, dial vmmdDialer) *wire.ReadyzProbe {
+	return buildReadinessProbeForDirs(ctx, pool, []string{buildsDir}, vmmTarget, dial)
+}
+
+// buildReadinessProbeForDirs constructs the dependency probe for the writable
+// paths used by the builder VM. Both the scratch drive directory and the
+// export directory are required: vmmd writes the exported build manifest and
+// OCI artifact under the latter after the guest exits.
+func buildReadinessProbeForDirs(ctx context.Context, pool pgPool, writableDirs []string, vmmTarget string, dial vmmdDialer) *wire.ReadyzProbe {
 	if dial == nil {
 		// No dial seam: simulate via a TCP attempt. Production
 		// passes deps.dialVmmd; tests inject a stub.
@@ -81,8 +89,21 @@ func buildReadinessProbeForDrive(ctx context.Context, pool pgPool, buildsDir, vm
 	}
 	vmmSig, vmmStop := vmmdDialSignal(ctx, vmmTarget, dial, 5*time.Second)
 	p.RegisterSignal(vmmSig, vmmStop)
-	buildsSig, buildsStop := buildsDirSignal(buildsDir, 5*time.Second)
-	p.RegisterSignal(buildsSig, buildsStop)
+	seen := make(map[string]struct{}, len(writableDirs))
+	for _, dir := range writableDirs {
+		if dir == "" {
+			sig := &wire.ReadySignal{}
+			sig.Set(false, "builderd writable path empty")
+			p.RegisterSignal(sig, nil)
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		sig, stop := buildsDirSignal(dir, 5*time.Second)
+		p.RegisterSignal(sig, stop)
+	}
 	return p
 }
 

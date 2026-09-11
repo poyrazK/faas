@@ -181,10 +181,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 
-	// Issue #571 / PR-A2: builderd /readyz probe. Three signals —
+	// Issue #571 / PR-A2: builderd /readyz probe. Four signals —
 	// PG ping (queued-build backlog stays reachable), vmmd RPC
 	// dialable (the build-volume microVM host), and
-	// cfg.BuildDriveDir writable (the overlay mount source).
+	// cfg.BuildDriveDir and cfg.BuildExportDir writable (the overlay mount
+	// source and post-build export destination).
 	// Constructed after openDB so the pool is live; the vmmd
 	// dial signal races alongside the driver dial below.
 
@@ -195,7 +196,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: load vmmd TLS: %w", err)
 	}
-	builderdProbe := buildReadinessProbeForDrive(ctx, pool, cfg.BuildDriveDir, vmmTarget, tlsReadinessDialer(vmmTLS))
+	builderdProbe := buildReadinessProbeForDirs(ctx, pool, []string{cfg.BuildDriveDir, cfg.BuildExportDir}, vmmTarget, tlsReadinessDialer(vmmTLS))
 
 	driver, err := deps.newDriver(ctx, vmmTarget, vmmTLS, cfg.BuilderBase, cfg.BuildDriveDir, cfg.BuildExportDir)
 	if err != nil {

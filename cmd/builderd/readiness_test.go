@@ -267,3 +267,41 @@ func TestBuilderdRoleCreatesConfiguredReadinessDrive(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildReadinessProbe_RequiresExportDir(t *testing.T) {
+	drive := t.TempDir()
+	exportRoot := t.TempDir()
+	export := filepath.Join(exportRoot, "export")
+	pool := &fakePGPool{pingFn: func(context.Context) error { return nil }}
+	p := buildReadinessProbeForDirs(context.Background(), pool, []string{drive, export}, "unix:///run/faas/vmmd.sock", func(context.Context, string) error { return nil })
+	defer p.Drain("", nil)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		ready, reason := p.All()
+		if !ready && strings.Contains(reason, export) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ready, reason := p.All()
+	t.Fatalf("readiness with missing export dir = (%v, %q), want not-ready reason containing %q", ready, reason, export)
+}
+
+func TestBuildReadinessProbe_EmptyWritablePathIsNotReady(t *testing.T) {
+	drive := t.TempDir()
+	pool := &fakePGPool{pingFn: func(context.Context) error { return nil }}
+	p := buildReadinessProbeForDirs(context.Background(), pool, []string{drive, ""}, "unix:///run/faas/vmmd.sock", func(context.Context, string) error { return nil })
+	defer p.Drain("", nil)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		ready, reason := p.All()
+		if !ready && strings.Contains(reason, "builderd writable path empty") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ready, reason := p.All()
+	t.Fatalf("readiness with empty writable path = (%v, %q), want not-ready empty-path reason", ready, reason)
+}
