@@ -2,7 +2,8 @@
 // handler tests for the tenant-surfaces customer-facing surface.
 //
 // The cluster ships dark under FAAS_TENANT_SURFACES_ENABLED — every
-// handler must 402 unless the flag is set. With the flag set, the
+// handler must return a 503 feature-unavailable problem unless the flag is
+// set. With the flag set, the
 // surface mirrors the closest precedent: cmd/apid/handlers_ext.go:1573
 // (custom_domains). The 12 cases below pin the contract so a future
 // refactor that drops the feature flag, the plan-tier gate, or the
@@ -10,7 +11,7 @@
 //
 // Coverage split:
 //   - shape:    happy path create→list→get→addHostname→removeHostname→delete
-//   - flag:     feature flag off → 402 on every handler
+//   - flag:     feature flag off → 503 on every handler
 //   - plan:     Free → 402 (TenantSurfacesAllowed=false)
 //   - quota:    per-account surface cap, per-surface hostname cap
 //   - IDOR:     cross-account surface → 404 (no existence oracle)
@@ -161,23 +162,81 @@ func TestCreateTenantSurface_HappyPath(t *testing.T) {
 }
 
 // TestCreateTenantSurface_FlagOffBlocks is the dark-launch guard:
-// without FAAS_TENANT_SURFACES_ENABLED, the handler must return 402
-// with the canonical code. The check runs BEFORE the loadApp call
-// so even a 404-eligible request (unknown slug) gets 402 — the
+// without FAAS_TENANT_SURFACES_ENABLED, the handler must return 503
+// with the feature-unavailable code. The check runs BEFORE the loadApp call
+// so even a 404-eligible request (unknown slug) gets 503 — the
 // surface is invisible until the operator flips the flag.
 func TestCreateTenantSurface_FlagOffBlocks(t *testing.T) {
-	// Note: do NOT call withTenantSurfacesEnabled — the env var is unset.
+	t.Setenv("FAAS_TENANT_SURFACES_ENABLED", "")
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "flag-off-app")
 
 	req := makeTenantSurfaceReq(appID, "any-name", "api.example.com")
 	rec := e.do(t, "POST", "/v1/apps/flag-off-app/tenant-surfaces", req, nil)
 
-	if rec.Code != http.StatusPaymentRequired {
-		t.Fatalf("flag-off status = %d, want 402; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("flag-off status = %d, want 503; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "tenant_surfaces_not_allowed") {
-		t.Errorf("body missing tenant_surfaces_not_allowed code: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "tenant_surfaces_not_enabled") {
+		t.Errorf("body missing tenant_surfaces_not_enabled code: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "upgrade to Hobby") {
+		t.Errorf("feature-disabled response must not suggest a plan downgrade: %s", rec.Body.String())
+	}
+}
+
+// TestTenantSurfaces_RuntimeDisabledOnScale verifies the live failure mode
+// from issue #1989 for both advertised Scale operations. A disabled runtime
+// switch is a deployment problem, not a billing decision, so list and add
+// must return the feature code without Scale→Hobby guidance.
+func TestTenantSurfaces_RuntimeDisabledOnScale(t *testing.T) {
+	t.Setenv("FAAS_TENANT_SURFACES_ENABLED", "")
+	e := setup(t, api.PlanScale)
+	appID := mustSeedApp(t, e, "scale-runtime-off-app")
+	surfaceID := seedTenantSurface(t, e, appID, "scale-surface")
+
+	list := e.do(t, "GET", "/v1/apps/scale-runtime-off-app/tenant-surfaces", nil, nil)
+	add := e.do(t, "POST", "/v1/apps/scale-runtime-off-app/tenant-surfaces/"+surfaceID+"/hostnames",
+		api.AddTenantHostnameRequest{Hostname: "tenant.example.com"}, nil)
+	for name, rec := range map[string]*httptest.ResponseRecorder{"list": list, "add": add} {
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s status = %d, want 503; body=%s", name, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "tenant_surfaces_not_enabled") {
+			t.Errorf("%s body missing tenant_surfaces_not_enabled code: %s", name, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "upgrade to Hobby") {
+			t.Errorf("%s feature-disabled response must not suggest a plan downgrade: %s", name, rec.Body.String())
+		}
+	}
+}
+
+// TestTenantSurfaces_ScaleEnabledListAndAdd pins the advertised Scale tier
+// against the deployed feature configuration: once the runtime switch is
+// enabled, the Scale customer can create, list, and add a hostname.
+func TestTenantSurfaces_ScaleEnabledListAndAdd(t *testing.T) {
+	withTenantSurfacesEnabled(t)
+	e, _ := newTestServerWithCapturingNotifier(t, api.PlanScale)
+	appID := mustSeedApp(t, e, "scale-enabled-app")
+
+	created := e.do(t, "POST", "/v1/apps/scale-enabled-app/tenant-surfaces",
+		makeTenantSurfaceReq(appID, "scale-surface"), nil)
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want 202; body=%s", created.Code, created.Body.String())
+	}
+	var surface api.TenantSurfaceResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &surface); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	list := e.do(t, "GET", "/v1/apps/scale-enabled-app/tenant-surfaces", nil, nil)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200; body=%s", list.Code, list.Body.String())
+	}
+	add := e.do(t, "POST", "/v1/apps/scale-enabled-app/tenant-surfaces/"+surface.ID+"/hostnames",
+		api.AddTenantHostnameRequest{Hostname: "tenant.example.com"}, nil)
+	if add.Code != http.StatusAccepted {
+		t.Fatalf("add status = %d, want 202; body=%s", add.Code, add.Body.String())
 	}
 }
 

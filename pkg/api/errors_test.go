@@ -302,6 +302,25 @@ func TestErrBillingNotImplemented(t *testing.T) {
 	}
 }
 
+// TestErrTenantSurfacesNotEnabled pins the runtime dark-launch response.
+// The feature gate is a cluster deployment state, so it must not reuse the
+// plan-denial code or tell an already-eligible Scale customer to downgrade.
+func TestErrTenantSurfacesNotEnabled(t *testing.T) {
+	p := ErrTenantSurfacesNotEnabled()
+	if p.Status != http.StatusServiceUnavailable {
+		t.Errorf("Status = %d, want 503", p.Status)
+	}
+	if p.Code != CodeTenantSurfacesNotEnabled {
+		t.Errorf("Code = %q, want %q", p.Code, CodeTenantSurfacesNotEnabled)
+	}
+	if strings.Contains(p.Detail, "upgrade to Hobby") {
+		t.Errorf("Detail = %q, must not suggest a plan downgrade", p.Detail)
+	}
+	if !strings.Contains(p.Detail, "FAAS_TENANT_SURFACES_ENABLED") {
+		t.Errorf("Detail = %q, want operator flag guidance", p.Detail)
+	}
+}
+
 func TestErrSourceTooLarge(t *testing.T) {
 	l := MustLimitsFor(PlanFree) // 100 MB cap
 	p := ErrSourceTooLarge(l, 150*1024*1024)

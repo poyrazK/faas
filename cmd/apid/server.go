@@ -1301,8 +1301,9 @@ func (s *server) handler() http.Handler {
 	// Issue #879 / ADR-100 PR-C — tenant surfaces (customer-facing
 	// hostname routing primitive). Feature-flagged via
 	// api.TenantSurfacesEnabled(); the flag check runs inside each
-	// handler so the routes 402 (not 404) when the operator has
-	// not yet enabled the cluster-side surface. Auth chain mirrors
+	// handler so the routes return a stable 503 feature-unavailable
+	// problem (not 404 or a plan denial) when the operator has not
+	// yet enabled the cluster-side surface. Auth chain mirrors
 	// the closest precedent (custom_domains at server.go:986):
 	// authLimited → requireMFA → requireScope(deploy:write) for
 	// mutators, requireScope(read) for the list/get.

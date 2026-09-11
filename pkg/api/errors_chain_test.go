@@ -106,6 +106,7 @@ func TestStatusForCode_KnownCodes(t *testing.T) {
 		"app_concurrency_reached":       http.StatusTooManyRequests,
 		"app_maintenance_mode":          http.StatusServiceUnavailable,
 		"debug_regressions_unavailable": http.StatusServiceUnavailable,
+		"tenant_surfaces_not_enabled":   http.StatusServiceUnavailable,
 		"domain_not_verified":           http.StatusConflict,
 		"plan_cron_quota":               http.StatusForbidden,
 		"alert_rule_invalid":            http.StatusBadRequest,

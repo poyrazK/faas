@@ -7,8 +7,9 @@
 //
 // The feature flag FAAS_TENANT_SURFACES_ENABLED gates every
 // handler — the cluster ships dark until the cert-engine
-// real-mint ADR lands. Plan-tier gating (Free=403, Hobby/Pro/
-// Scale=200) is enforced by the store surface via
+// real-mint ADR lands. A disabled flag returns a 503 feature-
+// unavailable problem, while plan-tier gating (Free=402,
+// Hobby/Pro/Scale=200) is enforced by the store surface via
 // limits.TenantSurfacesAllowed (PR-A land).
 //
 // All state-changing handlers emit an audit row + a pg_notify
@@ -43,7 +44,7 @@ import (
 // returns 202 for the same reason).
 func (s *server) createTenantSurface(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
-		api.WriteProblem(w, api.ErrTenantSurfacesNotAllowed(acct.Plan))
+		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
@@ -206,7 +207,7 @@ func hostnameCreateProblem(err error, plan api.Plan, surfaceID string) *api.Prob
 // the whole list with no cursor — mirrors listCrons / listDomains.
 func (s *server) listTenantSurfaces(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
-		api.WriteProblem(w, api.ErrTenantSurfacesNotAllowed(acct.Plan))
+		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
@@ -243,7 +244,7 @@ func (s *server) listTenantSurfaces(w http.ResponseWriter, r *http.Request, acct
 // in the DB but the API hides them.
 func (s *server) getTenantSurface(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
-		api.WriteProblem(w, api.ErrTenantSurfacesNotAllowed(acct.Plan))
+		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
 	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
@@ -273,7 +274,7 @@ func (s *server) getTenantSurface(w http.ResponseWriter, r *http.Request, acct s
 // surfaces are NOT re-deletable (404 — same as missing).
 func (s *server) deleteTenantSurface(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
-		api.WriteProblem(w, api.ErrTenantSurfacesNotAllowed(acct.Plan))
+		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
 	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
@@ -329,7 +330,7 @@ func (s *server) deleteTenantSurface(w http.ResponseWriter, r *http.Request, acc
 // case).
 func (s *server) addTenantHostname(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
-		api.WriteProblem(w, api.ErrTenantSurfacesNotAllowed(acct.Plan))
+		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
 	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
@@ -393,7 +394,7 @@ func (s *server) addTenantHostname(w http.ResponseWriter, r *http.Request, acct 
 // param is lowercased server-side to match the citext storage.
 func (s *server) removeTenantHostname(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
-		api.WriteProblem(w, api.ErrTenantSurfacesNotAllowed(acct.Plan))
+		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
 	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
