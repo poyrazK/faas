@@ -132,3 +132,44 @@ func TestPgStorePrewarmLifecycle(t *testing.T) {
 		t.Fatalf("missing cancel = %v, want ErrNotFound", err)
 	}
 }
+
+func TestPgStorePrewarmExpiryTerminalizesPendingRows(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "prewarm-expiry", "intent")
+	now := time.Now().UTC()
+
+	intent, err := s.CreatePrewarmIntent(ctx, appID, accountID, 1,
+		now.Add(time.Minute), now.Add(2*time.Minute), state.PrewarmTriggerCalendar)
+	if err != nil {
+		t.Fatalf("CreatePrewarmIntent: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `update prewarm_intents
+		set wake_at = $1, expires_at = $2 where id = $3`,
+		now.Add(-2*time.Minute), now.Add(-time.Minute), intent.ID); err != nil {
+		t.Fatalf("expire test fixture: %v", err)
+	}
+
+	rows, err := s.ListExpiredPrewarmIntents(ctx, now, 0)
+	if err != nil || len(rows) != 1 || rows[0].ID != intent.ID {
+		t.Fatalf("ListExpiredPrewarmIntents = %#v, err = %v", rows, err)
+	}
+	changed, err := s.ExpirePrewarmIntent(ctx, intent.ID, now)
+	if err != nil || !changed {
+		t.Fatalf("ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
+	}
+	changed, err = s.ExpirePrewarmIntent(ctx, intent.ID, now)
+	if err != nil || changed {
+		t.Fatalf("duplicate ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
+	}
+	got, err := s.PrewarmIntentByID(ctx, intent.ID)
+	if err != nil || got.Status != state.PrewarmStatusFailed || got.Outcome != "expired" || got.LastError != "expired" || got.FiredAt == nil {
+		t.Fatalf("expired intent = %+v, err = %v", got, err)
+	}
+	rows, err = s.ListExpiredPrewarmIntents(ctx, now, 0)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("expired rows after terminalization = %#v, err = %v", rows, err)
+	}
+	if changed, err := s.ExpirePrewarmIntent(ctx, uuid.NewString(), now); !errors.Is(err, state.ErrNotFound) || changed {
+		t.Fatalf("missing ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
+	}
+}

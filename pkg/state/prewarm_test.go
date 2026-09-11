@@ -186,3 +186,53 @@ func TestMemStoreActivePrewarmFloorUsesAdmittedCount(t *testing.T) {
 		t.Fatalf("active floor = %d, err = %v", got, err)
 	}
 }
+
+func TestMemStorePrewarmExpiryTerminalizesOnlyExpiredPending(t *testing.T) {
+	m := NewMemStore()
+	app := App{ID: "app-1", AccountID: "acct-1", Status: AppActive}
+	m.apps[app.ID] = app
+	now := time.Now().UTC()
+	if _, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 0,
+		now.Add(time.Minute), now.Add(2*time.Minute), PrewarmTriggerCalendar); err == nil {
+		t.Fatal("invalid prewarm creation succeeded")
+	}
+
+	expiredID := newID()
+	// CreatePrewarmIntent correctly rejects a past wake window, so seed the
+	// expired row directly to exercise the reaper's storage behavior.
+	m.prewarmIntents[expiredID] = PrewarmIntent{
+		ID: expiredID, AppID: app.ID, AccountID: app.AccountID, Count: 1,
+		WakeAt: now.Add(-2 * time.Minute), ExpiresAt: now.Add(-time.Minute),
+		Trigger: PrewarmTriggerCalendar, Status: PrewarmStatusPending, CreatedAt: now,
+	}
+	active, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 1,
+		now.Add(time.Minute), now.Add(2*time.Minute), PrewarmTriggerCalendar)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := m.ListExpiredPrewarmIntents(context.Background(), now, 0)
+	if err != nil || len(rows) != 1 || rows[0].ID != expiredID {
+		t.Fatalf("expired rows = %#v, err = %v", rows, err)
+	}
+	if changed, err := m.ExpirePrewarmIntent(context.Background(), expiredID, now); err != nil || !changed {
+		t.Fatalf("ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
+	}
+	if changed, err := m.ExpirePrewarmIntent(context.Background(), expiredID, now); err != nil || changed {
+		t.Fatalf("duplicate ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
+	}
+	got, err := m.PrewarmIntentByID(context.Background(), expiredID)
+	if err != nil || got.Status != PrewarmStatusFailed || got.Outcome != "expired" || got.LastError != "expired" || got.FiredAt == nil {
+		t.Fatalf("expired intent = %#v, err = %v", got, err)
+	}
+	rows, err = m.ListExpiredPrewarmIntents(context.Background(), now, 0)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("expired rows after terminalization = %#v, err = %v", rows, err)
+	}
+	if changed, err := m.ExpirePrewarmIntent(context.Background(), active.ID, now); err != nil || changed {
+		t.Fatalf("active ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
+	}
+	if changed, err := m.ExpirePrewarmIntent(context.Background(), "missing", now); !errors.Is(err, ErrNotFound) || changed {
+		t.Fatalf("missing ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
+	}
+}
