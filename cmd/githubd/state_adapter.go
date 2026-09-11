@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -178,4 +179,17 @@ func (a *stateLifecycleAdapter) RenameGitHubRepository(ctx context.Context, inst
 	return a.store.RenameGitHubRepository(ctx, installationID, oldRepoFullName, newRepoFullName)
 }
 
+func (a *stateLifecycleAdapter) ListGitHubInstallations(ctx context.Context) ([]state.GitHubInstall, error) {
+	return a.store.ListGitHubInstallations(ctx)
+}
+
+func (a *stateLifecycleAdapter) ListGitHubInstallBindingsForInstallation(ctx context.Context, installationID int64) ([]state.GitHubBinding, error) {
+	return a.store.ListGitHubInstallBindingsForInstallation(ctx, installationID)
+}
+
+func (a *stateLifecycleAdapter) RecordGitHubInstallationSync(ctx context.Context, installationID int64, syncedAt time.Time, syncErr string, remoteRepoCount, detachedCount int) error {
+	return a.store.RecordGitHubInstallationSync(ctx, installationID, syncedAt, syncErr, remoteRepoCount, detachedCount)
+}
+
 var _ githubd.InstallationLifecycleStore = (*stateLifecycleAdapter)(nil)
+var _ githubd.InstallationSyncStore = (*stateLifecycleAdapter)(nil)

@@ -473,14 +473,21 @@ func (s *RealService) selectOAuthInstallation(ctx context.Context, accountID, st
 // unsealed from the durable row instead of returning the
 // pre-PR-C "no installation for account" error.
 func (s *RealService) ListInstallableRepos(accountID string, installationID int64) ([]githubdgrpc.Repo, error) {
+	return s.ListInstallableReposContext(context.Background(), accountID, installationID)
+}
+
+// ListInstallableReposContext is the context-aware variant used by the
+// installation drift reconciler. The legacy ListInstallableRepos method is
+// retained for the gRPC surface, whose generated interface predates contexts.
+func (s *RealService) ListInstallableReposContext(ctx context.Context, accountID string, installationID int64) ([]githubdgrpc.Repo, error) {
 	if s.Auth == nil || s.Tokens == nil {
 		return nil, fmt.Errorf("githubd: OAuth not configured")
 	}
-	_, token, err := s.ensureInstallTokenForInstallation(context.Background(), accountID, installationID)
+	_, token, err := s.ensureInstallTokenForInstallation(ctx, accountID, installationID)
 	if err != nil {
 		return nil, err
 	}
-	repos, err := s.Auth.ListInstallableRepos(context.Background(), token, 0)
+	repos, err := s.Auth.ListInstallableRepos(ctx, token, 0)
 	if err != nil {
 		return nil, err
 	}

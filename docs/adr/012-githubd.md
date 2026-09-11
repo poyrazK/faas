@@ -119,3 +119,21 @@ credentials, and invalidate githubd's in-memory caches. Repository removal or
 archival detaches only the affected repository; rename/transfer updates the
 binding to the new full name. The operations are idempotent so GitHub retries
 cannot resurrect revoked access or duplicate state.
+
+## §12 Installation drift reconciler (2026-09-11)
+
+Lifecycle webhooks are the fast path, but webhook delivery can be delayed,
+dropped, or unavailable while a customer changes an installation's repository
+selection. githubd therefore runs an immediate and 15-minute reconciliation
+pass for every durable installation. It lists repositories through the exact
+account/installation token, compares names case-insensitively, and detaches
+bindings whose repositories are no longer accessible. A failed GitHub read is
+recorded in the installation's health columns and never causes a destructive
+detach. Newly accessible repositories are not auto-bound; customers still
+choose the app/repository edge explicitly in the picker.
+
+The pass exports low-cardinality run, failure, last-run, remote-repository, and
+detached-binding metrics. Persisted timestamps, bounded error text, and counts
+make the last outcome visible after a githubd restart. Repository renames still
+come from the lifecycle webhook because a name-only list cannot safely infer a
+rename versus removal.
