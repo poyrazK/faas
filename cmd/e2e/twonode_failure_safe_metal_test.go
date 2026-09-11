@@ -6,11 +6,9 @@
 // end-to-end recovery + drain + heartbeat + partition paths
 // across two schedd + two vmmd daemons.
 //
-// These tests require /dev/kvm + CAP_NET_ADMIN + a real Postgres.
-// They run under `make metal-lima-2node-fault` (Lima nested-virt
-// arm64 Linux guest). On a CI box without KVM they build-skipped
-// because the build tag is `metal`; on a Mac without Lima they
-// don't run.
+// These tests require a real Postgres. The native two-node heartbeat gate
+// runs on the x86 split-box pair via `make native-m9-acceptance`; it does not
+// depend on Lima or nested virtualization.
 //
 // The tests in this file are acceptance gates for §14.A Workstream
 // B. A green run here is one of the merge prerequisites per the
@@ -19,6 +17,7 @@ package e2e
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -32,6 +31,26 @@ import (
 // PG is unavailable — same shape as the single-node metal tests).
 func poolWithSkip(t *testing.T) *pgxpool.Pool {
 	t.Helper()
+	if os.Getenv("FAAS_TWO_NODE_REMOTE") == "1" {
+		dsn := os.Getenv("DATABASE_URL")
+		if dsn == "" {
+			t.Skip("native two-node acceptance requires DATABASE_URL")
+		}
+		cfg, err := pgxpool.ParseConfig(dsn)
+		if err != nil {
+			t.Fatalf("native two-node acceptance: parse DATABASE_URL: %v", err)
+		}
+		pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("native two-node acceptance: open DATABASE_URL: %v", err)
+		}
+		if err := pool.Ping(context.Background()); err != nil {
+			pool.Close()
+			t.Fatalf("native two-node acceptance: ping DATABASE_URL: %v", err)
+		}
+		t.Cleanup(pool.Close)
+		return pool
+	}
 	return pgtest.OpenMigrated(t)
 }
 
@@ -45,11 +64,27 @@ func TestTwoNode_HeartbeatGapFlipsLifecycleUnavailable(t *testing.T) {
 	h := e2etest.StartTwoNode(t, pool)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 
-	if err := fi.StaleHeartbeat(h.NodeB, 2*time.Minute); err != nil {
+	// In native mode the compute-only box owns vmmd while the control-plane
+	// schedd sweeps the fleet. Stop vmmd so the real heartbeat probe observes a
+	// durable failure; RestoreAll starts it again even if an assertion fails.
+	if h.Remote {
+		if err := fi.KillVmmd(h.NodeB); err != nil {
+			t.Fatalf("KillVmmd: %v", err)
+		}
+	} else if err := fi.StaleHeartbeat(h.NodeB, 2*time.Minute); err != nil {
 		t.Fatalf("StaleHeartbeat: %v", err)
 	}
 	if err := h.WaitForNode(context.Background(), h.NodeB, "unavailable", 90*time.Second); err != nil {
 		t.Fatalf("node-b did not flip to unavailable: %v", err)
+	}
+	var events int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM events WHERE kind = 'node.failed' AND payload->>'node_id' = $1`,
+		h.NodeBID).Scan(&events); err != nil {
+		t.Fatalf("count node.failed events: %v", err)
+	}
+	if events == 0 {
+		t.Fatalf("expected node.failed event for %s", h.NodeBID)
 	}
 }
 
@@ -85,7 +120,7 @@ func TestTwoNode_RecoveryArbiterLiveMigratesHealthyInstances(t *testing.T) {
 	pool := poolWithSkip(t)
 	h := e2etest.StartTwoNode(t, pool)
 	_ = h
-	t.Skip("requires live schedd/vmmd boot via make metal-lima-2node-fault; deferred to the runbook gate (#73)")
+	t.Skip("requires live schedd/vmmd workload fixtures; deferred to the native M9 runbook")
 }
 
 // TestTwoNode_RecoveryArbiterRecreatesWhenNoSnapshot — Task #72
@@ -97,7 +132,7 @@ func TestTwoNode_RecoveryArbiterRecreatesWhenNoSnapshot(t *testing.T) {
 	pool := poolWithSkip(t)
 	h := e2etest.StartTwoNode(t, pool)
 	_ = h
-	t.Skip("requires live schedd/vmmd boot; covered when metal-lima-2node-fault lands")
+	t.Skip("requires live schedd/vmmd workload fixtures; covered by a follow-up native M9 drill")
 }
 
 // TestTwoNode_DrainCompletesAfterLastMigration — Task #72 test #5.
@@ -109,7 +144,7 @@ func TestTwoNode_DrainCompletesAfterLastMigration(t *testing.T) {
 	pool := poolWithSkip(t)
 	h := e2etest.StartTwoNode(t, pool)
 	_ = h
-	t.Skip("requires live apid boot; covered when metal-lima-2node-fault lands")
+	t.Skip("requires live apid and workload fixtures; covered by a follow-up native M9 drill")
 }
 
 // TestTwoNode_PartitionedScheddRecoversViaStaleHeartbeat —

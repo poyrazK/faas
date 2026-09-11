@@ -35,17 +35,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TwoNodeHarness represents two schedd + two vmmd daemons
-// sharing one apid (the multi-host-single-apid pattern from
-// Tier A7). Each schedd has its own compute_nodes row (name =
-// node-{A,B}); the migration arbiter + drain handler exercise
-// the cross-row coordination paths end-to-end.
+// TwoNodeHarness represents the two-node database view used by the
+// failure-safe tests. Local tests create synthetic rows; native mode selects
+// the operator-managed split-box rows and leaves them in place. The daemons
+// are supplied by the corresponding fixture or production pair.
 //
 // Tests consume the struct's fields directly; cleanup is wired
 // via t.Cleanup in StartTwoNode so a t.Fatal cannot leak daemons.
 type TwoNodeHarness struct {
 	T          *testing.T
 	Pool       *pgxpool.Pool
+	Remote     bool // true when the rows and daemons belong to the native split-box pair
 	SockDir    string
 	ScheddA    string // schedd-a unix socket
 	ScheddB    string // schedd-b unix socket
@@ -58,10 +58,9 @@ type TwoNodeHarness struct {
 	APIDProcID int // pseudo PID — the apid's *exec.Cmd isn't exposed
 }
 
-// StartTwoNode boots the two-node control plane. Skips when
-// PG is unavailable (the existing pgtest.Open pattern). The
-// shared apid (single instance) is the production multi-host
-// pattern — only the schedd + vmmd tier is duplicated.
+// StartTwoNode prepares the two-node control-plane view. In local mode it
+// creates disposable rows. With FAAS_TWO_NODE_REMOTE=1 it selects existing
+// rows from the native split-box database and never deletes or rewrites them.
 //
 // Why the apid is single-instance: Tier A7 split (ADR-070)
 // places apid behind a HA front; multiple apid daemons on the
@@ -81,19 +80,43 @@ func StartTwoNode(t *testing.T, pool *pgxpool.Pool) *TwoNodeHarness {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 
-	nodeA := "node-a-" + uuid.NewString()[:8]
-	nodeB := "node-b-" + uuid.NewString()[:8]
-	nodeAID, err := upsertComputeNode(t, pool, nodeA, "fsn-a")
-	if err != nil {
-		t.Fatalf("twonode: upsert node A: %v", err)
+	remote := os.Getenv("FAAS_TWO_NODE_REMOTE") == "1"
+	nodeA, nodeB := "", ""
+	if remote {
+		nodeA = os.Getenv("FAAS_TWO_NODE_NODE_A")
+		nodeB = os.Getenv("FAAS_TWO_NODE_NODE_B")
+		if nodeA == "" || nodeB == "" {
+			t.Fatal("twonode: FAAS_TWO_NODE_NODE_A and FAAS_TWO_NODE_NODE_B are required in remote mode")
+		}
+	} else {
+		nodeA = "node-a-" + uuid.NewString()[:8]
+		nodeB = "node-b-" + uuid.NewString()[:8]
 	}
-	nodeBID, err := upsertComputeNode(t, pool, nodeB, "fsn-b")
-	if err != nil {
-		t.Fatalf("twonode: upsert node B: %v", err)
+
+	var nodeAID, nodeBID string
+	if remote {
+		nodeAID, err = existingComputeNode(t, pool, nodeA)
+		if err != nil {
+			t.Fatalf("twonode: find node A %q: %v", nodeA, err)
+		}
+		nodeBID, err = existingComputeNode(t, pool, nodeB)
+		if err != nil {
+			t.Fatalf("twonode: find node B %q: %v", nodeB, err)
+		}
+	} else {
+		nodeAID, err = upsertComputeNode(t, pool, nodeA, "fsn-a")
+		if err != nil {
+			t.Fatalf("twonode: upsert node A: %v", err)
+		}
+		nodeBID, err = upsertComputeNode(t, pool, nodeB, "fsn-b")
+		if err != nil {
+			t.Fatalf("twonode: upsert node B: %v", err)
+		}
 	}
 	h := &TwoNodeHarness{
 		T:       t,
 		Pool:    pool,
+		Remote:  remote,
 		SockDir: sockDir,
 		NodeA:   nodeA,
 		NodeB:   nodeB,
@@ -101,19 +124,31 @@ func StartTwoNode(t *testing.T, pool *pgxpool.Pool) *TwoNodeHarness {
 		NodeBID: nodeBID,
 	}
 	t.Cleanup(func() {
+		if remote {
+			return
+		}
 		// Best-effort cleanup of the per-test compute_nodes rows so a
 		// re-run with the same schema prefix doesn't collide.
 		_, _ = pool.Exec(context.Background(),
 			`DELETE FROM compute_nodes WHERE name IN ($1, $2)`, nodeA, nodeB)
 	})
-	// Note: this minimal harness does NOT spawn the daemon subprocesses
-	// (the existing single-node Harness.Start does, with buildBinaries +
-	// startProc + waitUnix). Tests that need live daemons use that path;
-	// the unit-tier tests in cmd/e2e/twonode_failure_safe_metal_test.go
-	// drive the harness via the recovery_arbiter unit tests + this
-	// fixture for the cross-node coordination surface.
+	// Note: this harness does not spawn daemon subprocesses. Local tests use
+	// the existing single-node Harness.Start path; native mode talks to the
+	// already-managed split-box daemons through the fault injector.
 	_ = filepath.Join(tmp, "bin") // placeholder for future buildBinaries
 	return h
+}
+
+// existingComputeNode selects an operator-managed node without mutating it.
+// Native acceptance runs against the Ansible split-box pair, so creating
+// synthetic rows would exercise a different schema and let the real daemons
+// overwrite the test state.
+func existingComputeNode(t *testing.T, pool *pgxpool.Pool, name string) (string, error) {
+	t.Helper()
+	var id string
+	err := pool.QueryRow(context.Background(),
+		`SELECT id FROM compute_nodes WHERE name = $1`, name).Scan(&id)
+	return id, err
 }
 
 // upsertComputeNode seeds a compute_nodes row the recovery
