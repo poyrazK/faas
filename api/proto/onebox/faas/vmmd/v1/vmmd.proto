@@ -1190,6 +1190,10 @@ message LogsRequest {
   int64  since_seq = 2;
   string wake_id = 3;
   google.protobuf.Timestamp since_written_at = 4;
+  // follow controls whether the stream remains attached after the
+  // retained replay page. When unset, legacy callers retain the live-tail
+  // behavior; explicit false makes this a one-shot snapshot stream.
+  optional bool follow = 5;
 }
 
 // LogsResponse is one streamed log line. seq is the per-instance

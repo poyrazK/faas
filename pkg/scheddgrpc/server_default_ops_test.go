@@ -53,7 +53,7 @@ func (noopEngine) ForceColdBootNextWake(context.Context, string) ([]string, erro
 func (noopEngine) ForceRestart(context.Context, string, string) ([]string, error) {
 	return nil, nil
 }
-func (noopEngine) StreamAppLogs(context.Context, string, int64, time.Time, string, LogFrameSink) error {
+func (noopEngine) StreamAppLogs(context.Context, string, int64, time.Time, bool, string, LogFrameSink) error {
 	return nil
 }
 func (noopEngine) StreamWarmHints(context.Context, WarmHintSink) error { return nil }

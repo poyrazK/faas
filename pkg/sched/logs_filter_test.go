@@ -52,9 +52,10 @@ type recordedDial struct {
 	InstanceID     string
 	SinceSeq       int64
 	SinceWrittenAt time.Time
+	Follow         bool
 }
 
-func (r *deploymentFilterFakeVMM) Logs(ctx context.Context, nodeID, instanceID string, sinceSeq int64, sinceWrittenAt time.Time) (LogStream, error) {
+func (r *deploymentFilterFakeVMM) Logs(ctx context.Context, nodeID, instanceID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool) (LogStream, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.dials = append(r.dials, recordedDial{
@@ -62,6 +63,7 @@ func (r *deploymentFilterFakeVMM) Logs(ctx context.Context, nodeID, instanceID s
 		InstanceID:     instanceID,
 		SinceSeq:       sinceSeq,
 		SinceWrittenAt: sinceWrittenAt,
+		Follow:         follow,
 	})
 	if r.perInstanceStream == nil {
 		return &fakeLogStream{}, nil
@@ -275,7 +277,7 @@ func TestEngineStreamAppLogs_DeploymentFilterScopesFanout(t *testing.T) {
 	wantSince := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	done := make(chan error, 1)
 	go func() {
-		done <- eng.StreamAppLogs(ctx, app.ID, 42, wantSince, dep1.ID, sink.sink())
+		done <- eng.StreamAppLogs(ctx, app.ID, 42, wantSince, true, dep1.ID, sink.sink())
 	}()
 	// Wait for the engine to fan out two Logs dials (A + B),
 	// then close all three streams so the per-instance goroutines
@@ -326,6 +328,52 @@ func TestEngineStreamAppLogs_DeploymentFilterScopesFanout(t *testing.T) {
 	}
 }
 
+// TestEngineStreamAppLogs_OneShotReturnsAfterReplay pins the scheduler
+// half of the non-follow contract: the explicit false mode is forwarded to
+// vmmd and the engine returns once every live instance has reached EOF.
+func TestEngineStreamAppLogs_OneShotReturnsAfterReplay(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 5)
+	ins, err := store.CreateInstance(ctx, app.ID, "", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	stream := newProgrammableLogStream(
+		LogLine{Seq: 1, Stream: "stdout", Line: "alpha"},
+		LogLine{Seq: 2, Stream: "stderr", Line: "beta"},
+	)
+	stream.close()
+	vmm := &deploymentFilterFakeVMM{
+		perInstanceStream: map[string]LogStream{
+			state.DefaultLocalNodeName + "/" + ins.ID: stream,
+		},
+	}
+	eng := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	sink := &frameSink{}
+	done := make(chan error, 1)
+	go func() {
+		done <- eng.StreamAppLogs(ctx, app.ID, 0, time.Time{}, false, "", sink.sink())
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("StreamAppLogs: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("one-shot StreamAppLogs did not return after replay")
+	}
+	frames := sink.snapshot()
+	if len(frames) != 2 {
+		t.Fatalf("replayed frames = %d, want 2", len(frames))
+	}
+	dials := vmm.dialed()
+	if len(dials) != 1 || dials[0].Follow {
+		t.Fatalf("vmmd dial follow state = %+v, want one dial with follow=false", dials)
+	}
+}
+
 // TestEngineStreamAppLogs_GapForwardedFromVMM pins AC4: a gap
 // frame the vmmd-side programmableLogStream delivers is forwarded
 // to the sink verbatim, with IsGap=true, GapToWrittenAt populated,
@@ -361,7 +409,7 @@ func TestEngineStreamAppLogs_GapForwardedFromVMM(t *testing.T) {
 	sink := &frameSink{}
 	done := make(chan error, 1)
 	go func() {
-		done <- eng.StreamAppLogs(ctx, app.ID, 0, time.Time{}, "", sink.sink())
+		done <- eng.StreamAppLogs(ctx, app.ID, 0, time.Time{}, true, "", sink.sink())
 	}()
 	// Wait for all three frames to land in the sink (each is
 	// delivered synchronously by the writer goroutine) then
@@ -428,7 +476,7 @@ func TestEngineStreamAppLogs_AttachesInstanceCreatedAfterFollowStarts(t *testing
 	sink := &frameSink{}
 	done := make(chan error, 1)
 	go func() {
-		done <- eng.StreamAppLogs(ctx, app.ID, 0, time.Time{}, "", sink.sink())
+		done <- eng.StreamAppLogs(ctx, app.ID, 0, time.Time{}, true, "", sink.sink())
 	}()
 
 	// A follow stream can begin while the app is parked. A later wake creates

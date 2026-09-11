@@ -103,7 +103,7 @@ func (c *capturingEngine) ForceColdBootNextWake(_ context.Context, _ string) ([]
 func (c *capturingEngine) ForceRestart(_ context.Context, _, _ string) ([]string, error) {
 	return nil, nil
 }
-func (c *capturingEngine) StreamAppLogs(_ context.Context, _ string, _ int64, _ time.Time, _ string, _ scheddgrpc.LogFrameSink) error {
+func (c *capturingEngine) StreamAppLogs(_ context.Context, _ string, _ int64, _ time.Time, _ bool, _ string, _ scheddgrpc.LogFrameSink) error {
 	return nil
 }
 func (c *capturingEngine) StreamWarmHints(_ context.Context, _ scheddgrpc.WarmHintSink) error {

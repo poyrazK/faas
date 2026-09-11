@@ -147,7 +147,7 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 			err = errors.New("log stream resolver returned nil streamer")
 		}
 		if err == nil {
-			stream, streamErr := streamer.StreamAppLogs(ctx, spec.AppID, 0, time.Time{}, "", "", "")
+			stream, streamErr := streamer.StreamAppLogs(ctx, spec.AppID, 0, time.Time{}, true, "", "", "")
 			if streamErr == nil {
 				backoff = time.Second
 				for {

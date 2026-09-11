@@ -19,6 +19,9 @@ import (
 //     committed line until the caller's context is cancelled or the
 //     ring is closed (Kill/DestroyWithExport).
 //
+// A request with follow=false returns after phase 1. The optional wire field
+// defaults to true so older schedd clients retain the live-tail behavior.
+//
 // PR-B (issue #517 / acceptance #3 + #4) extends the initial page
 // with two additive filters without changing the wire contract for
 // pre-PR-B clients:
@@ -80,10 +83,25 @@ func (s *Server) Logs(req *vmmdpb.LogsRequest, stream vmmdpb.Vmmd_LogsServer) er
 			"instance", req.GetInstance())
 		return sendErr
 	}
+	var sinceTime time.Time
+	if ts := req.GetSinceWrittenAt(); ts != nil {
+		sinceTime = ts.AsTime()
+	}
 	streamLogger.Info("vmmd: Logs: stream opened",
 		"instance", req.GetInstance(),
 		"since_seq", req.GetSinceSeq(),
-		"since_written_at", req.GetSinceWrittenAt().AsTime())
+		"since_written_at", sinceTime)
+	follow := true
+	if req.Follow != nil {
+		follow = req.GetFollow()
+	}
+	snapshotSince := req.GetSinceSeq()
+	if !follow && snapshotSince == 0 {
+		// The one-shot API has no cursor by default, so expose the
+		// retained page rather than the live-tail sentinel used by
+		// follow streams.
+		snapshotSince = 1
+	}
 	// Gap-frame synthesis (issue #517 / PR-B acceptance #4). When
 	// since_seq sits below the oldest line the ring currently
 	// retains, the producer surfaces an explicit gap frame BEFORE
@@ -106,14 +124,14 @@ func (s *Server) Logs(req *vmmdpb.LogsRequest, stream vmmdpb.Vmmd_LogsServer) er
 				return err
 			}
 		}
-	} else if !req.GetSinceWrittenAt().AsTime().IsZero() {
+	} else if !sinceTime.IsZero() {
 		// since_seq omitted (live-tail sentinel) but a since-time
 		// bound was passed AND the ring's oldest retained line is
 		// strictly newer than the caller's bound: the caller asked
 		// "give me everything since T" and the ring has nothing that
 		// old. Surface an explicit gap frame labelled with the bound.
 		headAt := ring.HeadWrittenAt()
-		if !headAt.IsZero() && headAt.After(req.GetSinceWrittenAt().AsTime()) {
+		if !headAt.IsZero() && headAt.After(sinceTime) {
 			if err := stream.Send(gapResponse(headAt, "since_below_retained")); err != nil {
 				sendErr = err
 				return err
@@ -125,9 +143,8 @@ func (s *Server) Logs(req *vmmdpb.LogsRequest, stream vmmdpb.Vmmd_LogsServer) er
 	// SnapshotAndSubscribe registers the live subscriber under the same
 	// lock as the snapshot so a line committed between these phases is
 	// buffered for the live tail instead of being lost.
-	snapshot, ch, cancel := ring.SnapshotAndSubscribe(req.GetSinceSeq())
+	snapshot, ch, cancel := ring.SnapshotAndSubscribe(snapshotSince)
 	defer cancel()
-	sinceTime := req.GetSinceWrittenAt().AsTime()
 	for _, line := range snapshot {
 		if !sinceTime.IsZero() && line.WrittenAt.Before(sinceTime) {
 			continue
@@ -136,6 +153,9 @@ func (s *Server) Logs(req *vmmdpb.LogsRequest, stream vmmdpb.Vmmd_LogsServer) er
 			sendErr = err
 			return err
 		}
+	}
+	if !follow {
+		return nil
 	}
 	// Live tail. SnapshotAndSubscribe returns an independent buffered
 	// channel per subscriber; concurrent subscribers do not share

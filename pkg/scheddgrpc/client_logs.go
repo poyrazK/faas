@@ -49,6 +49,9 @@ type LogStream interface {
 // zero time is the "no bound" sentinel and is skipped on the
 // wire.
 //
+// follow controls whether schedd remains subscribed after the
+// retained replay page; false is the one-shot CLI mode.
+//
 // deploymentID (issue #517 / PR-B acceptance #3) is the
 // per-deployment soft scoping; empty = fan out to every live
 // instance for the app.
@@ -64,10 +67,11 @@ type LogStream interface {
 // Returned errors pass through unchanged. The caller owns error
 // mapping; this method never lifts gRPC statuses to *api.Problem
 // because the SSE renderer needs the raw code.
-func (c *Client) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, level string, grep string) (LogStream, error) {
+func (c *Client) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool, deploymentID string, level string, grep string) (LogStream, error) {
 	req := &scheddpb.StreamAppLogsRequest{
 		AppId:    appID,
 		SinceSeq: sinceSeq,
+		Follow:   &follow,
 	}
 	if !sinceWrittenAt.IsZero() {
 		req.SinceWrittenAt = timestamppb.New(sinceWrittenAt)

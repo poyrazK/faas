@@ -431,7 +431,7 @@ func (f *fakeVMM) UpdateStaticEgressIP(_ context.Context, _, _, _ string, _ stri
 // do. Returns a closed fakeLogStream so any accidental caller exits
 // cleanly. PR-B adds the sinceWrittenAt time lower-bound; the fake
 // ignores it but still records the ctx for fan-out assertions.
-func (f *fakeVMM) Logs(ctx context.Context, _, _ string, _ int64, _ time.Time) (LogStream, error) {
+func (f *fakeVMM) Logs(ctx context.Context, _, _ string, _ int64, _ time.Time, _ bool) (LogStream, error) {
 	f.mu.Lock()
 	f.lastLogsCtx = ctx
 	f.mu.Unlock()

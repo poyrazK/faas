@@ -19,6 +19,8 @@
 // surface. We assert dial count == active node count per tick so
 // a regression that accidentally re-uses a cached conn trips the
 // test.
+// adr: 043 — the heartbeat fake implements the same routed VMM surface
+// used by the app-log stream.
 
 package sched
 
@@ -168,7 +170,7 @@ func (h *heartbeatFakeVMM) UpdateStaticEgressIP(context.Context, string, string,
 // do. Returns a closed fakeLogStream so any accidental caller exits
 // cleanly. PR-B adds the sinceWrittenAt time lower-bound; the fake
 // ignores it.
-func (h *heartbeatFakeVMM) Logs(context.Context, string, int64, time.Time) (LogStream, error) {
+func (h *heartbeatFakeVMM) Logs(context.Context, string, int64, time.Time, bool) (LogStream, error) {
 	return &fakeLogStream{}, nil
 }
 
