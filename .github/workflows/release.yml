@@ -116,7 +116,8 @@ jobs:
       # the working directory where both binaries live. The vendoring
       # step below retains a SHA256SUMS copy on the release branch for
       # action compatibility, while the GitHub release uses the distinct
-      # CLI-SHA256SUMS name so the daemon checksum asset cannot replace it.
+      # CLI-SHA256SUMS public asset name so the daemon checksum publication
+      # cannot replace it.
       # The archives are flattened into the same directory first so their
       # checksum entries carry bare filenames. scripts/install.sh matches on
       # "<digest>  <archive>" exactly, and an "archives/" prefix would fail.
