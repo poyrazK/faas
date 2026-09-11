@@ -34,6 +34,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -54,6 +55,11 @@ type issueCreditPayload struct {
 func (s *server) issueCredit(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if allowed, prob := s.adminAllows(acct); !allowed {
 		api.WriteProblem(w, prob)
+		return
+	}
+	if s.billingProvider == nil || !s.billingProvider.Capabilities().Has(billing.CapRefund) {
+		api.WriteProblem(w, api.ErrBillingNotImplemented(
+			"credits require a billing provider with idempotent refund support"))
 		return
 	}
 	targetID := r.PathValue("id")

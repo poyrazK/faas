@@ -26,6 +26,7 @@ package main
 // onto a paid plan (spec §4.7).
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -49,10 +50,14 @@ const dashboardUpgradeAction = "upgrade_plan"
 // plan: true when the provider exposes hosted checkout and the account
 // has no subscription yet. The billing page uses it to decide between
 // the per-plan upgrade links and the CLI / portal hint.
-func (s *server) canStartCheckout(acct state.Account) bool {
+func (s *server) canStartCheckout(ctx context.Context, acct state.Account) bool {
+	resolved, err := s.accountForActiveBillingProvider(ctx, acct)
+	if err != nil {
+		return false
+	}
 	return s.billingProvider != nil &&
 		s.billingProvider.Capabilities().Has(billing.CapHostedCheckout) &&
-		acct.StripeSubscriptionItem == ""
+		resolved.StripeSubscriptionItem == ""
 }
 
 // upgradeOptionsFor lists the paid plans acct can upgrade to, in
@@ -150,6 +155,7 @@ func (s *server) renderUpgrade(w http.ResponseWriter, r *http.Request, log *slog
 // the 50-line handler guideline.
 func (s *server) upgradePageData(r *http.Request, acct state.Account) dashboard.UpgradeData {
 	name := providerName(s.billingProvider)
+	billingAcct, identityErr := s.accountForActiveBillingProvider(r.Context(), acct)
 	data := dashboard.UpgradeData{
 		CurrentPlan:   string(acct.Plan),
 		Options:       upgradeOptionsFor(acct),
@@ -164,9 +170,11 @@ func (s *server) upgradePageData(r *http.Request, acct state.Account) dashboard.
 		}
 	}
 	switch {
-	case acct.StripeSubscriptionItem != "":
+	case identityErr != nil:
+		data.Reason = "Billing identity is temporarily unavailable. Please retry in a minute."
+	case billingAcct.StripeSubscriptionItem != "":
 		data.Reason = "Your account already has a subscription. Plan changes on an existing subscription are made in the " + data.ProviderLabel + " portal."
-		data.PortalURL = s.billingPortalURLForProvider(r.Context(), acct)
+		data.PortalURL = s.billingPortalURLForProvider(r.Context(), billingAcct)
 	case s.billingProvider == nil || !s.billingProvider.Capabilities().Has(billing.CapHostedCheckout):
 		data.Reason = "Hosted checkout is not available on this deployment. Change plan via the CLI: faas plan <plan>."
 	case len(data.Options) == 0:

@@ -131,6 +131,11 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 		if acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending {
 			continue
 		}
+		acct, err = p.accountForProvider(ctx, acct)
+		if err != nil {
+			p.log.Warn("meter: load provider billing identity", "account", acct.ID, "provider", ops.opLabel, "err", err)
+			continue
+		}
 		if acct.ProviderCustomerID == "" || acct.StripeSubscriptionItem == "" {
 			// Paid usage is not billable until both provider identities have
 			// been persisted by the subscription webhook. Calling a provider
@@ -180,6 +185,12 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 				"code", code, "mb_seconds", mbSec, "billable_mb_seconds", billableMBSeconds, "err", perr)
 			continue
 		}
+		if err := p.store.RecordBillingUsageDelivery(ctx, ops.opLabel, acct.ID, start, billableMBSeconds); err != nil {
+			// The provider idempotency key makes retry safe. Do not count the
+			// window as locally delivered until its durable receipt commits.
+			p.log.Warn("meter: record billing delivery", "account", acct.ID, "provider", ops.opLabel, "hour", start, "err", err)
+			continue
+		}
 		p.log.Info("meter: push usage", "account", acct.ID, "hour", start,
 			"code", code, "mb_seconds", mbSec, "billable_mb_seconds", billableMBSeconds)
 		pushed++
@@ -197,12 +208,12 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	if p.pusher == nil {
 		return 0, errors.New("meter: billing pusher not configured")
 	}
-	if lookback <= 0 {
-		lookback = 30 * 24 * time.Hour
-	}
+	// Kept in the signature for config/API compatibility. Delivery receipts,
+	// rather than a wall-clock lookback, now define replay completeness.
+	_ = lookback
 	end := p.now().UTC().Truncate(time.Hour)
-	start := end.Add(-lookback).Truncate(time.Hour)
-	windows, err := p.store.UsageWindows(ctx, start, end)
+	ops := providerOpsFor(p.pusher)
+	windows, err := p.store.PendingBillingUsageWindows(ctx, ops.opLabel, end)
 	if err != nil {
 		return 0, err
 	}
@@ -214,7 +225,6 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	for _, acct := range accounts {
 		byID[acct.ID] = acct
 	}
-	ops := providerOpsFor(p.pusher)
 	mode := providerUsageMode(p.pusher)
 	var caps map[string]int64
 	if mode == billing.UsageModeOverage {
@@ -247,6 +257,14 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 		if !ok || acct.Plan == "free" || acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending {
 			continue
 		}
+		acct, err = p.accountForProvider(ctx, acct)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			p.log.Warn("meter: load provider billing identity", "account", acct.ID, "provider", ops.opLabel, "err", err)
+			continue
+		}
 		if acct.ProviderCustomerID == "" || acct.StripeSubscriptionItem == "" {
 			// Keep the window in durable usage_minutes until the subscription
 			// webhook stamps both identities. This avoids reporting a successful
@@ -258,8 +276,9 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 			continue
 		}
 		billableMBSeconds := window.MBSeconds
+		settled := true
 		if mode == billing.UsageModeOverage {
-			billableMBSeconds, err = p.billablePendingUsage(ctx, acct, window, cursors, caps)
+			billableMBSeconds, settled, err = p.billablePendingUsage(ctx, acct, window, cursors, caps)
 			if err != nil {
 				if firstErr == nil {
 					firstErr = err
@@ -269,6 +288,14 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 			}
 		}
 		if billableMBSeconds <= 0 {
+			if settled {
+				if err := p.store.RecordBillingUsageDelivery(ctx, ops.opLabel, acct.ID, window.Hour, 0); err != nil {
+					if firstErr == nil {
+						firstErr = err
+					}
+					p.log.Warn("meter: record zero billing delivery", "account", acct.ID, "provider", ops.opLabel, "hour", window.Hour, "err", err)
+				}
+			}
 			continue
 		}
 		pushStart := time.Now()
@@ -283,6 +310,13 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 			}
 			p.log.Warn("meter: push usage", "account", acct.ID, "hour", window.Hour,
 				"replay", true, "code", code, "mb_seconds", window.MBSeconds, "billable_mb_seconds", billableMBSeconds, "err", perr)
+			continue
+		}
+		if err := p.store.RecordBillingUsageDelivery(ctx, ops.opLabel, acct.ID, window.Hour, billableMBSeconds); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			p.log.Warn("meter: record billing delivery", "account", acct.ID, "provider", ops.opLabel, "hour", window.Hour, "err", err)
 			continue
 		}
 		pushed++
@@ -327,7 +361,7 @@ func (p *Pusher) billableUsage(ctx context.Context, acct state.Account, hour tim
 	return after - before, nil
 }
 
-func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, window state.UsageWindow, cursors map[string]overageCursor, caps map[string]int64) (int64, error) {
+func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, window state.UsageWindow, cursors map[string]overageCursor, caps map[string]int64) (int64, bool, error) {
 	hour := window.Hour.UTC().Truncate(time.Hour)
 	monthStart := time.Date(hour.Year(), hour.Month(), 1, 0, 0, 0, 0, time.UTC)
 	key := acct.ID + "\x00" + monthStart.Format("2006-01")
@@ -335,7 +369,7 @@ func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, w
 	if !ok {
 		prior, err := sumUsageRows(ctx, p.store, acct.ID, monthStart, hour)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		cursor = overageCursor{rawBefore: prior}
 	}
@@ -347,9 +381,45 @@ func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, w
 		// Do not send a partial window. A partial push would be recorded as
 		// complete by the provider's hourly dedupe key and the remainder
 		// could never be replayed if the customer later raises the cap.
-		return 0, nil
+		return 0, false, nil
 	}
-	return after - before, nil
+	return after - before, true, nil
+}
+
+// accountForProvider replaces the legacy active-provider cache on Account with
+// the identity owned by the configured backend. Unknown test/custom providers
+// keep the legacy shape; production Stripe, Paddle, and Polar clients never
+// reuse a stale customer or subscription handle from another provider.
+func (p *Pusher) accountForProvider(ctx context.Context, acct state.Account) (state.Account, error) {
+	provider, qualified := billingProviderName(p.pusher)
+	if !qualified {
+		return acct, nil
+	}
+	identity, err := p.store.BillingIdentity(ctx, acct.ID, provider)
+	if errors.Is(err, state.ErrNotFound) {
+		acct.ProviderCustomerID = ""
+		acct.StripeSubscriptionItem = ""
+		return acct, nil
+	}
+	if err != nil {
+		return acct, err
+	}
+	acct.ProviderCustomerID = identity.CustomerID
+	acct.StripeSubscriptionItem = identity.SubscriptionID
+	return acct, nil
+}
+
+func billingProviderName(provider billing.Provider) (string, bool) {
+	switch provider.(type) {
+	case *stripe.Client:
+		return "stripe", true
+	case *paddle.Provider:
+		return "paddle", true
+	case *polar.Provider:
+		return "polar", true
+	default:
+		return "", false
+	}
 }
 
 // overageCapReached reports whether posting the entire candidate window would

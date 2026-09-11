@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -59,7 +58,7 @@ func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
 	// database write must leave the delivery retryable; the natural-key upsert
 	// makes this safe when Polar redelivers after the later business-state
 	// processing succeeds.
-	if err := s.persistBillingInvoice(r.Context(), string(webhookdedupe.ProviderPolar), acct, ev.Invoice); err != nil {
+	if err := s.persistBillingInvoice(r.Context(), string(webhookdedupe.ProviderPolar), acct, ev.PlanID, ev.Invoice); err != nil {
 		s.log.Error("polar webhook invoice persistence failed", "event_id", logsanitize.Field(ev.EventID), "err", err)
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
@@ -150,8 +149,5 @@ func (s *server) requestPolarInvoicePDFAsync(parentCtx context.Context, requeste
 }
 
 func (s *server) lookupAccountByPolarID(ctx context.Context, polarID string) (state.Account, error) {
-	if polarID == "" {
-		return state.Account{}, errors.New("apid: empty polar customer id")
-	}
-	return s.store.AccountByProviderCustomerID(ctx, polarID)
+	return s.lookupBillingAccount(ctx, "polar", polarID)
 }

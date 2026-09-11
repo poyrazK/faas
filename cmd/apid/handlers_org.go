@@ -21,9 +21,7 @@
 package main
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -146,7 +144,10 @@ func (s *server) getOrg(w http.ResponseWriter, r *http.Request, _ state.Account)
 	writeJSON(w, http.StatusOK, api.OrgResponseFromRow(orgToRow(org)))
 }
 
-// patchOrg updates one or both of (Name, Plan). Authz routing:
+// patchOrg updates Name. Plan is retained in the request DTO for wire
+// compatibility but cannot be written locally: only a provider-confirmed
+// billing flow may change an organisation's paid entitlement.
+// Authz routing:
 //   - name → OrgActionManageBilling (owner + billing)
 //   - plan → OrgActionChangePlan (owner only)
 //
@@ -170,19 +171,31 @@ func (s *server) patchOrg(w http.ResponseWriter, r *http.Request, _ state.Accoun
 	if !s.authorizeOrgPatchFields(w, r, req) {
 		return
 	}
-	newName, newPlan, ok := s.resolveOrgPatchFields(w, req)
-	if !ok {
+	if req.Plan != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired,
+			api.CodePayment, "Billing confirmation required",
+			"organization plans cannot be changed directly; use a provider-backed billing flow"))
+		return
+	}
+	newName := strings.TrimSpace(*req.Name)
+	if newName == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity,
+			api.CodeValidation, "Name required",
+			"name must be a non-empty string when supplied"))
 		return
 	}
 	org, ok := s.loadMutableOrgByMembership(r.Context(), w, mem)
 	if !ok {
 		return
 	}
-	if !s.applyOrgFieldUpdates(r.Context(), w, org.ID, req, newName, newPlan) {
+	if err := s.store.UpdateOrgName(r.Context(), org.ID, newName); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
+			api.CodeCapacity, "UpdateOrgName failed",
+			"try again; if the problem persists, contact support"))
 		return
 	}
 	s.audit.Emit(r.Context(), "org.updated", nil, map[string]any{
-		"org_id": org.ID, "name": req.Name != nil, "plan": req.Plan != nil,
+		"org_id": org.ID, "name": true, "plan": false,
 	})
 	updated, ok := s.rehydrateOrg(r.Context(), w, mem)
 	if !ok {
@@ -210,79 +223,6 @@ func (s *server) authorizeOrgPatchFields(w http.ResponseWriter, r *http.Request,
 		}
 	}
 	return true
-}
-
-// resolveOrgPatchFields validates + trims the per-field values
-// before any Store call (validation failures short-circuit before
-// a doomed UpdateOrgName). Returns newName, newPlan, true on
-// success; writes the Problem + returns zero values + false on
-// any failure.
-func (s *server) resolveOrgPatchFields(w http.ResponseWriter, req api.PatchOrgRequest) (string, api.Plan, bool) {
-	var newName string
-	var newPlan api.Plan
-	if req.Name != nil {
-		newName = strings.TrimSpace(*req.Name)
-		if newName == "" {
-			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity,
-				api.CodeValidation, "Name required",
-				"name must be a non-empty string when supplied"))
-			return "", "", false
-		}
-	}
-	if req.Plan != nil {
-		newPlan = api.Plan(strings.TrimSpace(*req.Plan))
-		if !isKnownPlan(newPlan) {
-			// Reuse ErrOrgSlugInvalid's wire shape for the closed
-			// enum: 422 org_slug_invalid with the closed set named
-			// in the detail (we don't add a new wire code; the
-			// catalogue is closed at PR 1).
-			api.WriteProblem(w, api.ErrOrgSlugInvalid(
-				fmt.Sprintf("plan %q is not in the closed set %v", string(newPlan), api.Plans)))
-			return "", "", false
-		}
-	}
-	return newName, newPlan, true
-}
-
-// applyOrgFieldUpdates persists the per-field changes for PATCH
-// /v1/orgs/{slug}. Each field has its own Store method per the §6
-// pattern (one SQL UPDATE per field, no consolidated multi-column
-// write); both stamp updated_at = now() so the wire shape's
-// UpdatedAt is monotonic per row. Returns false (and writes the
-// Problem) on the first Store failure.
-func (s *server) applyOrgFieldUpdates(ctx context.Context, w http.ResponseWriter, orgID string, req api.PatchOrgRequest, newName string, newPlan api.Plan) bool {
-	if req.Name != nil {
-		if err := s.store.UpdateOrgName(ctx, orgID, newName); err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				api.CodeCapacity, "UpdateOrgName failed",
-				"try again; if the problem persists, contact support"))
-			return false
-		}
-	}
-	if req.Plan != nil {
-		if err := s.store.UpdateOrgPlan(ctx, orgID, newPlan); err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				api.CodeCapacity, "UpdateOrgPlan failed",
-				"try again; if the problem persists, contact support"))
-			return false
-		}
-	}
-	return true
-}
-
-// isKnownPlan is the closed-enum membership check for the PATCH
-// /v1/orgs/{slug} body. Mirrors the slug validator's posture:
-// the wire shape carries a free string and the handler rejects
-// anything outside the closed set with ErrOrgSlugInvalid's wire
-// shape (the catalogue is closed at PR 1; adding a new plan is a
-// separate concern).
-func isKnownPlan(p api.Plan) bool {
-	for _, k := range api.Plans {
-		if k == p {
-			return true
-		}
-	}
-	return false
 }
 
 // softDeleteOrg sets the deleted_pending flag. Hard delete lands

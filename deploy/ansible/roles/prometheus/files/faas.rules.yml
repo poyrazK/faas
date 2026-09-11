@@ -1610,7 +1610,7 @@ groups:
           family: billing_drift
         annotations:
           summary: "Provider {{ $labels.provider }} push drift > 0.5% for 1h"
-          description: "Stripe or Paddle push totals are diverging from local usage_minutes totals by more than 0.5% for an hour (ADR-049 §B.1). Revenue leakage if local > pushed, refund liability if pushed > local. The meterd_billing_drift_mb_seconds{account_id=…} gauge identifies the offending account. Run `faas admin reconcile --verbose` to inspect, or page the on-call."
+          description: "Provider push totals are diverging from local usage_minutes totals by more than 0.5% for an hour (ADR-049 §B.1). Revenue leakage if local > pushed, refund liability if pushed > local. The meterd_billing_drift_mb_seconds{account_id=…} gauge identifies the offending account. Run `faas admin reconcile --verbose` to inspect, or page the on-call."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
       - alert: BillingDriftAccount
         expr: meterd_billing_drift_ratio > 0.05
@@ -1621,7 +1621,7 @@ groups:
           family: billing_drift
         annotations:
           summary: "Account {{ $labels.account_id }} drift > 5% for 15m"
-          description: "Single-account drift exceeds 5% for 15m (ADR-049 §B.1). The 1h provider-aggregate BillingDrift alert may not fire for a single account if other accounts are quiet. Inspect the meterd_billing_drift_mb_seconds{account_id=…} gauge and Stripe's UsageRecordSummaries API for the affected subscription_item to confirm the gap."
+          description: "Single-account drift exceeds 5% for 15m (ADR-049 §B.1). The 1h provider-aggregate BillingDrift alert may not fire for a single account if other accounts are quiet. Inspect the meterd_billing_drift_mb_seconds{account_id=…} gauge and the active provider's usage summary for the affected subscription to confirm the gap."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
       - alert: BillingReconcileFailures
         expr: sum by (provider) (rate(meterd_billing_drift_reconcile_failures_total[10m])) > 0
@@ -1633,6 +1633,17 @@ groups:
         annotations:
           summary: "Billing reconciliation is failing for {{ $labels.provider }}"
           description: "meterd cannot refresh provider-vs-local billing drift for provider {{ $labels.provider }}. The drift gauges may be stale even when they are below threshold; inspect meterd logs and the reason-labelled meterd_billing_drift_reconcile_failures_total counter."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
+      - alert: BillingReconciliationUnavailable
+        expr: meterd_billing_reconcile_supported == 0
+        for: 5m
+        labels:
+          severity: page
+          component: meterd
+          family: billing_drift
+        annotations:
+          summary: "Billing reconciliation is unavailable for {{ $labels.provider }}"
+          description: "The active provider does not expose a usable reconciliation surface, so provider-vs-local billing drift cannot be measured. Treat drift gauges as unknown, not healthy, until the provider or deployment configuration is corrected."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
 
       # ─────────────────────────────────────────────────────────────────

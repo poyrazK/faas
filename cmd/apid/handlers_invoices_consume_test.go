@@ -26,9 +26,30 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+// consumeRefundProvider keeps these tests on the Stripe-shaped path while
+// proving that a local credit drain is paired with a real provider refund.
+type consumeRefundProvider struct {
+	fakeBillingProvider
+}
+
+func (*consumeRefundProvider) Capabilities() billing.CapabilitySet {
+	return billing.CapabilitySet(billing.CapRefund)
+}
+
+func (*consumeRefundProvider) Refund(_ context.Context, chargeID string, amountCents int64) (*billing.RefundResult, error) {
+	return &billing.RefundResult{
+		ProviderRefundID: "re_" + chargeID,
+		ChargeID:         chargeID,
+		AmountCents:      amountCents,
+		Currency:         "eur",
+		Status:           "succeeded",
+	}, nil
+}
 
 // newConsumeEnv is the testEnv twin for the consume route. Mirrors
 // newIssueCreditEnv — same MemStore, same admin allowlist. The
@@ -52,6 +73,7 @@ func newConsumeEnv(t *testing.T, scopes []string, adminEmail, callerEmail string
 	}
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
 	srv.WithAdminAllowlist(adminEmail)
+	srv.WithBillingProvider(&consumeRefundProvider{})
 	return testEnv{h: srv.handler(), store: store, key: pt, acct: acct, ops: ops}
 }
 
@@ -78,6 +100,11 @@ func TestConsumeInvoice_HappyPath(t *testing.T) {
 		AccountID:         target.ID,
 		Provider:          "stripe",
 		ProviderInvoiceID: "in_consume_happy",
+		ProviderChargeID:  "ch_consume_happy",
+		Status:            "paid",
+		Plan:              api.PlanHobby,
+		TotalCents:        250,
+		AmountPaidCents:   250,
 	}
 	e.store.SeedInvoiceForTest(inv)
 	if err := e.store.AppendUsage(context.Background(), target.ID, "app-1", "inst-1",
@@ -152,6 +179,11 @@ func TestConsumeInvoice_IdempotentReplay(t *testing.T) {
 		AccountID:         target.ID,
 		Provider:          "stripe",
 		ProviderInvoiceID: "in_consume_replay",
+		ProviderChargeID:  "ch_consume_replay",
+		Status:            "paid",
+		Plan:              api.PlanHobby,
+		TotalCents:        250,
+		AmountPaidCents:   250,
 	}
 	e.store.SeedInvoiceForTest(inv)
 	if err := e.store.AppendUsage(context.Background(), target.ID, "app-1", "inst-1",

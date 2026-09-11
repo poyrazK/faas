@@ -43,6 +43,12 @@ func (s *server) postBillingCancel(w http.ResponseWriter, r *http.Request, acct 
 			"no billing provider configured on this box"))
 		return
 	}
+	var err error
+	acct, err = s.accountForActiveBillingProvider(r.Context(), acct)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("billing identity temporarily unavailable"))
+		return
+	}
 	effectiveAt, err := s.billingProvider.CancelAtPeriodEnd(r.Context(), acct)
 	if err != nil {
 		s.log.Error("billing_cancel",

@@ -4822,10 +4822,22 @@ type Store interface {
 	// list method alone cannot fetch an unknown invoice without
 	// knowing its account_id up-front.
 	GetInvoiceByID(ctx context.Context, id string) (Invoice, error)
+	// GetInvoiceByProviderID resolves the natural webhook key without an
+	// account-wide list scan.
+	GetInvoiceByProviderID(ctx context.Context, accountID, provider, providerInvoiceID string) (Invoice, error)
 	// UpsertInvoice persists one provider invoice projection. The natural key
 	// (account_id, provider, provider_invoice_id) makes webhook redelivery and
 	// order status updates idempotent.
 	UpsertInvoice(ctx context.Context, inv Invoice) error
+	// RecordInvoiceRefund appends one idempotent refund row and advances the
+	// invoice's cumulative refunded/credit-applied totals atomically.
+	RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund) error
+
+	// Provider-qualified identities prevent customer/subscription handles from
+	// one backend being reused after a deployment switches providers.
+	BillingIdentity(ctx context.Context, accountID, provider string) (BillingIdentity, error)
+	UpsertBillingIdentity(ctx context.Context, identity BillingIdentity) error
+	AccountByBillingCustomerID(ctx context.Context, provider, customerID string) (Account, error)
 
 	// Account credits (issue #279). The handler is the only writer to
 	// account_credits + credit_ledger; meterd reads overage_cap_cents
@@ -4907,6 +4919,11 @@ type Store interface {
 	// backfill source for meterd: a restart or provider outage can safely
 	// replay these rows because every provider records its own idempotency key.
 	UsageWindows(ctx context.Context, start, end time.Time) ([]UsageWindow, error)
+	// PendingBillingUsageWindows returns every retained positive hour without a
+	// successful pusher-owned delivery receipt for provider. There is no fixed
+	// lookback, so prolonged outages cannot silently strand usage.
+	PendingBillingUsageWindows(ctx context.Context, provider string, end time.Time) ([]UsageWindow, error)
+	RecordBillingUsageDelivery(ctx context.Context, provider, accountID string, windowStart time.Time, mbSeconds int64) error
 
 	// StripePushDedup is the dedupe table for hourly usage pushes. The
 	// PushDedupe interface in pkg/billing/stripe is satisfied by both stores.

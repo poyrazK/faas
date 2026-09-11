@@ -370,16 +370,19 @@ func (t EventType) Name() string {
 // invoice history API can persist.
 type InvoiceData struct {
 	ProviderInvoiceID string
-	Number            string
-	Status            string
-	PeriodStart       time.Time
-	PeriodEnd         time.Time
-	SubtotalCents     int64
-	TaxCents          int64
-	TotalCents        int64
-	AmountPaidCents   int64
-	Currency          string
-	PDFAvailable      bool
+	// ProviderChargeID is the charge/transaction/order handle accepted by
+	// Refund. Stripe and Paddle invoice IDs are not refundable handles.
+	ProviderChargeID string
+	Number           string
+	Status           string
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	SubtotalCents    int64
+	TaxCents         int64
+	TotalCents       int64
+	AmountPaidCents  int64
+	Currency         string
+	PDFAvailable     bool
 }
 
 // Event is the normalized envelope apid's dunning state machine
@@ -567,11 +570,10 @@ const (
 	CapRefund
 
 	// CapUsageReconcile means Provider.ReconcileUsage is implemented
-	// and returns real pushed-mb_seconds. The reconciler
-	// (pkg/billing/reconciler) skips accounts whose active provider
-	// lacks this capability, before any SDK call fires. Paddle: no
-	// (Paddle Billing has no usage-summary endpoint). Stripe: yes.
-	// Polar: yes when a meter ID is configured.
+	// and returns real pushed-mb_seconds. The reconciler marks providers
+	// without this capability unavailable so missing drift data cannot look
+	// healthy. Paddle and Stripe: no. Polar: yes when a meter ID is
+	// configured.
 	CapUsageReconcile
 
 	// CapSandbox means the provider supports a sandbox / test

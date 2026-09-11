@@ -1691,10 +1691,9 @@ func warnIfEmptyAPIKey(log *slog.Logger, billingCfg *billingloader.RootBillingCo
 }
 
 // validateBillingPushInterval keeps Polar delivery within the one-hour
-// settlement cadence. The pusher has a durable backfill, but a longer
-// interval increases receipt-time attribution skew and can exceed a
-// deployment's configured lookback during an outage. The historical field
-// name StripeInterval is retained for config/API compatibility.
+// settlement cadence. The pusher has a durable receipt-backed backfill, but a
+// longer interval still increases provider attribution skew. The historical
+// field name StripeInterval is retained for config/API compatibility.
 func validateBillingPushInterval(provName string, interval time.Duration) error {
 	if provName == provPolar && interval > time.Hour {
 		return fmt.Errorf("meterd: Polar usage push interval must be <= 1h (got %s); set [meter].stripe_interval = \"3600s\" or FAAS_STRIPE_INTERVAL=1h", interval)

@@ -51,7 +51,7 @@ func (s *server) applySubscriptionEnded(ctx context.Context, ev billing.Event, a
 		return nil
 	}
 	if acct.StripeSubscriptionItem != "" {
-		if err := s.store.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, ""); err != nil {
+		if err := s.stampActiveBillingSubscription(ctx, acct, ""); err != nil {
 			return fmt.Errorf("clear subscription id: %w", err)
 		}
 	}

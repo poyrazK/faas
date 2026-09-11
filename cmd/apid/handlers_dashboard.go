@@ -1408,7 +1408,7 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	// Free → paid hand-off (dashboard_upgrade.go): per-plan links to the
 	// /dashboard/upgrade confirmation page when the provider has hosted
 	// checkout and the account has no subscription yet.
-	data.CanCheckout = s.canStartCheckout(acct)
+	data.CanCheckout = s.canStartCheckout(ctx, acct)
 	data.UpgradeOptions = upgradeOptionsFor(acct)
 	data.UpgradeNotice = upgradeNoticeFor(r.URL.Query().Get("upgrade"))
 

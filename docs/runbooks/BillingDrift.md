@@ -9,7 +9,9 @@ Metrics: `meterd_billing_drift_mb_seconds{account_id, provider}`
 provider}` (abs(drift) / max(local, pushed)) over the rolling
 24 h window. Reconciliation failures are counted by
 `meterd_billing_drift_reconcile_failures_total{provider,reason}`;
-when non-zero, the gauges may be stale. Emitted by
+when non-zero, the gauges may be stale. Capability health is explicit in
+`meterd_billing_reconcile_supported{provider}`; zero means drift is unknown,
+not healthy. Emitted by
 `pkg/billing/reconciler`, which runs on a 6 h meterd cron tick
 (default `FAAS_RECONCILE_INTERVAL`).
 
@@ -30,6 +32,7 @@ threshold over the rolling window:
 | `BillingDrift` | `max by (provider) (meterd_billing_drift_ratio) > 0.005` | 1h | page |
 | `BillingDriftAccount` | `meterd_billing_drift_ratio > 0.05` | 15m | warn |
 | `BillingReconcileFailures` | `rate(meterd_billing_drift_reconcile_failures_total[10m]) > 0` | 10m | page |
+| `BillingReconciliationUnavailable` | `meterd_billing_reconcile_supported == 0` | 5m | page |
 
 The `provider` label distinguishes Polar, Paddle, and Stripe. The
 `account_id` label carries the offending customer id (omitted on

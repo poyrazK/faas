@@ -90,7 +90,8 @@ type CreateOrgRequest struct {
 //
 // Authz routing at the handler:
 //   - name  → OrgActionManageBilling (owner + billing roles)
-//   - plan  → OrgActionChangePlan (owner only)
+//   - plan  → OrgActionChangePlan (owner only), then payment_required;
+//     direct entitlement writes are forbidden until the provider confirms them.
 //
 // Owner role writes go through ManageBilling because renaming a
 // billing-relevant artefact is a billing concern, not a plan concern.

@@ -635,16 +635,29 @@ func (s *PgStore) UpdateAccountStatus(ctx context.Context, id string, status Acc
 // second customer picking up an old ID would fail at the DB; MemStore
 // mirrors that with the same shape (single-value index map).
 func (s *PgStore) UpdateAccountProviderCustomerID(ctx context.Context, id, stripeCustomerID string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update accounts set provider_customer_id = $2 where id = $1`,
-		id, stripeCustomerID)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
+		`update accounts set provider_customer_id = $2 where id = $1`, id, stripeCustomerID)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	provider := billingProviderForCustomerID(stripeCustomerID)
+	_, err = tx.Exec(ctx,
+		`insert into billing_identities (account_id, provider, customer_id, subscription_id)
+		 select id, $3, $2, coalesce(stripe_subscription_item, '') from accounts where id = $1
+		 on conflict (account_id, provider) do update set customer_id = excluded.customer_id, updated_at = now()`,
+		id, stripeCustomerID, provider)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // UpdateAccountStripeSubscriptionItem records the Stripe subscription
@@ -653,16 +666,29 @@ func (s *PgStore) UpdateAccountProviderCustomerID(ctx context.Context, id, strip
 // until pkg/billing/stripe::EnsureCustomer receives
 // customer.subscription.created. MemStore mirrors the column shape.
 func (s *PgStore) UpdateAccountStripeSubscriptionItem(ctx context.Context, id, subItem string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update accounts set stripe_subscription_item = $2 where id = $1`,
-		id, subItem)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
+		`update accounts set stripe_subscription_item = $2 where id = $1`, id, subItem)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	_, err = tx.Exec(ctx,
+		`update billing_identities bi
+		    set subscription_id = $2, updated_at = now()
+		   from accounts a
+		  where bi.account_id = a.id and a.id = $1
+		    and bi.customer_id = a.provider_customer_id`, id, subItem)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // --- MFA (IAM-2, issue #186) -------------------------------------------------
@@ -957,6 +983,54 @@ func (s *PgStore) AccountByProviderCustomerID(ctx context.Context, stripeCustome
 		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at
 		 from accounts where provider_customer_id = $1`,
 		stripeCustomerID)
+	return scanAccount(row)
+}
+
+// BillingIdentity returns the account's provider-qualified billing binding.
+func (s *PgStore) BillingIdentity(ctx context.Context, accountID, provider string) (BillingIdentity, error) {
+	var identity BillingIdentity
+	err := s.pool.QueryRow(ctx,
+		`select account_id, provider, customer_id, subscription_id, created_at, updated_at
+		   from billing_identities
+		  where account_id = $1 and provider = $2`, accountID, provider).Scan(
+		&identity.AccountID, &identity.Provider, &identity.CustomerID,
+		&identity.SubscriptionID, &identity.CreatedAt, &identity.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BillingIdentity{}, ErrNotFound
+	}
+	return identity, err
+}
+
+// UpsertBillingIdentity writes an exact provider-qualified binding. An empty
+// subscription is meaningful (customer exists, subscription ended).
+func (s *PgStore) UpsertBillingIdentity(ctx context.Context, identity BillingIdentity) error {
+	if identity.AccountID == "" || identity.CustomerID == "" ||
+		(identity.Provider != "stripe" && identity.Provider != "paddle" && identity.Provider != "polar") {
+		return errors.New("state: valid billing identity account, provider, and customer are required")
+	}
+	_, err := s.pool.Exec(ctx,
+		`insert into billing_identities (account_id, provider, customer_id, subscription_id)
+		 values ($1, $2, $3, $4)
+		 on conflict (account_id, provider) do update set
+		   customer_id = excluded.customer_id,
+		   subscription_id = excluded.subscription_id,
+		   updated_at = now()`,
+		identity.AccountID, identity.Provider, identity.CustomerID, identity.SubscriptionID)
+	return err
+}
+
+// AccountByBillingCustomerID is the provider-qualified webhook reverse lookup.
+func (s *PgStore) AccountByBillingCustomerID(ctx context.Context, provider, customerID string) (Account, error) {
+	row := s.pool.QueryRow(ctx,
+		`select a.id, a.email, a.plan, a.status,
+		        coalesce(a.provider_customer_id,''), coalesce(a.stripe_subscription_item,''),
+		        a.created_at, a.deletion_requested_at, a.last_quota_warning_at,
+		        a.past_due_at, a.mfa_enrolled_at, a.mfa_secret_encrypted,
+		        a.mfa_recovery_codes_hash, a.mfa_required,
+		        a.egress_allowlist_extra, a.email_verified_at
+		   from accounts a
+		   join billing_identities bi on bi.account_id = a.id
+		  where bi.provider = $1 and bi.customer_id = $2`, provider, customerID)
 	return scanAccount(row)
 }
 
@@ -15293,6 +15367,44 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 	return err
 }
 
+// InstanceBillingSeconds returns each instance's actual resident seconds in
+// [start,end), derived from the lifecycle interval ledger maintained by the
+// instances trigger. Partial seconds round up so any occupied wall-clock
+// second is billed once; the result is capped to the requested window length.
+// It is intentionally an optional PgStore surface (not part of Store) so older
+// in-memory/custom stores retain the legacy minute-snapshot test seam.
+func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Time) (map[string]int64, error) {
+	if !start.Before(end) {
+		return map[string]int64{}, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select instance_id::text,
+		        least(ceil(extract(epoch from ($2::timestamptz - $1::timestamptz)))::bigint,
+		              ceil(sum(extract(epoch from
+		                least(coalesce(ended_at, $2::timestamptz), $2::timestamptz)
+		                - greatest(started_at, $1::timestamptz))))::bigint) as resident_seconds
+		   from instance_billing_intervals
+		  where started_at < $2
+		    and coalesce(ended_at, $2) > $1
+		  group by instance_id`, start.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]int64)
+	for rows.Next() {
+		var instanceID string
+		var seconds int64
+		if err := rows.Scan(&instanceID, &seconds); err != nil {
+			return nil, err
+		}
+		if seconds > 0 {
+			out[instanceID] = seconds
+		}
+	}
+	return out, rows.Err()
+}
+
 // AppendBuilderUsage records one builder-time usage row at build
 // completion (ADR-048 §4). Idempotent on (build_id): a redelivered
 // meterd / webhook / builderd restart sees ON CONFLICT DO NOTHING
@@ -15395,9 +15507,10 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 		monthStart := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
 		monthEnd := monthStart.AddDate(0, 1, 0)
 		rows, err = s.pool.Query(ctx,
-			`select id, account_id, provider, provider_invoice_id, number, status,
+			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 			        period_start, period_end,
 			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+			        plan, amount_refunded_cents, credits_applied_cents,
 			        currency, pdf_available, created_at, updated_at
 			   from invoices
 			  where account_id = $1
@@ -15410,9 +15523,10 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 		monthStart := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
 		monthEnd := monthStart.AddDate(0, 1, 0)
 		rows, err = s.pool.Query(ctx,
-			`select id, account_id, provider, provider_invoice_id, number, status,
+			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 			        period_start, period_end,
 			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+			        plan, amount_refunded_cents, credits_applied_cents,
 			        currency, pdf_available, created_at, updated_at
 			   from invoices
 			  where account_id = $1
@@ -15424,9 +15538,10 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 			accountID, monthStart, monthEnd, before, limit)
 	case month == nil && !before.IsZero():
 		rows, err = s.pool.Query(ctx,
-			`select id, account_id, provider, provider_invoice_id, number, status,
+			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 			        period_start, period_end,
 			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+			        plan, amount_refunded_cents, credits_applied_cents,
 			        currency, pdf_available, created_at, updated_at
 			   from invoices
 			  where account_id = $1
@@ -15436,9 +15551,10 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 			accountID, before, limit)
 	default: // month == nil && before.IsZero()
 		rows, err = s.pool.Query(ctx,
-			`select id, account_id, provider, provider_invoice_id, number, status,
+			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 			        period_start, period_end,
 			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+			        plan, amount_refunded_cents, credits_applied_cents,
 			        currency, pdf_available, created_at, updated_at
 			   from invoices
 			  where account_id = $1
@@ -15454,10 +15570,11 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 	for rows.Next() {
 		var inv Invoice
 		if err := rows.Scan(
-			&inv.ID, &inv.AccountID, &inv.Provider, &inv.ProviderInvoiceID,
+			&inv.ID, &inv.AccountID, &inv.Provider, &inv.ProviderInvoiceID, &inv.ProviderChargeID,
 			&inv.Number, &inv.Status,
 			&inv.PeriodStart, &inv.PeriodEnd,
 			&inv.SubtotalCents, &inv.TaxCents, &inv.TotalCents, &inv.AmountPaidCents,
+			&inv.Plan, &inv.AmountRefundedCents, &inv.CreditsAppliedCents,
 			&inv.Currency, &inv.PDFAvailable,
 			&inv.CreatedAt, &inv.UpdatedAt,
 		); err != nil {
@@ -15477,17 +15594,19 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 func (s *PgStore) GetInvoiceByID(ctx context.Context, id string) (Invoice, error) {
 	var inv Invoice
 	err := s.pool.QueryRow(ctx,
-		`select id, account_id, provider, provider_invoice_id, number, status,
+		`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 		        period_start, period_end,
 		        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+		        plan, amount_refunded_cents, credits_applied_cents,
 		        currency, pdf_available, created_at, updated_at
 		   from invoices
 		  where id = $1`,
 		id).Scan(
-		&inv.ID, &inv.AccountID, &inv.Provider, &inv.ProviderInvoiceID,
+		&inv.ID, &inv.AccountID, &inv.Provider, &inv.ProviderInvoiceID, &inv.ProviderChargeID,
 		&inv.Number, &inv.Status,
 		&inv.PeriodStart, &inv.PeriodEnd,
 		&inv.SubtotalCents, &inv.TaxCents, &inv.TotalCents, &inv.AmountPaidCents,
+		&inv.Plan, &inv.AmountRefundedCents, &inv.CreditsAppliedCents,
 		&inv.Currency, &inv.PDFAvailable,
 		&inv.CreatedAt, &inv.UpdatedAt,
 	)
@@ -15498,6 +15617,32 @@ func (s *PgStore) GetInvoiceByID(ctx context.Context, id string) (Invoice, error
 		return Invoice{}, err
 	}
 	return inv, nil
+}
+
+// GetInvoiceByProviderID resolves the webhook natural key. It is used after
+// an idempotent invoice upsert to apply monetary credits without scanning an
+// account's full invoice history.
+func (s *PgStore) GetInvoiceByProviderID(ctx context.Context, accountID, provider, providerInvoiceID string) (Invoice, error) {
+	var inv Invoice
+	err := s.pool.QueryRow(ctx,
+		`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+		        period_start, period_end,
+		        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+		        plan, amount_refunded_cents, credits_applied_cents,
+		        currency, pdf_available, created_at, updated_at
+		   from invoices
+		  where account_id = $1 and provider = $2
+		    and (provider_invoice_id = $3 or provider_charge_id = $3)`,
+		accountID, provider, providerInvoiceID).Scan(
+		&inv.ID, &inv.AccountID, &inv.Provider, &inv.ProviderInvoiceID, &inv.ProviderChargeID,
+		&inv.Number, &inv.Status, &inv.PeriodStart, &inv.PeriodEnd,
+		&inv.SubtotalCents, &inv.TaxCents, &inv.TotalCents, &inv.AmountPaidCents,
+		&inv.Plan, &inv.AmountRefundedCents, &inv.CreditsAppliedCents,
+		&inv.Currency, &inv.PDFAvailable, &inv.CreatedAt, &inv.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Invoice{}, ErrNotFound
+	}
+	return inv, err
 }
 
 // UpsertInvoice stores the provider projection used by invoice history. A
@@ -15519,13 +15664,17 @@ func (s *PgStore) UpsertInvoice(ctx context.Context, inv Invoice) error {
 	if inv.Status == "" {
 		inv.Status = "open"
 	}
+	if !inv.Plan.Valid() {
+		inv.Plan = api.PlanFree
+	}
 	_, err := s.pool.Exec(ctx,
 		`insert into invoices (
-			account_id, provider, provider_invoice_id, number, status,
+			account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 			period_start, period_end, subtotal_cents, tax_cents, total_cents,
-			amount_paid_cents, currency, pdf_available, updated_at
-		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
+			amount_paid_cents, plan, currency, pdf_available, updated_at
+		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
 		on conflict (account_id, provider, provider_invoice_id) do update set
+			provider_charge_id = coalesce(nullif(excluded.provider_charge_id, ''), invoices.provider_charge_id),
 			number = excluded.number,
 			status = excluded.status,
 			period_start = excluded.period_start,
@@ -15537,10 +15686,67 @@ func (s *PgStore) UpsertInvoice(ctx context.Context, inv Invoice) error {
 			currency = excluded.currency,
 			pdf_available = excluded.pdf_available,
 			updated_at = now()`,
-		inv.AccountID, inv.Provider, inv.ProviderInvoiceID, inv.Number, inv.Status,
+		inv.AccountID, inv.Provider, inv.ProviderInvoiceID, inv.ProviderChargeID, inv.Number, inv.Status,
 		inv.PeriodStart.UTC(), inv.PeriodEnd.UTC(), inv.SubtotalCents, inv.TaxCents,
-		inv.TotalCents, inv.AmountPaidCents, strings.ToLower(inv.Currency), inv.PDFAvailable)
+		inv.TotalCents, inv.AmountPaidCents, string(inv.Plan), strings.ToLower(inv.Currency), inv.PDFAvailable)
 	return err
+}
+
+// RecordInvoiceRefund stores a provider refund and advances cumulative invoice
+// state in one transaction. Both provider and client idempotency identities are
+// unique, so a webhook and the initiating API response converge safely.
+func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund) error {
+	if refund.InvoiceID == "" || refund.ProviderRefundID == "" || refund.IdempotencyKey == "" || refund.AmountCents <= 0 {
+		return errors.New("state: invoice refund requires invoice, provider refund, idempotency key, and positive amount")
+	}
+	if refund.Source != "operator" && refund.Source != "credit" && refund.Source != "webhook" {
+		return errors.New("state: invalid invoice refund source")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var insertedID string
+	err = tx.QueryRow(ctx,
+		`insert into invoice_refunds (invoice_id, provider_refund_id, idempotency_key, amount_cents, source, status)
+		 values ($1, $2, $3, $4, $5, $6)
+		 on conflict do nothing
+		 returning id`,
+		refund.InvoiceID, refund.ProviderRefundID, refund.IdempotencyKey,
+		refund.AmountCents, refund.Source, refund.Status).Scan(&insertedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return tx.Commit(ctx)
+	}
+	if err != nil {
+		return err
+	}
+	creditCents := int64(0)
+	if refund.Source == "credit" {
+		creditCents = refund.AmountCents
+	}
+	tag, err := tx.Exec(ctx,
+		`update invoices
+		    set amount_refunded_cents = amount_refunded_cents + $2,
+		        credits_applied_cents = credits_applied_cents + $3,
+		        updated_at = now()
+		  where id = $1
+		    and amount_refunded_cents + $2 <= greatest(amount_paid_cents, total_cents)`,
+		refund.InvoiceID, refund.AmountCents, creditCents)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		var exists bool
+		if err := tx.QueryRow(ctx, `select exists(select 1 from invoices where id = $1)`, refund.InvoiceID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		return ErrConflict
+	}
+	return tx.Commit(ctx)
 }
 
 // --- account credits (issue #279) -------------------------------------------
@@ -15783,9 +15989,6 @@ func (s *PgStore) ListActiveCreditsForConsumption(ctx context.Context, accountID
 // Hand-written (not sqlc) — multi-statement transaction with
 // dynamic per-credit bounds; sqlc would not add observability here.
 func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCreditParams) (ConsumeAccountCreditResult, error) {
-	if p.TargetCents == 0 {
-		return ConsumeAccountCreditResult{}, nil
-	}
 	if p.ProviderInvoiceID == "" {
 		return ConsumeAccountCreditResult{}, fmt.Errorf("ConsumeAccountCredit: ProviderInvoiceID required (the partial unique index needs a non-null dedupe key)")
 	}
@@ -15815,6 +16018,12 @@ func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCred
 			RemainingCreditsCents:     remSum,
 			AlreadyConsumedForInvoice: true,
 		}, nil
+	}
+	if p.TargetCents == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return ConsumeAccountCreditResult{}, fmt.Errorf("state: consume_credits zero_target_commit: %w", err)
+		}
+		return ConsumeAccountCreditResult{}, nil
 	}
 
 	active, err := loadActiveForUpdate(ctx, tx, p.AccountID)
@@ -16195,6 +16404,57 @@ func (s *PgStore) UsageWindows(ctx context.Context, start, end time.Time) ([]Usa
 		out = append(out, w)
 	}
 	return out, rows.Err()
+}
+
+// PendingBillingUsageWindows returns retained positive hourly usage without a
+// pusher-owned receipt for provider. Retention bounds the scan; the 10k batch
+// cap prevents a first post-upgrade backfill from monopolising one meterd tick.
+func (s *PgStore) PendingBillingUsageWindows(ctx context.Context, provider string, end time.Time) ([]UsageWindow, error) {
+	rows, err := s.pool.Query(ctx,
+		`with hourly as (
+		   select account_id,
+		          date_trunc('hour', minute at time zone 'UTC') at time zone 'UTC' as window_start,
+		          sum(mb_seconds)::bigint as mb_seconds
+		     from usage_minutes
+		    where minute < $2
+		    group by account_id, window_start
+		   having sum(mb_seconds) > 0
+			 ), pending as (
+			   select h.*,
+			          row_number() over (partition by h.account_id order by h.window_start) as account_rank
+			     from hourly h
+			     left join billing_usage_deliveries d
+			       on d.provider = $1 and d.account_id = h.account_id
+			      and d.window_start = h.window_start
+			    where d.account_id is null
+			 )
+			 select account_id, window_start, mb_seconds
+			   from pending
+			  order by account_rank, window_start, account_id
+		  limit 10000`, provider, end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]UsageWindow, 0)
+	for rows.Next() {
+		var window UsageWindow
+		if err := rows.Scan(&window.AccountID, &window.Hour, &window.MBSeconds); err != nil {
+			return nil, err
+		}
+		window.Hour = window.Hour.UTC()
+		out = append(out, window)
+	}
+	return out, rows.Err()
+}
+
+func (s *PgStore) RecordBillingUsageDelivery(ctx context.Context, provider, accountID string, windowStart time.Time, mbSeconds int64) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into billing_usage_deliveries (provider, account_id, window_start, mb_seconds)
+		 values ($1, $2, $3, $4)
+		 on conflict (provider, account_id, window_start) do nothing`,
+		provider, accountID, windowStart.UTC().Truncate(time.Hour), mbSeconds)
+	return err
 }
 
 // UsageDaily returns the per-(account, app, day) rollup rows that the

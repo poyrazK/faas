@@ -179,6 +179,39 @@ $$;
 
 
 --
+-- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_instance_billing_interval() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  old_billable boolean := false;
+  new_billable boolean;
+  changed_at timestamptz := clock_timestamp();
+BEGIN
+  new_billable := NEW.state IN ('waking','cold_booting','running','snapshotting','migrating')
+                  AND COALESCE(NEW.mode, 'normal') <> 'mirror';
+  IF TG_OP = 'UPDATE' THEN
+    old_billable := OLD.state IN ('waking','cold_booting','running','snapshotting','migrating')
+                    AND COALESCE(OLD.mode, 'normal') <> 'mirror';
+  END IF;
+
+  IF new_billable AND NOT old_billable THEN
+    INSERT INTO instance_billing_intervals (instance_id, started_at)
+    VALUES (NEW.id, CASE WHEN TG_OP = 'INSERT' THEN COALESCE(NEW.started_at, changed_at) ELSE changed_at END)
+    ON CONFLICT (instance_id) WHERE ended_at IS NULL DO NOTHING;
+  ELSIF old_billable AND NOT new_billable THEN
+    UPDATE instance_billing_intervals
+       SET ended_at = changed_at
+     WHERE instance_id = NEW.id AND ended_at IS NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: cluster_signing_keys_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1460,6 +1493,37 @@ CREATE TABLE public.builder_vm_cleanup (
 
 
 --
+-- Name: billing_identities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_identities (
+    account_id uuid NOT NULL,
+    provider text NOT NULL,
+    customer_id text NOT NULL,
+    subscription_id text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT billing_identities_customer_id_check CHECK ((customer_id <> ''::text)),
+    CONSTRAINT billing_identities_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+);
+
+
+--
+-- Name: billing_usage_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_usage_deliveries (
+    provider text NOT NULL,
+    account_id uuid NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    mb_seconds bigint NOT NULL,
+    delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT billing_usage_deliveries_mb_seconds_check CHECK ((mb_seconds >= 0)),
+    CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+);
+
+
+--
 -- Name: builds; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2356,6 +2420,38 @@ CREATE TABLE public.idempotency_keys (
 
 
 --
+-- Name: instance_billing_intervals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_billing_intervals (
+    id bigint NOT NULL,
+    instance_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ended_at timestamp with time zone,
+    CONSTRAINT instance_billing_intervals_check CHECK (((ended_at IS NULL) OR (ended_at >= started_at)))
+);
+
+
+--
+-- Name: instance_billing_intervals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.instance_billing_intervals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: instance_billing_intervals_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.instance_billing_intervals_id_seq OWNED BY public.instance_billing_intervals.id;
+
+
+--
 -- Name: instances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2453,6 +2549,7 @@ CREATE TABLE public.invoices (
     account_id uuid NOT NULL,
     provider text NOT NULL,
     provider_invoice_id text NOT NULL,
+    provider_charge_id text DEFAULT ''::text NOT NULL,
     number text DEFAULT ''::text NOT NULL,
     status text NOT NULL,
     period_start timestamp with time zone NOT NULL,
@@ -2461,6 +2558,9 @@ CREATE TABLE public.invoices (
     tax_cents bigint DEFAULT 0 NOT NULL,
     total_cents bigint DEFAULT 0 NOT NULL,
     amount_paid_cents bigint DEFAULT 0 NOT NULL,
+    plan text DEFAULT 'free'::text NOT NULL,
+    amount_refunded_cents bigint DEFAULT 0 NOT NULL,
+    credits_applied_cents bigint DEFAULT 0 NOT NULL,
     currency text DEFAULT 'eur'::text NOT NULL,
     pdf_available boolean DEFAULT false NOT NULL,
     hosted_url text DEFAULT ''::text NOT NULL,
@@ -2469,12 +2569,35 @@ CREATE TABLE public.invoices (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,
     CONSTRAINT invoices_amount_paid_cents_check CHECK ((amount_paid_cents >= 0)),
+    CONSTRAINT invoices_amount_refunded_cents_check CHECK ((amount_refunded_cents >= 0)),
+    CONSTRAINT invoices_credits_applied_cents_check CHECK (((credits_applied_cents >= 0) AND (credits_applied_cents <= amount_refunded_cents))),
     CONSTRAINT invoices_currency_check CHECK ((currency = 'eur'::text)),
+    CONSTRAINT invoices_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT invoices_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
     CONSTRAINT invoices_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'uncollectible'::text, 'void'::text]))),
     CONSTRAINT invoices_subtotal_cents_check CHECK ((subtotal_cents >= 0)),
     CONSTRAINT invoices_tax_cents_check CHECK ((tax_cents >= 0)),
     CONSTRAINT invoices_total_cents_check CHECK ((total_cents >= 0))
+);
+
+
+--
+-- Name: invoice_refunds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invoice_refunds (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    invoice_id uuid NOT NULL,
+    provider_refund_id text NOT NULL,
+    idempotency_key text NOT NULL,
+    amount_cents bigint NOT NULL,
+    source text NOT NULL,
+    status text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT invoice_refunds_amount_cents_check CHECK ((amount_cents > 0)),
+    CONSTRAINT invoice_refunds_idempotency_key_check CHECK ((idempotency_key <> ''::text)),
+    CONSTRAINT invoice_refunds_provider_refund_id_check CHECK ((provider_refund_id <> ''::text)),
+    CONSTRAINT invoice_refunds_source_check CHECK ((source = ANY (ARRAY['operator'::text, 'credit'::text, 'webhook'::text])))
 );
 
 
@@ -3752,6 +3875,13 @@ ALTER TABLE ONLY public.runtime_config_revisions ALTER COLUMN id SET DEFAULT nex
 
 
 --
+-- Name: instance_billing_intervals id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_billing_intervals ALTER COLUMN id SET DEFAULT nextval('public.instance_billing_intervals_id_seq'::regclass);
+
+
+--
 -- Name: snapshot_fanout_events id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -3795,6 +3925,30 @@ ALTER TABLE ONLY public.account_passwords
 
 ALTER TABLE ONLY public.account_spend_snapshot
     ADD CONSTRAINT account_spend_snapshot_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: billing_identities billing_identities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_identities
+    ADD CONSTRAINT billing_identities_pkey PRIMARY KEY (account_id, provider);
+
+
+--
+-- Name: billing_identities billing_identities_provider_customer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_identities
+    ADD CONSTRAINT billing_identities_provider_customer_id_key UNIQUE (provider, customer_id);
+
+
+--
+-- Name: billing_usage_deliveries billing_usage_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_usage_deliveries
+    ADD CONSTRAINT billing_usage_deliveries_pkey PRIMARY KEY (provider, account_id, window_start);
 
 
 --
@@ -4310,6 +4464,14 @@ ALTER TABLE ONLY public.idempotency_keys
 
 
 --
+-- Name: instance_billing_intervals instance_billing_intervals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_billing_intervals
+    ADD CONSTRAINT instance_billing_intervals_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: instances instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4339,6 +4501,30 @@ ALTER TABLE ONLY public.invoices
 
 ALTER TABLE ONLY public.invoices
     ADD CONSTRAINT invoices_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: invoice_refunds invoice_refunds_invoice_id_idempotency_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invoice_refunds
+    ADD CONSTRAINT invoice_refunds_invoice_id_idempotency_key_key UNIQUE (invoice_id, idempotency_key);
+
+
+--
+-- Name: invoice_refunds invoice_refunds_invoice_id_provider_refund_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invoice_refunds
+    ADD CONSTRAINT invoice_refunds_invoice_id_provider_refund_id_key UNIQUE (invoice_id, provider_refund_id);
+
+
+--
+-- Name: invoice_refunds invoice_refunds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invoice_refunds
+    ADD CONSTRAINT invoice_refunds_pkey PRIMARY KEY (id);
 
 
 --
@@ -5735,6 +5921,20 @@ CREATE INDEX events_wake_id_idx ON public.events USING btree (((data ->> 'wake_i
 
 
 --
+-- Name: billing_identities_provider_subscription_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX billing_identities_provider_subscription_idx ON public.billing_identities USING btree (provider, subscription_id) WHERE (subscription_id <> ''::text);
+
+
+--
+-- Name: billing_usage_deliveries_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_usage_deliveries_window_idx ON public.billing_usage_deliveries USING btree (window_start);
+
+
+--
 -- Name: gdpr_requests_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5767,6 +5967,20 @@ CREATE INDEX github_installations_login_idx ON public.github_installations USING
 --
 
 CREATE INDEX github_installations_org_id_idx ON public.github_installations USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: instance_billing_intervals_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX instance_billing_intervals_open_idx ON public.instance_billing_intervals USING btree (instance_id) WHERE (ended_at IS NULL);
+
+
+--
+-- Name: instance_billing_intervals_range_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_billing_intervals_range_idx ON public.instance_billing_intervals USING btree (started_at, ended_at);
 
 
 --
@@ -5942,6 +6156,13 @@ CREATE INDEX invocations_replayed_from_idx ON public.invocations USING btree (ac
 --
 
 CREATE INDEX invoices_account_period_idx ON public.invoices USING btree (account_id, period_end DESC, id DESC);
+
+
+--
+-- Name: invoices_provider_charge_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX invoices_provider_charge_idx ON public.invoices USING btree (provider, provider_charge_id) WHERE (provider_charge_id <> ''::text);
 
 
 --
@@ -6946,6 +7167,13 @@ CREATE TRIGGER github_webhook_secrets_notify_trg AFTER INSERT OR UPDATE ON publi
 
 
 --
+-- Name: instances instances_billing_interval_trigger; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instances_billing_interval_trigger AFTER INSERT OR UPDATE OF state, mode ON public.instances FOR EACH ROW EXECUTE FUNCTION public.capture_instance_billing_interval();
+
+
+--
 -- Name: instances instances_started_at_set_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7057,6 +7285,22 @@ ALTER TABLE ONLY public.account_async_quota
 
 ALTER TABLE ONLY public.account_credits
     ADD CONSTRAINT account_credits_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_identities billing_identities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_identities
+    ADD CONSTRAINT billing_identities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_usage_deliveries billing_usage_deliveries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_usage_deliveries
+    ADD CONSTRAINT billing_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -7740,6 +7984,14 @@ ALTER TABLE ONLY public.idempotency_keys
 
 
 --
+-- Name: instance_billing_intervals instance_billing_intervals_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_billing_intervals
+    ADD CONSTRAINT instance_billing_intervals_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
 -- Name: instances instances_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7833,6 +8085,14 @@ ALTER TABLE ONLY public.invoices
 
 ALTER TABLE ONLY public.invoices
     ADD CONSTRAINT invoices_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: invoice_refunds invoice_refunds_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invoice_refunds
+    ADD CONSTRAINT invoice_refunds_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES public.invoices(id) ON DELETE CASCADE;
 
 
 --

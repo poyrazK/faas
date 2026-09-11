@@ -3403,25 +3403,30 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	// Free while Polar continues charging the previous paid subscription. The
 	// provider webhook is the only source of truth for the eventual local plan.
 	if acct.Plan != plan {
+		billingAcct, identityErr := s.accountForActiveBillingProvider(r.Context(), acct)
+		if identityErr != nil {
+			api.WriteProblem(w, api.ErrCapacity("billing identity temporarily unavailable"))
+			return
+		}
 		prob := &api.Problem{
 			Status: http.StatusPaymentRequired,
 			Code:   api.CodePayment,
 			Title:  "Billing confirmation required",
 			Detail: "plan downgrades must be scheduled with the billing provider; the current plan remains active until provider confirmation",
 		}
-		if s.billingProvider == nil || acct.StripeSubscriptionItem == "" {
-			prob.BillingPortalURL = s.billingPortalURLForProvider(r.Context(), acct)
+		if s.billingProvider == nil || billingAcct.StripeSubscriptionItem == "" {
+			prob.BillingPortalURL = s.billingPortalURLForProvider(r.Context(), billingAcct)
 			api.WriteProblem(w, prob)
 			return
 		}
 		changer, ok := s.billingProvider.(billing.SubscriptionPlanChangeProvider)
 		if !ok {
 			prob.Detail = "this billing provider does not support API plan downgrades; use the billing portal; the current plan remains active until provider confirmation"
-			prob.BillingPortalURL = s.billingPortalURLForProvider(r.Context(), acct)
+			prob.BillingPortalURL = s.billingPortalURLForProvider(r.Context(), billingAcct)
 			api.WriteProblem(w, prob)
 			return
 		}
-		effectiveAt, err := changer.ChangeSubscriptionPlan(r.Context(), acct, plan)
+		effectiveAt, err := changer.ChangeSubscriptionPlan(r.Context(), billingAcct, plan)
 		if err != nil {
 			s.log.Error("schedule plan change failed",
 				"account", acct.ID,
@@ -3554,6 +3559,32 @@ func (s *server) raiseOverageCapSvc(ctx context.Context, acct state.Account, cen
 	return updated, nil
 }
 
+type stripeWebhookEnvelope struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Data struct {
+		Object stripeWebhookObject `json:"object"`
+	} `json:"data"`
+}
+
+type stripeWebhookObject struct {
+	ID           string          `json:"id"`
+	Customer     string          `json:"customer"`
+	Status       string          `json:"status"`
+	Plan         json.RawMessage `json:"plan"`
+	Subscription json.RawMessage `json:"subscription"`
+	Charge       json.RawMessage `json:"charge"`
+	Number       string          `json:"number"`
+	Currency     string          `json:"currency"`
+	Subtotal     int64           `json:"subtotal"`
+	Tax          int64           `json:"tax"`
+	Total        int64           `json:"total"`
+	AmountPaid   int64           `json:"amount_paid"`
+	PeriodStart  int64           `json:"period_start"`
+	PeriodEnd    int64           `json:"period_end"`
+	InvoicePDF   string          `json:"invoice_pdf"`
+}
+
 // stripeWebhook accepts signed Stripe events. M7 enforces the v1 HMAC
 // against s.stripeWebhookSecret (empty secret = verify disabled, dev
 // only). It handles:
@@ -3567,6 +3598,11 @@ func (s *server) raiseOverageCapSvc(ctx context.Context, acct state.Account, cen
 // 2xx for everything it didn't recognize so it doesn't retry forever.
 // Returns 400 on bad payload / bad signature.
 func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
+	if s.billingProvider != nil && providerName(s.billingProvider) != "stripe" {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"stripe webhook not configured", "Stripe is not the active billing provider"))
+		return
+	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))
@@ -3592,17 +3628,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad signature", err.Error()))
 		return
 	}
-	var ev struct {
-		ID   string `json:"id"`
-		Type string `json:"type"`
-		Data struct {
-			Object struct {
-				Customer string `json:"customer"`
-				Status   string `json:"status"`
-				Plan     string `json:"plan"`
-			} `json:"object"`
-		} `json:"data"`
-	}
+	var ev stripeWebhookEnvelope
 	if err := json.Unmarshal(body, &ev); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))
 		return
@@ -3620,6 +3646,12 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+		return
+	}
+	normalized := normalizeStripeWebhook(ev, body)
+	if err := s.persistBillingInvoice(r.Context(), string(webhookdedupe.ProviderStripe), acct, normalized.PlanID, normalized.Invoice); err != nil {
+		s.log.Error("stripe webhook invoice persistence failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
 	}
 	// Issue #294: webhook replay dedupe. ev.ID is the Stripe
@@ -3655,12 +3687,6 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// paddleWebhook) builds a billing.Event directly from the SDK's
 	// VerifyWebhook return value, so both paths converge on
 	// handleBillingEvent.
-	normalized := billing.Event{
-		Type:       mapStripeTypeToEventType(ev.Type),
-		CustomerID: ev.Data.Object.Customer,
-		PlanID:     ev.Data.Object.Plan,
-		Raw:        body,
-	}
 	if err := s.handleBillingEvent(r.Context(), normalized, acct); err != nil {
 		s.log.Error("stripe webhook state application failed", "event_id", logsanitize.Field(ev.ID), "err", err)
 		webhookdedupe.ReleaseReplay(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
@@ -3668,6 +3694,67 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func stripeExpandableID(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var id string
+	if err := json.Unmarshal(raw, &id); err == nil {
+		return id
+	}
+	var expanded struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &expanded); err == nil {
+		return expanded.ID
+	}
+	return ""
+}
+
+func stripeUnixTime(value int64) time.Time {
+	if value <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(value, 0).UTC()
+}
+
+func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event {
+	obj := ev.Data.Object
+	normalized := billing.Event{
+		EventID:        ev.ID,
+		Type:           mapStripeTypeToEventType(ev.Type),
+		CustomerID:     obj.Customer,
+		SubscriptionID: stripeExpandableID(obj.Subscription),
+		PlanID:         stripeExpandableID(obj.Plan),
+		Raw:            raw,
+	}
+	if strings.HasPrefix(ev.Type, "invoice.") && obj.ID != "" {
+		amountPaid := obj.AmountPaid
+		status := strings.ToLower(obj.Status)
+		if ev.Type == "invoice.payment_succeeded" {
+			status = "paid"
+			if amountPaid <= 0 {
+				amountPaid = obj.Total
+			}
+		}
+		normalized.Invoice = &billing.InvoiceData{
+			ProviderInvoiceID: obj.ID,
+			ProviderChargeID:  stripeExpandableID(obj.Charge),
+			Number:            obj.Number,
+			Status:            status,
+			PeriodStart:       stripeUnixTime(obj.PeriodStart),
+			PeriodEnd:         stripeUnixTime(obj.PeriodEnd),
+			SubtotalCents:     obj.Subtotal / 10,
+			TaxCents:          obj.Tax / 10,
+			TotalCents:        obj.Total / 10,
+			AmountPaidCents:   amountPaid / 10,
+			Currency:          strings.ToLower(obj.Currency),
+			PDFAvailable:      obj.InvoicePDF != "",
+		}
+	}
+	return normalized
 }
 
 // billingWebhookTolerance returns the configured replay-protection
@@ -3758,7 +3845,7 @@ func (s *server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if err := s.persistBillingInvoice(r.Context(), string(webhookdedupe.ProviderPaddle), acct, ev.Invoice); err != nil {
+	if err := s.persistBillingInvoice(r.Context(), string(webhookdedupe.ProviderPaddle), acct, ev.PlanID, ev.Invoice); err != nil {
 		s.log.Error("paddle webhook invoice persistence failed", "event_id", logsanitize.Field(ev.EventID), "err", err)
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
@@ -3822,7 +3909,7 @@ func (s *server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
 // persistBillingInvoice stores the provider-neutral invoice projection before
 // a webhook delivery is claimed. Upserts make replay safe, while returning an
 // error keeps provider delivery retryable when Postgres is unavailable.
-func (s *server) persistBillingInvoice(ctx context.Context, provider string, acct state.Account, data *billing.InvoiceData) error {
+func (s *server) persistBillingInvoice(ctx context.Context, provider string, acct state.Account, providerPlanID string, data *billing.InvoiceData) error {
 	if data == nil || data.ProviderInvoiceID == "" {
 		return nil
 	}
@@ -3830,10 +3917,15 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 	if currency == "" {
 		currency = "eur"
 	}
+	plan := billingPlanFromProviderID(providerPlanID)
+	if !plan.Valid() {
+		plan = acct.Plan
+	}
 	return s.store.UpsertInvoice(ctx, state.Invoice{
 		AccountID:         acct.ID,
 		Provider:          provider,
 		ProviderInvoiceID: data.ProviderInvoiceID,
+		ProviderChargeID:  data.ProviderChargeID,
 		Number:            data.Number,
 		Status:            data.Status,
 		PeriodStart:       data.PeriodStart,
@@ -3842,6 +3934,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 		TaxCents:          data.TaxCents,
 		TotalCents:        data.TotalCents,
 		AmountPaidCents:   data.AmountPaidCents,
+		Plan:              plan,
 		Currency:          currency,
 		PDFAvailable:      data.PDFAvailable,
 	})
@@ -3900,7 +3993,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// Polar it stores the subscription UUID that cancel-at-period-end
 		// and future provider operations use.
 		if ev.SubscriptionID != "" {
-			if err := s.store.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, ev.SubscriptionID); err != nil {
+			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
 				return fmt.Errorf("store subscription id: %w", err)
 			}
 		}
@@ -3980,8 +4073,11 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 	case billing.EventPaymentSucceeded:
+		if err := s.applyInvoiceCredits(ctx, providerName(s.billingProvider), acct, ev.Invoice); err != nil {
+			return fmt.Errorf("apply invoice credits: %w", err)
+		}
 		if ev.SubscriptionID != "" {
-			if err := s.store.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, ev.SubscriptionID); err != nil {
+			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
 				return fmt.Errorf("store payment subscription id: %w", err)
 			}
 		}
@@ -4022,7 +4118,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		}
 	case billing.EventSubscriptionUpdated:
 		if ev.SubscriptionID != "" {
-			if err := s.store.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, ev.SubscriptionID); err != nil {
+			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
 				return fmt.Errorf("store updated subscription id: %w", err)
 			}
 		}
@@ -4044,6 +4140,23 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// (it's a real "event happened" — the second delivery is a
 		// different event in time). The dedupe happens upstream
 		// (the ingress dedupe has provider-specific retry semantics).
+		if ev.ProviderRefundID != "" && ev.ChargeID != "" && ev.AmountCents > 0 {
+			provider := providerName(s.billingProvider)
+			inv, err := s.store.GetInvoiceByProviderID(ctx, acct.ID, provider, ev.ChargeID)
+			if err != nil {
+				return fmt.Errorf("load refunded invoice: %w", err)
+			}
+			if err := s.store.RecordInvoiceRefund(ctx, state.InvoiceRefund{
+				InvoiceID:        inv.ID,
+				ProviderRefundID: ev.ProviderRefundID,
+				IdempotencyKey:   "webhook-" + ev.ProviderRefundID,
+				AmountCents:      ev.AmountCents,
+				Source:           "webhook",
+				Status:           "confirmed",
+			}); err != nil {
+				return fmt.Errorf("record refund webhook: %w", err)
+			}
+		}
 		s.audit.Emit(ctx, "refund.processed", &acct.ID, map[string]any{
 			"actor":              acct.ID,
 			"actor_email":        acct.Email,
@@ -4113,10 +4226,7 @@ func mapStripeTypeToEventType(t string) billing.EventType {
 // Store so the webhook stays O(1) regardless of account count (MemStore
 // uses a map; PgStore uses a unique index).
 func (s *server) lookupAccountByStripeID(ctx context.Context, stripeID string) (state.Account, error) {
-	if stripeID == "" {
-		return state.Account{}, errors.New("apid: empty stripe customer id")
-	}
-	return s.store.AccountByProviderCustomerID(ctx, stripeID)
+	return s.lookupBillingAccount(ctx, "stripe", stripeID)
 }
 
 // lookupAccountByPaddleID is the Paddle counterpart to
@@ -4125,10 +4235,7 @@ func (s *server) lookupAccountByStripeID(ctx context.Context, stripeID string) (
 // underlying store method is a 1-line pass-through; the dedicated
 // helper name keeps the Paddle call sites self-documenting.
 func (s *server) lookupAccountByPaddleID(ctx context.Context, paddleID string) (state.Account, error) {
-	if paddleID == "" {
-		return state.Account{}, errors.New("apid: empty paddle customer id")
-	}
-	return s.store.AccountByProviderCustomerID(ctx, paddleID)
+	return s.lookupBillingAccount(ctx, "paddle", paddleID)
 }
 
 // --- response helpers ------------------------------------------------------

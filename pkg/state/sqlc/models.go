@@ -410,6 +410,23 @@ type AuditLog struct {
 	Data         []byte
 }
 
+type BillingIdentity struct {
+	AccountID      pgtype.UUID
+	Provider       string
+	CustomerID     string
+	SubscriptionID string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type BillingUsageDelivery struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	WindowStart pgtype.Timestamptz
+	MbSeconds   int64
+	DeliveredAt pgtype.Timestamptz
+}
+
 type Build struct {
 	ID                           pgtype.UUID
 	DeploymentID                 pgtype.UUID
@@ -1001,6 +1018,13 @@ type Instance struct {
 	Mode               string
 }
 
+type InstanceBillingInterval struct {
+	ID         int64
+	InstanceID pgtype.UUID
+	StartedAt  pgtype.Timestamptz
+	EndedAt    pgtype.Timestamptz
+}
+
 type Invocation struct {
 	ID                       pgtype.UUID
 	AppID                    pgtype.UUID
@@ -1039,25 +1063,40 @@ type InvocationsPendingPerApp struct {
 }
 
 type Invoice struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	Provider          string
-	ProviderInvoiceID string
-	Number            string
-	Status            string
-	PeriodStart       pgtype.Timestamptz
-	PeriodEnd         pgtype.Timestamptz
-	SubtotalCents     int64
-	TaxCents          int64
-	TotalCents        int64
-	AmountPaidCents   int64
-	Currency          string
-	PdfAvailable      bool
-	HostedUrl         string
-	Raw               []byte
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	OrgID             pgtype.UUID
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Provider            string
+	ProviderInvoiceID   string
+	ProviderChargeID    string
+	Number              string
+	Status              string
+	PeriodStart         pgtype.Timestamptz
+	PeriodEnd           pgtype.Timestamptz
+	SubtotalCents       int64
+	TaxCents            int64
+	TotalCents          int64
+	AmountPaidCents     int64
+	Plan                string
+	AmountRefundedCents int64
+	CreditsAppliedCents int64
+	Currency            string
+	PdfAvailable        bool
+	HostedUrl           string
+	Raw                 []byte
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	OrgID               pgtype.UUID
+}
+
+type InvoiceRefund struct {
+	ID               pgtype.UUID
+	InvoiceID        pgtype.UUID
+	ProviderRefundID string
+	IdempotencyKey   string
+	AmountCents      int64
+	Source           string
+	Status           string
+	CreatedAt        pgtype.Timestamptz
 }
 
 type Job struct {
