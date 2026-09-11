@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"time"
 
@@ -195,6 +196,108 @@ func (c *Client) WriteCheck(ctx context.Context, repoFullName, commitSHA string,
 		return liftErr(err)
 	}
 	return nil
+}
+
+// ListRecoveryQueueItems returns bounded operator-safe queue projections.
+func (c *Client) ListRecoveryQueueItems(ctx context.Context, queueStatus string, limit int) (RecoveryQueueItems, error) {
+	if limit < math.MinInt32 || limit > math.MaxInt32 {
+		return RecoveryQueueItems{}, fmt.Errorf("githubdgrpc: recovery limit %d is outside int32 range", limit)
+	}
+	resp, err := c.cli.ListRecoveryQueueItems(ctx, &githubdpb.ListRecoveryQueueItemsRequest{
+		Status: queueStatus,
+		Limit:  int32(limit),
+	})
+	if err != nil {
+		return RecoveryQueueItems{}, liftErr(err)
+	}
+	return recoveryQueueItemsFromProto(resp)
+}
+
+// RetryWebhookDelivery moves a dead delivery back to pending.
+func (c *Client) RetryWebhookDelivery(ctx context.Context, deliveryID string) (bool, error) {
+	resp, err := c.cli.RetryWebhookDelivery(ctx, &githubdpb.RetryWebhookDeliveryRequest{DeliveryId: deliveryID})
+	if err != nil {
+		return false, liftErr(err)
+	}
+	return resp.GetRetried(), nil
+}
+
+// RetryCheckUpdate moves a dead Check Run update back to pending.
+func (c *Client) RetryCheckUpdate(ctx context.Context, deploymentID string) (bool, error) {
+	resp, err := c.cli.RetryCheckUpdate(ctx, &githubdpb.RetryCheckUpdateRequest{DeploymentId: deploymentID})
+	if err != nil {
+		return false, liftErr(err)
+	}
+	return resp.GetRetried(), nil
+}
+
+func recoveryQueueItemsFromProto(resp *githubdpb.ListRecoveryQueueItemsResponse) (RecoveryQueueItems, error) {
+	out := RecoveryQueueItems{
+		Deliveries:   make([]WebhookDeliveryRecord, 0, len(resp.GetDeliveries())),
+		CheckUpdates: make([]CheckUpdateRecord, 0, len(resp.GetCheckUpdates())),
+	}
+	for _, item := range resp.GetDeliveries() {
+		next, err := parseRecoveryTime(item.GetNextAttemptAt())
+		if err != nil {
+			return RecoveryQueueItems{}, err
+		}
+		received, err := parseRecoveryTime(item.GetReceivedAt())
+		if err != nil {
+			return RecoveryQueueItems{}, err
+		}
+		updated, err := parseRecoveryTime(item.GetUpdatedAt())
+		if err != nil {
+			return RecoveryQueueItems{}, err
+		}
+		processed, err := parseOptionalRecoveryTime(item.GetProcessedAt())
+		if err != nil {
+			return RecoveryQueueItems{}, err
+		}
+		out.Deliveries = append(out.Deliveries, WebhookDeliveryRecord{
+			DeliveryID: item.GetDeliveryId(), EventType: item.GetEventType(), Status: item.GetStatus(),
+			Attempts: int(item.GetAttempts()), NextAttempt: next, LastError: item.GetLastError(),
+			ReceivedAt: received, ProcessedAt: processed, UpdatedAt: updated,
+		})
+	}
+	for _, item := range resp.GetCheckUpdates() {
+		next, err := parseRecoveryTime(item.GetNextAttemptAt())
+		if err != nil {
+			return RecoveryQueueItems{}, err
+		}
+		updated, err := parseRecoveryTime(item.GetUpdatedAt())
+		if err != nil {
+			return RecoveryQueueItems{}, err
+		}
+		processed, err := parseOptionalRecoveryTime(item.GetProcessedAt())
+		if err != nil {
+			return RecoveryQueueItems{}, err
+		}
+		out.CheckUpdates = append(out.CheckUpdates, CheckUpdateRecord{
+			DeploymentID: item.GetDeploymentId(), Generation: item.GetGeneration(), Status: item.GetStatus(),
+			Attempts: int(item.GetAttempts()), NextAttempt: next, LastError: item.GetLastError(),
+			ProcessedAt: processed, UpdatedAt: updated,
+		})
+	}
+	return out, nil
+}
+
+func parseRecoveryTime(raw string) (time.Time, error) {
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("githubdgrpc: parse recovery timestamp %q: %w", raw, err)
+	}
+	return parsed, nil
+}
+
+func parseOptionalRecoveryTime(raw string) (*time.Time, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := parseRecoveryTime(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
 }
 
 // VerifyInstallation is the "trust on first contact" check that

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -10,6 +10,10 @@ from ..models.plan_workload_action import PlanWorkloadAction, check_plan_workloa
 from ..models.plan_workload_class import PlanWorkloadClass, check_plan_workload_class
 from ..models.plan_workload_tier import PlanWorkloadTier, check_plan_workload_tier
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.plan_detected_by import PlanDetectedBy
+
 
 T = TypeVar("T", bound="PlanWorkload")
 
@@ -36,6 +40,15 @@ class PlanWorkload:
     (root_dir, name)."""
     existing_app_id: str | Unset = UNSET
     """ADR-124: app row ID the update targets. Empty iff action == create."""
+    detected_by: PlanDetectedBy | Unset = UNSET
+    """Structured detection trace for one workload (issue #742).
+    `source` on PlanWorkload carries the same provenance as free
+    text ("compose.yaml: api"); this is the machine-readable form
+    so a client can branch on the detector without parsing it.
+
+    Additive and optional: absent on any response the server did
+    not populate, so existing consumers are unaffected.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +84,10 @@ class PlanWorkload:
 
         existing_app_id = self.existing_app_id
 
+        detected_by: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.detected_by, Unset):
+            detected_by = self.detected_by.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -97,11 +114,15 @@ class PlanWorkload:
             field_dict["action"] = action
         if existing_app_id is not UNSET:
             field_dict["existing_app_id"] = existing_app_id
+        if detected_by is not UNSET:
+            field_dict["detected_by"] = detected_by
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.plan_detected_by import PlanDetectedBy
+
         d = dict(src_dict)
         name = d.pop("name")
 
@@ -142,6 +163,13 @@ class PlanWorkload:
 
         existing_app_id = d.pop("existing_app_id", UNSET)
 
+        _detected_by = d.pop("detected_by", UNSET)
+        detected_by: PlanDetectedBy | Unset
+        if isinstance(_detected_by, Unset):
+            detected_by = UNSET
+        else:
+            detected_by = PlanDetectedBy.from_dict(_detected_by)
+
         plan_workload = cls(
             name=name,
             root_dir=root_dir,
@@ -155,6 +183,7 @@ class PlanWorkload:
             tier=tier,
             action=action,
             existing_app_id=existing_app_id,
+            detected_by=detected_by,
         )
 
         plan_workload.additional_properties = d

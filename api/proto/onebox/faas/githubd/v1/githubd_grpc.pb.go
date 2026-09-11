@@ -44,6 +44,9 @@ const (
 	Githubd_VerifyInstallation_FullMethodName       = "/onebox.faas.githubd.v1.Githubd/VerifyInstallation"
 	Githubd_MintInstallationToken_FullMethodName    = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
 	Githubd_StreamSourceRef_FullMethodName          = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
+	Githubd_ListRecoveryQueueItems_FullMethodName   = "/onebox.faas.githubd.v1.Githubd/ListRecoveryQueueItems"
+	Githubd_RetryWebhookDelivery_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/RetryWebhookDelivery"
+	Githubd_RetryCheckUpdate_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/RetryCheckUpdate"
 )
 
 // GithubdClient is the client API for Githubd service.
@@ -172,6 +175,15 @@ type GithubdClient interface {
 	//   - UNAVAILABLE when githubd is down or codeload
 	//     returns 5xx.
 	StreamSourceRef(ctx context.Context, in *StreamSourceRefRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamSourceRefChunk], error)
+	// ListRecoveryQueueItems returns operator-safe projections of the durable
+	// webhook-delivery inbox and Check Run outbox. Payloads are deliberately
+	// excluded because they can contain customer repository metadata.
+	ListRecoveryQueueItems(ctx context.Context, in *ListRecoveryQueueItemsRequest, opts ...grpc.CallOption) (*ListRecoveryQueueItemsResponse, error)
+	// RetryWebhookDelivery and RetryCheckUpdate move one dead item back to its
+	// pending state. Both operations are compare-and-swap writes: active or
+	// already-retried items return retried=false and are left untouched.
+	RetryWebhookDelivery(ctx context.Context, in *RetryWebhookDeliveryRequest, opts ...grpc.CallOption) (*RetryRecoveryItemResponse, error)
+	RetryCheckUpdate(ctx context.Context, in *RetryCheckUpdateRequest, opts ...grpc.CallOption) (*RetryRecoveryItemResponse, error)
 }
 
 type githubdClient struct {
@@ -311,6 +323,36 @@ func (c *githubdClient) StreamSourceRef(ctx context.Context, in *StreamSourceRef
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Githubd_StreamSourceRefClient = grpc.ServerStreamingClient[StreamSourceRefChunk]
 
+func (c *githubdClient) ListRecoveryQueueItems(ctx context.Context, in *ListRecoveryQueueItemsRequest, opts ...grpc.CallOption) (*ListRecoveryQueueItemsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRecoveryQueueItemsResponse)
+	err := c.cc.Invoke(ctx, Githubd_ListRecoveryQueueItems_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) RetryWebhookDelivery(ctx context.Context, in *RetryWebhookDeliveryRequest, opts ...grpc.CallOption) (*RetryRecoveryItemResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetryRecoveryItemResponse)
+	err := c.cc.Invoke(ctx, Githubd_RetryWebhookDelivery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) RetryCheckUpdate(ctx context.Context, in *RetryCheckUpdateRequest, opts ...grpc.CallOption) (*RetryRecoveryItemResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetryRecoveryItemResponse)
+	err := c.cc.Invoke(ctx, Githubd_RetryCheckUpdate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GithubdServer is the server API for Githubd service.
 // All implementations must embed UnimplementedGithubdServer
 // for forward compatibility.
@@ -437,6 +479,15 @@ type GithubdServer interface {
 	//   - UNAVAILABLE when githubd is down or codeload
 	//     returns 5xx.
 	StreamSourceRef(*StreamSourceRefRequest, grpc.ServerStreamingServer[StreamSourceRefChunk]) error
+	// ListRecoveryQueueItems returns operator-safe projections of the durable
+	// webhook-delivery inbox and Check Run outbox. Payloads are deliberately
+	// excluded because they can contain customer repository metadata.
+	ListRecoveryQueueItems(context.Context, *ListRecoveryQueueItemsRequest) (*ListRecoveryQueueItemsResponse, error)
+	// RetryWebhookDelivery and RetryCheckUpdate move one dead item back to its
+	// pending state. Both operations are compare-and-swap writes: active or
+	// already-retried items return retried=false and are left untouched.
+	RetryWebhookDelivery(context.Context, *RetryWebhookDeliveryRequest) (*RetryRecoveryItemResponse, error)
+	RetryCheckUpdate(context.Context, *RetryCheckUpdateRequest) (*RetryRecoveryItemResponse, error)
 	mustEmbedUnimplementedGithubdServer()
 }
 
@@ -482,6 +533,15 @@ func (UnimplementedGithubdServer) MintInstallationToken(context.Context, *MintIn
 }
 func (UnimplementedGithubdServer) StreamSourceRef(*StreamSourceRefRequest, grpc.ServerStreamingServer[StreamSourceRefChunk]) error {
 	return status.Error(codes.Unimplemented, "method StreamSourceRef not implemented")
+}
+func (UnimplementedGithubdServer) ListRecoveryQueueItems(context.Context, *ListRecoveryQueueItemsRequest) (*ListRecoveryQueueItemsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRecoveryQueueItems not implemented")
+}
+func (UnimplementedGithubdServer) RetryWebhookDelivery(context.Context, *RetryWebhookDeliveryRequest) (*RetryRecoveryItemResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetryWebhookDelivery not implemented")
+}
+func (UnimplementedGithubdServer) RetryCheckUpdate(context.Context, *RetryCheckUpdateRequest) (*RetryRecoveryItemResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetryCheckUpdate not implemented")
 }
 func (UnimplementedGithubdServer) mustEmbedUnimplementedGithubdServer() {}
 func (UnimplementedGithubdServer) testEmbeddedByValue()                 {}
@@ -713,6 +773,60 @@ func _Githubd_StreamSourceRef_Handler(srv interface{}, stream grpc.ServerStream)
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Githubd_StreamSourceRefServer = grpc.ServerStreamingServer[StreamSourceRefChunk]
 
+func _Githubd_ListRecoveryQueueItems_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRecoveryQueueItemsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).ListRecoveryQueueItems(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_ListRecoveryQueueItems_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).ListRecoveryQueueItems(ctx, req.(*ListRecoveryQueueItemsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Githubd_RetryWebhookDelivery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetryWebhookDeliveryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).RetryWebhookDelivery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_RetryWebhookDelivery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).RetryWebhookDelivery(ctx, req.(*RetryWebhookDeliveryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Githubd_RetryCheckUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetryCheckUpdateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).RetryCheckUpdate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_RetryCheckUpdate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).RetryCheckUpdate(ctx, req.(*RetryCheckUpdateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Githubd_ServiceDesc is the grpc.ServiceDesc for Githubd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -763,6 +877,18 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MintInstallationToken",
 			Handler:    _Githubd_MintInstallationToken_Handler,
+		},
+		{
+			MethodName: "ListRecoveryQueueItems",
+			Handler:    _Githubd_ListRecoveryQueueItems_Handler,
+		},
+		{
+			MethodName: "RetryWebhookDelivery",
+			Handler:    _Githubd_RetryWebhookDelivery_Handler,
+		},
+		{
+			MethodName: "RetryCheckUpdate",
+			Handler:    _Githubd_RetryCheckUpdate_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

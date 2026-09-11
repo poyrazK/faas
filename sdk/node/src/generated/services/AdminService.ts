@@ -10,6 +10,8 @@ import type { BillingCatalogResponse } from '../models/BillingCatalogResponse.js
 import type { BillingPaddleOveragePreflightResponse } from '../models/BillingPaddleOveragePreflightResponse.js';
 import type { BillingReconcileResponse } from '../models/BillingReconcileResponse.js';
 import type { ConsumeInvoiceResponse } from '../models/ConsumeInvoiceResponse.js';
+import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
+import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
 import type { OperatorIntentResponse } from '../models/OperatorIntentResponse.js';
@@ -747,6 +749,158 @@ export class AdminService {
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
         500: `Store call failed (transient PG hiccup; retry with the same threshold).`,
+      },
+    });
+  }
+  /**
+   * List operator-safe GitHub webhook and Check Run recovery queue items.
+   * Returns bounded queue metadata from githubd. Webhook payloads and
+   * installation credentials are deliberately excluded. Requires admin
+   * scope, MFA, and membership in FAAS_ADMIN_EMAILS.
+   *
+   * @returns GithubRecoveryStatusResponse Bounded recovery queue projections.
+   * @throws ApiError
+   */
+  public static getGithubRecoveryStatus({
+    status = 'dead',
+    limit = 100,
+  }: {
+    /**
+     * Queue status to select; omit to list every status.
+     */
+    status?: 'pending' | 'processing' | 'succeeded' | 'dead',
+    /**
+     * Maximum rows returned from each queue.
+     */
+    limit?: number,
+  }): CancelablePromise<GithubRecoveryStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/ops/github/recovery',
+      query: {
+        'status': status,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Move one dead GitHub webhook delivery back to pending.
+   * Strict operator-session mutation requiring a recent MFA step-up,
+   * Idempotency-Key, explicit confirmation, and a durable reason. The
+   * compare-and-swap write is owned by githubd and emits a trace-linked
+   * operator.action.github_delivery_retry audit event.
+   *
+   * @returns GithubRecoveryRetryResponse Delivery moved back to pending.
+   * @throws ApiError
+   */
+  public static retryGithubWebhookDelivery({
+    id,
+    confirm,
+    reason,
+  }: {
+    /**
+     * UUID of the dead webhook delivery to retry.
+     */
+    id: string,
+    /**
+     * Explicit acknowledgement that customer webhook work will be retried.
+     */
+    confirm: 'true',
+    /**
+     * Durable lowercase audit reason slug for the webhook retry.
+     */
+    reason: string,
+  }): CancelablePromise<GithubRecoveryRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/ops/github/deliveries/{id}/retry',
+      path: {
+        'id': id,
+      },
+      query: {
+        'confirm': confirm,
+        'reason': reason,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Move one dead GitHub Check Run update back to pending.
+   * Strict operator-session mutation requiring a recent MFA step-up,
+   * Idempotency-Key, explicit confirmation, and a durable reason. The
+   * compare-and-swap write is owned by githubd and emits a trace-linked
+   * operator.action.github_check_update_retry audit event.
+   *
+   * @returns GithubRecoveryRetryResponse Check Run update moved back to pending.
+   * @throws ApiError
+   */
+  public static retryGithubCheckUpdate({
+    id,
+    confirm,
+    reason,
+  }: {
+    /**
+     * Deployment UUID whose dead Check Run update should be retried.
+     */
+    id: string,
+    /**
+     * Explicit acknowledgement that customer Check Run work will be retried.
+     */
+    confirm: 'true',
+    /**
+     * Durable lowercase audit reason slug for the Check Run retry.
+     */
+    reason: string,
+  }): CancelablePromise<GithubRecoveryRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/ops/github/check-updates/{id}/retry',
+      path: {
+        'id': id,
+      },
+      query: {
+        'confirm': confirm,
+        'reason': reason,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }

@@ -12732,6 +12732,116 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/admin/ops/github/recovery:
+    get:
+      tags: [admin]
+      operationId: getGithubRecoveryStatus
+      summary: List operator-safe GitHub webhook and Check Run recovery queue items.
+      description: |
+        Returns bounded queue metadata from githubd. Webhook payloads and
+        installation credentials are deliberately excluded. Requires admin
+        scope, MFA, and membership in FAAS_ADMIN_EMAILS.
+      parameters:
+        - in: query
+          name: status
+          required: false
+          description: Queue status to select; omit to list every status.
+          schema: { type: string, enum: [pending, processing, succeeded, dead], default: dead }
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+          description: Maximum rows returned from each queue.
+      responses:
+        '200':
+          description: Bounded recovery queue projections.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GithubRecoveryStatusResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/admin/ops/github/deliveries/{id}/retry:
+    post:
+      tags: [admin]
+      operationId: retryGithubWebhookDelivery
+      summary: Move one dead GitHub webhook delivery back to pending.
+      description: |
+        Strict operator-session mutation requiring a recent MFA step-up,
+        Idempotency-Key, explicit confirmation, and a durable reason. The
+        compare-and-swap write is owned by githubd and emits a trace-linked
+        operator.action.github_delivery_retry audit event.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: UUID of the dead webhook delivery to retry.
+          schema: { type: string, format: uuid }
+        - in: query
+          name: confirm
+          required: true
+          description: Explicit acknowledgement that customer webhook work will be retried.
+          schema: { type: string, enum: ['true'] }
+        - in: query
+          name: reason
+          required: true
+          description: Durable lowercase audit reason slug for the webhook retry.
+          schema: { type: string, pattern: '^[a-z0-9_]{1,64}$' }
+      responses:
+        '200':
+          description: Delivery moved back to pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GithubRecoveryRetryResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/admin/ops/github/check-updates/{id}/retry:
+    post:
+      tags: [admin]
+      operationId: retryGithubCheckUpdate
+      summary: Move one dead GitHub Check Run update back to pending.
+      description: |
+        Strict operator-session mutation requiring a recent MFA step-up,
+        Idempotency-Key, explicit confirmation, and a durable reason. The
+        compare-and-swap write is owned by githubd and emits a trace-linked
+        operator.action.github_check_update_retry audit event.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: Deployment UUID whose dead Check Run update should be retried.
+          schema: { type: string, format: uuid }
+        - in: query
+          name: confirm
+          required: true
+          description: Explicit acknowledgement that customer Check Run work will be retried.
+          schema: { type: string, enum: ['true'] }
+        - in: query
+          name: reason
+          required: true
+          description: Durable lowercase audit reason slug for the Check Run retry.
+          schema: { type: string, pattern: '^[a-z0-9_]{1,64}$' }
+      responses:
+        '200':
+          description: Check Run update moved back to pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GithubRecoveryRetryResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   # ─── Organizations (issue #190 / IAM-6 / ADR-061, PR 5 + PR 7) ──────────
   # Customer-visible org surface. Account-scoped (/v1/orgs list +
   # create) and path-scoped (/v1/orgs/{slug}/...) routes. The
@@ -14859,6 +14969,57 @@ components:
           description: RFC 3339 cutoff timestamp (now - older_than).
       x-since: "2026-08"
       x-pr-cluster: "operator-obs-mega"
+
+    GithubRecoveryStatusResponse:
+      description: Operator-safe projections of githubd's durable recovery queues. Webhook payloads are never included.
+      type: object
+      required: [deliveries, check_updates]
+      properties:
+        deliveries:
+          type: array
+          items: { $ref: '#/components/schemas/GithubWebhookDeliveryRecord' }
+        check_updates:
+          type: array
+          items: { $ref: '#/components/schemas/GithubCheckUpdateRecord' }
+
+    GithubWebhookDeliveryRecord:
+      description: Payload-free queue metadata for one inbound GitHub webhook delivery.
+      type: object
+      required: [delivery_id, event_type, status, attempts, next_attempt_at, received_at, updated_at]
+      properties:
+        delivery_id: { type: string, format: uuid }
+        event_type: { type: string }
+        status: { type: string, enum: [pending, processing, succeeded, dead] }
+        attempts: { type: integer, minimum: 0 }
+        next_attempt_at: { type: string, format: date-time }
+        last_error: { type: string, maxLength: 2048 }
+        received_at: { type: string, format: date-time }
+        processed_at: { type: [string, "null"], format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GithubCheckUpdateRecord:
+      description: Queue metadata for one outbound GitHub Check Run update.
+      type: object
+      required: [deployment_id, generation, status, attempts, next_attempt_at, updated_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        generation: { type: integer, format: int64, minimum: 1 }
+        status: { type: string, enum: [pending, processing, succeeded, dead] }
+        attempts: { type: integer, minimum: 0 }
+        next_attempt_at: { type: string, format: date-time }
+        last_error: { type: string, maxLength: 2048 }
+        processed_at: { type: [string, "null"], format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GithubRecoveryRetryResponse:
+      description: Confirmation that one recovery item moved from dead back to pending.
+      type: object
+      required: [ok, kind, target_id, status]
+      properties:
+        ok: { type: boolean, const: true }
+        kind: { type: string, enum: [delivery, check_update] }
+        target_id: { type: string, format: uuid }
+        status: { type: string, const: pending }
 
     APIKeyExportResponse:
       description: "One API key in export form: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, and request count. Scopes is the permission set attached to the key at the moment of export (audit trail; IAM-1, ADR-034 rev2)."

@@ -229,6 +229,22 @@ The command uses the authenticated operator API, emits a trace ID, and never
 opens a database connection. Use `gregalectl audit trace --trace-id <id>` to
 inspect its audit event.
 
+### GitHub recovery
+
+Inspect and retry failed GitHub webhook or Check Run work without SSH or
+database credentials:
+
+```
+gregalectl github status --status dead
+gregalectl auth step-up
+gregalectl github retry-delivery --delivery-id <uuid> --reason incident_123 --yes
+gregalectl github retry-check --deployment-id <uuid> --reason incident_123 --yes
+```
+
+The CLI calls apid, which delegates queue ownership to githubd. Retry commands
+are MFA-gated, idempotent, and emit trace-linked operator audit events. Webhook
+payloads never cross the operator API.
+
 ### Account support
 
 Routine tenant investigation and lifecycle changes go through the authenticated

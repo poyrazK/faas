@@ -112,6 +112,8 @@ var cliCommands = []cliCommand{
 				Short: "Move one dead webhook delivery back to pending",
 				Flags: []cliFlag{
 					{Name: "delivery-id", Short: "X-GitHub-Delivery id", Req: true},
+					{Name: "reason", Short: "durable audit reason slug", Req: true},
+					{Name: "trace-id", Short: "32-char hex trace id (generated when omitted)"},
 					{Name: "yes", Short: "acknowledge retrying customer deployment work", Req: true},
 				},
 			},
@@ -120,6 +122,8 @@ var cliCommands = []cliCommand{
 				Short: "Move one dead Check Run update back to pending",
 				Flags: []cliFlag{
 					{Name: "deployment-id", Short: "deployment id", Req: true},
+					{Name: "reason", Short: "durable audit reason slug", Req: true},
+					{Name: "trace-id", Short: "32-char hex trace id (generated when omitted)"},
 					{Name: "yes", Short: "acknowledge retrying the GitHub Check Run write", Req: true},
 				},
 			},

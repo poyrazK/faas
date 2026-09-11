@@ -6869,6 +6869,44 @@ type SweepStuckBuildsResponse struct {
 	ThresholdISO  string `json:"threshold_iso"`
 }
 
+// GithubRecoveryStatusResponse is the operator-safe projection of githubd's
+// durable recovery queues. Webhook payloads and installation credentials are
+// intentionally absent.
+type GithubRecoveryStatusResponse struct {
+	Deliveries   []GithubWebhookDeliveryRecord `json:"deliveries"`
+	CheckUpdates []GithubCheckUpdateRecord     `json:"check_updates"`
+}
+
+type GithubWebhookDeliveryRecord struct {
+	DeliveryID  string     `json:"delivery_id"`
+	EventType   string     `json:"event_type"`
+	Status      string     `json:"status"`
+	Attempts    int        `json:"attempts"`
+	NextAttempt time.Time  `json:"next_attempt_at"`
+	LastError   string     `json:"last_error,omitempty"`
+	ReceivedAt  time.Time  `json:"received_at"`
+	ProcessedAt *time.Time `json:"processed_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type GithubCheckUpdateRecord struct {
+	DeploymentID string     `json:"deployment_id"`
+	Generation   int64      `json:"generation"`
+	Status       string     `json:"status"`
+	Attempts     int        `json:"attempts"`
+	NextAttempt  time.Time  `json:"next_attempt_at"`
+	LastError    string     `json:"last_error,omitempty"`
+	ProcessedAt  *time.Time `json:"processed_at,omitempty"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+type GithubRecoveryRetryResponse struct {
+	OK       bool   `json:"ok"`
+	Kind     string `json:"kind"`
+	TargetID string `json:"target_id"`
+	Status   string `json:"status"`
+}
+
 // ThrottleSuggestionRow is one (route → suggested rate) row in the
 // payload returned by GET /v1/apps/{slug}/throttle-suggestions
 // (ADR-091 D20.5 amendment, issue #881 / PR-E). The recommender is

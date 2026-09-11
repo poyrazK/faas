@@ -2074,6 +2074,15 @@ func (s *server) handler() http.Handler {
 	// in-flight builds.
 	mux.Handle("POST /v1/admin/builds/sweep-stuck",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postSweepStuckBuilds))))
+	// githubd-owned incident recovery. The read path is MFA-gated and the
+	// retry paths use the strict provider-mutation policy; apid never opens or
+	// writes githubd's queue tables directly.
+	mux.HandleFunc("GET /v1/admin/ops/github/recovery",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getGithubRecoveryStatus))))
+	mux.Handle("POST /v1/admin/ops/github/deliveries/{id}/retry",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postGithubDeliveryRetry))))
+	mux.Handle("POST /v1/admin/ops/github/check-updates/{id}/retry",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postGithubCheckRetry))))
 	// Account and compute-node lifecycle controls. They are deliberately
 	// separate from the read-only /obs namespace and require strict admin
 	// mutation authentication plus confirm=true.
