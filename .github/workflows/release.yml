@@ -72,27 +72,45 @@ jobs:
             go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-lint-${{ runner.os }}-
 
-      - name: Cross-build gregale (linux-amd64)
+      # Four shipped targets (ADR-172). Windows is absent on purpose:
+      # cmd/gregale transitively imports pkg/fcvm, which needs
+      # syscall.Stat_t / Mkfifo / SYS_IOCTL and does not compile for
+      # GOOS=windows. Both public channels fail closed there.
+      #
+      # Each target also gets a gregale_<semver>_<os>_<arch>.tar.gz
+      # archive. Those archives — not the bare binaries — are what
+      # scripts/install.sh downloads and what the npm platform packages
+      # are built from.
+      - name: Cross-build gregale for every shipped target
         env:
           VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          mkdir -p /tmp/gregale-build
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -trimpath -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
-            -o /tmp/gregale-build/gregale ./cmd/gregale
-          ls -la /tmp/gregale-build/gregale
-
-      - name: Optional cross-build (darwin-arm64)
-        env:
-          VERSION: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/gregale-build
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
-            go build -trimpath -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
-            -o /tmp/gregale-build/gregale-darwin-arm64 ./cmd/gregale
-          ls -la /tmp/gregale-build/gregale-darwin-arm64
+          mkdir -p /tmp/gregale-build/archives
+          SEMVER="${VERSION#v}"
+          MTIME="@$(git log -1 --format=%ct)"
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            stage="/tmp/gregale-build/stage/${GOOS}_${GOARCH}"
+            mkdir -p "$stage"
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
+              -o "$stage/gregale" ./cmd/gregale
+            # Pin sort order, ownership, and mtime so re-running this
+            # workflow on the same commit produces byte-identical
+            # archives, and therefore identical SHA256SUMS.
+            tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="$MTIME" \
+              -czf "/tmp/gregale-build/archives/gregale_${SEMVER}_${GOOS}_${GOARCH}.tar.gz" \
+              -C "$stage" gregale
+          done
+          # Historical asset layout, preserved verbatim: the bare
+          # linux-amd64 binary is what the deploy action vendors below,
+          # and gregale-darwin-arm64 is an already-published download
+          # link. Neither name may change.
+          cp /tmp/gregale-build/stage/linux_amd64/gregale /tmp/gregale-build/gregale
+          cp /tmp/gregale-build/stage/darwin_arm64/gregale /tmp/gregale-build/gregale-darwin-arm64
+          ls -la /tmp/gregale-build /tmp/gregale-build/archives
 
       # SHA256SUMS is generated in /tmp/gregale-build because that's
       # the working directory where both binaries live. The vendoring
@@ -100,11 +118,29 @@ jobs:
       # repo so the `sha256sum -c` snippet in the release notes can
       # resolve the file from the release branch (not just from the
       # /tmp artifact on the runner).
+      #
+      # The archives are flattened into the same directory first so
+      # their SHA256SUMS entries carry bare filenames. scripts/install.sh
+      # matches on "<digest>  <archive>" exactly, and a leading
+      # "archives/" would make every verification fail.
       - name: Generate SHA256SUMS
         working-directory: /tmp/gregale-build
         run: |
-          sha256sum gregale gregale-darwin-arm64 > SHA256SUMS
+          set -euo pipefail
+          cp archives/*.tar.gz .
+          sha256sum gregale gregale-darwin-arm64 gregale_*.tar.gz > SHA256SUMS
           cat SHA256SUMS
+
+      # Handed to publish-npm, which stages the five npm packages from
+      # these exact archives rather than rebuilding the CLI. One build per
+      # release, consumed by every channel.
+      - name: Upload CLI archives for the npm channel
+        uses: actions/upload-artifact@v4
+        with:
+          name: gregale-cli-archives-${{ github.sha }}
+          path: /tmp/gregale-build/archives/
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Vendor binary + SHA256SUMS into action repo
         env:
@@ -166,6 +202,8 @@ jobs:
           files: |
             .github/actions/deploy/bin/gregale
             /tmp/gregale-build/gregale-darwin-arm64
+            /tmp/gregale-build/gregale_*.tar.gz
+            scripts/install.sh
             SHA256SUMS
           # Release candidates (for example v0.1.18-rc.1) must not be
           # presented as stable releases. Keep the tag convention and the
@@ -176,6 +214,25 @@ jobs:
 
             Bundled CLI: **gregale ${{ github.ref_name }}**
             Compatible server API: see `poyrazK/faas` release notes for ${{ github.ref_name }}.
+
+            ### Install the CLI
+
+            ```sh
+            curl -fsSL https://get.gregale.dev | sh
+            ```
+
+            ```sh
+            npm install -g gregale
+            ```
+
+            Pin this exact release:
+
+            ```sh
+            curl -fsSL https://get.gregale.dev | sh -s -- --version ${{ github.ref_name }}
+            ```
+
+            macOS and Linux, amd64 and arm64. Windows is not supported yet
+            (ADR-172).
 
             ### Checksums
 
@@ -204,6 +261,124 @@ jobs:
             ```yaml
             - uses: poyrazK/faas/.github/actions/deploy@${{ github.ref_name }}
             ```
+
+  # ADR-172: the npm channel. Consumes the archives built above rather than
+  # rebuilding the CLI, so npm and the curl installer can never ship
+  # different bytes for the same tag.
+  #
+  # The curl installer has no counterpart job on purpose — it resolves the
+  # release from the GitHub API at run time, so attaching the assets above
+  # is the entire publish step for that channel.
+  publish-npm:
+    name: Publish the npm channel
+    needs: [build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download CLI archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gregale-cli-archives-${{ github.sha }}
+          path: ${{ runner.temp }}/archives
+
+      # Staging runs unconditionally, even with no NPM_TOKEN: a packaging
+      # regression should fail the release that introduced it rather than
+      # lie dormant until credentials exist.
+      - name: Stage npm packages
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          bash scripts/build-npm-packages.sh \
+            --version "$TAG" \
+            --artifacts-dir "$RUNNER_TEMP/archives" \
+            --out-dir "$RUNNER_TEMP/npm"
+
+      # `npm pack --dry-run` resolves the package's own `files` globs, which
+      # the hermetic unit test cannot do. A glob that silently excludes
+      # bin/gregale would otherwise publish an empty package.
+      - name: Verify each package actually contains its payload
+        run: |
+          set -euo pipefail
+          # Pack for real and read the tarball. This resolves the package's
+          # own `files` globs, which the hermetic unit test cannot do — a
+          # glob that silently excluded bin/gregale would otherwise publish
+          # an empty package that installs cleanly and then cannot run.
+          while IFS= read -r dir; do
+            name="$(node -p "require('$dir/package.json').name")"
+            if [ "$name" = "gregale" ]; then
+              want="package/bin/gregale.js"
+            else
+              want="package/bin/gregale"
+            fi
+            tarball="$( (cd "$dir" && npm pack --silent </dev/null) )"
+            if ! tar -tzf "$dir/$tarball" | grep -Fqx "$want"; then
+              echo "::error::$name would publish without $want" >&2
+              tar -tzf "$dir/$tarball" >&2
+              exit 1
+            fi
+            rm -f "$dir/$tarball"
+            echo "ok: $name contains ${want#package/}"
+          done < "$RUNNER_TEMP/npm/publish-order.txt"
+
+      - name: Resolve publish preconditions
+        id: guard
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # A prerelease tag must never move `latest`, or `npm i -g gregale`
+          # starts handing out release candidates to everyone.
+          case "$TAG" in
+            *-*) echo "dist_tag=rc" >> "$GITHUB_OUTPUT" ;;
+            *) echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
+          esac
+          # The `secrets` context is not usable in a job-level `if`, so the
+          # token check becomes a step output. Missing credentials skip the
+          # channel instead of failing the release (ADR-172).
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=npm channel skipped::NPM_TOKEN is not set, so ${TAG} was staged and validated but not published to npm."
+          fi
+
+      - name: Publish to npm
+        if: steps.guard.outputs.publish == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ steps.guard.outputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          # publish-order.txt lists the four platform packages before the
+          # root launcher that pins them, so no consumer can resolve a root
+          # package whose binaries are not on the registry yet.
+          while IFS= read -r dir; do
+            name="$(node -p "require('$dir/package.json').name")"
+            version="$(node -p "require('$dir/package.json').version")"
+            # Re-running a release workflow must not hard-fail on
+            # "cannot publish over the previously published version".
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is already on the registry; skipping"
+              continue
+            fi
+            # </dev/null: npm reads stdin, and without this it swallows the
+            # rest of publish-order.txt — silently publishing one package
+            # and skipping the others.
+            npm publish "$dir" \
+              --access public \
+              --tag "$DIST_TAG" \
+              --provenance </dev/null
+            echo "published $name@$version (dist-tag $DIST_TAG)"
+          done < "$RUNNER_TEMP/npm/publish-order.txt"
 
   daemon-bundle:
     name: Build and sign canonical daemon bundle
