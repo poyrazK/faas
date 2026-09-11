@@ -82,7 +82,7 @@ mkdir -p "$bindir"
 cat > "$bindir/gregalectl" <<'FAKE_GREGLECTL'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$VALIDATION_MARKER"
-exit 42
+exit "${BUNDLED_VALIDATOR_STATUS:-42}"
 FAKE_GREGLECTL
 chmod +x "$bindir/gregalectl"
 FAKE_MAKE
@@ -102,6 +102,53 @@ if [[ "$validation_status" -ne 42 ]]; then
   exit 1
 fi
 grep -Fqx "manifest validate --file $OUT_A" "$VALIDATION_MARKER"
+
+# A developer may run the pre-release gate from macOS while packaging Linux
+# daemons. An exec-format failure (126) must fall back to a host-native
+# gregalectl built from the same checkout, while leaving the bundled Linux
+# binary untouched.
+FALLBACK_BIN="$TMP_DIR/fallback-bin"
+HOST_VALIDATION_MARKER="$TMP_DIR/host-gregalectl.args"
+mkdir -p "$FALLBACK_BIN"
+cp "$FAKE_BIN/make" "$FALLBACK_BIN/make"
+cat > "$FALLBACK_BIN/go" <<'FAKE_GO'
+#!/usr/bin/env bash
+set -euo pipefail
+out=
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-o" && $# -gt 1 ]]; then
+    out=$2
+    shift 2
+    continue
+  fi
+  shift
+done
+[[ -n "$out" ]]
+cat > "$out" <<'FAKE_HOST_GREGLECTL'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$HOST_VALIDATION_MARKER"
+exit 43
+FAKE_HOST_GREGLECTL
+chmod +x "$out"
+FAKE_GO
+chmod +x "$FALLBACK_BIN/go"
+
+set +e
+PATH="$FALLBACK_BIN:$PATH" \
+  BUNDLED_VALIDATOR_STATUS=126 \
+  VALIDATION_MARKER="$VALIDATION_MARKER" \
+  HOST_VALIDATION_MARKER="$HOST_VALIDATION_MARKER" \
+  MANIFEST_FILE="$OUT_A" \
+  GIT_SHA="$SHA" \
+  OUT_DIR="$TMP_DIR/host-validation" \
+  "$REPO_ROOT/scripts/build-canonical-tarball.sh" >/dev/null 2>&1
+host_validation_status=$?
+set -e
+if [[ "$host_validation_status" -ne 43 ]]; then
+  echo "build-canonical-tarball did not fall back to host gregalectl (status=$host_validation_status)" >&2
+  exit 1
+fi
+grep -Fqx "manifest validate --file $OUT_A" "$HOST_VALIDATION_MARKER"
 
 go run "$REPO_ROOT/cmd/gregalectl" manifest validate --file "$OUT_A" >/dev/null
 echo "materialize-release-manifest: test passed"

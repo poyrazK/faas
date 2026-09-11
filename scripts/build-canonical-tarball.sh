@@ -64,11 +64,22 @@ make -C "$repo_root" \
   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 VERSION="$git_sha" build-release-batch
 
 # Validate with the exact gregalectl binary that will be signed into the
-# release. The tag workflow used to invoke `go run ./cmd/gregalectl` before
-# this build, compiling and linking the same large command graph twice on a
-# cold runner.
+# release. A local preflight may cross-compile that Linux binary on macOS,
+# where exec returns 126. In that case build a temporary host-native validator
+# from the same commit; the packaged artifact remains the Linux binary.
 if [[ -n "$manifest_file" ]]; then
-  "$work_root/$git_sha/bin/gregalectl" manifest validate --file "$manifest_file"
+	validator="$work_root/$git_sha/bin/gregalectl"
+	if "$validator" manifest validate --file "$manifest_file"; then
+		:
+	else
+		validation_status=$?
+		if [[ "$validation_status" -ne 126 ]]; then
+			exit "$validation_status"
+		fi
+		host_validator="$work_root/gregalectl-host"
+		CGO_ENABLED=0 go -C "$repo_root" build -o "$host_validator" ./cmd/gregalectl
+		"$host_validator" manifest validate --file "$manifest_file"
+	fi
 fi
 
 if [[ -n "${KERNEL_FILE:-}" ]]; then
