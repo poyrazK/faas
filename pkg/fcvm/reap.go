@@ -104,6 +104,10 @@ type ReapReport struct {
 	SkippedYoung int
 	// SkippedUnknown is the number left alone because IsLive errored.
 	SkippedUnknown int
+	// ProcessOnly is the number of candidates discovered from /proc after
+	// their jail directory had already disappeared. These are still gated by
+	// durable liveness and MinAge before teardown.
+	ProcessOnly int
 }
 
 // LayerCloneReapOptions configures the startup sweep for writable layer
@@ -274,14 +278,16 @@ func ReapOrphanedJails(ctx context.Context, opts ReapOptions) (ReapReport, error
 		}
 	}
 
+	type candidate struct {
+		newestMarker time.Time
+		hasChroot    bool
+		hasProcess   bool
+	}
+	candidates := make(map[string]candidate)
 	entries, err := os.ReadDir(opts.JailRoot)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return rep, nil
-		}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return rep, fmt.Errorf("fcvm: reap: read jail root %q: %w", opts.JailRoot, err)
 	}
-
 	for _, e := range entries {
 		if err := ctx.Err(); err != nil {
 			return rep, err
@@ -289,15 +295,36 @@ func ReapOrphanedJails(ctx context.Context, opts ReapOptions) (ReapReport, error
 		if !e.IsDir() || !looksLikeInstanceID(e.Name()) {
 			continue
 		}
-		id := e.Name()
-		rep.Scanned++
-
 		info, err := e.Info()
 		if err != nil {
 			rep.SkippedUnknown++
 			continue
 		}
-		if opts.now().Sub(info.ModTime()) < opts.MinAge {
+		candidates[e.Name()] = candidate{newestMarker: info.ModTime(), hasChroot: true}
+	}
+
+	processes, err := discoverFirecrackerProcesses(opts.ProcRoot)
+	if err != nil {
+		return rep, fmt.Errorf("fcvm: reap: discover processes: %w", err)
+	}
+	for id, process := range processes {
+		candidate := candidates[id]
+		candidate.hasProcess = true
+		if process.started.After(candidate.newestMarker) {
+			candidate.newestMarker = process.started
+		}
+		candidates[id] = candidate
+	}
+
+	for id, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return rep, err
+		}
+		rep.Scanned++
+		if candidate.hasProcess && !candidate.hasChroot {
+			rep.ProcessOnly++
+		}
+		if opts.now().Sub(candidate.newestMarker) < opts.MinAge {
 			rep.SkippedYoung++
 			continue
 		}
@@ -320,6 +347,64 @@ func ReapOrphanedJails(ctx context.Context, opts ReapOptions) (ReapReport, error
 		rep.Reaped++
 	}
 	return rep, nil
+}
+
+type firecrackerProcess struct {
+	pid     int
+	slot    int
+	started time.Time
+}
+
+// discoverFirecrackerProcesses returns process candidates even when cleanup
+// already removed their jail directories. Requiring both a Firecracker argv0
+// and a well-formed `--id <uuid>` pair prevents unrelated processes with a
+// coincidental UUID argument from becoming kill targets.
+func discoverFirecrackerProcesses(procRoot string) (map[string]firecrackerProcess, error) {
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]firecrackerProcess{}, nil
+		}
+		return nil, err
+	}
+	result := make(map[string]firecrackerProcess)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := parsePID(entry.Name())
+		if err != nil {
+			continue
+		}
+		path := filepath.Join(procRoot, entry.Name())
+		raw, err := os.ReadFile(filepath.Join(path, "cmdline"))
+		if err != nil {
+			continue
+		}
+		args := strings.Split(string(raw), "\x00")
+		id, ok := firecrackerInstanceID(args)
+		if !ok {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		result[id] = firecrackerProcess{pid: pid, slot: slotFromUIDArg(args), started: info.ModTime()}
+	}
+	return result, nil
+}
+
+func firecrackerInstanceID(args []string) (string, bool) {
+	if len(args) == 0 || !strings.HasPrefix(filepath.Base(args[0]), "firecracker") {
+		return "", false
+	}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--id" && looksLikeInstanceID(args[i+1]) {
+			return args[i+1], true
+		}
+	}
+	return "", false
 }
 
 // reapOne tears down a single orphan. Every step is best effort: the
@@ -392,42 +477,14 @@ func waitForExit(procRoot string, pid int, grace time.Duration, now func() time.
 // ok=false means no process was found, which is normal for a chroot
 // whose VM already exited.
 func findFirecrackerPID(procRoot, instanceID string) (pid int, slot int, ok bool) {
-	entries, err := os.ReadDir(procRoot)
+	processes, err := discoverFirecrackerProcesses(procRoot)
 	if err != nil {
 		return 0, -1, false
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		p, err := parsePID(e.Name())
-		if err != nil {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(procRoot, e.Name(), "cmdline"))
-		if err != nil {
-			continue
-		}
-		args := strings.Split(string(raw), "\x00")
-		if !cmdlineHasIDArg(args, instanceID) {
-			continue
-		}
-		return p, slotFromUIDArg(args), true
+	if process, ok := processes[instanceID]; ok {
+		return process.pid, process.slot, true
 	}
 	return 0, -1, false
-}
-
-// cmdlineHasIDArg reports whether argv contains the pair `--id <id>`.
-// Matching the pair rather than substring-searching the raw cmdline
-// keeps a UUID that merely appears in some other argument (a path, a
-// storage key) from selecting the wrong process to kill.
-func cmdlineHasIDArg(args []string, id string) bool {
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "--id" && args[i+1] == id {
-			return true
-		}
-	}
-	return false
 }
 
 // slotFromUIDArg recovers the allocator slot from the jailer's --uid
