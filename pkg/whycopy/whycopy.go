@@ -208,9 +208,9 @@ var catalog = map[string]Render{
 	},
 	api.CodeStageSnapshotPrepareTimeout: {
 		Title: "Snapshot prepare timed out",
-		Hint:  "the snapshot_prepare stage exceeded its wall-clock ceiling",
-		Why:   "snapshot_prepare walks the build VM's rootfs and assembles the per-app overlay layer; a large layer or a stall on the Firecracker PUT MMDS path trips this",
-		Fix:   "• check `gregale deploys status <id>` for the snapshot_prepare row's wall-clock\n• a layer > 1 GB (above the plan's app_layer cap) is the most common cause — slim the image\n• transient stalls are retried automatically on the next deploy; if persistent, file a ticket",
+		Hint:  "the snapshot_prepare stage exceeded the scheduler's wall-clock ceiling",
+		Why:   "snapshot_prepare boots the generated guest, waits for its handler, and captures the first snapshot; the scheduler deadline elapsed before vmmd completed that sequence",
+		Fix:   "• check `gregale deploys status <id>` and `gregale logs <slug>` for the last completed startup step\n• retry once in case the compute node was temporarily saturated\n• if the same artifact fails again, include the deployment id in a support report",
 	},
 	api.CodeStageReadinessFailed: {
 		Title: "Readiness probe failed",
