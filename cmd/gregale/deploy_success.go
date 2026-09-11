@@ -11,7 +11,13 @@ import (
 // best-effort read of the durable hosting evidence. The deployment itself is
 // already live at this point; receipt rendering must never turn that success
 // into a slow or failed command.
-const deploymentReceiptFetchTimeout = 3 * time.Second
+const (
+	deploymentReceiptFetchTimeout = 3 * time.Second
+	// defaultDeployWaitTimeout preserves the historical five-minute
+	// deploy wait while allowing `gregale deploy --timeout` to override
+	// the bounded wait for slower builds or CI jobs.
+	defaultDeployWaitTimeout = 5 * time.Minute
+)
 
 // deploymentWithReceipt fetches the durable deployment row after readiness.
 // The create response and the SSE status frame intentionally carry only the
@@ -40,25 +46,23 @@ func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.Deployme
 	return 0
 }
 
-// waitForDeploymentReceipt waits for a terminal deployment row without
-// opening an SSE log stream. This is the machine-readable --json --wait path:
-// callers receive the final DeploymentResponse, including hosting_receipt.
-func waitForDeploymentReceipt(ctx context.Context, c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool) {
+// waitForDeploymentReceiptUntil is the timeout-aware implementation used by
+// `gregale deploy --json --wait`.
+func waitForDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.DeploymentResponse, bool) {
 	if dep.Status == statusLive || dep.Status == deploymentStatusFailed {
 		return deploymentWithReceipt(ctx, c, dep), true
 	}
 	if c == nil {
 		return api.DeploymentResponse{}, false
 	}
-	return pollDeploymentFinalUntilContext(ctx, c, dep, 5*time.Minute)
+	return pollDeploymentFinalUntilContext(ctx, c, dep, deadline)
 }
 
-// writeWaitedDeploymentReceipt emits one terminal JSON object. A timed-out
-// wait still emits the accepted deployment so automation can retain its ID,
-// but returns an infrastructure exit code to make the incomplete wait visible
-// to CI callers.
-func writeWaitedDeploymentReceipt(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256 string) int {
-	final, ok := waitForDeploymentReceipt(ctx, c, dep)
+// writeWaitedDeploymentReceiptUntil emits a single terminal-or-timeout JSON
+// object using the caller's wait deadline. A timeout still returns the
+// accepted deployment id so automation can resume with `deployment wait`.
+func writeWaitedDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256 string, deadline time.Duration) int {
+	final, ok := waitForDeploymentReceiptUntil(ctx, c, dep, deadline)
 	if !ok {
 		PrintWarn(osStderr, "deployment did not reach a terminal state before the wait deadline; deployment=%s", dep.ID)
 		if code := jsonOut(writeJSON(newDeployReceipt(dep, prov, appURL, sourceSHA256))); code != 0 {
