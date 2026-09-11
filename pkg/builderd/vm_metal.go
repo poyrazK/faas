@@ -18,12 +18,19 @@ package builderd
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -118,6 +125,47 @@ func (d *VMMDriver) BuildEnvironment() (BuildEnvironment, error) {
 	return readBuildEnvironment(d.builderBase, runtime.GOOS+"/"+runtime.GOARCH)
 }
 
+// FirecrackerVersion asks vmmd for the version of the running Firecracker
+// binary. Warm snapshot restore is valid only when this value matches the
+// version captured in the slot metadata.
+func (d *VMMDriver) FirecrackerVersion(ctx context.Context) (string, error) {
+	if d == nil || d.cli == nil {
+		return "", fmt.Errorf("builderd: VMMDriver not wired")
+	}
+	resp, err := d.cli.Ping(ctx, &vmmdpb.PingRequest{})
+	if err != nil {
+		return "", fmt.Errorf("builderd: vmmd ping: %w", err)
+	}
+	if resp == nil || resp.GetFcVersion() == "" {
+		return "", fmt.Errorf("builderd: vmmd returned empty Firecracker version")
+	}
+	return resp.GetFcVersion(), nil
+}
+
+func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, error) {
+	workdir, err := buildWorkdir(req.SourceRoot)
+	if err != nil {
+		return api.BuildManifest{}, fmt.Errorf("builderd: source root: %w", err)
+	}
+	return api.BuildManifest{
+		SchemaVersion:   1,
+		BuildID:         req.BuildID,
+		TenantID:        req.TenantID,
+		DeploymentID:    req.DeploymentID,
+		SourceTarPath:   "/build/src.tar",
+		BuildContext:    "/build/src",
+		Workdir:         workdir,
+		OutDir:          "/build/out",
+		Framework:       MapFramework(req.Framework),
+		Runtime:         req.Runtime,
+		RuntimeBaseRef:  req.RuntimeBaseRef,
+		DependencyCache: req.DependencyCacheKey != "",
+		KeepWarm:        req.KeepWarm,
+		TimeoutSec:      timeoutSec,
+		LogTailBytes:    64 * 1024,
+	}, nil
+}
+
 // Spawn materialises the per-VM drive1, cold-boots the VM, and returns a
 // BuildHandle the caller can pass to WaitForCompletion. The VM base is
 // d.builderBase; drive1 is a throwaway 28 GiB ext4 that carries BuildManifest
@@ -164,26 +212,10 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	if timeoutSec <= 0 {
 		timeoutSec = api.BuildTimeoutSeconds
 	}
-	workdir, err := buildWorkdir(req.SourceRoot)
+	bManifest, err := buildManifestForRequest(req, timeoutSec)
 	if err != nil {
 		os.Remove(drive1Path)
-		return BuildHandle{}, fmt.Errorf("builderd: source root: %w", err)
-	}
-	bManifest := api.BuildManifest{
-		SchemaVersion:  1,
-		BuildID:        req.BuildID,
-		TenantID:       req.TenantID,
-		DeploymentID:   req.DeploymentID,
-		SourceTarPath:  "/build/src.tar",
-		BuildContext:   "/build/src",
-		Workdir:        workdir,
-		OutDir:         "/build/out",
-		Framework:      MapFramework(req.Framework),
-		Runtime:        req.Runtime,
-		RuntimeBaseRef: req.RuntimeBaseRef,
-		KeepWarm:       req.KeepWarm,
-		TimeoutSec:     timeoutSec,
-		LogTailBytes:   64 * 1024,
+		return BuildHandle{}, err
 	}
 	cachePath := ""
 	if req.DependencyCacheKey != "" {
@@ -252,7 +284,195 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		StartedAt:               time.Now(),
 		DependencyCacheKey:      req.DependencyCacheKey,
 		DependencyCacheRestored: cacheRestored,
+		WarmScopeKey:            req.WarmScopeKey,
 	}, nil
+}
+
+// RestoreWarmBuilder refreshes only the per-build inputs on a retained
+// builder drive, then restores the Firecracker memory/vmstate pair. The drive
+// itself stays in place so the guest's BuildKit state survives the restore.
+func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snapshot WarmSnapshot) (BuildHandle, error) {
+	if d == nil || d.cli == nil {
+		return BuildHandle{}, fmt.Errorf("builderd: VMMDriver not wired")
+	}
+	if req.BuildID == "" || snapshot.StorageKey == "" || snapshot.VMStateStorageKey == "" {
+		return BuildHandle{}, fmt.Errorf("builderd: incomplete warm restore request")
+	}
+	if snapshot.LayerPath == "" {
+		return BuildHandle{}, fmt.Errorf("builderd: warm snapshot has no retained builder drive")
+	}
+	if info, err := os.Stat(snapshot.LayerPath); err != nil || !info.Mode().IsRegular() {
+		if err == nil {
+			err = fmt.Errorf("not a regular file")
+		}
+		return BuildHandle{}, fmt.Errorf("builderd: retained builder drive: %w", err)
+	}
+	if err := os.MkdirAll(d.exportDir, 0o755); err != nil {
+		return BuildHandle{}, fmt.Errorf("builderd: mkdir export dir: %w", err)
+	}
+	timeoutSec := req.TimeoutSec
+	if timeoutSec <= 0 {
+		timeoutSec = api.BuildTimeoutSeconds
+	}
+	manifest, err := buildManifestForRequest(req, timeoutSec)
+	if err != nil {
+		return BuildHandle{}, err
+	}
+	if err := refreshWarmBuilderDrive(ctx, snapshot.LayerPath, manifest, req.SourcePath); err != nil {
+		return BuildHandle{}, fmt.Errorf("builderd: refresh warm drive: %w", err)
+	}
+	instance := "build-" + req.BuildID
+	buildExportDir := filepath.Join(d.exportDir, req.BuildID)
+	resp, err := d.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
+		Instance: instance,
+		App: &vmmdpb.AppSpec{
+			BaseKey:    sched.BaseKey("builder"),
+			LayerKey:   snapshot.LayerPath,
+			VcpuCount:  api.BuildVMVCPU,
+			MemSizeMib: int32(api.BuildVMRAMMB),
+		},
+		Snapshot: &vmmdpb.SnapshotRef{
+			StorageKey:        snapshot.StorageKey,
+			VmstateStorageKey: snapshot.VMStateStorageKey,
+			FcVersion:         snapshot.FCVersion,
+		},
+		Build: &vmmdpb.BuildSpec{
+			ExportDir:  buildExportDir,
+			TimeoutSec: int32(timeoutSec),
+		},
+		Plan:      req.Plan,
+		AccountId: req.TenantID,
+	})
+	if err != nil {
+		return BuildHandle{}, fmt.Errorf("builderd: warm restore: %w", err)
+	}
+	if resp == nil {
+		return BuildHandle{}, fmt.Errorf("builderd: nil warm restore outcome")
+	}
+	if resp.GetMethod() != vmmdpb.WakeMethod_WAKE_RESTORE {
+		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), instance)
+		if cleanupErr != nil {
+			return BuildHandle{}, fmt.Errorf("builderd: warm restore fell back to cold boot and cleanup failed: %w", cleanupErr)
+		}
+		return BuildHandle{}, fmt.Errorf("builderd: warm restore fell back to cold boot")
+	}
+	return BuildHandle{
+		Instance:                instance,
+		HostDrive1:              snapshot.LayerPath,
+		ExportDir:               buildExportDir,
+		BuildID:                 req.BuildID,
+		TimeoutSec:              timeoutSec,
+		StartedAt:               time.Now(),
+		DependencyCacheKey:      req.DependencyCacheKey,
+		DependencyCacheRestored: true,
+		WarmScopeKey:            req.WarmScopeKey,
+	}, nil
+}
+
+// WaitForWarmCompletion waits for the guest's successful build handoff,
+// captures the reusable memory state, destroys the live VM, and retains the
+// host drive for the next restore. Failed builds use the ordinary teardown
+// path and return no warm snapshot.
+func (d *VMMDriver) WaitForWarmCompletion(ctx context.Context, h BuildHandle) (BuildOutcome, WarmSnapshot, error) {
+	if d == nil || d.cli == nil {
+		return BuildOutcome{}, WarmSnapshot{}, fmt.Errorf("builderd: VMMDriver not wired")
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(h.TimeoutSec+600)*time.Second)
+	defer cancel()
+	readyResp, err := d.cli.WaitBuilderReady(waitCtx, &vmmdpb.WaitBuilderReadyRequest{Instance: h.Instance})
+	if err != nil {
+		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), h.Instance)
+		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: wait builder ready: %w", err), cleanupErr)
+	}
+	if readyResp == nil {
+		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), h.Instance)
+		return BuildOutcome{}, WarmSnapshot{}, errors.Join(errors.New("builderd: nil builder readiness outcome"), cleanupErr)
+	}
+	if !readyResp.GetReady() {
+		out, waitErr := d.waitForCompletion(ctx, h, false)
+		return out, WarmSnapshot{}, waitErr
+	}
+
+	fcVersion, err := d.FirecrackerVersion(ctx)
+	if err != nil {
+		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), h.Instance)
+		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: warm snapshot Firecracker version: %w", err), cleanupErr)
+	}
+	memKey, vmstateKey := warmBuilderSnapshotKeys(h.BuildID)
+	if _, err := d.cli.WarmSnapshot(ctx, &vmmdpb.WarmSnapshotRequest{
+		Instance:          h.Instance,
+		StorageKey:        memKey,
+		VmstateStorageKey: vmstateKey,
+	}); err != nil {
+		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), h.Instance)
+		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: warm snapshot: %w", err), cleanupErr)
+	}
+	snapshot := WarmSnapshot{
+		StorageKey:        memKey,
+		VMStateStorageKey: vmstateKey,
+		LayerPath:         h.HostDrive1,
+		ScopeKey:          h.WarmScopeKey,
+		FCVersion:         fcVersion,
+		CreatedAt:         time.Now(),
+		LastUsedAt:        time.Now(),
+	}
+	if _, err := d.cli.StopInstance(context.WithoutCancel(ctx), &vmmdpb.StopInstanceRequest{Instance: h.Instance, Signal: 9}); err != nil {
+		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), h.Instance)
+		_ = d.DeleteWarmSnapshot(context.WithoutCancel(ctx), snapshot)
+		_ = os.Remove(h.HostDrive1)
+		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: stop warm builder: %w", err), cleanupErr)
+	}
+	out, err := d.waitForCompletion(ctx, h, true)
+	if err != nil {
+		_ = d.DeleteWarmSnapshot(context.WithoutCancel(ctx), snapshot)
+		_ = os.Remove(h.HostDrive1)
+		return BuildOutcome{}, WarmSnapshot{}, err
+	}
+	return out, snapshot, nil
+}
+
+func warmBuilderSnapshotKeys(buildID string) (string, string) {
+	sum := sha256.Sum256([]byte(buildID))
+	suffix := hex.EncodeToString(sum[:])
+	return "snap/builder/" + suffix + "/mem", "snap/builder/" + suffix + "/vmstate"
+}
+
+func (d *VMMDriver) stopAndDestroy(ctx context.Context, instance string) error {
+	if d == nil || d.cli == nil || instance == "" {
+		return nil
+	}
+	stopCtx, cancel := context.WithTimeout(ctx, activeVMCancelTimeout)
+	defer cancel()
+	_, stopErr := d.cli.StopInstance(stopCtx, &vmmdpb.StopInstanceRequest{Instance: instance, Signal: 9})
+	destroyCtx, destroyCancel := context.WithTimeout(context.WithoutCancel(ctx), activeVMCancelTimeout)
+	defer destroyCancel()
+	_, destroyErr := d.cli.Destroy(destroyCtx, &vmmdpb.DestroyRequest{Instance: instance})
+	return errors.Join(stopErr, destroyErr)
+}
+
+// DeleteWarmSnapshot removes both vmmd-owned snapshot blobs and the retained
+// local builder drive. The latter is part of the warm snapshot because
+// Firecracker's memory snapshot does not include virtio block-device bytes.
+func (d *VMMDriver) DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapshot) error {
+	if d == nil || d.cli == nil {
+		return fmt.Errorf("builderd: VMMDriver not wired")
+	}
+	var errs []error
+	if snapshot.StorageKey != "" || snapshot.VMStateStorageKey != "" {
+		_, err := d.cli.DeleteWarmSnapshot(ctx, &vmmdpb.DeleteWarmSnapshotRequest{
+			StorageKey:        snapshot.StorageKey,
+			VmstateStorageKey: snapshot.VMStateStorageKey,
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("delete vmmd snapshot: %w", err))
+		}
+	}
+	if snapshot.LayerPath != "" {
+		if err := os.Remove(snapshot.LayerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("remove warm builder drive: %w", err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // WaitForCompletion blocks until the build VM exits (capped at
@@ -268,11 +488,15 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 //   - OCIImagePath: the host path of the produced OCI tarball, suitable
 //     to hand to imaged's snapshot_prime.
 func (d *VMMDriver) WaitForCompletion(ctx context.Context, h BuildHandle) (BuildOutcome, error) {
+	return d.waitForCompletion(ctx, h, false)
+}
+
+func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retainDrive bool) (BuildOutcome, error) {
 	if d == nil || d.cli == nil {
 		return BuildOutcome{}, fmt.Errorf("builderd: VMMDriver not wired")
 	}
 	defer func() {
-		if h.HostDrive1 != "" {
+		if h.HostDrive1 != "" && !retainDrive {
 			_ = os.Remove(h.HostDrive1)
 		}
 	}()
@@ -355,6 +579,135 @@ func (d *VMMDriver) WaitForCompletion(ctx context.Context, h BuildHandle) (Build
 		res.FailureClass, res.FailureCode, res.FailurePkg = classifyBuildFailure(exitCode, h.ExportDir)
 	}
 	return res, nil
+}
+
+// refreshWarmBuilderDrive updates the manifest, source archive, and one-shot
+// entropy seed in an offline retained ext4 image. debugfs edits the image
+// without CAP_SYS_ADMIN, so builderd can prepare it before vmmd stages the
+// same image into a fresh jail. BuildKit's cache directories are untouched.
+func refreshWarmBuilderDrive(ctx context.Context, drivePath string, manifest api.BuildManifest, sourcePath string) error {
+	if drivePath == "" || sourcePath == "" {
+		return fmt.Errorf("warm drive and source path are required")
+	}
+	if info, err := os.Stat(drivePath); err != nil || !info.Mode().IsRegular() {
+		if err == nil {
+			err = fmt.Errorf("not a regular file")
+		}
+		return fmt.Errorf("stat drive: %w", err)
+	}
+	if info, err := os.Stat(sourcePath); err != nil || !info.Mode().IsRegular() {
+		if err == nil {
+			err = fmt.Errorf("not a regular file")
+		}
+		return fmt.Errorf("stat source: %w", err)
+	}
+
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+	manifestFile, err := os.CreateTemp("", "faas-warm-manifest-")
+	if err != nil {
+		return fmt.Errorf("create manifest staging file: %w", err)
+	}
+	manifestPath := manifestFile.Name()
+	defer func() { _ = os.Remove(manifestPath) }()
+	if _, err := manifestFile.Write(manifestData); err != nil {
+		_ = manifestFile.Close()
+		return fmt.Errorf("stage manifest: %w", err)
+	}
+	if err := manifestFile.Sync(); err != nil {
+		_ = manifestFile.Close()
+		return fmt.Errorf("sync manifest: %w", err)
+	}
+	if err := manifestFile.Close(); err != nil {
+		return fmt.Errorf("close manifest: %w", err)
+	}
+
+	sourceFile, err := os.CreateTemp("", "faas-warm-source-")
+	if err != nil {
+		return fmt.Errorf("create source staging file: %w", err)
+	}
+	sourceTempPath := sourceFile.Name()
+	defer func() { _ = os.Remove(sourceTempPath) }()
+	//nolint:forbidigo // sourcePath was validated by builderd before the warm
+	// restore; this copy is an intermediate file for debugfs, not a customer
+	// path opened by vmmd.
+	sourceIn, err := os.Open(sourcePath)
+	if err != nil {
+		_ = sourceFile.Close()
+		return fmt.Errorf("open source: %w", err)
+	}
+	if _, err := io.Copy(sourceFile, sourceIn); err != nil {
+		_ = sourceIn.Close()
+		_ = sourceFile.Close()
+		return fmt.Errorf("stage source: %w", err)
+	}
+	_ = sourceIn.Close()
+	if err := sourceFile.Sync(); err != nil {
+		_ = sourceFile.Close()
+		return fmt.Errorf("sync source: %w", err)
+	}
+	if err := sourceFile.Close(); err != nil {
+		return fmt.Errorf("close source: %w", err)
+	}
+
+	seed := make([]byte, 256)
+	if _, err := rand.Read(seed); err != nil {
+		return fmt.Errorf("generate entropy seed: %w", err)
+	}
+	seedFile, err := os.CreateTemp("", "faas-warm-entropy-")
+	if err != nil {
+		return fmt.Errorf("create entropy staging file: %w", err)
+	}
+	seedPath := seedFile.Name()
+	defer func() { _ = os.Remove(seedPath) }()
+	if err := seedFile.Chmod(0o600); err != nil {
+		_ = seedFile.Close()
+		return fmt.Errorf("chmod entropy: %w", err)
+	}
+	if _, err := seedFile.Write(seed); err != nil {
+		_ = seedFile.Close()
+		return fmt.Errorf("stage entropy: %w", err)
+	}
+	if err := seedFile.Sync(); err != nil {
+		_ = seedFile.Close()
+		return fmt.Errorf("sync entropy: %w", err)
+	}
+	if err := seedFile.Close(); err != nil {
+		return fmt.Errorf("close entropy: %w", err)
+	}
+
+	if err := replaceWarmFile(ctx, drivePath, manifestPath, "/upper/etc/faas/build.json", true); err != nil {
+		return fmt.Errorf("replace build manifest: %w", err)
+	}
+	if err := replaceWarmFile(ctx, drivePath, sourceTempPath, "/upper/build/src.tar", true); err != nil {
+		return fmt.Errorf("replace source archive: %w", err)
+	}
+	if err := replaceWarmFile(ctx, drivePath, seedPath, "/upper/etc/faas/entropy.seed", false); err != nil {
+		return fmt.Errorf("replace entropy seed: %w", err)
+	}
+	return nil
+}
+
+func replaceWarmFile(ctx context.Context, image, hostPath, guestPath string, requireRemove bool) error {
+	removeErr := runDebugfs(ctx, image, "rm "+guestPath)
+	if removeErr != nil && requireRemove {
+		return removeErr
+	}
+	return runDebugfs(ctx, image, "write "+debugfsToken(hostPath)+" "+guestPath)
+}
+
+func runDebugfs(ctx context.Context, image, command string) error {
+	output, err := exec.CommandContext(ctx, "debugfs", "-w", "-R", command, image).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("debugfs %q: %w (%s)", command, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func debugfsToken(path string) string {
+	return `"` + strings.ReplaceAll(path, `"`, `\"`) + `"`
 }
 
 func readBuildDone(exportDir string) (api.BuildDone, bool) {

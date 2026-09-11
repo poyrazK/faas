@@ -773,6 +773,72 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 	}, nil
 }
 
+// WaitBuilderReady exposes the vmmd-owned serial handoff to builderd. The
+// handler stays optional at the Manager/VMM seam so older test doubles can
+// continue serving the rest of the vmmd API while the warm path rolls out.
+func (s *Server) WaitBuilderReady(ctx context.Context, req *vmmdpb.WaitBuilderReadyRequest) (*vmmdpb.WaitBuilderReadyResponse, error) {
+	const op = "WaitBuilderReady"
+	start := time.Now()
+	if req.GetInstance() == "" {
+		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Missing instance", "instance is required on WaitBuilderReady")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	waiter, ok := s.vmm.(interface {
+		WaitBuilderReady(context.Context, string, time.Duration) (bool, int32, error)
+	})
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Builder warm handoff unavailable", "vmmd does not expose builder readiness")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	deadline := time.Duration(0)
+	if until, ok := ctx.Deadline(); ok {
+		deadline = time.Until(until)
+	}
+	ready, exitCode, err := waiter.WaitBuilderReady(ctx, req.GetInstance(), deadline)
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.WaitBuilderReadyResponse{
+		Instance: req.GetInstance(),
+		Ready:    ready,
+		ExitCode: exitCode,
+	}, nil
+}
+
+// DeleteWarmSnapshot removes the storage objects owned by one builder warm
+// slot. The backing store remains behind vmmd so this operation works for both
+// local and remote StorageBackend implementations.
+func (s *Server) DeleteWarmSnapshot(ctx context.Context, req *vmmdpb.DeleteWarmSnapshotRequest) (*vmmdpb.DeleteWarmSnapshotResponse, error) {
+	const op = "DeleteWarmSnapshot"
+	start := time.Now()
+	if req.GetStorageKey() == "" || req.GetVmstateStorageKey() == "" {
+		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Missing storage keys", "storage_key and vmstate_storage_key are required on DeleteWarmSnapshot")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	deleter, ok := s.vmm.(interface {
+		DeleteWarmSnapshot(context.Context, string, string) error
+	})
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Builder warm cleanup unavailable", "vmmd does not expose warm snapshot cleanup")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	err := deleter.DeleteWarmSnapshot(ctx, req.GetStorageKey(), req.GetVmstateStorageKey())
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.DeleteWarmSnapshotResponse{Deleted: true}, nil
+}
+
 // FrameworkReady is the vmmd-side receipt of the guest-init "framework
 // ready" vsock DGRAM (port 1027, msg=4) signal (issue #470, PR
 // #470-FU-B). The handler:

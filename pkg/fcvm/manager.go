@@ -3981,9 +3981,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// TCP-accept on :8080 (pre-PR-D default). Non-empty →
 			// waitReady does HTTP GET <HealthcheckPath> against
 			// <HostIP>:8080 and accepts 2xx as ready.
-			HealthcheckPath:  req.HealthcheckPath,
-			StartupDeadlineS: req.StartupDeadlineS,
-			SkipReady:        req.ExportDir != "",
+			HealthcheckPath:   req.HealthcheckPath,
+			StartupDeadlineS:  req.StartupDeadlineS,
+			SkipReady:         req.ExportDir != "",
+			EphemeralWritable: req.ExportDir != "",
 			// Issue #463 / ADR-069 / PR-B: per-workload drives
 			// (main + sidecars). Empty = legacy single-workload
 			// path. Non-empty → Restore stages one extra drive
@@ -4380,6 +4381,38 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	}
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
+}
+
+// WaitBuilderReady waits for the vmmd-owned builder handoff marker. It is an
+// optional VMM capability so test VMMs and older embedders keep the existing
+// interface while the builderd warm transport rolls out.
+func (m *Manager) WaitBuilderReady(ctx context.Context, instance string, deadline time.Duration) (bool, int32, error) {
+	if m == nil || m.vmm == nil {
+		return false, 0, fmt.Errorf("wait builder ready %s: nil vmm", instance)
+	}
+	waiter, ok := m.vmm.(interface {
+		WaitBuilderReady(context.Context, string, time.Duration) (bool, int32, error)
+	})
+	if !ok {
+		return false, 0, fmt.Errorf("wait builder ready %s: unsupported", instance)
+	}
+	return waiter.WaitBuilderReady(ctx, instance, deadline)
+}
+
+// DeleteWarmSnapshot removes builder warm-tier storage objects. The VMM owns
+// the configured StorageBackend, so builderd never reaches into vmmd's local
+// cache or remote registry directly.
+func (m *Manager) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateStorageKey string) error {
+	if m == nil || m.vmm == nil {
+		return fmt.Errorf("delete warm snapshot: nil vmm")
+	}
+	deleter, ok := m.vmm.(interface {
+		DeleteWarmSnapshot(context.Context, string, string) error
+	})
+	if !ok {
+		return fmt.Errorf("delete warm snapshot: unsupported")
+	}
+	return deleter.DeleteWarmSnapshot(ctx, storageKey, vmstateStorageKey)
 }
 
 // SnapshotKeepAlive pauses and snapshots a live instance without destroying

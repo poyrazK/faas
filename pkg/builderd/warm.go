@@ -1,7 +1,10 @@
 package builderd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 )
@@ -40,9 +43,25 @@ type WarmSnapshot struct {
 	StorageKey        string
 	VMStateStorageKey string
 	VMStatePath       string
-	FCVersion         string
-	CreatedAt         time.Time
-	LastUsedAt        time.Time
+	// LayerPath is the retained per-builder drive1 image. Firecracker
+	// snapshots do not contain block-device bytes; keeping this image is what
+	// preserves the BuildKit state across a warm restore.
+	LayerPath string
+	// ScopeKey binds the retained BuildKit state to one app/runtime scope.
+	// A mismatch forces a cold builder so dependency layers cannot cross apps.
+	ScopeKey   string
+	FCVersion  string
+	CreatedAt  time.Time
+	LastUsedAt time.Time
+}
+
+func builderWarmScopeKey(accountID, appID string, framework Framework, runtimeBaseRef string) string {
+	if accountID == "" || appID == "" {
+		return ""
+	}
+	parts := []string{accountID, appID, string(framework), runtimeBaseRef}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s WarmSnapshot) valid() bool {

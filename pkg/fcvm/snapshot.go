@@ -189,6 +189,10 @@ type RestoreSpec struct {
 	// application HTTP readiness port; their readiness is the builder-specific
 	// resume handoff instead. App restores keep the normal probe.
 	SkipReady bool
+	// EphemeralWritable is set for warm builder restores. The retained builder
+	// drive is already isolated to one slot, so the VMM may link or bind it
+	// directly into the new jail. App restores keep the copy-on-write path.
+	EphemeralWritable bool
 }
 
 // SnapshotSpec is where to write a new snapshot's files (spec §4.4).
