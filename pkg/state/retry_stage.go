@@ -20,6 +20,19 @@ func RetryStageState(requested StageName) StageState {
 	}
 }
 
+// RetryStageStateAt seeds a retry's actual source stage with the time the new
+// attempt was enqueued. RetryStageState remains available for callers that
+// only need the declarative restart metadata.
+func RetryStageStateAt(requested StageName, startedAt time.Time) StageState {
+	state := RetryStageState(requested)
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	startedAt = stageTimestamp(startedAt)
+	state.CurrentStartedAt = &startedAt
+	return state
+}
+
 // retryDeploymentInput creates a fresh attempt from the immutable inputs on a
 // failed deployment. Mutable execution state is reset: canaries restart at
 // their first rung with a new soak timer, service rollouts restart their
