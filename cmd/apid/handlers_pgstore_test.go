@@ -320,7 +320,6 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 func TestPGHandler_DebuggerEvidenceDegradesWhenRegressionReadFails(t *testing.T) {
 	e := setupPGHandler(t, api.PlanPro)
 	app := seedPGApp(t, e, "pg-debugger-degraded")
-	requestID := uuid.New()
 	if err := e.store.InsertRequestTelemetry(context.Background(), sqlc.InsertRequestTelemetryParams{
 		AccountID:    pgtype.UUID{Bytes: uuid.MustParse(e.acct.ID), Valid: true},
 		AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
@@ -330,7 +329,9 @@ func TestPGHandler_DebuggerEvidenceDegradesWhenRegressionReadFails(t *testing.T)
 		Status:       500,
 		LatencyMs:    42,
 		ColdBoot:     false,
-		TraceID:      pgtype.Text{String: requestID.String(), Valid: true},
+		// request_telemetry.trace_id follows the W3C 32-character lowercase
+		// hexadecimal format; the request row ID is not a valid trace ID.
+		TraceID:      pgtype.Text{String: "0123456789abcdef0123456789abcdef", Valid: true},
 		ReceivedAt:   pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
 		Count:        1,
 		UaFamily:     "__unknown__",
