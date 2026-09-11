@@ -210,6 +210,43 @@
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/mirrors">Manage traffic mirrors →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/storage">Manage object storage →</a></p>
 
+      {{if .Data.GitHubConnection}}
+      <h2>GitHub connection</h2>
+      {{if .Data.GitHubConnection.Flash}}<div class="cron-flash-ok" role="status">{{.Data.GitHubConnection.Flash}}</div>{{end}}
+      {{if not .Data.GitHubConnection.Available}}
+        <p class="cron-flash-error" role="alert">GitHub connection status is temporarily unavailable. Refresh the page or try again later.</p>
+      {{else if .Data.GitHubConnection.Connected}}
+        <p>
+          <strong>Repository:</strong> <code>{{.Data.GitHubConnection.RepoFullName}}</code>
+          · <strong>Production branch:</strong> <code>{{.Data.GitHubConnection.ProductionBranch}}</code>
+          {{if .Data.GitHubConnection.GitHubLogin}} · GitHub account: <code>{{.Data.GitHubConnection.GitHubLogin}}</code>{{end}}
+        </p>
+        <p>
+          <strong>Access:</strong>
+          {{if eq .Data.GitHubConnection.Health "healthy"}}<span class="badge running">healthy</span>
+          {{else if eq .Data.GitHubConnection.Health "degraded"}}<span class="badge cert-failed">degraded</span>
+          {{else}}<span class="badge dim">{{.Data.GitHubConnection.Health}}</span>{{end}}
+          {{if .Data.GitHubConnection.LastReconciledAt}} · Last checked {{.Data.GitHubConnection.LastReconciledAt}}{{end}}
+          {{if .Data.GitHubConnection.LastReconcileRepositoryCount}} · {{.Data.GitHubConnection.LastReconcileRepositoryCount}} repositories visible{{end}}
+        </p>
+        {{if .Data.GitHubConnection.LastReconcileError}}<p class="cron-flash-error" role="alert">{{.Data.GitHubConnection.LastReconcileError}}</p>{{end}}
+        <form method="POST" action="/dashboard/apps/{{.Data.App.Slug}}/github/sync" style="display:inline-block">
+          <input type="hidden" name="csrf_token" value="{{.Data.GitHubConnection.CSRFToken}}">
+          <button type="submit">Sync GitHub access</button>
+        </form>
+        <form method="POST" action="/dashboard/apps/{{.Data.App.Slug}}/github/disconnect" style="display:inline-block">
+          <input type="hidden" name="csrf_token" value="{{.Data.GitHubConnection.CSRFToken}}">
+          <button type="submit">Disconnect</button>
+        </form>
+      {{else if eq .Data.GitHubConnection.State "installed"}}
+        <p>GitHub is connected for <code>{{.Data.GitHubConnection.GitHubLogin}}</code>, but this app has no repository binding.</p>
+        <p><a href="/dashboard/apps/new">Bind a repository from the deploy wizard →</a></p>
+      {{else}}
+        <p>This app is not connected to GitHub yet.</p>
+        <p><a href="/dashboard/account">Connect GitHub →</a></p>
+      {{end}}
+      {{end}}
+
       <h2>Manifest</h2>
       <table>
         <tr><th>Entrypoint</th><td><code>{{range .Data.Manifest.Entrypoint}}{{.}} {{end}}</code></td></tr>

@@ -918,6 +918,10 @@ type CronRunRow struct {
 type AppDetailData struct {
 	App      AppListItem
 	Manifest ManifestView
+	// GitHubConnection is the account-scoped GitHub App binding for this
+	// app. A nil value means the status read failed; the dashboard keeps
+	// the rest of the app page usable and renders a degraded notice.
+	GitHubConnection *GitHubConnectionView
 	// EffectiveLimits is the customer-visible resource and request
 	// envelope derived from the app plus its current plan.
 	EffectiveLimits     api.AppEffectiveLimits
@@ -1007,6 +1011,26 @@ type AppDetailData struct {
 	// render with an "upgrade to <plan>" hint so a Hobby customer
 	// sees what api_down would do without a clickable Enable.
 	Presets []AlertPresetItem
+}
+
+// GitHubConnectionView is the safe customer-facing projection of a GitHub
+// installation and app binding. It intentionally contains no installation
+// credentials; the CSRF token is only the short-lived form envelope used by
+// the dashboard's sync and disconnect actions.
+type GitHubConnectionView struct {
+	Available                    bool
+	State                        string
+	Health                       string
+	Connected                    bool
+	GitHubLogin                  string
+	RepoFullName                 string
+	ProductionBranch             string
+	LastReconciledAt             string
+	LastReconcileError           string
+	LastReconcileRepositoryCount int
+	LastReconcileDetachedCount   int
+	CSRFToken                    string
+	Flash                        string
 }
 
 // WorkflowRunItem is the dashboard projection of one durable workflow run.

@@ -200,3 +200,44 @@ func TestUnbindGitHubAppRequiresCSRFAndClearsBinding(t *testing.T) {
 		t.Fatal("binding remains after unbind")
 	}
 }
+
+func TestDashboardGitHubSyncRedirectsWithFlash(t *testing.T) {
+	gh := &githubConnectionFake{}
+	h, _, store, acct, cookie := newGitHubConnectionTestServer(t, gh, []Repo{{FullName: "ACME/API"}})
+	get := httptest.NewRecorder()
+	h.ServeHTTP(get, githubStatusRequest(http.MethodGet, "/v1/apps/myapp/install", cookie, ""))
+	token := githubStatusBody(t, get).CSRFToken
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, githubStatusRequest(http.MethodPost, "/dashboard/apps/myapp/github/sync", cookie, token))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303\nbody=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/dashboard/apps/myapp?github=synced" {
+		t.Fatalf("location = %q, want synced flash", got)
+	}
+	inst, err := store.GitHubInstallForAccount(context.Background(), acct.ID)
+	if err != nil || inst.LastReconciledAt == nil {
+		t.Fatalf("dashboard sync did not record health: %+v %v", inst, err)
+	}
+}
+
+func TestDashboardGitHubDisconnectRedirectsWithFlash(t *testing.T) {
+	gh := &githubConnectionFake{}
+	h, _, store, acct, cookie := newGitHubConnectionTestServer(t, gh, []Repo{{FullName: "acme/api"}})
+	get := httptest.NewRecorder()
+	h.ServeHTTP(get, githubStatusRequest(http.MethodGet, "/v1/apps/myapp/install", cookie, ""))
+	token := githubStatusBody(t, get).CSRFToken
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, githubStatusRequest(http.MethodPost, "/dashboard/apps/myapp/github/disconnect", cookie, token))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303\nbody=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/dashboard/apps/myapp?github=disconnected" {
+		t.Fatalf("location = %q, want disconnected flash", got)
+	}
+	if _, err := store.GetGithubInstallBindingForApp(context.Background(), "myapp", acct.ID); err == nil {
+		t.Fatal("dashboard disconnect left binding behind")
+	}
+}

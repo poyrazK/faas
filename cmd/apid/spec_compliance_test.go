@@ -141,6 +141,8 @@ var routeExclude = map[string]bool{
 	"GET /oauth/callback":                                        true, // GitHub App install callback
 	"GET /oauth/code-callback":                                   true, // GitHub App user-to-server OAuth callback (PR-C)
 	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
+	"POST /dashboard/apps/{slug}/github/sync":                    true, // GitHub connection repair form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/disconnect":              true, // GitHub connection disconnect form; session-cookie + CSRF-only
 	"GET /dashboard":                                             true, // HTML dashboard
 	"GET /dashboard/":                                            true, // HTML dashboard
 	"POST /dashboard/account/delete":                             true, // HTML form

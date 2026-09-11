@@ -69,15 +69,25 @@ func (s *server) getGitHubInstallStatus(w http.ResponseWriter, r *http.Request) 
 		api.WriteProblem(w, api.ErrCapacity("could not read GitHub connection status"))
 		return
 	}
-	if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, githubInstallManageAction, acct.ID, githubInstallManageCSRFCookie); tokenErr == nil {
-		status.CSRFToken = token
-		http.SetCookie(w, &http.Cookie{
-			Name: githubInstallManageCSRFCookie, Value: token, Path: "/", HttpOnly: true,
-			Secure: s.domain != "", SameSite: http.SameSiteLaxMode,
-			MaxAge: int(middleware.DefaultCSRFTTL.Seconds()),
-		})
-	}
+	status.CSRFToken = s.issueGitHubInstallManageCSRF(w, acct.ID)
 	writeJSON(w, http.StatusOK, status)
+}
+
+// issueGitHubInstallManageCSRF mints the named form envelope shared by the
+// status, sync, and disconnect surfaces. Keeping the cookie write in one
+// helper ensures the JSON API and server-rendered dashboard use the same
+// action binding and expiry semantics.
+func (s *server) issueGitHubInstallManageCSRF(w http.ResponseWriter, accountID string) string {
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, githubInstallManageAction, accountID, githubInstallManageCSRFCookie)
+	if err != nil {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: githubInstallManageCSRFCookie, Value: token, Path: "/", HttpOnly: true,
+		Secure: s.domain != "", SameSite: http.SameSiteLaxMode,
+		MaxAge: int(middleware.DefaultCSRFTTL.Seconds()),
+	})
+	return token
 }
 
 // unbindGitHubApp removes one app's binding. The app lookup is account
@@ -99,12 +109,8 @@ func (s *server) unbindGitHubApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	previous, previousErr := s.store.GetGithubInstallBindingForApp(r.Context(), app.ID, acct.ID)
-	if previousErr != nil && !errors.Is(previousErr, state.ErrNotFound) {
-		api.WriteProblem(w, api.ErrCapacity("could not read GitHub connection"))
-		return
-	}
-	if err := s.githubd.UnbindAppRepo(r.Context(), app.ID, acct.ID); err != nil {
+	previous, err := s.unbindGitHubAppForAccount(r.Context(), app.ID, acct.ID)
+	if err != nil {
 		var problem *api.Problem
 		if errors.As(err, &problem) {
 			api.WriteProblem(w, problem)
@@ -125,6 +131,25 @@ func (s *server) unbindGitHubApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+// unbindGitHubAppForAccount performs the account- and app-scoped part of a
+// disconnect. The caller owns CSRF validation and audit emission; returning
+// the previous binding lets both the JSON API and dashboard redirect record
+// the same repository without rereading after the delete.
+func (s *server) unbindGitHubAppForAccount(ctx context.Context, appID, accountID string) (state.GitHubBinding, error) {
+	previous, previousErr := s.store.GetGithubInstallBindingForApp(ctx, appID, accountID)
+	if previousErr != nil && !errors.Is(previousErr, state.ErrNotFound) {
+		return state.GitHubBinding{}, api.ErrCapacity("could not read GitHub connection")
+	}
+	if err := s.githubd.UnbindAppRepo(ctx, appID, accountID); err != nil {
+		var problem *api.Problem
+		if errors.As(err, &problem) {
+			return state.GitHubBinding{}, problem
+		}
+		return state.GitHubBinding{}, api.ErrCapacity("could not disconnect GitHub")
+	}
+	return previous, nil
 }
 
 // syncGitHubApp performs an app-scoped, on-demand reconciliation. It asks
@@ -148,35 +173,61 @@ func (s *server) syncGitHubApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	binding, err := s.store.GetGithubInstallBindingForApp(r.Context(), app.ID, acct.ID)
-	if errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "github_not_bound",
-			"GitHub is not connected to this app", "bind a repository before requesting a sync"))
-		return
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not read GitHub connection"))
-		return
-	}
-	if _, err := s.store.GitHubInstallForAccountInstallation(r.Context(), acct.ID, binding.InstallID); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "github_install_not_found",
-				"GitHub installation is no longer available", "reconnect GitHub before syncing this app"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not read GitHub installation"))
-		return
-	}
-	repos, err := s.githubd.ListInstallableRepos(r.Context(), acct.ID, binding.InstallID)
+	binding, result, err := s.syncGitHubAppForAccount(r.Context(), app.ID, acct.ID)
 	if err != nil {
 		var problem *api.Problem
 		if errors.As(err, &problem) {
 			api.WriteProblem(w, problem)
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
-			"Could not reach GitHub", "retry in a minute"))
+		api.WriteProblem(w, api.ErrCapacity("could not sync GitHub connection"))
 		return
+	}
+	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("GitHub sync completed but status could not be refreshed"))
+		return
+	}
+	status.SyncResult = result
+	acctID := acct.ID
+	s.audit.Emit(r.Context(), "auth.install.synced", &acctID, map[string]any{
+		"app_id":                  app.ID,
+		"install_id":              binding.InstallID,
+		"repo_full_name":          binding.RepoFullName,
+		"remote_repository_count": result.RemoteRepositoryCount,
+		"detached":                result.Detached,
+	})
+	writeJSON(w, http.StatusOK, status)
+}
+
+// syncGitHubAppForAccount performs the network reconciliation and durable
+// health projection shared by the JSON API and server-rendered dashboard.
+// It deliberately returns the pre-sync binding so callers can emit an audit
+// row even when GitHub access was removed and the binding was detached.
+func (s *server) syncGitHubAppForAccount(ctx context.Context, appID, accountID string) (state.GitHubBinding, *githubInstallSyncResult, error) {
+	binding, err := s.store.GetGithubInstallBindingForApp(ctx, appID, accountID)
+	if errors.Is(err, state.ErrNotFound) {
+		return state.GitHubBinding{}, nil, api.NewProblem(http.StatusConflict, "github_not_bound",
+			"GitHub is not connected to this app", "bind a repository before requesting a sync")
+	}
+	if err != nil {
+		return state.GitHubBinding{}, nil, api.ErrCapacity("could not read GitHub connection")
+	}
+	if _, err := s.store.GitHubInstallForAccountInstallation(ctx, accountID, binding.InstallID); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return binding, nil, api.NewProblem(http.StatusConflict, "github_install_not_found",
+				"GitHub installation is no longer available", "reconnect GitHub before syncing this app")
+		}
+		return binding, nil, api.ErrCapacity("could not read GitHub installation")
+	}
+	repos, err := s.githubd.ListInstallableRepos(ctx, accountID, binding.InstallID)
+	if err != nil {
+		var problem *api.Problem
+		if errors.As(err, &problem) {
+			return binding, nil, problem
+		}
+		return binding, nil, api.NewProblem(http.StatusBadGateway, "github_unreachable",
+			"Could not reach GitHub", "retry in a minute")
 	}
 	found := false
 	for _, repo := range repos {
@@ -186,42 +237,25 @@ func (s *server) syncGitHubApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !found {
-		if err := s.githubd.UnbindAppRepo(r.Context(), app.ID, acct.ID); err != nil {
+		if err := s.githubd.UnbindAppRepo(ctx, appID, accountID); err != nil {
 			var problem *api.Problem
 			if errors.As(err, &problem) {
-				api.WriteProblem(w, problem)
-				return
+				return binding, nil, problem
 			}
-			api.WriteProblem(w, api.ErrCapacity("could not detach inaccessible GitHub repository"))
-			return
+			return binding, nil, api.ErrCapacity("could not detach inaccessible GitHub repository")
 		}
 	}
 	now := time.Now().UTC()
+	detached := 0
+	if !found {
+		detached = 1
+	}
 	if recorder, ok := s.store.(githubInstallationSyncRecorder); ok {
-		detached := 0
-		if !found {
-			detached = 1
-		}
-		if recordErr := recorder.RecordGitHubInstallationSync(r.Context(), binding.InstallID, now, "", len(repos), detached); recordErr != nil {
-			api.WriteProblem(w, api.ErrCapacity("connection synced but health could not be recorded"))
-			return
+		if recordErr := recorder.RecordGitHubInstallationSync(ctx, binding.InstallID, now, "", len(repos), detached); recordErr != nil {
+			return binding, nil, api.ErrCapacity("connection synced but health could not be recorded")
 		}
 	}
-	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("GitHub sync completed but status could not be refreshed"))
-		return
-	}
-	status.SyncResult = &githubInstallSyncResult{Detached: !found, RemoteRepositoryCount: len(repos), SyncedAt: now}
-	acctID := acct.ID
-	s.audit.Emit(r.Context(), "auth.install.synced", &acctID, map[string]any{
-		"app_id":                  app.ID,
-		"install_id":              binding.InstallID,
-		"repo_full_name":          binding.RepoFullName,
-		"remote_repository_count": len(repos),
-		"detached":                !found,
-	})
-	writeJSON(w, http.StatusOK, status)
+	return binding, &githubInstallSyncResult{Detached: !found, RemoteRepositoryCount: len(repos), SyncedAt: now}, nil
 }
 
 type githubInstallationSyncRecorder interface {
