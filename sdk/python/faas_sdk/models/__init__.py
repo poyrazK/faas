@@ -196,6 +196,7 @@ from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetr
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deployment_files_body import CreateDeploymentFilesBody
 from .create_deployment_files_body_kind import CreateDeploymentFilesBodyKind
 from .create_deployment_files_body_runtime import CreateDeploymentFilesBodyRuntime
@@ -291,6 +292,9 @@ from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
 from .deploy_dev_source_body import DeployDevSourceBody
 from .deploy_dev_source_body_runtime import DeployDevSourceBodyRuntime
+from .deploy_token_response import DeployTokenResponse
+from .deploy_token_response_scopes_item import DeployTokenResponseScopesItem
+from .deploy_token_response_status import DeployTokenResponseStatus
 from .deployment_audit_response import DeploymentAuditResponse
 from .deployment_audit_response_kind import DeploymentAuditResponseKind
 from .deployment_change import DeploymentChange
@@ -490,6 +494,7 @@ from .list_audit_log_response import ListAuditLogResponse
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
 from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
 from .list_cron_runs_response import ListCronRunsResponse
+from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -717,6 +722,8 @@ from .rotate_app_webhook_secret_response import RotateAppWebhookSecretResponse
 from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
     RotateAppWebhookSecretResponseWebhookSecretSealedMasked,
 )
+from .rotate_deploy_token_request import RotateDeployTokenRequest
+from .rotate_deploy_token_response import RotateDeployTokenResponse
 from .rotate_key_response import RotateKeyResponse
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
@@ -1091,6 +1098,7 @@ __all__ = (
     "CreateDeploymentRequestTagType1",
     "CreateDeploymentRequestTagType2Type1",
     "CreateDeploymentRequestTagType3Type1",
+    "CreateDeployTokenRequest",
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestValidateMode",
@@ -1198,6 +1206,9 @@ __all__ = (
     "DeploymentResponseRolloutState",
     "DeploymentResponseStageState",
     "DeploymentResponseTag",
+    "DeployTokenResponse",
+    "DeployTokenResponseScopesItem",
+    "DeployTokenResponseStatus",
     "DeploymentSummaryResponse",
     "DevSessionResponse",
     "DiffAppConfigPatch",
@@ -1367,6 +1378,7 @@ __all__ = (
     "ListBucketObjectsResponse200ItemsItem",
     "ListCronRunsResponse",
     "ListDeploymentAuditResponse",
+    "ListDeployTokensResponse",
     "ListInstancesResponse",
     "ListInvocationsResponse",
     "ListJobRunsResponse",
@@ -1589,6 +1601,8 @@ __all__ = (
     "RotateAppWebhookSecretRequest",
     "RotateAppWebhookSecretResponse",
     "RotateAppWebhookSecretResponseWebhookSecretSealedMasked",
+    "RotateDeployTokenRequest",
+    "RotateDeployTokenResponse",
     "RotateKeyResponse",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",

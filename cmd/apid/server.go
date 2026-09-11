@@ -1875,6 +1875,15 @@ func (s *server) handler() http.Handler {
 	// via the rotation path.
 	mux.HandleFunc("POST /v1/keys/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.rotateKey)))))
 
+	// Per-app deploy tokens. These credentials are minted by an
+	// administrator, carry only deploy:write, and are accepted by
+	// the bearer middleware solely on /v1/apps/{slug}/... paths.
+	// loadApp enforces that the slug matches the token's bound app.
+	mux.HandleFunc("GET /v1/apps/{slug}/deploy-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeployTokens))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deploy-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.createDeployToken))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/deploy-tokens/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.revokeDeployToken))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deploy-tokens/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.rotateDeployToken)))))
+
 	// PR 6 (issue #190 / IAM-6 / ADR-061) — org-scoped API key surface.
 	// Compose s.loadOrg (resolves X-Active-Org / ?org= to a membership)
 	// followed by s.authLimited. No requireMFA / no requireScope: the

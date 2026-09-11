@@ -22,6 +22,10 @@ const (
 	// but prefix-disjoint so the two validators don't cross-match.
 	// The middleware dispatches on prefix in pkg/auth/middleware.
 	APIKeyOIDCKeyPrefix = "fp_oidc_"
+	// DeployTokenPrefix marks long-lived credentials scoped to one app.
+	// Keeping a distinct, registered prefix lets secret scanners identify
+	// leaked CI credentials without confusing them with account keys.
+	DeployTokenPrefix = "fp_deploy_"
 	// apiKeyRandomBytes is the entropy behind each key.
 	apiKeyRandomBytes = 24
 )
@@ -106,6 +110,18 @@ func GenerateOIDCKey() (plaintext string, hash []byte, err error) {
 		return "", nil, fmt.Errorf("api: generate OIDC key: %w", err)
 	}
 	plaintext = APIKeyOIDCKeyPrefix + hex.EncodeToString(buf)
+	sum := sha256.Sum256([]byte(plaintext))
+	return plaintext, sum[:], nil
+}
+
+// GenerateDeployToken mints a per-app deploy bearer. The plaintext is
+// returned exactly once; callers persist only its SHA-256 hash.
+func GenerateDeployToken() (plaintext string, hash []byte, err error) {
+	buf := make([]byte, apiKeyRandomBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", nil, fmt.Errorf("api: generate deploy token: %w", err)
+	}
+	plaintext = DeployTokenPrefix + hex.EncodeToString(buf)
 	sum := sha256.Sum256([]byte(plaintext))
 	return plaintext, sum[:], nil
 }
@@ -213,6 +229,20 @@ func ValidOIDCKeyFormat(s string) bool {
 		return false
 	}
 	body := strings.TrimPrefix(s, APIKeyOIDCKeyPrefix)
+	if len(body) != apiKeyRandomBytes*2 {
+		return false
+	}
+	_, err := hex.DecodeString(body)
+	return err == nil
+}
+
+// ValidDeployTokenFormat reports whether s has the registered deploy-token
+// shape. It is a cheap prefix/hex check performed before a database lookup.
+func ValidDeployTokenFormat(s string) bool {
+	if !strings.HasPrefix(s, DeployTokenPrefix) {
+		return false
+	}
+	body := strings.TrimPrefix(s, DeployTokenPrefix)
 	if len(body) != apiKeyRandomBytes*2 {
 		return false
 	}

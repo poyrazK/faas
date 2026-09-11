@@ -2702,6 +2702,87 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/deploy-tokens:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listDeployTokens
+      summary: List deploy tokens for an app.
+      responses:
+        '200':
+          description: Deploy-token metadata. Plaintexts are never returned by list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDeployTokensResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [apps]
+      operationId: createDeployToken
+      summary: Create a deploy token scoped to this app.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDeployTokenRequest' }
+      responses:
+        '201':
+          description: Token metadata and plaintext. Capture plaintext immediately; it is never returned again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeployTokenResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deploy-tokens/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Deploy-token identifier returned by the list or create endpoint.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [apps]
+      operationId: revokeDeployToken
+      summary: Revoke an app deploy token.
+      responses:
+        '204': { description: Token revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deploy-tokens/{id}/rotate:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Deploy-token identifier to rotate, returned by the list or create endpoint.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: rotateDeployToken
+      summary: Rotate an app deploy token.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateDeployTokenRequest' }
+      responses:
+        '201':
+          description: New token metadata and plaintext. The predecessor is revoked atomically.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RotateDeployTokenResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/preview/{slug}/destroy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -20488,6 +20569,61 @@ components:
           type: [string, "null"]
           description: PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again.
       example: {id: "0123456789abcdef0123456789abcdef", org_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c", prefix: "fp_live_ab12cd34", label: "ci-deploy", scopes: [apps:read, deploy:write], created_at: "2026-08-02T11:25:00Z", expires_at: "2027-08-02T11:25:00Z", status: "active", last_used_at: "2026-07-25T13:25:00Z"}
+
+    DeployTokenResponse:
+      description: "Metadata for a per-app deploy token. The fp_deploy_ plaintext is returned only on create and rotate responses."
+      type: object
+      required: [id, app_id, prefix, scopes, status, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        prefix: { type: string, example: "fp_deploy_" }
+        label: { type: string, maxLength: 100 }
+        scopes:
+          type: array
+          items: { type: string, enum: [deploy:write] }
+        status: { type: string, enum: [active, grace, revoked] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        rotated_from_id: { type: string, format: uuid }
+        plaintext:
+          type: string
+          description: "Present only on create/rotate. Store it in CI immediately; it cannot be retrieved later."
+
+    ListDeployTokensResponse:
+      description: "GET /v1/apps/{slug}/deploy-tokens response. Plaintexts are never returned by list."
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          items: { $ref: '#/components/schemas/DeployTokenResponse' }
+
+    CreateDeployTokenRequest:
+      description: "Create a deploy token scoped to one app. The server always assigns deploy:write."
+      type: object
+      properties:
+        label: { type: string, maxLength: 100 }
+        expires_at: { type: string, format: date-time, description: "Optional future expiry; defaults to 90 days and is capped at 365 days." }
+
+    RotateDeployTokenRequest:
+      description: "Rotate a deploy token. Empty label inherits the predecessor; empty expiry defaults to 90 days."
+      type: object
+      properties:
+        label: { type: string, maxLength: 100 }
+        expires_at: { type: string, format: date-time }
+
+    RotateDeployTokenResponse:
+      description: "Replacement deploy-token metadata and one-time plaintext, plus the revoked predecessor id."
+      type: object
+      required: [token, token_plaintext, old_token_id]
+      properties:
+        token: { $ref: '#/components/schemas/DeployTokenResponse' }
+        token_plaintext: { type: string }
+        old_token_id: { type: string, format: uuid }
+        old_token_expires_at: { type: string, format: date-time }
 
     CreateKeyRequest:
       description: "API key creation payload — label and optional scopes. Plaintext is returned exactly once in the 201 response. Scopes defaults to `[\"admin\"]` when omitted so existing callers preserve the legacy full-access behavior. See IAM-1, ADR-034 rev2."

@@ -647,6 +647,10 @@ func (k ConsumerKey) Active(now time.Time) bool {
 type APIKey struct {
 	ID        string
 	AccountID string
+	// AppID is set only for per-app deploy-token principals. Legacy
+	// account/org API keys leave it empty; authz.LoadApp uses it as an
+	// additional tenant boundary when the principal is app-scoped.
+	AppID string
 	// OrgID is the org the key was minted against (issue #190 / IAM-6,
 	// PR 6). Migration 00127 flips api_keys.org_id from NULL to
 	// NOT NULL after the deterministic personal-org backfill, so every
@@ -683,6 +687,25 @@ type APIKey struct {
 	// future PR). ON DELETE SET NULL — a hard-deleted predecessor
 	// leaves the lineage intact but un-anchored.
 	ParentKeyID *string
+}
+
+// DeployToken is a CI credential scoped to one application. The plaintext is
+// never stored; Hash is the SHA-256 of the registered fp_deploy_ bearer.
+// Status follows the same active/grace/revoked lifecycle as APIKey, while
+// AppID is mandatory and is checked at every app load boundary.
+type DeployToken struct {
+	ID            string
+	AccountID     string
+	AppID         string
+	Hash          []byte
+	Label         string
+	Scopes        []string
+	CreatedAt     time.Time
+	ExpiresAt     *time.Time
+	LastUsedAt    *time.Time
+	Status        string
+	RevokedAt     *time.Time
+	RotatedFromID *string
 }
 
 // App is a deployed application (or function). The Manifest carries the

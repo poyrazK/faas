@@ -106,6 +106,17 @@ type Authenticator interface {
 	TouchKeyLastUsed(ctx context.Context, keyID string) error
 }
 
+// DeployTokenAuthenticator is an optional extension implemented by stores
+// that support fp_deploy_ credentials. Keeping it separate from
+// Authenticator lets existing embedders adopt deploy tokens incrementally.
+type DeployTokenAuthenticator interface {
+	AuthenticateDeployToken(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
+}
+
+type deployTokenLastUsedToucher interface {
+	TouchDeployTokenLastUsed(ctx context.Context, tokenID string) error
+}
+
 // Sessions is the subset of pkg/session.Manager.Verify that the
 // session-cookie branch of RequireSession needs. Today that's one
 // method; the interface exists so tests can inject a fake without
@@ -557,6 +568,49 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			// ErrNotFound for rows past ExpiresAt), so a stale OIDC
 			// bearer naturally falls through and 401s via the
 			// no-credentials terminal below.
+		}
+
+		// (1c) Per-app deploy-token branch. Deploy tokens are
+		// prefix-disjoint from account keys and OIDC bearers. Stores
+		// opt in through the optional interface so existing auth test
+		// doubles continue to work unchanged.
+		if api.ValidDeployTokenFormat(tok) {
+			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
+				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
+				if err == nil {
+					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") {
+						api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug}"))
+						return
+					}
+					if !acct.Active() {
+						if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+							api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+								"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
+							return
+						}
+					}
+					*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
+					if toucher, ok := m.Authn.(deployTokenLastUsedToucher); ok {
+						//nolint:contextcheck // detached bounded touch is observability-only; request cancellation must not suppress it.
+						go func(id string, touch deployTokenLastUsedToucher) {
+							ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+							defer cancel()
+							_ = touch.TouchDeployTokenLastUsed(ctx, id)
+						}(key.ID, toucher)
+					}
+					next(w, r, acct)
+					return
+				}
+				if errors.Is(err, state.ErrAPIKeyExpired) {
+					api.WriteProblem(w, api.ErrAPIKeyExpired())
+					return
+				}
+				if errors.Is(err, state.ErrAPIKeyRevoked) {
+					api.WriteProblem(w, api.ErrAPIKeyRevoked())
+					return
+				}
+			}
 		}
 
 		// (2) Session-cookie branch — verify AEAD, cross-check
@@ -1080,6 +1134,14 @@ func (m *Middleware) RequireScope(allowed ...string) func(AccountHandler) Accoun
 func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) (state.App, bool) {
 	app, err := m.Authn.AppBySlug(r.Context(), slug)
 	if err != nil || app.AccountID != acct.ID {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+			"Not found", "no such app"))
+		return state.App{}, false
+	}
+	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AppID != "" && p.Key.AppID != app.ID {
+		// App-bound deploy tokens must not be usable against another
+		// app in the same account. Collapse the mismatch to the same
+		// 404 shape as a cross-account slug probe.
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"Not found", "no such app"))
 		return state.App{}, false
