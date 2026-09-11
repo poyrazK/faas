@@ -12,11 +12,11 @@ Functions differ from apps in two ways:
 ## Deploy
 
 ```
-gregale deploy --template function-node
+gregale deploy --template function-node --name <slug>
 ```
 
 ## Invoke
 
 ```
-gregale open   # browser test page, or POST from any HTTP client
+gregale open <slug>   # browser test page, or POST from any HTTP client
 ```

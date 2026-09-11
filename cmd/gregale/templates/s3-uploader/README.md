@@ -30,7 +30,7 @@ S3_SECRET_ACCESS_KEY=...
 # S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
 EOF
 chmod 600 ../s3-uploader.secrets
-gregale deploy --secrets-file ../s3-uploader.secrets
+gregale deploy --name <slug> --secrets-file ../s3-uploader.secrets
 ```
 
 ## Rotate or update secrets
@@ -57,7 +57,7 @@ gregale deploy
 ## Try it
 
 ```sh
-gregale open                         # browser, opens the app
+gregale open <slug>                  # browser, opens the app
 curl -X POST --data 'hello world' https://<slug>.gregale.dev/upload/hello.txt
 ```
 

@@ -7,24 +7,25 @@ A minimal Express.js hello-world for gregale.
 From this directory:
 
 ```
-gregale deploy --template hello-node
+gregale deploy --template hello-node --name <slug>
 ```
 
-This materializes the template, tars it, and ships it to apid. imaged
-will detect `package.json` and use the `node22` runner.
+This materializes the template, tars it, and ships it to apid. The CLI
+detects `package.json` and selects the `node22` runner.
 
 ## Try it
 
 ```
-gregale open             # browser, or:
-gregale curl <slug>      # print first 200 bytes (if available)
+gregale open <slug>      # browser
 ```
 
 ## Edit and re-deploy
 
 ```
+gregale init --template hello-node --path hello-node
+cd hello-node
 # edit handler.js, then:
-gregale deploy --template hello-node --name <slug>
+gregale deploy --name <slug>
 ```
 
 ## Add secrets

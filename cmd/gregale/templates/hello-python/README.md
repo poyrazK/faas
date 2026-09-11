@@ -5,18 +5,25 @@ A minimal Flask hello-world for gregale.
 ## Deploy
 
 ```
-gregale deploy --template hello-python
+gregale deploy --template hello-python --name <slug>
 ```
 
-imaged will detect `requirements.txt` and use the `python312` runner.
+The CLI detects `requirements.txt` and selects the `python312` runner.
 
 ## Try it
 
 ```
-gregale open             # browser, or:
-gregale curl <slug>      # print first 200 bytes (if available)
+gregale open <slug>      # browser
 ```
 
 ## Edit and re-deploy
 
-Edit `handler.py`, then re-run `gregale deploy --template hello-python --name <slug>`.
+`--template` creates a fresh copy on every run, so use an initialized
+directory when you want to keep edits:
+
+```
+gregale init --template hello-python --path hello-python
+cd hello-python
+# edit handler.py, then:
+gregale deploy --name <slug>
+```
