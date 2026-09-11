@@ -15,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // fakeMailBounce records every HandleMailBounce call so tests
@@ -34,16 +35,13 @@ func (f *fakeMailBounce) HandleMailBounce(_ context.Context, b meter.MailBounce)
 
 // resendServerForTest builds a minimal *server suitable for
 // exercising the resendWebhook handler. The handler's only
-// dependencies are the signed-secret field, the mailBounce
-// seam, and the audit shim — the rest of the server's wiring
-// (store, billing, …) is unused on this route. Reuses the same
-// shape as cmd/apid/advisory_receiver_metrics_test.go.
+// dependencies are the signed-secret field, durable replay store,
+// mailBounce seam, and audit shim. Use the production constructor so
+// replay coverage cannot silently drift from the handler's wiring.
 func resendServerForTest(t *testing.T, secret string, bouncer *fakeMailBounce) *server {
 	t.Helper()
-	s := &server{
-		resendWebhookSecret: secret,
-		log:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
+	s := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "", noopNotifier{})
+	s.resendWebhookSecret = secret
 	s.mailBounce = bouncer
 	return s
 }

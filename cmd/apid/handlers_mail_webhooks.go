@@ -65,7 +65,7 @@ func resendReason(t string) string {
 // resendWebhook accepts signed Resend bounce / complaint events
 // (issue #246 acceptance item 8). The HMAC envelope is Svix /
 // Standard Webhooks (verified by pkg/mail.VerifyResendSignature);
-// replay is guarded by webhookdedupe.CheckReplay using the svix-id
+// replay is guarded by the durable webhook delivery claim using the svix-id
 // delivery UUID; the resulting bounce is dispatched to the
 // mailBounceHandler the meterd process registered via main.go.
 //
@@ -117,19 +117,24 @@ func (s *server) resendWebhook(w http.ResponseWriter, r *http.Request) {
 	// Replay check — svix-id is the delivery UUID Resend uses.
 	// The dedupe window is 5 minutes (webhookdedupe.TTL). On a
 	// hit, emit the audit row + 200 so Resend stops retrying.
-	if deliveryID := r.Header.Get(mail.ResendIDHeader); deliveryID != "" {
-		if err := webhookdedupe.CheckReplay(r.Context(), webhookdedupe.ProviderResend, deliveryID); err != nil {
-			if webhookdedupe.IsReplay(err) {
-				s.audit.Emit(r.Context(), "webhook.replay_rejected", nil, map[string]any{
-					"provider":    webhookdedupe.ProviderResend,
-					"delivery_id": logsanitize.Field(deliveryID),
-				})
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-			s.log.Warn("resend replay-check infra error; forwarding",
-				"delivery_id", logsanitize.Field(deliveryID), "err", err)
-		}
+	deliveryID := r.Header.Get(mail.ResendIDHeader)
+	if deliveryID == "" {
+		api.WriteProblem(w, api.ErrValidation("resend webhook delivery id is required"))
+		return
+	}
+	claimed, err := s.claimWebhookDelivery(r.Context(), webhookdedupe.ProviderResend, deliveryID)
+	if err != nil {
+		s.log.Error("resend replay claim failed", "delivery_id", logsanitize.Field(deliveryID), "err", err)
+		api.WriteProblem(w, api.ErrCapacity("mail webhook replay protection unavailable"))
+		return
+	}
+	if !claimed {
+		s.audit.Emit(r.Context(), "webhook.replay_rejected", nil, map[string]any{
+			"provider":    webhookdedupe.ProviderResend,
+			"delivery_id": logsanitize.Field(deliveryID),
+		})
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 
 	reason := resendReason(ev.Type)
@@ -148,6 +153,7 @@ func (s *server) resendWebhook(w http.ResponseWriter, r *http.Request) {
 		// here without it the wiring is broken — fail loud so
 		// the operator sees a 500 rather than silently dropping
 		// bounces.
+		s.releaseWebhookDelivery(r.Context(), webhookdedupe.ProviderResend, deliveryID)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"mail bounce handler not wired",
 			"resend webhook received but no mailBounce handler is configured"))
@@ -172,6 +178,7 @@ func (s *server) resendWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		s.log.Error("resend_webhook.bounce_handler_failed",
 			"err", err, "delivery_id", logsanitize.Field(bounce.ProviderEventID))
+		s.releaseWebhookDelivery(r.Context(), webhookdedupe.ProviderResend, deliveryID)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Bounce handler failed", err.Error()))
 		return

@@ -40,6 +40,9 @@ const (
 	MaxObjectBucketsPerApp                    = 100
 	DefaultObjectUploadBytes            int64 = 100 << 20
 	MaxObjectSinglePutBytes             int64 = 5 << 30
+	MaxObjectUploadSpoolBytes           int64 = 5 << 30
+	ObjectUploadSpoolMinFreeBytes       int64 = 1 << 30
+	ObjectTransferTimeout                     = 30 * time.Minute
 	MaxObjectUploadBytes                int64 = 5 << 40
 	DefaultMultipartPartBytes           int64 = 64 << 20
 	MinMultipartPartBytes               int64 = 5 << 20
@@ -4173,6 +4176,20 @@ const (
 	// bound. Same cap applied to all three mail-webhook handlers
 	// the apid mounts (resend / postmark / paddle) for consistency.
 	WebhookMaxBodyBytes = 1 << 20 // 1 MiB
+	// GitHubWebhookMaxBodyBytes keeps the larger push-event allowance in the
+	// central limits table. GitHub payloads can include a large commit list.
+	GitHubWebhookMaxBodyBytes = 10 << 20
+
+	// TriggerBrokerErrorBodyMaxBytes bounds diagnostic bodies returned by
+	// customer-configured external brokers. The text is only used in an
+	// operator-facing error and must never consume meaningful schedd memory.
+	TriggerBrokerErrorBodyMaxBytes = 64 << 10
+	// TriggerBrokerEnvelopeOverheadBytes covers the JSON envelope and broker
+	// metadata around an SQS-compatible batch. JSON may expand one input byte
+	// to a six-byte unicode escape, so the receive cap is derived from the
+	// trigger payload budget with this multiplier.
+	TriggerBrokerEnvelopeOverheadBytes int64 = 64 << 10
+	TriggerBrokerJSONExpansion         int64 = 6
 
 	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
 	FreeTierColdEvictDays = 14
@@ -4318,6 +4335,8 @@ var (
 )
 
 const (
+	WorkflowRunInputMaxBytes int64 = 1 << 20
+
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
 	ExecutionTimeoutDefaultMS       = 5_000
