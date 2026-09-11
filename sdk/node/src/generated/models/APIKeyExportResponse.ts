@@ -10,9 +10,9 @@ export type APIKeyExportResponse = {
   prefix: string;
   label?: string | null;
   /**
-   * Permission set attached to the exported key. Object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access.
+   * Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access.
    */
-  scopes: Array<'admin' | 'apps:read' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'env:read' | 'env:write' | 'registry_credentials:read' | 'registry_credentials:write' | 'upstreams:write' | 'storage:manage' | 'storage:read' | 'storage:write' | 'postgres:manage' | 'postgres:read'>;
+  scopes: Array<'admin' | 'apps:read' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'env:read' | 'env:write' | 'registry_credentials:read' | 'registry_credentials:write' | 'upstreams:write' | 'storage:manage' | 'storage:read' | 'storage:write' | 'postgres:manage' | 'postgres:read' | 'github:manage'>;
   created_at: string;
   last_used_at?: string | null;
 };

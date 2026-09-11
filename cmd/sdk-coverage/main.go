@@ -333,6 +333,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/openapi/preview":                          "PreviewAppOpenAPIPolicy",        // read-only declared-vs-observed route-policy preview (roadmap item 11)
 	"POST /v1/apps/{slug}/openapi/apply":                           "ApplyAppOpenAPIPolicy",          // explicit plan/confirm policy apply
 	"GET /v1/apps/{slug}/openapi/diff":                             "DiffAppOpenAPIContract",         // ADR-121 production contract gate preview
+	"GET /v1/apps/{slug}/github":                                   "GetGitHubConnection",
+	"POST /v1/apps/{slug}/github/bind":                             "BindGitHubConnection",
+	"POST /v1/apps/{slug}/github/sync":                             "SyncGitHubConnection",
+	"DELETE /v1/apps/{slug}/github":                                "DisconnectGitHubConnection",
 	"GET /v1/deployments/{id}":                                     "GetDeployment",
 	"PATCH /v1/deployments/{id}":                                   "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override
 	"DELETE /v1/deployments/{id}":                                  "ClearDeployment", // ADR-124 PR-A; soft-delete (status untouched)

@@ -375,6 +375,117 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// bindGitHubConnection is the bearer/API-key bind surface. Unlike the
+// dashboard picker it has no GitHub OAuth session to prove ownership with, so
+// it authorizes the installation through the durable account/install row and
+// verifies that the requested repository is currently visible to that install.
+// This keeps a leaked API key from binding an arbitrary installation or repo.
+func (s *server) bindGitHubConnection(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	var req installBindRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
+			"Invalid body", "expected JSON with installation_id, repo_full_name, production_branch"))
+		return
+	}
+	if req.InstallationID <= 0 || req.RepoFullName == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
+			"Missing GitHub binding fields", "the body must include a positive installation_id and repo_full_name"))
+		return
+	}
+	if req.DeployBranches != nil {
+		if err := validateDeployBranches(req.DeployBranches); err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
+				"Invalid deploy_branches", err.Error()))
+			return
+		}
+	}
+	install, err := s.store.GitHubInstallForAccountInstallation(r.Context(), acct.ID, req.InstallationID)
+	if errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeGitHubInstallNotOwned,
+			"GitHub installation is not connected to this account", "connect the GitHub App before binding a repository"))
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read GitHub installation"))
+		return
+	}
+	repos, err := s.githubd.ListInstallableRepos(r.Context(), acct.ID, req.InstallationID)
+	if err != nil {
+		var problem *api.Problem
+		if errors.As(err, &problem) {
+			api.WriteProblem(w, problem)
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
+			"Could not reach GitHub", "retry in a minute"))
+		return
+	}
+	canonical := canonicalGitHubRepo(req.RepoFullName)
+	visible := false
+	repoFullName := req.RepoFullName
+	for _, repo := range repos {
+		if canonicalGitHubRepo(repo.FullName) == canonical {
+			visible = true
+			repoFullName = repo.FullName
+			break
+		}
+	}
+	if !visible {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeGitHubRepoNotAccessible,
+			"Repository is not accessible", "the GitHub App installation cannot currently access this repository"))
+		return
+	}
+	branch := req.ProductionBranch
+	if branch == "" {
+		branch = install.DefaultBranch
+	}
+	if req.DeployBranches != nil {
+		branchesStore, ok := s.store.(state.ProjectDeployBranchesStore)
+		if !ok || app.ProjectID == "" {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "project_required",
+				"Project required", "branch deployment scopes are available for project-backed apps only"))
+			return
+		}
+		if err := branchesStore.ReplaceProjectDeployBranches(r.Context(), acct.ID, app.ProjectID, req.DeployBranches); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				api.WriteProblem(w, api.NewProblem(http.StatusNotFound, "not_found", "Project not found", "the app project no longer exists"))
+			} else {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request", "Invalid deploy_branches", err.Error()))
+			}
+			return
+		}
+	}
+	bindingID, err := s.githubd.BindAppRepo(r.Context(), app.ID, acct.ID, req.InstallationID, repoFullName, branch)
+	if err != nil {
+		var problem *api.Problem
+		if errors.As(err, &problem) {
+			api.WriteProblem(w, problem)
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
+			"Could not persist GitHub binding", "retry in a minute"))
+		return
+	}
+	acctID := acct.ID
+	s.audit.Emit(r.Context(), "auth.install.bound", &acctID, map[string]any{
+		"install_id":        req.InstallationID,
+		"app_id":            app.ID,
+		"install_owner":     install.AuditGithubLogin,
+		"repo_full_name":    repoFullName,
+		"production_branch": branch,
+		"binding_id":        bindingID,
+		"surface":           "api",
+	})
+	writeJSON(w, http.StatusOK, installBindResponse{
+		BindingID: bindingID, RepoFullName: repoFullName,
+		ProductionBranch: branch, DeployBranches: req.DeployBranches,
+	})
+}
+
 // sessionGithubLogin extracts env.GithubLogin from the session
 // cookie, applying the same §11 proof renderOAuthCallback uses.
 // Writes the right 403 / 302 and returns ok=false when the proof

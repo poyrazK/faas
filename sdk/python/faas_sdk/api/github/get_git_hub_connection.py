@@ -17,7 +17,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/apps/{slug}/install/bind".format(
+        "url": "/v1/apps/{slug}/github".format(
             slug=quote(str(slug), safe=""),
         ),
     }
@@ -37,6 +37,11 @@ def _parse_response(
         response_401 = Problem.from_dict(response.json())
 
         return response_401
+
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
 
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
@@ -68,14 +73,13 @@ def _build_response(
 def sync_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[GitHubInstallStatus | Problem]:
-    """Inspect the app's GitHub repository binding.
+    """Read the GitHub installation and repository binding for an app.
 
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+     Bearer API-key surface for customer automation. Requires the
+    dedicated `github:manage` scope and never returns a CSRF token or
+    installation credentials.
 
     Args:
         slug (str):
@@ -102,14 +106,13 @@ def sync_detailed(
 def sync(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> GitHubInstallStatus | Problem | None:
-    """Inspect the app's GitHub repository binding.
+    """Read the GitHub installation and repository binding for an app.
 
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+     Bearer API-key surface for customer automation. Requires the
+    dedicated `github:manage` scope and never returns a CSRF token or
+    installation credentials.
 
     Args:
         slug (str):
@@ -131,14 +134,13 @@ def sync(
 async def asyncio_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[GitHubInstallStatus | Problem]:
-    """Inspect the app's GitHub repository binding.
+    """Read the GitHub installation and repository binding for an app.
 
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+     Bearer API-key surface for customer automation. Requires the
+    dedicated `github:manage` scope and never returns a CSRF token or
+    installation credentials.
 
     Args:
         slug (str):
@@ -163,14 +165,13 @@ async def asyncio_detailed(
 async def asyncio(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> GitHubInstallStatus | Problem | None:
-    """Inspect the app's GitHub repository binding.
+    """Read the GitHub installation and repository binding for an app.
 
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+     Bearer API-key surface for customer automation. Requires the
+    dedicated `github:manage` scope and never returns a CSRF token or
+    installation credentials.
 
     Args:
         slug (str):

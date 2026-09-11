@@ -22,8 +22,9 @@ class CreateKeyRequest:
 
     label: str | Unset = UNSET
     scopes: list[CreateKeyRequestScopesItem] | Unset = UNSET
-    """Requested permission set. The server rejects unknown scopes. Object-storage read/write scopes do not expose
-    data until a storage manager grants the key access to a logical bucket."""
+    """Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub
+    connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the
+    key access to a logical bucket."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

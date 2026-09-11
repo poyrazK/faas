@@ -204,6 +204,23 @@ func (s *server) requireScope(allowed ...string) func(accountHandler) accountHan
 	}
 }
 
+// requireBearer keeps API-key-only aliases from becoming CSRF-able through
+// the dashboard session cookie. requireScope deliberately treats a session
+// principal as implicit admin for browser routes; these customer automation
+// endpoints must instead require an explicit bearer key carrying the narrow
+// route scope.
+func (s *server) requireBearer(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		p, ok := principalFrom(r)
+		if !ok || p.Key == nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+				"Bearer token required", "this endpoint requires an API key with the github:manage scope"))
+			return
+		}
+		next(w, r, acct)
+	}
+}
+
 // loadApp delegates to pkg/auth.Middleware.LoadApp (IDOR-safe
 // slug→App with the ownership predicate app.AccountID == acct.ID).
 // Behaviour matches cmd/apid/server.go:1611-1617.

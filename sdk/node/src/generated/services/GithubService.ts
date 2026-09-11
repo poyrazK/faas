@@ -49,6 +49,174 @@ export class GithubService {
     });
   }
   /**
+   * Read the GitHub installation and repository binding for an app.
+   * Bearer API-key surface for customer automation. Requires the
+   * dedicated `github:manage` scope and never returns a CSRF token or
+   * installation credentials.
+   *
+   * @returns GitHubInstallStatus Automation-safe installation and binding snapshot.
+   * @throws ApiError
+   */
+  public static getGitHubConnection({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<GitHubInstallStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/github',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Remove an app's GitHub repository binding.
+   * Bearer API-key surface for customer automation. Requires
+   * `github:manage`; the account-level GitHub installation remains
+   * available for a later bind. Safe to retry with an idempotency key.
+   *
+   * @returns GitHubInstallStatus Automation disconnect completed; the installation remains available.
+   * @throws ApiError
+   */
+  public static disconnectGitHubConnection({
+    slug,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<GitHubInstallStatus> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/github',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Bind or rebind an app to a visible GitHub repository.
+   * Bearer API-key surface for customer automation. Requires
+   * `github:manage`. The installation_id must belong to the account and
+   * the requested repository must currently be visible to that GitHub App
+   * installation. Safe to retry with an idempotency key.
+   *
+   * @returns InstallBindResponse Automation bind completed and the repository edge is active.
+   * @throws ApiError
+   */
+  public static bindGitHubConnection({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: InstallBindRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<InstallBindResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/github/bind',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Installation ownership or repository-access proof failed.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        502: `GitHub could not be reached.`,
+      },
+    });
+  }
+  /**
+   * Check an app's GitHub repository access now.
+   * Bearer API-key surface for customer automation. Requires
+   * `github:manage`; GitHub is queried and the app is detached only when
+   * its bound repository is no longer accessible.
+   *
+   * @returns GitHubInstallStatus Post-reconciliation connection projection.
+   * @throws ApiError
+   */
+  public static syncGitHubConnection({
+    slug,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<GitHubInstallStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/github/sync',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        502: `The GitHub repository catalog was unavailable during reconciliation.`,
+      },
+    });
+  }
+  /**
    * Inspect the app's GitHub repository binding.
    * Cookie-session-authenticated (NOT API-key). Returns the durable
    * GitHub installation metadata and the app's repository binding without

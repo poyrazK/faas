@@ -8,20 +8,26 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.git_hub_install_status import GitHubInstallStatus
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(idempotency_key, Unset):
+        headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/apps/{slug}/install/bind".format(
+        "method": "post",
+        "url": "/v1/apps/{slug}/github/sync".format(
             slug=quote(str(slug), safe=""),
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -38,15 +44,25 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
         return response_404
 
-    if response.status_code == 503:
-        response_503 = Problem.from_dict(response.json())
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
 
-        return response_503
+        return response_409
+
+    if response.status_code == 502:
+        response_502 = Problem.from_dict(response.json())
+
+        return response_502
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -68,17 +84,18 @@ def _build_response(
 def sync_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
+    idempotency_key: str | Unset = UNSET,
 ) -> Response[GitHubInstallStatus | Problem]:
-    """Inspect the app's GitHub repository binding.
+    """Check an app's GitHub repository access now.
 
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+     Bearer API-key surface for customer automation. Requires
+    `github:manage`; GitHub is queried and the app is detached only when
+    its bound repository is no longer accessible.
 
     Args:
         slug (str):
+        idempotency_key (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -90,6 +107,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -102,17 +120,18 @@ def sync_detailed(
 def sync(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
+    idempotency_key: str | Unset = UNSET,
 ) -> GitHubInstallStatus | Problem | None:
-    """Inspect the app's GitHub repository binding.
+    """Check an app's GitHub repository access now.
 
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+     Bearer API-key surface for customer automation. Requires
+    `github:manage`; GitHub is queried and the app is detached only when
+    its bound repository is no longer accessible.
 
     Args:
         slug (str):
+        idempotency_key (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,23 +144,25 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        idempotency_key=idempotency_key,
     ).parsed
 
 
 async def asyncio_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
+    idempotency_key: str | Unset = UNSET,
 ) -> Response[GitHubInstallStatus | Problem]:
-    """Inspect the app's GitHub repository binding.
+    """Check an app's GitHub repository access now.
 
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+     Bearer API-key surface for customer automation. Requires
+    `github:manage`; GitHub is queried and the app is detached only when
+    its bound repository is no longer accessible.
 
     Args:
         slug (str):
+        idempotency_key (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -153,6 +174,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        idempotency_key=idempotency_key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -163,17 +185,18 @@ async def asyncio_detailed(
 async def asyncio(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
+    idempotency_key: str | Unset = UNSET,
 ) -> GitHubInstallStatus | Problem | None:
-    """Inspect the app's GitHub repository binding.
+    """Check an app's GitHub repository access now.
 
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+     Bearer API-key surface for customer automation. Requires
+    `github:manage`; GitHub is queried and the app is detached only when
+    its bound repository is no longer accessible.
 
     Args:
         slug (str):
+        idempotency_key (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,5 +210,6 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            idempotency_key=idempotency_key,
         )
     ).parsed

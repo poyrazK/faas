@@ -37,8 +37,9 @@ class APIKeyResponse:
     prefix: str
     """First 16 chars of the key (e.g. `fp_live_abc12345…`)."""
     scopes: list[APIKeyResponseScopesItem]
-    """Closed permission set attached to the key. storage:manage controls bucket lifecycle/grants; storage:read and
-    storage:write also require a matching per-bucket grant; admin remains full access."""
+    """Closed permission set attached to the key. github:manage controls customer GitHub connection automation;
+    storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-
+    bucket grant; admin remains full access."""
     created_at: datetime.datetime
     label: None | str | Unset = UNSET
     last_used_at: datetime.datetime | None | Unset = UNSET
