@@ -668,7 +668,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/debug/requests":                   "ListAppDebugRequests",
 	"GET /v1/apps/{slug}/debug/requests/{req_id}":          "GetAppDebugRequest",
 	"GET /v1/apps/{slug}/debug/requests/{req_id}/evidence": "GetAppDebugRequestEvidence",
-	"GET /v1/apps/{slug}/debug/coverage":                  "GetAppDebugCoverage",
+	"GET /v1/apps/{slug}/debug/coverage":                   "GetAppDebugCoverage",
 
 	// ADR-127 / PR-B — production debugger consumer surface.
 	// Same rationale as the PR-A request list: drop the slug from
