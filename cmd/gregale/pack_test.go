@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // writeFile is a tiny helper: create parent dirs + write content.
@@ -626,6 +627,29 @@ func TestPackDirToTarGz_TotalSizeCap(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "zero-config cap") {
 		t.Errorf("expected friendly total-cap error; got %v", err)
+	}
+}
+
+func TestPackDirToTarGz_RejectsTooManyArchiveEntries(t *testing.T) {
+	dir := t.TempDir()
+	// The server's limit applies to every tar header, including directories.
+	// Keep exactly one directory header in addition to the maximum number of
+	// regular files so a file-only counter would incorrectly allow this tree.
+	for i := 0; i < api.SourceArchiveMaxEntries-1; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("file-%05d.txt", i))
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	writeFile(t, dir, "nested/last.txt", "")
+
+	dest := filepath.Join(t.TempDir(), "out.tar.gz")
+	_, err := packDirToTarGz(dir, dest, defaultZeroConfigSourceCapMB, nil)
+	if err == nil {
+		t.Fatal("packDirToTarGz should reject a source tree over the archive-entry limit, got nil")
+	}
+	if !strings.Contains(err.Error(), "archive entries") || !strings.Contains(err.Error(), fmt.Sprint(api.SourceArchiveMaxEntries)) {
+		t.Fatalf("expected archive-entry limit error, got %v", err)
 	}
 }
 
