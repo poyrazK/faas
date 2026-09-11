@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -224,6 +225,88 @@ func TestTierC_Invoke_AsyncHappyPath(t *testing.T) {
 	}
 	if f.sawMethod != "POST" || f.sawPath != "/v1/apps/demo/invoke/async" {
 		t.Errorf("route = %s %s, want POST /v1/apps/demo/invoke/async", f.sawMethod, f.sawPath)
+	}
+}
+
+func TestTierC_Invoke_PositionalFirstFlags(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"i-3","status":"completed","result":"{}"}`, http.StatusOK)
+	if code := cmdInvoke([]string{
+		"demo",
+		"--payload", `{"hello":"world"}`,
+		"--method", "PUT",
+		"--path", "/hook",
+	}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != "POST" || f.sawPath != "/v1/apps/demo/invoke" {
+		t.Errorf("route = %s %s, want POST /v1/apps/demo/invoke", f.sawMethod, f.sawPath)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatalf("request body is not JSON: %v; body=%s", err, f.sawBody)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(got["payload"], &payload); err != nil {
+		t.Fatalf("payload is not an object: %v; body=%s", err, f.sawBody)
+	}
+	if payload["hello"] != "world" {
+		t.Errorf("payload = %v, want hello=world", payload)
+	}
+	var method, path string
+	if err := json.Unmarshal(got["method"], &method); err != nil || method != "PUT" {
+		t.Errorf("method = %q, want PUT", method)
+	}
+	if err := json.Unmarshal(got["path"], &path); err != nil || path != "/hook" {
+		t.Errorf("path = %q, want /hook", path)
+	}
+}
+
+func TestTierC_CachePurge_PositionalFirstPath(t *testing.T) {
+	resetJSONOut(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "test-token")
+	var method, path, query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path, query = r.Method, r.URL.Path, r.URL.RawQuery
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+
+	if code := run([]string{"cache", "purge", "demo", "--path", "/round16/*", "--json"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if method != "DELETE" || path != "/v1/apps/demo/cache" || query != "path=%2Fround16%2F%2A" {
+		t.Errorf("request = %s %s?%s, want DELETE /v1/apps/demo/cache?path=%%2Fround16%%2F%%2A", method, path, query)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(out.Bytes(), &response); err != nil {
+		t.Fatalf("stdout is not JSON: %v; output=%s", err, out.String())
+	}
+	if response["app"] != "demo" || response["path"] != "/round16/*" || response["purged"] != true {
+		t.Errorf("response = %v, want demo purge receipt", response)
+	}
+}
+
+func TestTierC_PositionalFirstFlagsRejectUnknownAndExtraArgs(t *testing.T) {
+	resetJSONOut(t)
+	if code := cmdInvoke([]string{"demo", "--unknown"}); code != 1 {
+		t.Errorf("invoke unknown flag exit = %d, want 1", code)
+	}
+	if code := cmdInvoke([]string{"demo", "extra", "--payload", `{}`}); code != 1 {
+		t.Errorf("invoke extra positional exit = %d, want 1", code)
+	}
+	if code := cmdCache([]string{"purge", "demo", "--unknown"}); code != 1 {
+		t.Errorf("cache unknown flag exit = %d, want 1", code)
+	}
+	if code := cmdCache([]string{"purge", "demo", "extra", "--path", "/"}); code != 1 {
+		t.Errorf("cache extra positional exit = %d, want 1", code)
 	}
 }
 

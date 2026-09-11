@@ -26,14 +26,18 @@ func cmdInvoke(args []string) int {
 	payload := fs.String("payload", "", "JSON payload (or @file for file body, - for stdin)")
 	method := fs.String("method", "", "HTTP method override (defaults to handler's)")
 	path := fs.String("path", "", "URL path override (defaults to handler's)")
-	if err := fs.Parse(args); err != nil {
+	// Go's flag parser stops at the first positional token. Reorder the
+	// documented `<slug> [flags]` form before parsing so flags-first and
+	// positional-first invocations share the same validation path.
+	flags, positional := splitArgsForFlags(args, "async")
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if len(positional) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] <slug>", "invoke")
 		return 1
 	}
-	slug := fs.Arg(0)
+	slug := positional[0]
 	body, err := resolvePayload(*payload)
 	if err != nil {
 		return printErr("Invalid payload", err)
