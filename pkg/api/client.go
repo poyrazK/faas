@@ -2580,8 +2580,18 @@ func (c *Client) GetAuditEvent(ctx context.Context, id string) (AuditEventRespon
 // the calling account's id inside the handler; `account_id IS NULL`
 // rows are filtered out server-side.
 func (c *Client) ListAuditLog(ctx context.Context, since, kindPrefix string, limit int) (ListAuditLogResponse, error) {
+	return c.ListAuditLogPage(ctx, "", since, kindPrefix, limit)
+}
+
+// ListAuditLogPage is the cursor-aware customer audit-log read. Pass the
+// previous response's NextBefore back unchanged; an empty before starts at
+// the newest row.
+func (c *Client) ListAuditLogPage(ctx context.Context, before, since, kindPrefix string, limit int) (ListAuditLogResponse, error) {
 	var out ListAuditLogResponse
 	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
 	if since != "" {
 		q.Set("since", since)
 	}
@@ -2605,8 +2615,18 @@ func (c *Client) ListAuditLog(ctx context.Context, since, kindPrefix string, lim
 // admin scope; the SDK caller must be holding an admin API key or
 // an admin session.
 func (c *Client) ListAuditLogAll(ctx context.Context, accountID, since, kindPrefix string, limit int, includeAnonymous bool) (ListAuditLogResponse, error) {
+	return c.ListAuditLogAllPage(ctx, "", accountID, since, kindPrefix, limit, includeAnonymous)
+}
+
+// ListAuditLogAllPage is the cursor-aware operator audit-log read. Pass the
+// previous response's NextBefore back unchanged; an empty before starts at
+// the newest row.
+func (c *Client) ListAuditLogAllPage(ctx context.Context, before, accountID, since, kindPrefix string, limit int, includeAnonymous bool) (ListAuditLogResponse, error) {
 	var out ListAuditLogResponse
 	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
 	if accountID != "" {
 		q.Set("account_id", accountID)
 	}

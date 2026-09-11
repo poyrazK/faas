@@ -42,6 +42,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apislogs"
+	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -57,6 +58,7 @@ import (
 //	?account_id=<uuid>        restricts to one account (omitted → all)
 //	?kind_prefix=<prefix>     LIKE 'prefix%' on kind
 //	?since=<rfc3339>          inclusive lower bound
+//	?before=<cursor>          opaque cursor from a previous response's next_before
 //	?include_anonymous=<0|1>  when 1, surfaces account_id IS NULL rows
 //	?limit=<n>                default 200, cap 500
 //	?actor_email=<email>      (P4 / operator-self-service) exact match on
@@ -84,7 +86,7 @@ func (s *server) obsAuditLogSearch(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, prob)
 		return
 	}
-	since, kindPrefix, includeAnon, limit, actorEmail, operatorOnly, targetAccountID, prob := parseObsAuditLogSearchQuery(r)
+	since, kindPrefix, includeAnon, before, limit, actorEmail, operatorOnly, targetAccountID, prob := parseObsAuditLogSearchQuery(r)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -126,8 +128,9 @@ func (s *server) obsAuditLogSearch(w http.ResponseWriter, r *http.Request, acct 
 		AccountID:        accountFilter,
 		KindPrefix:       effectiveKindPrefix,
 		Since:            since,
+		Before:           before,
 		IncludeAnonymous: includeAnon,
-		Limit:            limit,
+		Limit:            limit + 1,
 		ActorEmail:       accountEmailFilter,
 		TargetAccountID:  targetAccountFilter,
 	})
@@ -136,10 +139,17 @@ func (s *server) obsAuditLogSearch(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	items := toObsAuditLogRows(rows)
+	var nextBefore string
 	// Truncate to the requested limit (the over-read constants are
 	// passed to the store so the planner picks the index scan; the
-	// handler just enforces the wire cap).
+	// handler just enforces the wire cap and emits a cursor when the
+	// bounded over-read proves another page exists).
 	if len(items) > limit {
+		last := rows[limit-1]
+		nextBefore = cursor.Encode(cursor.Key{
+			CreatedAt: last.ReceivedAt,
+			ID:        last.ID.String(),
+		})
 		items = items[:limit]
 	}
 	acctIDStr := ""
@@ -165,6 +175,7 @@ func (s *server) obsAuditLogSearch(w http.ResponseWriter, r *http.Request, acct 
 		ActorEmail:       actorEmail,
 		OperatorOnly:     operatorOnly,
 		TargetAccountID:  targetIDStr,
+		NextBefore:       nextBefore,
 	})
 }
 
@@ -303,15 +314,28 @@ var obsNodesEventsChannels = []string{
 // target_account_id) are the operator-self-service surface; see
 // the obsAuditLogSearch doc-comment for the rationale + mutual-
 // exclusivity rule with kind_prefix.
-func parseObsAuditLogSearchQuery(r *http.Request) (since time.Time, kindPrefix string, includeAnon bool, limit int, actorEmail string, operatorOnly bool, targetAccountID uuid.UUID, prob *api.Problem) {
+func parseObsAuditLogSearchQuery(r *http.Request) (since time.Time, kindPrefix string, includeAnon bool, before *state.AuditLogCursor, limit int, actorEmail string, operatorOnly bool, targetAccountID uuid.UUID, prob *api.Problem) {
 	q := r.URL.Query()
 	if raw := q.Get("since"); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			return time.Time{}, "", false, 0, "", false, uuid.Nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			return time.Time{}, "", false, nil, 0, "", false, uuid.Nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid since", "since must be RFC 3339 (e.g. 2026-07-25T00:00:00Z)")
 		}
 		since = t
+	}
+	if raw := q.Get("before"); raw != "" {
+		key, err := cursor.Decode(raw)
+		if err != nil {
+			return time.Time{}, "", false, nil, 0, "", false, uuid.Nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid before", "before must be an opaque cursor returned as next_before")
+		}
+		id, err := uuid.Parse(key.ID)
+		if err != nil {
+			return time.Time{}, "", false, nil, 0, "", false, uuid.Nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid before", "before must be an opaque cursor returned as next_before")
+		}
+		before = &state.AuditLogCursor{ReceivedAt: key.CreatedAt, ID: id}
 	}
 	kindPrefix = q.Get("kind_prefix")
 	includeAnon, _ = strconv.ParseBool(q.Get("include_anonymous"))
@@ -319,7 +343,7 @@ func parseObsAuditLogSearchQuery(r *http.Request) (since time.Time, kindPrefix s
 	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {
-			return time.Time{}, "", false, 0, "", false, uuid.Nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			return time.Time{}, "", false, nil, 0, "", false, uuid.Nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid limit", "limit must be a positive integer")
 		}
 		if n > api.ObsAdminAuditLogLimitMax {
@@ -331,7 +355,7 @@ func parseObsAuditLogSearchQuery(r *http.Request) (since time.Time, kindPrefix s
 	if raw := q.Get("operator_only"); raw != "" {
 		parsed, err := strconv.ParseBool(raw)
 		if err != nil {
-			return time.Time{}, "", false, 0, "", false, uuid.Nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			return time.Time{}, "", false, nil, 0, "", false, uuid.Nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid operator_only", "operator_only must be a boolean (true/false)")
 		}
 		operatorOnly = parsed
@@ -339,12 +363,12 @@ func parseObsAuditLogSearchQuery(r *http.Request) (since time.Time, kindPrefix s
 	if raw := q.Get("target_account_id"); raw != "" {
 		parsed, err := uuid.Parse(raw)
 		if err != nil {
-			return time.Time{}, "", false, 0, "", false, uuid.Nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			return time.Time{}, "", false, nil, 0, "", false, uuid.Nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid target_account_id", "target_account_id must be a UUID")
 		}
 		targetAccountID = parsed
 	}
-	return since, kindPrefix, includeAnon, limit, actorEmail, operatorOnly, targetAccountID, nil
+	return since, kindPrefix, includeAnon, before, limit, actorEmail, operatorOnly, targetAccountID, nil
 }
 
 // parseObsEventsQuery parses the events query string. Same

@@ -11393,6 +11393,10 @@ paths:
           in: query
           schema: { type: string, format: date-time }
           description: "Audit-log rows with `received_at >= since` (RFC 3339) are returned. Omit to read from the newest row."
+        - name: before
+          in: query
+          schema: { type: string }
+          description: "Opaque cursor returned as `next_before`; fetches the next older page. Pass verbatim without decoding or re-encoding."
         - name: kind_prefix
           in: query
           schema: { type: string }
@@ -11450,6 +11454,10 @@ paths:
           in: query
           schema: { type: string, format: date-time }
           description: "Operator-side audit-log rows with `received_at >= since` (RFC 3339) are returned. Omit to read from the newest row."
+        - name: before
+          in: query
+          schema: { type: string }
+          description: "Operator-only opaque cursor returned as `next_before`; fetches the next older page. Pass verbatim without decoding or re-encoding."
         - name: kind_prefix
           in: query
           schema: { type: string }
@@ -21287,6 +21295,9 @@ components:
           type: integer
           description: "Effective page size applied (always 1..100; mirrors the customer and operator /v1/audit-log routes)."
           example: 50
+        next_before:
+          type: string
+          description: "Opaque cursor for the next older page; omitted when this page reaches the end."
 
     WakeTimelineEvent:
       description: |
