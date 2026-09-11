@@ -14,6 +14,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     since: datetime.datetime | Unset = UNSET,
+    before: str | Unset = UNSET,
     kind_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
 ) -> dict[str, Any]:
@@ -24,6 +25,8 @@ def _get_kwargs(
     if not isinstance(since, Unset):
         json_since = since.isoformat()
     params["since"] = json_since
+
+    params["before"] = before
 
     params["kind_prefix"] = kind_prefix
 
@@ -84,6 +87,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
+    before: str | Unset = UNSET,
     kind_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
 ) -> Response[ListAuditLogResponse | Problem]:
@@ -105,6 +109,7 @@ def sync_detailed(
 
     Args:
         since (datetime.datetime | Unset):
+        before (str | Unset):
         kind_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
 
@@ -118,6 +123,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         since=since,
+        before=before,
         kind_prefix=kind_prefix,
         limit=limit,
     )
@@ -133,6 +139,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
+    before: str | Unset = UNSET,
     kind_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
 ) -> ListAuditLogResponse | Problem | None:
@@ -154,6 +161,7 @@ def sync(
 
     Args:
         since (datetime.datetime | Unset):
+        before (str | Unset):
         kind_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
 
@@ -168,6 +176,7 @@ def sync(
     return sync_detailed(
         client=client,
         since=since,
+        before=before,
         kind_prefix=kind_prefix,
         limit=limit,
     ).parsed
@@ -177,6 +186,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
+    before: str | Unset = UNSET,
     kind_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
 ) -> Response[ListAuditLogResponse | Problem]:
@@ -198,6 +208,7 @@ async def asyncio_detailed(
 
     Args:
         since (datetime.datetime | Unset):
+        before (str | Unset):
         kind_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
 
@@ -211,6 +222,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         since=since,
+        before=before,
         kind_prefix=kind_prefix,
         limit=limit,
     )
@@ -224,6 +236,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
+    before: str | Unset = UNSET,
     kind_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
 ) -> ListAuditLogResponse | Problem | None:
@@ -245,6 +258,7 @@ async def asyncio(
 
     Args:
         since (datetime.datetime | Unset):
+        before (str | Unset):
         kind_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
 
@@ -260,6 +274,7 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             since=since,
+            before=before,
             kind_prefix=kind_prefix,
             limit=limit,
         )

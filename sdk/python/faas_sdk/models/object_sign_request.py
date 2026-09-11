@@ -28,13 +28,13 @@ class ObjectSignRequest:
     content_type: str | Unset = UNSET
     """PUT only."""
     cache_control: str | Unset = UNSET
-    """PUT only."""
+    """Cache-Control value for PUT."""
     content_disposition: str | Unset = UNSET
-    """PUT only."""
+    """Content-Disposition value for PUT."""
     content_encoding: str | Unset = UNSET
-    """PUT only."""
+    """Content-Encoding value for PUT."""
     content_language: str | Unset = UNSET
-    """PUT only."""
+    """Content-Language value for PUT."""
     metadata: ObjectSignRequestMetadata | Unset = UNSET
     """PUT-only x-amz-meta-* values."""
     tags: ObjectSignRequestTags | Unset = UNSET

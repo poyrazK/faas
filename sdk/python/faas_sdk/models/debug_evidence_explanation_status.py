@@ -1,9 +1,10 @@
 from typing import Literal
 
-DebugEvidenceExplanationStatus = Literal["regression_detected", "unobserved"]
+DebugEvidenceExplanationStatus = Literal["regression_detected", "regression_unavailable", "unobserved"]
 
 DEBUG_EVIDENCE_EXPLANATION_STATUS_VALUES: set[DebugEvidenceExplanationStatus] = {
     "regression_detected",
+    "regression_unavailable",
     "unobserved",
 }
 
