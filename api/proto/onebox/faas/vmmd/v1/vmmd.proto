@@ -723,6 +723,11 @@ message CreateFromSnapshotRequest {
   // and as a synchronous-validation seam for future callers
   // that don't read MD. Empty on a non-wake RPC (e.g. ping).
   string wake_id = 6;
+  // Build carries the builder-VM specifics when a warm builder snapshot is
+  // restored. It must accompany the snapshot so vmmd can retain the export
+  // directory and build timeout across the restore, just as it does for a
+  // cold builder boot. Nil for app VMs.
+  BuildSpec build = 7;
 }
 
 message CreateColdBootRequest {
