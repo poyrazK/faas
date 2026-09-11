@@ -993,12 +993,12 @@ spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
 	@vacuum lint -r $(VACUUM_RULES) $(SPEC)
 
 .PHONY: spec-check
-spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md ## CI gate: vacuum lint + AST parity + git clean + denylist.md + subprocessor.md drift (runs in PR CI)
+spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md pricing-md docs-links-check ## CI gate: vacuum lint + AST parity + generated docs drift (runs in PR CI)
 	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
 	# would double the wall time without adding signal.
 	@$(GO) test -count=1 -run TestSpecCompliance ./cmd/apid/...
-	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/compliance/subprocessors.md || \
-	  (echo "spec-check: drift (spec, denylist.md, or subprocessor.md) — re-run 'make spec-check' or hand-fix to match"; exit 1)
+	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/compliance/subprocessors.md docs/plans.md || \
+	  (echo "spec-check: drift (spec or generated docs) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
 
 .PHONY: images-lock-check
@@ -1058,6 +1058,21 @@ capabilities-check: ## Verify the product capability registry and generated matr
 	@$(GO) run ./cmd/capabilities-md > /tmp/faas-capabilities.md
 	@cmp -s /tmp/faas-capabilities.md docs/capabilities.md || (echo "docs/capabilities.md is stale; run 'make capabilities-md'"; diff -u docs/capabilities.md /tmp/faas-capabilities.md || true; exit 1)
 	@echo "capabilities-check: OK"
+
+.PHONY: pricing-md
+pricing-md: ## Regenerate customer plan/pricing page from api limits
+	@$(GO) run ./cmd/pricing-md > docs/plans.md
+	@echo "pricing-md: docs/plans.md regenerated"
+
+.PHONY: pricing-check
+pricing-check: ## Verify generated customer pricing is in sync
+	@$(GO) run ./cmd/pricing-md > /tmp/faas-plans.md
+	@cmp -s /tmp/faas-plans.md docs/plans.md || (echo "docs/plans.md is stale; run 'make pricing-md'"; diff -u docs/plans.md /tmp/faas-plans.md || true; exit 1)
+	@echo "pricing-check: OK"
+
+.PHONY: docs-links-check
+docs-links-check: ## Verify every Gregale docs URL maps to a customer page source
+	@$(GO) run ./cmd/docs-links-check
 
 .PHONY: api-hosting-contract-check
 api-hosting-contract-check: ## Run the metal-free API framework fixture contract
@@ -1164,6 +1179,10 @@ sdk-gen: ## (re)generate every generated SDK + assert clean diff vs HEAD
 pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@echo "==> pre-pr: capabilities-check (product registry ↔ generated matrix)"
 	@$(MAKE) capabilities-check
+	@echo "==> pre-pr: pricing-check (plan limits ↔ customer pricing)"
+	@$(MAKE) pricing-check
+	@echo "==> pre-pr: docs-links-check (docs URLs ↔ customer pages)"
+	@$(MAKE) docs-links-check
 	@echo "==> pre-pr: api-hosting-contract-check (metal-free fixture matrix)"
 	@$(MAKE) api-hosting-contract-check
 	@echo "==> pre-pr: api-hosting-scorecard-check (release evidence contract)"
