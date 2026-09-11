@@ -109,12 +109,15 @@ for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
 done
 
 write_sums() {
-	: >"$FAKE_ROOT/dl/SHA256SUMS"
+	: >"$FAKE_ROOT/dl/CLI-SHA256SUMS"
 	for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
 		archive="gregale_${SEMVER}_${target}.tar.gz"
 		printf '%s  %s\n' "$(sha256_of "$FAKE_ROOT/dl/$archive")" "$archive" \
-			>>"$FAKE_ROOT/dl/SHA256SUMS"
+			>>"$FAKE_ROOT/dl/CLI-SHA256SUMS"
 	done
+	# The canonical daemon checksum asset deliberately has no CLI entries.
+	# A current installer that accidentally reads it must fail the happy path.
+	printf '%064d  release.tar.gz\n' 0 >"$FAKE_ROOT/dl/SHA256SUMS"
 }
 write_sums
 
@@ -180,7 +183,7 @@ cp "$FAKE_ROOT/dl/gregale_${SEMVER}_linux_amd64.tar.gz" \
 	"$FAKE_ROOT/dl/gregale_2.0.0-rc.7_linux_amd64.tar.gz"
 printf '%s  %s\n' \
 	"$(sha256_of "$FAKE_ROOT/dl/gregale_2.0.0-rc.7_linux_amd64.tar.gz")" \
-	"gregale_2.0.0-rc.7_linux_amd64.tar.gz" >>"$FAKE_ROOT/dl/SHA256SUMS"
+	"gregale_2.0.0-rc.7_linux_amd64.tar.gz" >>"$FAKE_ROOT/dl/CLI-SHA256SUMS"
 
 DEST="$TMP_DIR/bin-prerelease"
 run expect-ok "prerelease fallback" --dir "$DEST"
@@ -204,9 +207,9 @@ mv "$FAKE_ROOT/api/latest.json.off" "$FAKE_ROOT/api/latest.json"
 
 # The single most important assertion in this file: a tampered archive must
 # not reach PATH.
-cp "$FAKE_ROOT/dl/SHA256SUMS" "$TMP_DIR/SHA256SUMS.good"
+cp "$FAKE_ROOT/dl/CLI-SHA256SUMS" "$TMP_DIR/CLI-SHA256SUMS.good"
 sed 's/^[0-9a-f]\{64\}/0000000000000000000000000000000000000000000000000000000000000000/' \
-	"$TMP_DIR/SHA256SUMS.good" >"$FAKE_ROOT/dl/SHA256SUMS"
+	"$TMP_DIR/CLI-SHA256SUMS.good" >"$FAKE_ROOT/dl/CLI-SHA256SUMS"
 
 DEST="$TMP_DIR/bin-tampered"
 run expect-fail "checksum mismatch" --version "$TAG" --dir "$DEST"
@@ -215,16 +218,29 @@ grep -Fq "checksum mismatch" <<<"$RUN_OUT" ||
 [ ! -e "$DEST/gregale" ] ||
 	fail "SECURITY: installer wrote a binary despite a checksum mismatch"
 
-# An archive with no SHA256SUMS line at all is equally unverifiable.
-grep -v "linux_amd64" "$TMP_DIR/SHA256SUMS.good" >"$FAKE_ROOT/dl/SHA256SUMS"
+# An archive with no CLI-SHA256SUMS line at all is equally unverifiable.
+grep -v "linux_amd64" "$TMP_DIR/CLI-SHA256SUMS.good" >"$FAKE_ROOT/dl/CLI-SHA256SUMS"
 DEST="$TMP_DIR/bin-unlisted"
-run expect-fail "archive absent from SHA256SUMS" --version "$TAG" --dir "$DEST"
+run expect-fail "archive absent from CLI-SHA256SUMS" --version "$TAG" --dir "$DEST"
 grep -Fq "no entry for" <<<"$RUN_OUT" ||
 	fail "missing checksum entry must name itself: $RUN_OUT"
 [ ! -e "$DEST/gregale" ] ||
 	fail "SECURITY: installer wrote a binary with no checksum entry"
 
-cp "$TMP_DIR/SHA256SUMS.good" "$FAKE_ROOT/dl/SHA256SUMS"
+cp "$TMP_DIR/CLI-SHA256SUMS.good" "$FAKE_ROOT/dl/CLI-SHA256SUMS"
+
+# Explicit installs of releases from before the asset split still work. The
+# fallback is reached only when CLI-SHA256SUMS is absent, never when it exists
+# but is invalid.
+mv "$FAKE_ROOT/dl/CLI-SHA256SUMS" "$FAKE_ROOT/dl/CLI-SHA256SUMS.off"
+cp "$TMP_DIR/CLI-SHA256SUMS.good" "$FAKE_ROOT/dl/SHA256SUMS"
+DEST="$TMP_DIR/bin-legacy-sums"
+run expect-ok "legacy SHA256SUMS fallback" --version "$TAG" --dir "$DEST"
+[ -x "$DEST/gregale" ] || fail "legacy checksum fallback did not install"
+grep -Fq "trying the legacy SHA256SUMS asset" <<<"$RUN_OUT" ||
+	fail "legacy checksum fallback should be visible: $RUN_OUT"
+mv "$FAKE_ROOT/dl/CLI-SHA256SUMS.off" "$FAKE_ROOT/dl/CLI-SHA256SUMS"
+printf '%064d  release.tar.gz\n' 0 >"$FAKE_ROOT/dl/SHA256SUMS"
 
 # ---------------------------------------------------- platform detection
 
@@ -275,7 +291,7 @@ grep -Fq "download failed" <<<"$RUN_OUT" ||
 # An archive that unpacks without a gregale binary must not be reported as
 # a successful install.
 tar -czf "$FAKE_ROOT/dl/gregale_${SEMVER}_linux_amd64.tar.gz" \
-	-C "$TMP_DIR" SHA256SUMS.good
+	-C "$TMP_DIR" CLI-SHA256SUMS.good
 write_sums
 DEST="$TMP_DIR/bin-empty-archive"
 run expect-fail "archive without the binary" --version "$TAG" --dir "$DEST"
