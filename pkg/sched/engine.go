@@ -1688,6 +1688,52 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 	return e.EnsureWakeCapacity(ctx, appID, trigger, 1)
 }
 
+// Prewarm restores a bounded amount of capacity for a scheduled demand
+// window. It uses the normal bounded burst admission in batches, calculating
+// the delta from the ledger first so count means a target capacity rather than
+// "count more instances". Every admission still passes the normal ledger,
+// placement, plan, RAM and wake-rate gates. The returned count is the number
+// of instances actually admitted.
+func (e *Engine) Prewarm(ctx context.Context, appID string, count int) (int, error) {
+	if count <= 0 {
+		return 0, nil
+	}
+	if e == nil || e.ledger == nil {
+		return 0, fmt.Errorf("sched: prewarm: admission ledger unavailable")
+	}
+	current := e.ledger.Concurrency(appID)
+	remaining := count - current
+	if remaining <= 0 {
+		return 0, nil
+	}
+	admitted := 0
+	for remaining > 0 {
+		batch := remaining
+		if batch > api.ScaleUpMaxBurstPerTick {
+			batch = api.ScaleUpMaxBurstPerTick
+		}
+		results, err := e.AdmitInstances(ctx, appID, "", TriggerPrewarm, batch)
+		batchAdmitted := 0
+		for _, result := range results {
+			if !result.AtCapacity && result.InstanceID != "" {
+				batchAdmitted++
+			}
+		}
+		admitted += batchAdmitted
+		remaining -= batchAdmitted
+		// AdmitInstances returns successful sibling results alongside the
+		// first error. Count those before propagating the error so the intent
+		// records a partial success and the reaper keeps the admitted floor.
+		if err != nil {
+			return admitted, err
+		}
+		if batchAdmitted == 0 || batchAdmitted < batch {
+			break
+		}
+	}
+	return admitted, nil
+}
+
 // EnsureWakeCapacity shares the existing wake coordinator and accepts a bounded
 // desired-capacity hint from a coalesced gateway burst. Followers inherit the
 // leader's actual results; unmet demand is reconciled by their ordinary path.

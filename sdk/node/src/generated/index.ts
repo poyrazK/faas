@@ -336,6 +336,8 @@ export type { PlanManaged } from './models/PlanManaged.js';
 export type { PlanResponse } from './models/PlanResponse.js';
 export type { PlanWorkload } from './models/PlanWorkload.js';
 export type { PreviewCreatedWebhookPayload } from './models/PreviewCreatedWebhookPayload.js';
+export type { PrewarmIntentResponse } from './models/PrewarmIntentResponse.js';
+export type { PrewarmRequest } from './models/PrewarmRequest.js';
 export type { Problem } from './models/Problem.js';
 export type { ProgrammaticAPIKey } from './models/ProgrammaticAPIKey.js';
 export type { ProgrammaticAuthResponse } from './models/ProgrammaticAuthResponse.js';

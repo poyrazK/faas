@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/floor"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/sched/instancestats"
+	"github.com/onebox-faas/faas/pkg/sched/prewarm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
 	"github.com/onebox-faas/faas/pkg/sched/targets"
@@ -1516,6 +1517,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("min-instances floor reconciler enabled",
 		"interval", floorInterval,
 		"owner_node_id", ownerNodeID)
+	// Scheduled/predicted demand-window restore is an exact opt-in while the
+	// migration and API are rolled through the fleet. This avoids a noisy
+	// missing-table query on an older schedd; set FAAS_PREWARM_ENABLED=1 after
+	// applying the prewarm_intents migration.
+	if prewarmEnabled(os.Getenv("FAAS_PREWARM_ENABLED")) {
+		loop.WithPrewarm(prewarm.New(store, engine, prewarm.Options{
+			Logger:  log,
+			Auditor: schedulerAuditor,
+		}))
+		log.Info("scheduled prewarm reconciler enabled",
+			"interval", prewarm.DefaultInterval,
+			"lead_time", prewarm.DefaultLeadTime)
+	} else {
+		log.Info("scheduled prewarm reconciler disabled — set FAAS_PREWARM_ENABLED=1 to enable")
+	}
 	// Issue #171: wire the recent-load mirror off the same scraper and the
 	// VMMD telemetry reader. Split-box schedulers commonly leave the local
 	// gateway metrics URL empty; the telemetry fallback keeps scale-down
@@ -1872,6 +1888,12 @@ func jobsDispatchEnabled(value string) bool {
 // workflow runtime cannot activate from a truthy-but-ambiguous environment
 // value. It mirrors the jobs dispatch gate above.
 func workflowsDispatchEnabled(value string) bool {
+	return strings.TrimSpace(value) == "1"
+}
+
+// prewarmEnabled is intentionally an exact opt-in, matching jobs/workflows:
+// only the explicit value 1 enables the scheduler during rollout.
+func prewarmEnabled(value string) bool {
 	return strings.TrimSpace(value) == "1"
 }
 

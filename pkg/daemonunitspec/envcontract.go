@@ -322,6 +322,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PRESSURE_THRESHOLD_PER_MIN", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PREVIEW_JANITOR_INTERVAL_SECONDS", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PREVIEW_JANITOR_STARTUP_DELAY_SECONDS", Owners: []string{"apid"}, Source: EnvSourceDefault},
+	{Name: "FAAS_PREWARM_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "exact opt-in (`1`) for scheduled prewarm; disabled by default; ADR-160"},
 	{Name: "FAAS_PRIVATE_INGRESS_CIDRS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; private control-plane source CIDRs from the generated host inventory"},
 	{Name: "FAAS_PRIVATE_INGRESS_TCP_PORTS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; exact compute service ports reachable from the control plane"},
 	{Name: "FAAS_PROMETHEUS_URL", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault},

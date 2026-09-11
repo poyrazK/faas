@@ -16,6 +16,7 @@ import (
 type drainVM struct {
 	waitStarted chan struct{}
 	cancelCalls chan string
+	cancelGate  chan struct{}
 	startOnce   sync.Once
 }
 
@@ -29,10 +30,16 @@ func (v *drainVM) WaitForCompletion(ctx context.Context, _ BuildHandle) (BuildOu
 	return BuildOutcome{}, ctx.Err()
 }
 
-func (v *drainVM) Cancel(_ context.Context, buildID string) error {
+func (v *drainVM) Cancel(ctx context.Context, buildID string) error {
 	select {
 	case v.cancelCalls <- buildID:
 	default:
+	}
+	if v.cancelGate != nil {
+		select {
+		case <-v.cancelGate:
+		case <-ctx.Done():
+		}
 	}
 	return nil
 }
@@ -46,6 +53,7 @@ func TestDrainCancelsActiveBuildAndRequeuesClaim(t *testing.T) {
 	vm := &drainVM{
 		waitStarted: make(chan struct{}),
 		cancelCalls: make(chan string, 1),
+		cancelGate:  make(chan struct{}),
 	}
 	b := New(store, nil, vm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -61,13 +69,10 @@ func TestDrainCancelsActiveBuildAndRequeuesClaim(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("build did not reach VM wait")
 	}
-	cancelBuild()
-
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), time.Second)
 	defer cancelDrain()
-	if err := b.Drain(drainCtx); err != nil {
-		t.Fatalf("Drain: %v", err)
-	}
+	drainDone := make(chan error, 1)
+	go func() { drainDone <- b.Drain(drainCtx) }()
 
 	select {
 	case got := <-vm.cancelCalls:
@@ -76,6 +81,11 @@ func TestDrainCancelsActiveBuildAndRequeuesClaim(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Drain did not cancel the active VM")
+	}
+	cancelBuild()
+	close(vm.cancelGate)
+	if err := <-drainDone; err != nil {
+		t.Fatalf("Drain: %v", err)
 	}
 	select {
 	case err := <-processDone:

@@ -22,6 +22,33 @@ import (
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.
 
+// PrewarmRequest schedules temporary capacity restoration ahead of a known
+// demand window. The scheduler starts the restore during its lead time.
+type PrewarmRequest struct {
+	Count     int       `json:"count"`
+	WakeAt    time.Time `json:"wake_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// PrewarmIntentResponse is the durable scheduler state returned by the
+// prewarm API. ClaimedAt/FiredAt stay nullable until schedd reaches those
+// lifecycle transitions.
+type PrewarmIntentResponse struct {
+	ID            string     `json:"id"`
+	AppID         string     `json:"app_id"`
+	Count         int        `json:"count"`
+	WakeAt        time.Time  `json:"wake_at"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	Trigger       string     `json:"trigger"`
+	Status        string     `json:"status"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ClaimedAt     *time.Time `json:"claimed_at,omitempty"`
+	FiredAt       *time.Time `json:"fired_at,omitempty"`
+	AdmittedCount int        `json:"admitted_count,omitempty"`
+	Outcome       string     `json:"outcome,omitempty"`
+	LastError     string     `json:"last_error,omitempty"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug            string `json:"slug"`
