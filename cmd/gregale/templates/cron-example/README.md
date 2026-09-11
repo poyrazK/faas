@@ -5,7 +5,7 @@ A trivial handler designed to be hit by a scheduled synthetic POST.
 ## Deploy
 
 ```
-gregale deploy --template cron-example
+gregale deploy --template cron-example --name <slug>
 ```
 
 ## Schedule it

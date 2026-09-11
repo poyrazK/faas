@@ -2,27 +2,32 @@
 
 A minimal stdlib-only HTTP handler for gregale.
 
-The template ships without a `go.mod` because Go's `//go:embed` (which
-the CLI uses to ship these templates as a single binary) refuses to
-descend into any directory that contains one. imaged auto-creates a
-`go.mod` at build time, so you don't need to add one — just edit
-`main.go` and re-deploy.
+Gregale supplies a minimal `go.mod` for this template with `go 1.24`.
+`gregale init` writes it into your working copy; a direct template deploy
+includes the same module in the upload archive.
 
 ## Deploy
 
 ```
-gregale deploy --template hello-go
+gregale deploy --template hello-go --name <slug>
 ```
 
-imaged will detect `main.go` and use the `go1.22` builder (it adds a
-`go.mod` for you on first build).
+The CLI detects `main.go` and selects the Go 1.24 builder.
 
 ## Try it
 
 ```
-gregale open             # browser
+gregale open <slug>      # browser
 ```
 
 ## Edit and re-deploy
 
-Edit `main.go`, then re-run `gregale deploy --template hello-go --name <slug>`.
+`--template` creates a fresh copy on every run, so use an initialized
+directory when you want to keep edits:
+
+```
+gregale init --template hello-go --path hello-go
+cd hello-go
+# edit main.go, then:
+gregale deploy --name <slug>
+```

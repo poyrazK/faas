@@ -15,13 +15,13 @@ Functions differ from apps in two ways:
 ## Deploy
 
 ```
-gregale deploy --template function-node24
+gregale deploy --template function-node24 --name <slug>
 ```
 
 ## Invoke
 
 ```
-gregale open   # browser test page, or POST from any HTTP client
+gregale open <slug>   # browser test page, or POST from any HTTP client
 ```
 
 ## Differences from `function-node`

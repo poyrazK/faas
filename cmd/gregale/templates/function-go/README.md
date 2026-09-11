@@ -22,13 +22,13 @@ to the upload archive without changing your local files.
 ## Deploy
 
 ```
-gregale deploy --template function-go
+gregale deploy --template function-go --name <slug>
 ```
 
 ## Invoke
 
 ```
-gregale open   # browser test page, or POST from any HTTP client
+gregale open <slug>   # browser test page, or POST from any HTTP client
 ```
 
 ## Local test (no platform)

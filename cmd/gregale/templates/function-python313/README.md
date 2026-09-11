@@ -5,7 +5,7 @@ A minimal Python 3.13 function handler.
 ## Deploy
 
 ```
-gregale deploy --template function-python313
+gregale deploy --template function-python313 --name <slug>
 ```
 
 The CLI forces `--runtime python313 --handler handler.handler` so
@@ -16,7 +16,7 @@ on the wire — same as `python312`).
 ## Invoke
 
 ```
-gregale open   # browser test page
+gregale open <slug>   # browser test page
 ```
 
 ## Differences from `function-python`
