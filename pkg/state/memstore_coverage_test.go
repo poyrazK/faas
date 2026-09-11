@@ -279,6 +279,23 @@ func TestMemStoreCoverageInstancesSnapshotsAndNodes(t *testing.T) {
 	if n, err := m.TouchInstancesLastSeen(ctx, []InstanceTouch{{InstanceID: instance.ID, LastRequest: time.Now()}, {InstanceID: "missing"}}); err != nil || n != 1 {
 		t.Fatalf("touch count = %d, %v", n, err)
 	}
+	if err := m.SetInstanceMode(ctx, "missing", InstanceModeMirror); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("set instance mode missing = %v", err)
+	}
+	if err := m.SetInstanceMode(ctx, instance.ID, InstanceModeMirror); err != nil {
+		t.Fatalf("set instance mode = %v", err)
+	}
+	requestAt := time.Now()
+	if n, err := m.TouchInstancesWithRequestDelta(ctx, []InstanceTouch{
+		{InstanceID: instance.ID, LastRequest: requestAt, RequestDelta: 3},
+		{InstanceID: "missing", RequestDelta: 99},
+	}); err != nil || n != 1 {
+		t.Fatalf("touch request delta = %d, %v", n, err)
+	}
+	updatedInstance, err := m.InstanceByID(ctx, instance.ID)
+	if err != nil || updatedInstance.Mode != string(InstanceModeMirror) || updatedInstance.RequestCount != 3 || !updatedInstance.LastRequestAt.Equal(requestAt) {
+		t.Fatalf("updated instance = %+v, %v", updatedInstance, err)
+	}
 	if err := m.DeleteInstance(ctx, instance.ID); err != nil {
 		t.Fatal(err)
 	}
