@@ -1665,6 +1665,12 @@ type DebugPageData struct {
 	WindowEnd           string
 	WindowClamped       bool
 	Route               string
+	DeploymentID        string
+	Status              int
+	ColdBoot            *bool
+	ColdBootFilter      string
+	ConsumerID          string
+	MinLatencyMS        int
 	Cursor              string
 	NextCursor          string
 	Complete            bool
@@ -1800,6 +1806,7 @@ type DebugRequestView struct {
 	GuestDurationMS int
 	GuestOutcome    string
 	GuestErrorClass string
+	ConsumerID      string
 	DetailURL       string
 }
 

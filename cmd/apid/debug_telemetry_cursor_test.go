@@ -42,6 +42,33 @@ func TestDebugTelemetryCursorRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDebugTelemetryCursorCarriesAllFilters(t *testing.T) {
+	appID := uuid.New()
+	requestID := uuid.New()
+	receivedAt := time.Date(2026, 9, 12, 10, 11, 12, 0, time.UTC)
+	coldBoot := false
+	row := sqlc.ListRequestTelemetryByAppRow{
+		ID:         pgtype.UUID{Bytes: requestID, Valid: true},
+		ReceivedAt: pgtype.Timestamptz{Time: receivedAt, Valid: true},
+	}
+	filters := debugTelemetryCursorFilters{
+		DeploymentID: uuid.NewString(), Status: 503, ColdBoot: &coldBoot,
+		ConsumerID: debugTelemetryAnonymousConsumer, MinLatencyMS: 250,
+	}
+	raw := encodeDebugTelemetryCursorWithFilters(appID.String(), "/checkout", filters, receivedAt.Add(-time.Hour), receivedAt.Add(time.Hour), false, row)
+	got, err := decodeDebugTelemetryCursor(raw)
+	if err != nil {
+		t.Fatalf("decodeDebugTelemetryCursor() error = %v", err)
+	}
+	publicFilters := debugTelemetryFilters{
+		DeploymentID: filters.DeploymentID, Status: filters.Status, ColdBoot: filters.ColdBoot,
+		ConsumerID: filters.ConsumerID, MinLatencyMS: filters.MinLatencyMS,
+	}
+	if !publicFilters.same(got.filters()) {
+		t.Fatalf("decoded filters = %+v, want %+v", got.filters(), filters)
+	}
+}
+
 func TestDebugTelemetryCursorRejectsMalformedAndOutOfWindow(t *testing.T) {
 	for _, raw := range []string{"not-base64", "", "e30"} {
 		if raw == "" {

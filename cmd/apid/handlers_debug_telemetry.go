@@ -37,7 +37,8 @@ import (
 // `limit` defaults to 20, capped at 200 (matches
 // handlers_invocations.go:451-455). The endpoint is IDOR-safe via
 // loadApp (cross-account slug → 404). Cursor pages carry the original
-// window and route so the ordering remains stable while new rows arrive.
+// window and every filter so the ordering remains stable while new rows
+// arrive.
 func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -75,6 +76,11 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation("route must be at most 256 characters"))
 		return
 	}
+	filters, err := parseDebugTelemetryFilters(r.URL.Query())
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 
 	cursorRaw := strings.TrimSpace(r.URL.Query().Get("cursor"))
 	if len(cursorRaw) > 8192 {
@@ -86,8 +92,8 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation("cursor is invalid; restart the request list"))
 		return
 	}
-	if decodedCursor.Version != 0 && (decodedCursor.AppID != app.ID || decodedCursor.Route != route) {
-		api.WriteProblem(w, api.ErrValidation("cursor does not match this app or route"))
+	if decodedCursor.Version != 0 && (decodedCursor.AppID != app.ID || decodedCursor.Route != route || !filters.same(decodedCursor.filters())) {
+		api.WriteProblem(w, api.ErrValidation("cursor does not match this app or filters"))
 		return
 	}
 
@@ -112,13 +118,19 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 	}
 	cursorReceivedAt, cursorID := debugTelemetryCursorParams(decodedCursor)
 	rows, err := s.store.ListRequestTelemetryByApp(r.Context(), sqlc.ListRequestTelemetryByAppParams{
-		AppID:            stringToPgUUID(app.ID),
-		ReceivedAt:       pgtype.Timestamptz{Time: windowStart, Valid: true},
-		ReceivedAt_2:     pgtype.Timestamptz{Time: windowEnd, Valid: true},
-		CursorReceivedAt: cursorReceivedAt,
-		CursorID:         cursorID,
-		Route:            route,
-		Limit:            int32(limit + 1),
+		AppID:             stringToPgUUID(app.ID),
+		ReceivedAt:        pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReceivedAt_2:      pgtype.Timestamptz{Time: windowEnd, Valid: true},
+		CursorReceivedAt:  cursorReceivedAt,
+		CursorID:          cursorID,
+		Route:             route,
+		DeploymentID:      filters.DeploymentID,
+		StatusFilter:      int32(filters.Status),
+		ColdBootFilter:    filters.sqlColdBootFilter(),
+		ConsumerID:        filters.sqlConsumerID(),
+		ConsumerAnonymous: filters.sqlConsumerAnonymous(),
+		MinLatencyMs:      int32(filters.MinLatencyMS),
+		Limit:             int32(limit + 1),
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list request telemetry"))
@@ -137,7 +149,7 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 	}
 	nextCursor := ""
 	if hasMore && len(rows) > 0 {
-		nextCursor = encodeDebugTelemetryCursor(app.ID, route, windowStart, windowEnd, retentionClamped, rows[len(rows)-1])
+		nextCursor = encodeDebugTelemetryCursorWithFilters(app.ID, route, filters.cursor(), windowStart, windowEnd, retentionClamped, rows[len(rows)-1])
 	}
 	writeJSON(w, http.StatusOK, api.DebugTelemetryListResponse{
 		Requests:         items,
@@ -147,6 +159,7 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 		RetentionClamped: retentionClamped,
 		Complete:         !hasMore || nextCursor == "",
 		NextCursor:       nextCursor,
+		Filters:          filters.response(),
 	})
 }
 

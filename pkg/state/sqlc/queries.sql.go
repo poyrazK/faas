@@ -5760,18 +5760,45 @@ WHERE app_id = $1
        OR (received_at, id) < ($4::timestamptz,
                                $5::uuid))
   AND ($6::text = '' OR route = $6::text)
+  -- Filters are explicit query parameters so sqlc keeps the generated
+  -- params stable. The cursor stores the same values and the handler
+  -- rejects a page walk when they change.
+  AND ($7::text = ''
+       OR deployment_id = NULLIF($7::text, '')::uuid)
+  AND ($8::int = 0
+       OR status = $8::int)
+  AND ($9::int = -1
+       OR cold_boot = ($9::int = 1))
+  AND (
+       ($10::boolean AND consumer_id IS NULL)
+       OR (
+           NOT $10::boolean
+           AND (
+               $11::text = ''
+               OR consumer_id = NULLIF($11::text, '')::uuid
+           )
+       )
+  )
+  AND ($12::int = 0
+       OR latency_ms >= $12::int)
 ORDER BY received_at DESC, id DESC
-LIMIT $7::int
+LIMIT $13::int
 `
 
 type ListRequestTelemetryByAppParams struct {
-	AppID            pgtype.UUID
-	ReceivedAt       pgtype.Timestamptz
-	ReceivedAt_2     pgtype.Timestamptz
-	CursorReceivedAt pgtype.Timestamptz
-	CursorID         pgtype.UUID
-	Route            string
-	Limit            int32
+	AppID             pgtype.UUID
+	ReceivedAt        pgtype.Timestamptz
+	ReceivedAt_2      pgtype.Timestamptz
+	CursorReceivedAt  pgtype.Timestamptz
+	CursorID          pgtype.UUID
+	Route             string
+	DeploymentID      string
+	StatusFilter      int32
+	ColdBootFilter    int32
+	ConsumerAnonymous bool
+	ConsumerID        string
+	MinLatencyMs      int32
+	Limit             int32
 }
 
 type ListRequestTelemetryByAppRow struct {
@@ -5808,6 +5835,12 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 		arg.CursorReceivedAt,
 		arg.CursorID,
 		arg.Route,
+		arg.DeploymentID,
+		arg.StatusFilter,
+		arg.ColdBootFilter,
+		arg.ConsumerAnonymous,
+		arg.ConsumerID,
+		arg.MinLatencyMs,
 		arg.Limit,
 	)
 	if err != nil {

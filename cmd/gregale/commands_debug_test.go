@@ -74,7 +74,9 @@ func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	// The slug intentionally appears before the flags. This is the form
 	// shown in the command's top-level docs and must not drop the filters.
 	if code := cmdDebugRequestsList([]string{
-		"my-app", "--since", "6h", "--route", "GET /checkout", "--cursor", "previous-page", "--limit", "50",
+		"my-app", "--since", "6h", "--route", "GET /checkout", "--deployment-id", "11111111-1111-4111-8111-111111111111",
+		"--status", "503", "--cold-boot", "false", "--consumer-id", "__anonymous__", "--min-latency-ms", "250",
+		"--cursor", "previous-page", "--limit", "50",
 	}); code != 0 {
 		t.Fatalf("cmdDebugRequestsList() = %d, want 0", code)
 	}
@@ -84,7 +86,9 @@ func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	}
 	q := got.URL.Query()
 	for key, want := range map[string]string{
-		"since": "6h", "route": "GET /checkout", "cursor": "previous-page", "limit": "50",
+		"since": "6h", "route": "GET /checkout", "deployment_id": "11111111-1111-4111-8111-111111111111",
+		"status": "503", "cold_boot": "false", "consumer_id": "__anonymous__", "min_latency_ms": "250",
+		"cursor": "previous-page", "limit": "50",
 	} {
 		if got := q.Get(key); got != want {
 			t.Errorf("query %s = %q, want %q", key, got, want)

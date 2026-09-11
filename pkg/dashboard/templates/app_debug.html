@@ -65,6 +65,11 @@
         <strong>Window</strong>
         <label>Since <input name="since" value="{{.Data.Since}}" placeholder="24h"></label>
         <label>Route <input name="route" value="{{.Data.Route}}" placeholder="/api/example"></label>
+        <label>Deployment <input name="deployment_id" value="{{.Data.DeploymentID}}" placeholder="deployment UUID"></label>
+        <label>Status <input name="status" value="{{if .Data.Status}}{{.Data.Status}}{{end}}" inputmode="numeric" placeholder="500"></label>
+        <label>Min latency <input name="min_latency_ms" value="{{if .Data.MinLatencyMS}}{{.Data.MinLatencyMS}}{{end}}" inputmode="numeric" placeholder="250"> ms</label>
+        <label>Consumer <input name="consumer_id" value="{{.Data.ConsumerID}}" placeholder="UUID or __anonymous__"></label>
+        <label>Cold boot <select name="cold_boot"><option value="">all</option><option value="true"{{if eq .Data.ColdBootFilter "true"}} selected{{end}}>true</option><option value="false"{{if eq .Data.ColdBootFilter "false"}} selected{{end}}>false</option></select></label>
         <button type="submit">Refresh</button>
         <span class="muted">{{.Data.WindowStart}} → {{.Data.WindowEnd}}</span>
         {{if .Data.WindowClamped}}<span class="notice">Window reduced to your plan's telemetry retention.</span>{{end}}
@@ -111,6 +116,11 @@
           <form class="toolbar" method="get" action="/dashboard/apps/{{.Data.AppSlug}}/debug">
             <input type="hidden" name="since" value="{{.Data.Since}}">
             <input type="hidden" name="route" value="{{.Data.Route}}">
+            <input type="hidden" name="deployment_id" value="{{.Data.DeploymentID}}">
+            <input type="hidden" name="status" value="{{if .Data.Status}}{{.Data.Status}}{{end}}">
+            <input type="hidden" name="cold_boot" value="{{.Data.ColdBootFilter}}">
+            <input type="hidden" name="consumer_id" value="{{.Data.ConsumerID}}">
+            <input type="hidden" name="min_latency_ms" value="{{if .Data.MinLatencyMS}}{{.Data.MinLatencyMS}}{{end}}">
             <input type="hidden" name="compare" value="1">
             <label>Source
               <select name="compare_source">
@@ -154,7 +164,7 @@
       <h2 id="requests">Recent requests</h2>
       {{if .Data.Requests}}
         <table aria-label="Recent debugger requests">
-          <thead><tr><th>Received</th><th>Route</th><th>Status</th><th>Latency</th><th>Count</th><th>Deployment</th><th>Signals</th></tr></thead>
+          <thead><tr><th>Received</th><th>Route</th><th>Status</th><th>Latency</th><th>Count</th><th>Deployment</th><th>Consumer</th><th>Signals</th></tr></thead>
           <tbody>
           {{range .Data.Requests}}
             <tr>
@@ -164,6 +174,7 @@
               <td><strong>{{.LatencyMS}} ms</strong></td>
               <td>{{.Count}}</td>
               <td><code>{{.DeploymentID}}</code></td>
+              <td>{{if .ConsumerID}}<code>{{.ConsumerID}}</code>{{else}}<span class="muted">anonymous</span>{{end}}</td>
               <td>{{if .ColdBoot}}<span class="badge cold">cold boot</span>{{end}}{{if .TraceID}} <span class="badge ok">trace linked</span>{{end}}{{if .GuestRuntime}} <span class="badge ok">guest {{.GuestRuntime}} · {{.GuestDurationMS}} ms</span>{{end}}</td>
             </tr>
           {{end}}
@@ -182,7 +193,7 @@
       {{if .Data.Selected}}
         <h2 id="request-detail">Request evidence</h2>
         <div class="detail">
-          <p><a href="/dashboard/apps/{{.Data.AppSlug}}/debug?since={{.Data.Since}}&amp;route={{.Data.Route}}&amp;cursor={{.Data.Cursor}}#requests">← Back to requests</a></p>
+          <p><a href="/dashboard/apps/{{.Data.AppSlug}}/debug?since={{.Data.Since}}&amp;route={{.Data.Route}}&amp;deployment_id={{.Data.DeploymentID}}&amp;status={{if .Data.Status}}{{.Data.Status}}{{end}}&amp;cold_boot={{.Data.ColdBootFilter}}&amp;consumer_id={{.Data.ConsumerID}}&amp;min_latency_ms={{if .Data.MinLatencyMS}}{{.Data.MinLatencyMS}}{{end}}&amp;cursor={{.Data.Cursor}}#requests">← Back to requests</a></p>
           <p><code>{{.Data.Selected.Request.Method}} {{.Data.Selected.Request.Route}}</code> · HTTP {{.Data.Selected.Request.Status}} · <strong>{{.Data.Selected.Request.LatencyMS}} ms</strong> · {{.Data.Selected.Request.ReceivedAt}}</p>
           <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.InstanceID}} · instance <code>{{.Data.Selected.Request.InstanceID}}</code>{{end}}{{if .Data.Selected.Request.WakeID}} · wake <code>{{.Data.Selected.Request.WakeID}}</code>{{end}}{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
           {{if .Data.Selected.Request.GuestRuntime}}<p class="muted">guest execution <strong>{{.Data.Selected.Request.GuestRuntime}}</strong> · {{.Data.Selected.Request.GuestDurationMS}} ms · outcome <strong>{{.Data.Selected.Request.GuestOutcome}}</strong>{{if .Data.Selected.Request.GuestErrorClass}} · error <code>{{.Data.Selected.Request.GuestErrorClass}}</code>{{end}}</p>{{end}}
@@ -210,6 +221,11 @@
               <input type="hidden" name="since" value="{{.Data.Since}}">
               <input type="hidden" name="route" value="{{.Data.Route}}">
               <input type="hidden" name="cursor" value="{{.Data.Cursor}}">
+              <input type="hidden" name="deployment_id" value="{{.Data.DeploymentID}}">
+              <input type="hidden" name="status" value="{{if .Data.Status}}{{.Data.Status}}{{end}}">
+              <input type="hidden" name="cold_boot" value="{{.Data.ColdBootFilter}}">
+              <input type="hidden" name="consumer_id" value="{{.Data.ConsumerID}}">
+              <input type="hidden" name="min_latency_ms" value="{{if .Data.MinLatencyMS}}{{.Data.MinLatencyMS}}{{end}}">
               <button type="submit">Replay against mirror</button>
               <span class="muted">Metadata only; no request body or credentials are replayed.</span>
             </form>

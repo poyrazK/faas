@@ -41,17 +41,24 @@ func cmdDebugRequestsWatch(args []string) int {
 	fs := flag.NewFlagSet("debug requests watch", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	route := fs.String("route", "", "route filter (exact match)")
+	deploymentID := fs.String("deployment-id", "", "deployment UUID filter")
+	status := fs.Int("status", 0, "exact HTTP status filter (100..599)")
+	coldBoot := fs.String("cold-boot", "", "cold-start filter (true or false)")
+	consumerID := fs.String("consumer-id", "", "consumer UUID or __anonymous__")
+	minLatencyMS := fs.Int("min-latency-ms", 0, "minimum latency bucket in milliseconds")
 	limit := fs.Int("limit", 20, "max rows per poll (1..200)")
 	interval := fs.Duration("interval", debugWatchDefaultInterval, "poll interval (250ms..1h)")
 	once := fs.Bool("once", false, "poll once and exit (useful for scripts and tests)")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
-		"since": true, "route": true, "limit": true, "interval": true,
+		"since": true, "route": true, "deployment-id": true, "status": true,
+		"cold-boot": true, "consumer-id": true, "min-latency-ms": true,
+		"limit": true, "interval": true,
 	})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests watch [--since D] [--route P] [--limit N] [--interval D] [--once] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests watch [--since D] [--route P] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--limit N] [--interval D] [--once] <slug>", debugCmdDocsTopic)
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {
@@ -61,15 +68,18 @@ func cmdDebugRequestsWatch(args []string) int {
 	if err := validateDebugWatchInterval(*interval); err != nil {
 		return printErr("Invalid watch interval", err)
 	}
+	options, err := debugTelemetryOptionsFromFlags(*since, *route, *deploymentID, *status, *coldBoot, *consumerID, *minLatencyMS, "", *limit)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	return runDebugRequestsWatch(ctx, client, positional[0], api.DebugTelemetryListOptions{
-		Since: *since, Route: *route, Limit: *limit,
-	}, *interval, *once)
+	return runDebugRequestsWatch(ctx, client, positional[0], options, *interval, *once)
 }
 
 func runDebugRequestsWatch(ctx context.Context, client *api.Client, slug string, opts api.DebugTelemetryListOptions, interval time.Duration, once bool) int {

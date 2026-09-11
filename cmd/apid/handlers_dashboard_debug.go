@@ -54,8 +54,8 @@ func parseAppDebugPath(rest string) (string, bool) {
 
 // renderAppDebug renders the debugger page. Query parameters are
 // intentionally small and stable so an incident link can be pasted into a
-// ticket: ?since=24h&route=/api&request_id=<uuid>. A comparison link adds
-// compare=1&compare_source=<uuid>&compare_mirror=<uuid>.
+// ticket: ?since=24h&route=/api&status=500&request_id=<uuid>. A comparison
+// link adds compare=1&compare_source=<uuid>&compare_mirror=<uuid>.
 func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
@@ -99,6 +99,19 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		api.WriteProblem(w, api.ErrValidation("route must be at most 256 characters"))
 		return
 	}
+	filters, filterErr := parseDebugTelemetryFilters(r.URL.Query())
+	if filterErr != nil {
+		api.WriteProblem(w, api.ErrValidation(filterErr.Error()))
+		return
+	}
+	data.DeploymentID = filters.DeploymentID
+	data.Status = filters.Status
+	data.ColdBoot = filters.ColdBoot
+	if filters.ColdBoot != nil {
+		data.ColdBootFilter = strconv.FormatBool(*filters.ColdBoot)
+	}
+	data.ConsumerID = filters.ConsumerID
+	data.MinLatencyMS = filters.MinLatencyMS
 
 	cursorRaw := strings.TrimSpace(r.URL.Query().Get("cursor"))
 	if len(cursorRaw) > 8192 {
@@ -110,8 +123,8 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		api.WriteProblem(w, api.ErrValidation("cursor is invalid; restart the request list"))
 		return
 	}
-	if decodedCursor.Version != 0 && (decodedCursor.AppID != app.ID || decodedCursor.Route != data.Route) {
-		api.WriteProblem(w, api.ErrValidation("cursor does not match this app or route"))
+	if decodedCursor.Version != 0 && (decodedCursor.AppID != app.ID || decodedCursor.Route != data.Route || !filters.same(decodedCursor.filters())) {
+		api.WriteProblem(w, api.ErrValidation("cursor does not match this app or filters"))
 		return
 	}
 	data.Cursor = cursorRaw
@@ -160,13 +173,19 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 
 	cursorReceivedAt, cursorID := debugTelemetryCursorParams(decodedCursor)
 	rows, err := s.store.ListRequestTelemetryByApp(ctx, sqlc.ListRequestTelemetryByAppParams{
-		AppID:            stringToPgUUID(app.ID),
-		ReceivedAt:       pgtype.Timestamptz{Time: windowStart, Valid: true},
-		ReceivedAt_2:     pgtype.Timestamptz{Time: windowEnd, Valid: true},
-		CursorReceivedAt: cursorReceivedAt,
-		CursorID:         cursorID,
-		Limit:            51,
-		Route:            data.Route,
+		AppID:             stringToPgUUID(app.ID),
+		ReceivedAt:        pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReceivedAt_2:      pgtype.Timestamptz{Time: windowEnd, Valid: true},
+		CursorReceivedAt:  cursorReceivedAt,
+		CursorID:          cursorID,
+		Limit:             51,
+		Route:             data.Route,
+		DeploymentID:      filters.DeploymentID,
+		StatusFilter:      int32(filters.Status),
+		ColdBootFilter:    filters.sqlColdBootFilter(),
+		ConsumerID:        filters.sqlConsumerID(),
+		ConsumerAnonymous: filters.sqlConsumerAnonymous(),
+		MinLatencyMs:      int32(filters.MinLatencyMS),
 	})
 	if err != nil {
 		log.Warn("dashboard renderAppDebug: list requests", "account_id", acct.ID, "app_id", app.ID, "err", err)
@@ -178,18 +197,16 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		}
 		data.Requests = make([]dashboard.DebugRequestView, 0, len(rows))
 		for _, row := range rows {
-			data.Requests = append(data.Requests, dashboardDebugRequestView(debugTelemetryRowToItem(row), app.Slug, data.Since, data.Route, data.Cursor))
+			data.Requests = append(data.Requests, dashboardDebugRequestView(debugTelemetryRowToItem(row), app.Slug, data.Since, data.Route, data.Cursor, filters))
 		}
 		data.NextCursor = ""
 		if hasMore && len(rows) > 0 {
-			data.NextCursor = encodeDebugTelemetryCursor(app.ID, data.Route, windowStart, windowEnd, data.WindowClamped, rows[len(rows)-1])
+			data.NextCursor = encodeDebugTelemetryCursorWithFilters(app.ID, data.Route, filters.cursor(), windowStart, windowEnd, data.WindowClamped, rows[len(rows)-1])
 		}
 		data.Complete = !hasMore || data.NextCursor == ""
 		if data.NextCursor != "" {
-			values := url.Values{"since": []string{data.Since}, "cursor": []string{data.NextCursor}}
-			if data.Route != "" {
-				values.Set("route", data.Route)
-			}
+			values := debugTelemetryFilterValues(data.Since, data.Route, data.Cursor, filters)
+			values.Set("cursor", data.NextCursor)
 			data.NextPageURL = "/dashboard/apps/" + url.PathEscape(app.Slug) + "/debug?" + values.Encode() + "#requests"
 		}
 	}
@@ -204,7 +221,7 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		data.Regressions = make([]dashboard.DebugRegressionView, 0, len(regRows))
 		for _, row := range regRows {
 			reg := debugRegressionRowToItem(row)
-			data.Regressions = append(data.Regressions, dashboardDebugRegressionView(reg, app.Slug, data.Since))
+			data.Regressions = append(data.Regressions, dashboardDebugRegressionView(reg, app.Slug, data.Since, filters))
 		}
 	}
 
@@ -234,7 +251,7 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 	}
 	s.populateDashboardDebugCompare(ctx, log, app, data.Deployments, data.Since, data.WindowEnd, r.URL.Query(), &data)
 	for i := range data.Regressions {
-		data.Regressions[i].CompareURL = dashboardDebugRegressionCompareURL(slug, data.Since, data.Regressions[i].DeploymentID, data.Regressions[i].Route, data.Deployments)
+		data.Regressions[i].CompareURL = dashboardDebugRegressionCompareURL(slug, data.Since, data.Regressions[i].DeploymentID, data.Regressions[i].Route, data.Deployments, filters)
 	}
 
 	if rawID := strings.TrimSpace(r.URL.Query().Get("request_id")); rawID != "" {
@@ -242,7 +259,7 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 			data.ErrorMessage = err.Error()
 		}
 		if data.Selected != nil && data.Selected.Regression != nil {
-			data.Selected.Regression.CompareURL = dashboardDebugRegressionCompareURL(slug, data.Since, data.Selected.Regression.DeploymentID, data.Selected.Regression.Route, data.Deployments)
+			data.Selected.Regression.CompareURL = dashboardDebugRegressionCompareURL(slug, data.Since, data.Selected.Regression.DeploymentID, data.Selected.Regression.Route, data.Deployments, filters)
 		}
 	}
 	if replayID := strings.TrimSpace(r.URL.Query().Get("replay_id")); replayID != "" && data.Selected != nil {
@@ -304,10 +321,15 @@ func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 	}
 	inv, problem := s.enqueueDebugReplay(r.Context(), app, acct, reqID)
 	values := url.Values{
-		"request_id": []string{reqID},
-		"since":      []string{strings.TrimSpace(r.FormValue("since"))},
-		"route":      []string{strings.TrimSpace(r.FormValue("route"))},
-		"cursor":     []string{strings.TrimSpace(r.FormValue("cursor"))},
+		"request_id":     []string{reqID},
+		"since":          []string{strings.TrimSpace(r.FormValue("since"))},
+		"route":          []string{strings.TrimSpace(r.FormValue("route"))},
+		"cursor":         []string{strings.TrimSpace(r.FormValue("cursor"))},
+		"deployment_id":  []string{strings.TrimSpace(r.FormValue("deployment_id"))},
+		"status":         []string{strings.TrimSpace(r.FormValue("status"))},
+		"cold_boot":      []string{strings.TrimSpace(r.FormValue("cold_boot"))},
+		"consumer_id":    []string{strings.TrimSpace(r.FormValue("consumer_id"))},
+		"min_latency_ms": []string{strings.TrimSpace(r.FormValue("min_latency_ms"))},
 	}
 	if problem != nil {
 		values.Set("action", "replay_error")
@@ -409,14 +431,8 @@ func dashboardDebugCoverageSignalView(rows, requests, total int64) dashboard.Deb
 	return dashboard.DebugCoverageSignalView{Rows: rows, Requests: requests, RatePct: rate}
 }
 
-func dashboardDebugRequestView(item api.DebugTelemetryRequestItem, slug, since, route, cursor string) dashboard.DebugRequestView {
-	values := url.Values{"since": []string{since}}
-	if route != "" {
-		values.Set("route", route)
-	}
-	if cursor != "" {
-		values.Set("cursor", cursor)
-	}
+func dashboardDebugRequestView(item api.DebugTelemetryRequestItem, slug, since, route, cursor string, filters debugTelemetryFilters) dashboard.DebugRequestView {
+	values := debugTelemetryFilterValues(since, route, cursor, filters)
 	values.Set("request_id", item.ID)
 	return dashboard.DebugRequestView{
 		ID:              item.ID,
@@ -435,8 +451,35 @@ func dashboardDebugRequestView(item api.DebugTelemetryRequestItem, slug, since, 
 		GuestDurationMS: valueOrGuestDuration(item.Guest),
 		GuestOutcome:    valueOrEmptyGuestOutcome(item.Guest),
 		GuestErrorClass: valueOrEmptyGuestErrorClass(item.Guest),
+		ConsumerID:      item.ConsumerID,
 		DetailURL:       "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode(),
 	}
+}
+
+func debugTelemetryFilterValues(since, route, cursor string, filters debugTelemetryFilters) url.Values {
+	values := url.Values{"since": []string{since}}
+	if route != "" {
+		values.Set("route", route)
+	}
+	if filters.DeploymentID != "" {
+		values.Set("deployment_id", filters.DeploymentID)
+	}
+	if filters.Status != 0 {
+		values.Set("status", strconv.Itoa(filters.Status))
+	}
+	if filters.ColdBoot != nil {
+		values.Set("cold_boot", strconv.FormatBool(*filters.ColdBoot))
+	}
+	if filters.ConsumerID != "" {
+		values.Set("consumer_id", filters.ConsumerID)
+	}
+	if filters.MinLatencyMS != 0 {
+		values.Set("min_latency_ms", strconv.Itoa(filters.MinLatencyMS))
+	}
+	if cursor != "" {
+		values.Set("cursor", cursor)
+	}
+	return values
 }
 
 func valueOrEmptyGuestRuntime(guest *api.DebugGuestExecutionEvidence) string {
@@ -467,8 +510,9 @@ func valueOrEmptyGuestErrorClass(guest *api.DebugGuestExecutionEvidence) string 
 	return guest.ErrorClass
 }
 
-func dashboardDebugRegressionView(item api.DebugRegressionItem, slug, since string) dashboard.DebugRegressionView {
-	values := url.Values{"since": []string{since}, "route": []string{item.Route}}
+func dashboardDebugRegressionView(item api.DebugRegressionItem, slug, since string, filters debugTelemetryFilters) dashboard.DebugRegressionView {
+	values := debugTelemetryFilterValues(since, item.Route, "", filters)
+	values.Set("deployment_id", item.DeploymentID)
 	return dashboard.DebugRegressionView{
 		DeploymentID:    item.DeploymentID,
 		Route:           item.Route,
@@ -507,7 +551,11 @@ func dashboardDebugTimeString(raw interface{}) string {
 	return ""
 }
 
-func dashboardDebugRegressionCompareURL(slug, since, source, route string, deployments []dashboard.DebugDeploymentView) string {
+func dashboardDebugRegressionCompareURL(slug, since, source, route string, deployments []dashboard.DebugDeploymentView, filterArgs ...debugTelemetryFilters) string {
+	var filters debugTelemetryFilters
+	if len(filterArgs) > 0 {
+		filters = filterArgs[0]
+	}
 	found := false
 	for _, deployment := range deployments {
 		if deployment.ID == source {
@@ -522,13 +570,11 @@ func dashboardDebugRegressionCompareURL(slug, since, source, route string, deplo
 		if deployment.ID == source {
 			continue
 		}
-		values := url.Values{
-			"since":          []string{since},
-			"compare":        []string{"1"},
-			"compare_source": []string{source},
-			"compare_mirror": []string{deployment.ID},
-			"compare_route":  []string{route},
-		}
+		values := debugTelemetryFilterValues(since, "", "", filters)
+		values.Set("compare", "1")
+		values.Set("compare_source", source)
+		values.Set("compare_mirror", deployment.ID)
+		values.Set("compare_route", route)
 		return "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode()
 	}
 	return ""
@@ -665,7 +711,13 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 	}
 
 	item := debugTelemetryGetRowToItem(row)
-	request := dashboardDebugRequestView(item, app.Slug, data.Since, data.Route, data.Cursor)
+	request := dashboardDebugRequestView(item, app.Slug, data.Since, data.Route, data.Cursor, debugTelemetryFilters{
+		DeploymentID: data.DeploymentID,
+		Status:       data.Status,
+		ColdBoot:     data.ColdBoot,
+		ConsumerID:   data.ConsumerID,
+		MinLatencyMS: data.MinLatencyMS,
+	})
 	spans, truncated := parseDebugEvidenceSpans(row.SpansSummary)
 	spanViews := make([]dashboard.DebugSpanView, 0, len(spans))
 	for _, span := range spans {
@@ -690,7 +742,13 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		for _, regRow := range regRows {
 			reg := debugRegressionRowToItem(regRow)
 			if reg.DeploymentID == item.DeploymentID && reg.Route == item.Route {
-				view := dashboardDebugRegressionView(reg, app.Slug, data.Since)
+				view := dashboardDebugRegressionView(reg, app.Slug, data.Since, debugTelemetryFilters{
+					DeploymentID: data.DeploymentID,
+					Status:       data.Status,
+					ColdBoot:     data.ColdBoot,
+					ConsumerID:   data.ConsumerID,
+					MinLatencyMS: data.MinLatencyMS,
+				})
 				matching = &view
 				break
 			}

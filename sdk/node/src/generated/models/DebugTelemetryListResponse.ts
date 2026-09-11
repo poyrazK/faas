@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DebugTelemetryListFilters } from './DebugTelemetryListFilters.js';
 import type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 /**
  * Response from GET /v1/apps/{slug}/debug/requests (ADR-127).
@@ -35,6 +36,7 @@ export type DebugTelemetryListResponse = {
    * Opaque cursor for the next page; omitted when complete is true.
    */
   next_cursor?: string;
+  filters: DebugTelemetryListFilters;
   requests: Array<DebugTelemetryRequestItem>;
 };
 

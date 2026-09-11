@@ -5,8 +5,8 @@
 //
 // Subcommand surface:
 //
-//	gregale debug requests list <slug> [--since <dur>] [--route <pattern>] [--cursor C] [--limit N]
-//	gregale debug requests watch <slug> [--since <dur>] [--route <pattern>] [--limit N] [--interval D] [--once]
+//	gregale debug requests list <slug> [--since <dur>] [--route <pattern>] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N]
+//	gregale debug requests watch <slug> [--since <dur>] [--route <pattern>] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--limit N] [--interval D] [--once]
 //	gregale debug requests get <slug> <req_id>
 //	gregale debug requests show <slug> <req_id>
 //	gregale debug requests evidence <slug> <req_id>
@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -158,18 +159,32 @@ func cmdDebugRequestsList(args []string) int {
 	fs := flag.NewFlagSet("debug requests list", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	route := fs.String("route", "", "route filter (exact match)")
+	deploymentID := fs.String("deployment-id", "", "deployment UUID filter")
+	status := fs.Int("status", 0, "exact HTTP status filter (100..599)")
+	coldBoot := fs.String("cold-boot", "", "cold-start filter (true or false)")
+	consumerID := fs.String("consumer-id", "", "consumer UUID or __anonymous__")
+	minLatencyMS := fs.Int("min-latency-ms", 0, "minimum latency bucket in milliseconds")
 	cursor := fs.String("cursor", "", "opaque cursor from the previous page")
 	limit := fs.Int("limit", 20, "max rows (1..200)")
-	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true, "route": true, "cursor": true, "limit": true})
+	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
+		"since": true, "route": true, "deployment-id": true, "status": true,
+		"cold-boot": true, "consumer-id": true, "min-latency-ms": true,
+		"cursor": true, "limit": true,
+	})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests list [--since D] [--route P] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests list [--since D] [--route P] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {
 		fmt.Fprintln(os.Stderr, "--limit must be between 1 and 200")
+		return 1
+	}
+	options, err := debugTelemetryOptionsFromFlags(*since, *route, *deploymentID, *status, *coldBoot, *consumerID, *minLatencyMS, *cursor, *limit)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	slug := positional[0]
@@ -177,12 +192,7 @@ func cmdDebugRequestsList(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListAppDebugRequestsWithOptions(context.Background(), slug, api.DebugTelemetryListOptions{
-		Since:  *since,
-		Route:  *route,
-		Cursor: *cursor,
-		Limit:  *limit,
-	})
+	resp, err := client.ListAppDebugRequestsWithOptions(context.Background(), slug, options)
 	if err != nil {
 		return printErr("Could not list debug requests", err)
 	}
@@ -191,6 +201,32 @@ func cmdDebugRequestsList(args []string) int {
 	}
 	renderDebugRequestsTable(osStdout, resp)
 	return 0
+}
+
+// debugTelemetryOptionsFromFlags converts the CLI's optional string form for
+// cold_boot into the pointer form used by the SDK, preserving false versus an
+// omitted filter. The server repeats UUID validation so scripts get the same
+// canonical validation even when they bypass the CLI.
+func debugTelemetryOptionsFromFlags(since, route, deploymentID string, status int, coldBoot, consumerID string, minLatencyMS int, cursor string, limit int) (api.DebugTelemetryListOptions, error) {
+	if status != 0 && (status < 100 || status > 599) {
+		return api.DebugTelemetryListOptions{}, fmt.Errorf("--status must be between 100 and 599")
+	}
+	if minLatencyMS < 0 || minLatencyMS > 86_400_000 {
+		return api.DebugTelemetryListOptions{}, fmt.Errorf("--min-latency-ms must be between 0 and 86400000")
+	}
+	var coldBootValue *bool
+	if raw := strings.TrimSpace(coldBoot); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return api.DebugTelemetryListOptions{}, fmt.Errorf("--cold-boot must be true or false")
+		}
+		coldBootValue = &value
+	}
+	return api.DebugTelemetryListOptions{
+		Since: since, Route: route, DeploymentID: deploymentID, Status: status,
+		ColdBoot: coldBootValue, ConsumerID: consumerID, MinLatencyMS: minLatencyMS,
+		Cursor: cursor, Limit: limit,
+	}, nil
 }
 
 // cmdDebugRequestsGet renders a single request's metadata by id.
@@ -305,14 +341,18 @@ func cmdDebugCompare(args []string) int {
 
 func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tRECEIVED_AT")
+	_, _ = fmt.Fprintln(tw, "ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tCONSUMER\tRECEIVED_AT")
 	for _, r := range resp.Requests {
 		cold := ""
 		if r.ColdBoot {
 			cold = "yes"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
-			r.ID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, r.ReceivedAt)
+		consumer := r.ConsumerID
+		if consumer == "" {
+			consumer = "anonymous"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
+			r.ID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, consumer, r.ReceivedAt)
 	}
 	_ = tw.Flush()
 	if resp.RetentionClamped {

@@ -1074,9 +1074,11 @@ export class AppsService {
    * effective `since` is returned in the response so the
    * dashboard can render a "you widened past the cap" tile. Results are
    * cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
-   * cursor pins the effective window and route, so callers can safely
+   * cursor pins the effective window, route, and every supplied filter, so callers can safely
    * walk pages while new telemetry arrives. `complete` is true only when
    * every retained row in that bounded window is present in the page.
+   * Filters are applied before pagination and echoed in `filters` so an
+   * incident link can be reproduced exactly.
    * Returns 200 with `requests: []` when no rows exist in the
    * window — never 404. Cross-account slug is 404 (IDOR-safe;
    * byte-identical to "no such app").
@@ -1089,6 +1091,11 @@ export class AppsService {
     since,
     limit,
     route,
+    deploymentId,
+    status,
+    coldBoot,
+    consumerId,
+    minLatencyMs,
     cursor,
   }: {
     /**
@@ -1108,7 +1115,27 @@ export class AppsService {
      */
     route?: string | null,
     /**
-     * Opaque next_cursor from a previous response. The cursor must be reused with the same app and route.
+     * Exact deployment UUID filter.
+     */
+    deploymentId?: string | null,
+    /**
+     * Exact HTTP status filter.
+     */
+    status?: number | null,
+    /**
+     * Filter cold-start requests when true, or warm requests when false.
+     */
+    coldBoot?: boolean | null,
+    /**
+     * Consumer UUID, or __anonymous__ for requests without a stable consumer identity.
+     */
+    consumerId?: string | null,
+    /**
+     * Minimum inclusive latency bucket bound in milliseconds.
+     */
+    minLatencyMs?: number | null,
+    /**
+     * Opaque next_cursor from a previous response. The cursor must be reused with the same app and filters.
      */
     cursor?: string | null,
   }): CancelablePromise<DebugTelemetryListResponse> {
@@ -1122,6 +1149,11 @@ export class AppsService {
         'since': since,
         'limit': limit,
         'route': route,
+        'deployment_id': deploymentId,
+        'status': status,
+        'cold_boot': coldBoot,
+        'consumer_id': consumerId,
+        'min_latency_ms': minLatencyMs,
         'cursor': cursor,
       },
       errors: {

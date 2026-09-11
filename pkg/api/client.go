@@ -4557,8 +4557,9 @@ func (c *Client) ListAppDebugRequests(ctx context.Context, slug, since string) (
 }
 
 // ListAppDebugRequestsWithOptions is the filtered and cursor-paginated form
-// of ListAppDebugRequests. Route, cursor, and limit are sent to the API so
-// filtering and pagination happen before rows are read from the database.
+// of ListAppDebugRequests. All filters, the cursor, and the limit are sent to
+// the API so filtering and pagination happen before rows are read from the
+// database.
 func (c *Client) ListAppDebugRequestsWithOptions(ctx context.Context, slug string, opts DebugTelemetryListOptions) (DebugTelemetryListResponse, error) {
 	var out DebugTelemetryListResponse
 	path := "/v1/apps/" + slug + "/debug/requests"
@@ -4568,6 +4569,21 @@ func (c *Client) ListAppDebugRequestsWithOptions(ctx context.Context, slug strin
 	}
 	if opts.Route != "" {
 		q.Set("route", opts.Route)
+	}
+	if opts.DeploymentID != "" {
+		q.Set("deployment_id", opts.DeploymentID)
+	}
+	if opts.Status != 0 {
+		q.Set("status", strconv.Itoa(opts.Status))
+	}
+	if opts.ColdBoot != nil {
+		q.Set("cold_boot", strconv.FormatBool(*opts.ColdBoot))
+	}
+	if opts.ConsumerID != "" {
+		q.Set("consumer_id", opts.ConsumerID)
+	}
+	if opts.MinLatencyMS != 0 {
+		q.Set("min_latency_ms", strconv.Itoa(opts.MinLatencyMS))
 	}
 	if opts.Cursor != "" {
 		q.Set("cursor", opts.Cursor)
