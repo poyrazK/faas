@@ -154,6 +154,12 @@ type runDeps struct {
 	// inject func() error { return nil } to bypass the live
 	// /proc/self/status check.
 	capCheck func() error
+	// executionArtifacts resolves platform-owned runtime release metadata.
+	// It is consulted only when FAAS_EXECUTION_DISPATCH=1.
+	executionArtifacts func(context.Context, api.ExecutionRuntime, api.ExecutionSnapshotShape) (sched.ExecutionRuntimeArtifacts, error)
+	// executionPayloadDecoder is the authenticated host-side payload decoder.
+	// Production must inject it before enabling execution; nil is fail-closed.
+	executionPayloadDecoder sched.ExecutionPayloadDecoder
 }
 
 func defaultDeps() runDeps {
@@ -165,7 +171,8 @@ func defaultDeps() runDeps {
 		dialVMM: func(ctx context.Context, target string, tlsCfg *tls.Config) (sched.VMM, error) {
 			return sched.DialVMMContext(ctx, target, tlsCfg)
 		},
-		listen: wire.ListenAs,
+		listen:             wire.ListenAs,
+		executionArtifacts: executionRuntimeArtifactsFromEnv,
 		// Production wires db.Subscribe. Tests inject a fake channel
 		// so the subscriber's Park path is exercised end-to-end
 		// without standing up Postgres.
@@ -264,6 +271,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
 		return err
+	}
+	executionEnabled := executionDispatchEnabled(os.Getenv("FAAS_EXECUTION_DISPATCH"))
+	if executionEnabled {
+		if deps.executionArtifacts == nil || deps.executionPayloadDecoder == nil {
+			return errors.New("schedd: execution dispatch enabled but runtime artifacts or authenticated payload decoder is not wired")
+		}
+		log.Info("schedd: execution dispatch requested; validating disposable-VM dependencies")
 	}
 	// Gate-B box-role gate. schedd is a control-plane daemon — it
 	// refuses to start under RoleComputeOnly. The role is set
@@ -1688,8 +1702,45 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		log.Warn("trigger batch dispatch dial skipped: synthTarget empty (gatewayd-internal not wired in this schedd)")
 	}
+
+	// Execution dispatch is an exact opt-in because it claims durable tenant
+	// payloads and starts disposable VMs. The resolver supplies node, plan,
+	// resource, artifact, and snapshot identity; the backend then pins every
+	// restore/execute/destroy RPC to that node. Snapshot verification remains
+	// fail-closed until a storage-backed verifier is supplied, so an indexed
+	// entry without verification becomes a same-identity cold boot.
+	var executionCoordinator *sched.ExecutionCoordinator
+	if executionEnabled {
+		executionNodeID := ownerNodeID
+		if executionNodeID == "" && len(nodes) == 1 {
+			executionNodeID = nodes[0].ID
+		}
+		if strings.TrimSpace(executionNodeID) == "" {
+			return errors.New("schedd: execution dispatch enabled but no compute node is available")
+		}
+		catalog := sched.NewRuntimeSnapshotCatalog(sched.NewStateRuntimeSnapshotIndex(store), nil)
+		resolver := sched.NewExecutionClaimResolver(
+			store,
+			catalog,
+			sched.ExecutionRuntimeArtifactsFunc(deps.executionArtifacts),
+			executionNodeID,
+		)
+		backend := sched.NewRoutedVmmdExecutionBackend(vmmRouter, deps.executionPayloadDecoder)
+		executionCoordinator = sched.NewExecutionCoordinator(store, backend, sched.ExecutionCoordinatorConfig{
+			Enabled: true,
+			Owner:   executionNodeID,
+		}, log).WithClaimResolver(resolver)
+		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "fail-closed-cold-boot")
+	}
 	loopErr := make(chan error, 1)
 	go func() { loopErr <- loop.Run(ctx) }()
+	if executionCoordinator != nil {
+		go func() {
+			if err := executionCoordinator.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("schedd: execution coordinator exited", "err", err)
+			}
+		}()
+	}
 
 	// Issue #757 / ADR-0NN (commit #16): trigger dispatch
 	// wakeups. Subscribe to the trigger_ready + trigger_changed
