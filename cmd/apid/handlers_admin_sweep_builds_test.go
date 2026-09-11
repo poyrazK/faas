@@ -20,6 +20,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -235,6 +236,34 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 		}
 		if body["older_than_seconds"] != float64(900) {
 			t.Errorf("body.older_than_seconds = %v, want 900", body["older_than_seconds"])
+		}
+	})
+
+	t.Run("trace_id_is_echoed_and_stamped_on_audit_event", func(t *testing.T) {
+		const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+		srv, store, cookie := newForceHarness(t, nil)
+		req := httptest.NewRequest(http.MethodPost,
+			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m&reason=builder_vm_timeout", nil)
+		req.AddCookie(cookie)
+		req.Header.Set("Idempotency-Key", "test-admin-mutation-trace")
+		req.Header.Set("X-Trace-Id", traceID)
+		rec := httptest.NewRecorder()
+		srv.handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		if got := rec.Header().Get("X-Trace-Id"); got != traceID {
+			t.Fatalf("response trace id = %q, want %q", got, traceID)
+		}
+		events, err := store.ListEvents(context.Background(), "", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) == 0 || events[0].Kind != "operator.action.reclaim_build" {
+			t.Fatalf("audit events = %+v", events)
+		}
+		if events[0].TraceID == nil || *events[0].TraceID != traceID {
+			t.Fatalf("audit trace id = %v, want %q", events[0].TraceID, traceID)
 		}
 	})
 }

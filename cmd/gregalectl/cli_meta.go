@@ -535,15 +535,8 @@ var cliCommands = []cliCommand{
 		}},
 	},
 	{
-		// P2c of the operator-side observability mega-PR
-		// (Commit 5c). Operator-side build-recovery primitive —
-		// `sweep-stuck` opens a state.Store via FAAS_PG_DSN
-		// and calls state.Store.SweepStuckRunningBuilds
-		// directly (per user decision: NO builderd gRPC
-		// server). The Store method is also called by
-		// pkg/builderd/reaper.go:48 — the CLI path is the
-		// operator's manual escape hatch when the reaper's
-		// grace period is too long for an incident.
+		// Authenticated build recovery through the existing apid
+		// mutation surface. No direct database credential is used.
 		Name:    dispatchBuilds,
 		DocSlug: "builds",
 		Short:   "Build-recovery primitives (builds sweep-stuck)",
@@ -552,7 +545,9 @@ var cliCommands = []cliCommand{
 				Name:  "sweep-stuck",
 				Short: "Flip every 'running' build row older than the threshold to 'failed/timeout'",
 				Flags: []cliFlag{
-					{Name: "older-than", Short: "threshold duration (clamped to [1m, 60m]; default 15m)"},
+					{Name: "older-than", Short: "threshold duration (1m..60m; default 15m)"},
+					{Name: "reason", Short: "durable audit reason slug [a-z0-9_]{1,64}", Req: true},
+					{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
 					{Name: "yes", Short: "acknowledge that rows older than the threshold will be flipped (required)"},
 				},
 			},

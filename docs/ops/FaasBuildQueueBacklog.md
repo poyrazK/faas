@@ -55,12 +55,12 @@ code.
    Confirm the reaper is running: `ps aux | grep
    builderd` should show the ReaperLoop goroutine.
 
-3. **Force-evict stuck builds** via the operator
-   endpoint:
+3. **Force-evict stuck builds** via the operator CLI:
    ```
-   POST /v1/admin/builds/sweep-stuck?older_than=15m&confirm=true
+   gregalectl auth step-up
+   gregalectl builds sweep-stuck --older-than 15m --reason build_queue_incident --yes
    ```
-   The handler calls `state.Store.SweepStuckRunningBuilds`
+   The authenticated API handler calls `state.Store.SweepStuckRunningBuilds`
    directly, flips each stuck row to
    `status='failed', failure_class='timeout'`, and
    emits an `operator.action.reclaim_build` audit row.

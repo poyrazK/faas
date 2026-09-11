@@ -59,6 +59,7 @@ Commands:
   accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
   audit        Correlate operator intents and events by trace ID (audit trace)
+  builds       Authenticated recovery for stuck builds (builds sweep-stuck)
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
   obs           Operator-side meta-obs health snapshot (obs health; Obs-Meta + Trace-IDs Mega-PR / C8)
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
@@ -201,14 +202,8 @@ func run(args []string) int {
 		// Exact, indexed trace correlation through the read-only operator API.
 		return cmdAuditDispatch(args[1:])
 	case dispatchBuilds:
-		// P2c — operator-side build-recovery primitive.
-		// sweep-stuck opens a state.Store via FAAS_PG_DSN and
-		// calls state.Store.SweepStuckRunningBuilds directly
-		// (per user decision: NO builderd gRPC server). The
-		// Store method is also called by pkg/builderd/reaper.go:48
-		// — the CLI path is the operator's manual escape hatch
-		// when the reaper's grace period is too long for an
-		// incident.
+		// Authenticated build recovery through apid; direct database
+		// mutation is reserved for the reviewed break-glass runbook.
 		return cmdBuildsDispatch(args[1:])
 	case dispatchDeploy:
 		// Provider-neutral join-node is the production path. The legacy

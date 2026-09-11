@@ -2067,8 +2067,8 @@ func (s *server) handler() http.Handler {
 	// decision, NO builderd gRPC server). ?older_than= is
 	// clamped to [1m, 60m] so a fat-fingered "1ns" cannot sweep
 	// in-flight builds.
-	mux.HandleFunc("POST /v1/admin/builds/sweep-stuck",
-		s.authLimited(s.requireAdminMutation(s.postSweepStuckBuilds)))
+	mux.Handle("POST /v1/admin/builds/sweep-stuck",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postSweepStuckBuilds))))
 	// Account and compute-node lifecycle controls. They are deliberately
 	// separate from the read-only /obs namespace and require strict admin
 	// mutation authentication plus confirm=true.

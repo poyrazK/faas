@@ -216,6 +216,19 @@ gregalectl audit trace --trace-id <32-char-lowercase-hex>
 The command uses exact indexed reads to correlate the durable intent with its
 live audit events. Add `--json` for incident tooling.
 
+### Build recovery
+
+Sweep builder jobs that remained running beyond the incident threshold:
+
+```
+gregalectl auth step-up
+gregalectl builds sweep-stuck --older-than 15m --reason builder_vm_timeout --yes
+```
+
+The command uses the authenticated operator API, emits a trace ID, and never
+opens a database connection. Use `gregalectl audit trace --trace-id <id>` to
+inspect its audit event.
+
 ### Account support
 
 Routine tenant investigation and lifecycle changes go through the authenticated
