@@ -324,6 +324,12 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TRACE_RING_CAP` | shared | `default` |  |  | `` |  |
 | `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | TLS terminator CIDRs allowed to provide canonical forwarding context |
 | `FAAS_TRUSTED_PUBLISHERS_DIR` | apid, imaged | `default` |  |  | `` |  |
+| `FAAS_TWO_NODE_ADDR_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
+| `FAAS_TWO_NODE_NODE_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
+| `FAAS_TWO_NODE_NODE_A` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
+| `FAAS_TWO_NODE_NODE_B` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
+| `FAAS_TWO_NODE_REMOTE` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
+| `FAAS_TWO_NODE_SSH_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
 | `FAAS_UPSTREAM_AFFINITY` | schedd | `default` |  |  | `` | off by design until the §9.A rollout gate (spec) |
 | `FAAS_UPSTREAM_AFFINITY_TTL` | schedd | `default` |  |  | `` |  |
 | `FAAS_UPSTREAM_PROBE` | meterd | `default` |  |  | `` | off by design until the §9.A rollout gate (spec) |
