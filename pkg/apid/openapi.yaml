@@ -16487,6 +16487,10 @@ components:
         source_root:
           type: string
           description: "Repository-relative build root used by a workspace context upload; omitted when the archive root is built."
+        source_sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: "SHA-256 digest of the exact source archive handed to the builder; stable identity for local-source revisions."
         has_overrides: { type: boolean, description: "True when this deployment carries a non-null override_* column set." }
         override_entrypoint:
           type: array

@@ -4313,6 +4313,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		SourceURL:         d.SourceURL,
 		CommitSHA:         d.CommitSHA,
 		SourceRoot:        d.SourceRoot,
+		SourceSHA256:      d.SourceSHA256,
 		HasOverrides:      hasOverrides,
 		MinInstances:      d.MinInstances,
 		// Issue #556 PR-A: traffic_percent echoes the per-deployment

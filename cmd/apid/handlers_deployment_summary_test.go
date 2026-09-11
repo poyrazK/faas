@@ -16,7 +16,7 @@ func TestGetAppDeploymentSummaryIncludesDiffAndRollbackTarget(t *testing.T) {
 	appID := mustSeedApp(t, e, "summary-app")
 	base := time.Now().UTC().Add(-time.Minute)
 	previous, err := e.store.CreateDeployment(context.Background(), state.Deployment{
-		AppID: appID, ImageDigest: "sha256:previous", CommitSHA: "1111111", SourceURL: "https://github.com/acme/app",
+		AppID: appID, BuildID: "build-v1", SourceSHA256: "1111111111111111111111111111111111111111111111111111111111111111", ImageDigest: "sha256:previous", CommitSHA: "1111111", SourceURL: "https://github.com/acme/app",
 		Kind: state.DeploymentKindImage, Status: state.DeployPending, CreatedAt: base, Scope: "production", TrafficPercent: 100,
 	})
 	if err != nil {
@@ -26,7 +26,7 @@ func TestGetAppDeploymentSummaryIncludesDiffAndRollbackTarget(t *testing.T) {
 		t.Fatalf("promote previous: %v", err)
 	}
 	current, err := e.store.CreateDeployment(context.Background(), state.Deployment{
-		AppID: appID, ImageDigest: "sha256:current", CommitSHA: "2222222", SourceURL: "https://github.com/acme/app",
+		AppID: appID, BuildID: "build-v2", SourceSHA256: "2222222222222222222222222222222222222222222222222222222222222222", ImageDigest: "sha256:current", CommitSHA: "2222222", SourceURL: "https://github.com/acme/app",
 		Kind: state.DeploymentKindImage, Status: state.DeployPending, CreatedAt: base.Add(time.Second), Scope: "production", TrafficPercent: 50,
 	})
 	if err != nil {
@@ -57,7 +57,13 @@ func TestGetAppDeploymentSummaryIncludesDiffAndRollbackTarget(t *testing.T) {
 	for _, change := range got.Changes {
 		changed[change.Field] = change
 	}
-	for _, field := range []string{"status", "image_digest", "commit_sha", "traffic_percent"} {
+	if got.Deployment.BuildID != "build-v2" || got.Deployment.SourceSHA256 == "" {
+		t.Fatalf("deployment provenance = build %q source %q", got.Deployment.BuildID, got.Deployment.SourceSHA256)
+	}
+	if got.Previous.BuildID != "build-v1" || got.Previous.SourceSHA256 == "" {
+		t.Fatalf("previous provenance = build %q source %q", got.Previous.BuildID, got.Previous.SourceSHA256)
+	}
+	for _, field := range []string{"status", "image_digest", "build_id", "source_sha256", "commit_sha", "traffic_percent"} {
 		if _, ok := changed[field]; !ok {
 			t.Errorf("missing change %q in %+v", field, got.Changes)
 		}

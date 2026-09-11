@@ -2787,7 +2787,8 @@ type Store interface {
 	// values at GET /v1/builds/{id}/provenance.
 	SetDeploymentSourceURL(ctx context.Context, id, sourceURL, commitSHA string) error
 
-	// Builds (apid creates the queued row; builderd writes status, spec §9).
+	// Builds (apid creates the queued row and links deployments.build_id;
+	// builderd writes status, spec §9).
 	CreateBuild(ctx context.Context, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error)
 	FailSourceDeployment(ctx context.Context, id, message string) error
 	CreateBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error)
