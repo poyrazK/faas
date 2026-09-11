@@ -1220,6 +1220,25 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
 		return 1
 	}
+	// Deploy has no positional arguments. Go's flag parser stops at the
+	// first positional token, so accepting one also silently ignores every
+	// later flag. Reject the complete remainder before validation, auth, or
+	// source I/O; this prevents a stray token from bypassing --dry-run or
+	// changing the target app.
+	if fs.NArg() != 0 {
+		return printErr("Invalid arguments", fmt.Errorf(
+			"gregale deploy accepts flags only; unexpected positional arguments: %s",
+			strings.Join(fs.Args(), " ")))
+	}
+	if *waitTimeoutSeconds <= 0 {
+		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
+	}
+	if *waitTimeoutSeconds > int((24*time.Hour)/time.Second) {
+		return printErr("Invalid --timeout", fmt.Errorf("must be at most 86400 seconds"))
+	}
+	if err := validateDeployIdempotencyKey(*idempotencyKey); err != nil {
+		return printErr("Invalid --idempotency-key", err)
+	}
 	// run() consumes the global --json before dispatch. Keep the
 	// deploy-local --json spelling equivalent for the diff path,
 	// whose renderer uses a separate option field.
@@ -1313,6 +1332,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customers see no behaviour change.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *deployOnly != "" || *projectSlug != "" {
+		var unsupported []string
+		for _, name := range []string{
+			"traffic-percent", "canary-preset", "canary-stages",
+			"reason", "tag", "deployed-by", "pr-number",
+		} {
+			if explicit[name] {
+				unsupported = append(unsupported, "--"+name)
+			}
+		}
+		if len(unsupported) > 0 {
+			return printErr("Unsupported project deploy flags", fmt.Errorf(
+				"%s cannot be combined with --project-slug or --only; project deploy policy is not yet supported",
+				strings.Join(unsupported, ", ")))
+		}
+	}
 	if explicit["wait"] && explicit["no-wait"] {
 		return printErr("Invalid flags", fmt.Errorf("--wait and --no-wait are mutually exclusive"))
 	}
