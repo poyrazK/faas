@@ -517,6 +517,14 @@
           - --admission-ceiling-mb
           - "{{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}"
           - --defer-activation
+          # A newly adopted host deliberately has no interactive operator MFA
+          # session. The trusted join already stages its root-only database
+          # credential, so acknowledge this bootstrap-only direct write
+          # explicitly instead of silently falling back from the API path.
+          - --reason
+          - node_join_preregister
+          - --break-glass-db
+          - --yes
       register: faas_compute_node_preregister
       changed_when: true
 
