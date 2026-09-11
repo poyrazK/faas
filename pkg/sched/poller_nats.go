@@ -33,14 +33,32 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
+
+type natsEgressDialer struct {
+	dial func(context.Context, string, string) (net.Conn, error)
+}
+
+func newNATSEgressDialer(timeout time.Duration) *natsEgressDialer {
+	parent := &net.Dialer{Timeout: timeout}
+	return &natsEgressDialer{dial: oci.EgressDialContext(parent)}
+}
+
+func (d *natsEgressDialer) Dial(network, address string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return d.dial(ctx, network, address)
+}
 
 // natsBroker is the shared, per-schedd NATS connection. Opened at
 // schedd boot via NewNATSBroker and passed to every kind=nats
@@ -61,16 +79,24 @@ type natsBroker struct {
 // Connection lifecycle: caller MUST invoke broker.Close() at
 // schedd shutdown so in-flight Fetch goroutines unwind and the
 // TCP socket closes.
-func NewNATSBroker(url string) (*natsBroker, error) {
-	conn, err := nats.Connect(url,
+func NewNATSBroker(rawURL string) (*natsBroker, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "nats" && parsed.Scheme != "tls") || parsed.Host == "" {
+		return nil, fmt.Errorf("nats_broker: invalid server URL")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("nats_broker: credentials, query parameters, and fragments are forbidden in server URL")
+	}
+	conn, err := nats.Connect(rawURL,
 		nats.Name("gregale-schedd"),
+		nats.SetCustomDialer(newNATSEgressDialer(5*time.Second)),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2*time.Second),
 		nats.Timeout(5*time.Second),
 		nats.PingInterval(20*time.Second),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("nats_broker: connect %s: %w", url, err)
+		return nil, fmt.Errorf("nats_broker: connect %s: %w", parsed.Redacted(), err)
 	}
 	js, err := jetstream.New(conn)
 	if err != nil {

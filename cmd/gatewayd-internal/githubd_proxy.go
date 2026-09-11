@@ -28,6 +28,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -116,7 +117,7 @@ func (g *githubdProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // X-GitHub-Delivery header returns 400 (a misconfigured client, not
 // a replay — GitHub always sets this header).
 func (g *githubdProxy) handleWebhook(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 10<<20)) // 10 MiB cap; pushes are <10 MB typically
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, api.GitHubWebhookMaxBodyBytes))
 	if err != nil {
 		g.log.Warn("githubd proxy body read failed", "err", err)
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)

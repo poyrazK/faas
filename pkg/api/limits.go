@@ -4131,6 +4131,20 @@ const (
 	// bound. Same cap applied to all three mail-webhook handlers
 	// the apid mounts (resend / postmark / paddle) for consistency.
 	WebhookMaxBodyBytes = 1 << 20 // 1 MiB
+	// GitHubWebhookMaxBodyBytes keeps the larger push-event allowance in the
+	// central limits table. GitHub payloads can include a large commit list.
+	GitHubWebhookMaxBodyBytes = 10 << 20
+
+	// TriggerBrokerErrorBodyMaxBytes bounds diagnostic bodies returned by
+	// customer-configured external brokers. The text is only used in an
+	// operator-facing error and must never consume meaningful schedd memory.
+	TriggerBrokerErrorBodyMaxBytes = 64 << 10
+	// TriggerBrokerEnvelopeOverheadBytes covers the JSON envelope and broker
+	// metadata around an SQS-compatible batch. JSON may expand one input byte
+	// to a six-byte unicode escape, so the receive cap is derived from the
+	// trigger payload budget with this multiplier.
+	TriggerBrokerEnvelopeOverheadBytes int64 = 64 << 10
+	TriggerBrokerJSONExpansion         int64 = 6
 
 	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
 	FreeTierColdEvictDays = 14

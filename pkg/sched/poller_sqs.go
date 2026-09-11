@@ -40,7 +40,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -48,6 +47,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -110,6 +111,9 @@ func decodeSQSConfig(t sqlc.Trigger) (sqsConfig, error) {
 	if u.Host == "" {
 		return cfg, fmt.Errorf("sqs_poller: invalid queue_url %q: missing host", cfg.QueueURL)
 	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return cfg, fmt.Errorf("sqs_poller: invalid queue_url %q: credentials, query parameters, and fragments are forbidden", cfg.QueueURL)
+	}
 	if cfg.LongPollSec < 0 || cfg.LongPollSec > 20 {
 		// SQS-compatible brokers cap long-poll at 20s (AWS SQS
 		// itself). Higher values are silently clamped.
@@ -148,6 +152,7 @@ func newSQSPoller(t sqlc.Trigger) (triggerSource, error) {
 	c := &http.Client{
 		Timeout: time.Duration(cfg.LongPollSec+5) * time.Second,
 		Transport: &http.Transport{
+			DialContext:         oci.EgressDialContext(nil),
 			MaxIdleConns:        50,
 			MaxIdleConnsPerHost: 5,
 			IdleConnTimeout:     90 * time.Second,
@@ -193,15 +198,30 @@ func (s *sqsPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		return PollResult{Records: []SourceRecord{}}
 	}
 	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, api.TriggerBrokerErrorBodyMaxBytes))
 		return PollResult{Error: fmt.Errorf("sqs_poller: receive status %d: %s", resp.StatusCode, raw)}
 	}
+	payloadBudget := int64(t.PayloadMaxBytes)
+	if payloadBudget < 1 {
+		payloadBudget = 1
+	}
+	responseLimit := api.TriggerBrokerEnvelopeOverheadBytes + payloadBudget*api.TriggerBrokerJSONExpansion
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, responseLimit+1))
+	if err != nil {
+		return PollResult{Error: fmt.Errorf("sqs_poller: read response: %w", err)}
+	}
+	if int64(len(raw)) > responseLimit {
+		return PollResult{Error: fmt.Errorf("sqs_poller: response exceeds %d-byte safety limit", responseLimit)}
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return PollResult{Records: []SourceRecord{}}
+	}
 	var got sqsReceiveResponse
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-		if errors.Is(err, io.EOF) {
-			return PollResult{Records: []SourceRecord{}}
-		}
+	if err := json.Unmarshal(raw, &got); err != nil {
 		return PollResult{Error: fmt.Errorf("sqs_poller: decode: %w", err)}
+	}
+	if len(got.Messages) > limit {
+		return PollResult{Error: fmt.Errorf("sqs_poller: broker returned %d messages, limit is %d", len(got.Messages), limit)}
 	}
 	out := make([]SourceRecord, 0, len(got.Messages))
 	for _, m := range got.Messages {

@@ -27,12 +27,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -113,6 +115,7 @@ func newRedisPoller(t sqlc.Trigger) (triggerSource, error) {
 	}
 	client := redis.NewClient(&redis.Options{
 		Addr:         cfg.Addr,
+		Dialer:       oci.EgressDialContext(&net.Dialer{Timeout: 5 * time.Second}),
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,

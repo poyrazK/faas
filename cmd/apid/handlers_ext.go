@@ -3567,6 +3567,7 @@ func (s *server) raiseOverageCapSvc(ctx context.Context, acct state.Account, cen
 // 2xx for everything it didn't recognize so it doesn't retry forever.
 // Returns 400 on bad payload / bad signature.
 func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, api.WebhookMaxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))
@@ -3709,6 +3710,7 @@ func (s *server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
 			"FAAS_BILLING_PROVIDER != paddle; refusing to process events"))
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, api.WebhookMaxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))

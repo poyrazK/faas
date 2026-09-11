@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 	"time"
 
@@ -42,6 +43,7 @@ import (
 	kafkaSASLPlain "github.com/segmentio/kafka-go/sasl/plain"
 	kafkaSASLScram "github.com/segmentio/kafka-go/sasl/scram"
 
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -179,7 +181,8 @@ func decodeKafkaConfig(t sqlc.Trigger) (kafkaConfig, error) {
 // username/password).
 func buildKafkaDialer(cfg kafkaConfig) (*kafka.Dialer, error) {
 	d := &kafka.Dialer{
-		Timeout: 5 * time.Second,
+		Timeout:  5 * time.Second,
+		DialFunc: oci.EgressDialContext(&net.Dialer{Timeout: 5 * time.Second}),
 	}
 	if cfg.TLS != nil {
 		tlsCfg, err := buildKafkaTLSConfig(cfg.TLS)
