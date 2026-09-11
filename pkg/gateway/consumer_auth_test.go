@@ -87,6 +87,17 @@ func TestEnforceConsumerAuth_OptionalAnonymousPasses(t *testing.T) {
 	}
 }
 
+func TestEnforceConsumerAuth_EmptyModePreservesLegacyAuthorization(t *testing.T) {
+	h := NewHandlerWith(nil, nil, nil)
+	// Legacy/fake App rows leave ConsumerAuthMode empty while the same
+	// request may carry a deployment API key for require_authn/public_auth.
+	rr, _, ok := runConsumerAuthGate(t, h, App{ID: "app-1", AccountID: "acct-1"}, http.MethodGet,
+		"fp_live_"+strings.Repeat("a", 48))
+	if !ok || rr.Code != http.StatusOK {
+		t.Fatalf("empty consumer auth mode: ok=%v status=%d, want true/200", ok, rr.Code)
+	}
+}
+
 func TestEnforceConsumerAuth_RequiredAnonymousRejected(t *testing.T) {
 	store, _ := consumerAuthFixture()
 	h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)

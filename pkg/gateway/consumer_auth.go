@@ -106,7 +106,14 @@ func (t *consumerKeyToucher) touch(store ConsumerAuthStore, keyID string) {
 func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
 	mode := app.ConsumerAuthMode
 	if mode == "" {
-		mode = api.ConsumerAuthModeOptional
+		// An empty mode is the zero value used by legacy/fake App rows
+		// that predate apps.consumer_auth_mode. Keep those rows entirely
+		// unchanged: their Authorization header may carry an operator
+		// API key (fp_live_…) for require_authn/public_auth rather than a
+		// customer consumer key. Durable app rows always hydrate the
+		// column (defaulting to "optional"), so explicit optional mode
+		// still enforces the ADR-120 present-credential matrix.
+		return true
 	}
 	if mode != api.ConsumerAuthModeOptional && mode != api.ConsumerAuthModeRequired {
 		if h.log != nil {
