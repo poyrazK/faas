@@ -7209,6 +7209,15 @@ func writeWakeError(w http.ResponseWriter, err error) {
 	default:
 		var prob *api.Problem
 		if errors.As(err, &prob) {
+			// A budget expiry can arrive here as a canonical Problem when
+			// the wake/forward layer converts its context deadline before
+			// the outer middleware observes it. Preserve the same edge
+			// marker as the direct timeout writers so the public Worker can
+			// distinguish it from a genuine CDN/origin 504.
+			if prob.Code == api.CodeRequestBudgetExceeded {
+				w.Header().Set(api.ErrorCodeHeader, api.CodeRequestBudgetExceeded)
+				w.Header().Set("Cache-Control", "no-store")
+			}
 			api.WriteProblem(w, prob)
 			return
 		}

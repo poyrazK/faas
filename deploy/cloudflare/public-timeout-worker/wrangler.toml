@@ -1,0 +1,13 @@
+name = "gregale-public-timeout"
+main = "worker.mjs"
+compatibility_date = "2026-09-11"
+workers_dev = false
+
+routes = [
+  { pattern = "api.gregale.dev/*", zone_name = "gregale.dev" },
+  { pattern = "*.apps.gregale.dev/*", zone_name = "gregale.dev" },
+  { pattern = "*.gregale.dev/*", zone_name = "gregale.dev" },
+]
+
+[vars]
+ORIGIN_HOSTNAME = "origin.gregale.dev"
