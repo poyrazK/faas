@@ -71,7 +71,7 @@ func serveExecutionOnce(ctx context.Context, ln net.Listener, handler executionp
 	if err != nil {
 		return fmt.Errorf("execution vsock accept: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	return executionproto.Serve(ctx, conn, handler)
 }
 
@@ -92,7 +92,7 @@ func runExecutionGuest(log *slog.Logger) error {
 		_ = poweroffExecution()
 		return err
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	serveErr := serveExecutionOnce(context.Background(), ln, executor.New().Handle)
 	if serveErr != nil {
 		log.Warn("execution guest exchange failed", "err", serveErr)

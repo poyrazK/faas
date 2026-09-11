@@ -70,7 +70,7 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	if err != nil {
 		return executionproto.Result{}, errors.New("execution scratch space unavailable")
 	}
-	defer os.RemoveAll(workdir)
+	defer func() { _ = os.RemoveAll(workdir) }()
 
 	sourcePath := filepath.Join(workdir, sourceName)
 	inputPath := filepath.Join(workdir, "input.json")
@@ -214,11 +214,12 @@ func writeGuestFile(path string, data []byte) error {
 }
 
 func readResult(path string) (json.RawMessage, error) {
+	//nolint:forbidigo // path is a freshly-created per-request scratch file; no customer path is accepted here.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, int64(executionproto.MaxFrameBytes)+1))
 	if err != nil {
 		return nil, err
