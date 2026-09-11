@@ -1,0 +1,16 @@
+name = "gregale-public-timeout"
+main = "worker.mjs"
+compatibility_date = "2026-09-11"
+workers_dev = false
+
+# Use a DNS-only hostname that resolves to the Caddy origin. It must not route
+# back through this Worker, and it must be in the same Cloudflare zone for
+# `cf.resolveOverride` to preserve the customer Host header.
+[vars]
+ORIGIN_HOSTNAME = "origin.gregale.dev"
+
+# Configure the route in the Cloudflare dashboard or with your deployment
+# pipeline. Keep the Worker on the customer-facing routes only:
+#   api.gregale.dev/*
+#   *.gregale.dev/*
+#   *.apps.gregale.dev/*

@@ -29,7 +29,21 @@ func requestBudgetExpired(ctx context.Context) bool {
 	return errors.Is(ctx.Err(), context.DeadlineExceeded) || b.Remaining(time.Time{}) <= 0
 }
 
-func writeRequestBudgetExceeded(w http.ResponseWriter) {
+// writeRequestBudgetExceededForRequest emits the canonical timeout envelope
+// plus stable edge metadata. The metadata is intentionally outside the JSON
+// body: a Cloudflare Worker can preserve/reconstruct the body while
+// distinguishing this platform-owned timeout from a genuine CDN failure.
+func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request) {
+	// Avoid Header.Add here. gatewayd-internal stamps the request id before
+	// this path and duplicate correlation headers make clients disagree about
+	// which value to log.
+	if r != nil {
+		if rid := requestIDFrom(r); rid != "" {
+			w.Header().Set(api.RequestIDHeader, rid)
+		}
+	}
+	w.Header().Set(api.ErrorCodeHeader, api.CodeRequestBudgetExceeded)
+	w.Header().Set("Cache-Control", "no-store")
 	api.WriteProblem(w, api.NewProblem(http.StatusGatewayTimeout,
 		api.CodeRequestBudgetExceeded,
 		"Request budget exceeded",
@@ -41,7 +55,7 @@ func writeRequestBudgetExceeded(w http.ResponseWriter) {
 // has already gone away and no response should be written.
 func writeBurstCapacityError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if r != nil && requestBudgetExpired(r.Context()) {
-		writeRequestBudgetExceeded(w)
+		writeRequestBudgetExceededForRequest(w, r)
 		return true
 	}
 	if r != nil && errors.Is(err, context.Canceled) && r.Context().Err() != nil {
@@ -63,7 +77,7 @@ func handleForwardRequestCancellation(w http.ResponseWriter, r *http.Request, ca
 	ctx := r.Context()
 	if requestBudgetExpired(ctx) {
 		if canWrite {
-			writeRequestBudgetExceeded(w)
+			writeRequestBudgetExceededForRequest(w, r)
 		}
 		return true
 	}

@@ -20,6 +20,7 @@ func TestWriteBurstCapacityErrorMapsBudgetExpiryTo504(t *testing.T) {
 		Started: time.Now().Add(-2 * time.Second),
 	})
 	r := httptest.NewRequest("POST", "http://example.test", nil).WithContext(ctx)
+	r.Header.Set("x-faas-request-id", "budget-req-1")
 	rr := httptest.NewRecorder()
 
 	if !writeBurstCapacityError(rr, r, context.DeadlineExceeded) {
@@ -31,6 +32,15 @@ func TestWriteBurstCapacityErrorMapsBudgetExpiryTo504(t *testing.T) {
 	problem := rr.Body.String()
 	if !strings.Contains(problem, api.CodeRequestBudgetExceeded) {
 		t.Fatalf("body = %q, missing code %q", problem, api.CodeRequestBudgetExceeded)
+	}
+	if got := rr.Header().Get(api.ErrorCodeHeader); got != api.CodeRequestBudgetExceeded {
+		t.Fatalf("error code header = %q, want %q", got, api.CodeRequestBudgetExceeded)
+	}
+	if got := rr.Header().Get(api.RequestIDHeader); got != "budget-req-1" {
+		t.Fatalf("request id header = %q, want budget-req-1", got)
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("cache-control = %q, want no-store", got)
 	}
 }
 

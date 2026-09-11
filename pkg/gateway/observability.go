@@ -8,7 +8,26 @@ import (
 	"encoding/hex"
 	"net/http"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// RequestIDMiddleware stamps a request id before a public edge handler runs.
+// gatewayd-internal also stamps the id at its routing boundary, but the
+// public listener can time out before that hop returns. Stamping here keeps
+// the correlation id available on those early 504 responses and forwards it
+// through the internal proxy.
+func RequestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rid := r.Header.Get(api.RequestIDHeader)
+		if rid == "" {
+			rid = newRequestID()
+		}
+		w.Header().Set(api.RequestIDHeader, rid)
+		r = r.WithContext(WithRequestID(r.Context(), rid)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+		next.ServeHTTP(w, r)
+	})
+}
 
 // requestIDKey is the context key used to thread a per-request id through
 // downstream handlers and outbound RPCs.

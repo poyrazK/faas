@@ -377,8 +377,41 @@ func TestInternalReverseProxy_BudgetExpiry_504NotBadGateway(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), api.CodeRequestBudgetExceeded) {
 		t.Errorf("body = %q, want RFC 7807 code %q", rr.Body.String(), api.CodeRequestBudgetExceeded)
 	}
+	if got := rr.Header().Get(api.ErrorCodeHeader); got != api.CodeRequestBudgetExceeded {
+		t.Errorf("error code header = %q, want %q", got, api.CodeRequestBudgetExceeded)
+	}
+	if got := rr.Header().Get(api.RequestIDHeader); got == "" {
+		t.Error("request id header is empty")
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("cache-control = %q, want no-store", got)
+	}
 	if strings.Contains(rr.Body.String(), "bad gateway") {
 		t.Errorf("body = %q, must not blame upstream for the edge's own deadline", rr.Body.String())
+	}
+}
+
+func TestInternalReverseProxy_ReplacesSingletonEdgeHeaders(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(api.RequestIDHeader, "upstream-request")
+		w.Header().Set(api.ErrorCodeHeader, api.CodeRequestBudgetExceeded)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	dialer := &stubDialer{server: upstream}
+	p := NewInternalReverseProxy(dialer, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	rr.Header().Set(api.RequestIDHeader, "public-request")
+	rr.Header().Set(api.ErrorCodeHeader, "stale")
+	p.ServeHTTP(rr, req)
+
+	if got := rr.Header().Values(api.RequestIDHeader); len(got) != 1 || got[0] != "upstream-request" {
+		t.Fatalf("request id headers = %v, want one upstream value", got)
+	}
+	if got := rr.Header().Values(api.ErrorCodeHeader); len(got) != 1 || got[0] != api.CodeRequestBudgetExceeded {
+		t.Fatalf("error code headers = %v, want one upstream value", got)
 	}
 }
 
