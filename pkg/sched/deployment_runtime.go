@@ -13,6 +13,13 @@ import (
 // applies to app.json. Returning zero preserves the platform's legacy 8080
 // default for container deployments and older rows.
 func deploymentRuntimePort(dep state.Deployment) int {
+	return DeploymentRuntimePort(dep)
+}
+
+// DeploymentRuntimePort exposes the scheduler's canonical runtime-port
+// resolution to gateway restart reconciliation. Both paths must rebuild the
+// same Target or a custom-port app becomes unreachable after gatewayd restarts.
+func DeploymentRuntimePort(dep state.Deployment) int {
 	if dep.OverridePort != 0 {
 		return dep.OverridePort
 	}

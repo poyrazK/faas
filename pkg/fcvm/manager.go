@@ -1771,6 +1771,7 @@ func (m *Manager) ReportLivenessFailed(ctx context.Context, instanceID, reason s
 // without vmmd hard-coding it.
 type LivenessProbeConfig struct {
 	Path                string
+	Port                int
 	PeriodSeconds       int
 	ConsecutiveFailures int
 	CooldownSeconds     int
@@ -2030,9 +2031,16 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 	// legacy pre-PR-B callers carry "" on the wire; the gate
 	// falls back to the bypass branch in that case.
 	deploymentID := ""
+	// The host publishes every guest through :8080, while DNAT can map that
+	// to a source-inferred or explicitly configured port inside the guest.
+	// Guest liveness runs inside the VM and must probe that actual port.
+	cfg.Port = netns.AppPort
 	m.mu.Lock()
 	if inst, ok := m.live[instance]; ok {
 		deploymentID = inst.DeploymentID
+		if inst.Port > 0 && inst.Port <= 65535 {
+			cfg.Port = inst.Port
+		}
 	}
 	m.mu.Unlock()
 	if m.livenessStarter == nil {

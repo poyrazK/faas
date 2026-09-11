@@ -1102,6 +1102,32 @@ func TestDestroyCancelsLivenessLoop(t *testing.T) {
 	}
 }
 
+func TestLivenessLoopUsesInstanceRuntimePort(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	registry := NewLivenessRegistry()
+	var got LivenessProbeConfig
+	m.WithLivenessProbes(registry, LivenessProbeConfig{
+		Path:                "/healthz",
+		PeriodSeconds:       5,
+		ConsecutiveFailures: 3,
+	}).WithLivenessProbeStarter(func(_ context.Context, _ string, _ int, _ string, cfg LivenessProbeConfig) context.CancelFunc {
+		got = cfg
+		return func() {}
+	})
+	m.mu.Lock()
+	m.live["i-custom-port"] = &Instance{
+		Lease: Lease{Instance: "i-custom-port", Slot: 1},
+		Port:  3000,
+	}
+	m.mu.Unlock()
+
+	m.startLivenessLoop(context.Background(), "i-custom-port", 1, nil)
+	t.Cleanup(func() { m.cancelLivenessLoop("i-custom-port") })
+	if got.Port != 3000 {
+		t.Fatalf("liveness port = %d, want 3000", got.Port)
+	}
+}
+
 func TestParkCancelsLivenessLoop(t *testing.T) {
 	run, vmm := &fakeRunner{}, &fakeVMM{}
 	m := newTestManager(run, vmm)
