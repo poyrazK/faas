@@ -23,6 +23,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 172 | [Public CLI distribution channels: curl installer and npm](172-cli-distribution-channels.md) | accepted | the CLI had no install path; proprietary license rules out homebrew-core/nixpkgs |
 | 171 | [Disposable one-shot executions from sanitized runtime snapshots](171-disposable-one-shot-executions.md) | proposed | caller-supplied code execution gap; runtime-snapshot foundation |
 | 168 | [Temporary cold-boot CPU allowance](168-cold-boot-startup-cpu.md) | accepted | SSD-node micro-profile cold-boot measurements; issue #1668 |
 | 165 | [Remote snapshot memory compression](165-remote-snapshot-memory-compression.md) | proposed | SSD-node snapshot publication measurement; reader-first OCI wire-format rollout |
