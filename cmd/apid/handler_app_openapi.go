@@ -288,12 +288,12 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	created := make([]state.EdgeRule, 0, len(suggestions))
-	rollback := func() {
+	rollback := func(ctx context.Context) {
 		for i := len(created) - 1; i >= 0; i-- {
 			row := created[i]
-			if deleteErr := s.store.DeleteEdgeRule(r.Context(), row.ID); deleteErr == nil || errors.Is(deleteErr, state.ErrNotFound) {
+			if deleteErr := s.store.DeleteEdgeRule(ctx, row.ID); deleteErr == nil || errors.Is(deleteErr, state.ErrNotFound) {
 				if s.notif != nil {
-					_ = s.notif.Notify(r.Context(), db.NotifyEdgeRuleChanged,
+					_ = s.notif.Notify(ctx, db.NotifyEdgeRuleChanged,
 						fmt.Sprintf(`{"app_id":%q,"rule_id":%q,"op":"deleted"}`, app.ID, row.ID))
 				}
 			}
@@ -311,7 +311,7 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 		}
 		actionRaw, marshalErr := json.Marshal(actionPayload)
 		if marshalErr != nil {
-			rollback()
+			rollback(r.Context())
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
 				"failed to encode OpenAPI policy action", marshalErr.Error()))
 			return
@@ -322,7 +322,7 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 			ValidateMode: api.ValidateModeObserve, Action: actionRaw,
 		}
 		if prob := validateEdgeRuleBody(&createReq, acct.Plan); prob != nil {
-			rollback()
+			rollback(r.Context())
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -333,7 +333,7 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 			Action: actionFromBody(suggestion.Kind, actionRaw), ValidateMode: api.ValidateModeObserve,
 		}, limits)
 		if createErr != nil {
-			rollback()
+			rollback(r.Context())
 			var qe *state.EdgeRuleQuotaError
 			switch {
 			case errors.As(createErr, &qe):
