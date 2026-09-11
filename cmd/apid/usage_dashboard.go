@@ -39,9 +39,11 @@ func usageAppData(rows []state.Usage, apps []state.App, totalGBHours float64) []
 			SharePct:    share,
 			Requests:    row.Requests,
 			CPUHours:    meter.CPUHours(row.CPUUsec),
-			EgressGB:    float64(row.TXBytes+row.NetTxBytes) / (1024 * 1024 * 1024),
-			IngressGB:   float64(row.NetRxBytes) / (1024 * 1024 * 1024),
-			ColdBoots:   row.ColdBootCount,
+			// TXBytes is the gateway payload subset of canonical interface
+			// egress and must not be added to NetTxBytes.
+			EgressGB:  float64(row.NetTxBytes) / (1024 * 1024 * 1024),
+			IngressGB: float64(row.NetRxBytes) / (1024 * 1024 * 1024),
+			ColdBoots: row.ColdBootCount,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
