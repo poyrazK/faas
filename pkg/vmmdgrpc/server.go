@@ -25,6 +25,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/activity"
 	"github.com/onebox-faas/faas/pkg/fcvm/cpustats"
@@ -161,6 +162,14 @@ type wakeNetworkReadyVMM interface {
 type JobVMMAPI interface {
 	BootJob(context.Context, fcvm.JobBootRequest) (*fcvm.Instance, error)
 	WaitJobExit(context.Context, string, time.Duration) (fcvm.JobExitPayload, error)
+}
+
+// ExecutionVMMAPI is the optional post-restore execution surface. Keeping it
+// separate from VmmdAPI preserves compatibility with older vmmd fakes and
+// makes capability negotiation explicit: a node without a configured
+// execution dialer returns Unimplemented before it sees caller source.
+type ExecutionVMMAPI interface {
+	ExecuteExecution(context.Context, string, executionproto.Request) (executionproto.Result, error)
 }
 
 // flowCounter is the compute-side conntrack seam. Keeping it local to the
@@ -631,6 +640,38 @@ func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		Instance: inst.Lease.Instance,
 		NodeId:   boot.NodeID,
 	}, nil
+}
+
+// ExecuteExecution sends one validated payload to an already restored
+// disposable VM. Manager owns the final teardown, including netns, cgroup,
+// lease, and live-map cleanup, before this handler returns.
+func (s *Server) ExecuteExecution(ctx context.Context, req *vmmdpb.ExecuteExecutionRequest) (*vmmdpb.ExecuteExecutionResponse, error) {
+	const op = "ExecuteExecution"
+	start := time.Now()
+	executionVMM, ok := s.vmm.(ExecutionVMMAPI)
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Execution unavailable", "vmmd execution is not configured")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	wireReq, err := executionRequestFromProto(req)
+	if err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	result, err := executionVMM.ExecuteExecution(ctx, req.GetInstance(), wireReq)
+	if err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(executionProblem(err))
+	}
+	if err := result.Validate(wireReq.MaxOutput); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Execution protocol failed", "vmmd received an invalid terminal result"))
+	}
+	s.ops.Observe(op, time.Since(start), nil)
+	return executionResponseFromResult(wireReq.ExecutionID, result), nil
 }
 
 // WaitJobExit waits for the guest supervisor's terminal job receipt. The
@@ -1551,6 +1592,32 @@ func toProblem(err error) *api.Problem {
 	}
 	return api.NewProblem(int(codes.Internal), "internal",
 		"vmmd operation failed", err.Error())
+}
+
+// executionProblem maps internal execution failures to a fixed, caller-safe
+// envelope. Guest error strings may contain source snippets or host paths, so
+// they never cross this boundary verbatim.
+func executionProblem(err error) *api.Problem {
+	if err == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(err, fcvm.ErrExecutionInstanceNotFound):
+		return api.NewProblem(int(codes.NotFound), api.CodeNotFound,
+			"Execution instance not found", "the disposable execution instance is no longer live")
+	case errors.Is(err, fcvm.ErrExecutionNotConfigured):
+		return api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Execution unavailable", "vmmd execution is not configured")
+	case errors.Is(err, executionproto.ErrInvalidRequest):
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid execution request", "request failed guest-boundary validation")
+	case errors.Is(err, context.DeadlineExceeded):
+		return api.NewProblem(int(codes.DeadlineExceeded), api.CodeInternal,
+			"Execution timed out", "the execution deadline elapsed")
+	default:
+		return api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Execution failed", "the isolated execution could not be completed")
+	}
 }
 
 // unused import guard.

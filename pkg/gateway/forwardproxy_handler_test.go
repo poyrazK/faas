@@ -1,3 +1,4 @@
+// adr: 171
 // Tests for the gatewayd-internal Handler × ForwardingReverseProxy integration
 // (issue #98 / ADR-028 / ADR-047). The unit tests in forwardproxy_test.go
 // pin the forwarder in isolation; this file pins the seam — when the
@@ -106,6 +107,9 @@ func (s *stubVmmdClient) CreateColdBoot(context.Context, *vmmdpb.CreateColdBootR
 }
 func (s *stubVmmdClient) JobColdBoot(context.Context, *vmmdpb.JobColdBootRequest, ...grpc.CallOption) (*vmmdpb.JobColdBootResponse, error) {
 	panic("JobColdBoot: not stubbed in handler integration test")
+}
+func (s *stubVmmdClient) ExecuteExecution(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (*vmmdpb.ExecuteExecutionResponse, error) {
+	panic("ExecuteExecution: not stubbed in handler integration test")
 }
 func (s *stubVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
 	panic("WaitJobExit: not stubbed in handler integration test")
