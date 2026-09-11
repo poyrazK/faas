@@ -38,6 +38,13 @@ func TestPgCreateDeployment_ParkedAppPreservesCustomCanary(t *testing.T) {
 	if err := s.MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
+	prior, err = s.DeploymentByID(ctx, prior.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prior.RolloutState != "complete" || prior.RolloutCompletedAt == nil {
+		t.Fatalf("stable deployment rollout = state:%q completed_at:%v; want complete with terminal timestamp", prior.RolloutState, prior.RolloutCompletedAt)
+	}
 
 	parked := state.AppEvictedCold
 	if _, err := s.UpdateApp(ctx, app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
