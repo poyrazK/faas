@@ -1744,7 +1744,7 @@ func (c *Client) CancelJobRun(ctx context.Context, name, runID string) (JobRunCa
 }
 
 // ListJobRunTasks returns a page of the run's task rows
-// (issue #1184 Workstream A). task_index 1..N (1-based; matches
+// (issue #1184 Workstream A). task_index 0..N-1 (zero-based; matches
 // the server's CTE fan-out). Status is the closed-set {queued,
 // claimed, succeeded, failed, timeout, oom, cancelled}. LeaseToken
 // is intentionally OMITTED from the wire response (internal
