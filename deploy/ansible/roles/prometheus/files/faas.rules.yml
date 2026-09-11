@@ -631,18 +631,20 @@ groups:
       # reporting still belongs in the durable metrics backend; this local
       # Prometheus retains 15 days.
       #
-      # `sum(rate(...[5m])) > 0` guards the denominator so an idle box
-      # does not alert. Do not clamp a rate denominator to 1: at less than
-      # one request per second that changes the ratio and makes successful
-      # low-volume traffic look unavailable.
+      # Eligible platform outcomes are 2xx and 5xx. Client/application 4xx
+      # responses do not consume the fleet availability budget. The
+      # `sum(rate(...[5m])) > 0` guard keeps an idle box from alerting. Do not
+      # clamp a rate denominator to 1: at less than one request per second
+      # that changes the ratio and makes successful low-volume traffic look
+      # unavailable.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasApiAvailabilityLow
         expr: |
-          (sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m]))
+          ((sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) or vector(0))
             /
-          sum(rate(gateway_requests_total{app!="-"}[5m])))
+          sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])))
             < 0.995
-          and sum(rate(gateway_requests_total{app!="-"}[5m])) > 0
+          and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
         for: 10m
         labels:
           severity: page
@@ -657,18 +659,18 @@ groups:
         expr: |
           (
             (
-              sum(rate(gateway_requests_total{app!="-",code!~"2.."}[1h]))
-              / sum(rate(gateway_requests_total{app!="-"}[1h]))
+              sum(rate(gateway_requests_total{app!="-",code=~"5.."}[1h]))
+              / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h]))
             ) > 0.072
-            and sum(rate(gateway_requests_total{app!="-"}[1h])) > 0
+            and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h])) > 0
           )
           and
           (
             (
-              sum(rate(gateway_requests_total{app!="-",code!~"2.."}[6h]))
-              / sum(rate(gateway_requests_total{app!="-"}[6h]))
+              sum(rate(gateway_requests_total{app!="-",code=~"5.."}[6h]))
+              / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h]))
             ) > 0.03
-            and sum(rate(gateway_requests_total{app!="-"}[6h])) > 0
+            and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h])) > 0
           )
         for: 10m
         labels:
