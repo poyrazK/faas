@@ -120,7 +120,8 @@ func (l *Loop) WithFCSweepCh(ch <-chan struct{}) *Loop {
 // in-process worker polls with FOR UPDATE SKIP LOCKED). imaged no
 // longer re-emits db.NotifyBuildQueued on a reap tick; only the
 // deployment-side signals (NotifyDeploymentChanged,
-// NotifySnapshotBoot, NotifySnapshotWritten, NotifyAppChanged) drive
+// NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady,
+// NotifyAppChanged) drive
 // imaged's handlers.
 //
 // Tests can drive the loop without a pool by passing nil Pool; in that
@@ -163,6 +164,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			db.NotifyDeploymentChanged,
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
+			db.NotifyDeploymentReady,
 			db.NotifyAppChanged,
 			// Issue #472 / ADR-054: cosign trusted-publisher CRUD
 			// (apid → imaged refresh) + imaged-side audit emits

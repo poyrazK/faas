@@ -1299,6 +1299,15 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 		if err := h.handleSnapshotWritten(ctx, p); err != nil {
 			h.log.Warn("imaged: record snapshot failed", "deployment", p.DeploymentID, "err", err)
 		}
+	case db.NotifyDeploymentReady:
+		var p deploymentReadyPayload
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+			h.log.Warn("imaged: bad deployment_ready payload", "err", err)
+			return
+		}
+		if err := h.handleDeploymentReady(ctx, p); err != nil {
+			h.log.Warn("imaged: activate non-snapshot deployment failed", "deployment", p.DeploymentID, "mode", p.ExecutionMode, "err", err)
+		}
 	case db.NotifyAppChanged:
 		var p appChangedPayload
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
@@ -1387,6 +1396,16 @@ type snapshotWrittenPayload struct {
 	// lands, this field is empty and the row is recorded as
 	// init per the DB column default.
 	Tier string `json:"tier,omitempty"`
+}
+
+// deploymentReadyPayload is the non-snapshot sibling of
+// snapshotWrittenPayload. Worker deploys carry the RUNNING instance that
+// proved startup; job deploys are artifact-only and deliberately carry no
+// instance because executing the job entrypoint belongs to invocation time.
+type deploymentReadyPayload struct {
+	DeploymentID  string `json:"deployment_id"`
+	ExecutionMode string `json:"execution_mode"`
+	InstanceID    string `json:"instance_id,omitempty"`
 }
 
 // snapshotBootPayload is the JSON shape builderd emits on `snapshot_boot`
@@ -2497,75 +2516,133 @@ func layersAsReaders(rcs []io.ReadCloser) []io.Reader {
 	return out
 }
 
-// handleSnapshotWritten records the snapshot row schedd's Prime/Park produced and
-// flips the deployment `live` (spec §5, ADR-018). imaged is the sole writer to
-// the snapshots table, so this is the only place the row is inserted. Idempotent:
-// a duplicate emission (same deployment_id) collapses to ErrConflict and the
-// deployment is (re-)marked live regardless, so a redelivered notification is safe.
+// handleSnapshotWritten records the snapshot row schedd's Prime/Park produced,
+// then enters the shared deployment activation path. imaged remains the sole
+// writer to both snapshots and the deployment live transition.
 func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPayload) error {
-	if p.DeploymentID == "" {
-		return errors.New("imaged: snapshot_written missing deployment_id")
+	return h.handleDeploymentActivation(ctx, p, nil)
+}
+
+// handleDeploymentReady activates worker/job deployments without inventing a
+// snapshot. Workers prove readiness with a matching RUNNING instance; jobs are
+// artifact-only at deploy time so user code runs exactly once per invocation.
+func (h *Handler) handleDeploymentReady(ctx context.Context, p deploymentReadyPayload) error {
+	return h.handleDeploymentActivation(ctx, snapshotWrittenPayload{}, &p)
+}
+
+// handleDeploymentActivation is the common post-readiness deployment gate.
+// snapshot is populated for request/service flows; ready is populated for the
+// non-snapshot worker/job flows. Exactly one input must be present.
+func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) error {
+	deploymentID := snapshot.DeploymentID
+	if ready != nil {
+		deploymentID = ready.DeploymentID
 	}
-	dep, err := h.store.DeploymentByID(ctx, p.DeploymentID)
+	if deploymentID == "" {
+		return errors.New("imaged: deployment activation missing deployment_id")
+	}
+	dep, err := h.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		return fmt.Errorf("imaged: load deployment: %w", err)
 	}
 	app, err := h.store.AppByID(ctx, dep.AppID)
 	if err != nil {
-		return fmt.Errorf("imaged: load app for snapshot: %w", err)
-	}
-	// Firecracker restore requires the memory artifact to match the VM's
-	// configured RAM exactly. An app update can race a snapshot notification,
-	// so validate again at the sole snapshot-row writer rather than relying
-	// only on schedd's pre-capture check. Zero is retained for legacy writers
-	// that did not report mem_bytes.
-	expectedMemBytes := int64(app.RAMMB) << 20
-	if p.MemBytes > 0 && app.RAMMB > 0 && p.MemBytes != expectedMemBytes {
-		if state.IsSnapshotCaptureKey(p.StorageKey) {
-			h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: p.StorageKey})
-		}
-		return fmt.Errorf("imaged: snapshot RAM mismatch: deployment %s has %d bytes, app requires %d",
-			p.DeploymentID, p.MemBytes, expectedMemBytes)
+		return fmt.Errorf("imaged: load app for deployment activation: %w", err)
 	}
 
-	snap := state.Snapshot{
-		DeploymentID:     p.DeploymentID,
-		FCVersion:        p.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
-		BaseImageVersion: p.BaseImageVersion, // pins H2C runner/base compatibility
-		StorageKey:       p.StorageKey,       // see snapshotWrittenPayload.StorageKey
-		MemBytes:         p.MemBytes,
-		DiskBytes:        p.VMStateBytes,
-		StoredBytes:      p.StoredBytes,
-		// Tier (issue #470 / PR #470-FU-B). Empty payload falls
-		// back to "init" (the DB column default and the legacy
-		// pre-#470 behaviour); warm-tier rows are only ever
-		// written by schedd's captureWarmSnapshot path
-		// (PR #470-FU-A), which is the only flow that knows the
-		// framework-ready signal has actually fired.
-		Tier: p.Tier,
-	}
-	stored, err := h.store.CreateSnapshot(ctx, snap)
-	if err != nil {
-		if !errors.Is(err, state.ErrConflict) {
-			return fmt.Errorf("imaged: create snapshot: %w", err)
+	if ready != nil {
+		if dep.Status != state.DeploySnapshotting && dep.Status != state.DeployLive {
+			return fmt.Errorf("imaged: deployment_ready cannot activate deployment in %q", dep.Status)
 		}
-		stored, err = h.store.LatestSnapshotForTier(ctx, p.DeploymentID, snap.Tier)
-		if err != nil {
-			return fmt.Errorf("imaged: load existing snapshot: %w", err)
+		mode := app.Manifest.ExecutionMode
+		if mode == "" {
+			mode = api.ExecutionModeRequest
+		}
+		if ready.ExecutionMode != mode {
+			return fmt.Errorf("imaged: deployment_ready mode mismatch: payload=%q app=%q", ready.ExecutionMode, mode)
+		}
+		switch mode {
+		case api.ExecutionModeWorker:
+			if ready.InstanceID == "" {
+				return errors.New("imaged: worker deployment_ready missing instance_id")
+			}
+			if dep.Status == state.DeployLive {
+				return nil
+			}
+			ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
+			if instanceErr != nil {
+				return fmt.Errorf("imaged: load ready worker instance: %w", instanceErr)
+			}
+			if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
+				ins.Mode != string(state.InstanceModeWorker) || ins.State != string(state.StateRunning) {
+				return fmt.Errorf("imaged: worker readiness proof does not match a running worker instance")
+			}
+		case api.ExecutionModeJob:
+			if ready.InstanceID != "" {
+				return errors.New("imaged: job deployment_ready must not carry instance_id")
+			}
+			if dep.Status == state.DeployLive {
+				return nil
+			}
+		default:
+			return fmt.Errorf("imaged: execution mode %q requires snapshot activation", mode)
 		}
 	}
-	if stored.StorageKey != p.StorageKey && state.IsSnapshotCaptureKey(p.StorageKey) {
-		// A second capture can finish before the first notification is read.
-		// Keep the already-published pair and discard only this unused one.
-		h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: p.StorageKey})
-	}
-	if p.NodeID != "" && stored.StorageKey == p.StorageKey {
-		if origins, ok := h.store.(state.SnapshotOriginStore); ok {
-			if originErr := origins.RecordSnapshotOrigin(ctx, stored.ID, p.NodeID); originErr != nil {
-				// Origin metadata improves locality but is not the blob's
-				// source of truth. Keep the deployment live if an older
-				// compute_nodes row or a transient DB issue blocks it.
-				h.log.Warn("imaged: record snapshot origin failed", "snapshot_id", stored.ID, "node_id", p.NodeID, "err", originErr)
+
+	if ready == nil {
+		// Firecracker restore requires the memory artifact to match the VM's
+		// configured RAM exactly. An app update can race a snapshot notification,
+		// so validate again at the sole snapshot-row writer rather than relying
+		// only on schedd's pre-capture check. Zero is retained for legacy writers
+		// that did not report mem_bytes.
+		expectedMemBytes := int64(app.RAMMB) << 20
+		if snapshot.MemBytes > 0 && app.RAMMB > 0 && snapshot.MemBytes != expectedMemBytes {
+			if state.IsSnapshotCaptureKey(snapshot.StorageKey) {
+				h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: snapshot.StorageKey})
+			}
+			return fmt.Errorf("imaged: snapshot RAM mismatch: deployment %s has %d bytes, app requires %d",
+				snapshot.DeploymentID, snapshot.MemBytes, expectedMemBytes)
+		}
+
+		snap := state.Snapshot{
+			DeploymentID:     snapshot.DeploymentID,
+			FCVersion:        snapshot.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
+			BaseImageVersion: snapshot.BaseImageVersion, // pins H2C runner/base compatibility
+			StorageKey:       snapshot.StorageKey,       // see snapshotWrittenPayload.StorageKey
+			MemBytes:         snapshot.MemBytes,
+			DiskBytes:        snapshot.VMStateBytes,
+			StoredBytes:      snapshot.StoredBytes,
+			// Tier (issue #470 / PR #470-FU-B). Empty payload falls
+			// back to "init" (the DB column default and the legacy
+			// pre-#470 behaviour); warm-tier rows are only ever
+			// written by schedd's captureWarmSnapshot path
+			// (PR #470-FU-A), which is the only flow that knows the
+			// framework-ready signal has actually fired.
+			Tier: snapshot.Tier,
+		}
+		stored, createErr := h.store.CreateSnapshot(ctx, snap)
+		if createErr != nil {
+			if !errors.Is(createErr, state.ErrConflict) {
+				return fmt.Errorf("imaged: create snapshot: %w", createErr)
+			}
+			stored, createErr = h.store.LatestSnapshotForTier(ctx, snapshot.DeploymentID, snap.Tier)
+			if createErr != nil {
+				return fmt.Errorf("imaged: load existing snapshot: %w", createErr)
+			}
+		}
+		if stored.StorageKey != snapshot.StorageKey && state.IsSnapshotCaptureKey(snapshot.StorageKey) {
+			// A second capture can finish before the first notification is read.
+			// Keep the already-published pair and discard only this unused one.
+			h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: snapshot.StorageKey})
+		}
+		if snapshot.NodeID != "" && stored.StorageKey == snapshot.StorageKey {
+			if origins, ok := h.store.(state.SnapshotOriginStore); ok {
+				if originErr := origins.RecordSnapshotOrigin(ctx, stored.ID, snapshot.NodeID); originErr != nil {
+					// Origin metadata improves locality but is not the blob's
+					// source of truth. Keep the deployment live if an older
+					// compute_nodes row or a transient DB issue blocks it.
+					h.log.Warn("imaged: record snapshot origin failed", "snapshot_id", stored.ID, "node_id", snapshot.NodeID, "err", originErr)
+				}
 			}
 		}
 	}
@@ -2576,8 +2653,8 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	// it to failed and retain the failed receipt when possible.
 	var hostingApp state.App
 	verificationStarted := time.Now()
-	hostingReceiptEnabled := h.hostingSmoke != nil || h.hostingSmokeRequired
-	if _, ok := h.store.(state.DeploymentHostingReceiptStore); ok {
+	hostingReceiptEnabled := ready == nil && (h.hostingSmoke != nil || h.hostingSmokeRequired)
+	if _, ok := h.store.(state.DeploymentHostingReceiptStore); ready == nil && ok {
 		hostingReceiptEnabled = true
 	}
 	if hostingReceiptEnabled {
@@ -2699,17 +2776,15 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 			h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeComplete, time.Since(verificationStarted))
 		}
 	}
-	// ADR-117: close the readiness stage. snapshot_prepare closed
-	// at handler.go:1355 / 2334; readiness opened when vmmd stamped
-	// the framework-ready probe success on this row (instance
-	// framework_ready_at). The customer sees the readiness row
-	// in the summary block — the `✓ Deployed.` line is owned by
-	// streamDeployLogs and is NOT a stage row.
+	// ADR-117: close the readiness stage. The existing stage vocabulary is
+	// retained for wire compatibility: snapshot_prepare means activation
+	// preparation for worker/job even though those modes do not write a
+	// snapshot. The customer-visible terminal line is not a stage row.
 	if appended, serr := h.store.AppendDeploymentStage(ctx, dep.ID,
 		state.StageSnapshotPrepare, state.StageReadiness, time.Now(), ""); serr != nil {
 		h.log.Warn("mark live: stage append failed",
 			"deployment_id", dep.ID, "from", "snapshot_prepare", "to", "readiness", "err", serr)
-	} else if h.ops != nil && len(appended.StageState) > 0 {
+	} else if ready == nil && h.ops != nil && len(appended.StageState) > 0 {
 		var ss state.StageState
 		if json.Unmarshal(appended.StageState, &ss) == nil && len(ss.History) > 0 {
 			for i := len(ss.History) - 1; i >= 0; i-- {
@@ -2727,7 +2802,7 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	if closed, serr := h.store.CloseDeploymentStage(ctx, dep.ID, state.StageReadiness, time.Now()); serr != nil {
 		h.log.Warn("mark live: stage close failed",
 			"deployment_id", dep.ID, "stage", "readiness", "err", serr)
-	} else if h.ops != nil {
+	} else if ready == nil && h.ops != nil {
 		if len(closed.StageState) > 0 {
 			var ss state.StageState
 			if json.Unmarshal(closed.StageState, &ss) == nil && len(ss.History) > 0 {
