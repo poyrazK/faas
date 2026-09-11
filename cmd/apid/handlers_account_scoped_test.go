@@ -488,7 +488,10 @@ func TestGetAppsMetrics_ZeroTrafficDoesNotDegrade(t *testing.T) {
 		case strings.Contains(query, "gateway_request_duration_seconds_bucket"):
 			return `{"data":{"resultType":"vector","result":[]}}`
 		case strings.Contains(query, "gateway_wake_latency_seconds_bucket"):
-			return `{"data":{"resultType":"vector","result":[{"value":[1,"250"]}]}}`
+			if !strings.Contains(query, "gateway_wake_latency_seconds_count") || !strings.Contains(query, "or vector(0)") {
+				return `{"data":{"resultType":"vector","result":[{"value":[1,"NaN"]}]}}`
+			}
+			return `{"data":{"resultType":"vector","result":[{"value":[1,"0"]}]}}`
 		default:
 			return `{"data":{"resultType":"vector","result":[]}}`
 		}

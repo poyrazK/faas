@@ -79,6 +79,14 @@ func PercentRatioQuery(numerator, denominator string) string {
 	return fmt.Sprintf(`(((%s) or vector(0)) / (%s) * 100) and ((%s) > 0)`, numerator, denominator, denominator)
 }
 
+// HistogramQuantileMSQuery builds an idle-safe latency percentile query.
+// Prometheus returns NaN when histogram_quantile has no observations, while
+// QueryScalar rejects non-finite samples. The matching count expression proves
+// that observations exist; otherwise the query returns a finite zero.
+func HistogramQuantileMSQuery(quantile float64, buckets, count string) string {
+	return fmt.Sprintf(`((histogram_quantile(%g, %s) * 1000) and ((%s) > 0)) or vector(0)`, quantile, buckets, count)
+}
+
 // Fetch runs the per-app PromQL queries and assembles an
 // AppMetricsResponse. Returns the response and a Source string
 // ("prometheus" on success, "degraded: <reason>" on failure). Safe
@@ -137,8 +145,10 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		return degradedFromErr(resp, err, log, "request_count")
 	}
 
-	// 2-4. P50 / P95 / P99 over 2xx class only. histogram_quantile
-	// returns NaN on an empty window — SafeFloat coerces to 0.
+	// 2-4. P50 / P95 / P99 over 2xx class only. Prometheus encodes
+	// histogram_quantile over an empty window as NaN. QueryScalar
+	// deliberately rejects non-finite samples before they reach
+	// SafeFloat, so make the idle value explicit in PromQL.
 	for _, p := range []struct {
 		q     float64
 		dest  *float64
@@ -148,9 +158,10 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		{q: 0.95, dest: &resp.LatencyP95MS, label: "p95"},
 		{q: 0.99, dest: &resp.LatencyP99MS, label: "p99"},
 	} {
-		q := fmt.Sprintf(
-			`histogram_quantile(%g, sum by (le) (rate(gateway_request_duration_seconds_bucket{app=%q,class="2xx"}[%s]))) * 1000`,
-			p.q, appID, rng)
+		q := HistogramQuantileMSQuery(
+			p.q,
+			fmt.Sprintf(`sum by (le) (rate(gateway_request_duration_seconds_bucket{app=%q,class="2xx"}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="2xx"}[%s]))`, appID, rng))
 		v, err := fetcher.QueryScalar(ctx, q)
 		if err != nil {
 			return degradedFromErr(resp, err, log, p.label)
@@ -179,8 +190,10 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	}
 
 	// 7. Fleet wake p95 (the unlabeled gateway_wake_latency_seconds).
-	wakeQ := fmt.Sprintf(
-		`histogram_quantile(0.95, sum by (le) (rate(gateway_wake_latency_seconds_bucket[%s]))) * 1000`, rng)
+	wakeQ := HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le) (rate(gateway_wake_latency_seconds_bucket[%s]))`, rng),
+		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, rng))
 	if v, err := fetcher.QueryScalar(ctx, wakeQ); err == nil {
 		resp.WakeP95MS = SafeFloat(v)
 	} else {
