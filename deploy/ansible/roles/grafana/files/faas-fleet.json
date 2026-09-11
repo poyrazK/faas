@@ -519,7 +519,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..\"}[5m])) / sum(rate(gateway_requests_total{app!=\"-\"}[5m])) * 100",
+          "expr": "(sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..\"}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) * 100",
           "refId": "A"
         }
       ],

@@ -83,7 +83,7 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 			name:     "api availability",
 			query:    statusAPIAvailabilityQuery,
 			fallback: "or vector(100)",
-			guard:    "sum(rate(gateway_requests_total{app!=\"-\"}[5m])) > 0",
+			guard:    "sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) > 0",
 		},
 		{
 			name:     "wake p95",
@@ -114,6 +114,10 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 	if strings.Contains(statusAPIAvailabilityQuery, `gateway_requests_total[5m]`) ||
 		!strings.Contains(statusAPIAvailabilityQuery, `app!="-"`) {
 		t.Fatalf("API availability query includes unresolved-host traffic: %q", statusAPIAvailabilityQuery)
+	}
+	if !strings.Contains(statusAPIAvailabilityQuery, `code=~"2..|5.."`) ||
+		strings.Contains(statusAPIAvailabilityQuery, `code=~"[45].."`) {
+		t.Fatalf("API availability query does not exclude client 4xx outcomes: %q", statusAPIAvailabilityQuery)
 	}
 }
 

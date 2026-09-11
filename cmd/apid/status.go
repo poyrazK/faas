@@ -104,8 +104,8 @@ type statusCache struct {
 
 const (
 	statusAPIAvailabilityQuery = `(
-		(sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) / sum(rate(gateway_requests_total{app!="-"}[5m])) * 100)
-		and sum(rate(gateway_requests_total{app!="-"}[5m])) > 0
+		((sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) * 100)
+		and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
 	) or vector(100)`
 	statusWakeP95Query = `(
 		(histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) * 1000)
@@ -185,7 +185,9 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	var firstErr error
 	okCount := 0
 
-	// 1. API availability over last 5m: 2xx / total for resolved apps.
+	// 1. API availability over last 5m: 2xx / eligible 2xx+5xx outcomes for
+	// resolved apps. Client and application 4xx responses are not platform
+	// failures and must not make the public fleet status look unavailable.
 	// Requests with app="-" never reached a tenant route (unknown Host and
 	// direct-address probes); counting them makes Internet scans look like a
 	// platform outage.
