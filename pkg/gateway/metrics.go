@@ -119,10 +119,18 @@ type Metrics struct {
 	vmInflightRequests *prometheus.GaugeVec
 	// Customer runtime log-drain delivery health. `kind` is the closed
 	// {http_json, otlp} vocabulary and `app` is the existing app identity.
-	logDrainDropped   *prometheus.CounterVec
-	logDrainDelivered *prometheus.CounterVec
-	logDrainFailed    *prometheus.CounterVec
-	logDrainActive    *prometheus.GaugeVec
+	logDrainDropped          *prometheus.CounterVec
+	logDrainDelivered        *prometheus.CounterVec
+	logDrainFailed           *prometheus.CounterVec
+	logDrainActive           *prometheus.GaugeVec
+	logDrainQueueDepth       *prometheus.GaugeVec
+	logDrainQueueCapacity    *prometheus.GaugeVec
+	logDrainDeliveryLatency  *prometheus.HistogramVec
+	logDrainRetries          *prometheus.CounterVec
+	logDrainStreamReconnects *prometheus.CounterVec
+	logDrainGaps             *prometheus.CounterVec
+	logDrainLastSuccess      *prometheus.GaugeVec
+	logDrainLastFailure      *prometheus.GaugeVec
 	// wakeLatencyByNode (PR #4 / ADR-092 §3.5) is the per-node
 	// labelled twin of wakeLatency. The unlabeled histogram stays
 	// untouched — it's the §12 SLA contract and is consumed by
@@ -687,8 +695,8 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "plan", "code"}),
 		logDrainDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_log_drain_dropped_total",
-			Help: "Runtime log records dropped because a customer log-drain queue was full or stopped.",
-		}, []string{"app"}),
+			Help: "Runtime log records dropped because a customer log-drain queue was full or stopped, labelled by app and kind.",
+		}, []string{"app", "kind"}),
 		logDrainDelivered: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_log_drain_delivered_total",
 			Help: "Runtime log records delivered to customer log-drain endpoints.",
@@ -700,6 +708,39 @@ func NewMetrics() *Metrics {
 		logDrainActive: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_log_drain_active",
 			Help: "Whether a configured customer log-drain worker is active.",
+		}, []string{"app", "kind"}),
+		logDrainQueueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_log_drain_queue_depth",
+			Help: "Number of runtime log records waiting in a customer log-drain delivery queue.",
+		}, []string{"app", "kind"}),
+		logDrainQueueCapacity: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_log_drain_queue_capacity",
+			Help: "Configured capacity of a customer log-drain delivery queue.",
+		}, []string{"app", "kind"}),
+		logDrainDeliveryLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "gateway_log_drain_delivery_latency_seconds",
+			Help:    "End-to-end seconds from enqueue to successful customer log-drain delivery.",
+			Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60},
+		}, []string{"app", "kind"}),
+		logDrainRetries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_log_drain_retries_total",
+			Help: "Retry attempts made for customer log-drain delivery.",
+		}, []string{"app", "kind"}),
+		logDrainStreamReconnects: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_log_drain_stream_reconnects_total",
+			Help: "Customer log-drain source stream reconnects after an established stream ends.",
+		}, []string{"app", "kind"}),
+		logDrainGaps: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_log_drain_gaps_total",
+			Help: "Runtime log ring gaps observed while feeding customer log drains.",
+		}, []string{"app", "kind"}),
+		logDrainLastSuccess: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_log_drain_last_success_timestamp_seconds",
+			Help: "Unix timestamp of the most recent successful customer log-drain delivery.",
+		}, []string{"app", "kind"}),
+		logDrainLastFailure: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_log_drain_last_failure_timestamp_seconds",
+			Help: "Unix timestamp of the most recent terminal customer log-drain delivery failure.",
 		}, []string{"app", "kind"}),
 		requestTelemetryDropped: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gateway_request_telemetry_dropped_total",
@@ -1481,7 +1522,7 @@ func NewMetrics() *Metrics {
 	// cartesian) is the same pattern as the rest of the family.
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
-	reg.MustRegister(m.requests, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -1536,13 +1577,13 @@ func (m *Metrics) SetInflightRequests(daemon, op string, count float64) {
 }
 
 // IncLogDrainDropped records a runtime line that could not enter a bounded
-// customer drain queue. The app label is intentionally the exact same app
-// identity used by gateway_requests_total.
-func (m *Metrics) IncLogDrainDropped(app string) {
-	if m == nil || m.logDrainDropped == nil || app == "" {
+// customer drain queue. The labels use the same app identity and closed drain
+// kind vocabulary as the other customer log-drain metrics.
+func (m *Metrics) IncLogDrainDropped(app, kind string) {
+	if m == nil || m.logDrainDropped == nil || app == "" || kind == "" {
 		return
 	}
-	m.logDrainDropped.WithLabelValues(app).Inc()
+	m.logDrainDropped.WithLabelValues(app, kind).Inc()
 }
 
 func (m *Metrics) ObserveLogDrainDelivered(app, kind string) {
@@ -1568,6 +1609,80 @@ func (m *Metrics) SetLogDrainActive(app, kind string, active bool) {
 		value = 1
 	}
 	m.logDrainActive.WithLabelValues(app, kind).Set(value)
+}
+
+// SetLogDrainQueue reports the current bounded-queue state. Capacity is
+// emitted separately so operators can alert on saturation without relying on
+// an implementation default.
+func (m *Metrics) SetLogDrainQueue(app, kind string, depth, capacity int) {
+	if m == nil || app == "" || kind == "" {
+		return
+	}
+	if m.logDrainQueueDepth != nil {
+		m.logDrainQueueDepth.WithLabelValues(app, kind).Set(float64(max(depth, 0)))
+	}
+	if m.logDrainQueueCapacity != nil {
+		m.logDrainQueueCapacity.WithLabelValues(app, kind).Set(float64(max(capacity, 0)))
+	}
+}
+
+// InitializeLogDrain creates a fresh health baseline for a worker. A zero
+// last-success value is meaningful: it lets alert rules distinguish a drain
+// that has never delivered from one that is merely idle.
+func (m *Metrics) InitializeLogDrain(app, kind string) {
+	if m == nil || app == "" || kind == "" {
+		return
+	}
+	if m.logDrainLastSuccess != nil {
+		m.logDrainLastSuccess.WithLabelValues(app, kind).Set(0)
+	}
+	if m.logDrainLastFailure != nil {
+		m.logDrainLastFailure.WithLabelValues(app, kind).Set(0)
+	}
+}
+
+// ObserveLogDrainDeliveryLatency records time from enqueue to a successful
+// endpoint response, including queue wait and network/retry time.
+func (m *Metrics) ObserveLogDrainDeliveryLatency(app, kind string, d time.Duration) {
+	if m == nil || m.logDrainDeliveryLatency == nil || app == "" || kind == "" || d < 0 {
+		return
+	}
+	m.logDrainDeliveryLatency.WithLabelValues(app, kind).Observe(d.Seconds())
+}
+
+func (m *Metrics) ObserveLogDrainRetry(app, kind string) {
+	if m == nil || m.logDrainRetries == nil || app == "" || kind == "" {
+		return
+	}
+	m.logDrainRetries.WithLabelValues(app, kind).Inc()
+}
+
+func (m *Metrics) ObserveLogDrainStreamReconnect(app, kind string) {
+	if m == nil || m.logDrainStreamReconnects == nil || app == "" || kind == "" {
+		return
+	}
+	m.logDrainStreamReconnects.WithLabelValues(app, kind).Inc()
+}
+
+func (m *Metrics) IncLogDrainGap(app, kind string) {
+	if m == nil || m.logDrainGaps == nil || app == "" || kind == "" {
+		return
+	}
+	m.logDrainGaps.WithLabelValues(app, kind).Inc()
+}
+
+func (m *Metrics) SetLogDrainLastSuccess(app, kind string, at time.Time) {
+	if m == nil || m.logDrainLastSuccess == nil || app == "" || kind == "" || at.IsZero() {
+		return
+	}
+	m.logDrainLastSuccess.WithLabelValues(app, kind).Set(float64(at.UnixNano()) / float64(time.Second))
+}
+
+func (m *Metrics) SetLogDrainLastFailure(app, kind string, at time.Time) {
+	if m == nil || m.logDrainLastFailure == nil || app == "" || kind == "" || at.IsZero() {
+		return
+	}
+	m.logDrainLastFailure.WithLabelValues(app, kind).Set(float64(at.UnixNano()) / float64(time.Second))
 }
 
 // ObserveVMInflightDelta updates the plan-level aggregate of requests

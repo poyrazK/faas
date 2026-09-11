@@ -63,6 +63,38 @@ func TestRequestTelemetryMetricsExposition(t *testing.T) {
 	}
 }
 
+func TestLogDrainHealthMetricsExposition(t *testing.T) {
+	m := NewMetrics()
+	m.InitializeLogDrain("app-1", "otlp")
+	m.IncLogDrainDropped("app-1", "otlp")
+	m.SetLogDrainQueue("app-1", "otlp", 3, 256)
+	m.ObserveLogDrainDeliveryLatency("app-1", "otlp", 250*time.Millisecond)
+	m.ObserveLogDrainRetry("app-1", "otlp")
+	m.ObserveLogDrainStreamReconnect("app-1", "otlp")
+	m.IncLogDrainGap("app-1", "otlp")
+	m.SetLogDrainLastSuccess("app-1", "otlp", time.Unix(100, 0))
+	m.SetLogDrainLastFailure("app-1", "otlp", time.Unix(90, 0))
+
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_log_drain_dropped_total{app="app-1",kind="otlp"} 1`,
+		`gateway_log_drain_queue_depth{app="app-1",kind="otlp"} 3`,
+		`gateway_log_drain_queue_capacity{app="app-1",kind="otlp"} 256`,
+		`gateway_log_drain_delivery_latency_seconds_count{app="app-1",kind="otlp"} 1`,
+		`gateway_log_drain_retries_total{app="app-1",kind="otlp"} 1`,
+		`gateway_log_drain_stream_reconnects_total{app="app-1",kind="otlp"} 1`,
+		`gateway_log_drain_gaps_total{app="app-1",kind="otlp"} 1`,
+		`gateway_log_drain_last_success_timestamp_seconds{app="app-1",kind="otlp"} 100`,
+		`gateway_log_drain_last_failure_timestamp_seconds{app="app-1",kind="otlp"} 90`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics body missing %q:\n%s", want, body)
+		}
+	}
+}
+
 // TestMetricsIssue273Exposition pins the new histogram + the cold
 // rename (issue #273 / ADR-042). Catches a rename that the existing
 // cold-wake test would have missed because it reads the Go field

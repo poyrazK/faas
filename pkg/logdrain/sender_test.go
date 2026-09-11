@@ -103,7 +103,14 @@ func TestSenderRetriesTransientHTTPFailure(t *testing.T) {
 	}))
 	defer server.Close()
 	delivered := make(chan struct{}, 1)
-	sender, err := New(Config{Kind: KindHTTPJSON, TargetURL: server.URL, MaxAttempts: 2, OnDelivered: func(Record) { delivered <- struct{}{} }})
+	retries := make(chan int, 1)
+	latency := make(chan time.Duration, 1)
+	sender, err := New(Config{
+		Kind: KindHTTPJSON, TargetURL: server.URL, MaxAttempts: 2,
+		OnDelivered:        func(Record) { delivered <- struct{}{} },
+		OnRetry:            func(_ Record, attempt int) { retries <- attempt },
+		OnDeliveredLatency: func(_ Record, d time.Duration) { latency <- d },
+	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -116,8 +123,86 @@ func TestSenderRetriesTransientHTTPFailure(t *testing.T) {
 		if attempts.Load() != 2 {
 			t.Fatalf("attempts = %d, want 2", attempts.Load())
 		}
+		select {
+		case attempt := <-retries:
+			if attempt != 2 {
+				t.Fatalf("retry attempt = %d, want 2", attempt)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for retry callback")
+		}
+		select {
+		case d := <-latency:
+			if d <= 0 {
+				t.Fatalf("delivery latency = %s, want positive", d)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for delivery latency callback")
+		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for retry")
+	}
+}
+
+func TestSenderQueueTelemetry(t *testing.T) {
+	depths := make(chan [2]int, 4)
+	sender, err := New(Config{
+		Kind: KindHTTPJSON, TargetURL: "https://logs.example.test", QueueSize: 2,
+		OnQueueDepth: func(depth, capacity int) { depths <- [2]int{depth, capacity} },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	select {
+	case got := <-depths:
+		if got != [2]int{0, 2} {
+			t.Fatalf("initial queue telemetry = %v, want [0 2]", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial queue telemetry")
+	}
+	if !sender.Enqueue(Record{Line: "queued"}) {
+		t.Fatal("Enqueue returned false")
+	}
+	select {
+	case got := <-depths:
+		if got != [2]int{1, 2} {
+			t.Fatalf("enqueue queue telemetry = %v, want [1 2]", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for enqueue queue telemetry")
+	}
+}
+
+func TestSenderShutdownDropsQueuedRecords(t *testing.T) {
+	dropped := make(chan Record, 3)
+	sender, err := New(Config{
+		Kind: KindHTTPJSON, TargetURL: "https://logs.example.test", QueueSize: 2,
+		OnDropped: func(record Record) { dropped <- record },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if !sender.Enqueue(Record{Sequence: 1}) || !sender.Enqueue(Record{Sequence: 2}) {
+		t.Fatal("failed to queue records")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan struct{})
+	go func() {
+		sender.Run(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("sender did not stop")
+	}
+	if sender.Enqueue(Record{Sequence: 3}) {
+		t.Fatal("enqueue after shutdown unexpectedly succeeded")
+	}
+	if got := len(dropped); got != 3 {
+		t.Fatalf("dropped records = %d, want 3", got)
 	}
 }
 

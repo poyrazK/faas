@@ -116,17 +116,35 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		Kind:       logdrain.Kind(spec.Kind),
 		TargetURL:  spec.TargetURL,
 		AuthHeader: authHeader,
-		OnDropped:  func(logdrain.Record) { m.metrics.IncLogDrainDropped(spec.AppID) },
+		OnDropped:  func(logdrain.Record) { m.metrics.IncLogDrainDropped(spec.AppID, string(spec.Kind)) },
 		OnDelivered: func(logdrain.Record) {
 			m.metrics.ObserveLogDrainDelivered(spec.AppID, string(spec.Kind))
+			m.metrics.SetLogDrainLastSuccess(spec.AppID, string(spec.Kind), time.Now())
 		},
-		OnFailed: func(logdrain.Record, error) {
+		OnFailed: func(_ logdrain.Record, err error) {
 			m.metrics.ObserveLogDrainFailed(spec.AppID, string(spec.Kind))
+			m.metrics.SetLogDrainLastFailure(spec.AppID, string(spec.Kind), time.Now())
+			m.log.Warn("customer log drain delivery failed",
+				slog.String("drain_id", spec.ID),
+				slog.String("app_id", spec.AppID),
+				slog.String("kind", string(spec.Kind)),
+				slog.String("err", err.Error()),
+			)
+		},
+		OnQueueDepth: func(depth, capacity int) {
+			m.metrics.SetLogDrainQueue(spec.AppID, string(spec.Kind), depth, capacity)
+		},
+		OnRetry: func(_ logdrain.Record, _ int) {
+			m.metrics.ObserveLogDrainRetry(spec.AppID, string(spec.Kind))
+		},
+		OnDeliveredLatency: func(_ logdrain.Record, latency time.Duration) {
+			m.metrics.ObserveLogDrainDeliveryLatency(spec.AppID, string(spec.Kind), latency)
 		},
 	})
 	if err != nil {
 		return nil, err
 	}
+	m.metrics.InitializeLogDrain(spec.AppID, string(spec.Kind))
 	workerCtx, cancel := context.WithCancel(parent)
 	worker := &appLogDrainWorker{spec: spec, cancel: cancel}
 	m.setActiveLocked(spec, 1)
@@ -138,6 +156,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLogDrain, sender *logdrain.Sender) {
 	lastSeq := make(map[string]int64)
 	backoff := time.Second
+	streamEstablished := false
 	for {
 		if ctx.Err() != nil {
 			return
@@ -149,6 +168,10 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 		if err == nil {
 			stream, streamErr := streamer.StreamAppLogs(ctx, spec.AppID, 0, time.Time{}, "", "", "")
 			if streamErr == nil {
+				if streamEstablished {
+					m.metrics.ObserveLogDrainStreamReconnect(spec.AppID, string(spec.Kind))
+				}
+				streamEstablished = true
 				backoff = time.Second
 				for {
 					frame, recvErr := stream.Recv()
@@ -158,7 +181,11 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 						}
 						break
 					}
-					if frame.IsGap || frame.InstanceID == "" || frame.Seq <= lastSeq[frame.InstanceID] {
+					if frame.IsGap {
+						m.metrics.IncLogDrainGap(spec.AppID, string(spec.Kind))
+						continue
+					}
+					if frame.InstanceID == "" || frame.Seq <= lastSeq[frame.InstanceID] {
 						continue
 					}
 					lastSeq[frame.InstanceID] = frame.Seq
