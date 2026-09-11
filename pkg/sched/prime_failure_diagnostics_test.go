@@ -1,5 +1,8 @@
 package sched
 
+// adr: 117 — snapshot_prepare timeout failures retain a typed deployment
+// error and an operator-visible phase instead of a raw deadline string.
+
 import (
 	"context"
 	"errors"
