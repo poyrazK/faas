@@ -30,7 +30,8 @@ func TestMemStoreAppLogDrainDeliveryAnalyticsRollsUpAndPrunes(t *testing.T) {
 	if len(rows) != 2 || rows[0].DeliveredTotal != 2 || rows[1].DeliveredTotal != 5 {
 		t.Fatalf("analytics rows = %+v", rows)
 	}
-	if err := store.PruneAppLogDrainDeliveryAnalytics(ctx, now.Add(-90*time.Minute)); err != nil {
+	pruneBefore := now.Add(-2 * time.Hour).Truncate(time.Hour).Add(time.Minute)
+	if err := store.PruneAppLogDrainDeliveryAnalytics(ctx, pruneBefore); err != nil {
 		t.Fatalf("PruneAppLogDrainDeliveryAnalytics: %v", err)
 	}
 	rows, err = store.ListAppLogDrainDeliveryAnalytics(ctx, drain.ID, now.Add(-3*time.Hour), now)
