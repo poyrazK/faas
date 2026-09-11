@@ -356,6 +356,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	go builderdpkg.CacheGCSweepLoop(runCtx, cache, gcInterval, cfg.CacheMaxBytes, cfg.CacheMaxAge, log)
 
+	// Warm builder snapshots own both vmmd storage objects and a retained
+	// local BuildKit drive. Expire them on the configured idle window even when
+	// no later build arrives to observe the stale state; Drain performs the
+	// final shutdown cleanup after active builds have released the slot.
+	go builderdpkg.WarmBuilderSweepLoop(runCtx, b, builderdpkg.WarmBuilderSweepInterval(cfg.WarmIdle), log)
+
 	// Split-box source retention. apid publishes sources/<build>.tar.gz
 	// before it creates the durable build row, so an apid crash can leave a
 	// remote object with no database owner. The sweep preserves queued and

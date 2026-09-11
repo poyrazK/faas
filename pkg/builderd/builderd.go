@@ -287,13 +287,15 @@ func (b *Builderd) prepareWarmBuilder(ctx context.Context, slot SlotDecision, re
 	return warmVM, result, snapshot, true
 }
 
-func (b *Builderd) cleanupWarmSnapshot(ctx context.Context, warmVM WarmVM, snapshot WarmSnapshot) {
+func (b *Builderd) cleanupWarmSnapshot(ctx context.Context, warmVM WarmVM, snapshot WarmSnapshot) error {
 	if warmVM == nil || snapshot.StorageKey == "" {
-		return
+		return nil
 	}
 	if err := warmVM.DeleteWarmSnapshot(context.WithoutCancel(ctx), snapshot); err != nil {
 		b.log.Warn("builderd: warm snapshot cleanup failed", "mem_key", snapshot.StorageKey, "vmstate_key", snapshot.VMStateStorageKey, "err", err)
+		return err
 	}
+	return nil
 }
 
 // WithOpsMetrics attaches the build-metrics sink (ADR-030) and returns the
@@ -418,7 +420,7 @@ func (b *Builderd) Drain(ctx context.Context) error {
 	}()
 	select {
 	case <-processDone:
-		return nil
+		return b.CleanupWarmBuilder(ctx)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
