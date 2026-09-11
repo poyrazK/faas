@@ -184,7 +184,7 @@ func (a ExecutionRuntimeArtifacts) validate(runtime api.ExecutionRuntime, shape 
 		FormatVersion: CurrentRuntimeSnapshotFormatVersion,
 	}.Identity()
 	if err := identity.Validate(); err != nil {
-		return fmt.Errorf("%w: artifact identity: %v", ErrExecutionClaimInvalid, err)
+		return fmt.Errorf("%w: artifact identity: %w", ErrExecutionClaimInvalid, err)
 	}
 	for name, key := range map[string]string{"kernel": a.KernelKey, "base": a.BaseKey, "layer": a.LayerKey} {
 		if !validExecutionArtifactKey(key) {
