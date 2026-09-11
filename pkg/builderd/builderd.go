@@ -595,8 +595,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, err
 	}
 
-	fw, ver, profileUsed := persistedProfileFramework(dep)
-	if profileUsed {
+	fw, ver := FrameworkUnknown, ""
+	if functionFW, ok := functionRuntimeFramework(app); ok {
+		// Function runtime is explicit app configuration, so it wins over a
+		// stale or misleading source marker/profile. This also keeps legacy
+		// markerless function deployments buildable after upgrade.
+		fw = functionFW
+		b.emitBuildLog(ctx, build.ID, "using function runtime framework: "+string(fw)+"\n")
+	} else if persistedFW, persistedVer, profileUsed := persistedProfileFramework(dep); profileUsed {
+		fw, ver = persistedFW, persistedVer
 		b.emitBuildLog(ctx, build.ID, "using persisted framework profile: "+string(fw)+"\n")
 	} else {
 		fw, ver, err = b.detector.DetectWithVersionAtRoot(dep.SourcePath, dep.SourceRoot)

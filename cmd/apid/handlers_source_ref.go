@@ -192,14 +192,15 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		AppID:       app.ID,
-		Kind:        state.DeploymentKindGitHub,
-		SourcePath:  spoolPath,
-		SourceBytes: spoolBytes,
-		SourceURL:   fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
-		CommitSHA:   resolvedSHA,
-		LogSpool:    spoolRoot(),
-		Log:         s.log,
+		AppID:           app.ID,
+		Kind:            state.DeploymentKindGitHub,
+		SourcePath:      spoolPath,
+		SourceBytes:     spoolBytes,
+		SourceURL:       fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
+		CommitSHA:       resolvedSHA,
+		FunctionRuntime: functionRuntimeForApp(app),
+		LogSpool:        spoolRoot(),
+		Log:             s.log,
 		// Issue #606 / SAFE-RELEASES-E.1: server-stamped actor
 		// attribution. The source-ref path is the dashboard +
 		// CLI flow that streams a GH repo through the apid

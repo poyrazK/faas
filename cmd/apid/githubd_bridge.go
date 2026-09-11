@@ -320,16 +320,17 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	}
 	kind := eventKindToDeploymentKind(req.EventKind)
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, apidsource.EnqueueParams{
-		AppID:       app.ID,
-		DeliveryID:  req.DeliveryId,
-		Kind:        kind,
-		SourcePath:  req.SourcePath,
-		SourceBytes: req.SourceBytes,
-		SourceURL:   req.SourceUrl,
-		CommitSHA:   req.CommitSha,
-		Scope:       req.DeploymentScope,
-		LogSpool:    g.spool,
-		Log:         g.log,
+		AppID:           app.ID,
+		DeliveryID:      req.DeliveryId,
+		Kind:            kind,
+		SourcePath:      req.SourcePath,
+		SourceBytes:     req.SourceBytes,
+		SourceURL:       req.SourceUrl,
+		CommitSHA:       req.CommitSha,
+		FunctionRuntime: functionRuntimeForApp(app),
+		Scope:           req.DeploymentScope,
+		LogSpool:        g.spool,
+		Log:             g.log,
 		// Issue #606 / SAFE-RELEASES-E.1: bridge-side actor
 		// attribution. ActorVia is hard-coded to "github"
 		// (the closed-set CHECK on deployments.deployed_via

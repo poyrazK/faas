@@ -53,6 +53,28 @@ func TestPersistedProfileFrameworkFallsBackForUnknownVersion(t *testing.T) {
 	}
 }
 
+func TestFunctionRuntimeFramework(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		runtime string
+		want    Framework
+	}{
+		{runtime: "node22", want: FrameworkNode},
+		{runtime: "python313", want: FrameworkPython},
+		{runtime: "go124-alpine", want: FrameworkGo},
+	} {
+		t.Run(tt.runtime, func(t *testing.T) {
+			got, ok := functionRuntimeFramework(state.App{Type: state.AppTypeFunction, Runtime: tt.runtime})
+			if !ok || got != tt.want {
+				t.Fatalf("functionRuntimeFramework(%q) = (%q, %t), want (%q, true)", tt.runtime, got, ok, tt.want)
+			}
+		})
+	}
+	if got, ok := functionRuntimeFramework(state.App{Type: state.AppTypeApp, Runtime: "python313"}); ok || got != FrameworkUnknown {
+		t.Fatalf("plain app runtime mapping = (%q, %t), want (unknown, false)", got, ok)
+	}
+}
+
 func TestCatalogRuntimeProfilesMapToBuilderPipelines(t *testing.T) {
 	t.Parallel()
 	catalog, err := apihostingcontract.Load()

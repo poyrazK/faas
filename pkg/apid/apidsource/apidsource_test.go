@@ -15,6 +15,8 @@
 package apidsource
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,8 +31,41 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func writeHandlerOnlyTarball(t *testing.T) (string, int64) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "source.tar.gz")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	body := []byte("def handler(event, context):\n    return {'ok': True}\n")
+	if err := tw.WriteHeader(&tar.Header{Name: "handler.py", Mode: 0o644, Size: int64(len(body))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path, info.Size()
+}
 
 // recordingNotifier records every Notify call so tests can assert
 // on payload + channel. The slice is mutex-guarded because the
@@ -181,6 +216,32 @@ func TestEnqueue_HappyPath_FirstDeploy(t *testing.T) {
 	logPath := filepath.Join(spoolDir, res.DeploymentID, "build.log")
 	if _, err := os.Stat(logPath); err != nil {
 		t.Fatalf("build.log not staged: %v", err)
+	}
+}
+
+func TestEnqueue_UsesExplicitFunctionRuntimeForMarkerlessSource(t *testing.T) {
+	st := state.NewMemStore()
+	app := mustSeedApp(t, st)
+	srcPath, srcBytes := writeHandlerOnlyTarball(t)
+
+	result, err := Enqueue(context.Background(), st, &recordingNotifier{}, EnqueueParams{
+		AppID: app.ID, Kind: state.DeploymentKindTarball,
+		SourcePath: srcPath, SourceBytes: srcBytes, FunctionRuntime: "python313",
+		LogSpool: t.TempDir(), Log: quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	dep, err := st.DeploymentByID(context.Background(), result.DeploymentID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	var profile frameworkprofile.Profile
+	if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil {
+		t.Fatalf("decode inferred profile: %v", err)
+	}
+	if profile.Framework != "python" || profile.Inferred || profile.StartCommand != "" {
+		t.Fatalf("inferred profile = %+v, want explicit python framework-only profile", profile)
 	}
 }
 

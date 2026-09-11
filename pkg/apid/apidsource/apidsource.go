@@ -49,6 +49,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
+	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -167,9 +168,13 @@ type EnqueueParams struct {
 	CommitSHA     string
 	Scope         string
 	Handler       string
-	Source        string
-	LogSpool      string
-	Log           *slog.Logger
+	// FunctionRuntime carries the app's explicit runtime for markerless
+	// function sources. It is used only when static profiling finds no
+	// framework marker; the runtime remains authoritative in builderd.
+	FunctionRuntime string
+	Source          string
+	LogSpool        string
+	Log             *slog.Logger
 	// Issue #606 / SAFE-RELEASES-E.1 actor columns. ActorVia
 	// must be one of the closed-set values enforced by the
 	// deployments.deployed_via CHECK constraint; ActorUserID
@@ -358,11 +363,21 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			if p.Log != nil {
 				p.Log.Warn("apidsource.Enqueue: infer source profile", "app", p.AppID, "err", profileErr)
 			}
-		} else if inferredProfile, err = json.Marshal(profile); err != nil {
-			if p.Log != nil {
-				p.Log.Warn("apidsource.Enqueue: encode source profile", "app", p.AppID, "err", err)
+		} else {
+			// A dependency-free function is a valid source tree even though
+			// static framework detection has no manifest to inspect. The
+			// explicit app runtime supplies the missing builder pipeline.
+			if profile.Framework == string(markers.FrameworkUnknown) && p.FunctionRuntime != "" {
+				if runtimeProfile, ok := frameworkprofile.ProfileForFunctionRuntime(p.FunctionRuntime); ok {
+					profile = runtimeProfile
+				}
 			}
-			inferredProfile = nil
+			if inferredProfile, err = json.Marshal(profile); err != nil {
+				if p.Log != nil {
+					p.Log.Warn("apidsource.Enqueue: encode source profile", "app", p.AppID, "err", err)
+				}
+				inferredProfile = nil
+			}
 		}
 		sourceErr = publishSource(ctx, sourceStorage, buildID, p.SourcePath)
 	}
