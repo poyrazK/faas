@@ -2040,6 +2040,34 @@ func TestEnginePrime_BootsSnapshotsParks(t *testing.T) {
 	}
 }
 
+// adr: 053
+// Snapshot prime is a separate cold-boot builder from the ordinary wake path.
+// Keep the persisted source profile's port on that wire boundary too.
+func TestEnginePrime_ForwardsInferredRuntimePort(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 2)
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:  app.ID,
+		Kind:   state.DeploymentKindTarball,
+		Status: state.DeploySnapshotting,
+		InferredProfile: json.RawMessage(
+			`{"version":"v1","framework":"node","port":3000,"health_path":"/healthz","inferred":true}`,
+		),
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	if err := e.Prime(context.Background(), app.ID, dep.ID); err != nil {
+		t.Fatalf("Prime: %v", err)
+	}
+	if got := vmm.lastColdBootSpec.Port; got != 3000 {
+		t.Fatalf("prime cold-boot Port = %d, want 3000", got)
+	}
+}
+
 func TestEnginePark_SnapshotFailureStops(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
