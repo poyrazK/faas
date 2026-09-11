@@ -55,6 +55,7 @@ func Run(t *testing.T, open Open) {
 		{"billing_identity_is_provider_qualified", testBillingIdentity},
 		{"invoice_refunds_are_cumulative_and_idempotent", testInvoiceRefunds},
 		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
+		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
@@ -269,6 +270,29 @@ func testBillingUsageDelivery(t *testing.T, fx *Fixture) {
 	pending, err = fx.Store.PendingBillingUsageWindows(fx.Ctx, "polar", hour, hour.Add(time.Hour))
 	if err != nil || len(pending) != 1 || pending[0].AccountID != fx.Account.ID || !pending[0].Hour.Equal(hour) || pending[0].MBSeconds != mbSeconds {
 		t.Fatalf("polar pending after paddle delivery = (%+v, %v), want original window", pending, err)
+	}
+}
+
+func testPaddleOverageWindowExistence(t *testing.T, fx *Fixture) {
+	window := time.Now().UTC().Truncate(time.Hour).Add(-time.Hour)
+	exists, err := fx.Store.PaddleOverageWindowExists(fx.Ctx, fx.Account.ID, window)
+	if err != nil || exists {
+		t.Fatalf("PaddleOverageWindowExists(fresh) = (%v, %v), want false", exists, err)
+	}
+	claimed, err := fx.Store.ClaimPaddleOverageWindow(fx.Ctx, fx.Account.ID, window, "conformance", time.Minute)
+	if err != nil || !claimed {
+		t.Fatalf("ClaimPaddleOverageWindow = (%v, %v), want true", claimed, err)
+	}
+	exists, err = fx.Store.PaddleOverageWindowExists(fx.Ctx, fx.Account.ID, window)
+	if err != nil || !exists {
+		t.Fatalf("PaddleOverageWindowExists(pending) = (%v, %v), want true", exists, err)
+	}
+	if err := fx.Store.CompletePaddleOverageWindow(fx.Ctx, fx.Account.ID, window, 321); err != nil {
+		t.Fatalf("CompletePaddleOverageWindow: %v", err)
+	}
+	exists, err = fx.Store.PaddleOverageWindowExists(fx.Ctx, fx.Account.ID, window)
+	if err != nil || !exists {
+		t.Fatalf("PaddleOverageWindowExists(completed) = (%v, %v), want true", exists, err)
 	}
 }
 

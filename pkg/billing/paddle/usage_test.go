@@ -1,5 +1,6 @@
 package paddle
 
+// adr: 032
 // usage_test covers the pure helpers in usage.go + products.go's
 // money conversion functions — primitives that PR #3's
 // integration test will exercise end-to-end but should also be

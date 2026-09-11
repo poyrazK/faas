@@ -1,3 +1,4 @@
+// spec: §5.7
 // Issue #279 PR A — Stripe webhook mapping for charge.refunded.
 //
 // The Refund gRPC seam is exercised end-to-end through the apid

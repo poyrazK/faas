@@ -1,3 +1,4 @@
+// adr: 032
 // Whitebox tests for the small-but-uncovered surfaces in
 // pkg/billing/paddle: WebhookTolerance/SetWebhookTolerance,
 // claimedBy env-var fallback, PaddleCapabilities (static),

@@ -1,5 +1,6 @@
 package paddle
 
+// adr: 032
 // coverage_sweep2_test.go: covers zero-coverage branches in
 // pkg/billing/paddle that the existing tests don't reach. All paths
 // here are pure logic — no live Paddle API call. Test seams
