@@ -1883,6 +1883,7 @@ func (s *server) handler() http.Handler {
 	// API writes remain Bearer-key + MFA + deploy-scope gated below.
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
+	mux.HandleFunc("GET /v1/apps/{slug}/debug/coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryCoverageHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/{req_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryGetHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/{req_id}/evidence", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRequestEvidenceHandler))))

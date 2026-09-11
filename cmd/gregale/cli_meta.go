@@ -814,6 +814,7 @@ var cliCommands = []cliCommand{
 		Short:   "Production debugger (ADR-127)",
 		Subcommands: []cliSub{
 			{Name: "requests", Short: "Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])"},
+			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
 			{Name: "regressions", Short: "Active regression observations (list|watch [--interval D] [--once])"},
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
 			{Name: "bundle", Short: "Export a redacted incident investigation bundle (bundle <slug> <req_id> [--output PATH])"},

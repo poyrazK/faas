@@ -146,6 +146,8 @@ export type { DataUpstreamResponse } from './DataUpstreamResponse.js';
 export type { DebugCompareRequest } from './DebugCompareRequest.js';
 export type { DebugCompareResponse } from './DebugCompareResponse.js';
 export type { DebugCompareRouteStats } from './DebugCompareRouteStats.js';
+export type { DebugCoverageResponse } from './DebugCoverageResponse.js';
+export type { DebugCoverageSignal } from './DebugCoverageSignal.js';
 export type { DebugEvidenceExplanation } from './DebugEvidenceExplanation.js';
 export type { DebugGuestExecutionEvidence } from './DebugGuestExecutionEvidence.js';
 export type { DebugRegressionItem } from './DebugRegressionItem.js';

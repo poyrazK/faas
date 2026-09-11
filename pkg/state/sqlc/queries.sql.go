@@ -10152,6 +10152,83 @@ func (q *Queries) RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const requestTelemetryCoverage = `-- name: RequestTelemetryCoverage :one
+SELECT
+    COUNT(*)::bigint AS telemetry_rows,
+    COALESCE(SUM(count::bigint), 0)::bigint AS represented_requests,
+    COUNT(*) FILTER (WHERE trace_id IS NOT NULL)::bigint AS trace_linked_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE trace_id IS NOT NULL), 0)::bigint AS trace_linked_requests,
+    COUNT(*) FILTER (WHERE spans_summary IS NOT NULL)::bigint AS span_evidence_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE spans_summary IS NOT NULL), 0)::bigint AS span_evidence_requests,
+    COUNT(*) FILTER (WHERE wake_id IS NOT NULL AND wake_id <> '')::bigint AS wake_evidence_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE wake_id IS NOT NULL AND wake_id <> ''), 0)::bigint AS wake_evidence_requests,
+    COUNT(*) FILTER (WHERE guest_runtime <> '__unknown__' AND guest_outcome <> 'missing')::bigint AS guest_evidence_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE guest_runtime <> '__unknown__' AND guest_outcome <> 'missing'), 0)::bigint AS guest_evidence_requests,
+    COALESCE(SUM(count::bigint) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+    MIN(received_at) AS oldest_telemetry_at,
+    MAX(received_at) AS latest_telemetry_at
+FROM request_telemetry
+WHERE app_id = $1
+  AND account_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+`
+
+type RequestTelemetryCoverageParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+}
+
+type RequestTelemetryCoverageRow struct {
+	TelemetryRows         int64
+	RepresentedRequests   int64
+	TraceLinkedRows       int64
+	TraceLinkedRequests   int64
+	SpanEvidenceRows      int64
+	SpanEvidenceRequests  int64
+	WakeEvidenceRows      int64
+	WakeEvidenceRequests  int64
+	GuestEvidenceRows     int64
+	GuestEvidenceRequests int64
+	ErrorRequests         int64
+	OldestTelemetryAt     interface{}
+	LatestTelemetryAt     interface{}
+}
+
+// Signal coverage for the customer debugger. Counts are weighted by the
+// publisher's collapsed-row `count`, while the row totals make the amount
+// of aggregation visible to callers. This query deliberately reports
+// observed coverage only: request_telemetry has no trustworthy denominator
+// for requests dropped before persistence, so the API must not invent a
+// capture percentage.
+func (q *Queries) RequestTelemetryCoverage(ctx context.Context, db DBTX, arg RequestTelemetryCoverageParams) (RequestTelemetryCoverageRow, error) {
+	row := db.QueryRow(ctx, requestTelemetryCoverage,
+		arg.AppID,
+		arg.AccountID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+	)
+	var i RequestTelemetryCoverageRow
+	err := row.Scan(
+		&i.TelemetryRows,
+		&i.RepresentedRequests,
+		&i.TraceLinkedRows,
+		&i.TraceLinkedRequests,
+		&i.SpanEvidenceRows,
+		&i.SpanEvidenceRequests,
+		&i.WakeEvidenceRows,
+		&i.WakeEvidenceRequests,
+		&i.GuestEvidenceRows,
+		&i.GuestEvidenceRequests,
+		&i.ErrorRequests,
+		&i.OldestTelemetryAt,
+		&i.LatestTelemetryAt,
+	)
+	return i, err
+}
+
 const revokeAllSessions = `-- name: RevokeAllSessions :many
 update sessions set revoked_at = now()
 where account_id = $1 and id <> $2 and revoked_at is null

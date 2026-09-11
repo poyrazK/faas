@@ -289,6 +289,8 @@ from .data_upstream_response_source import DataUpstreamResponseSource
 from .debug_compare_request import DebugCompareRequest
 from .debug_compare_response import DebugCompareResponse
 from .debug_compare_route_stats import DebugCompareRouteStats
+from .debug_coverage_response import DebugCoverageResponse
+from .debug_coverage_signal import DebugCoverageSignal
 from .debug_evidence_explanation import DebugEvidenceExplanation
 from .debug_evidence_explanation_status import DebugEvidenceExplanationStatus
 from .debug_guest_execution_evidence import DebugGuestExecutionEvidence
@@ -1234,6 +1236,8 @@ __all__ = (
     "DebugCompareRequest",
     "DebugCompareResponse",
     "DebugCompareRouteStats",
+    "DebugCoverageResponse",
+    "DebugCoverageSignal",
     "DebugEvidenceExplanation",
     "DebugEvidenceExplanationStatus",
     "DebugGuestExecutionEvidence",

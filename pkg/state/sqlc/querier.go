@@ -967,6 +967,13 @@ type Querier interface {
 	// weight so callers can report request totals rather than stored
 	// aggregate-row totals. Uses request_telemetry_app_dep_received_idx.
 	RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryByDeploymentParams) ([]RequestTelemetryByDeploymentRow, error)
+	// Signal coverage for the customer debugger. Counts are weighted by the
+	// publisher's collapsed-row `count`, while the row totals make the amount
+	// of aggregation visible to callers. This query deliberately reports
+	// observed coverage only: request_telemetry has no trustworthy denominator
+	// for requests dropped before persistence, so the API must not invent a
+	// capture percentage.
+	RequestTelemetryCoverage(ctx context.Context, db DBTX, arg RequestTelemetryCoverageParams) (RequestTelemetryCoverageRow, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
 	RevokeAllSessions(ctx context.Context, db DBTX, arg RevokeAllSessionsParams) ([]pgtype.UUID, error)

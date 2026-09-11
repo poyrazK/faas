@@ -10,6 +10,44 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+func TestCmdDebugCoverage_RendersObservedSignalRates(t *testing.T) {
+	var got http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = *r.Clone(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.DebugCoverageResponse{
+			AppID: "app-1", Since: "6h", WindowStart: "2026-09-11T00:00:00Z", WindowEnd: "2026-09-11T06:00:00Z",
+			PlanRetentionDays: 7, TelemetryRows: 3, RepresentedRequests: 10, ErrorRequests: 2,
+			TraceLinked:       api.DebugCoverageSignal{Rows: 2, Requests: 8, RatePct: 80},
+			SpanEvidence:      api.DebugCoverageSignal{Rows: 1, Requests: 4, RatePct: 40},
+			WakeEvidence:      api.DebugCoverageSignal{Rows: 1, Requests: 2, RatePct: 20},
+			GuestEvidence:     api.DebugCoverageSignal{Rows: 1, Requests: 2, RatePct: 20},
+			OldestTelemetryAt: "2026-09-11T00:01:00Z", LatestTelemetryAt: "2026-09-11T05:59:00Z",
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test")
+
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	oldJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = oldJSON }()
+
+	if code := cmdDebugCoverage([]string{"my-app", "--since", "6h"}); code != 0 {
+		t.Fatalf("cmdDebugCoverage() = %d, want 0", code)
+	}
+	if got.URL.Path != "/v1/apps/my-app/debug/coverage" || got.URL.Query().Get("since") != "6h" {
+		t.Fatalf("request = %s?%s, want coverage with since=6h", got.URL.Path, got.URL.RawQuery)
+	}
+	for _, want := range []string{"represented requests: 10", "trace linked", "80.0%", "observed range"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("coverage output missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
 func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	var got http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +117,7 @@ func TestCmdDebugHelp(t *testing.T) {
 		t.Fatalf("cmdDebug(--help) = %d, want 0", code)
 	}
 	got := readStderr()
-	for _, want := range []string{"usage: gregale debug", "requests list", "requests evidence", "regressions", "compare"} {
+	for _, want := range []string{"usage: gregale debug", "requests list", "requests evidence", "coverage", "regressions", "compare"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("help missing %q:\n%s", want, got)
 		}

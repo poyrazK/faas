@@ -23178,6 +23178,13 @@ func (s *PgStore) ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRe
 	return s.appErrorsQueries().ListRequestTelemetryByApp(ctx, s.pool, arg)
 }
 
+// RequestTelemetryCoverage backs the debugger coverage endpoint. The
+// aggregate is weighted by collapsed-row count and remains bounded by the
+// caller's plan retention window.
+func (s *PgStore) RequestTelemetryCoverage(ctx context.Context, arg sqlc.RequestTelemetryCoverageParams) (sqlc.RequestTelemetryCoverageRow, error) {
+	return s.appErrorsQueries().RequestTelemetryCoverage(ctx, s.pool, arg)
+}
+
 // GetRequestTelemetryByAppAndID backs the direct customer debugger
 // drill-down. The sqlc query filters by app_id before matching the
 // request id, preserving the app's tenant boundary in the database.

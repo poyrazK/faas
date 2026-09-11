@@ -4576,6 +4576,19 @@ func (c *Client) ListAppDebugRequestsWithOptions(ctx context.Context, slug strin
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppDebugCoverage returns observed debugger signal coverage for one app.
+// The response distinguishes collapsed telemetry rows from represented
+// requests and reports percentages only for signals attached to persisted
+// rows; it never invents a denominator for requests dropped before storage.
+func (c *Client) GetAppDebugCoverage(ctx context.Context, slug, since string) (DebugCoverageResponse, error) {
+	var out DebugCoverageResponse
+	path := "/v1/apps/" + slug + "/debug/coverage"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppDebugRequest returns one request-telemetry row by id. The
 // server scopes the lookup to the app resolved from slug, so a request
 // id from another app is indistinguishable from a missing request.

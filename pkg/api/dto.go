@@ -7395,6 +7395,38 @@ type DebugTelemetryListResponse struct {
 	Requests []DebugTelemetryRequestItem `json:"requests"`
 }
 
+// DebugCoverageSignal is the observed coverage of one optional debugger
+// signal. Requests is weighted by the publisher's collapsed-row count;
+// rows exposes how much of that traffic was stored as aggregate rows. RatePct
+// is relative to represented_requests in the same response and is zero when
+// the window contains no telemetry.
+type DebugCoverageSignal struct {
+	Rows     int64   `json:"rows"`
+	Requests int64   `json:"requests"`
+	RatePct  float64 `json:"rate_pct"`
+}
+
+// DebugCoverageResponse is the customer-safe debugger signal coverage
+// summary. It intentionally reports observed coverage only: the persistence
+// layer cannot know how many requests were dropped before a telemetry row was
+// written, so no inferred capture percentage is exposed.
+type DebugCoverageResponse struct {
+	AppID               string              `json:"app_id"`
+	Since               string              `json:"since"`
+	WindowStart         string              `json:"window_start"`
+	WindowEnd           string              `json:"window_end"`
+	PlanRetentionDays   int                 `json:"plan_retention_days"`
+	TelemetryRows       int64               `json:"telemetry_rows"`
+	RepresentedRequests int64               `json:"represented_requests"`
+	ErrorRequests       int64               `json:"error_requests"`
+	TraceLinked         DebugCoverageSignal `json:"trace_linked"`
+	SpanEvidence        DebugCoverageSignal `json:"span_evidence"`
+	WakeEvidence        DebugCoverageSignal `json:"wake_evidence"`
+	GuestEvidence       DebugCoverageSignal `json:"guest_evidence"`
+	OldestTelemetryAt   string              `json:"oldest_telemetry_at,omitempty"`
+	LatestTelemetryAt   string              `json:"latest_telemetry_at,omitempty"`
+}
+
 // DebugTelemetrySpan is the safe, bounded span drill-down returned by the
 // request evidence endpoint. Attributes and status messages are intentionally
 // omitted; DBStatement is a sanitized fingerprint rather than raw SQL.
