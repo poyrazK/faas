@@ -58,13 +58,53 @@ test("recovers a canonical timeout when a proxy strips the marker", async () => 
   assert.deepEqual(await response.json(), { code: "request_budget_exceeded", status: 504 });
 });
 
+test("decodes a budget timeout transported around Cloudflare's origin error page", async () => {
+  const response = await handleRequest(request(), { ORIGIN_HOSTNAME: "origin.gregale.dev" }, async () => new Response(
+    JSON.stringify({ code: "request_budget_exceeded", status: 504 }),
+    {
+      status: 409,
+      headers: {
+        "X-Faas-Edge-Original-Status": "504",
+        "X-Faas-Error-Code": "request_budget_exceeded",
+        "Content-Type": "application/problem+json",
+      },
+    },
+  ));
+
+  assert.equal(response.status, 504);
+  assert.equal(response.headers.get("X-Faas-Edge-Original-Status"), null);
+  assert.equal(response.headers.get("X-Faas-Error-Code"), "request_budget_exceeded");
+  assert.deepEqual(await response.json(), { code: "request_budget_exceeded", status: 504 });
+});
+
+test("decodes an application's unmarked 504 without reclassifying it", async () => {
+  const response = await handleRequest(request(), { ORIGIN_HOSTNAME: "origin.gregale.dev" }, async () => new Response(
+    "application timeout",
+    {
+      status: 409,
+      headers: {
+        "X-Faas-Edge-Original-Status": "504",
+        "Content-Type": "text/plain",
+      },
+    },
+  ));
+
+  assert.equal(response.status, 504);
+  assert.equal(response.headers.get("X-Faas-Edge-Original-Status"), null);
+  assert.equal(response.headers.get("X-Faas-Error-Code"), null);
+  assert.equal(await response.text(), "application timeout");
+});
+
 test("does not rewrite genuine origin or CDN failures", async () => {
   const origin = new Response("origin timeout", {
     status: 504,
     headers: { "Content-Type": "text/plain" },
   });
   const response = await handleRequest(request(), { ORIGIN_HOSTNAME: "origin.gregale.dev" }, async () => origin);
-  assert.equal(response, origin);
+  assert.notEqual(response, origin);
+  assert.equal(response.status, 504);
+  assert.equal(response.headers.get("Content-Type"), "text/plain");
+  assert.equal(await response.text(), "origin timeout");
 });
 
 test("passes successful responses through unchanged", async () => {

@@ -8,6 +8,12 @@ unchanged. If a TLS/proxy frontend strips the marker but preserves the
 canonical `application/problem+json` body, the Worker accepts that exact
 `code=request_budget_exceeded` envelope as a compatibility fallback.
 
+Cloudflare replaces an origin 504 before Worker code can inspect it. Requests
+from this Worker carry Cloudflare's `CF-Worker: gregale.dev` header; the public
+gateway therefore transports an origin 504 as HTTP 409 with the private
+`X-Faas-Edge-Original-Status: 504` marker. The Worker restores the original 504
+and removes the marker before returning the response to the customer.
+
 ## Deploy
 
 1. Create a DNS-only `origin.gregale.dev` record pointing at the Caddy origin.

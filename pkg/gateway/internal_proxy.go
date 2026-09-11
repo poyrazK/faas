@@ -134,6 +134,13 @@ type InternalReverseProxy struct {
 	Drain *drain.Tracker
 }
 
+const (
+	cloudflareWorkerHeader       = "CF-Worker"
+	cloudflareWorkerZone         = "gregale.dev"
+	edgeOriginalStatusHeader     = "X-Faas-Edge-Original-Status"
+	edgeOrigin504TransportStatus = http.StatusConflict
+)
+
 // WithTrustedIngressCIDRs configures the network peers allowed to supply the
 // canonical X-Forwarded-For and X-Forwarded-Proto values. The slice is copied
 // so callers cannot mutate the trust boundary after startup.
@@ -517,8 +524,15 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// in place on the response (RFC 7230 §6.1) — the internal
 	// daemon may have set Connection: close and we don't want to
 	// leak that to the customer.
+	encodeOrigin504 := resp.StatusCode == http.StatusGatewayTimeout &&
+		strings.EqualFold(strings.TrimSpace(r.Header.Get(cloudflareWorkerHeader)), cloudflareWorkerZone)
 	for k, vv := range resp.Header {
 		if isHopByHop(k) {
+			continue
+		}
+		// Only this proxy may emit the private edge transport marker. An
+		// application response cannot opt itself into status decoding.
+		if strings.EqualFold(k, edgeOriginalStatusHeader) {
 			continue
 		}
 		// The public request-id middleware stamps the response before the
@@ -538,7 +552,16 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	for name := range resp.Trailer {
 		w.Header().Add("Trailer", name)
 	}
-	w.WriteHeader(resp.StatusCode)
+	responseStatus := resp.StatusCode
+	if encodeOrigin504 {
+		// Cloudflare replaces origin 504 bodies before a Worker can inspect
+		// them. CF-Worker is added to Worker subrequests by Cloudflare, so
+		// carry the response through its origin hop as a non-5xx status. The
+		// edge Worker restores 504 and removes this private marker.
+		w.Header().Set(edgeOriginalStatusHeader, "504")
+		responseStatus = edgeOrigin504TransportStatus
+	}
+	w.WriteHeader(responseStatus)
 	// Body copy bound to ctx — a hung upstream pins only the
 	// in-flight goroutine, not the listener.
 	if isLongLivedResponse(resp.StatusCode, resp.Header) {

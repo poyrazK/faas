@@ -10,6 +10,8 @@
 const ERROR_CODE = "request_budget_exceeded";
 const ERROR_CODE_HEADER = "X-Faas-Error-Code";
 const REQUEST_ID_HEADER = "X-Faas-Request-Id";
+const ORIGINAL_STATUS_HEADER = "X-Faas-Edge-Original-Status";
+const ORIGIN_504_TRANSPORT_STATUS = 409;
 const PROBLEM_CONTENT_TYPE = "application/problem+json";
 const PROBLEM_TYPE = "https://docs.gregale.dev/errors/request-budget-exceeded";
 
@@ -91,25 +93,33 @@ export async function handleRequest(request, env, fetchImpl = globalThis.fetch) 
     });
   }
 
-  if (upstream.status !== 504) {
+  const encodedOrigin504 =
+    upstream.status === ORIGIN_504_TRANSPORT_STATUS &&
+    upstream.headers.get(ORIGINAL_STATUS_HEADER) === "504";
+  if (upstream.status !== 504 && !encodedOrigin504) {
     return upstream;
   }
 
   const headers = removeHopByHopHeaders(new Headers(upstream.headers));
+  headers.delete(ORIGINAL_STATUS_HEADER);
   const contentType = headers.get("content-type") || "";
   const marked = headers.get(ERROR_CODE_HEADER) === ERROR_CODE;
   let body;
   if (!marked) {
     // Some TLS/proxy frontends drop X-Faas-Error-Code while preserving the
-    // origin's canonical problem envelope. Read only a problem+json 504 and
-    // require the exact platform error code; generic/unmarked failures pass
-    // through unchanged so CDN errors are never reclassified.
-    if (!contentType.toLowerCase().includes(PROBLEM_CONTENT_TYPE)) {
-      return upstream;
-    }
-    body = await upstream.clone().text();
+    // origin's canonical problem envelope. Require the exact platform error
+    // code; generic/unmarked failures retain their original body and status
+    // so CDN errors are never reclassified.
+    body = await upstream.text();
     if (!isStructuredBudgetBody(body, contentType)) {
-      return upstream;
+      // Returning the fetch Response object lets Cloudflare apply its generic
+      // 504 page after the Worker. Recreate the same response so an app's own
+      // status, headers, and body survive the edge unchanged.
+      return new Response(body, {
+        status: 504,
+        statusText: "Gateway Timeout",
+        headers,
+      });
     }
   }
   const id = requestID(request, headers);
