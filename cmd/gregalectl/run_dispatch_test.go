@@ -193,7 +193,7 @@ func TestRun_Man(t *testing.T) {
 		if code := run([]string{"man"}); code != 0 {
 			t.Errorf("run(man) = %d, want 0", code)
 		}
-		if !strings.Contains(buf.String(), ".TH GREGALE(1)") {
+		if !strings.Contains(buf.String(), ".TH GREGALE 1") {
 			t.Errorf("run(man) missing top-level title: %q", buf.String())
 		}
 	})
@@ -204,7 +204,7 @@ func TestRun_Man(t *testing.T) {
 		if code := run([]string{"man", "manifest"}); code != 0 {
 			t.Errorf("run(man manifest) = %d, want 0", code)
 		}
-		if !strings.Contains(buf.String(), "GREGALE-MANIFEST(1)") {
+		if !strings.Contains(buf.String(), "GREGALE-MANIFEST 1") {
 			t.Errorf("run(man manifest) missing per-command title: %q", buf.String())
 		}
 	})

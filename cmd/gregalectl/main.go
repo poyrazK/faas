@@ -87,7 +87,7 @@ func main() {
 
 func init() {
 	// Mirror cmd/gregale/main.go:114 — wire.Version into the man-page
-	// `.TH GREGALECTL(1) "version"` header at process boot.
+	// `.TH GREGALECTL 1 "date" "gregale" "version"` header at process boot.
 	gregalectlVersion = wire.Version
 }
 
