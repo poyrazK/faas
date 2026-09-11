@@ -2,6 +2,7 @@
 // for the operator-intent dispatcher
 // (PR #1099 P2 redesign step 2). Mirrors the cron fire-now
 // precedent at pkg/sched/operator_intent_subscriber.go.
+// adr: 174
 //
 // Pins:
 //

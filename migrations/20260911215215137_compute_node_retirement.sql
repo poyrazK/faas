@@ -1,3 +1,5 @@
+-- filename: 20260911215215137_compute_node_retirement.sql
+
 -- Terminal compute-node retirement. Unlike unavailable, retired nodes are not
 -- eligible for heartbeat recovery or operator re-enrollment. The lifecycle
 -- transition is dispatched through schedd's durable operator intent queue.
