@@ -41,6 +41,10 @@ type TokenFetcher interface {
 	ExchangeInstallationToken(ctx context.Context, installationID int64) (string, time.Time, error)
 }
 
+// ErrInstallationInvalidated indicates that a token refresh completed after
+// the installation was revoked. Callers must not use the returned token.
+var ErrInstallationInvalidated = errors.New("githubd: installation invalidated during token refresh")
+
 // TokenCache is a thread-safe, singleflight-style cache of
 // installation tokens.
 type TokenCache struct {
@@ -55,6 +59,9 @@ type TokenCache struct {
 
 	mu    sync.Mutex
 	items map[int64]*tokenEntry
+	// generations prevents an in-flight refresh from repopulating the cache
+	// after a revoke event has invalidated the installation.
+	generations map[int64]uint64
 	// inflight coalesces concurrent refreshes for the same
 	// installation_id so we don't stampede api.github.com.
 	inflight map[int64]*inflightCall
@@ -69,10 +76,11 @@ type tokenEntry struct {
 }
 
 type inflightCall struct {
-	done chan struct{}
-	tok  string
-	exp  time.Time
-	err  error
+	done       chan struct{}
+	generation uint64
+	tok        string
+	exp        time.Time
+	err        error
 }
 
 // NewTokenCache builds a TokenCache wired to the given fetcher.
@@ -86,6 +94,7 @@ func NewTokenCache(fetcher TokenFetcher, refreshWindow time.Duration) *TokenCach
 		refreshWindow: refreshWindow,
 		clock:         time.Now,
 		items:         map[int64]*tokenEntry{},
+		generations:   map[int64]uint64{},
 		inflight:      map[int64]*inflightCall{},
 	}
 }
@@ -117,7 +126,7 @@ func (c *TokenCache) Token(ctx context.Context, installationID int64) (string, e
 			return "", ctx.Err()
 		}
 	}
-	call := &inflightCall{done: make(chan struct{})}
+	call := &inflightCall{done: make(chan struct{}), generation: c.generations[installationID]}
 	c.inflight[installationID] = call
 	c.mu.Unlock()
 
@@ -125,12 +134,14 @@ func (c *TokenCache) Token(ctx context.Context, installationID int64) (string, e
 	tok, exp, err := c.fetcher.ExchangeInstallationToken(ctx, installationID)
 
 	c.mu.Lock()
-	if err == nil {
+	if err == nil && c.generations[installationID] == call.generation {
 		c.items[installationID] = &tokenEntry{
 			token:       tok,
 			expiresAt:   exp,
 			lastRefresh: c.clock(),
 		}
+	} else if err == nil {
+		err = ErrInstallationInvalidated
 	}
 	delete(c.inflight, installationID)
 	call.tok, call.exp, call.err = tok, exp, err
@@ -218,8 +229,15 @@ func (c *TokenCache) janitorSweep(ctx context.Context) {
 // Invalidate drops a single entry (used by the binding-store path
 // when an installation is unbound).
 func (c *TokenCache) Invalidate(installationID int64) {
+	if installationID <= 0 {
+		return
+	}
 	c.mu.Lock()
 	delete(c.items, installationID)
+	if c.generations == nil {
+		c.generations = make(map[int64]uint64)
+	}
+	c.generations[installationID]++
 	c.mu.Unlock()
 }
 

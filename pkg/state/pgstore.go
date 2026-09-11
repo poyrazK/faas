@@ -4545,6 +4545,120 @@ func (s *PgStore) GitHubInstallForAccountInstallation(ctx context.Context, accou
 	return inst, nil
 }
 
+// RevokeGitHubInstallation atomically removes all access derived from a
+// GitHub App installation. The binding update happens before deleting the
+// install row so a retry can never observe a credential without its deploy
+// edge. Existing preview apps are marked stale and picked up by the normal
+// teardown janitor.
+func (s *PgStore) RevokeGitHubInstallation(ctx context.Context, installationID int64) error {
+	if installationID <= 0 {
+		return ErrNotFound
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin revoke GitHub installation: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	if _, err := tx.Exec(ctx, `
+		update apps p
+		   set preview_pr_state = $2,
+		       preview_expires_at = now()
+		 where p.preview_of_slug is not null
+		   and coalesce(p.preview_pr_state, '') <> $3
+		   and exists (
+			 select 1 from apps parent
+			  where parent.account_id = p.account_id
+				and parent.slug = p.preview_of_slug
+				and parent.github_install_id = $1
+				and parent.status <> 'deleted'
+		   )`, installationID, PreviewPrStateStale, PreviewPrStateTornDown); err != nil {
+		return fmt.Errorf("state: mark GitHub previews stale: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update apps
+		   set github_install_id = null,
+		       github_repo_full_name = null,
+		       github_production_branch = null,
+		       github_install_binding_id = null,
+		       github_install_account_id = null,
+		       github_install_linked_at = null
+		 where github_install_id = $1`, installationID); err != nil {
+		return fmt.Errorf("state: clear GitHub bindings: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `delete from github_webhook_secrets where installation_id = $1`, installationID); err != nil {
+		return fmt.Errorf("state: delete GitHub webhook secret: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `delete from github_installations where installation_id = $1`, installationID); err != nil {
+		return fmt.Errorf("state: delete GitHub installation: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit revoke GitHub installation: %w", err)
+	}
+	return nil
+}
+
+// RemoveGitHubRepositories detaches selected repositories while retaining the
+// installation for the repositories that remain accessible.
+func (s *PgStore) RemoveGitHubRepositories(ctx context.Context, installationID int64, repoFullNames []string) error {
+	if installationID <= 0 || len(repoFullNames) == 0 {
+		return nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin remove GitHub repositories: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	if _, err := tx.Exec(ctx, `
+		update apps p
+		   set preview_pr_state = $2,
+		       preview_expires_at = now()
+		 where p.preview_of_slug is not null
+		   and coalesce(p.preview_pr_state, '') <> $3
+		   and exists (
+			 select 1 from apps parent
+			  where parent.account_id = p.account_id
+				and parent.slug = p.preview_of_slug
+				and parent.github_install_id = $1
+				and parent.github_repo_full_name = any($4::text[])
+				and parent.status <> 'deleted'
+		   )`, installationID, PreviewPrStateStale, PreviewPrStateTornDown, repoFullNames); err != nil {
+		return fmt.Errorf("state: mark removed-repository previews stale: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update apps
+		   set github_install_id = null,
+		       github_repo_full_name = null,
+		       github_production_branch = null,
+		       github_install_binding_id = null,
+		       github_install_account_id = null,
+		       github_install_linked_at = null
+		 where github_install_id = $1
+		   and github_repo_full_name = any($2::text[])`, installationID, repoFullNames); err != nil {
+		return fmt.Errorf("state: clear removed GitHub repositories: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit remove GitHub repositories: %w", err)
+	}
+	return nil
+}
+
+// RenameGitHubRepository keeps an existing binding valid after GitHub emits a
+// repository rename or transfer event.
+func (s *PgStore) RenameGitHubRepository(ctx context.Context, installationID int64, oldRepoFullName, newRepoFullName string) error {
+	if installationID <= 0 || oldRepoFullName == "" || newRepoFullName == "" {
+		return ErrNotFound
+	}
+	_, err := s.pool.Exec(ctx, `
+		update apps
+		   set github_repo_full_name = $3
+		 where github_install_id = $1
+		   and github_repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName)
+	if err != nil {
+		return fmt.Errorf("state: rename GitHub repository binding: %w", err)
+	}
+	return nil
+}
+
 // GetGithubInstallBindingForApp returns the (appID, accountID)
 // bind row. accountID scopes the lookup so a forged session cannot
 // read another tenant's binding — when the app is bound but to a

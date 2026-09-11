@@ -346,7 +346,8 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 		observe(nil)
 		return
 	}
-	if eventType != "" && eventType != "push" && eventType != "pull_request" {
+	if eventType != "" && eventType != "push" && eventType != "pull_request" &&
+		eventType != "installation" && eventType != "installation_repositories" && eventType != "repository" {
 		http.Error(w, "unsupported event", http.StatusBadRequest)
 		observe(errors.New("githubd: unsupported webhook event"))
 		return
@@ -384,6 +385,19 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 	if eventType == "pull_request" {
 		result, err := s.Service.handlePullRequest(r.Context(), body)
 		s.writeWebhookResult(w, result, err, observe)
+		return
+	}
+	if eventType == "installation" || eventType == "installation_repositories" || eventType == "repository" {
+		if err := s.Service.HandleInstallationLifecycle(r.Context(), eventType, body); err != nil {
+			s.Log.Error("githubd lifecycle webhook handle", "event_type", eventType, "err", err)
+			http.Error(w, "internal", http.StatusInternalServerError)
+			observe(err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+		observe(nil)
 		return
 	}
 	result, err := s.Service.HandlePushRequest(r.Context(), body)

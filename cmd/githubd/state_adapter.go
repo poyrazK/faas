@@ -154,3 +154,28 @@ func (a *stateInstallsAdapter) ForAccount(ctx context.Context, accountID string)
 func (a *stateInstallsAdapter) ForAccountInstallation(ctx context.Context, accountID string, installationID int64) (state.GitHubInstall, error) {
 	return a.store.GitHubInstallForAccountInstallation(ctx, accountID, installationID)
 }
+
+// stateLifecycleAdapter applies GitHub App access changes through the same
+// PgStore used by the webhook and OAuth paths. Keeping this adapter narrow
+// lets githubd remain persistence-agnostic while making revocation atomic.
+type stateLifecycleAdapter struct {
+	store *state.PgStore
+}
+
+func newStateLifecycleAdapter(pool *pgxpool.Pool) *stateLifecycleAdapter {
+	return &stateLifecycleAdapter{store: state.NewPgStore(pool)}
+}
+
+func (a *stateLifecycleAdapter) RevokeGitHubInstallation(ctx context.Context, installationID int64) error {
+	return a.store.RevokeGitHubInstallation(ctx, installationID)
+}
+
+func (a *stateLifecycleAdapter) RemoveGitHubRepositories(ctx context.Context, installationID int64, repoFullNames []string) error {
+	return a.store.RemoveGitHubRepositories(ctx, installationID, repoFullNames)
+}
+
+func (a *stateLifecycleAdapter) RenameGitHubRepository(ctx context.Context, installationID int64, oldRepoFullName, newRepoFullName string) error {
+	return a.store.RenameGitHubRepository(ctx, installationID, oldRepoFullName, newRepoFullName)
+}
+
+var _ githubd.InstallationLifecycleStore = (*stateLifecycleAdapter)(nil)
