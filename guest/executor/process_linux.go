@@ -3,6 +3,7 @@
 package executor
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -12,13 +13,15 @@ import (
 // guest init remains root only long enough to bind vsock and launch this
 // process; no customer code runs as PID 1.
 func configureProcess(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-		Credential: &syscall.Credential{
-			Uid: 1000,
-			Gid: 1000,
-		},
+	attrs := &syscall.SysProcAttr{Setpgid: true}
+	// guest-init is root in the production microVM and can enforce the
+	// dedicated runtime uid. Local tests and developer builds often already
+	// run as an unprivileged user; asking the kernel to switch identities there
+	// would make an otherwise valid interpreter launch fail with EPERM.
+	if os.Geteuid() == 0 {
+		attrs.Credential = &syscall.Credential{Uid: 1000, Gid: 1000}
 	}
+	cmd.SysProcAttr = attrs
 }
 
 func terminateProcess(cmd *exec.Cmd) {
