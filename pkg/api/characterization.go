@@ -24,14 +24,13 @@ package api
 type CharacterizationReport struct {
 	// ObservedClass is the guest's best guess. The host re-derives.
 	ObservedClass string `json:"observed_class"`
-	// ObservedPort is the TCP port the guest saw the app bind. 0
-	// means "no socket observed within the deadline" — the host
-	// treats 0 as a job-class hint (no listener, clean exit expected).
+	// ObservedPort is the TCP port the guest saw the app bind. 0 means no
+	// socket was observed; ExitCode then distinguishes job, worker, and startup
+	// failure.
 	ObservedPort int `json:"observed_port"`
-	// ExitCode captures the supervisor's terminating exit (-1 if the
-	// supervisor's restart budget was exhausted and the app is still
-	// crashing). 0 = clean exit; the host treats this as a strong
-	// `job` signal when ObservedPort == 0.
+	// ExitCode captures the supervisor's terminal exit. -1 means the workload
+	// was still running when the report was produced; 0 is a clean exit and a
+	// positive value is a startup failure when ObservedPort is 0.
 	ExitCode int `json:"exit_code"`
 	// ListeningAddrs lists every address the guest observed the app
 	// bind (with the address family — `0.0.0.0` vs `127.0.0.1` — so

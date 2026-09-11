@@ -103,16 +103,11 @@ type VMM interface {
 	// ADR-022 records the wire format (4-byte msg type + JSON body, port 1024
 	// on the fixed host CID 3).
 	TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error
-	// WaitCharacterizationReport (ADR-051 Phase 4 / PR-D) is the
-	// host-side mirror of TriggerResumeHook: it accepts ONE
-	// guest-initiated AF_VSOCK STREAM connection at port 1026
-	// (msg_type=3) carrying the CharacterizationReport, writes a
-	// 1-byte ack, and returns. Called only on cold boots (the warm
-	// path inherits the class from the apps row captured in the
-	// original cold boot). On deadline elapse the implementation
-	// MUST return (zero, err) and the caller (Manager.Wake) MUST
-	// fall back to the scan-hint class — never fail the wake, that
-	// would regress vs today's `:8080` accept failure path.
+	// WaitCharacterizationReport returns the cold boot's guest-initiated
+	// AF_VSOCK STREAM report. Implementations may start the receiver during
+	// boot and cache the result so readiness and this caller share one accept
+	// loop. On deadline it returns (zero, err), allowing Manager.Wake to retain
+	// the scan-hint class.
 	WaitCharacterizationReport(ctx context.Context, l Lease, deadline time.Duration) (api.CharacterizationReport, error)
 	// Snapshot pauses the running VM, writes a full snapshot to spec's paths, and
 	// destroys the VM (spec §4.4). The instance is gone when this returns.
@@ -835,13 +830,9 @@ type Manager struct {
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
 	// 0 when it doesn't (the ct cap rule is omitted, egress tc cap unaffected).
 	conntrackCap int64
-	// characterizationWait (ADR-051 Phase 4 / PR-D) bounds the
-	// WaitCharacterizationReport dial+read inside Wake. The guest
-	// retries its report 4× (initial + 3 backoffs totalling ~1.85s),
-	// so 4s gives us margin for slow vsock proxies on nested KVM.
-	// Mismatch with the guest deadline matters only in that the
-	// guest falls back to "ack_timeout" earlier than we fall back
-	// to scan-hint class — both sides degrade the same way.
+	// characterizationWait bounds retrieval of the shared cold-boot receipt.
+	// It outlives the guest's observation window so a no-bind worker can use
+	// the full window before reporting, including on nested KVM.
 	characterizationWait time.Duration
 	// storage is the artifact backend vmmd reads scan sidecars from at
 	// boot time (issue #299). Wired via WithStorage, mirroring the VMM's
@@ -3783,25 +3774,18 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 	}
 
-	// ADR-051 Phase 4 / PR-D: on cold boot, gate the wake on the
-	// characterization report. The guest dials host CID 2 at port
-	// 1026 with the report framed as [4B msg_type=3][4B body_len][JSON].
-	// On deadline we fall back to the scan-hint class — never fail
-	// the wake, that's strictly worse than today's `:8080` accept
-	// failure path (the operator gets no signal). Restore inherits
-	// the class from the apps row captured in the original cold boot.
+	// ADR-051 Phase 4 / PR-D: retrieve the cold boot's characterization
+	// receipt. Production JailerVMM starts and consumes this handshake while
+	// racing boot readiness, then returns the cached result here. Other VMM
+	// implementations may still receive it in this call. Missing reports retain
+	// the scan-hint class; restore inherits the original cold-boot class.
 	//
 	// ADR-098 C11: stamp the GuestReadyMs = round-trip from wake RPC
 	// return to the framework-ready DGRAM (issue #470 / PR #543).
-	// WaitCharacterizationReport IS the framework-ready handshake —
-	// measuring around it captures the guest-ready tail that the
-	// aggregate wake latency has been hiding. The deadline-elapsed
-	// path returns immediately with stamp = characterizationWait,
-	// signalling "guest never reached ready" rather than fabricating a
-	// value. Restore inherits the framework-ready stamp from the
-	// original cold-boot's row, but the restore window itself is
-	// already on RestoreMs below, so this field on restore reads as
-	// 0 (= not measured) and the wire emits it accordingly.
+	// The production receipt is normally cached by the time this call begins,
+	// while cold_boot_ms includes the readiness/characterization race. Fake or
+	// alternate VMMs can still expose remaining handshake latency here. Restore
+	// reports 0 because restore_ms owns that phase.
 	var report api.CharacterizationReport
 	var guestReadyMs int64
 	// Builder VMs do not emit the app readiness/characterization signals;

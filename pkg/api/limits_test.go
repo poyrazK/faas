@@ -1,3 +1,5 @@
+// adr: 051
+
 package api
 
 import (
@@ -2432,11 +2434,10 @@ func TestPlanLivenessAccessorsMatchTable(t *testing.T) {
 // The guest (characterize_linux.go::waitForBind) and the host
 // (pkg/fcvm/manager.go::characterizationWait) both read from this
 // single source so a future bump moves both sides together. The
-// invariants: guest >= host (the guest's full observation window
-// must cover the host's dial+read window or the host gives up
-// first and reports a false timeout), both > 0 (a zero deadline
-// would make waitForBind return instantly without observing the
-// bind), and both < readyTimeout (the legacy vmmd waitReady
+// invariants: host > guest (the receiver must remain open for the guest's full
+// observation window or it gives up before no-bind workers report), both > 0
+// (a zero deadline would make waitForBind return instantly without observing
+// the bind), and both < readyTimeout (the legacy vmmd waitReady
 // default of 30s — characterization is the faster gate).
 func TestCharacterizationDeadlines(t *testing.T) {
 	if CharacterizationDeadline <= 0 {
@@ -2445,14 +2446,14 @@ func TestCharacterizationDeadlines(t *testing.T) {
 	if CharacterizationHostDeadline <= 0 {
 		t.Errorf("CharacterizationHostDeadline = %s, want > 0", CharacterizationHostDeadline)
 	}
-	if CharacterizationDeadline < CharacterizationHostDeadline {
-		t.Errorf("guest deadline %s < host deadline %s (host would time out before guest has a chance to ship)",
-			CharacterizationDeadline, CharacterizationHostDeadline)
+	if CharacterizationHostDeadline <= CharacterizationDeadline {
+		t.Errorf("host deadline %s <= guest deadline %s (host would time out before the guest's observation window closes)",
+			CharacterizationHostDeadline, CharacterizationDeadline)
 	}
 	const readyTimeout = 30 * time.Second
-	if CharacterizationDeadline >= readyTimeout {
-		t.Errorf("CharacterizationDeadline = %s must be < readyTimeout (%s) so characterization gates boot faster than the legacy :8080 accept path",
-			CharacterizationDeadline, readyTimeout)
+	if CharacterizationHostDeadline >= readyTimeout {
+		t.Errorf("CharacterizationHostDeadline = %s must be < readyTimeout (%s) so characterization gates boot faster than the legacy :8080 accept path",
+			CharacterizationHostDeadline, readyTimeout)
 	}
 }
 

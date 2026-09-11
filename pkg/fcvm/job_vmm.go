@@ -504,7 +504,7 @@ func (v *JailerVMM) WaitJobExit(ctx context.Context, l Lease, deadline time.Dura
 	if ln == nil {
 		return zero, fmt.Errorf("vmm: WaitJobExit: listener for %s was not prepared", l.Instance)
 	}
-	defer v.closeJobExitListener(l.Instance)
+	defer v.releaseGuestVsockListener(l.Instance, VsockJobExitPort, ln)
 
 	end := time.Now().Add(deadline)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(end) {

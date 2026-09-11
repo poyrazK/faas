@@ -74,6 +74,10 @@ type JailerVMM struct {
 	// listeners here closes the race where a fast guest sends its characterization
 	// or job-exit frame before the corresponding wait RPC starts.
 	guestVsockListeners map[guestVsockListenerKey]*net.UnixListener
+	// characterizationReceipts coordinate the receiver started during boot
+	// with Manager.Wake's later WaitCharacterizationReport call. A single
+	// accept loop owns each listener; every waiter observes the cached result.
+	characterizationReceipts map[string]*characterizationReceipt
 	// hcClient (issue #460 / ADR-053, ADR-057 / PR-D) is the
 	// per-VMM *http.Client the waitReady HTTP probe reuses across
 	// its 200ms-cadence loop. Lazily created by healthcheckClient
@@ -348,19 +352,20 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		readyTimeout = 30 * time.Second
 	}
 	return &JailerVMM{
-		chrootBase:          chrootBase,
-		fcName:              resolveFCChrootName(),
-		readyTimeout:        readyTimeout,
-		destroyWait:         10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
-		exportMaxBytes:      0,                // resolved to api.MaxExportedLayerBytes at first export
-		proc:                make(map[string]*exec.Cmd),
-		clients:             make(map[string]*http.Client),
-		guestVsockListeners: make(map[guestVsockListenerKey]*net.UnixListener),
-		recs:                make(map[string]*instanceRecord),
-		rings:               make(map[string]*logbuf.Ring),
-		materialisedTmp:     make(map[string][]string),
-		bindMounts:          make(map[string][]ephemeralBind),
-		bindSourceModes:     make(map[string]bindSourceMode),
+		chrootBase:               chrootBase,
+		fcName:                   resolveFCChrootName(),
+		readyTimeout:             readyTimeout,
+		destroyWait:              10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
+		exportMaxBytes:           0,                // resolved to api.MaxExportedLayerBytes at first export
+		proc:                     make(map[string]*exec.Cmd),
+		clients:                  make(map[string]*http.Client),
+		guestVsockListeners:      make(map[guestVsockListenerKey]*net.UnixListener),
+		characterizationReceipts: make(map[string]*characterizationReceipt),
+		recs:                     make(map[string]*instanceRecord),
+		rings:                    make(map[string]*logbuf.Ring),
+		materialisedTmp:          make(map[string][]string),
+		bindMounts:               make(map[string][]ephemeralBind),
+		bindSourceModes:          make(map[string]bindSourceMode),
 	}
 }
 
@@ -705,8 +710,26 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	// post-start PUT needed.
 	var readyAt, quotaRestoredAt time.Time
 	if !skipReady {
+		var characterization *characterizationReceipt
+		v.mu.Lock()
+		preparedCharacterization := v.characterizationReceipts[l.Instance] != nil
+		v.mu.Unlock()
+		if preparedCharacterization {
+			var startErr error
+			characterization, startErr = v.startCharacterizationReceiver(l, api.CharacterizationHostDeadline)
+			if startErr != nil {
+				slog.Default().Warn("vmm: start characterization receiver; falling back to readiness probe",
+					"instance", l.Instance, "err", startErr)
+				characterization = nil
+			}
+		}
 		readinessStartedAt := time.Now()
-		if err = v.waitReady(ctx, l, healthcheckPath, startupDeadlineS); err != nil {
+		if characterization != nil {
+			err = v.waitReadyOrCharacterized(ctx, l, healthcheckPath, startupDeadlineS, characterization)
+		} else {
+			err = v.waitReady(ctx, l, healthcheckPath, startupDeadlineS)
+		}
+		if err != nil {
 			return fmt.Errorf("vmm: readiness: %w", err)
 		}
 		readyAt = time.Now()
@@ -1212,6 +1235,13 @@ type guestVsockListenerKey struct {
 	port     uint32
 }
 
+type characterizationReceipt struct {
+	once   sync.Once
+	done   chan struct{}
+	report api.CharacterizationReport
+	err    error
+}
+
 // guestVsockUDSSock is Firecracker's documented host endpoint for a
 // guest-initiated connection: <configured uds_path>_<destination port>.
 func (v *JailerVMM) guestVsockUDSSock(instance string, port uint32) string {
@@ -1273,12 +1303,32 @@ func (v *JailerVMM) closeGuestVsockListener(instance string, port uint32) {
 	key := guestVsockListenerKey{instance: instance, port: port}
 	v.mu.Lock()
 	ln := v.guestVsockListeners[key]
-	delete(v.guestVsockListeners, key)
 	v.mu.Unlock()
-	if ln != nil {
-		_ = ln.Close()
+	if ln == nil {
+		_ = os.Remove(v.guestVsockUDSSock(instance, port))
+		return
 	}
-	_ = os.Remove(v.guestVsockUDSSock(instance, port))
+	v.releaseGuestVsockListener(instance, port, ln)
+}
+
+// releaseGuestVsockListener only removes the map entry and socket path when
+// they still belong to the completed accept loop. This prevents a late defer
+// from an old instance generation from tearing down a newly prepared listener.
+func (v *JailerVMM) releaseGuestVsockListener(instance string, port uint32, ln *net.UnixListener) {
+	if v == nil || ln == nil {
+		return
+	}
+	key := guestVsockListenerKey{instance: instance, port: port}
+	v.mu.Lock()
+	current := v.guestVsockListeners[key]
+	if current == ln {
+		delete(v.guestVsockListeners, key)
+	}
+	v.mu.Unlock()
+	_ = ln.Close()
+	if current == ln {
+		_ = os.Remove(v.guestVsockUDSSock(instance, port))
+	}
 }
 
 func (v *JailerVMM) closeGuestVsockListeners(instance string) {
@@ -1293,6 +1343,7 @@ func (v *JailerVMM) closeGuestVsockListeners(instance string) {
 			delete(v.guestVsockListeners, key)
 		}
 	}
+	delete(v.characterizationReceipts, instance)
 	v.mu.Unlock()
 	for port, ln := range listeners {
 		if ln != nil {
@@ -3774,6 +3825,72 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 	}
 }
 
+// waitReadyOrCharacterized races the legacy :8080 readiness probe with the
+// guest's observed workload outcome. Bound server classes still have to pass
+// the host probe. A job or worker has no listening port by definition, so its
+// valid report is the readiness signal. A terminal startup exit fails fast
+// with the captured log tail instead of waiting for a misleading TCP timeout.
+func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healthcheckPath string, startupDeadlineS int, receipt *characterizationReceipt) error {
+	readyCtx, cancelReady := context.WithCancel(ctx)
+	defer cancelReady()
+	readyCh := make(chan error, 1)
+	go func() {
+		readyCh <- v.waitReady(readyCtx, l, healthcheckPath, startupDeadlineS)
+	}()
+
+	receiptDone := receipt.done
+	for {
+		select {
+		case err := <-readyCh:
+			if err == nil {
+				return nil
+			}
+			// Respect the configured startup deadline. If the report became
+			// available at the same instant, prefer its terminal job/worker or
+			// startup-failure outcome; otherwise the readiness timeout wins.
+			if receiptDone != nil {
+				select {
+				case <-receiptDone:
+					if terminal, outcomeErr := characterizationBootOutcome(receipt.report, receipt.err); terminal {
+						return outcomeErr
+					}
+				default:
+				}
+			}
+			return err
+		case <-receiptDone:
+			receiptDone = nil
+			if terminal, outcomeErr := characterizationBootOutcome(receipt.report, receipt.err); terminal {
+				return outcomeErr
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func characterizationBootOutcome(report api.CharacterizationReport, receiveErr error) (bool, error) {
+	if receiveErr != nil {
+		return false, nil
+	}
+	switch report.ObservedClass {
+	case "job", "worker":
+		return true, nil
+	case "":
+		if report.ObservedPort == 0 && report.ExitCode > 0 {
+			tail := []rune(strings.TrimSpace(report.LogTail))
+			if len(tail) > 4096 {
+				tail = tail[len(tail)-4096:]
+			}
+			if len(tail) > 0 {
+				return true, fmt.Errorf("workload exited with code %d during startup: %s", report.ExitCode, string(tail))
+			}
+			return true, fmt.Errorf("workload exited with code %d during startup", report.ExitCode)
+		}
+	}
+	return false, nil
+}
+
 // notReadyProblem shapes the deadline-expired error from the TCP
 // probe path. When every probe hit ECONNREFUSED, the kernel is
 // telling us nothing is listening — the canonical
@@ -4100,20 +4217,22 @@ func (v *JailerVMM) characterizationUDSSock(instance string) string {
 }
 
 func (v *JailerVMM) prepareCharacterizationListener(l Lease) error {
-	return v.prepareGuestVsockListener(l, VsockCharacterizationHostPort)
+	if err := v.prepareGuestVsockListener(l, VsockCharacterizationHostPort); err != nil {
+		return err
+	}
+	v.mu.Lock()
+	if v.characterizationReceipts == nil {
+		v.characterizationReceipts = make(map[string]*characterizationReceipt)
+	}
+	v.characterizationReceipts[l.Instance] = &characterizationReceipt{done: make(chan struct{})}
+	v.mu.Unlock()
+	return nil
 }
 
 func (v *JailerVMM) closeCharacterizationListener(instance string) {
 	v.closeGuestVsockListener(instance, VsockCharacterizationHostPort)
 }
 
-// WaitCharacterizationReport accepts a guest-initiated AF_VSOCK STREAM on the
-// listener prepared before cold boot. Firecracker forwards that stream to
-// <uds_path>_1026; dialing the base UDS and sending CONNECT would initiate the
-// opposite direction and can never receive the guest's report.
-//
-// Invalid frames receive a non-zero ack and consume a bounded retry slot. The
-// listener accepts later guest retries until the overall deadline expires.
 func (v *JailerVMM) WaitCharacterizationReport(ctx context.Context, l Lease, deadline time.Duration) (api.CharacterizationReport, error) {
 	var zero api.CharacterizationReport
 	if v == nil {
@@ -4128,22 +4247,57 @@ func (v *JailerVMM) WaitCharacterizationReport(ctx context.Context, l Lease, dea
 	if deadline <= 0 {
 		return zero, fmt.Errorf("vmm: WaitCharacterizationReport: deadline must be positive")
 	}
+	receipt, err := v.startCharacterizationReceiver(l, deadline)
+	if err != nil {
+		return zero, err
+	}
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
+	select {
+	case <-receipt.done:
+		return receipt.report, receipt.err
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	case <-timer.C:
+		return zero, context.DeadlineExceeded
+	}
+}
+
+// startCharacterizationReceiver gives boot and Manager.Wake one shared receipt.
+// The first caller owns the accept loop; later callers wait for its cached
+// result instead of racing a second Accept against the same Unix listener.
+func (v *JailerVMM) startCharacterizationReceiver(l Lease, deadline time.Duration) (*characterizationReceipt, error) {
+	v.mu.Lock()
+	receipt := v.characterizationReceipts[l.Instance]
+	v.mu.Unlock()
+	if receipt == nil {
+		return nil, fmt.Errorf("vmm: WaitCharacterizationReport: listener for %s was not prepared", l.Instance)
+	}
+	receipt.once.Do(func() {
+		go func() {
+			receipt.report, receipt.err = v.receiveCharacterizationReport(l, deadline)
+			close(receipt.done)
+		}()
+	})
+	return receipt, nil
+}
+
+// receiveCharacterizationReport accepts a guest-initiated AF_VSOCK STREAM on
+// the listener prepared before cold boot. Firecracker forwards that stream to
+// <uds_path>_1026. Invalid frames receive a non-zero ack and consume a bounded
+// retry slot so the guest can reconnect without creating an unbounded loop.
+func (v *JailerVMM) receiveCharacterizationReport(l Lease, deadline time.Duration) (api.CharacterizationReport, error) {
+	var zero api.CharacterizationReport
 	ln := v.guestVsockListener(l.Instance, VsockCharacterizationHostPort)
 	if ln == nil {
-		return zero, fmt.Errorf("vmm: WaitCharacterizationReport: listener for %s was not prepared", l.Instance)
+		return zero, fmt.Errorf("vmm: receive characterization: listener for %s was not prepared", l.Instance)
 	}
-	defer v.closeCharacterizationListener(l.Instance)
+	defer v.releaseGuestVsockListener(l.Instance, VsockCharacterizationHostPort, ln)
 
 	end := time.Now().Add(deadline)
-	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(end) {
-		end = ctxDeadline
-	}
 	const maxInvalidFrames = 8
 	var lastErr error
 	for invalid := 0; invalid < maxInvalidFrames; {
-		if err := ctx.Err(); err != nil {
-			return zero, err
-		}
 		now := time.Now()
 		if !now.Before(end) {
 			if lastErr != nil {
@@ -4164,13 +4318,13 @@ func (v *JailerVMM) WaitCharacterizationReport(ctx context.Context, l Lease, dea
 			if errors.As(err, &netErr) && netErr.Timeout() {
 				continue
 			}
-			if ctx.Err() != nil {
-				return zero, ctx.Err()
-			}
 			return zero, fmt.Errorf("vmm: WaitCharacterizationReport: accept: %w", err)
 		}
 		_ = conn.SetDeadline(end)
 		report, readErr := readCharacterizationEnvelope(conn)
+		if readErr == nil {
+			readErr = normalizeCharacterizationReport(&report)
+		}
 		if readErr != nil {
 			lastErr = readErr
 			invalid++
@@ -4206,6 +4360,20 @@ func readCharacterizationEnvelope(r io.Reader) (api.CharacterizationReport, erro
 	if _, err := io.ReadFull(r, body); err != nil {
 		return zero, fmt.Errorf("read body (%d bytes): %w", bodyLen, err)
 	}
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return zero, fmt.Errorf("characterization body must be a JSON object")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return zero, fmt.Errorf("parse JSON: %w", err)
+	}
+	for _, name := range []string{"observed_class", "observed_port", "exit_code"} {
+		raw, ok := fields[name]
+		if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return zero, fmt.Errorf("characterization body missing required field %q", name)
+		}
+	}
 	var report api.CharacterizationReport
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(&report); err != nil {
@@ -4215,6 +4383,62 @@ func readCharacterizationEnvelope(r io.Reader) (api.CharacterizationReport, erro
 		return zero, fmt.Errorf("parse JSON: trailing content")
 	}
 	return report, nil
+}
+
+// normalizeCharacterizationReport validates the untrusted guest boundary and
+// replaces the guest's class proposal with the host-derived authoritative
+// value required by ADR-051. The L7 hint can refine a bound server to GraphQL
+// or gRPC; it can never turn a bound workload into a job/worker or a no-bind
+// workload into a server.
+func normalizeCharacterizationReport(report *api.CharacterizationReport) error {
+	if report == nil {
+		return fmt.Errorf("nil characterization report")
+	}
+	if report.ObservedPort < 0 || report.ObservedPort > 65535 {
+		return fmt.Errorf("observed_port=%d out of range", report.ObservedPort)
+	}
+	if report.ExitCode < -1 || report.ExitCode > 255 {
+		return fmt.Errorf("exit_code=%d out of range", report.ExitCode)
+	}
+	if report.OutboundCount < 0 || report.OutboundCount > 1_000_000 {
+		return fmt.Errorf("outbound_count=%d out of range", report.OutboundCount)
+	}
+	if len(report.ListeningAddrs) > 128 {
+		return fmt.Errorf("listening_addrs has %d entries (max 128)", len(report.ListeningAddrs))
+	}
+	for i, addr := range report.ListeningAddrs {
+		if len(addr) > 256 {
+			return fmt.Errorf("listening_addrs[%d] is %d bytes (max 256)", i, len(addr))
+		}
+	}
+	// The frame limit already bounds LogTail together with every other field.
+	// Do not independently reject it at the guest ring capacity: replacing
+	// invalid UTF-8 before JSON encoding can legitimately expand the byte count.
+	switch report.PortNormalizationMode {
+	case "", "none", "dnat", "forward":
+	default:
+		return fmt.Errorf("unsupported port_norm_mode %q", report.PortNormalizationMode)
+	}
+
+	if report.ObservedPort > 0 {
+		switch report.ObservedClass {
+		case "graphql", "grpc":
+			// A successful in-guest L7 probe may refine a bound server.
+		default:
+			report.ObservedClass = "http"
+		}
+		return nil
+	}
+	switch report.ExitCode {
+	case 0:
+		report.ObservedClass = "job"
+	case -1:
+		report.ObservedClass = "worker"
+	default:
+		// A non-zero startup exit is a boot failure, not a workload class.
+		report.ObservedClass = ""
+	}
+	return nil
 }
 
 // fcClient returns an HTTP client bound to the instance's Firecracker API socket.
