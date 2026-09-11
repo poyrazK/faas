@@ -26,8 +26,10 @@ import (
 // so a direct MiddlewareConfig{} literal still produces stable
 // metric labels.
 const (
-	endpointUnknown = "unknown"
-	routeUnknown    = "unknown"
+	endpointUnknown              = "unknown"
+	routeUnknown                 = "unknown"
+	requestBudgetErrorCodeHeader = "X-Faas-Error-Code"
+	requestIDHeader              = "X-Faas-Request-Id"
 )
 
 // MiddlewareConfig wires BudgetMiddleware. nil Metrics means
@@ -172,7 +174,7 @@ func (cfg MiddlewareConfig) Middleware(next http.Handler) http.Handler {
 			// Inner handler hit the budget before it could write a
 			// response. Write 504 + RFC 7807 envelope if no one
 			// else has yet, then record outcome=exceeded.
-			cfg.writeProblem(bw, w, b, "exceeded", "request_budget_exceeded")
+			cfg.writeProblem(bw, w, b, "exceeded", "request_budget_exceeded", r)
 			cfg.observe(b, "exceeded")
 		case errors.Is(ctx.Err(), context.Canceled):
 			cfg.observe(b, "cancelled")
@@ -212,7 +214,7 @@ func (cfg MiddlewareConfig) observe(b Budget, outcome string) {
 // handler hasn't yet committed a response. The middleware uses a
 // fixed code (`request_budget_exceeded`) and a fixed docs URL —
 // see ADR-093 for the docs location.
-func (cfg MiddlewareConfig) writeProblem(bw *budgetWriter, w http.ResponseWriter, b Budget, outcome, code string) {
+func (cfg MiddlewareConfig) writeProblem(bw *budgetWriter, w http.ResponseWriter, b Budget, outcome, code string, r *http.Request) {
 	if bw.wrote {
 		return
 	}
@@ -234,6 +236,17 @@ func (cfg MiddlewareConfig) writeProblem(bw *budgetWriter, w http.ResponseWriter
 		"budget_ms", b.Total.Milliseconds(),
 		"hop", hop,
 	)
+	// These headers are the edge adapter contract. They remain useful when a
+	// CDN replaces the origin error body, and are harmless on direct origin
+	// responses. Set (rather than Add) so a request-id middleware cannot create
+	// ambiguous duplicate values.
+	w.Header().Set(requestBudgetErrorCodeHeader, code)
+	w.Header().Set("Cache-Control", "no-store")
+	if r != nil {
+		if rid := r.Header.Get(requestIDHeader); rid != "" {
+			w.Header().Set(requestIDHeader, rid)
+		}
+	}
 	// Direct write to the wrapped w (not bw) so the budgetWriter's
 	// wrote flag isn't double-tripped — bw is only consulted
 	// post-handler.

@@ -100,6 +100,7 @@ func TestMiddleware_Exceeded(t *testing.T) {
 	})
 	h := cfg.Middleware(slowHandler)
 	req := httptest.NewRequest(http.MethodPost, "/payment", nil)
+	req.Header.Set(requestIDHeader, "middleware-req-1")
 	rr := httptest.NewRecorder()
 	start := time.Now()
 	h.ServeHTTP(rr, req)
@@ -124,6 +125,15 @@ func TestMiddleware_Exceeded(t *testing.T) {
 	}
 	if env.Status != http.StatusGatewayTimeout {
 		t.Fatalf("exceeded: status = %d, want 504", env.Status)
+	}
+	if got := rr.Header().Get(requestBudgetErrorCodeHeader); got != "request_budget_exceeded" {
+		t.Fatalf("exceeded: error code header = %q, want request_budget_exceeded", got)
+	}
+	if got := rr.Header().Get(requestIDHeader); got != "middleware-req-1" {
+		t.Fatalf("exceeded: request id header = %q, want middleware-req-1", got)
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("exceeded: cache-control = %q, want no-store", got)
 	}
 	// Counter must increment on exceed.
 	if got := testutil.ToFloat64(m.RequestBudgetExceededTotal.WithLabelValues("forward", "POST:/payment", "gateway")); got != 1 {
