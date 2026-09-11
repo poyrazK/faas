@@ -73,6 +73,7 @@ type gcsStore interface {
 	ListObjects(context.Context, string, string, string, string, int32) ([]gcsObjectState, []string, string, error)
 	DeleteObject(context.Context, string, string) error
 	ObjectState(context.Context, string, string) (gcsObjectState, error)
+	UpdateObjectMetadata(context.Context, string, string, map[string]string) (gcsObjectState, error)
 	CopyObject(context.Context, string, string, string, ObjectMetadata, string) (gcsObjectState, error)
 }
 
@@ -186,16 +187,28 @@ func (s *googleGCSStore) ObjectState(ctx context.Context, bucket, key string) (g
 	return gcsObjectState{Key: attr.Name, ETag: attr.Etag, Size: attr.Size, LastModified: attr.Updated, Metadata: attr.Metadata}, nil
 }
 
+func (s *googleGCSStore) UpdateObjectMetadata(ctx context.Context, bucket, key string, metadata map[string]string) (gcsObjectState, error) {
+	attrs, err := s.client.Bucket(bucket).Object(key).Update(ctx, storage.ObjectAttrsToUpdate{Metadata: metadata})
+	if err != nil {
+		return gcsObjectState{}, err
+	}
+	return gcsObjectState{Key: attrs.Name, ETag: attrs.Etag, Size: attrs.Size, LastModified: attrs.Updated, Metadata: attrs.Metadata}, nil
+}
+
 func (s *googleGCSStore) CopyObject(ctx context.Context, bucket, source, destination string, metadata ObjectMetadata, directive string) (gcsObjectState, error) {
 	copier := s.client.Bucket(bucket).Object(destination).CopierFrom(s.client.Bucket(bucket).Object(source))
 	if directive == "REPLACE" {
+		objectMetadata, err := gcsMetadataForObject(metadata)
+		if err != nil {
+			return gcsObjectState{}, err
+		}
 		copier.ObjectAttrs = storage.ObjectAttrs{
 			CacheControl:       metadata.CacheControl,
 			ContentDisposition: metadata.ContentDisposition,
 			ContentEncoding:    metadata.ContentEncoding,
 			ContentLanguage:    metadata.ContentLanguage,
 			ContentType:        metadata.ContentType,
-			Metadata:           metadata.Metadata,
+			Metadata:           objectMetadata,
 		}
 	}
 	attrs, err := copier.Run(ctx)
@@ -321,8 +334,40 @@ func (p *GCS) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest
 	if r.MetadataDirective != "COPY" && r.MetadataDirective != "REPLACE" {
 		return CopyObjectResult{}, ErrInvalid
 	}
-	if err := validateObjectMetadata(r.Metadata); err != nil {
+	if r.TaggingDirective == "" {
+		r.TaggingDirective = "COPY"
+	}
+	if r.TaggingDirective != "COPY" && r.TaggingDirective != "REPLACE" {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	if r.MetadataDirective == "COPY" && r.TaggingDirective == "REPLACE" {
+		// Replacing tags while copying all other GCS metadata requires a
+		// read/merge/update sequence that is not atomic on every GCS backend.
+		return CopyObjectResult{}, ErrUnsupported
+	}
+	if r.TaggingDirective == "COPY" && len(r.Metadata.Tags) != 0 {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	if len(r.Metadata.Tags) != 0 {
+		if r.TaggingDirective != "REPLACE" {
+			return CopyObjectResult{}, ErrInvalid
+		}
+		// GCS has no native S3 tag API. Tags are kept in one reserved custom
+		// metadata value so the branded gateway can preserve S3 semantics.
+	}
+	if err := ValidateObjectMetadata(r.Metadata); err != nil {
 		return CopyObjectResult{}, err
+	}
+	if r.MetadataDirective == "REPLACE" && r.TaggingDirective == "COPY" {
+		source, sourceErr := p.store.ObjectState(ctx, bucket, r.SourceKey)
+		if sourceErr != nil {
+			return CopyObjectResult{}, normalizeGCS(sourceErr)
+		}
+		tags, tagsErr := gcsTagsFromMetadata(source.Metadata)
+		if tagsErr != nil {
+			return CopyObjectResult{}, tagsErr
+		}
+		r.Metadata.Tags = tags
 	}
 	object, err := p.store.CopyObject(ctx, bucket, r.SourceKey, r.DestinationKey, r.Metadata, r.MetadataDirective)
 	if err != nil {
@@ -332,6 +377,80 @@ func (p *GCS) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest
 		return CopyObjectResult{}, ErrUnavailable
 	}
 	return CopyObjectResult{ETag: object.ETag, LastModified: object.LastModified}, nil
+}
+
+func (p *GCS) GetObjectTags(ctx context.Context, bucket, key string) (map[string]string, error) {
+	if !ValidKey(key) {
+		return nil, ErrInvalid
+	}
+	object, err := p.store.ObjectState(ctx, bucket, key)
+	if err != nil {
+		return nil, normalizeGCS(err)
+	}
+	return gcsTagsFromMetadata(object.Metadata)
+}
+
+func (p *GCS) PutObjectTags(ctx context.Context, bucket, key string, tags map[string]string) error {
+	if !ValidKey(key) {
+		return ErrInvalid
+	}
+	if err := ValidateObjectMetadata(ObjectMetadata{Tags: tags}); err != nil {
+		return err
+	}
+	object, err := p.store.ObjectState(ctx, bucket, key)
+	if err != nil {
+		return normalizeGCS(err)
+	}
+	metadata := cloneMetadata(object.Metadata)
+	encoded, err := EncodeObjectTags(tags)
+	if err != nil {
+		return err
+	}
+	if encoded == "" {
+		delete(metadata, ReservedObjectTagsMetadataKey)
+	} else {
+		metadata[ReservedObjectTagsMetadataKey] = encoded
+	}
+	_, err = p.store.UpdateObjectMetadata(ctx, bucket, key, metadata)
+	return normalizeGCS(err)
+}
+
+func (p *GCS) DeleteObjectTags(ctx context.Context, bucket, key string) error {
+	return p.PutObjectTags(ctx, bucket, key, nil)
+}
+
+func gcsMetadataForObject(metadata ObjectMetadata) (map[string]string, error) {
+	if err := ValidateObjectMetadata(metadata); err != nil {
+		return nil, err
+	}
+	out := cloneMetadata(metadata.Metadata)
+	encoded, err := EncodeObjectTags(metadata.Tags)
+	if err != nil {
+		return nil, err
+	}
+	if encoded != "" {
+		out[ReservedObjectTagsMetadataKey] = encoded
+	}
+	return out, nil
+}
+
+func gcsTagsFromMetadata(metadata map[string]string) (map[string]string, error) {
+	raw := metadata[ReservedObjectTagsMetadataKey]
+	if raw == "" {
+		return map[string]string{}, nil
+	}
+	return ParseObjectTags(raw)
+}
+
+func cloneMetadata(metadata map[string]string) map[string]string {
+	if len(metadata) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		out[key] = value
+	}
+	return out
 }
 
 func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
@@ -356,12 +475,29 @@ func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (Signed
 		}
 		opts.ContentType = contentType
 		result.Headers["Content-Type"] = contentType
+		opts.Headers = append(opts.Headers, gcsMetadataHeaders(r.Metadata)...)
+		for name, value := range gcsMetadataHeaderValues(r.Metadata) {
+			result.Headers[name] = value
+		}
+		tagging, err := EncodeObjectTags(r.Tags)
+		if err != nil {
+			return SignedRequest{}, err
+		}
+		if tagging != "" {
+			name := "x-goog-meta-" + ReservedObjectTagsMetadataKey
+			opts.Headers = append(opts.Headers, name+":"+tagging)
+			result.Headers[name] = tagging
+		}
+		for name, value := range gcsContentHeaderValues(r) {
+			opts.Headers = append(opts.Headers, strings.ToLower(name)+":"+value)
+			result.Headers[name] = value
+		}
 		if *r.SizeBytes == 0 {
 			opts.MD5 = "1B2M2Y8AsgTpgAmY7PhCfg=="
 			result.Headers["Content-MD5"] = opts.MD5
 		} else {
 			length := strconv.FormatInt(*r.SizeBytes, 10)
-			opts.Headers = []string{"content-length:" + length}
+			opts.Headers = append(opts.Headers, "content-length:"+length)
 			result.Headers["Content-Length"] = length
 		}
 	case http.MethodGet:
@@ -374,6 +510,36 @@ func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (Signed
 	}
 	result.URL = value
 	return result, nil
+}
+
+func gcsMetadataHeaders(metadata map[string]string) []string {
+	values := gcsMetadataHeaderValues(metadata)
+	keys := make([]string, 0, len(values))
+	for name := range values {
+		keys = append(keys, strings.ToLower(name)+":"+values[name])
+	}
+	return keys
+}
+
+func gcsMetadataHeaderValues(metadata map[string]string) map[string]string {
+	values := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		values["x-goog-meta-"+strings.ToLower(key)] = value
+	}
+	return values
+}
+
+func gcsContentHeaderValues(r SignRequest) map[string]string {
+	values := map[string]string{}
+	for name, value := range map[string]string{
+		"Cache-Control": r.CacheControl, "Content-Disposition": r.ContentDisposition,
+		"Content-Encoding": r.ContentEncoding, "Content-Language": r.ContentLanguage,
+	} {
+		if value != "" {
+			values[name] = value
+		}
+	}
+	return values
 }
 
 func (p *GCS) signedURL(ctx context.Context, bucket, key string, opts storage.SignedURLOptions) (string, error) {

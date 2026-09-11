@@ -146,7 +146,20 @@ func (p *S3) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest)
 	if r.MetadataDirective != "COPY" && r.MetadataDirective != "REPLACE" {
 		return CopyObjectResult{}, ErrInvalid
 	}
-	if err := validateObjectMetadata(r.Metadata); err != nil {
+	if r.TaggingDirective == "" {
+		r.TaggingDirective = "COPY"
+	}
+	if r.TaggingDirective != "COPY" && r.TaggingDirective != "REPLACE" {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	if r.TaggingDirective == "COPY" && len(r.Metadata.Tags) != 0 {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	if err := ValidateObjectMetadata(r.Metadata); err != nil {
+		return CopyObjectResult{}, err
+	}
+	tagging, err := EncodeObjectTags(r.Metadata.Tags)
+	if err != nil {
 		return CopyObjectResult{}, err
 	}
 	in := &s3.CopyObjectInput{
@@ -160,6 +173,10 @@ func (p *S3) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest)
 		ContentEncoding:    stringPtrOrNil(r.Metadata.ContentEncoding),
 		ContentLanguage:    stringPtrOrNil(r.Metadata.ContentLanguage),
 		MetadataDirective:  types.MetadataDirective(r.MetadataDirective),
+		TaggingDirective:   types.TaggingDirective(r.TaggingDirective),
+	}
+	if r.TaggingDirective == "REPLACE" {
+		in.Tagging = aws.String(tagging)
 	}
 	out, err := p.client.CopyObject(ctx, in)
 	if err != nil {
@@ -172,20 +189,7 @@ func (p *S3) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest)
 }
 
 func validateObjectMetadata(metadata ObjectMetadata) error {
-	for _, value := range []string{metadata.CacheControl, metadata.ContentDisposition, metadata.ContentEncoding, metadata.ContentLanguage, metadata.ContentType} {
-		if err := ValidateContentType(value); err != nil {
-			return err
-		}
-	}
-	if len(metadata.Metadata) > 90 {
-		return ErrInvalid
-	}
-	for key, value := range metadata.Metadata {
-		if key == "" || len(key) > 128 || len(value) > 2048 || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
-			return ErrInvalid
-		}
-	}
-	return nil
+	return ValidateObjectMetadata(metadata)
 }
 
 func stringPtrOrNil(value string) *string {
@@ -235,7 +239,19 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 		if contentType == "" {
 			contentType = "application/octet-stream"
 		}
-		in := &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(r.Key), ContentLength: r.SizeBytes, ContentType: aws.String(contentType)}
+		tagging, err := EncodeObjectTags(r.Tags)
+		if err != nil {
+			return SignedRequest{}, err
+		}
+		in := &s3.PutObjectInput{
+			Bucket: aws.String(bucket), Key: aws.String(r.Key), ContentLength: r.SizeBytes, ContentType: aws.String(contentType),
+			CacheControl: stringPtrOrNil(r.CacheControl), ContentDisposition: stringPtrOrNil(r.ContentDisposition),
+			ContentEncoding: stringPtrOrNil(r.ContentEncoding), ContentLanguage: stringPtrOrNil(r.ContentLanguage),
+			Metadata: r.Metadata,
+		}
+		if tagging != "" {
+			in.Tagging = aws.String(tagging)
+		}
 		// The SDK does not sign Content-Length: 0. Binding the standard S3
 		// empty-body digest prevents using that URL for a nonempty upload.
 		if *r.SizeBytes == 0 {
@@ -270,6 +286,48 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 		result.URL = out.URL
 	}
 	return result, nil
+}
+
+func (p *S3) GetObjectTags(ctx context.Context, bucket, key string) (map[string]string, error) {
+	if !ValidKey(key) {
+		return nil, ErrInvalid
+	}
+	out, err := p.client.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		return nil, normalize(err)
+	}
+	tags := make(map[string]string, len(out.TagSet))
+	for _, tag := range out.TagSet {
+		key, value := aws.ToString(tag.Key), aws.ToString(tag.Value)
+		tags[key] = value
+	}
+	if err := ValidateObjectMetadata(ObjectMetadata{Tags: tags}); err != nil {
+		return nil, ErrUnavailable
+	}
+	return tags, nil
+}
+
+func (p *S3) PutObjectTags(ctx context.Context, bucket, key string, tags map[string]string) error {
+	if !ValidKey(key) {
+		return ErrInvalid
+	}
+	if err := ValidateObjectMetadata(ObjectMetadata{Tags: tags}); err != nil {
+		return err
+	}
+	tagSet := make([]types.Tag, 0, len(tags))
+	for key, value := range tags {
+		tagSet = append(tagSet, types.Tag{Key: aws.String(key), Value: aws.String(value)})
+	}
+	_, err := p.client.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key), Tagging: &types.Tagging{TagSet: tagSet}})
+	return normalize(err)
+}
+
+func (p *S3) DeleteObjectTags(ctx context.Context, bucket, key string) error {
+	if !ValidKey(key) {
+		return ErrInvalid
+	}
+	_, err := p.client.DeleteObjectTagging(ctx, &s3.DeleteObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	return normalize(err)
 }
 
 const multipartSessionMetadata = "gregale-upload-id"

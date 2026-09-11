@@ -17,5 +17,29 @@ export type ObjectSignRequest = {
    * PUT only.
    */
   content_type?: string;
+  /**
+   * PUT only.
+   */
+  cache_control?: string;
+  /**
+   * PUT only.
+   */
+  content_disposition?: string;
+  /**
+   * PUT only.
+   */
+  content_encoding?: string;
+  /**
+   * PUT only.
+   */
+  content_language?: string;
+  /**
+   * PUT-only x-amz-meta-* values.
+   */
+  metadata?: Record<string, string>;
+  /**
+   * PUT-only S3 object tags.
+   */
+  tags?: Record<string, string>;
 };
 

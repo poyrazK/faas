@@ -25,11 +25,17 @@ type ObjectBucketList struct {
 }
 
 type ObjectSignRequest struct {
-	Method      string `json:"method"`
-	Key         string `json:"key"`
-	ExpiresIn   int64  `json:"expires_in,omitempty"`
-	SizeBytes   *int64 `json:"size_bytes,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
+	Method             string            `json:"method"`
+	Key                string            `json:"key"`
+	ExpiresIn          int64             `json:"expires_in,omitempty"`
+	SizeBytes          *int64            `json:"size_bytes,omitempty"`
+	ContentType        string            `json:"content_type,omitempty"`
+	CacheControl       string            `json:"cache_control,omitempty"`
+	ContentDisposition string            `json:"content_disposition,omitempty"`
+	ContentEncoding    string            `json:"content_encoding,omitempty"`
+	ContentLanguage    string            `json:"content_language,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	Tags               map[string]string `json:"tags,omitempty"`
 }
 
 type ObjectSignedRequest struct {

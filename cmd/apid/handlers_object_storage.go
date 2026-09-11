@@ -47,6 +47,8 @@ func bucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 404, "object_storage_not_found", "Bucket or object not found."
 	case errors.Is(err, objectstorage.ErrInvalid):
 		status, code, detail = 400, "object_storage_invalid", "Invalid object storage request."
+	case errors.Is(err, objectstorage.ErrUnsupported):
+		status, code, detail = 501, "object_storage_unsupported", "This object storage operation is not supported by the selected provider."
 	case errors.Is(err, objectstorage.ErrNotEmpty):
 		status, code, detail = 409, "bucket_not_empty", "Empty the bucket, including any versions, before deleting it."
 	case errors.Is(err, state.ErrConflict), errors.Is(err, objectstorage.ErrConflict):

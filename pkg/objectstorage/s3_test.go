@@ -142,6 +142,65 @@ func TestS3Presign(t *testing.T) {
 	if head.Method != http.MethodHead || headURL.Query().Has("response-content-disposition") || headURL.Query().Has("response-content-type") {
 		t.Fatalf("invalid HEAD request: %+v", head)
 	}
+	size := int64(5)
+	metadata, err := p.Presign(context.Background(), "gregale-test", SignRequest{
+		Method: http.MethodPut, Key: "metadata.txt", SizeBytes: &size, ContentType: "text/plain", CacheControl: "max-age=60",
+		Metadata: map[string]string{"owner": "platform"}, Tags: map[string]string{"env": "prod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataURL, _ := url.Parse(metadata.URL)
+	if !strings.Contains(metadataURL.Query().Get("X-Amz-SignedHeaders"), "x-amz-meta-owner") || !strings.Contains(metadataURL.Query().Get("X-Amz-SignedHeaders"), "x-amz-tagging") || headerValue(metadata.Headers, "X-Amz-Tagging") != "env=prod" || headerValue(metadata.Headers, "X-Amz-Meta-Owner") != "platform" {
+		t.Fatalf("metadata/tagging was not signed: url=%s headers=%v", metadata.URL, metadata.Headers)
+	}
+}
+
+func headerValue(headers map[string]string, name string) string {
+	for key, value := range headers {
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
+}
+
+func TestS3ObjectTags(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("tagging") {
+			switch r.Method {
+			case http.MethodGet:
+				_, _ = io.WriteString(w, `<Tagging><TagSet><Tag><Key>env</Key><Value>prod</Value></Tag></TagSet></Tagging>`)
+			case http.MethodPut:
+				body, _ := io.ReadAll(r.Body)
+				if !strings.Contains(string(body), `<Key>team</Key>`) {
+					t.Errorf("tagging body = %s", body)
+				}
+			case http.MethodDelete:
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer upstream.Close()
+	c := testBackend()
+	c.Endpoint = upstream.URL
+	p, err := NewS3(c, testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tags, err := p.(ObjectTagger).GetObjectTags(context.Background(), "gregale-test", "file.txt")
+	if err != nil || tags["env"] != "prod" {
+		t.Fatalf("get tags = %v err=%v", tags, err)
+	}
+	if err := p.(ObjectTagger).PutObjectTags(context.Background(), "gregale-test", "file.txt", map[string]string{"team": "core"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.(ObjectTagger).DeleteObjectTags(context.Background(), "gregale-test", "file.txt"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestS3MultipartProtocolAndCompletionRecovery(t *testing.T) {
