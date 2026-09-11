@@ -1161,7 +1161,10 @@ groups:
       # is more sensitive — a small absolute spike in 5xx is a larger
       # signal than a small absolute spike in 2xx traffic.
       - alert: FaasErrorRateSpike
-        expr: max(faas_apid_error_rate_ratio:by_route) > 2
+        # Anonymous Internet scans land in the unmatched bucket. They are
+        # expected 404s, not evidence that a customer-facing API route has
+        # regressed, and must not turn the public platform status red.
+        expr: max(faas_apid_error_rate_ratio:by_route{route!="unmatched"}) > 2
         for: 10m
         labels:
           severity: page
@@ -1177,9 +1180,9 @@ groups:
 
       - alert: FaasErrorRateDrop
         expr: |
-          (faas_apid_error_rate_ratio:by_route < 0.5)
+          (faas_apid_error_rate_ratio:by_route{route!="unmatched"} < 0.5)
           and
-          (faas_apid_error_rate_5m:by_route > 0.001)
+          (faas_apid_error_rate_5m:by_route{route!="unmatched"} > 0.001)
         for: 15m
         labels:
           severity: page
