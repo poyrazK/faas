@@ -773,6 +773,17 @@ type ObsEventRow struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
+// ObsTraceLookupResponse is the bounded diagnostic view for one exact OTel
+// trace id. It correlates durable operator intents with their live events
+// without requiring operators to query either table directly.
+type ObsTraceLookupResponse struct {
+	TraceID     string                   `json:"trace_id"`
+	GeneratedAt time.Time                `json:"generated_at"`
+	Limit       int                      `json:"limit"`
+	Intents     []OperatorIntentResponse `json:"intents"`
+	Events      []ObsEventRow            `json:"events"`
+}
+
 // ObsBuilderHeartbeatListResponse is the response of the
 // /v1/admin/obs/builder-heartbeats endpoint (operator-side
 // observability mega-PR / Commit 7 — P5). One row per active

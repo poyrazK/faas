@@ -414,6 +414,7 @@ ListEnabledCrons
 ListEnabledTriggers
 ListEvents
 ListEventsBySidecar
+ListEventsByTraceID
 ListEventsByWakeID
 ListExpiredInvocationsForReaper
 ListExpiredMigrations
@@ -439,6 +440,7 @@ ListMirrorResults
 ListMirrorRules
 ListOIDCTrustPoliciesForAccount
 ListOpenStatusIncidents
+ListOperatorIntentsByTraceID
 ListOrgAPIKeys
 ListOrgInvitationsForOrg
 ListOrgInvitationsForOrgPage

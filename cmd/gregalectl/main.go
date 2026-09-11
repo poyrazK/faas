@@ -58,6 +58,7 @@ Commands:
   instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart)
   accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
+  audit        Correlate operator intents and events by trace ID (audit trace)
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
   obs           Operator-side meta-obs health snapshot (obs health; Obs-Meta + Trace-IDs Mega-PR / C8)
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
@@ -196,6 +197,9 @@ func run(args []string) int {
 		// Runtime configuration reads and hot-only mutations through
 		// apid. The CLI refuses apply modes that require a rollout.
 		return cmdConfigDispatch(args[1:])
+	case dispatchAudit:
+		// Exact, indexed trace correlation through the read-only operator API.
+		return cmdAuditDispatch(args[1:])
 	case dispatchBuilds:
 		// P2c — operator-side build-recovery primitive.
 		// sweep-stuck opens a state.Store via FAAS_PG_DSN and

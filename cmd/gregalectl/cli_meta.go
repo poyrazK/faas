@@ -522,6 +522,19 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchAudit,
+		DocSlug: "audit",
+		Short:   "Correlate durable operator intents and live events by trace ID",
+		Subcommands: []cliSub{{
+			Name:  "trace",
+			Short: "Look up one exact OTel trace ID through the operator API",
+			Flags: []cliFlag{
+				{Name: "trace-id", Short: "OTel 32-char lowercase hex trace id", Req: true},
+				{Name: "limit", Short: "maximum intents and events to return (1..500)"},
+			},
+		}},
+	},
+	{
 		// P2c of the operator-side observability mega-PR
 		// (Commit 5c). Operator-side build-recovery primitive —
 		// `sweep-stuck` opens a state.Store via FAAS_PG_DSN

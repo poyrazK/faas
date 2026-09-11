@@ -14975,6 +14975,40 @@ func (s *PgStore) ListAllEventsPaged(ctx context.Context, actor, kindPrefix, sub
 	return out, rows.Err()
 }
 
+// ListEventsByTraceID performs an exact, bounded lookup through the partial
+// events_trace_idx index. It is operator-only diagnostic traffic, separate
+// from the customer deployment and invocation paths.
+func (s *PgStore) ListEventsByTraceID(ctx context.Context, traceID string, limit int) ([]Event, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, at, actor, kind, subject, trace_id, data
+		FROM events
+		WHERE trace_id = $1
+		ORDER BY at DESC, id DESC
+		LIMIT $2
+	`, traceID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list events by trace id: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Event, 0)
+	for rows.Next() {
+		var event Event
+		var rawData []byte
+		if err := rows.Scan(&event.ID, &event.At, &event.Actor, &event.Kind, &event.Subject, &event.TraceID, &rawData); err != nil {
+			return nil, fmt.Errorf("state: scan event by trace id: %w", err)
+		}
+		event.Data = json.RawMessage(rawData)
+		out = append(out, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate events by trace id: %w", err)
+	}
+	return out, nil
+}
+
 // ListRecentEventsForAccount (ADR-091 §3.7 / PR #3) is the
 // per-account events drill-down. Backed by the partial
 // events_actor_account_idx on (actor_account_id) WHERE actor_account_id IS NOT NULL
