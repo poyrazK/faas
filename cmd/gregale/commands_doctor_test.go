@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -105,6 +106,91 @@ func TestRunDoctorChecks_EnvVarMissing(t *testing.T) {
 	if len(envCheck.Sources) == 0 || envCheck.Sources[0] != "DATABASE_URL" {
 		t.Fatalf("expected Sources[0]=DATABASE_URL, got %v", envCheck.Sources)
 	}
+}
+
+func TestRunDoctorChecks_EnvVarReferenceForms(t *testing.T) {
+	tests := []struct {
+		name        string
+		source      string
+		optional    string
+		wantStatus  string
+		wantSources []string
+	}{
+		{name: "node dot property", source: "const token = process.env.API_TOKEN;\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
+		{name: "node bracket property", source: "const token = process.env[\"API_TOKEN\"];\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
+		{name: "python get", source: "token = os.environ.get(\"API_TOKEN\")\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
+		{name: "python bracket", source: "token = os.environ[\"API_TOKEN\"]\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
+		{name: "go getenv", source: "token := os.Getenv(\"API_TOKEN\")\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
+		{name: "node object property", source: "const config = {token: process.env.API_TOKEN};\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
+		{name: "multiple references", source: "a := os.Getenv(\"FIRST_KEY\"); b := os.Getenv(\"SECOND_KEY\")\n", wantStatus: "error", wantSources: []string{"FIRST_KEY", "SECOND_KEY"}},
+		{name: "node fallback", source: "model := process.env.MODEL || \"default\"\n", wantStatus: "ok"},
+		{name: "python fallback", source: "model = os.environ.get(\"MODEL\", \"default\")\n", wantStatus: "ok"},
+		{name: "platform port", source: "port := os.Getenv(\"PORT\")\n", wantStatus: "ok"},
+		{name: "comment only", source: "// process.env.API_TOKEN\n# os.environ[\"OTHER_KEY\"]\n", wantStatus: "ok"},
+		{name: "declared optional", source: "value := process.env.OPTIONAL_KEY;\n", optional: `{"optional":["OPTIONAL_KEY"]}`, wantStatus: "ok"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "source.txt"), []byte(tt.source), 0o644); err != nil {
+				t.Fatalf("write source: %v", err)
+			}
+			if tt.optional != "" {
+				if err := os.Mkdir(filepath.Join(dir, ".gregale"), 0o755); err != nil {
+					t.Fatalf("mkdir metadata: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, ".gregale", "env.json"), []byte(tt.optional), 0o644); err != nil {
+					t.Fatalf("write metadata: %v", err)
+				}
+			}
+
+			rep := runDoctorChecks(dir)
+			var envCheck *doctorCheck
+			for i := range rep.Checks {
+				if rep.Checks[i].Name == "env-required" {
+					envCheck = &rep.Checks[i]
+					break
+				}
+			}
+			if envCheck == nil {
+				t.Fatalf("env-required check missing")
+			}
+			if envCheck.Status != tt.wantStatus {
+				t.Fatalf("status = %q, want %q (sources=%v)", envCheck.Status, tt.wantStatus, envCheck.Sources)
+			}
+			if !reflect.DeepEqual(envCheck.Sources, tt.wantSources) {
+				t.Fatalf("sources = %v, want %v", envCheck.Sources, tt.wantSources)
+			}
+			if tt.name == "node dot property" {
+				for _, want := range []string{"gregale env push --app <app-slug> -f .env", "gregale secrets set --app <app-slug> API_TOKEN=<value>"} {
+					if !strings.Contains(envCheck.Fix, want) {
+						t.Errorf("fix missing %q: %s", want, envCheck.Fix)
+					}
+				}
+				if strings.Contains(envCheck.Fix, "gregale env set") {
+					t.Errorf("fix contains removed command: %s", envCheck.Fix)
+				}
+			}
+		})
+	}
+}
+
+func TestRunDoctorChecks_EnvVarSkipsDocumentationExamples(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("Use process.env.API_TOKEN in your handler.\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	rep := runDoctorChecks(dir)
+	for _, check := range rep.Checks {
+		if check.Name == "env-required" {
+			if check.Status != "ok" {
+				t.Fatalf("env-required status = %q, want ok (sources=%v)", check.Status, check.Sources)
+			}
+			return
+		}
+	}
+	t.Fatal("env-required check missing")
 }
 
 // TestRunDoctorChecks_StatelessOnlyDir pins the stateless-only

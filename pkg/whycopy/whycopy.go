@@ -96,7 +96,7 @@ var catalog = map[string]Render{
 		Title: "Missing environment variable",
 		Hint:  "your code references an env var we haven't been given",
 		Why:   "the preflight scanner found a reference to $ENV_VAR_NAME in your source that is not declared in the app's env config; the runtime would crash on first access",
-		Fix:   "• `gregale env set ENV_VAR_NAME <value>` (or use secrets for sensitive values)\n• or declare it as optional in the source if it's truly optional",
+		Fix:   "• `gregale env push --app <app-slug> -f .env` for non-secret values\n• `gregale secrets set --app <app-slug> ENV_VAR_NAME=<value>` for sensitive values\n• add a source fallback or declare it optional when absence is intentional",
 		Observed: func(observed any) (why, fix string) {
 			if observed == nil {
 				return "", ""
@@ -106,7 +106,7 @@ var catalog = map[string]Render{
 				return "", ""
 			}
 			return fmt.Sprintf("source references $%s but it is not declared in the app's env config.", name),
-				fmt.Sprintf("• `gregale env set %s <value>`\n• or use secrets: `gregale secrets set %s` (rotates on each read)", name, name)
+				fmt.Sprintf("• `gregale env push --app <app-slug> -f .env` (add %s=... to .env)\n• or `gregale secrets set --app <app-slug> %s=<value>`\n• if absence is intentional, add a source fallback or list %s under optional in `.gregale/env.json`", name, name, name)
 		},
 	},
 	api.CodeAppHealthzUnauthorized: {
