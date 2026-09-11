@@ -1834,6 +1834,26 @@ func TestCreateDomain_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCreateDomain_AcceptsOwnedAppSlug pins the CLI's documented --app
+// contract. The request carries a slug while the stored domain keeps the
+// canonical app UUID.
+func TestCreateDomain_AcceptsOwnedAppSlug(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	appID := mustSeedApp(t, e, "domain-by-slug")
+	rec := e.do(t, "POST", "/v1/domains",
+		api.CreateCustomDomainRequest{Domain: "slug.example.com", AppID: "domain-by-slug"}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CustomDomainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.AppID != appID {
+		t.Fatalf("app_id = %q, want canonical ID %q", out.AppID, appID)
+	}
+}
+
 func TestCreateDomain_WildcardPlanGate(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	appID := mustSeedApp(t, e, "wildcard-hobby")
