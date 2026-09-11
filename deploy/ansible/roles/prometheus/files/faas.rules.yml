@@ -139,16 +139,38 @@ groups:
     rules:
       - alert: FaasCustomerLogDrainBacklog
         expr: |
-          gateway_log_drain_queue_capacity > 0
-          and gateway_log_drain_queue_depth / gateway_log_drain_queue_capacity > 0.8
+          gateway_log_drain_active == 1
+          and (
+            (
+              gateway_log_drain_pending_bytes_capacity > 0
+              and gateway_log_drain_pending_bytes / gateway_log_drain_pending_bytes_capacity > 0.8
+            )
+            or (
+              gateway_log_drain_oldest_pending_timestamp_seconds > 0
+              and time() - gateway_log_drain_oldest_pending_timestamp_seconds > 600
+            )
+          )
         for: 10m
         labels:
           severity: warn
           component: gatewayd-internal
           family: customer_log_drain
         annotations:
-          summary: "Customer log-drain queue is saturated for {{ $labels.app }}"
-          description: "The {{ $labels.kind }} runtime log drain for app {{ $labels.app }} has remained above 80% queue utilization for 10m. The destination is applying backpressure; records may be dropped once the bounded queue fills. Check delivery latency, retries, and the destination endpoint."
+          summary: "Customer log-drain outbox is backlogged for {{ $labels.app }}"
+          description: "The {{ $labels.kind }} runtime log drain for app {{ $labels.app }} has remained above 80% durable outbox utilization or has had a pending record older than 10m. The destination is applying backpressure; records are retained across gateway restarts until the outbox reaches its byte limit. Check delivery latency, retries, and the destination endpoint."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerLogDrainDegraded.md"
+
+      - alert: FaasCustomerLogDrainDeadLetters
+        expr: gateway_log_drain_active == 1
+          and gateway_log_drain_dead_letter_total > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: customer_log_drain
+        annotations:
+          summary: "Customer log-drain dead letters need review for {{ $labels.app }}"
+          description: "The {{ $labels.kind }} runtime log drain for app {{ $labels.app }} has retained records after retry exhaustion. The records are preserved in the node-local bounded dead-letter file; repair the destination and follow the runbook before the file rotates."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerLogDrainDegraded.md"
 
       - alert: FaasCustomerLogDrainDeliveryFailed

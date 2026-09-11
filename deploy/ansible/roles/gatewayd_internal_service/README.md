@@ -25,12 +25,13 @@ side during the migration window.
 
 ## Network surface
 
-`gatewayd-internal` is **loopback-only**. The systemd unit's
-`RestrictAddressFamilies=AF_UNIX` enforces this at the kernel
-syscall layer — even a buggy code path can't reach an external
-IP. The only inbound traffic is from `gatewayd-public` over the
-unix socket; the only outbound traffic is gRPC to per-node
-schedd/vmmd via `pkg/wire.DialContext` (loopback mTLS).
+`gatewayd-internal` is **loopback-only** for inbound traffic. The systemd
+unit's `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` keeps the listener
+local while allowing its required outbound paths. Inbound traffic is from
+`gatewayd-public` over the unix socket; outbound traffic is gRPC to per-node
+schedd/vmmd via `pkg/wire.DialContext` (loopback mTLS) and HTTPS delivery to
+customer-configured log-drain endpoints. Runtime drain records are spooled
+under `/var/lib/faas/log-drains` before delivery.
 
 ## Drop-ins
 

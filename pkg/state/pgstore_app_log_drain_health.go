@@ -13,15 +13,22 @@ func (s *PgStore) UpsertAppLogDrainHealth(ctx context.Context, health AppLogDrai
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO app_log_drain_health (
 			drain_id, status, active, queue_depth, queue_capacity,
+			pending_records, pending_bytes, pending_bytes_capacity, dead_letter_total,
+			oldest_pending_at,
 			delivered_total, failed_total, dropped_total, retries_total,
 			stream_reconnects_total, gaps_total, last_success_at,
 			last_failure_at, last_error
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		ON CONFLICT (drain_id) DO UPDATE SET
 			status = EXCLUDED.status,
 			active = EXCLUDED.active,
 			queue_depth = EXCLUDED.queue_depth,
 			queue_capacity = EXCLUDED.queue_capacity,
+			pending_records = EXCLUDED.pending_records,
+			pending_bytes = EXCLUDED.pending_bytes,
+			pending_bytes_capacity = EXCLUDED.pending_bytes_capacity,
+			dead_letter_total = EXCLUDED.dead_letter_total,
+			oldest_pending_at = EXCLUDED.oldest_pending_at,
 			delivered_total = EXCLUDED.delivered_total,
 			failed_total = EXCLUDED.failed_total,
 			dropped_total = EXCLUDED.dropped_total,
@@ -33,7 +40,9 @@ func (s *PgStore) UpsertAppLogDrainHealth(ctx context.Context, health AppLogDrai
 			last_error = EXCLUDED.last_error,
 			updated_at = now()
 	`, health.DrainID, healthStatus(health.Status), health.Active,
-		health.QueueDepth, health.QueueCapacity, health.DeliveredTotal,
+		health.QueueDepth, health.QueueCapacity, health.PendingRecords,
+		health.PendingBytes, health.PendingBytesCapacity, health.DeadLetterTotal,
+		nullableTime(health.OldestPendingAt), health.DeliveredTotal,
 		health.FailedTotal, health.DroppedTotal, health.RetriesTotal,
 		health.StreamReconnectsTotal, health.GapsTotal,
 		nullableTime(health.LastSuccessAt), nullableTime(health.LastFailureAt),
@@ -47,6 +56,8 @@ func (s *PgStore) UpsertAppLogDrainHealth(ctx context.Context, health AppLogDrai
 func (s *PgStore) AppLogDrainHealthByDrainID(ctx context.Context, drainID string) (AppLogDrainHealth, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT drain_id, status, active, queue_depth, queue_capacity,
+		       pending_records, pending_bytes, pending_bytes_capacity, dead_letter_total,
+		       oldest_pending_at,
 		       delivered_total, failed_total, dropped_total, retries_total,
 		       stream_reconnects_total, gaps_total, last_success_at,
 		       last_failure_at, coalesce(last_error, ''), updated_at
@@ -66,6 +77,8 @@ func (s *PgStore) AppLogDrainHealthByDrainID(ctx context.Context, drainID string
 func (s *PgStore) ListAppLogDrainHealthForApp(ctx context.Context, appID string) ([]AppLogDrainHealth, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT h.drain_id, h.status, h.active, h.queue_depth, h.queue_capacity,
+		       h.pending_records, h.pending_bytes, h.pending_bytes_capacity, h.dead_letter_total,
+		       h.oldest_pending_at,
 		       h.delivered_total, h.failed_total, h.dropped_total, h.retries_total,
 		       h.stream_reconnects_total, h.gaps_total, h.last_success_at,
 		       h.last_failure_at, coalesce(h.last_error, ''), h.updated_at
@@ -98,10 +111,12 @@ type appLogDrainHealthRow interface {
 
 func scanAppLogDrainHealth(row appLogDrainHealthRow) (AppLogDrainHealth, error) {
 	var health AppLogDrainHealth
-	var lastSuccessAt, lastFailureAt *time.Time
+	var oldestPendingAt, lastSuccessAt, lastFailureAt *time.Time
 	if err := row.Scan(
 		&health.DrainID, &health.Status, &health.Active, &health.QueueDepth,
-		&health.QueueCapacity, &health.DeliveredTotal, &health.FailedTotal,
+		&health.QueueCapacity, &health.PendingRecords, &health.PendingBytes,
+		&health.PendingBytesCapacity, &health.DeadLetterTotal, &oldestPendingAt,
+		&health.DeliveredTotal, &health.FailedTotal,
 		&health.DroppedTotal, &health.RetriesTotal, &health.StreamReconnectsTotal,
 		&health.GapsTotal, &lastSuccessAt, &lastFailureAt, &health.LastError,
 		&health.UpdatedAt,
@@ -110,6 +125,9 @@ func scanAppLogDrainHealth(row appLogDrainHealthRow) (AppLogDrainHealth, error) 
 	}
 	if lastSuccessAt != nil {
 		health.LastSuccessAt = lastSuccessAt.UTC()
+	}
+	if oldestPendingAt != nil {
+		health.OldestPendingAt = oldestPendingAt.UTC()
 	}
 	if lastFailureAt != nil {
 		health.LastFailureAt = lastFailureAt.UTC()

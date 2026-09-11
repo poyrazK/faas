@@ -68,6 +68,7 @@ func TestLogDrainHealthMetricsExposition(t *testing.T) {
 	m.InitializeLogDrain("app-1", "otlp")
 	m.IncLogDrainDropped("app-1", "otlp")
 	m.SetLogDrainQueue("app-1", "otlp", 3, 256)
+	m.SetLogDrainDurableQueue("app-1", "otlp", 3, 2048, 65536, 2, time.Unix(80, 0))
 	m.ObserveLogDrainDeliveryLatency("app-1", "otlp", 250*time.Millisecond)
 	m.ObserveLogDrainRetry("app-1", "otlp")
 	m.ObserveLogDrainStreamReconnect("app-1", "otlp")
@@ -82,6 +83,11 @@ func TestLogDrainHealthMetricsExposition(t *testing.T) {
 		`gateway_log_drain_dropped_total{app="app-1",kind="otlp"} 1`,
 		`gateway_log_drain_queue_depth{app="app-1",kind="otlp"} 3`,
 		`gateway_log_drain_queue_capacity{app="app-1",kind="otlp"} 256`,
+		`gateway_log_drain_pending_records{app="app-1",kind="otlp"} 3`,
+		`gateway_log_drain_pending_bytes{app="app-1",kind="otlp"} 2048`,
+		`gateway_log_drain_pending_bytes_capacity{app="app-1",kind="otlp"} 65536`,
+		`gateway_log_drain_dead_letter_total{app="app-1",kind="otlp"} 2`,
+		`gateway_log_drain_oldest_pending_timestamp_seconds{app="app-1",kind="otlp"} 80`,
 		`gateway_log_drain_delivery_latency_seconds_count{app="app-1",kind="otlp"} 1`,
 		`gateway_log_drain_retries_total{app="app-1",kind="otlp"} 1`,
 		`gateway_log_drain_stream_reconnects_total{app="app-1",kind="otlp"} 1`,

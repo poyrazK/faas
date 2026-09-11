@@ -26,7 +26,8 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //   - RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6: gRPC to schedd/vmmd
 //     is over loopback mTLS (AF_INET) and the unix socket to gatewayd-public
 //     (AF_UNIX). AF_INET6 is allowed so the internal dial doesn't fail
-//     on v6-only networks (defense in depth; we never connect OUT to v6).
+//     on v6-only networks (defense in depth); customer log drains also use
+//     the permitted IPv4/IPv6 families for outbound HTTPS delivery.
 //
 // See ADR-078 for the migration that wiped these from the unit body.
 //
@@ -117,7 +118,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
-		ReadWritePaths: []string{"/run/faas"},
+		ReadWritePaths: []string{"/run/faas", "/var/lib/faas/log-drains"},
 
 		WantedBy: "multi-user.target",
 	}

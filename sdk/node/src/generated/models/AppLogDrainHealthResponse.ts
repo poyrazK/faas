@@ -11,6 +11,26 @@ export type AppLogDrainHealthResponse = {
   active: boolean;
   queue_depth: number;
   queue_capacity: number;
+  /**
+   * Number of records waiting in the durable local outbox.
+   */
+  pending_records: number;
+  /**
+   * Bytes waiting in the durable local outbox.
+   */
+  pending_bytes: number;
+  /**
+   * Durable local outbox byte capacity.
+   */
+  pending_bytes_capacity: number;
+  /**
+   * Number of records retained in the bounded dead-letter file.
+   */
+  dead_letter_total: number;
+  /**
+   * Timestamp of the oldest record still awaiting delivery.
+   */
+  oldest_pending_at?: string;
   delivered_total: number;
   failed_total: number;
   dropped_total: number;

@@ -24,9 +24,12 @@ func TestGetAppLogDrainHealthReturnsDurableSafeProjection(t *testing.T) {
 		t.Fatalf("CreateAppLogDrain: %v", err)
 	}
 	updatedAt := time.Date(2026, 9, 11, 16, 0, 0, 0, time.UTC)
+	oldestPendingAt := updatedAt.Add(-time.Minute)
 	if err := e.store.UpsertAppLogDrainHealth(t.Context(), state.AppLogDrainHealth{
 		DrainID: drain.ID, Status: "future-status", Active: true, QueueDepth: 3,
-		QueueCapacity: 10, DeliveredTotal: 8, FailedTotal: 1,
+		QueueCapacity: 10, PendingRecords: 2, PendingBytes: 2048,
+		PendingBytesCapacity: 65536, DeadLetterTotal: 1, OldestPendingAt: oldestPendingAt,
+		DeliveredTotal: 8, FailedTotal: 1,
 		LastError: "dial tcp 10.0.0.1:443: secret=leaked", UpdatedAt: updatedAt,
 	}); err != nil {
 		t.Fatalf("UpsertAppLogDrainHealth: %v", err)
@@ -40,7 +43,7 @@ func TestGetAppLogDrainHealthReturnsDurableSafeProjection(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.LogDrainID != drain.ID || got.Status != api.AppLogDrainHealthStatusUnknown || !got.Active || got.QueueDepth != 3 || got.DeliveredTotal != 8 {
+	if got.LogDrainID != drain.ID || got.Status != api.AppLogDrainHealthStatusUnknown || !got.Active || got.QueueDepth != 3 || got.PendingRecords != 2 || got.PendingBytes != 2048 || got.PendingBytesCapacity != 65536 || got.DeadLetterTotal != 1 || got.OldestPendingAt != oldestPendingAt.Format(time.RFC3339) || got.DeliveredTotal != 8 {
 		t.Fatalf("health response = %+v", got)
 	}
 	if got.LastError != "delivery failed" || got.UpdatedAt != updatedAt.Format(time.RFC3339) {

@@ -125,6 +125,11 @@ type Metrics struct {
 	logDrainActive           *prometheus.GaugeVec
 	logDrainQueueDepth       *prometheus.GaugeVec
 	logDrainQueueCapacity    *prometheus.GaugeVec
+	logDrainPendingRecords   *prometheus.GaugeVec
+	logDrainPendingBytes     *prometheus.GaugeVec
+	logDrainPendingCapacity  *prometheus.GaugeVec
+	logDrainDeadLetters      *prometheus.GaugeVec
+	logDrainOldestPending    *prometheus.GaugeVec
 	logDrainDeliveryLatency  *prometheus.HistogramVec
 	logDrainRetries          *prometheus.CounterVec
 	logDrainStreamReconnects *prometheus.CounterVec
@@ -716,6 +721,26 @@ func NewMetrics() *Metrics {
 		logDrainQueueCapacity: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_log_drain_queue_capacity",
 			Help: "Configured capacity of a customer log-drain delivery queue.",
+		}, []string{"app", "kind"}),
+		logDrainPendingRecords: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_log_drain_pending_records",
+			Help: "Records waiting in the durable customer log-drain outbox.",
+		}, []string{"app", "kind"}),
+		logDrainPendingBytes: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_log_drain_pending_bytes",
+			Help: "Bytes waiting in the durable customer log-drain outbox.",
+		}, []string{"app", "kind"}),
+		logDrainPendingCapacity: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_log_drain_pending_bytes_capacity",
+			Help: "Configured byte capacity of the durable customer log-drain outbox.",
+		}, []string{"app", "kind"}),
+		logDrainDeadLetters: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_log_drain_dead_letter_total",
+			Help: "Records retained in the bounded customer log-drain dead-letter file.",
+		}, []string{"app", "kind"}),
+		logDrainOldestPending: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_log_drain_oldest_pending_timestamp_seconds",
+			Help: "Unix timestamp of the oldest record waiting in the durable customer log-drain outbox.",
 		}, []string{"app", "kind"}),
 		logDrainDeliveryLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "gateway_log_drain_delivery_latency_seconds",
@@ -1522,7 +1547,7 @@ func NewMetrics() *Metrics {
 	// cartesian) is the same pattern as the rest of the family.
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
-	reg.MustRegister(m.requests, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -1623,6 +1648,33 @@ func (m *Metrics) SetLogDrainQueue(app, kind string, depth, capacity int) {
 	}
 	if m.logDrainQueueCapacity != nil {
 		m.logDrainQueueCapacity.WithLabelValues(app, kind).Set(float64(max(capacity, 0)))
+	}
+}
+
+// SetLogDrainDurableQueue reports the persistent outbox state. The timestamp
+// is reset to zero when the outbox is empty so alerts do not retain stale age.
+func (m *Metrics) SetLogDrainDurableQueue(app, kind string, pendingRecords int, pendingBytes, capacityBytes, deadLetters int64, oldestPending time.Time) {
+	if m == nil || app == "" || kind == "" {
+		return
+	}
+	if m.logDrainPendingBytes != nil {
+		m.logDrainPendingBytes.WithLabelValues(app, kind).Set(float64(max(pendingBytes, 0)))
+	}
+	if m.logDrainPendingRecords != nil {
+		m.logDrainPendingRecords.WithLabelValues(app, kind).Set(float64(max(pendingRecords, 0)))
+	}
+	if m.logDrainPendingCapacity != nil {
+		m.logDrainPendingCapacity.WithLabelValues(app, kind).Set(float64(max(capacityBytes, 0)))
+	}
+	if m.logDrainDeadLetters != nil {
+		m.logDrainDeadLetters.WithLabelValues(app, kind).Set(float64(max(deadLetters, 0)))
+	}
+	if m.logDrainOldestPending != nil {
+		value := float64(0)
+		if !oldestPending.IsZero() {
+			value = float64(oldestPending.Unix())
+		}
+		m.logDrainOldestPending.WithLabelValues(app, kind).Set(value)
 	}
 }
 

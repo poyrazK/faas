@@ -33,7 +33,9 @@ func TestPgAppLogDrainHealthRoundTripAndCascade(t *testing.T) {
 	lastFailure := lastSuccess.Add(time.Minute)
 	if err := s.UpsertAppLogDrainHealth(ctx, state.AppLogDrainHealth{
 		DrainID: drain.ID, Status: "degraded", Active: true, QueueDepth: 4,
-		QueueCapacity: 32, DeliveredTotal: 10, FailedTotal: 2,
+		QueueCapacity: 32, PendingRecords: 3, PendingBytes: 2048,
+		PendingBytesCapacity: 65536, DeadLetterTotal: 1,
+		OldestPendingAt: lastSuccess.Add(-time.Minute), DeliveredTotal: 10, FailedTotal: 2,
 		DroppedTotal: 1, RetriesTotal: 3, StreamReconnectsTotal: 2,
 		GapsTotal: 1, LastSuccessAt: lastSuccess, LastFailureAt: lastFailure,
 		LastError: "source log gap observed", UpdatedAt: lastFailure,
@@ -45,10 +47,10 @@ func TestPgAppLogDrainHealthRoundTripAndCascade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppLogDrainHealthByDrainID: %v", err)
 	}
-	if got.Status != "degraded" || !got.Active || got.QueueDepth != 4 || got.QueueCapacity != 32 || got.DeliveredTotal != 10 || got.FailedTotal != 2 || got.DroppedTotal != 1 || got.RetriesTotal != 3 || got.StreamReconnectsTotal != 2 || got.GapsTotal != 1 {
+	if got.Status != "degraded" || !got.Active || got.QueueDepth != 4 || got.QueueCapacity != 32 || got.PendingRecords != 3 || got.PendingBytes != 2048 || got.PendingBytesCapacity != 65536 || got.DeadLetterTotal != 1 || got.DeliveredTotal != 10 || got.FailedTotal != 2 || got.DroppedTotal != 1 || got.RetriesTotal != 3 || got.StreamReconnectsTotal != 2 || got.GapsTotal != 1 {
 		t.Fatalf("health counters = %+v", got)
 	}
-	if !got.LastSuccessAt.Equal(lastSuccess) || !got.LastFailureAt.Equal(lastFailure) || got.LastError != "source log gap observed" {
+	if !got.OldestPendingAt.Equal(lastSuccess.Add(-time.Minute)) || !got.LastSuccessAt.Equal(lastSuccess) || !got.LastFailureAt.Equal(lastFailure) || got.LastError != "source log gap observed" {
 		t.Fatalf("health event fields = %+v", got)
 	}
 	rows, err := s.ListAppLogDrainHealthForApp(ctx, app.ID)

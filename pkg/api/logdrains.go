@@ -89,6 +89,11 @@ type AppLogDrainHealthResponse struct {
 	Active                bool   `json:"active"`
 	QueueDepth            int    `json:"queue_depth"`
 	QueueCapacity         int    `json:"queue_capacity"`
+	PendingRecords        int    `json:"pending_records"`
+	PendingBytes          int64  `json:"pending_bytes"`
+	PendingBytesCapacity  int64  `json:"pending_bytes_capacity"`
+	DeadLetterTotal       int64  `json:"dead_letter_total"`
+	OldestPendingAt       string `json:"oldest_pending_at,omitempty"`
 	DeliveredTotal        int64  `json:"delivered_total"`
 	FailedTotal           int64  `json:"failed_total"`
 	DroppedTotal          int64  `json:"dropped_total"`
