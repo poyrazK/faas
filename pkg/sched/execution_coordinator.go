@@ -46,15 +46,27 @@ type ExecutionCoordinatorConfig struct {
 }
 
 // ExecutionRestoreRequest is the payload-free machine envelope supplied to
-// the disposable-VM backend. Restore must prepare a fresh jail, network
-// namespace, cgroup, and scratch drive, but must not run caller code.
+// the disposable-VM backend. Restore must prepare a fresh jail, cgroup, and
+// scratch drive with no tenant network namespace, but must not run caller code.
 type ExecutionRestoreRequest struct {
 	ID          string
 	AccountID   string
+	NodeID      string
+	Plan        api.Plan
 	Runtime     api.ExecutionRuntime
 	NetworkMode api.ExecutionNetworkMode
 	Limits      api.ResolvedExecutionLimits
 	DeadlineAt  time.Time
+	// Machine fields are resolved by the scheduler from the immutable runtime
+	// snapshot catalog. They are payload-free and are forwarded only to vmmd's
+	// dedicated RestoreExecution RPC.
+	KernelKey     string
+	BaseKey       string
+	LayerKey      string
+	Snapshot      SnapshotRef
+	VcpuCount     int
+	MemSizeMiB    int
+	CPUMillicores int
 }
 
 // ExecutionPayload stays opaque to the coordinator. The future vmmd adapter

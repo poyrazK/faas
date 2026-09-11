@@ -409,6 +409,10 @@ type executionVMMClient interface {
 	ExecuteExecution(context.Context, string, executionproto.Request) (executionproto.Result, error)
 }
 
+type executionRestoreVMMClient interface {
+	RestoreExecution(context.Context, ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error)
+}
+
 // ExecuteExecution routes the post-restore one-shot exchange to the node
 // owning the disposable VM. The capability is optional so a mixed-version
 // cluster can continue serving ordinary app wakes while execution support is
@@ -424,6 +428,22 @@ func (r *VMMRouter) ExecuteExecution(ctx context.Context, nodeID, instance strin
 			"Execution unavailable", "vmmd client does not support disposable executions")
 	}
 	return executionClient.ExecuteExecution(ctx, instance, req)
+}
+
+// RestoreExecution routes the payload-free disposable-VM constructor. The
+// node is selected before any source/input is available, and the optional
+// capability keeps mixed-version clusters fail-closed.
+func (r *VMMRouter) RestoreExecution(ctx context.Context, nodeID string, req ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	restoreClient, ok := cli.(executionRestoreVMMClient)
+	if !ok {
+		return nil, api.NewProblem(501, api.CodeNotImplemented,
+			"Execution unavailable", "vmmd client does not support disposable VM restore")
+	}
+	return restoreClient.RestoreExecution(ctx, req)
 }
 
 type jobVMMClient interface {

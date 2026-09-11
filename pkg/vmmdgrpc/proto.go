@@ -112,6 +112,50 @@ func cloneStringMap(in map[string]string) map[string]string {
 	return out
 }
 
+// executionWakeRequestFromProto converts the payload-free execution restore
+// envelope. The dedicated RPC accepts only catalog metadata and rejects an
+// ordinary application snapshot so the networkless invariant is explicit at
+// the vmmd trust boundary.
+func executionWakeRequestFromProto(req *vmmdpb.RestoreExecutionRequest) (fcvm.ExecutionWakeRequest, error) {
+	if req == nil {
+		return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution restore request", "request is required")
+	}
+	if req.GetInstance() == "" || req.GetAccountId() == "" || req.GetKernelKey() == "" ||
+		req.GetBaseKey() == "" || req.GetLayerKey() == "" {
+		return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution restore request", "instance, account_id, kernel_key, base_key, and layer_key are required")
+	}
+	plan := api.Plan(req.GetPlan())
+	if !plan.Valid() || !api.ExecutionRuntime(req.GetRuntime()).Valid() {
+		return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution restore request", "plan or runtime is invalid")
+	}
+	if req.GetVcpuCount() < 1 || req.GetMemSizeMib() < 1 || req.GetCpuMillicores() < 1 {
+		return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution restore request", "vcpu_count, mem_size_mib, and cpu_millicores must be positive")
+	}
+	var snapshot *fcvm.Snapshot
+	if ref := req.GetSnapshot(); ref != nil {
+		if !ref.GetNetworkless() {
+			return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+				api.CodeValidation, "Invalid execution restore request", "snapshot is not marked networkless")
+		}
+		snapshot = &fcvm.Snapshot{
+			DeploymentID: ref.GetDeploymentId(), VMStatePath: ref.GetVmstatePath(),
+			FCVersion: ref.GetFcVersion(), StorageKey: ref.GetStorageKey(),
+			VMStateStorageKey: ref.GetVmstateStorageKey(), Networkless: true,
+		}
+	}
+	return fcvm.ExecutionWakeRequest{
+		Instance: req.GetInstance(), AccountID: req.GetAccountId(), Plan: plan,
+		Runtime: req.GetRuntime(), KernelKey: req.GetKernelKey(),
+		BaseKey: req.GetBaseKey(), LayerKey: req.GetLayerKey(), Snapshot: snapshot,
+		VcpuCount: int(req.GetVcpuCount()), MemSizeMiB: int(req.GetMemSizeMib()),
+		CPUMillicores: int(req.GetCpuMillicores()),
+	}, nil
+}
+
 // executionRequestFromProto lifts the post-restore execution envelope and
 // applies the guest-boundary validation a second time. The source and input
 // fields are copied so the generated protobuf message can be released as
