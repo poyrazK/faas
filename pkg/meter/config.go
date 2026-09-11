@@ -89,13 +89,12 @@ type Config struct {
 	QuotaInterval time.Duration
 	// StripeInterval is the cadence of the provider usage backfill pass.
 	// The historical field name is retained for config compatibility. Zero
-	// means the production default (1 h); each pass scans BillingLookback
-	// of completed UTC-hour windows and provider idempotency keys make replay
-	// safe after a restart or transient outage.
+	// means the production default (1 h); each pass scans all retained windows
+	// without a delivery receipt, and provider idempotency keys make replay safe.
 	StripeInterval time.Duration
-	// BillingLookback is the completed usage history meterd rechecks on each
-	// provider pass. Zero means 30 days, which covers a prolonged outage while
-	// remaining bounded by the usage retention/index range.
+	// BillingLookback is deprecated and retained for config compatibility.
+	// Durable delivery receipts now make the replay horizon equal to usage
+	// retention, so an outage longer than this value cannot strand usage.
 	BillingLookback time.Duration
 	// DunningInterval is how often the dunning timer sweeps accounts
 	// for the past_due → 7d → suspended and suspended → 21d →

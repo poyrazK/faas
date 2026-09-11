@@ -310,6 +310,45 @@ func TestReplayInvocation_AppTransferredAway(t *testing.T) {
 	}
 }
 
-// (the test file relies on strings.Contains directly — main_test.go
-// already declares a `contains` helper for the spec_compliance
-// suite and a same-name declaration here would shadow/collide.)
+// TestListInvocations_PaginatesWithNextBefore proves that the public
+// cursor is discoverable and advances without repeating the anchor row.
+func TestListInvocations_PaginatesWithNextBefore(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	appID := mustSeedApp(t, e, "invocation-pagination")
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		_, err := e.store.EnqueueInvocation(ctx, state.Invocation{
+			AppID: appID, AccountID: e.acct.ID, Source: state.InvocationAsyncInvoke,
+			Method: "POST", Path: "/invoke", DueAt: now,
+			CreatedAt: now.Add(time.Duration(i) * time.Second),
+		})
+		if err != nil {
+			t.Fatalf("enqueue %d: %v", i, err)
+		}
+	}
+
+	first := e.do(t, http.MethodGet, "/v1/invocations?limit=2", nil, nil)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first page status = %d: %s", first.Code, first.Body)
+	}
+	var page1 api.ListInvocationsResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &page1); err != nil {
+		t.Fatalf("decode first page: %v", err)
+	}
+	if len(page1.Invocations) != 2 || page1.NextBefore == "" {
+		t.Fatalf("first page = %+v, want 2 rows and a cursor", page1)
+	}
+
+	second := e.do(t, http.MethodGet, "/v1/invocations?limit=2&before="+page1.NextBefore, nil, nil)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second page status = %d: %s", second.Code, second.Body)
+	}
+	var page2 api.ListInvocationsResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &page2); err != nil {
+		t.Fatalf("decode second page: %v", err)
+	}
+	if len(page2.Invocations) != 1 || page2.Invocations[0].ID == page1.Invocations[0].ID || page2.NextBefore != "" {
+		t.Fatalf("second page = %+v, want one older non-overlapping row and no cursor", page2)
+	}
+}

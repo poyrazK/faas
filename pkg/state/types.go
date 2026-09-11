@@ -4037,6 +4037,10 @@ type AuditLogFilter struct {
 	// Since is the inclusive lower bound on received_at. Zero
 	// value means "no floor" — the full table is scanned.
 	Since time.Time
+	// Before is an exclusive compound cursor for the stable
+	// (received_at DESC, id DESC) ordering. A nil value starts at the
+	// newest row; when set, rows at or after the cursor are skipped.
+	Before *AuditLogCursor
 	// IncludeAnonymous controls whether rows with account_id IS
 	// NULL are returned. Customer endpoint always sets this false;
 	// operator endpoint reads ?include_anonymous=.
@@ -4068,6 +4072,15 @@ type AuditLogFilter struct {
 	// GIN index on data (verified at PR-open) is used.
 	// Operator-only filter. Empty pointer = no constraint.
 	TargetAccountID *string
+}
+
+// AuditLogCursor is the keyset boundary used by AuditLogFilter. The
+// handler owns the opaque wire encoding; the store receives the parsed
+// timestamp + UUID so both PostgreSQL and the in-memory implementation
+// apply the exact same ordering predicate.
+type AuditLogCursor struct {
+	ReceivedAt time.Time
+	ID         uuid.UUID
 }
 
 // AuditLogKindAccountDeleted is the canonical kind value emitted into
@@ -4186,18 +4199,55 @@ type Invoice struct {
 	AccountID         string
 	Provider          string // "stripe" | "paddle" | "polar"
 	ProviderInvoiceID string
-	Number            string
-	Status            string // "draft" | "open" | "paid" | "uncollectible" | "void"
-	PeriodStart       time.Time
-	PeriodEnd         time.Time
-	SubtotalCents     int64
-	TaxCents          int64
-	TotalCents        int64
-	AmountPaidCents   int64
-	Currency          string
-	PDFAvailable      bool
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// ProviderChargeID is the refundable payment/transaction handle. It is
+	// distinct from an invoice document ID on Stripe and Paddle.
+	ProviderChargeID string
+	Number           string
+	Status           string // "draft" | "open" | "paid" | "uncollectible" | "void"
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	SubtotalCents    int64
+	TaxCents         int64
+	TotalCents       int64
+	AmountPaidCents  int64
+	// Plan snapshots the entitlement whose included allowance applies to
+	// this invoice period. Historical credit/refund math must never consult
+	// the account's mutable current plan.
+	Plan                api.Plan
+	AmountRefundedCents int64
+	CreditsAppliedCents int64
+	Currency            string
+	PDFAvailable        bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+// InvoiceRefund is the durable local projection of a provider refund. The
+// provider handle and caller idempotency key are independently unique per
+// invoice so both webhook redelivery and an ambiguous API response collapse
+// to one cumulative amount.
+type InvoiceRefund struct {
+	ID               string
+	InvoiceID        string
+	ProviderRefundID string
+	IdempotencyKey   string
+	AmountCents      int64
+	Source           string // operator | credit | webhook
+	Status           string
+	CreatedAt        time.Time
+}
+
+// BillingIdentity binds one account to one provider. Account's historical
+// ProviderCustomerID/StripeSubscriptionItem fields remain the compatibility
+// cache for the currently active provider; this row is the authoritative,
+// provider-qualified identity used during switches and usage delivery.
+type BillingIdentity struct {
+	AccountID      string
+	Provider       string // stripe | paddle | polar
+	CustomerID     string
+	SubscriptionID string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // AccountCredit is one positive-cents balance issued by an operator
@@ -6579,6 +6629,28 @@ type AppLogDrain struct {
 	Enabled          bool
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+}
+
+// AppLogDrainHealth is the durable, customer-safe delivery snapshot for one
+// log drain. Counters are periodically flushed by gatewayd-internal rather
+// than written once per log record, so the health surface cannot add a
+// database round-trip to the application request path.
+type AppLogDrainHealth struct {
+	DrainID               string
+	Status                string
+	Active                bool
+	QueueDepth            int
+	QueueCapacity         int
+	DeliveredTotal        int64
+	FailedTotal           int64
+	DroppedTotal          int64
+	RetriesTotal          int64
+	StreamReconnectsTotal int64
+	GapsTotal             int64
+	LastSuccessAt         time.Time
+	LastFailureAt         time.Time
+	LastError             string
+	UpdatedAt             time.Time
 }
 
 // UpdateAppLogDrainParams carries the optional fields of UpdateAppLogDrain.

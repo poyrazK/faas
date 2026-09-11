@@ -1744,7 +1744,7 @@ func (c *Client) CancelJobRun(ctx context.Context, name, runID string) (JobRunCa
 }
 
 // ListJobRunTasks returns a page of the run's task rows
-// (issue #1184 Workstream A). task_index 1..N (1-based; matches
+// (issue #1184 Workstream A). task_index 0..N-1 (zero-based; matches
 // the server's CTE fan-out). Status is the closed-set {queued,
 // claimed, succeeded, failed, timeout, oom, cancelled}. LeaseToken
 // is intentionally OMITTED from the wire response (internal
@@ -2580,8 +2580,18 @@ func (c *Client) GetAuditEvent(ctx context.Context, id string) (AuditEventRespon
 // the calling account's id inside the handler; `account_id IS NULL`
 // rows are filtered out server-side.
 func (c *Client) ListAuditLog(ctx context.Context, since, kindPrefix string, limit int) (ListAuditLogResponse, error) {
+	return c.ListAuditLogPage(ctx, "", since, kindPrefix, limit)
+}
+
+// ListAuditLogPage is the cursor-aware customer audit-log read. Pass the
+// previous response's NextBefore back unchanged; an empty before starts at
+// the newest row.
+func (c *Client) ListAuditLogPage(ctx context.Context, before, since, kindPrefix string, limit int) (ListAuditLogResponse, error) {
 	var out ListAuditLogResponse
 	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
 	if since != "" {
 		q.Set("since", since)
 	}
@@ -2605,8 +2615,18 @@ func (c *Client) ListAuditLog(ctx context.Context, since, kindPrefix string, lim
 // admin scope; the SDK caller must be holding an admin API key or
 // an admin session.
 func (c *Client) ListAuditLogAll(ctx context.Context, accountID, since, kindPrefix string, limit int, includeAnonymous bool) (ListAuditLogResponse, error) {
+	return c.ListAuditLogAllPage(ctx, "", accountID, since, kindPrefix, limit, includeAnonymous)
+}
+
+// ListAuditLogAllPage is the cursor-aware operator audit-log read. Pass the
+// previous response's NextBefore back unchanged; an empty before starts at
+// the newest row.
+func (c *Client) ListAuditLogAllPage(ctx context.Context, before, accountID, since, kindPrefix string, limit int, includeAnonymous bool) (ListAuditLogResponse, error) {
 	var out ListAuditLogResponse
 	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
 	if accountID != "" {
 		q.Set("account_id", accountID)
 	}
@@ -4069,6 +4089,11 @@ func (c *Client) GetAppLogDrain(ctx context.Context, slug, id string) (AppLogDra
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains/"+id, nil, &out)
 }
 
+func (c *Client) GetAppLogDrainHealth(ctx context.Context, slug, id string) (AppLogDrainHealthResponse, error) {
+	var out AppLogDrainHealthResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains/"+id+"/health", nil, &out)
+}
+
 func (c *Client) UpdateAppLogDrain(ctx context.Context, slug, id string, req UpdateAppLogDrainRequest) (AppLogDrainResponse, error) {
 	var out AppLogDrainResponse
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/log-drains/"+id, req, &out)
@@ -4453,6 +4478,17 @@ func (c *Client) ImportAppOpenAPI(ctx context.Context, slug string, doc map[stri
 func (c *Client) DryRunAppOpenAPI(ctx context.Context, slug string, doc map[string]any) (AppOpenAPIImportDryRunResponse, error) {
 	var out AppOpenAPIImportDryRunResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/openapi/dry-run", doc, &out)
+}
+
+// ApplyAppOpenAPIPolicy plans or applies validation edge rules derived from
+// the persisted app-level OpenAPI document. Call with Confirm=false first;
+// the returned PreviewSHA256 is an approval token for a subsequent
+// Confirm=true call. A stale token is rejected so concurrent policy changes
+// cannot be accidentally overwritten. MatchHost is optional and defaults to
+// the app's platform hostname.
+func (c *Client) ApplyAppOpenAPIPolicy(ctx context.Context, slug string, req ApplyAppOpenAPIPolicyRequest) (AppOpenAPIPolicyApplyResponse, error) {
+	var out AppOpenAPIPolicyApplyResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/openapi/apply", req, &out)
 }
 
 // DeleteAppOpenAPI wipes the imported OpenAPI document for an app.

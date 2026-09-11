@@ -112,6 +112,8 @@ var cliCommands = []cliCommand{
 				Short: "Move one dead webhook delivery back to pending",
 				Flags: []cliFlag{
 					{Name: "delivery-id", Short: "X-GitHub-Delivery id", Req: true},
+					{Name: "reason", Short: "durable audit reason slug", Req: true},
+					{Name: "trace-id", Short: "32-char hex trace id (generated when omitted)"},
 					{Name: "yes", Short: "acknowledge retrying customer deployment work", Req: true},
 				},
 			},
@@ -120,6 +122,8 @@ var cliCommands = []cliCommand{
 				Short: "Move one dead Check Run update back to pending",
 				Flags: []cliFlag{
 					{Name: "deployment-id", Short: "deployment id", Req: true},
+					{Name: "reason", Short: "durable audit reason slug", Req: true},
+					{Name: "trace-id", Short: "32-char hex trace id (generated when omitted)"},
 					{Name: "yes", Short: "acknowledge retrying the GitHub Check Run write", Req: true},
 				},
 			},
@@ -207,6 +211,7 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "active-only", Short: "filter to active=true rows only"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
+					{Name: "break-glass-db", Short: "read directly during an apid outage"},
 				},
 			},
 			{
@@ -215,6 +220,7 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "node", Short: "fqdn / short-hostname of the node to show (required)"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
+					{Name: "break-glass-db", Short: "read directly during an apid outage"},
 				},
 			},
 			{

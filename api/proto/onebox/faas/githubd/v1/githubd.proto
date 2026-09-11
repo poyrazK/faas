@@ -152,7 +152,55 @@ service Githubd {
   //   - UNAVAILABLE when githubd is down or codeload
   //     returns 5xx.
   rpc StreamSourceRef(StreamSourceRefRequest) returns (stream StreamSourceRefChunk);
+
+  // ListRecoveryQueueItems returns operator-safe projections of the durable
+  // webhook-delivery inbox and Check Run outbox. Payloads are deliberately
+  // excluded because they can contain customer repository metadata.
+  rpc ListRecoveryQueueItems(ListRecoveryQueueItemsRequest) returns (ListRecoveryQueueItemsResponse);
+
+  // RetryWebhookDelivery and RetryCheckUpdate move one dead item back to its
+  // pending state. Both operations are compare-and-swap writes: active or
+  // already-retried items return retried=false and are left untouched.
+  rpc RetryWebhookDelivery(RetryWebhookDeliveryRequest) returns (RetryRecoveryItemResponse);
+  rpc RetryCheckUpdate(RetryCheckUpdateRequest) returns (RetryRecoveryItemResponse);
 }
+
+message ListRecoveryQueueItemsRequest {
+  string status = 1;
+  int32 limit = 2;
+}
+
+message WebhookDeliveryRecord {
+  string delivery_id = 1;
+  string event_type = 2;
+  string status = 3;
+  int32 attempts = 4;
+  string next_attempt_at = 5;
+  string last_error = 6;
+  string received_at = 7;
+  string processed_at = 8;
+  string updated_at = 9;
+}
+
+message CheckUpdateRecord {
+  string deployment_id = 1;
+  int64 generation = 2;
+  string status = 3;
+  int32 attempts = 4;
+  string next_attempt_at = 5;
+  string last_error = 6;
+  string processed_at = 7;
+  string updated_at = 8;
+}
+
+message ListRecoveryQueueItemsResponse {
+  repeated WebhookDeliveryRecord deliveries = 1;
+  repeated CheckUpdateRecord check_updates = 2;
+}
+
+message RetryWebhookDeliveryRequest { string delivery_id = 1; }
+message RetryCheckUpdateRequest { string deployment_id = 1; }
+message RetryRecoveryItemResponse { bool retried = 1; }
 
 message VerifyInstallationRequest {
   int64 installation_id = 1;

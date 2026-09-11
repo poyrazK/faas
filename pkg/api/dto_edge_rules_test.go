@@ -624,6 +624,10 @@ func TestEdgeRuleThrottleAction_Validate_PinBackCompat(t *testing.T) {
 			a:    EdgeRuleThrottleAction{RequestsPerSecond: 10, Burst: 20, KeyBy: ThrottleKeyByAPIKey},
 		},
 		{
+			name: "key_by=consumer_id with no other Phase-3 fields",
+			a:    EdgeRuleThrottleAction{RequestsPerSecond: 10, Burst: 20, KeyBy: ThrottleKeyByConsumerID},
+		},
+		{
 			name: "key_by=jwt_subject with no other Phase-3 fields",
 			a:    EdgeRuleThrottleAction{RequestsPerSecond: 10, Burst: 20, KeyBy: ThrottleKeyByJWTSubject},
 		},

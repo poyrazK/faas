@@ -98,22 +98,25 @@ var routeExclude = map[string]bool{
 	// Mirror the exclusion across BOTH this list AND
 	// cmd/apid/spec_compliance_test.go::routeExclude; the two
 	// lists must move together.
-	"POST /v1/admin/instances/{id}/force-park":          true, // PR #1099 P2a — operator-only recovery primitive
-	"POST /v1/admin/apps/{slug}/force-cold-boot":        true, // PR #1099 P2b — operator-only recovery primitive
-	"POST /v1/admin/instances/{id}/force-restart":       true, // PR #1105 P2d — operator-only recovery primitive
-	"POST /v1/admin/builds/sweep-stuck":                 true, // PR #1099 P2c — operator-only recovery primitive
-	"POST /v1/admin/ops/accounts/{id}/suspend":          true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/restore":          true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":  true, // operator-only tenant security control
-	"POST /v1/admin/ops/nodes/{name}/drain":             true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/force-drain":       true, // operator-only destructive node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/activate":          true, // operator-only node lifecycle control
-	"GET /v1/admin/operator-intents/{id}":               true, // PR #1099 P2.3 — operator-only intent polling endpoint
-	"GET /v1/admin/config":                              true, // operator-only runtime configuration catalog
-	"PATCH /v1/admin/config/{key}":                      true, // operator-only runtime configuration write
-	"GET /v1/admin/config-operations/{id}":              true, // operator-only runtime configuration operation polling
-	"GET /v1/admin/config/{key}/revisions":              true, // operator-only runtime configuration history
-	"GET /v1/admin/managed-postgres/usage/{account_id}": true, // operator-only COGS/capacity view; public SDK is customer-scoped
+	"POST /v1/admin/instances/{id}/force-park":           true, // PR #1099 P2a — operator-only recovery primitive
+	"POST /v1/admin/apps/{slug}/force-cold-boot":         true, // PR #1099 P2b — operator-only recovery primitive
+	"POST /v1/admin/instances/{id}/force-restart":        true, // PR #1105 P2d — operator-only recovery primitive
+	"POST /v1/admin/builds/sweep-stuck":                  true, // PR #1099 P2c — operator-only recovery primitive
+	"GET /v1/admin/ops/github/recovery":                  true, // operator-only githubd queue projection
+	"POST /v1/admin/ops/github/deliveries/{id}/retry":    true, // operator-only githubd delivery recovery
+	"POST /v1/admin/ops/github/check-updates/{id}/retry": true, // operator-only githubd Check Run recovery
+	"POST /v1/admin/ops/accounts/{id}/suspend":           true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/restore":           true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":   true, // operator-only tenant security control
+	"POST /v1/admin/ops/nodes/{name}/drain":              true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/force-drain":        true, // operator-only destructive node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/activate":           true, // operator-only node lifecycle control
+	"GET /v1/admin/operator-intents/{id}":                true, // PR #1099 P2.3 — operator-only intent polling endpoint
+	"GET /v1/admin/config":                               true, // operator-only runtime configuration catalog
+	"PATCH /v1/admin/config/{key}":                       true, // operator-only runtime configuration write
+	"GET /v1/admin/config-operations/{id}":               true, // operator-only runtime configuration operation polling
+	"GET /v1/admin/config/{key}/revisions":               true, // operator-only runtime configuration history
+	"GET /v1/admin/managed-postgres/usage/{account_id}":  true, // operator-only COGS/capacity view; public SDK is customer-scoped
 
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the
 	// device-code flow for programmatic auth; the dashboard cookie
@@ -324,6 +327,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/openapi":                               "DeleteAppOpenAPI",               // idempotent wipe of the imported doc (item #2 D5 emits pg_notify)
 	"POST /v1/apps/{slug}/openapi/dry-run":                         "DryRunAppOpenAPI",               // read-only edge-rule suggestions (item #2 D3)
 	"GET /v1/apps/{slug}/openapi/preview":                          "PreviewAppOpenAPIPolicy",        // read-only declared-vs-observed route-policy preview (roadmap item 11)
+	"POST /v1/apps/{slug}/openapi/apply":                           "ApplyAppOpenAPIPolicy",          // explicit plan/confirm policy apply
 	"GET /v1/apps/{slug}/openapi/diff":                             "DiffAppOpenAPIContract",         // ADR-121 production contract gate preview
 	"GET /v1/deployments/{id}":                                     "GetDeployment",
 	"PATCH /v1/deployments/{id}":                                   "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override
@@ -470,11 +474,12 @@ var methodRouteMap = map[string]string{
 
 	// Issue #1398 O4 — customer runtime log destinations. Hyphenated path
 	// segments need explicit noun-oriented SDK names.
-	"GET /v1/apps/{slug}/log-drains":         "ListAppLogDrains",
-	"POST /v1/apps/{slug}/log-drains":        "CreateAppLogDrain",
-	"GET /v1/apps/{slug}/log-drains/{id}":    "GetAppLogDrain",
-	"PATCH /v1/apps/{slug}/log-drains/{id}":  "UpdateAppLogDrain",
-	"DELETE /v1/apps/{slug}/log-drains/{id}": "DeleteAppLogDrain",
+	"GET /v1/apps/{slug}/log-drains":             "ListAppLogDrains",
+	"POST /v1/apps/{slug}/log-drains":            "CreateAppLogDrain",
+	"GET /v1/apps/{slug}/log-drains/{id}":        "GetAppLogDrain",
+	"GET /v1/apps/{slug}/log-drains/{id}/health": "GetAppLogDrainHealth",
+	"PATCH /v1/apps/{slug}/log-drains/{id}":      "UpdateAppLogDrain",
+	"DELETE /v1/apps/{slug}/log-drains/{id}":     "DeleteAppLogDrain",
 
 	// ADR-098 §9.A — connection-aware data upstreams (PR-B hand-off).
 	// The auto-derivation would produce Swagger-style names

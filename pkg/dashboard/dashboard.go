@@ -510,6 +510,38 @@ type AppWebhooksData struct {
 	ErrorMessage  string
 }
 
+// AppLogDrainsData is the customer-facing delivery-health projection for one
+// app. It intentionally contains only the masked destination and sanitized
+// health summary; credentials and raw transport errors never reach a
+// template.
+type AppLogDrainsData struct {
+	App          AppListItem
+	PlanAllowed  bool
+	Drains       []LogDrainPageItem
+	ErrorMessage string
+}
+
+type LogDrainPageItem struct {
+	ID                    string
+	Kind                  string
+	TargetURL             string
+	Enabled               bool
+	Status                string
+	Active                bool
+	QueueDepth            int
+	QueueCapacity         int
+	DeliveredTotal        int64
+	FailedTotal           int64
+	DroppedTotal          int64
+	RetriesTotal          int64
+	StreamReconnectsTotal int64
+	GapsTotal             int64
+	LastSuccessAt         string
+	LastFailureAt         string
+	LastError             string
+	UpdatedAt             string
+}
+
 // TenantSurfacesData is the customer-facing projection for the per-app
 // tenant-surface page (issue #1397 / G9). Hostname verification and durable
 // certificate state are kept as display fields so the template never needs
@@ -1693,19 +1725,23 @@ type DebugRegressionView struct {
 
 // DebugRequestView is one row in the debugger request table.
 type DebugRequestView struct {
-	ID           string
-	DeploymentID string
-	Route        string
-	Method       string
-	Status       int
-	LatencyMS    int
-	Count        int
-	ColdBoot     bool
-	TraceID      string
-	WakeID       string
-	InstanceID   string
-	ReceivedAt   string
-	DetailURL    string
+	ID              string
+	DeploymentID    string
+	Route           string
+	Method          string
+	Status          int
+	LatencyMS       int
+	Count           int
+	ColdBoot        bool
+	TraceID         string
+	WakeID          string
+	InstanceID      string
+	ReceivedAt      string
+	GuestRuntime    string
+	GuestDurationMS int
+	GuestOutcome    string
+	GuestErrorClass string
+	DetailURL       string
 }
 
 // DebugRequestDetailView is the selected request drill-down. Spans and the

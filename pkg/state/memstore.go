@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -248,6 +249,7 @@ type MemStore struct {
 	appWebhooks          map[string]AppWebhook
 	appWebhookDeliveries map[string]AppWebhookDelivery
 	appLogDrains         map[string]AppLogDrain
+	appLogDrainHealth    map[string]AppLogDrainHealth
 	// deploymentScopeExclusions backs the ADR-124 follow-up #3
 	// persistent --exclude history (migration 00418). Keyed by row
 	// id (uuid string) for symmetry with appWebhooks; the (account,
@@ -368,6 +370,9 @@ type MemStore struct {
 	// by ClaimExecution after the in-memory lease CAS succeeds.
 	executions        map[string]Execution
 	executionPayloads map[string]executionPayload
+	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
+	// immutable compatibility catalog keys; retirement only changes state.
+	runtimeSnapshots map[string]RuntimeSnapshotRecord
 	// accountAsyncQuota is the in-memory mirror of the
 	// account_async_quota table (ADR-134 PR-B). Keyed by account
 	// ID; populated lazily by EnsureAccountAsyncQuota; mutated by
@@ -460,9 +465,14 @@ type MemStore struct {
 	// stripeByCustomer is the reverse-lookup index used by
 	// AccountByProviderCustomerID; keyed by Stripe `cus_…` ID.
 	stripeByCustomer map[string]string
+	// billingIdentities is the provider-qualified source of truth used by
+	// checkout, webhooks, and meterd after a billing-provider switch.
+	billingIdentities map[string]BillingIdentity
 	// invoices is the in-memory mirror of the `invoices` table
 	// (migration 00050, issue #259).
-	invoices map[string]Invoice
+	invoices               map[string]Invoice
+	invoiceRefunds         map[string]InvoiceRefund
+	billingUsageDeliveries map[string]struct{}
 	// objectStorageBilling is the in-memory mirror of the finalized
 	// object-storage month-close ledger.
 	objectStorageBilling map[string]ObjectStorageBillingRecord
@@ -816,6 +826,7 @@ func NewMemStore() *MemStore {
 		appWebhooks:               map[string]AppWebhook{},
 		appWebhookDeliveries:      map[string]AppWebhookDelivery{},
 		appLogDrains:              map[string]AppLogDrain{},
+		appLogDrainHealth:         map[string]AppLogDrainHealth{},
 		deploymentScopeExclusions: map[string]DeploymentScopeExclusion{}, // ADR-124 follow-up #3
 		uploadSessions:            map[string]sqlc.UploadSession{},
 		uploadCommitOutcomes:      map[string]sqlc.UploadCommitOutcome{},
@@ -850,6 +861,7 @@ func NewMemStore() *MemStore {
 		invocations:             map[string]Invocation{},
 		executions:              map[string]Execution{},
 		executionPayloads:       map[string]executionPayload{},
+		runtimeSnapshots:        map[string]RuntimeSnapshotRecord{},
 		accountAsyncQuota:       map[string]accountAsyncQuotaRow{},
 		instances:               map[string]Instance{},
 		loginTokens:             map[string]LoginToken{},
@@ -878,11 +890,14 @@ func NewMemStore() *MemStore {
 		// stripeByCustomer is the reverse-lookup map AccountByProviderCustomerID
 		// walks; populated by UpdateAccountProviderCustomerID.
 
-		stripeByCustomer: map[string]string{},
+		stripeByCustomer:  map[string]string{},
+		billingIdentities: map[string]BillingIdentity{},
 		// invoices starts empty; PR A reads it via ListInvoicesForAccount,
 		// PR B writes via UpsertInvoice (webhook ingestion).
-		invoices:             map[string]Invoice{},
-		objectStorageBilling: map[string]ObjectStorageBillingRecord{},
+		invoices:               map[string]Invoice{},
+		invoiceRefunds:         map[string]InvoiceRefund{},
+		billingUsageDeliveries: map[string]struct{}{},
+		objectStorageBilling:   map[string]ObjectStorageBillingRecord{},
 		// accountCredits starts empty; the operator-only
 		// POST /v1/admin/accounts/{id}/credits path is the sole writer.
 		accountCredits: map[string]AccountCredit{},
@@ -1650,7 +1665,30 @@ func (m *MemStore) UpdateAccountProviderCustomerID(_ context.Context, id, provid
 		}
 	}
 	m.stripeByCustomer[providerCustomerID] = id
+	provider := billingProviderForCustomerID(providerCustomerID)
+	key := billingIdentityKey(id, provider)
+	identity := m.billingIdentities[key]
+	identity.AccountID = id
+	identity.Provider = provider
+	identity.CustomerID = providerCustomerID
+	if identity.CreatedAt.IsZero() {
+		identity.SubscriptionID = a.StripeSubscriptionItem
+		identity.CreatedAt = time.Now().UTC()
+	}
+	identity.UpdatedAt = time.Now().UTC()
+	m.billingIdentities[key] = identity
 	return nil
+}
+
+func billingProviderForCustomerID(customerID string) string {
+	switch {
+	case strings.HasPrefix(customerID, "cus_"):
+		return "stripe"
+	case strings.HasPrefix(customerID, "ctm_"):
+		return "paddle"
+	default:
+		return "polar"
+	}
 }
 
 // UpdateAccountStripeSubscriptionItem stamps the Stripe metered
@@ -1666,6 +1704,13 @@ func (m *MemStore) UpdateAccountStripeSubscriptionItem(_ context.Context, id, su
 	}
 	a.StripeSubscriptionItem = subItem
 	m.accounts[id] = a
+	for key, identity := range m.billingIdentities {
+		if identity.AccountID == id && identity.CustomerID == a.ProviderCustomerID {
+			identity.SubscriptionID = subItem
+			identity.UpdatedAt = time.Now().UTC()
+			m.billingIdentities[key] = identity
+		}
+	}
 	return nil
 }
 
@@ -1684,6 +1729,63 @@ func (m *MemStore) AccountByProviderCustomerID(_ context.Context, stripeCustomer
 		return Account{}, ErrNotFound
 	}
 	return a, nil
+}
+
+func billingIdentityKey(accountID, provider string) string {
+	return provider + "\x00" + accountID
+}
+
+func (m *MemStore) BillingIdentity(_ context.Context, accountID, provider string) (BillingIdentity, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	identity, ok := m.billingIdentities[billingIdentityKey(accountID, provider)]
+	if !ok {
+		return BillingIdentity{}, ErrNotFound
+	}
+	return identity, nil
+}
+
+func (m *MemStore) UpsertBillingIdentity(_ context.Context, identity BillingIdentity) error {
+	if identity.AccountID == "" || identity.CustomerID == "" ||
+		(identity.Provider != "stripe" && identity.Provider != "paddle" && identity.Provider != "polar") {
+		return errors.New("state: valid billing identity account, provider, and customer are required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[identity.AccountID]; !ok {
+		return ErrNotFound
+	}
+	for key, existing := range m.billingIdentities {
+		if key != billingIdentityKey(identity.AccountID, identity.Provider) &&
+			existing.Provider == identity.Provider && existing.CustomerID == identity.CustomerID {
+			return ErrConflict
+		}
+	}
+	key := billingIdentityKey(identity.AccountID, identity.Provider)
+	if existing, ok := m.billingIdentities[key]; ok {
+		identity.CreatedAt = existing.CreatedAt
+	}
+	if identity.CreatedAt.IsZero() {
+		identity.CreatedAt = time.Now().UTC()
+	}
+	identity.UpdatedAt = time.Now().UTC()
+	m.billingIdentities[key] = identity
+	return nil
+}
+
+func (m *MemStore) AccountByBillingCustomerID(_ context.Context, provider, customerID string) (Account, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, identity := range m.billingIdentities {
+		if identity.Provider == provider && identity.CustomerID == customerID {
+			acct, ok := m.accounts[identity.AccountID]
+			if !ok {
+				return Account{}, ErrNotFound
+			}
+			return acct, nil
+		}
+	}
+	return Account{}, ErrNotFound
 }
 
 // ListAllAccounts walks the account map under the store mutex. The
@@ -4774,9 +4876,10 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 
 // --- Deployments ------------------------------------------------------------
 
-// CreateDeployment mirrors PgStore.CreateDeployment's active-app gate
-// (PR-A). Both stores must reject deployments against AppDeleted or
-// missing apps with ErrNotFound — apid's s.notFound relies on this
+// CreateDeployment mirrors PgStore.CreateDeployment's app gate (PR-A).
+// Active and intentionally parked apps accept deployments. Both stores
+// reject deployments against AppDeleted or missing apps with ErrNotFound;
+// apid's s.notFound relies on this
 // to return 404. The mutex already serialises the check + insert
 // together, so the gate is race-free here without a tx.
 //
@@ -6295,7 +6398,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
-	if app, ok := m.apps[src.AppID]; !ok || app.Status != AppActive {
+	if app, ok := m.apps[src.AppID]; !ok || (app.Status != AppActive && app.Status != AppEvictedCold) {
 		return Deployment{}, ErrNotFound
 	}
 	now := time.Now()
@@ -11941,12 +12044,13 @@ func (m *MemStore) appendAuditLogLocked(entry AuditLog) {
 	})
 }
 
-// ListAuditLog (issue #755 / PR-6) is the dashboard read path. Walks
-// m.auditLog in reverse (newest-first) and applies the same WHERE
+// ListAuditLog (issue #755 / PR-6) is the dashboard read path. Sorts
+// a snapshot newest-first and applies the same WHERE
 // semantics as pgstore.ListAuditLog: AccountID is "match-or-null",
 // KindPrefix is a LIKE prefix match, Since is an inclusive lower
-// bound on ReceivedAt, IncludeAnonymous gates the AccountID-is-nil
-// rows. Limit defaults to 100 when zero / negative.
+// bound on ReceivedAt, Before is an exclusive (ReceivedAt, ID)
+// cursor, and IncludeAnonymous gates the AccountID-is-nil rows.
+// Limit defaults to 100 when zero / negative.
 //
 // Returned slice is a fresh copy of each AuditLog row (Data
 // included) so a caller can hold it past the next store mutation.
@@ -11964,9 +12068,16 @@ func (m *MemStore) ListAuditLog(_ context.Context, filter AuditLogFilter) ([]Aud
 	if filter.OperatorOnly {
 		kindPrefix = "operator.action."
 	}
+	rows := append([]AuditLog(nil), m.auditLog...)
+	sort.SliceStable(rows, func(i, j int) bool {
+		if !rows[i].ReceivedAt.Equal(rows[j].ReceivedAt) {
+			return rows[i].ReceivedAt.After(rows[j].ReceivedAt)
+		}
+		return bytes.Compare(rows[i].ID[:], rows[j].ID[:]) > 0
+	})
+
 	var out []AuditLog
-	for i := len(m.auditLog) - 1; i >= 0; i-- {
-		row := m.auditLog[i]
+	for _, row := range rows {
 		if filter.AccountID != nil {
 			if row.AccountID == nil || *row.AccountID != *filter.AccountID {
 				continue
@@ -11976,6 +12087,11 @@ func (m *MemStore) ListAuditLog(_ context.Context, filter AuditLogFilter) ([]Aud
 			continue
 		}
 		if !filter.Since.IsZero() && row.ReceivedAt.Before(filter.Since) {
+			continue
+		}
+		if filter.Before != nil && (row.ReceivedAt.After(filter.Before.ReceivedAt) ||
+			(row.ReceivedAt.Equal(filter.Before.ReceivedAt) &&
+				bytes.Compare(row.ID[:], filter.Before.ID[:]) >= 0)) {
 			continue
 		}
 		if !filter.IncludeAnonymous && row.AccountID == nil {
@@ -12547,6 +12663,18 @@ func (m *MemStore) GetInvoiceByID(_ context.Context, id string) (Invoice, error)
 	return Invoice{}, ErrNotFound
 }
 
+func (m *MemStore) GetInvoiceByProviderID(_ context.Context, accountID, provider, providerInvoiceID string) (Invoice, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, inv := range m.invoices {
+		if inv.AccountID == accountID && inv.Provider == provider &&
+			(inv.ProviderInvoiceID == providerInvoiceID || inv.ProviderChargeID == providerInvoiceID) {
+			return inv, nil
+		}
+	}
+	return Invoice{}, ErrNotFound
+}
+
 // UpsertInvoice mirrors the production natural-key upsert used by webhook
 // ingestion. MemStore keeps the existing row id and created_at on updates so
 // list ordering and idempotency match Postgres.
@@ -12568,10 +12696,19 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 	if inv.Status == "" {
 		inv.Status = "open"
 	}
+	if !inv.Plan.Valid() {
+		inv.Plan = api.PlanFree
+	}
 	for id, existing := range m.invoices {
 		if existing.AccountID == inv.AccountID && existing.Provider == inv.Provider && existing.ProviderInvoiceID == inv.ProviderInvoiceID {
 			inv.ID = existing.ID
 			inv.CreatedAt = existing.CreatedAt
+			if inv.ProviderChargeID == "" {
+				inv.ProviderChargeID = existing.ProviderChargeID
+			}
+			inv.AmountRefundedCents = existing.AmountRefundedCents
+			inv.CreditsAppliedCents = existing.CreditsAppliedCents
+			inv.Plan = existing.Plan
 			if inv.CreatedAt.IsZero() {
 				inv.CreatedAt = time.Now().UTC()
 			}
@@ -12590,6 +12727,59 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 		inv.UpdatedAt = inv.CreatedAt
 	}
 	m.invoices[inv.ID] = inv
+	return nil
+}
+
+func (m *MemStore) RecordInvoiceRefund(_ context.Context, refund InvoiceRefund) error {
+	if refund.InvoiceID == "" || refund.ProviderRefundID == "" || refund.IdempotencyKey == "" || refund.AmountCents <= 0 {
+		return errors.New("state: invoice refund requires invoice, provider refund, idempotency key, and positive amount")
+	}
+	if refund.Source != "operator" && refund.Source != "credit" && refund.Source != "webhook" {
+		return errors.New("state: invalid invoice refund source")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var invoiceKey string
+	inv, ok := m.invoices[refund.InvoiceID]
+	if ok {
+		invoiceKey = refund.InvoiceID
+	} else {
+		for key, candidate := range m.invoices {
+			if candidate.ID == refund.InvoiceID {
+				invoiceKey, inv, ok = key, candidate, true
+				break
+			}
+		}
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	for _, existing := range m.invoiceRefunds {
+		if existing.InvoiceID == refund.InvoiceID &&
+			(existing.ProviderRefundID == refund.ProviderRefundID || existing.IdempotencyKey == refund.IdempotencyKey) {
+			return nil
+		}
+	}
+	paid := inv.AmountPaidCents
+	if paid <= 0 {
+		paid = inv.TotalCents
+	}
+	if paid <= 0 || inv.AmountRefundedCents+refund.AmountCents > paid {
+		return ErrConflict
+	}
+	if refund.ID == "" {
+		refund.ID = uuid.NewString()
+	}
+	if refund.CreatedAt.IsZero() {
+		refund.CreatedAt = time.Now().UTC()
+	}
+	m.invoiceRefunds[refund.ID] = refund
+	inv.AmountRefundedCents += refund.AmountCents
+	if refund.Source == "credit" {
+		inv.CreditsAppliedCents += refund.AmountCents
+	}
+	inv.UpdatedAt = time.Now().UTC()
+	m.invoices[invoiceKey] = inv
 	return nil
 }
 
@@ -12761,9 +12951,6 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if p.TargetCents == 0 {
-		return ConsumeAccountCreditResult{}, nil
-	}
 	if p.ProviderInvoiceID == "" {
 		return ConsumeAccountCreditResult{}, fmt.Errorf("ConsumeAccountCredit: ProviderInvoiceID required (the partial unique index needs a non-null dedupe key)")
 	}
@@ -12796,6 +12983,9 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 			RemainingCreditsCents:     remaining,
 			AlreadyConsumedForInvoice: true,
 		}, nil
+	}
+	if p.TargetCents == 0 {
+		return ConsumeAccountCreditResult{}, nil
 	}
 
 	now := time.Now().UTC()
@@ -13130,6 +13320,53 @@ func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]Usag
 		return out[i].AccountID < out[j].AccountID
 	})
 	return out, nil
+}
+
+func billingUsageDeliveryKey(provider, accountID string, hour time.Time) string {
+	return provider + "\x00" + accountID + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
+}
+
+func (m *MemStore) PendingBillingUsageWindows(_ context.Context, provider string, end time.Time) ([]UsageWindow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	type key struct {
+		account string
+		hour    time.Time
+	}
+	agg := make(map[key]int64)
+	for _, row := range m.usage {
+		if !row.Minute.Before(end.UTC()) {
+			continue
+		}
+		hour := row.Minute.UTC().Truncate(time.Hour)
+		if _, delivered := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, row.AccountID, hour)]; delivered {
+			continue
+		}
+		agg[key{account: row.AccountID, hour: hour}] += row.MBSeconds
+	}
+	out := make([]UsageWindow, 0, len(agg))
+	for k, mbSeconds := range agg {
+		if mbSeconds > 0 {
+			out = append(out, UsageWindow{AccountID: k.account, Hour: k.hour, MBSeconds: mbSeconds})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Hour.Equal(out[j].Hour) {
+			return out[i].Hour.Before(out[j].Hour)
+		}
+		return out[i].AccountID < out[j].AccountID
+	})
+	if len(out) > 10000 {
+		out = out[:10000]
+	}
+	return out, nil
+}
+
+func (m *MemStore) RecordBillingUsageDelivery(_ context.Context, provider, accountID string, windowStart time.Time, _ int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, windowStart)] = struct{}{}
+	return nil
 }
 
 // UsageDaily mirrors pgstore.UsageDaily by aggregating MemStore's minute and
@@ -15253,6 +15490,40 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for k := range m.paddleOverageMonths {
 		if k.accountID == id {
 			delete(m.paddleOverageMonths, k)
+		}
+	}
+	for key, identity := range m.billingIdentities {
+		if identity.AccountID == id {
+			delete(m.billingIdentities, key)
+		}
+	}
+	deletedInvoiceIDs := make(map[string]struct{})
+	for key, invoice := range m.invoices {
+		if invoice.AccountID == id {
+			deletedInvoiceIDs[invoice.ID] = struct{}{}
+			delete(m.invoices, key)
+		}
+	}
+	for key, refund := range m.invoiceRefunds {
+		if _, deleted := deletedInvoiceIDs[refund.InvoiceID]; deleted {
+			delete(m.invoiceRefunds, key)
+		}
+	}
+	for key, credit := range m.accountCredits {
+		if credit.AccountID == id {
+			delete(m.accountCredits, key)
+		}
+	}
+	keptLedger := m.creditLedger[:0]
+	for _, entry := range m.creditLedger {
+		if entry.AccountID != id {
+			keptLedger = append(keptLedger, entry)
+		}
+	}
+	m.creditLedger = keptLedger
+	for key := range m.billingUsageDeliveries {
+		if strings.Contains(key, "\x00"+id+"\x00") {
+			delete(m.billingUsageDeliveries, key)
 		}
 	}
 	// Audit events (spec §17 G6 right-to-erasure). Drop events whose

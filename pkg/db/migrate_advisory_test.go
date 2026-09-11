@@ -32,10 +32,9 @@ func TestAcquireMigrationLock_BlocksSecondHolder(t *testing.T) {
 	}
 
 	const holdFor = 600 * time.Millisecond
-	// MigrationLockKey is intentionally global across schemas and CI runs
-	// several Postgres-backed shards concurrently. A different shard may be
-	// applying its migration set when this test starts, so allow that
-	// legitimate contention to drain before treating acquisition as a failure.
+	// MigrationLockKey is intentionally global across schemas and package
+	// shards. Other Postgres-backed tests may briefly own it while running
+	// MigrateUp, so allow the same contention budget as the release test below.
 	const acquireDeadline = 30 * time.Second
 
 	type result struct {

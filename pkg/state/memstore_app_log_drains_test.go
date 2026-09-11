@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -52,12 +53,41 @@ func TestMemStoreAppLogDrainCRUDAndQuota(t *testing.T) {
 		t.Fatalf("AppLogDrainByID returned aliased secret: %q", untouched.AuthHeaderSealed)
 	}
 
+	lastSuccess := time.Now().UTC().Add(-time.Minute)
+	if err := store.UpsertAppLogDrainHealth(ctx, AppLogDrainHealth{
+		DrainID: created.ID, Status: "healthy", Active: true, QueueDepth: 2,
+		QueueCapacity: 100, DeliveredTotal: 7, LastSuccessAt: lastSuccess,
+		UpdatedAt: lastSuccess,
+	}); err != nil {
+		t.Fatalf("UpsertAppLogDrainHealth: %v", err)
+	}
+	health, err := store.AppLogDrainHealthByDrainID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("AppLogDrainHealthByDrainID: %v", err)
+	}
+	if health.Status != "healthy" || !health.Active || health.QueueDepth != 2 || health.DeliveredTotal != 7 || !health.LastSuccessAt.Equal(lastSuccess) {
+		t.Fatalf("health round-trip mismatch: %+v", health)
+	}
+	healthRows, err := store.ListAppLogDrainHealthForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("ListAppLogDrainHealthForApp: %v", err)
+	}
+	if len(healthRows) != 1 || healthRows[0].DrainID != created.ID {
+		t.Fatalf("app health list = %+v, want %q", healthRows, created.ID)
+	}
+	if _, err := store.AppLogDrainHealthByDrainID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("AppLogDrainHealthByDrainID missing = %v, want ErrNotFound", err)
+	}
+
 	disabled, err := store.CreateAppLogDrain(ctx, AppLogDrain{
 		AppID: app.ID, AccountID: account.ID, Kind: AppLogDrainKindOTLP,
 		TargetURL: "https://logs.example/two", Enabled: false,
 	})
 	if err != nil {
 		t.Fatalf("CreateAppLogDrain disabled: %v", err)
+	}
+	if err := store.UpsertAppLogDrainHealth(ctx, AppLogDrainHealth{DrainID: disabled.ID, Status: "degraded"}); err != nil {
+		t.Fatalf("UpsertAppLogDrainHealth disabled: %v", err)
 	}
 	rows, err := store.ListAppLogDrainsForApp(ctx, app.ID)
 	if err != nil {
@@ -106,6 +136,9 @@ func TestMemStoreAppLogDrainCRUDAndQuota(t *testing.T) {
 
 	if err := store.DeleteAppLogDrain(ctx, disabled.ID); err != nil {
 		t.Fatalf("DeleteAppLogDrain: %v", err)
+	}
+	if _, err := store.AppLogDrainHealthByDrainID(ctx, disabled.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted drain health = %v, want ErrNotFound", err)
 	}
 	if err := store.DeleteAppLogDrain(ctx, disabled.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("DeleteAppLogDrain twice = %v, want ErrNotFound", err)

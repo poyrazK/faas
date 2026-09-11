@@ -2,9 +2,8 @@
 // Workstream A / ADR-099).
 //
 // This file is build-tag-free: only the structs / constants / pure
-// helpers that the linux file (job_supervisor_linux.go) and the
-// darwin unit tests (job_supervisor_darwin_test.go, if any) need.
-// The syscall.Exec / vsock / signal handling lives in the linux
+// helpers that the linux file (job_supervisor_linux.go) and portable
+// unit tests need. The child supervision / vsock / signal handling lives in the linux
 // sibling; the type shapes mirror pkg/fcvm/job_vmm.go::JobManifest
 // + JobExitPayload exactly so a wire-format drift would surface
 // as a parse error on first cold boot.
@@ -20,6 +19,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -27,8 +27,8 @@ import (
 // VsockJobExitPort is the AF_VSOCK port the job supervisor dials
 // on the host to ship the terminal exit envelope. Matches
 // pkg/fcvm/job_vmm.go::VsockJobExitPort (1026). The port number
-// is the same as VsockCharacterizationPort — the discriminator
-// is the socket type (DGRAM for jobs, STREAM for characterize).
+// is the same as VsockCharacterizationPort. Job and characterization VMs are
+// mutually exclusive, and the framed message type rejects cross-protocol data.
 const VsockJobExitPort uint32 = 1026
 
 // VsockJobExitMsgType is the wire-format discriminator for the
@@ -38,11 +38,21 @@ const VsockJobExitPort uint32 = 1026
 // host-side parse layer.
 const VsockJobExitMsgType uint32 = 4
 
+// Job mode reuses the app liveness port for host-initiated cancellation. The
+// boot dispatcher returns into RunJob before it starts the app liveness
+// listener, so the two protocols cannot coexist in one VM.
+const (
+	VsockJobControlPort     uint32 = 1028
+	VsockJobCancelMsgType   uint32 = 5
+	VsockJobControlAckOK    byte   = 0
+	VsockJobControlAckError byte   = 1
+)
+
 // VsockJobExitMaxBody caps the JSON body at 8 KiB. The exit
 // envelope is tiny (exit_code + error_class + signal + lease_token
-// + finished_at ≈ 200 bytes); 8 KiB is generous headroom. The
-// supervisor hard-truncates BEFORE json.Marshal so the host never
-// sees a malformed body. Matches pkg/fcvm/job_vmm.go::VsockJobExitMaxBody.
+// + finished_at ≈ 200 bytes); 8 KiB is generous headroom. Oversize
+// payloads are rejected rather than truncated into malformed JSON. Matches
+// pkg/fcvm/job_vmm.go::VsockJobExitMaxBody.
 const VsockJobExitMaxBody = 8 * 1024
 
 // JobManifest is the JSON shape vmmd writes to drive1 at
@@ -71,7 +81,7 @@ type JobManifest struct {
 	VsockJobExitMsgType int               `json:"vsock_job_exit_msg_type,omitempty"`
 }
 
-// JobExitPayload is the JSON the supervisor writes via vsock DGRAM
+// JobExitPayload is the JSON the supervisor writes via vsock STREAM
 // at port 1026, msg_type 4 when the customer's command exits.
 // Mirrors pkg/fcvm/job_vmm.go::JobExitPayload exactly — the wire
 // format is the wire format (no separate DTO per transport).
@@ -97,6 +107,56 @@ type JobExitPayload struct {
 	Signal             int32  `json:"signal"`
 	FinishedAtUnixNano int64  `json:"finished_at_unix_nano"`
 	LeaseToken         string `json:"lease_token,omitempty"`
+}
+
+const (
+	JobManifestMaxBytes       = 16 * 1024 * 1024
+	jobManifestMaxCommandArgs = 64
+	jobManifestMaxEnvEntries  = 256
+	jobManifestMaxEnvValue    = 32 * 1024
+	jobManifestMaxTokenBytes  = 1024
+	jobManifestMaxTimeoutSec  = 5400
+)
+
+func validateJobManifest(m JobManifest) error {
+	if m.Kind != "job" {
+		return fmt.Errorf("kind=%q, want job", m.Kind)
+	}
+	if m.AccountID == "" || len(m.AccountID) > 128 || m.RunID == "" || len(m.RunID) > 128 || m.TaskIndex < 0 {
+		return fmt.Errorf("invalid job identity")
+	}
+	if len(m.ImageRef) > 2048 {
+		return fmt.Errorf("image_ref exceeds 2048 bytes")
+	}
+	if len(m.Command) == 0 || len(m.Command) > jobManifestMaxCommandArgs {
+		return fmt.Errorf("command args=%d out of range", len(m.Command))
+	}
+	for i, arg := range m.Command {
+		if (i == 0 && arg == "") || strings.IndexByte(arg, 0) >= 0 {
+			return fmt.Errorf("invalid command arg %d", i)
+		}
+	}
+	if m.TaskTimeoutSec <= 0 || m.TaskTimeoutSec > jobManifestMaxTimeoutSec {
+		return fmt.Errorf("task_timeout_s=%d out of range", m.TaskTimeoutSec)
+	}
+	if len(m.LeaseToken) == 0 || len(m.LeaseToken) > jobManifestMaxTokenBytes {
+		return fmt.Errorf("lease_token length=%d out of range", len(m.LeaseToken))
+	}
+	if m.VsockJobExitPort != int(VsockJobExitPort) || m.VsockJobExitMsgType != int(VsockJobExitMsgType) {
+		return fmt.Errorf("invalid job-exit wire constants")
+	}
+	if len(m.Env) > jobManifestMaxEnvEntries {
+		return fmt.Errorf("env entries=%d exceeds %d", len(m.Env), jobManifestMaxEnvEntries)
+	}
+	for key, value := range m.Env {
+		if key == "" || len(key) > 128 || strings.ContainsAny(key, "=\x00") {
+			return fmt.Errorf("invalid env key %q", key)
+		}
+		if len(value) > jobManifestMaxEnvValue || strings.IndexByte(value, 0) >= 0 {
+			return fmt.Errorf("env value for %q is invalid or too large", key)
+		}
+	}
+	return nil
 }
 
 // jobEnvBaseline are the env vars the supervisor ALWAYS sets

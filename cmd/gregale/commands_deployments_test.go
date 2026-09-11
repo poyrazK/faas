@@ -542,13 +542,15 @@ func TestCmdDeployments_NonEmpty_RowsRendered(t *testing.T) {
 func TestCmdDeployment_HappyPath_DetailRendered(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-			ID:          "0123456789abcdef0123456789abcdef",
-			AppID:       "fedcba9876543210fedcba9876543210",
-			BuildID:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-			ImageDigest: "sha256:abc123",
-			Kind:        "app",
-			Status:      "succeeded",
-			CreatedAt:   "2026-07-23T11:25:00Z",
+			ID:               "0123456789abcdef0123456789abcdef",
+			AppID:            "fedcba9876543210fedcba9876543210",
+			BuildID:          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			BuildCacheStatus: "hit",
+			CacheKeySHA256:   "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			ImageDigest:      "sha256:abc123",
+			Kind:             "app",
+			Status:           "succeeded",
+			CreatedAt:        "2026-07-23T11:25:00Z",
 		})
 	}))
 	defer srv.Close()
@@ -569,6 +571,8 @@ func TestCmdDeployment_HappyPath_DetailRendered(t *testing.T) {
 		"id:",
 		"app_id:",
 		"build_id:",
+		"build_cache:",
+		"hit (sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)",
 		"image_digest:",
 		"kind:",
 		"status:",

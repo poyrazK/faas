@@ -8,6 +8,7 @@
 //   - Concurrent dials for different nodes race freely.
 //   - Unknown node → *api.Problem Capacity.
 //   - Lost-race closes the duplicate client (no fd leak).
+// adr: 043 — keep the routed app-log client surface covered.
 
 package sched
 
@@ -136,7 +137,7 @@ func (f *fakeRouterVMM) UpdateStaticEgressIP(_ context.Context, _, _ string, _ s
 // do. Returns a closed fakeLogStream so any accidental caller exits
 // cleanly. PR-B adds the sinceWrittenAt time lower-bound; the fake
 // ignores it.
-func (f *fakeRouterVMM) Logs(_ context.Context, _ string, _ int64, _ time.Time) (LogStream, error) {
+func (f *fakeRouterVMM) Logs(_ context.Context, _ string, _ int64, _ time.Time, _ bool) (LogStream, error) {
 	return &fakeLogStream{}, nil
 }
 

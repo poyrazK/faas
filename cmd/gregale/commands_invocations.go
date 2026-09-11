@@ -94,7 +94,10 @@ func cmdInvocationsList(args []string) int {
 		return 0
 	}
 	for _, inv := range resp.Invocations {
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path)
+	}
+	if resp.NextBefore != "" {
+		_, _ = fmt.Fprintf(osStdout, "... more — pass --before %s\n", resp.NextBefore)
 	}
 	return 0
 }

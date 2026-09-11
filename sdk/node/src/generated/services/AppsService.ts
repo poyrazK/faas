@@ -1208,6 +1208,7 @@ export class AppsService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
       },
     });
   }
@@ -1254,6 +1255,7 @@ export class AppsService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
       },
     });
   }
@@ -1661,11 +1663,15 @@ export class AppsService {
    *
    * Two modes share this URL:
    *
-   * - **Live (default)** — `?follow=1` holds the connection open and
-   * streams new entries from the per-instance ring buffer. The
-   * stream terminates with `event: end` when the backstop fires
-   * (10 minutes idle), the schedd returns NotFound (parked app), or
-   * the connection closes.
+   * - **Snapshot (default)** — `?follow=0` replays the retained entries
+   * from each live instance and closes with `event: end`. This is the
+   * mode used by `gregale logs` for a finite command that can be piped
+   * into other tools.
+   *
+   * - **Live** — `?follow=1` holds the connection open and streams new
+   * entries from the per-instance ring buffer. The stream terminates
+   * with `event: end` when the backstop fires (10 minutes idle), the
+   * schedd returns NotFound (parked app), or the connection closes.
    *
    * - **Archive (`?archive=1`)** — fetches a single day's
    * per-instance log batch from the S3 bucket the apid shipper
@@ -1703,7 +1709,7 @@ export class AppsService {
      */
     slug: string,
     /**
-     * If 1, hold the connection open and stream new entries.
+     * If 1, hold the connection open and stream new entries; if 0 (default), replay the retained page and close.
      */
     follow?: 0 | 1,
     /**

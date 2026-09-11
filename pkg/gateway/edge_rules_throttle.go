@@ -62,7 +62,7 @@ package gateway
 // The applier (handler.go::applyEdgeRuleThrottle) reads these and
 // routes the bucket-key construction through Limiter.AllowWithParams
 // (back-compat, KeyBy == "" or "none") or Limiter.AllowWithConsumerKey
-// (per-consumer, KeyBy ∈ {"api_key","jwt_subject","jwt_claim"}):
+// (per-consumer, KeyBy ∈ {"api_key","consumer_id","jwt_subject","jwt_claim"}):
 //
 //   - KeyBy           closed vocab from api.ThrottleKeyBy*.
 //     Empty / "none" preserves PR #887 behaviour.
@@ -84,7 +84,7 @@ type EdgeRuleThrottleResolved struct {
 	RequestsPerSecond float64         // > 0 post-compile
 	Burst             int             // > 0 post-compile
 	// Phase 3 (ADR-104):
-	KeyBy          string // "" | "none" | "api_key" | "jwt_subject" | "jwt_claim"
+	KeyBy          string // "" | "none" | "api_key" | "consumer_id" | "jwt_subject" | "jwt_claim"
 	JWTClaimName   string // required iff KeyBy == "jwt_claim"
 	MaxKeysPerRule int    // 0 = plan default; capped at compileThrottleRules
 }

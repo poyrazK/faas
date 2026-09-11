@@ -254,7 +254,7 @@ type SchedAPI interface {
 	//
 	// deploymentID (PR-B acceptance #3) is the per-deployment
 	// soft scoping; empty = fan out to every live instance.
-	StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink LogFrameSink) error
+	StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool, deploymentID string, sink LogFrameSink) error
 	// StreamWarmHints (ADR-025 axis 4) is the push-side
 	// sticky-warm affinity stream. The engine fans out
 	// WarmHintEvents from its warmHintBroadcaster to the sink
@@ -964,8 +964,15 @@ func (s *Server) StreamAppLogs(req *scheddpb.StreamAppLogsRequest, stream schedd
 	if sinceSeq < 0 {
 		sinceSeq = 0
 	}
-	sinceWrittenAt := req.GetSinceWrittenAt().AsTime()
+	var sinceWrittenAt time.Time
+	if ts := req.GetSinceWrittenAt(); ts != nil {
+		sinceWrittenAt = ts.AsTime()
+	}
 	deploymentID := req.GetDeploymentId()
+	follow := true
+	if req.Follow != nil {
+		follow = req.GetFollow()
+	}
 	// Parse the customer-supplied level/grep filters once per
 	// RPC (issue #309 / tier-2 DX). Pre-#309 the gateway parsed
 	// these and discarded them with `_ = level; _ = grep`; the
@@ -1073,7 +1080,7 @@ func (s *Server) StreamAppLogs(req *scheddpb.StreamAppLogsRequest, stream schedd
 		}
 		return stream.Send(resp)
 	}
-	if err := s.engine.StreamAppLogs(stream.Context(), req.GetAppId(), sinceSeq, sinceWrittenAt, deploymentID, sink); err != nil {
+	if err := s.engine.StreamAppLogs(stream.Context(), req.GetAppId(), sinceSeq, sinceWrittenAt, follow, deploymentID, sink); err != nil {
 		// Engine.StreamAppLogs surfaces "no live instances" as
 		// state.ErrNotFound (apid maps this to its 404 "the app
 		// is parked; wake it first"). A clean caller cancel

@@ -1,3 +1,4 @@
+// spec: §14 M7 provider usage must match the local invoice shadow.
 package meter_test
 
 import (
@@ -50,6 +51,17 @@ func makeBillableAccount(t *testing.T, ctx context.Context, s *state.MemStore, p
 	}
 	if err := s.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, subscriptionID); err != nil {
 		t.Fatalf("stamp subscription: %v", err)
+	}
+	// Provider-qualified production identities are distinct. This shared
+	// provider-dispatch fixture intentionally exercises all three backends, so
+	// seed an equivalent identity for each one rather than relying on the legacy
+	// account cache being reusable across providers.
+	for _, provider := range []string{"stripe", "paddle", "polar"} {
+		if err := s.UpsertBillingIdentity(ctx, state.BillingIdentity{
+			AccountID: acct.ID, Provider: provider, CustomerID: customerID, SubscriptionID: subscriptionID,
+		}); err != nil {
+			t.Fatalf("stamp %s billing identity: %v", provider, err)
+		}
 	}
 	acct.ProviderCustomerID = customerID
 	acct.StripeSubscriptionItem = subscriptionID

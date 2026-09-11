@@ -63,6 +63,51 @@ func TestTierD_DeploymentSetMinInstances_HappyPath(t *testing.T) {
 	}
 }
 
+func TestTierD_DeploymentSetMinInstances_OmittedMinDoesNotPatch(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{}`, http.StatusOK)
+	if code := cmdDeploymentSetMinInstances([]string{"0123456789abcdef0123456789abcdef"}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if f.sawMethod != "" {
+		t.Fatalf("unexpected request: %s %s", f.sawMethod, f.sawPath)
+	}
+}
+
+func TestTierD_DeploymentSetMinInstances_ExplicitZeroPatches(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"id":"0123456789abcdef0123456789abcdef","min_instances":0}`
+	f := authedFakeAPI(t, body, http.StatusOK)
+	if code := cmdDeploymentSetMinInstances([]string{
+		"0123456789abcdef0123456789abcdef", "--min", "0",
+	}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != "PATCH" {
+		t.Fatalf("method = %q, want PATCH", f.sawMethod)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got["min_instances"] != float64(0) {
+		t.Fatalf("min_instances = %v, want explicit 0", got["min_instances"])
+	}
+}
+
+func TestTierD_DeploymentSetMinInstances_NegativeDoesNotPatch(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{}`, http.StatusOK)
+	if code := cmdDeploymentSetMinInstances([]string{
+		"--min", "-1", "0123456789abcdef0123456789abcdef",
+	}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if f.sawMethod != "" {
+		t.Fatalf("unexpected request: %s %s", f.sawMethod, f.sawPath)
+	}
+}
+
 // --- leaf 2: cmdWakeTimeline ---
 
 func TestTierD_WakeTimeline_NoArgsExitsOne(t *testing.T) {

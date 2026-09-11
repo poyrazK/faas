@@ -9,12 +9,10 @@
 // on real provider outages that would otherwise go unobserved
 // (revenue leakage / over-billing).
 //
-// Failure mode is fail-soft. A single account's reconcile error
-// (network blip, provider rate-limit, or provider not-yet-implemented
-// ErrNotImplemented) is logged and the account is skipped — the
-// loop continues to the next account. The loop itself never
-// blocks on a single account; the long-run mean drift ratio is
-// the signal.
+// Per-account failures are fail-soft: a network blip or provider rate-limit
+// is logged, counted, and does not block the rest of the fleet. A provider
+// without reconciliation is different: the supported gauge is set to zero
+// and the operator alert treats drift as unknown rather than healthy.
 //
 // The reconciler owns its own Prometheus registry (separate from
 // wire.OpsMetrics) so it can be wired in cmd/meterd/main.go
@@ -64,6 +62,7 @@ type Reconciler struct {
 
 	driftMBSeconds *prometheus.GaugeVec
 	driftRatio     *prometheus.GaugeVec
+	supported      *prometheus.GaugeVec
 	failures       *prometheus.CounterVec
 }
 
@@ -85,6 +84,9 @@ func New(providerName string, store state.Store, provider billing.Provider, log 
 	if registry == nil {
 		registry = prometheus.NewRegistry()
 	}
+	if providerName == "" {
+		providerName = "unknown"
+	}
 	r := &Reconciler{
 		Store:        store,
 		Provider:     provider,
@@ -100,12 +102,21 @@ func New(providerName string, store state.Store, provider billing.Provider, log 
 			Name: "meterd_billing_drift_ratio",
 			Help: "abs(local-pushed) / max(local, pushed) over the rolling Window. ADR-049 §B.1. The BillingDrift alert pages on ratio > 0.005 for 1h.",
 		}, []string{"account_id", "provider"}),
+		supported: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "meterd_billing_reconcile_supported",
+			Help: "Whether the active billing provider supports usage reconciliation (1 supported, 0 unavailable).",
+		}, []string{"provider"}),
 		failures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meterd_billing_drift_reconcile_failures_total",
 			Help: "Billing reconciliation failures by provider and failure source. A non-zero rate means the drift gauges may be stale and requires operator investigation.",
 		}, []string{"provider", "reason"}),
 	}
-	registry.MustRegister(r.driftMBSeconds, r.driftRatio, r.failures)
+	registry.MustRegister(r.driftMBSeconds, r.driftRatio, r.supported, r.failures)
+	capabilityValue := float64(0)
+	if provider != nil && provider.Capabilities().Has(billing.CapUsageReconcile) {
+		capabilityValue = 1
+	}
+	r.supported.WithLabelValues(providerName).Set(capabilityValue)
 	return r
 }
 
@@ -126,6 +137,15 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 	if r.ProviderName == "" {
 		r.ProviderName = "unknown"
 	}
+	if r.Provider == nil || !r.Provider.Capabilities().Has(billing.CapUsageReconcile) {
+		r.supported.WithLabelValues(r.ProviderName).Set(0)
+		r.failures.WithLabelValues(r.ProviderName, "unsupported").Inc()
+		if r.Log != nil {
+			r.Log.Error("billing reconciliation unavailable", "provider", r.ProviderName)
+		}
+		return nil
+	}
+	r.supported.WithLabelValues(r.ProviderName).Set(1)
 	accounts, err := r.Store.ListAllAccounts(ctx)
 	if err != nil {
 		r.failures.WithLabelValues(r.ProviderName, "store").Inc()
@@ -168,17 +188,13 @@ func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start
 	if acct.Plan == api.PlanFree {
 		return nil
 	}
-	// Capability short-circuit: if the active provider does not
-	// implement ReconcileUsage (Paddle today, since Paddle Billing
-	// has no usage-summary endpoint), skip the SDK call entirely.
-	// The errors.Is(err, billing.ErrNotImplemented) fallback below
-	// remains as a defensive check for older stub Client/Provider
-	// instances that haven't opted into Capabilities().
-	if !r.Provider.Capabilities().Has(billing.CapUsageReconcile) {
-		return nil
+	identity, err := r.Store.BillingIdentity(ctx, acct.ID, r.ProviderName)
+	if err != nil {
+		return &reconcileError{reason: "identity", err: fmt.Errorf("load %s billing identity: %w", r.ProviderName, err)}
 	}
+	acct.ProviderCustomerID = identity.CustomerID
+	acct.StripeSubscriptionItem = identity.SubscriptionID
 	var local int64
-	var err error
 	if modeProvider, ok := r.Provider.(billing.UsageModeProvider); ok && modeProvider.UsageMode() == billing.UsageModeOverage {
 		local, err = billing.OverageMBSecondsForRange(ctx, r.Store, acct, start, end)
 		if err != nil {
@@ -195,14 +211,9 @@ func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start
 	}
 	pushed, err := r.Provider.ReconcileUsage(ctx, acct, start, end)
 	if err != nil {
-		// ErrNotImplemented (Paddle today) is not an error — the
-		// reconciler observes "provider has no drift signal yet"
-		// and the local sum becomes the only contribution to
-		// the ratio. We return nil so the metric records the
-		// observed pushed=0 (which the ratio calc treats as
-		// "provider drift ratio undefined" → no alert).
 		if errors.Is(err, billing.ErrNotImplemented) {
-			return nil
+			r.supported.WithLabelValues(r.ProviderName).Set(0)
+			return &reconcileError{reason: "unsupported", err: fmt.Errorf("provider reconcile: %w", err)}
 		}
 		return &reconcileError{reason: "provider", err: fmt.Errorf("provider reconcile: %w", err)}
 	}

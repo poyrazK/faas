@@ -2,8 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApplyAppOpenAPIPolicyRequest } from '../models/ApplyAppOpenAPIPolicyRequest.js';
 import type { AppOpenAPIImportDryRunResponse } from '../models/AppOpenAPIImportDryRunResponse.js';
 import type { AppOpenAPIImportResponse } from '../models/AppOpenAPIImportResponse.js';
+import type { AppOpenAPIPolicyApplyResponse } from '../models/AppOpenAPIPolicyApplyResponse.js';
 import type { AppOpenAPIPolicyPreviewResponse } from '../models/AppOpenAPIPolicyPreviewResponse.js';
 import type { OpenAPIContractDiffResponse } from '../models/OpenAPIContractDiffResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -227,6 +229,48 @@ export class OpenapiImportService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Plan or explicitly apply generated OpenAPI validation rules.
+   * The default request is a read-only plan. It returns a deterministic
+   * `preview_sha256` approval token and the validation rules that would be
+   * created for uncovered OpenAPI operations. To mutate policy, repeat the
+   * request with `confirm=true` and the exact token. If the document or
+   * edge rules changed in the meantime, the server returns 409
+   * `openapi_policy_stale` and no writes occur. Applying an already-covered
+   * document is an idempotent no-op. A missing match_host defaults to the
+   * app's platform hostname. Requires MFA and deploy-write scope.
+   *
+   * @returns AppOpenAPIPolicyApplyResponse Policy plan or applied rules.
+   * @throws ApiError
+   */
+  public static applyAppOpenApiPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody?: ApplyAppOpenAPIPolicyRequest,
+  }): CancelablePromise<AppOpenAPIPolicyApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/openapi/apply',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation or openapi_policy_confirmation_required.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: openapi_policy_stale. The approval token no longer matches the current plan.`,
+        422: `code: validation. A generated rule failed edge-rule validation.`,
+        500: `Internal server error.`,
       },
     });
   }

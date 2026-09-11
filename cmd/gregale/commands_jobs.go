@@ -440,7 +440,7 @@ func cmdJobsCancel(args []string) int {
 }
 
 // cmdJobsTasks implements `gregale jobs tasks <name> <run-id>`.
-// Returns a page of tasks 1..N (1-based). LeaseToken is OMITTED
+// Returns a page of tasks 0..N-1 (zero-based). LeaseToken is OMITTED
 // from the wire (internal dispatch primitive).
 func cmdJobsTasks(args []string) int {
 	if len(args) != 2 {
@@ -482,8 +482,8 @@ func cmdJobsLogs(args []string) int {
 		return 1
 	}
 	taskIdx, err := strconv.Atoi(args[2])
-	if err != nil || taskIdx <= 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs logs <name> <run-id> <task-index>   (task-index > 0)", "jobs")
+	if err != nil || taskIdx < 0 {
+		PrintUsage(os.Stderr, "usage: gregale jobs logs <name> <run-id> <task-index>   (task-index >= 0)", "jobs")
 		return 1
 	}
 	_ = taskIdx
@@ -559,7 +559,7 @@ func renderJobRunsTable(w io.Writer, runs []api.JobRunResponse) {
 }
 
 // renderJobTasksTable writes a tabular row per task. task_index
-// runs 1..N (1-based; matches the server's CTE fan-out).
+// runs 0..N-1 (zero-based; matches the server's CTE fan-out).
 func renderJobTasksTable(w io.Writer, tasks []api.JobTaskResponse) {
 	if len(tasks) == 0 {
 		_, _ = fmt.Fprintln(w, "(no tasks)")

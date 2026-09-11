@@ -9,7 +9,7 @@
 //
 // Cardinality discipline is NOT the recorder's job in PR-A — the
 // publisher (request_telemetry_publisher.go) is where the
-// (app_id, deployment_id, route, status, dimensions, minute,
+// (app_id, deployment_id, route, status, consumer identity, dimensions, minute,
 // latency-bucket) dedupe collapses burst traffic to bounded
 // representative rows + count. Doing it in the
 // publisher keeps the recorder's hot path to O(1) under one mutex.
@@ -46,7 +46,7 @@ import (
 // PR-B adds Count — the collapse aggregate. The recorder always sets
 // Count=1 (one observed request). The publisher's
 // collapseRequestTelemetry increments Count when multiple rows fold
-// into the same (app, deployment, route, method, status, dimensions,
+// into the same (app, deployment, route, method, status, consumer identity, dimensions,
 // minute, latency-bucket) bucket. The apid receiver passes Count
 // verbatim to the sqlc
 // INSERT. Pre-PR-B clients (the recorder compiled against PR-A)
@@ -71,11 +71,21 @@ type RequestTelemetryRow struct {
 	// and never contain customer payloads.
 	WakeID     string
 	InstanceID string
+	// ConsumerID is the stable API consumer identity resolved by the
+	// consumer-key middleware. It is empty for anonymous/legacy traffic.
+	// Credentials are deliberately never persisted in telemetry.
+	ConsumerID string
 	// These dimensions are normalized at the edge. Raw User-Agent, referrer
 	// URLs, and IP addresses never enter this row or the gRPC payload.
 	UAFamily     string // normalized family, e.g. chrome, safari, bot
 	ReferrerHost string // lower-case hostname only; __none__ when absent
 	Country      string // ISO alpha-2 uppercase; __unknown__ when unavailable
+	// Guest execution evidence is emitted by the platform-owned runtime
+	// runner. Values are closed/bounded and contain no customer payload.
+	GuestDurationMS int
+	GuestRuntime    string
+	GuestOutcome    string
+	GuestErrorClass string
 }
 
 // RequestTelemetryConfig bundles the knobs the recorder reads at

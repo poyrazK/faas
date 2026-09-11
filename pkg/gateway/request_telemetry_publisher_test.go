@@ -86,6 +86,33 @@ func TestCollapseRequestTelemetry_BulkFoldsIntoOneBucket(t *testing.T) {
 	}
 }
 
+func TestCollapseRequestTelemetrySeparatesConsumers(t *testing.T) {
+	t.Parallel()
+	accountID, appID, deploymentID := uuid.New(), uuid.New(), uuid.New()
+	base := time.Date(2026, 8, 24, 18, 42, 0, 0, time.UTC)
+	consumerA, consumerB := uuid.NewString(), uuid.NewString()
+	rows := []RequestTelemetryRow{
+		makeCollapseRow(accountID, appID, deploymentID, "GET /v1/usage", "GET", 200, 20, false, "", base),
+		makeCollapseRow(accountID, appID, deploymentID, "GET /v1/usage", "GET", 200, 20, false, "", base.Add(time.Second)),
+		makeCollapseRow(accountID, appID, deploymentID, "GET /v1/usage", "GET", 200, 20, false, "", base.Add(2*time.Second)),
+	}
+	rows[0].ConsumerID = consumerA
+	rows[1].ConsumerID = consumerA
+	rows[2].ConsumerID = consumerB
+
+	collapsed := collapseRequestTelemetry(rows)
+	if len(collapsed) != 2 {
+		t.Fatalf("len(collapsed) = %d, want 2 consumer buckets", len(collapsed))
+	}
+	counts := map[string]int{}
+	for _, row := range collapsed {
+		counts[row.ConsumerID] = row.Count
+	}
+	if counts[consumerA] != 2 || counts[consumerB] != 1 {
+		t.Fatalf("consumer counts = %#v, want %s=2 and %s=1", counts, consumerA, consumerB)
+	}
+}
+
 func TestCollapseRequestTelemetry_PreservesLatencyDistribution(t *testing.T) {
 	t.Parallel()
 	appID := uuid.New()
@@ -115,6 +142,25 @@ func TestCollapseRequestTelemetry_PreservesLatencyDistribution(t *testing.T) {
 	}
 	if got, want := counts[800], 5; got != want {
 		t.Errorf("800ms bucket count = %d, want %d", got, want)
+	}
+}
+
+func TestCollapseRequestTelemetry_PreservesGuestOutcomes(t *testing.T) {
+	t.Parallel()
+	appID := uuid.New()
+	deployID := uuid.New()
+	accountID := uuid.New()
+	base := time.Date(2026, 8, 24, 18, 42, 0, 0, time.UTC)
+	rows := []RequestTelemetryRow{
+		{AccountID: accountID, AppID: appID, DeploymentID: deployID, Route: "GET /v1/foo", Method: "GET", Status: 200, LatencyMS: 40, GuestDurationMS: 12, GuestRuntime: "node22", GuestOutcome: "ok", ReceivedAt: base, Count: 1},
+		{AccountID: accountID, AppID: appID, DeploymentID: deployID, Route: "GET /v1/foo", Method: "GET", Status: 200, LatencyMS: 40, GuestDurationMS: 12, GuestRuntime: "node22", GuestOutcome: "http_error", GuestErrorClass: "http_5xx", ReceivedAt: base, Count: 1},
+	}
+	collapsed := collapseRequestTelemetry(rows)
+	if got, want := len(collapsed), 2; got != want {
+		t.Fatalf("len(collapsed) = %d, want %d", got, want)
+	}
+	if collapsed[0].GuestOutcome != "ok" || collapsed[1].GuestOutcome != "http_error" {
+		t.Fatalf("guest outcomes collapsed incorrectly: %+v", collapsed)
 	}
 }
 

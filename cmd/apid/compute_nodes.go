@@ -17,6 +17,7 @@
 // Endpoints:
 //
 //	GET    /v1/compute-nodes            — list (active only by default)
+//	GET    /v1/compute-nodes/{name}     — operator-safe detail + live count
 //	POST   /v1/compute-nodes            — upsert by name (admin POST)
 //	DELETE /v1/compute-nodes/{name}     — soft-delete (active=false);
 //	                                       ?hard=1 toggles to DELETE FROM
@@ -107,22 +108,9 @@ type computeNodePayload struct {
 	AdmissionCeilingMB int    `json:"admission_ceiling_mb"`
 }
 
-// computeNodeResponse is the canonical JSON wire shape GET /
-// POST / DELETE return. Mirrors state.ComputeNode with id exposed
-// as a UUID string and timestamps in RFC 3339.
-type computeNodeResponse struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	TargetURL          string `json:"target_url"`
-	GatewayTargetURL   string `json:"gateway_target_url,omitempty"`
-	VPCPUs             int    `json:"vpcpus"`
-	MemMB              int    `json:"mem_mb"`
-	MaxConcurrency     int    `json:"max_concurrency"`
-	AdmissionCeilingMB int    `json:"admission_ceiling_mb"`
-	Active             bool   `json:"active"`
-	LastHeartbeatAt    string `json:"last_heartbeat_at,omitempty"`
-	CreatedAt          string `json:"created_at"`
-}
+// computeNodeResponse retains the package-local name used by the handler tests
+// while sharing the authenticated operator wire contract with gregalectl.
+type computeNodeResponse = api.ComputeNodeOperatorResponse
 
 // toComputeNodeResponse projects a state.ComputeNode to the wire
 // shape. Kept as a free function so tests can construct responses
@@ -139,12 +127,52 @@ func toComputeNodeResponse(n state.ComputeNode) computeNodeResponse {
 		MaxConcurrency:     n.MaxConcurrency,
 		AdmissionCeilingMB: n.AdmissionCeilingMB,
 		Active:             n.Active,
+		Role:               n.Role,
+		Region:             n.Region,
+		Zone:               n.Zone,
+		ReleaseID:          n.ReleaseID,
+		ManifestHash:       n.ManifestHash,
+		CertFingerprint:    n.CertFingerprint,
+		Generation:         n.Generation,
 		CreatedAt:          n.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999Z07:00"),
 	}
 	if !n.LastHeartbeatAt.IsZero() {
 		r.LastHeartbeatAt = n.LastHeartbeatAt.UTC().Format("2006-01-02T15:04:05.999999Z07:00")
 	}
 	return r
+}
+
+// getComputeNode returns one full operator-safe node row plus the live instance
+// count used by gregalectl show. The host certificate remains server-side.
+func (s *server) getComputeNode(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	allowed, prob := s.adminAllows(acct)
+	if !allowed {
+		api.WriteProblem(w, prob)
+		return
+	}
+	row, err := s.store.ComputeNodeByName(r.Context(), r.PathValue("name"))
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "no such compute_node")
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read compute node"))
+		return
+	}
+	instances, err := s.store.ListInstancesOnNodeID(r.Context(), row.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list node instances"))
+		return
+	}
+	response := toComputeNodeResponse(row)
+	live := 0
+	for _, instance := range instances {
+		if state.IsLive(strings.ToLower(instance.State)) {
+			live++
+		}
+	}
+	response.LiveInstanceCount = &live
+	writeJSON(w, http.StatusOK, response)
 }
 
 func stringValue(v *string) string {

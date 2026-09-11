@@ -76,7 +76,7 @@ func (s *stubSchedd) ReportActivity(context.Context, []state.InstanceTouch) (int
 func (s *stubSchedd) ParkInstance(context.Context, string, string, string) error {
 	panic("stubSchedd.ParkInstance")
 }
-func (s *stubSchedd) StreamAppLogs(context.Context, string, int64, time.Time, string, string, string) (scheddgrpc.LogStream, error) {
+func (s *stubSchedd) StreamAppLogs(context.Context, string, int64, time.Time, bool, string, string, string) (scheddgrpc.LogStream, error) {
 	panic("stubSchedd.StreamAppLogs")
 }
 func (s *stubSchedd) StreamWarmHints(context.Context) (scheddgrpc.WarmHintStream, error) {

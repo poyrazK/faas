@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 )
 
 // makeTestRecorder constructs a production-shaped recorder with the
@@ -115,6 +116,43 @@ func TestHandlerObserveEnqueuesRow(t *testing.T) {
 	}
 }
 
+func TestHandlerObserveCarriesConsumerIdentity(t *testing.T) {
+	h := &Handler{requestTelemetry: makeTestRecorder()}
+	acct := uuid.New()
+	app := uuid.New()
+	consumer := uuid.New()
+	r := httptest.NewRequest(http.MethodGet, "/checkout", nil)
+	r = withAppAndAccount(r, acct, app)
+	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{
+		ID: consumer.String(), AppID: app.String(), KeyID: uuid.NewString(),
+	}))
+
+	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{DeploymentID: uuid.NewString()})
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 {
+		t.Fatalf("expected one telemetry row, got %d", len(rows))
+	}
+	if rows[0].ConsumerID != consumer.String() {
+		t.Fatalf("ConsumerID = %q, want %q", rows[0].ConsumerID, consumer.String())
+	}
+}
+
+func TestHandlerObserveIgnoresMalformedConsumerIdentity(t *testing.T) {
+	h := &Handler{requestTelemetry: makeTestRecorder()}
+	r := httptest.NewRequest(http.MethodGet, "/checkout", nil)
+	r = withAppAndAccount(r, uuid.New(), uuid.New())
+	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{ID: "legacy-consumer"}))
+
+	h.observe(r, 200, "app", string(api.PlanPro), false, Target{DeploymentID: uuid.NewString()})
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 {
+		t.Fatalf("expected one telemetry row, got %d", len(rows))
+	}
+	if rows[0].ConsumerID != "" {
+		t.Fatalf("ConsumerID = %q, want empty for malformed identity", rows[0].ConsumerID)
+	}
+}
+
 // TestHandlerObserveNoRecorderPassesThrough proves the kill-switch:
 // when h.requestTelemetry is nil (unit-test seam + older call
 // paths), observe does not panic and does not allocate a row.
@@ -174,5 +212,30 @@ func TestHandlerTelemetryAcceptsCustomRequestIDs(t *testing.T) {
 				t.Fatal("caller request ID mutated")
 			}
 		})
+	}
+}
+
+func TestHandlerObservePersistsGuestEvidence(t *testing.T) {
+	h := &Handler{requestTelemetry: makeTestRecorder()}
+	acct, app, deployment := uuid.New(), uuid.New(), uuid.New()
+	r := httptest.NewRequest(http.MethodGet, "/checkout", nil)
+	r = withAppAndAccount(r, acct, app)
+	r = withGuestExecutionEvidence(r)
+	for _, header := range []struct{ name, value string }{
+		{"X-Faas-Guest-Runtime", "node24"},
+		{"X-Faas-Guest-Duration-Ms", "125"},
+		{"X-Faas-Guest-Outcome", "ok"},
+	} {
+		if !recordGuestExecutionEvidence(r.Context(), header.name, header.value) {
+			t.Fatalf("failed to record %s", header.name)
+		}
+	}
+	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{DeploymentID: deployment.String()})
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].GuestRuntime != "node24" || rows[0].GuestDurationMS != 125 || rows[0].GuestOutcome != "ok" {
+		t.Fatalf("guest evidence = (%q, %d, %q)", rows[0].GuestRuntime, rows[0].GuestDurationMS, rows[0].GuestOutcome)
 	}
 }

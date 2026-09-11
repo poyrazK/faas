@@ -28,6 +28,7 @@ AppByID
 AppBySlug
 AppBySlugIncludingDeleted
 AppLogDrainByID
+AppLogDrainHealthByDrainID
 AppWebhookByID
 AppWebhookDeliveryByID
 AppendBuilderUsage
@@ -357,6 +358,7 @@ ListAppEnvInScope
 ListAppErrorFingerprintsForPurge
 ListAppErrorGroups
 ListAppErrorRequests
+ListAppLogDrainHealthForApp
 ListAppLogDrainsForApp
 ListAppRegistryCredentials
 ListAppSecrets
@@ -474,6 +476,7 @@ LoadAllOverageCapCents
 LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes
 LookupDeploymentScopeExclusions
+LookupRuntimeSnapshot
 MTDSpendEurCents
 MarkAPIKeyRevoked
 MarkAccountDeletionPending
@@ -546,6 +549,7 @@ ProjectByRepo
 ProjectBySlug
 ProvisionedStaticEgressIPExists
 PruneDataUpstreamProbesOlderThan
+PublishRuntimeSnapshot
 PutIdempotent
 PutManagedObjectStorageSecret
 PutManagedPostgresSecret
@@ -595,6 +599,7 @@ ResetAppWebhookDeliveryFromDead
 ResolveStatusIncident
 RestoreAccount
 RestoreApp
+RetireRuntimeSnapshot
 RetryDeploymentFromStage
 RetryQueueDeadLetter
 RetryTriggerRecordByOperator
@@ -694,6 +699,7 @@ UpdateTrigger
 UpsertAccountSpendSnapshot
 UpsertAppEnv
 UpsertAppEnvInScope
+UpsertAppLogDrainHealth
 UpsertAppOpenAPIDoc
 UpsertAppOpenAPIDocIfUnderQuota
 UpsertAppRegistryCredential
@@ -712,7 +718,6 @@ UpsertDoctorObservation
 UpsertGitHubInstall
 UpsertGithubInstallBinding
 UpsertGithubWebhookSecret
-UpsertInvoice
 UpsertNodeKey
 UpsertOAuthLink
 UpsertOIDCTrustPolicy

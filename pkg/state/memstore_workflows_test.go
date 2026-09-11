@@ -262,6 +262,61 @@ func TestMemStore_WorkflowListPagination(t *testing.T) {
 	}
 }
 
+func TestMemStore_WorkflowAdmissionRecoveryAndCancel(t *testing.T) {
+	ctx := context.Background()
+	ms := state.NewMemStore()
+
+	run := &state.WorkflowRun{
+		AppID:              "app-admission",
+		WorkflowName:       "recoverable",
+		DefinitionSnapshot: json.RawMessage(`{"steps":["first","second"]}`),
+	}
+	if _, err := ms.CreateWorkflowRunAdmitted(ctx, run, 0); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+		t.Fatalf("zero quota error = %v, want ErrWorkflowRunQuotaExceeded", err)
+	}
+	active, err := ms.CreateWorkflowRunAdmitted(ctx, run, 1)
+	if err != nil || active != 1 {
+		t.Fatalf("CreateWorkflowRunAdmitted = (%d, %v), want (1, nil)", active, err)
+	}
+
+	overQuota := &state.WorkflowRun{
+		AppID:              run.AppID,
+		WorkflowName:       "over-quota",
+		DefinitionSnapshot: json.RawMessage(`{}`),
+	}
+	if active, err := ms.CreateWorkflowRunAdmitted(ctx, overQuota, 1); active != 1 || !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+		t.Fatalf("over-quota admission = (%d, %v), want (1, ErrWorkflowRunQuotaExceeded)", active, err)
+	}
+
+	if err := ms.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{
+		{StepName: "first", Status: state.WorkflowStepStatusRunning, Attempt: 2},
+		{StepName: "second", Status: state.WorkflowStepStatusPending},
+	}); err != nil {
+		t.Fatalf("CreateWorkflowSteps: %v", err)
+	}
+	if err := ms.RecoverWorkflowRun(ctx, run.ID); err != nil {
+		t.Fatalf("RecoverWorkflowRun: %v", err)
+	}
+	steps, err := ms.GetWorkflowSteps(ctx, run.ID)
+	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusPending || steps[0].Attempt != 1 {
+		t.Fatalf("recovered steps = (%#v, %v), want first pending at attempt 1", steps, err)
+	}
+
+	const reason = "cancelled by test"
+	cancelled, err := ms.CancelWorkflowRun(ctx, run.ID, reason)
+	if err != nil || cancelled.Status != state.WorkflowRunStatusFailed || cancelled.LastError == nil || *cancelled.LastError != reason || cancelled.FinishedAt == nil {
+		t.Fatalf("CancelWorkflowRun = (%#v, %v), want terminal failure with reason", cancelled, err)
+	}
+	steps, err = ms.GetWorkflowSteps(ctx, run.ID)
+	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusSkipped || steps[1].Status != state.WorkflowStepStatusSkipped {
+		t.Fatalf("cancelled steps = (%#v, %v), want both skipped", steps, err)
+	}
+	unchanged, err := ms.CancelWorkflowRun(ctx, run.ID, "replacement reason")
+	if err != nil || unchanged.LastError == nil || *unchanged.LastError != reason {
+		t.Fatalf("terminal cancellation = (%#v, %v), want original terminal result", unchanged, err)
+	}
+}
+
 func TestMemStore_WorkflowRejectsInvalidRecords(t *testing.T) {
 	ctx := context.Background()
 	ms := state.NewMemStore()

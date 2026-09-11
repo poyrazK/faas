@@ -3713,9 +3713,12 @@ type Invocation struct {
 // ListInvocationsResponse is the wire shape for GET /v1/invocations.
 // The handler emits a `[]state.Invocation` under the `invocations`
 // key; here we declare the same shape with the SDK-side mirror type
-// so pkg/api stays decoupled from pkg/state.
+// so pkg/api stays decoupled from pkg/state. NextBefore is the id of
+// the last row when the page reaches its limit; pass it as `before`
+// to continue with older rows.
 type ListInvocationsResponse struct {
 	Invocations []Invocation `json:"invocations"`
+	NextBefore  string       `json:"next_before,omitempty"`
 }
 
 // --- Issue #791 — cron run history ----------------------------------
@@ -3990,11 +3993,12 @@ type AuditLogEntry struct {
 // (received_at DESC, id DESC) per the audit_log_received_at_idx so the
 // dashboard can render top-of-list without re-sorting. Limit echoes
 // the effective limit applied by the handler (capped at
-// listAuditLogLimitMax) so the SDK can display "showing 50 of N"
-// without re-issuing the request.
+// listAuditLogLimitMax). NextBefore is an opaque compound cursor for
+// the next older page; it is omitted when this page reaches the end.
 type ListAuditLogResponse struct {
-	Entries []AuditLogEntry `json:"entries"`
-	Limit   int             `json:"limit"`
+	Entries    []AuditLogEntry `json:"entries"`
+	Limit      int             `json:"limit"`
+	NextBefore string          `json:"next_before,omitempty"`
 }
 
 // --- GitHub install bind picker (PR-B; §11) ---------------------------------
@@ -6109,7 +6113,10 @@ func (a *EdgeRuleGeoAction) Validate() *Problem {
 	if len(a.Allow) == 0 && len(a.Deny) == 0 {
 		return ErrValidation("geo action requires at least one allow or deny entry")
 	}
-	seen := make(map[string]struct{}, len(a.Allow)+len(a.Deny))
+	// Do not size this map from the caller-provided slice lengths. Apart from
+	// allocating far more than the 50-entry rule cap for malformed input, the
+	// sum can overflow an int before make is called.
+	seen := make(map[string]struct{})
 	for _, code := range a.Allow {
 		if p := validateGeoCountryCode(code); p != nil {
 			return ErrValidation("geo action allow entry " + p.Error())
@@ -6262,7 +6269,7 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 // fields default to zero-values that produce bit-identical behaviour
 // to PR #887's bucket key (appID+"\x00"+ruleID):
 //
-//   - KeyBy ∈ {"", "none", "api_key", "jwt_subject", "jwt_claim"}.
+//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim"}.
 //     Empty string and "none" are equivalent — the empty value is the
 //     pre-Phase-3 shape; "none" is the explicit Phase-3 opt-out. Both
 //     preserve back-compat (the bucket key is unchanged).
@@ -6296,6 +6303,7 @@ type EdgeRuleThrottleAction struct {
 const (
 	ThrottleKeyByNone       = "none"
 	ThrottleKeyByAPIKey     = "api_key"
+	ThrottleKeyByConsumerID = "consumer_id"
 	ThrottleKeyByJWTSubject = "jwt_subject"
 	ThrottleKeyByJWTClaim   = "jwt_claim"
 )
@@ -6316,8 +6324,8 @@ const ThrottleMaxKeysPerRuleDefault = 1000
 // value opts the rule into per-consumer bucket keying
 // (ADR-104, issue #881 Phase 3). Empty string is treated as
 // back-compat (PR #887's `appID+"\x00"+ruleID` shape) — only
-// the explicit "none" and the four other close-vocab values
-// trigger per-consumer routing. The single source of truth for
+// the non-empty per-consumer values trigger per-consumer routing;
+// "none" remains an explicit opt-out. The single source of truth for
 // "is this a per-consumer KeyBy?" — pkg/gateway/handler.go and
 // cmd/gatewayd-internal/edge_rules.go both consult this rather
 // than duplicating the membership test, so adding a future
@@ -6325,7 +6333,7 @@ const ThrottleMaxKeysPerRuleDefault = 1000
 // update.
 func ThrottleKeyByIsPerConsumer(keyBy string) bool {
 	switch keyBy {
-	case ThrottleKeyByAPIKey, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim:
 		return true
 	default:
 		return false
@@ -6402,7 +6410,7 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		if a.MaxKeysPerRule != 0 {
 			return ErrValidation("throttle action: max_keys_per_rule requires key_by != \"none\" (got key_by=\"\")")
 		}
-	case ThrottleKeyByAPIKey, ThrottleKeyByJWTSubject:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject:
 		if a.JWTClaimName != "" {
 			return ErrValidation(fmt.Sprintf(
 				"throttle action: jwt_claim_name is only valid with key_by=\"jwt_claim\" (got key_by=%q)",
@@ -6425,7 +6433,7 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		}
 	default:
 		return ErrValidation(fmt.Sprintf(
-			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"jwt_subject\", \"jwt_claim\")",
+			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"consumer_id\", \"jwt_subject\", \"jwt_claim\")",
 			a.KeyBy))
 	}
 	return nil
@@ -6806,6 +6814,32 @@ type RekeyProgress struct {
 	LastID  string `json:"last_id,omitempty"`
 }
 
+// ComputeNodeOperatorResponse is the authenticated operator projection used by
+// GET /v1/compute-nodes and GET /v1/compute-nodes/{name}. It exposes the
+// routing and release metadata needed for fleet diagnosis, but never returns
+// the node's host certificate.
+type ComputeNodeOperatorResponse struct {
+	ID                 string  `json:"id"`
+	Name               string  `json:"name"`
+	TargetURL          string  `json:"target_url"`
+	GatewayTargetURL   string  `json:"gateway_target_url,omitempty"`
+	VPCPUs             int     `json:"vpcpus"`
+	MemMB              int     `json:"mem_mb"`
+	MaxConcurrency     int     `json:"max_concurrency"`
+	AdmissionCeilingMB int     `json:"admission_ceiling_mb"`
+	Active             bool    `json:"active"`
+	Role               *string `json:"role,omitempty"`
+	Region             *string `json:"region,omitempty"`
+	Zone               *string `json:"zone,omitempty"`
+	ReleaseID          *string `json:"release_id,omitempty"`
+	ManifestHash       *string `json:"manifest_hash,omitempty"`
+	CertFingerprint    *string `json:"cert_fingerprint,omitempty"`
+	Generation         *int    `json:"generation,omitempty"`
+	LastHeartbeatAt    string  `json:"last_heartbeat_at,omitempty"`
+	CreatedAt          string  `json:"created_at"`
+	LiveInstanceCount  *int    `json:"live_instance_count,omitempty"`
+}
+
 // OperatorIntentAcceptedResponse is the wire shape returned by
 // POST /v1/admin/instances/{id}/force-park,
 // POST /v1/admin/apps/{slug}/force-cold-boot, and
@@ -6867,6 +6901,44 @@ type SweepStuckBuildsResponse struct {
 	SweptCount    int    `json:"swept_count"`
 	OlderThanSecs int    `json:"older_than_seconds"`
 	ThresholdISO  string `json:"threshold_iso"`
+}
+
+// GithubRecoveryStatusResponse is the operator-safe projection of githubd's
+// durable recovery queues. Webhook payloads and installation credentials are
+// intentionally absent.
+type GithubRecoveryStatusResponse struct {
+	Deliveries   []GithubWebhookDeliveryRecord `json:"deliveries"`
+	CheckUpdates []GithubCheckUpdateRecord     `json:"check_updates"`
+}
+
+type GithubWebhookDeliveryRecord struct {
+	DeliveryID  string     `json:"delivery_id"`
+	EventType   string     `json:"event_type"`
+	Status      string     `json:"status"`
+	Attempts    int        `json:"attempts"`
+	NextAttempt time.Time  `json:"next_attempt_at"`
+	LastError   string     `json:"last_error,omitempty"`
+	ReceivedAt  time.Time  `json:"received_at"`
+	ProcessedAt *time.Time `json:"processed_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type GithubCheckUpdateRecord struct {
+	DeploymentID string     `json:"deployment_id"`
+	Generation   int64      `json:"generation"`
+	Status       string     `json:"status"`
+	Attempts     int        `json:"attempts"`
+	NextAttempt  time.Time  `json:"next_attempt_at"`
+	LastError    string     `json:"last_error,omitempty"`
+	ProcessedAt  *time.Time `json:"processed_at,omitempty"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+type GithubRecoveryRetryResponse struct {
+	OK       bool   `json:"ok"`
+	Kind     string `json:"kind"`
+	TargetID string `json:"target_id"`
+	Status   string `json:"status"`
 }
 
 // ThrottleSuggestionRow is one (route → suggested rate) row in the
@@ -7146,6 +7218,31 @@ type AppOpenAPIPolicyPreviewResponse struct {
 	Suggestions       []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
 }
 
+// ApplyAppOpenAPIPolicyRequest controls the explicit OpenAPI policy apply
+// workflow. With Confirm=false (the default), the endpoint is a read-only
+// plan. Confirm=true requires PreviewSHA256 to match the plan currently
+// derived by the server; this prevents approving a stale or altered policy.
+// MatchHost optionally overrides the app's platform hostname for the rules.
+type ApplyAppOpenAPIPolicyRequest struct {
+	Confirm       bool   `json:"confirm,omitempty"`
+	PreviewSHA256 string `json:"preview_sha256,omitempty"`
+	MatchHost     string `json:"match_host,omitempty"`
+}
+
+// AppOpenAPIPolicyApplyResponse is returned by POST
+// /v1/apps/{slug}/openapi/apply. A response with Planned=true is a
+// read-only plan. A confirmed response reports the rules created during this
+// call; AppliedCount is zero for an idempotent no-op.
+type AppOpenAPIPolicyApplyResponse struct {
+	AppID         string               `json:"app_id"`
+	MatchHost     string               `json:"match_host"`
+	PreviewSHA256 string               `json:"preview_sha256"`
+	Suggestions   []EdgeRuleSuggestion `json:"suggestions"`
+	Planned       bool                 `json:"planned"`
+	Applied       []EdgeRuleResponse   `json:"applied"`
+	AppliedCount  int                  `json:"applied_count"`
+}
+
 // AppOpenAPIPolicyPreviewRoute is one path/method row in the policy preview.
 // Status is one of matched, declared_only, or observed_only.
 type AppOpenAPIPolicyPreviewRoute struct {
@@ -7175,23 +7272,35 @@ type AppOpenAPIPolicyPreviewRule struct {
 
 // DebugTelemetryRequestItem is one row of per-app request telemetry
 // returned by GET /v1/apps/{slug}/debug/requests (ADR-127 / PR-A).
-// The fields are 1:1 with the request_telemetry table columns; the
-// apid handler maps sqlc-generated rows to this wire DTO (cmd/apid
-// uses the sqlc row directly because pkg/api cannot import
-// pkg/state/sqlc without an import cycle).
+// The scalar fields mirror the request_telemetry table columns; guest
+// execution columns are grouped under a nested, optional object. The apid
+// handler maps sqlc-generated rows to this wire DTO (cmd/apid uses the sqlc
+// row directly because pkg/api cannot import pkg/state/sqlc without a cycle).
 type DebugTelemetryRequestItem struct {
-	ID           string  `json:"id"`
-	DeploymentID string  `json:"deployment_id"`
-	Route        string  `json:"route"`
-	Method       string  `json:"method"`
-	Status       int     `json:"status"`
-	LatencyMS    int     `json:"latency_ms"`
-	Count        int     `json:"count"`
-	ColdBoot     bool    `json:"cold_boot"`
-	TraceID      *string `json:"trace_id"`
-	ReceivedAt   string  `json:"received_at"`
-	WakeID       string  `json:"wake_id,omitempty"`
-	InstanceID   string  `json:"instance_id,omitempty"`
+	ID           string                       `json:"id"`
+	DeploymentID string                       `json:"deployment_id"`
+	Route        string                       `json:"route"`
+	Method       string                       `json:"method"`
+	Status       int                          `json:"status"`
+	LatencyMS    int                          `json:"latency_ms"`
+	Count        int                          `json:"count"`
+	ColdBoot     bool                         `json:"cold_boot"`
+	TraceID      *string                      `json:"trace_id"`
+	ReceivedAt   string                       `json:"received_at"`
+	WakeID       string                       `json:"wake_id,omitempty"`
+	InstanceID   string                       `json:"instance_id,omitempty"`
+	ConsumerID   string                       `json:"consumer_id,omitempty"`
+	Guest        *DebugGuestExecutionEvidence `json:"guest,omitempty"`
+}
+
+// DebugGuestExecutionEvidence is the bounded execution signal emitted by a
+// platform-owned runtime runner. It contains no customer payload or error
+// text and is omitted when the runner did not emit evidence.
+type DebugGuestExecutionEvidence struct {
+	Runtime    string `json:"runtime"`
+	DurationMS int    `json:"duration_ms"`
+	Outcome    string `json:"outcome"`
+	ErrorClass string `json:"error_class,omitempty"`
 }
 
 // DebugTelemetryListOptions controls the server-side filters for a request

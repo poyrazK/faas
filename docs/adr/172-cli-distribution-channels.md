@@ -67,12 +67,19 @@ nixpkgs, and the distro archives.
 - `get.gregale.dev` is a proxied Cloudflare hostname with a redirect rule to
   the maintained `scripts/install.sh` on the default branch. The release
   pipeline also attaches that script to each immutable release.
-- Two new hermetic shell tests run on every PR
-  (`scripts/install_test.sh`, `scripts/build-npm-packages_test.sh`)
-  alongside the existing `materialize-release-manifest_test.sh`. The
-  installer's checksum-mismatch path is covered, because a silent
-  verification failure in a `curl | sh` installer is the worst defect this
-  surface can have.
+- Three new hermetic shell tests run on every PR
+  (`scripts/install_test.sh`, `scripts/build-npm-packages_test.sh`,
+  `scripts/archive-cli-binary_test.sh`) alongside the existing
+  `materialize-release-manifest_test.sh`. The installer's checksum-mismatch
+  path is covered, because a silent verification failure in a `curl | sh`
+  installer is the worst defect this surface can have.
+- Release archives are byte-reproducible for a given commit, and that is
+  enforced by a test rather than asserted in a comment. Archive creation
+  therefore lives in `scripts/archive-cli-binary.sh` instead of inline in
+  the workflow: `tar -czf` writes the current wall-clock time into the gzip
+  header, so the first implementation was not reproducible and nothing could
+  catch it. Determinism needs `gzip -n` in addition to `--sort`,
+  `--owner`/`--group`/`--numeric-owner`, and `--mtime`.
 
 ## Rejected alternatives
 

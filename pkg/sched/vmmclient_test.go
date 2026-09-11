@@ -2,6 +2,7 @@
 // real pkg/vmmdgrpc.Server over bufconn, mirroring pkg/vmmdgrpc/bufconn_test.go.
 // A fake VmmdAPI stands in for firecracker so the wire path (proto round-trip +
 // error re-lifting) is fully covered without KVM.
+// adr: 043 — the typed vmmd wrapper carries the app-log follow mode.
 
 package sched_test
 
@@ -143,7 +144,7 @@ func (f *fakeVMM) UpdateStaticEgressIP(ctx context.Context, accountID, appID str
 // sees EOF immediately (the right no-op for tests that don't care
 // about log content). PR-B adds the sinceWrittenAt time lower-bound;
 // the fake ignores it.
-func (f *fakeVMM) Logs(_ context.Context, _ string, _ int64, _ time.Time) (sched.LogStream, error) {
+func (f *fakeVMM) Logs(_ context.Context, _ string, _ int64, _ time.Time, _ bool) (sched.LogStream, error) {
 	return nil, io.EOF
 }
 

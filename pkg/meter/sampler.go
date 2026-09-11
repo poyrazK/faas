@@ -118,6 +118,14 @@ type TailSecondsSource interface {
 	ReadAndResetTailSeconds(instanceID string) (seconds int64, ok bool)
 }
 
+// instanceBillingSecondsStore is implemented by PgStore once the lifecycle
+// interval ledger migration is present. Keeping it optional preserves the
+// lightweight MemStore/custom-store seam while production bills completed
+// minutes from actual residency instead of a point-in-time snapshot.
+type instanceBillingSecondsStore interface {
+	InstanceBillingSeconds(ctx context.Context, start, end time.Time) (map[string]int64, error)
+}
+
 // Sampler writes one minute of billable usage per live instance. It walks
 // every app on the box (one-box scale; schedd's ListAllApps is the canonical
 // source) and lists its instances; for each one in a state that counts
@@ -336,7 +344,23 @@ type RolledRow struct {
 //   - the per-minute CPU-µs delta (issue #279 / PR-B; informational
 //     only — billing is on RAM).
 func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
-	minute := MinuteKey(s.now())
+	observedAt := s.now().UTC()
+	minute := MinuteKey(observedAt)
+	residentSeconds := map[string]int64(nil)
+	exactResidency := false
+	if residencyStore, ok := s.store.(instanceBillingSecondsStore); ok {
+		// Only closed minutes are materialised. This prevents an early tick
+		// from locking a partial value behind usage_minutes' first-write-wins
+		// idempotency key.
+		windowEnd := observedAt.Truncate(time.Minute)
+		minute = windowEnd.Add(-time.Minute)
+		var err error
+		residentSeconds, err = residencyStore.InstanceBillingSeconds(ctx, minute, windowEnd)
+		if err != nil {
+			return nil, fmt.Errorf("meter: load instance billing residency: %w", err)
+		}
+		exactResidency = true
+	}
 	apps, err := s.store.ListAllApps(ctx)
 	if err != nil {
 		return nil, err
@@ -371,6 +395,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 		// so the floor is symmetric with the rows we just
 		// wrote — never over- nor under-counting.
 		liveCount := 0
+		var liveSeconds int64
 		// Issue #463 / ADR-070 / PR-C: pre-load sidecar MBs
 		// once per app (not once per instance) so a 100-instance
 		// fleet is 1 DB read per app, not 100. Missing keys
@@ -414,11 +439,19 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				continue
 			}
 			usage, usageOK := s.usageDeltas(ins.ID)
+			seconds := int64(60)
+			if exactResidency {
+				seconds = residentSeconds[ins.ID]
+			}
+			billableResident := state.State(ins.State).CountsForRAM()
+			if exactResidency {
+				billableResident = seconds > 0
+			}
 			// A request may finish just before the idle reaper parks its
 			// instance. The gateway stream is independent of lifecycle
 			// state, so drain its final activity into a telemetry-only row
 			// instead of dropping it because RAM is no longer resident.
-			if !state.State(ins.State).CountsForRAM() {
+			if !billableResident {
 				if !usageOK {
 					continue
 				}
@@ -447,7 +480,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				AccountID:   app.AccountID,
 				Minute:      minute,
 				AdmissionMB: api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs),
-				MBSeconds:   MBSecondsPerMinute(api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs)),
+				MBSeconds:   int64(api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs)) * seconds,
 				Mode:        ins.Mode,
 				Plan:        string(planByAccount[app.AccountID]),
 			}
@@ -502,6 +535,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			}
 			out = append(out, row)
 			liveCount++
+			liveSeconds += seconds
 		}
 		// PR-A (ADR-060, issue #515): per-app GB-h floor for
 		// ScalingPolicy.MinInstances. When the floor is set
@@ -566,7 +600,11 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				floor = dFloor
 			}
 		}
-		if floor > 0 && liveCount < floor {
+		floorGap := floor > 0 && liveCount < floor
+		if exactResidency {
+			floorGap = floor > 0 && liveSeconds < int64(floor)*60
+		}
+		if floorGap {
 			// The floor is a promise to provide capacity. Preserve ADR-060's
 			// billed-from-t=0 contract while a deployment is starting, but
 			// stop synthetic billing once every deployment is terminal. At
@@ -580,9 +618,14 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			if !floorAvailable {
 				continue
 			}
-			gap := floor - liveCount
 			billable := api.BillableRAMMB(app.RAMMB)
+			gap := floor - liveCount
 			floorTotal := int64(gap) * MBSecondsPerMinute(billable)
+			if exactResidency {
+				gapSeconds := int64(floor)*60 - liveSeconds
+				gap = int((gapSeconds + 59) / 60)
+				floorTotal = gapSeconds * int64(billable)
+			}
 			perRow := floorTotal / int64(gap)
 			remainder := floorTotal - perRow*int64(gap)
 			for i := 0; i < gap; i++ {

@@ -976,6 +976,11 @@ type Querier interface {
 	// coalesce(revoked_at, now()) makes the call idempotent on already
 	// revoked rows (returns 0 rows).
 	RevokeSession(ctx context.Context, db DBTX, arg RevokeSessionParams) (pgtype.UUID, error)
+	RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, catalogKey string) (RuntimeSnapshot, error)
+	// Runtime snapshot catalog (ADR-171 follow-up / durable publication boundary).
+	// Publication is insert-only; retirement is the sole mutable transition.
+	RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg RuntimeSnapshotInsertParams) (RuntimeSnapshot, error)
+	RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg RuntimeSnapshotRetireParams) (int64, error)
 	SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error
 	// ADR-021 (G1, image digest enforcement hardening): durable
 	// carrier for the RFC 7807 failure code that imaged writes when a

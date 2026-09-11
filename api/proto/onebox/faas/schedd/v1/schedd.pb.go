@@ -1664,7 +1664,12 @@ type StreamAppLogsRequest struct {
 	// surface, regex internally). The gateway rejects newlines
 	// (Move 4 substring-matcher never matches across line
 	// boundaries). Wire is additive per ADR-016.
-	Grep          string `protobuf:"bytes,6,opt,name=grep,proto3" json:"grep,omitempty"`
+	Grep string `protobuf:"bytes,6,opt,name=grep,proto3" json:"grep,omitempty"`
+	// follow controls whether the stream remains attached after the
+	// retained replay page. When unset, legacy callers retain the live-tail
+	// behavior; explicit false is the one-shot CLI mode. Optional preserves
+	// that compatibility while allowing the gateway to carry follow=0.
+	Follow        *bool `protobuf:"varint,7,opt,name=follow,proto3,oneof" json:"follow,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1739,6 +1744,13 @@ func (x *StreamAppLogsRequest) GetGrep() string {
 		return x.Grep
 	}
 	return ""
+}
+
+func (x *StreamAppLogsRequest) GetFollow() bool {
+	if x != nil && x.Follow != nil {
+		return *x.Follow
+	}
+	return false
 }
 
 // StreamAppLogsResponse is one frame of the per-app log stream.
@@ -2763,14 +2775,16 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x13disk_capacity_bytes\x18\f \x01(\v2\x1b.google.protobuf.Int64ValueR\x11diskCapacityBytes\"\x1a\n" +
 	"\x18ListInstanceStatsRequest\"X\n" +
 	"\x19ListInstanceStatsResponse\x12;\n" +
-	"\x04rows\x18\x01 \x03(\v2'.onebox.faas.schedd.v1.InstanceStatsRowR\x04rows\"\xdf\x01\n" +
+	"\x04rows\x18\x01 \x03(\v2'.onebox.faas.schedd.v1.InstanceStatsRowR\x04rows\"\x87\x02\n" +
 	"\x14StreamAppLogsRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x1b\n" +
 	"\tsince_seq\x18\x02 \x01(\x03R\bsinceSeq\x12#\n" +
 	"\rdeployment_id\x18\x03 \x01(\tR\fdeploymentId\x12D\n" +
 	"\x10since_written_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0esinceWrittenAt\x12\x14\n" +
 	"\x05level\x18\x05 \x01(\tR\x05level\x12\x12\n" +
-	"\x04grep\x18\x06 \x01(\tR\x04grep\"\xc4\x02\n" +
+	"\x04grep\x18\x06 \x01(\tR\x04grep\x12\x1b\n" +
+	"\x06follow\x18\a \x01(\bH\x00R\x06follow\x88\x01\x01B\t\n" +
+	"\a_follow\"\xc4\x02\n" +
 	"\x15StreamAppLogsResponse\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x10\n" +
@@ -2982,6 +2996,7 @@ func file_onebox_faas_schedd_v1_schedd_proto_init() {
 	if File_onebox_faas_schedd_v1_schedd_proto != nil {
 		return
 	}
+	file_onebox_faas_schedd_v1_schedd_proto_msgTypes[20].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

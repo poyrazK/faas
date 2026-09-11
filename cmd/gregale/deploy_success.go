@@ -42,6 +42,9 @@ func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.Deployme
 	final := deploymentWithReceipt(ctx, c, dep)
 	PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
 	printDeployColdWakeSentence()
+	if cache := formatBuildCacheSummary(final.BuildCacheStatus, final.CacheKeySHA256); cache != "" {
+		PrintProgress(osStdout, "Build cache: %s", cache)
+	}
 	renderDeploymentHostingReceipt(osStdout, final.APIHostingReceipt)
 	return 0
 }

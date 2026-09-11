@@ -666,6 +666,11 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %s\n", "overflow node:", *a.OverflowNode)
 		}
 		fmt.Printf("%-30s %s\n", "status:", a.Status)
+		// Issue #1053: the API already returns the trailing 30-day
+		// cache hit-rate rollup. Keep it visible in the default app
+		// view so developers can tell whether repeat deploys are
+		// benefiting from the builder cache without switching to JSON.
+		fmt.Printf("%-30s %.1f%% (last 30d)\n", "build cache hit rate:", a.BuildCacheHitRatePct)
 		// Issue #1395 / A4: show a best-effort wake-tier recommendation
 		// only for apps with enough recent wake history. JSON output stays
 		// a stable AppResponse payload, so this is text-mode only.
@@ -717,6 +722,13 @@ func cmdAppsRm(args []string) int {
 	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
 		return printErr("Delete failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{
+			"slug":    slug,
+			"status":  "deleted",
+			"deleted": true,
+		}))
 	}
 	PrintOK(osStdout, "Deleted %s", slug)
 	return 0
@@ -1226,6 +1238,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
 		return 1
 	}
+	// Deploy has no positional arguments. Go's flag parser stops at the
+	// first positional token, so accepting one also silently ignores every
+	// later flag. Reject the complete remainder before validation, auth, or
+	// source I/O; this prevents a stray token from bypassing --dry-run or
+	// changing the target app.
+	if fs.NArg() != 0 {
+		return printErr("Invalid arguments", fmt.Errorf(
+			"gregale deploy accepts flags only; unexpected positional arguments: %s",
+			strings.Join(fs.Args(), " ")))
+	}
 	if *waitTimeoutSeconds <= 0 {
 		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
 	}
@@ -1331,6 +1353,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customers see no behaviour change.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *deployOnly != "" || *projectSlug != "" {
+		var unsupported []string
+		for _, name := range []string{
+			"traffic-percent", "canary-preset", "canary-stages",
+			"reason", "tag", "deployed-by", "pr-number",
+		} {
+			if explicit[name] {
+				unsupported = append(unsupported, "--"+name)
+			}
+		}
+		if len(unsupported) > 0 {
+			return printErr("Unsupported project deploy flags", fmt.Errorf(
+				"%s cannot be combined with --project-slug or --only; project deploy policy is not yet supported",
+				strings.Join(unsupported, ", ")))
+		}
+	}
 	if explicit["wait"] && explicit["no-wait"] {
 		return printErr("Invalid flags", fmt.Errorf("--wait and --no-wait are mutually exclusive"))
 	}
@@ -1701,10 +1739,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 							dirtyFiles++
 						}
 					}
-					if dirtyFiles > 0 && *worktree {
+					if !jsonOutput && dirtyFiles > 0 && *worktree {
 						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying working-tree source (%s)",
 							dirtyFiles, provVal.SHA[:7])
-					} else if dirtyFiles > 0 {
+					} else if !jsonOutput && dirtyFiles > 0 {
 						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying HEAD (%s) only — commit first to include the changes",
 							dirtyFiles, provVal.SHA[:7])
 					}
@@ -1957,6 +1995,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
 	// happen. --diff and --dry-run never ship a deploy.
 	if *diff {
+		// Project deploys have a different preview contract from a
+		// single-app diff: the apply path is driven by ScanProject, so
+		// preview must use that same planner and render the complete
+		// workload/managed/warning response. Keeping this branch ahead
+		// of runDiff prevents a project preview from silently falling
+		// back to the root-app diff (issue #1976).
+		if *deployOnly != "" || *projectSlug != "" {
+			if *profile != "" {
+				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --only or --project-slug"))
+			}
+			return runProjectDeployPreview(ctx, client, *tarball, *projectSlug,
+				*deployOnly, *deployExclude, *deployShowAffected, *diffJSON)
+		}
 		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
@@ -2335,6 +2386,13 @@ func cmdPark(args []string) int {
 	if err := client.Park(context.Background(), args[0]); err != nil {
 		return printErr("Park failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]string{
+			"slug":   args[0],
+			"status": "parked",
+			"state":  "cold",
+		}))
+	}
 	PrintOK(osStdout, "Parked (cold)")
 	return 0
 }
@@ -2350,6 +2408,12 @@ func cmdWake(args []string) int {
 	}
 	if err := client.Wake(context.Background(), args[0]); err != nil {
 		return printErr("Wake failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]string{
+			"slug":   args[0],
+			"status": "waking",
+		}))
 	}
 	PrintOK(osStdout, "Waking…")
 	return 0
@@ -2552,6 +2616,9 @@ func cmdCrons(args []string) int {
 		if err != nil {
 			return printErr("Create failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeJSON(c))
+		}
 		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, c.Path)
 		return 0
 	case subUpdate:
@@ -2571,6 +2638,13 @@ func cmdCrons(args []string) int {
 		}
 		if err := client.DeleteCron(context.Background(), args[1]); err != nil {
 			return printErr("Delete failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{
+				"id":      args[1],
+				"status":  "deleted",
+				"deleted": true,
+			}))
 		}
 		PrintOK(osStdout, "Removed")
 		return 0

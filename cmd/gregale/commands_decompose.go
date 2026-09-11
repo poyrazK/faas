@@ -124,6 +124,54 @@ func cmdScan(args []string) int {
 	return printPlanTextWithExplain(osStdout, plan, excludeList, *showAffected, *explain)
 }
 
+// runProjectDeployPreview is the read-only preview path for
+// `gregale deploy --dry-run/--diff --project-slug ...` and the
+// corresponding `--only` form. Project apply is planned by ScanProject,
+// not by the single-app deploy-diff engine, so using the same endpoint here
+// keeps preview and apply semantically identical (issue #1976).
+//
+// The response is rendered exactly like `gregale scan`: JSON emits the
+// PlanResponse wire shape verbatim, while human output includes workloads,
+// managed services, warnings, and the optional affected-set partition. The
+// scan endpoint is read-only even when the apply-only `--persist-exclude` flag
+// was present; this helper deliberately does not have access to that flag so a
+// preview cannot accidentally persist state.
+func runProjectDeployPreview(
+	ctx context.Context,
+	client *api.Client,
+	tarball, projectSlug, only, exclude string,
+	showAffected, emitJSON bool,
+) int {
+	if tarball == "" {
+		return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
+			errors.New("no source resolved"))
+	}
+
+	onlyList := splitCSV(only)
+	excludeList := splitCSV(exclude)
+	if ok, clash := intersect(onlyList, excludeList); ok {
+		return printErr("Invalid flags", fmt.Errorf(
+			"--only and --exclude share workload(s): %s",
+			strings.Join(clash, ", "))) // keep preview parity with apply
+	}
+
+	src, err := openCustomerFile(tarball)
+	if err != nil {
+		return printErr("Could not open tarball", err)
+	}
+	defer func() { _ = src.Close() }()
+
+	plan, err := client.ScanProject(ctx, src, filepath.Base(tarball), projectSlug,
+		"main", 0, onlyList, excludeList, false)
+	if err != nil {
+		return printErr("Scan failed", err)
+	}
+	if emitJSON {
+		return jsonOut(writeJSON(plan))
+	}
+	return printPlanText(osStdout, plan, excludeList, showAffected)
+}
+
 // resolveScanSource normalises the three input shapes (--tarball /
 // --path / --repo) into a (path, sourceName, cleanup, err). For
 // --repo the tarball is fetched via the install token and dropped

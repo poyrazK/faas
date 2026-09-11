@@ -370,20 +370,26 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 	for _, row := range rows {
 		row.Count = normalizedRequestTelemetryCount(row.Count)
 		row.LatencyMS = requestTelemetryLatencyBucketUpperBound(row.LatencyMS)
+		row.GuestDurationMS = requestTelemetryLatencyBucketUpperBound(row.GuestDurationMS)
 		bucket := row.ReceivedAt.Truncate(time.Minute)
 		key := bucketKey{
-			AccountID:     row.AccountID,
-			AppID:         row.AppID,
-			DeploymentID:  row.DeploymentID,
-			Route:         row.Route,
-			Method:        row.Method,
-			Status:        row.Status,
-			UAFamily:      row.UAFamily,
-			ReferrerHost:  row.ReferrerHost,
-			Country:       row.Country,
-			WakeID:        row.WakeID,
-			LatencyBucket: row.LatencyMS,
-			bucket:        bucket,
+			AccountID:           row.AccountID,
+			AppID:               row.AppID,
+			DeploymentID:        row.DeploymentID,
+			Route:               row.Route,
+			Method:              row.Method,
+			Status:              row.Status,
+			UAFamily:            row.UAFamily,
+			ReferrerHost:        row.ReferrerHost,
+			Country:             row.Country,
+			WakeID:              row.WakeID,
+			GuestRuntime:        row.GuestRuntime,
+			GuestOutcome:        row.GuestOutcome,
+			GuestErrorClass:     row.GuestErrorClass,
+			GuestDurationBucket: row.GuestDurationMS,
+			ConsumerID:          row.ConsumerID,
+			LatencyBucket:       row.LatencyMS,
+			bucket:              bucket,
 		}.String()
 		idx, ok := bucketIdx[key]
 		if !ok {
@@ -416,18 +422,23 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 // reader; the apid receiver never sees bucketKey, only the resulting
 // RequestTelemetryRow.
 type bucketKey struct {
-	AccountID     uuid.UUID
-	AppID         uuid.UUID
-	DeploymentID  uuid.UUID
-	Route         string
-	Method        string
-	Status        int
-	UAFamily      string
-	ReferrerHost  string
-	Country       string
-	WakeID        string
-	LatencyBucket int
-	bucket        time.Time
+	AccountID           uuid.UUID
+	AppID               uuid.UUID
+	DeploymentID        uuid.UUID
+	Route               string
+	Method              string
+	Status              int
+	UAFamily            string
+	ReferrerHost        string
+	Country             string
+	WakeID              string
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	GuestDurationBucket int
+	ConsumerID          string
+	LatencyBucket       int
+	bucket              time.Time
 }
 
 func (k bucketKey) String() string {
@@ -436,10 +447,11 @@ func (k bucketKey) String() string {
 	// encoding if the profiler flags it. (Profile showed < 1%
 	// of publisher CPU before the collapse; even at 2x with the
 	// canonical string we're well under 2%.)
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%d|%d",
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%d|%d|%d",
 		k.AccountID, k.AppID, k.DeploymentID,
 		k.Route, k.Method, k.Status, k.UAFamily, k.ReferrerHost,
-		k.Country, k.WakeID, k.LatencyBucket, k.bucket.Unix())
+		k.Country, k.WakeID, k.GuestRuntime, k.GuestOutcome,
+		k.GuestErrorClass, k.ConsumerID, k.GuestDurationBucket, k.LatencyBucket, k.bucket.Unix())
 }
 
 // requestTelemetryLatencyBucketUpperBound quantizes a request latency to a

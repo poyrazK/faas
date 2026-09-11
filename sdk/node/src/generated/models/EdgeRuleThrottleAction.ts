@@ -51,7 +51,9 @@ export type EdgeRuleThrottleAction = {
    * Phase 3). When `""` or `"none"`, the bucket is shared
    * across every caller of the route (PR #887 shape).
    * When `"api_key"`, one bucket per authenticated API
-   * key. When `"jwt_subject"`, one bucket per JWT `sub`.
+   * key. When `"consumer_id"`, one bucket per stable API consumer
+   * identity (all rotated keys for that consumer share a bucket).
+   * When `"jwt_subject"`, one bucket per JWT `sub`.
    * When `"jwt_claim"`, one bucket per value of the
    * claim named by `jwt_claim_name`. Each non-empty
    * value activates the bounded design: when the
@@ -62,7 +64,7 @@ export type EdgeRuleThrottleAction = {
    * property — see ADR-104 §"Consequences").
    *
    */
-  key_by?: '' | 'none' | 'api_key' | 'jwt_subject' | 'jwt_claim';
+  key_by?: '' | 'none' | 'api_key' | 'consumer_id' | 'jwt_subject' | 'jwt_claim';
   /**
    * Required iff `key_by="jwt_claim"`. Names the JWT
    * custom claim to extract (e.g., `"tier"`,

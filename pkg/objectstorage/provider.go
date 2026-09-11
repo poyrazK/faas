@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +23,7 @@ var (
 	ErrConflict      = errors.New("object storage resource conflict")
 	ErrNotEmpty      = errors.New("bucket is not empty")
 	ErrInvalid       = errors.New("invalid object storage request")
+	ErrUnsupported   = errors.New("object storage operation is not supported")
 	ErrConfiguration = errors.New("object storage provider configuration requires attention")
 )
 
@@ -57,8 +59,66 @@ type Object struct {
 }
 
 type ObjectPage struct {
-	Items      []Object `json:"items"`
-	NextCursor string   `json:"next_cursor,omitempty"`
+	Items          []Object `json:"items"`
+	CommonPrefixes []string `json:"common_prefixes,omitempty"`
+	NextCursor     string   `json:"next_cursor,omitempty"`
+}
+
+// DelimitedObjectLister is an optional provider capability for S3 directory
+// views. Keeping it separate preserves the small inventory/listing contract
+// used by accounting and older drivers.
+type DelimitedObjectLister interface {
+	ListObjectsDelimited(context.Context, string, string, string, string, int32) (ObjectPage, error)
+}
+
+// ObjectMetadata contains the portable HTTP metadata that S3 CopyObject can
+// preserve or replace. Provider-specific headers and ACLs deliberately stay
+// outside this contract.
+type ObjectMetadata struct {
+	CacheControl       string            `json:"cache_control,omitempty"`
+	ContentDisposition string            `json:"content_disposition,omitempty"`
+	ContentEncoding    string            `json:"content_encoding,omitempty"`
+	ContentLanguage    string            `json:"content_language,omitempty"`
+	ContentType        string            `json:"content_type,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	Tags               map[string]string `json:"tags,omitempty"`
+}
+
+type CopyObjectRequest struct {
+	SourceKey         string
+	DestinationKey    string
+	MetadataDirective string
+	TaggingDirective  string
+	Metadata          ObjectMetadata
+}
+
+type CopyObjectResult struct {
+	ETag         string
+	LastModified time.Time
+}
+
+// ObjectCopier is an optional provider capability for the branded S3
+// CopyObject operation. It is intentionally separate so a custom driver can
+// opt in without weakening the basic Provider contract.
+type ObjectCopier interface {
+	CopyObject(context.Context, string, CopyObjectRequest) (CopyObjectResult, error)
+}
+
+// ObjectSizer lets the gateway reserve the source object's bytes before a
+// server-side copy. Drivers that cannot cheaply inspect an object may omit it;
+// usage reconciliation remains authoritative in that case.
+type ObjectSizer interface {
+	ObjectSize(context.Context, string, string) (int64, error)
+}
+
+// ObjectTagger is an optional provider capability for the S3 object-tagging
+// subresource. Providers that lack a native tag API may implement this using
+// an isolated metadata representation, but must preserve the same limits and
+// semantics at the Gregale boundary.
+type ObjectTagger interface {
+	GetObjectTags(context.Context, string, string) (map[string]string, error)
+	PutObjectTags(context.Context, string, string, map[string]string) error
+	DeleteObjectTags(context.Context, string, string) error
 }
 
 // PUT sizes are signed, not merely advisory client-side limits.
@@ -71,10 +131,13 @@ func (r SignRequest) Validate(maxBytes int64) error {
 	if r.Method == http.MethodPut && (r.SizeBytes == nil || *r.SizeBytes < 0 || *r.SizeBytes > maxBytes) {
 		return ErrInvalid
 	}
-	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && (r.SizeBytes != nil || r.ContentType != "") {
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && (r.SizeBytes != nil || r.ContentType != "" || r.CacheControl != "" || r.ContentDisposition != "" || r.ContentEncoding != "" || r.ContentLanguage != "" || len(r.Metadata) != 0 || len(r.Tags) != 0) {
 		return ErrInvalid
 	}
-	return ValidateContentType(r.ContentType)
+	return ValidateObjectMetadata(ObjectMetadata{
+		CacheControl: r.CacheControl, ContentDisposition: r.ContentDisposition, ContentEncoding: r.ContentEncoding,
+		ContentLanguage: r.ContentLanguage, ContentType: r.ContentType, Metadata: r.Metadata, Tags: r.Tags,
+	})
 }
 
 func ValidKey(key string) bool {
@@ -157,6 +220,53 @@ func ValidateContentType(contentType string) error {
 		if c < 32 || c == 127 {
 			return ErrInvalid
 		}
+	}
+	return nil
+}
+
+const (
+	maxObjectMetadataEntries = 90
+	maxObjectMetadataKey     = 128
+	maxObjectMetadataValue   = 2048
+	maxObjectTags            = 10
+	maxObjectTagKey          = 128
+	maxObjectTagValue        = 256
+	maxObjectTaggingBytes    = 8 << 10
+	// ReservedObjectTagsMetadataKey is used only by providers without a native
+	// object-tagging API (currently the GCS adapter). It never crosses the
+	// branded S3 response boundary as ordinary user metadata.
+	ReservedObjectTagsMetadataKey = "gregale-s3-tags"
+)
+
+// ValidateObjectMetadata applies the portable S3 metadata/tag limits before
+// a provider-specific request is built. Values are intentionally kept to
+// printable UTF-8 strings because they become signed HTTP headers or XML.
+func ValidateObjectMetadata(metadata ObjectMetadata) error {
+	for _, value := range []string{metadata.CacheControl, metadata.ContentDisposition, metadata.ContentEncoding, metadata.ContentLanguage, metadata.ContentType} {
+		if err := ValidateContentType(value); err != nil {
+			return err
+		}
+	}
+	if len(metadata.Metadata) > maxObjectMetadataEntries {
+		return ErrInvalid
+	}
+	for key, value := range metadata.Metadata {
+		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) {
+			return ErrInvalid
+		}
+	}
+	if len(metadata.Tags) > maxObjectTags {
+		return ErrInvalid
+	}
+	total := 0
+	for key, value := range metadata.Tags {
+		if key == "" || len(key) > maxObjectTagKey || len(value) > maxObjectTagValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
+			return ErrInvalid
+		}
+		total += len(key) + len(value) + 2
+	}
+	if total > maxObjectTaggingBytes {
+		return ErrInvalid
 	}
 	return nil
 }

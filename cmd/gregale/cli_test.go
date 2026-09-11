@@ -486,6 +486,8 @@ func TestCmdDeploy_HappyPath_PrintsHostingReceipt(t *testing.T) {
 		case r.URL.Path == "/v1/deployments/d1":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 				ID: "d1", AppID: "a1", Status: "live",
+				BuildCacheStatus: "hit",
+				CacheKeySHA256:   "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
 				APIHostingReceipt: json.RawMessage(`{
 					"schema_version":1,"deployment_id":"d1","app_id":"a1",
 					"profile":{"version":"v1","framework":"fastapi","package_manager":"pip","start_command":"uvicorn app:app","port":8000,"health_path":"/healthz","inferred":true},
@@ -509,7 +511,7 @@ func TestCmdDeploy_HappyPath_PrintsHostingReceipt(t *testing.T) {
 		t.Fatalf("cmdDeploy exit = %d, want 0", code)
 	}
 	out := stdout.String()
-	for _, want := range []string{"profile:", "fastapi (port 8000)", "package_manager:", "pip", "start_command:", "uvicorn app:app", "hosting_status:", "verified", "health_status:", "200", "health_latency:", "42ms"} {
+	for _, want := range []string{"profile:", "fastapi (port 8000)", "package_manager:", "pip", "start_command:", "uvicorn app:app", "Build cache:", "hit (sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd)", "hosting_status:", "verified", "health_status:", "200", "health_latency:", "42ms"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q\nfull: %s", want, out)
 		}

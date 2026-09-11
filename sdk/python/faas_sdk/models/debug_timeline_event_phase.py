@@ -1,9 +1,10 @@
 from typing import Literal
 
-DebugTimelineEventPhase = Literal["error", "regression", "request", "wake"]
+DebugTimelineEventPhase = Literal["error", "guest", "regression", "request", "wake"]
 
 DEBUG_TIMELINE_EVENT_PHASE_VALUES: set[DebugTimelineEventPhase] = {
     "error",
+    "guest",
     "regression",
     "request",
     "wake",

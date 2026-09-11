@@ -159,8 +159,10 @@ type RoutedVMM interface {
 	// sinceWrittenAt (issue #517 / PR-B acceptance #3) is the
 	// host-side WrittenAt lower bound on the replay page; the
 	// zero-time value is the "no bound" sentinel and is skipped
-	// on the wire. Wire is additive per ADR-016.
-	Logs(ctx context.Context, nodeID, instance string, sinceSeq int64, sinceWrittenAt time.Time) (LogStream, error)
+	// on the wire. Wire is additive per ADR-016. follow controls
+	// whether vmmd remains subscribed after replay; false is the
+	// one-shot CLI mode.
+	Logs(ctx context.Context, nodeID, instance string, sinceSeq int64, sinceWrittenAt time.Time, follow bool) (LogStream, error)
 }
 
 // DialFunc is the factory VMMRouter uses to open a per-target VMM
@@ -628,12 +630,12 @@ func (r *VMMRouter) UpdateStaticEgressIP(ctx context.Context, nodeID, accountID,
 // sinceWrittenAt (issue #517 / PR-B) is the host-side WrittenAt
 // lower bound on the replay page; the zero value means no
 // bound. Forwarded verbatim — the wire is additive per ADR-016.
-func (r *VMMRouter) Logs(ctx context.Context, nodeID, instance string, sinceSeq int64, sinceWrittenAt time.Time) (LogStream, error) {
+func (r *VMMRouter) Logs(ctx context.Context, nodeID, instance string, sinceSeq int64, sinceWrittenAt time.Time, follow bool) (LogStream, error) {
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return nil, err
 	}
-	return cli.Logs(ctx, instance, sinceSeq, sinceWrittenAt)
+	return cli.Logs(ctx, instance, sinceSeq, sinceWrittenAt, follow)
 }
 
 // Compile-time assertion: VMMRouter satisfies the engine-facing

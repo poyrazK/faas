@@ -3829,6 +3829,7 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
 
   /v1/apps/{slug}/debug/regressions:
     parameters:
@@ -3863,6 +3864,7 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
 
   /v1/apps/{slug}/debug/compare:
     parameters:
@@ -4737,6 +4739,45 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/openapi/apply:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [openapi_import]
+      operationId: applyAppOpenAPIPolicy
+      summary: Plan or explicitly apply generated OpenAPI validation rules.
+      description: |
+        The default request is a read-only plan. It returns a deterministic
+        `preview_sha256` approval token and the validation rules that would be
+        created for uncovered OpenAPI operations. To mutate policy, repeat the
+        request with `confirm=true` and the exact token. If the document or
+        edge rules changed in the meantime, the server returns 409
+        `openapi_policy_stale` and no writes occur. Applying an already-covered
+        document is an idempotent no-op. A missing match_host defaults to the
+        app's platform hostname. Requires MFA and deploy-write scope.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyAppOpenAPIPolicyRequest'
+      responses:
+        '200':
+          description: Policy plan or applied rules.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOpenAPIPolicyApplyResponse'
+        '400':
+          description: "code: validation or openapi_policy_confirmation_required."
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: "code: openapi_policy_stale. The approval token no longer matches the current plan."
+        '422':
+          description: "code: validation. A generated rule failed edge-rule validation."
+        '500': { description: "Internal server error." }
+
   /v1/apps/{slug}/openapi/diff:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -5458,11 +5499,15 @@ paths:
 
         Two modes share this URL:
 
-        - **Live (default)** — `?follow=1` holds the connection open and
-          streams new entries from the per-instance ring buffer. The
-          stream terminates with `event: end` when the backstop fires
-          (10 minutes idle), the schedd returns NotFound (parked app), or
-          the connection closes.
+        - **Snapshot (default)** — `?follow=0` replays the retained entries
+          from each live instance and closes with `event: end`. This is the
+          mode used by `gregale logs` for a finite command that can be piped
+          into other tools.
+
+        - **Live** — `?follow=1` holds the connection open and streams new
+          entries from the per-instance ring buffer. The stream terminates
+          with `event: end` when the backstop fires (10 minutes idle), the
+          schedd returns NotFound (parked app), or the connection closes.
 
         - **Archive (`?archive=1`)** — fetches a single day's
           per-instance log batch from the S3 bucket the apid shipper
@@ -5485,7 +5530,8 @@ paths:
         - name: follow
           in: query
           schema: { type: integer, enum: [0, 1], default: 0 }
-          description: If 1, hold the connection open and stream new entries.
+          description: If 1, hold the connection open and stream new entries;
+            if 0 (default), replay the retained page and close.
         - name: grep
           in: query
           schema: { type: string }
@@ -8359,8 +8405,8 @@ paths:
       - name: idx
         in: path
         required: true
-        schema: { type: integer, minimum: 1 }
-        description: The task index within the run (1-indexed).
+        schema: { type: integer, minimum: 0 }
+        description: The task index within the run (zero-indexed).
       - name: max_bytes
         in: query
         required: false
@@ -10385,6 +10431,29 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/log-drains/{id}/health:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [observability]
+      operationId: getAppLogDrainHealth
+      summary: Fetch durable delivery health for a runtime log destination.
+      description: |
+        Returns a customer-safe delivery snapshot. Authentication headers and
+        raw transport errors are never returned. Empty timestamps mean that
+        the corresponding event has not happened yet.
+      responses:
+        '200':
+          description: Durable log-drain delivery health.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppLogDrainHealthResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Event-driven surface (Move 2) ─────────────────────────────────────────
   # Customer-facing surface for the Move 1 invocations backend. The five
   # shapes — async_invoke, queue_send, queue_receive, queue_ack, delayed_task
@@ -11489,6 +11558,10 @@ paths:
           in: query
           schema: { type: string, format: date-time }
           description: "Audit-log rows with `received_at >= since` (RFC 3339) are returned. Omit to read from the newest row."
+        - name: before
+          in: query
+          schema: { type: string }
+          description: "Opaque cursor returned as `next_before`; fetches the next older page. Pass verbatim without decoding or re-encoding."
         - name: kind_prefix
           in: query
           schema: { type: string }
@@ -11546,6 +11619,10 @@ paths:
           in: query
           schema: { type: string, format: date-time }
           description: "Operator-side audit-log rows with `received_at >= since` (RFC 3339) are returned. Omit to read from the newest row."
+        - name: before
+          in: query
+          schema: { type: string }
+          description: "Operator-only opaque cursor returned as `next_before`; fetches the next older page. Pass verbatim without decoding or re-encoding."
         - name: kind_prefix
           in: query
           schema: { type: string }
@@ -12856,6 +12933,116 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/admin/ops/github/recovery:
+    get:
+      tags: [admin]
+      operationId: getGithubRecoveryStatus
+      summary: List operator-safe GitHub webhook and Check Run recovery queue items.
+      description: |
+        Returns bounded queue metadata from githubd. Webhook payloads and
+        installation credentials are deliberately excluded. Requires admin
+        scope, MFA, and membership in FAAS_ADMIN_EMAILS.
+      parameters:
+        - in: query
+          name: status
+          required: false
+          description: Queue status to select; omit to list every status.
+          schema: { type: string, enum: [pending, processing, succeeded, dead], default: dead }
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+          description: Maximum rows returned from each queue.
+      responses:
+        '200':
+          description: Bounded recovery queue projections.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GithubRecoveryStatusResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/admin/ops/github/deliveries/{id}/retry:
+    post:
+      tags: [admin]
+      operationId: retryGithubWebhookDelivery
+      summary: Move one dead GitHub webhook delivery back to pending.
+      description: |
+        Strict operator-session mutation requiring a recent MFA step-up,
+        Idempotency-Key, explicit confirmation, and a durable reason. The
+        compare-and-swap write is owned by githubd and emits a trace-linked
+        operator.action.github_delivery_retry audit event.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: UUID of the dead webhook delivery to retry.
+          schema: { type: string, format: uuid }
+        - in: query
+          name: confirm
+          required: true
+          description: Explicit acknowledgement that customer webhook work will be retried.
+          schema: { type: string, enum: ['true'] }
+        - in: query
+          name: reason
+          required: true
+          description: Durable lowercase audit reason slug for the webhook retry.
+          schema: { type: string, pattern: '^[a-z0-9_]{1,64}$' }
+      responses:
+        '200':
+          description: Delivery moved back to pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GithubRecoveryRetryResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/admin/ops/github/check-updates/{id}/retry:
+    post:
+      tags: [admin]
+      operationId: retryGithubCheckUpdate
+      summary: Move one dead GitHub Check Run update back to pending.
+      description: |
+        Strict operator-session mutation requiring a recent MFA step-up,
+        Idempotency-Key, explicit confirmation, and a durable reason. The
+        compare-and-swap write is owned by githubd and emits a trace-linked
+        operator.action.github_check_update_retry audit event.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: Deployment UUID whose dead Check Run update should be retried.
+          schema: { type: string, format: uuid }
+        - in: query
+          name: confirm
+          required: true
+          description: Explicit acknowledgement that customer Check Run work will be retried.
+          schema: { type: string, enum: ['true'] }
+        - in: query
+          name: reason
+          required: true
+          description: Durable lowercase audit reason slug for the Check Run retry.
+          schema: { type: string, pattern: '^[a-z0-9_]{1,64}$' }
+      responses:
+        '200':
+          description: Check Run update moved back to pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GithubRecoveryRetryResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   # ─── Organizations (issue #190 / IAM-6 / ADR-061, PR 5 + PR 7) ──────────
   # Customer-visible org surface. Account-scoped (/v1/orgs list +
   # create) and path-scoped (/v1/orgs/{slug}/...) routes. The
@@ -14016,6 +14203,12 @@ components:
         expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
         size_bytes: { type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET. }
         content_type: { type: string, maxLength: 255, description: PUT only. }
+        cache_control: { type: string, maxLength: 255, description: Cache-Control value for PUT. }
+        content_disposition: { type: string, maxLength: 255, description: Content-Disposition value for PUT. }
+        content_encoding: { type: string, maxLength: 255, description: Content-Encoding value for PUT. }
+        content_language: { type: string, maxLength: 255, description: Content-Language value for PUT. }
+        metadata: { type: object, additionalProperties: { type: string, maxLength: 2048 }, maxProperties: 90, description: PUT-only x-amz-meta-* values. }
+        tags: { type: object, additionalProperties: { type: string, maxLength: 256 }, maxProperties: 10, description: PUT-only S3 object tags. }
     ObjectSignedRequest:
       description: Temporary bearer capability for a direct provider request. Do not log or persist it.
       type: object
@@ -15027,6 +15220,57 @@ components:
           description: RFC 3339 cutoff timestamp (now - older_than).
       x-since: "2026-08"
       x-pr-cluster: "operator-obs-mega"
+
+    GithubRecoveryStatusResponse:
+      description: Operator-safe projections of githubd's durable recovery queues. Webhook payloads are never included.
+      type: object
+      required: [deliveries, check_updates]
+      properties:
+        deliveries:
+          type: array
+          items: { $ref: '#/components/schemas/GithubWebhookDeliveryRecord' }
+        check_updates:
+          type: array
+          items: { $ref: '#/components/schemas/GithubCheckUpdateRecord' }
+
+    GithubWebhookDeliveryRecord:
+      description: Payload-free queue metadata for one inbound GitHub webhook delivery.
+      type: object
+      required: [delivery_id, event_type, status, attempts, next_attempt_at, received_at, updated_at]
+      properties:
+        delivery_id: { type: string, format: uuid }
+        event_type: { type: string }
+        status: { type: string, enum: [pending, processing, succeeded, dead] }
+        attempts: { type: integer, minimum: 0 }
+        next_attempt_at: { type: string, format: date-time }
+        last_error: { type: string, maxLength: 2048 }
+        received_at: { type: string, format: date-time }
+        processed_at: { type: [string, "null"], format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GithubCheckUpdateRecord:
+      description: Queue metadata for one outbound GitHub Check Run update.
+      type: object
+      required: [deployment_id, generation, status, attempts, next_attempt_at, updated_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        generation: { type: integer, format: int64, minimum: 1 }
+        status: { type: string, enum: [pending, processing, succeeded, dead] }
+        attempts: { type: integer, minimum: 0 }
+        next_attempt_at: { type: string, format: date-time }
+        last_error: { type: string, maxLength: 2048 }
+        processed_at: { type: [string, "null"], format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GithubRecoveryRetryResponse:
+      description: Confirmation that one recovery item moved from dead back to pending.
+      type: object
+      required: [ok, kind, target_id, status]
+      properties:
+        ok: { type: boolean, const: true }
+        kind: { type: string, enum: [delivery, check_update] }
+        target_id: { type: string, format: uuid }
+        status: { type: string, const: pending }
 
     APIKeyExportResponse:
       description: "One API key in export form: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, and request count. Scopes is the permission set attached to the key at the moment of export (audit trail; IAM-1, ADR-034 rev2)."
@@ -18539,7 +18783,7 @@ components:
       required: [run_id, task_index, status, attempt, created_at]
       properties:
         run_id: { type: string, format: uuid }
-        task_index: { type: integer, minimum: 1 }
+        task_index: { type: integer, minimum: 0 }
         status: { type: string, enum: [queued, claimed, succeeded, failed, timeout, cancelled, oom] }
         attempt: { type: integer, minimum: 1 }
         instance_id: { type: string, format: uuid }
@@ -20815,14 +21059,16 @@ components:
           example: 200
         key_by:
           type: string
-          enum: ["", "none", "api_key", "jwt_subject", "jwt_claim"]
+          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim"]
           default: ""
           description: |
             Per-consumer keying dimension (ADR-104 / issue #881
             Phase 3). When `""` or `"none"`, the bucket is shared
             across every caller of the route (PR #887 shape).
             When `"api_key"`, one bucket per authenticated API
-            key. When `"jwt_subject"`, one bucket per JWT `sub`.
+            key. When `"consumer_id"`, one bucket per stable API consumer
+            identity (all rotated keys for that consumer share a bucket).
+            When `"jwt_subject"`, one bucket per JWT `sub`.
             When `"jwt_claim"`, one bucket per value of the
             claim named by `jwt_claim_name`. Each non-empty
             value activates the bounded design: when the
@@ -21427,6 +21673,9 @@ components:
           type: integer
           description: "Effective page size applied (always 1..100; mirrors the customer and operator /v1/audit-log routes)."
           example: 50
+        next_before:
+          type: string
+          description: "Opaque cursor for the next older page; omitted when this page reaches the end."
 
     WakeTimelineEvent:
       description: |
@@ -22362,6 +22611,51 @@ components:
         status: { type: string }
         path_in_schema: { type: string }
         field: { type: string }
+
+    ApplyAppOpenAPIPolicyRequest:
+      description: |
+        Controls the explicit OpenAPI policy plan/apply workflow. Omit the
+        body (or set confirm=false) to request a read-only plan. A confirmed
+        apply must include the preview_sha256 returned by that plan.
+      type: object
+      additionalProperties: false
+      properties:
+        confirm:
+          type: boolean
+          default: false
+          description: "Authorize creation of the generated validation rules."
+        preview_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: "Approval token returned by the current plan."
+        match_host:
+          type: string
+          maxLength: 253
+          description: "Hostname for generated rules; defaults to the app hostname."
+
+    AppOpenAPIPolicyApplyResponse:
+      description: |
+        Deterministic OpenAPI policy plan or the result of an explicit apply.
+        Planned=true means no mutation occurred. AppliedCount is zero for an
+        idempotent no-op.
+      type: object
+      required: [app_id, match_host, preview_sha256, suggestions, planned, applied, applied_count]
+      properties:
+        app_id: { type: string, format: uuid }
+        match_host: { type: string }
+        preview_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        suggestions:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleSuggestion' }
+        planned: { type: boolean }
+        applied:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleResponse' }
+        applied_count:
+          type: integer
+          minimum: 0
 
     AppOpenAPIPolicyPreviewResponse:
       description: |
@@ -23749,13 +24043,15 @@ components:
           { type: [string, "null"], format: date-time, description: "ADR-134 PR-C. When this row was most recently replayed from dead_letter via POST /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay." }
 
     ListInvocationsResponse:
-      description: "Page of invocations; ordered by created_at DESC, id DESC. Pass the LAST id of the returned slice as the next `?before=` to load older."
+      description: "Page of invocations; ordered by created_at DESC, id DESC. When present, pass next_before as `?before=` to load older rows."
       type: object
       required: [invocations]
       properties:
         invocations:
           type: array
           items: { $ref: '#/components/schemas/Invocation' }
+        next_before:
+          { type: string, description: "ID cursor for the next older page; omitted when this page contains fewer rows than requested." }
 
     InvokeRequest:
       description: "Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to POST; path defaults to `/`."
@@ -24968,6 +25264,27 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
+    AppLogDrainHealthResponse:
+      type: object
+      description: Durable, customer-safe delivery health for one runtime log destination.
+      required: [log_drain_id, status, active, queue_depth, queue_capacity, delivered_total, failed_total, dropped_total, retries_total, stream_reconnects_total, gaps_total, updated_at]
+      properties:
+        log_drain_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        status: { type: string, enum: [unknown, healthy, degraded, inactive] }
+        active: { type: boolean }
+        queue_depth: { type: integer, minimum: 0 }
+        queue_capacity: { type: integer, minimum: 0 }
+        delivered_total: { type: integer, format: int64, minimum: 0 }
+        failed_total: { type: integer, format: int64, minimum: 0 }
+        dropped_total: { type: integer, format: int64, minimum: 0 }
+        retries_total: { type: integer, format: int64, minimum: 0 }
+        stream_reconnects_total: { type: integer, format: int64, minimum: 0 }
+        gaps_total: { type: integer, format: int64, minimum: 0 }
+        last_success_at: { type: string, format: date-time }
+        last_failure_at: { type: string, format: date-time }
+        last_error: { type: string, description: Sanitized delivery summary; never raw transport output. }
+        updated_at: { type: string, format: date-time }
+
     CreateAppLogDrainRequest:
       type: object
       description: Create a provider-neutral runtime log destination.
@@ -25155,6 +25472,19 @@ components:
         received_at: { type: string, format: date-time }
         wake_id: { type: string, description: "Opaque wake identifier when this request admitted a wake; omitted for warm requests." }
         instance_id: { type: string, description: "Opaque instance identifier that served the request; omitted when no target was reached." }
+        consumer_id: { type: string, format: uuid, description: "Stable API consumer identity; omitted for anonymous or legacy traffic." }
+        guest:
+          $ref: '#/components/schemas/DebugGuestExecutionEvidence'
+
+    DebugGuestExecutionEvidence:
+      type: object
+      description: "Bounded, platform-owned runtime execution evidence. Omitted when the runner signal was unavailable."
+      required: [runtime, duration_ms, outcome]
+      properties:
+        runtime: { type: string, enum: [node22, node24, python312, python313, go124] }
+        duration_ms: { type: integer, minimum: 0, maximum: 86400000 }
+        outcome: { type: string, enum: [ok, http_error, handler_error, timeout, canceled] }
+        error_class: { type: string, enum: [http_5xx, handler_exec, handler_protocol, timeout, canceled] }
 
     DebugTelemetrySpan:
       type: object
@@ -25175,7 +25505,7 @@ components:
       description: "Deterministic explanation generated from the safe evidence payload."
       required: [status, headline]
       properties:
-        status: { type: string, enum: [regression_detected, unobserved] }
+        status: { type: string, enum: [regression_detected, unobserved, regression_unavailable] }
         headline: { type: string }
         primary_span:
           oneOf:
@@ -25188,7 +25518,7 @@ components:
       required: [at, phase, kind, summary]
       properties:
         at: { type: string, format: date-time }
-        phase: { type: string, enum: [request, wake, error, regression] }
+        phase: { type: string, enum: [request, wake, guest, error, regression] }
         kind: { type: string, maxLength: 128 }
         actor: { type: string, maxLength: 128 }
         summary: { type: string, maxLength: 256 }
@@ -25685,6 +26015,12 @@ components:
 
     CapacityUnavailable:
       description: 'code: capacity_unavailable — no host headroom (alerting; should be near-impossible).'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    DebuggerRegressionUnavailable:
+      description: 'code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

@@ -41,6 +41,16 @@ const maxSourceFiles = api.SourceArchiveMaxEntries
 // hermetic.
 const sourceSpoolRootEnv = "FAAS_SPOOL_ROOT"
 
+// functionRuntimeForApp forwards the app's explicit runtime to source
+// profiling. Plain apps keep the detector-only behavior, while function apps
+// may legitimately contain only a handler and no framework manifest.
+func functionRuntimeForApp(app state.App) string {
+	if app.Type != state.AppTypeFunction {
+		return ""
+	}
+	return app.Runtime
+}
+
 func marshalWorkflowDefinitions(definitions []api.WorkflowSpec) json.RawMessage {
 	if len(definitions) == 0 {
 		return nil
@@ -354,6 +364,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			SourceBytes:            sourceBytes,
 			SourceRoot:             sourceRoot,
 			Handler:                handler,
+			FunctionRuntime:        functionRuntimeForApp(app),
 			LogSpool:               spoolRoot(),
 			Log:                    s.log,
 			ActorUserID:            acct.ID,
@@ -376,7 +387,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && trafficPercent == nil && canarySpec == nil,
 		})
 		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+			s.writeDeploymentCreateError(w, err)
 			return
 		}
 		if developerSource {

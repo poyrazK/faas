@@ -140,6 +140,7 @@ export class AuditService {
    */
   public static listAuditLog({
     since,
+    before,
     kindPrefix,
     limit = 50,
   }: {
@@ -147,6 +148,10 @@ export class AuditService {
      * Audit-log rows with `received_at >= since` (RFC 3339) are returned. Omit to read from the newest row.
      */
     since?: string,
+    /**
+     * Opaque cursor returned as `next_before`; fetches the next older page. Pass verbatim without decoding or re-encoding.
+     */
+    before?: string,
     /**
      * Only return rows whose `kind` starts with this prefix (e.g. `account.` returns `account.deleted`).
      */
@@ -161,6 +166,7 @@ export class AuditService {
       url: '/v1/audit-log',
       query: {
         'since': since,
+        'before': before,
         'kind_prefix': kindPrefix,
         'limit': limit,
       },
@@ -194,6 +200,7 @@ export class AuditService {
   public static listAuditLogAll({
     accountId,
     since,
+    before,
     kindPrefix,
     limit = 50,
     includeAnonymous = false,
@@ -206,6 +213,10 @@ export class AuditService {
      * Operator-side audit-log rows with `received_at >= since` (RFC 3339) are returned. Omit to read from the newest row.
      */
     since?: string,
+    /**
+     * Operator-only opaque cursor returned as `next_before`; fetches the next older page. Pass verbatim without decoding or re-encoding.
+     */
+    before?: string,
     /**
      * Only return rows whose `kind` starts with this prefix.
      */
@@ -225,6 +236,7 @@ export class AuditService {
       query: {
         'account_id': accountId,
         'since': since,
+        'before': before,
         'kind_prefix': kindPrefix,
         'limit': limit,
         'include_anonymous': includeAnonymous,

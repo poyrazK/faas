@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppLogDrainHealthResponse } from '../models/AppLogDrainHealthResponse.js';
 import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
 import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
 import type { Trace } from '../models/Trace.js';
@@ -183,6 +184,46 @@ export class ObservabilityService {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/log-drains/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Fetch durable delivery health for a runtime log destination.
+   * Returns a customer-safe delivery snapshot. Authentication headers and
+   * raw transport errors are never returned. Empty timestamps mean that
+   * the corresponding event has not happened yet.
+   *
+   * @returns AppLogDrainHealthResponse Durable log-drain delivery health.
+   * @throws ApiError
+   */
+  public static getAppLogDrainHealth({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AppLogDrainHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-drains/{id}/health',
       path: {
         'slug': slug,
         'id': id,

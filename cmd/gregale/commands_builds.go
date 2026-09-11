@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -246,6 +247,12 @@ func printBuildStatus(w io.Writer, b api.BuildResponse) {
 		{"deployment_id", b.DeploymentID},
 		{"kind", b.Kind},
 		{"status", b.Status},
+		// Build-cache fields are deliberately rendered beside the
+		// lifecycle status: a cache hit explains why a succeeded build
+		// completed without a VM, while a miss explains the normal
+		// builder latency (issue #1053).
+		{"cache_status", b.CacheStatus},
+		{"cache_key_sha256", b.CacheKeySHA256},
 		{"failure_class", b.FailureClass},
 		{"source_bytes", strconv.FormatInt(b.SourceBytes, 10)},
 		{"enqueued_at", b.EnqueuedAt},
@@ -265,6 +272,22 @@ func printBuildStatus(w io.Writer, b api.BuildResponse) {
 		// show up as a malformed output and the CLI will exit non-zero on the parse below.
 		fmt.Fprintf(w, "%-22s %s\n", r.label+":", r.value)
 	}
+}
+
+// formatBuildCacheSummary returns the concise human-facing explanation used
+// by deploy receipts. The builder's durable cache fields are optional on old
+// rows, so an empty status intentionally produces no summary at all. When a
+// recipe digest is available it is included as a short provenance hint; the
+// full 64-character value remains available through --json and build status.
+func formatBuildCacheSummary(status, key string) string {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return ""
+	}
+	if key = strings.TrimSpace(key); key != "" {
+		return fmt.Sprintf("%s (sha256:%s)", status, key)
+	}
+	return status
 }
 
 // durationSecondsForDisplay returns "" when the build is still

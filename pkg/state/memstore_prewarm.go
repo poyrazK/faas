@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -29,9 +28,6 @@ func (m *MemStore) CreatePrewarmIntent(_ context.Context, appID, accountID strin
 	app, ok := m.apps[appID]
 	if !ok || app.Status == AppDeleted || app.AccountID != accountID {
 		return PrewarmIntent{}, ErrNotFound
-	}
-	if strings.TrimSpace(trigger) == "" {
-		trigger = PrewarmTriggerCalendar
 	}
 	now := time.Now().UTC()
 	intent := PrewarmIntent{

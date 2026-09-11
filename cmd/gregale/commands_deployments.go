@@ -495,6 +495,9 @@ func cmdDeploymentGet(args []string) int {
 	if d.BuildID != "" {
 		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "build_id:", d.BuildID)
 	}
+	if cache := formatBuildCacheSummary(d.BuildCacheStatus, d.CacheKeySHA256); cache != "" {
+		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "build_cache:", cache)
+	}
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "image_digest:", d.ImageDigest)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "kind:", d.Kind)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "status:", d.Status)
@@ -666,7 +669,17 @@ func cmdDeploymentSetMinInstances(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	minSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "min" {
+			minSet = true
+		}
+	})
 	if len(pos) != 1 {
+		PrintUsage(os.Stderr, "usage: gregale deployment set-min-instances <id> --min N", "deployment")
+		return 1
+	}
+	if !minSet {
 		PrintUsage(os.Stderr, "usage: gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}

@@ -108,7 +108,7 @@ func (f *fakeWakeVMM) UpdateStaticEgressIP(_ context.Context, _, _, _ string, _ 
 // tests do. Returns a closed fakeLogStream so any accidental caller
 // exits cleanly. PR-B adds the sinceWrittenAt time lower-bound; the
 // fake ignores it.
-func (f *fakeWakeVMM) Logs(_ context.Context, _, _ string, _ int64, _ time.Time) (LogStream, error) {
+func (f *fakeWakeVMM) Logs(_ context.Context, _, _ string, _ int64, _ time.Time, _ bool) (LogStream, error) {
 	return &fakeLogStream{}, nil
 }
 

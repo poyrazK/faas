@@ -322,6 +322,24 @@ type AppLogDrain struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type AppLogDrainHealth struct {
+	DrainID               pgtype.UUID
+	Status                string
+	Active                bool
+	QueueDepth            int32
+	QueueCapacity         int32
+	DeliveredTotal        int64
+	FailedTotal           int64
+	DroppedTotal          int64
+	RetriesTotal          int64
+	StreamReconnectsTotal int64
+	GapsTotal             int64
+	LastSuccessAt         pgtype.Timestamptz
+	LastFailureAt         pgtype.Timestamptz
+	LastError             pgtype.Text
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type AppOpenapiDoc struct {
 	AppID          pgtype.UUID
 	AccountID      pgtype.UUID
@@ -408,6 +426,23 @@ type AuditLog struct {
 	Actor        pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
 	Data         []byte
+}
+
+type BillingIdentity struct {
+	AccountID      pgtype.UUID
+	Provider       string
+	CustomerID     string
+	SubscriptionID string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type BillingUsageDelivery struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	WindowStart pgtype.Timestamptz
+	MbSeconds   int64
+	DeliveredAt pgtype.Timestamptz
 }
 
 type Build struct {
@@ -1001,6 +1036,13 @@ type Instance struct {
 	Mode               string
 }
 
+type InstanceBillingInterval struct {
+	ID         int64
+	InstanceID pgtype.UUID
+	StartedAt  pgtype.Timestamptz
+	EndedAt    pgtype.Timestamptz
+}
+
 type Invocation struct {
 	ID                       pgtype.UUID
 	AppID                    pgtype.UUID
@@ -1039,25 +1081,40 @@ type InvocationsPendingPerApp struct {
 }
 
 type Invoice struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	Provider          string
-	ProviderInvoiceID string
-	Number            string
-	Status            string
-	PeriodStart       pgtype.Timestamptz
-	PeriodEnd         pgtype.Timestamptz
-	SubtotalCents     int64
-	TaxCents          int64
-	TotalCents        int64
-	AmountPaidCents   int64
-	Currency          string
-	PdfAvailable      bool
-	HostedUrl         string
-	Raw               []byte
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	OrgID             pgtype.UUID
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Provider            string
+	ProviderInvoiceID   string
+	ProviderChargeID    string
+	Number              string
+	Status              string
+	PeriodStart         pgtype.Timestamptz
+	PeriodEnd           pgtype.Timestamptz
+	SubtotalCents       int64
+	TaxCents            int64
+	TotalCents          int64
+	AmountPaidCents     int64
+	Plan                string
+	AmountRefundedCents int64
+	CreditsAppliedCents int64
+	Currency            string
+	PdfAvailable        bool
+	HostedUrl           string
+	Raw                 []byte
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	OrgID               pgtype.UUID
+}
+
+type InvoiceRefund struct {
+	ID               pgtype.UUID
+	InvoiceID        pgtype.UUID
+	ProviderRefundID string
+	IdempotencyKey   string
+	AmountCents      int64
+	Source           string
+	Status           string
+	CreatedAt        pgtype.Timestamptz
 }
 
 type Job struct {
@@ -1519,100 +1576,121 @@ type ReleaseBundle struct {
 }
 
 type RequestTelemetry struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	DeploymentID pgtype.UUID
-	Route        string
-	Method       string
-	Status       int32
-	LatencyMs    int32
-	ColdBoot     bool
-	TraceID      pgtype.Text
-	SpansSummary []byte
-	ReceivedAt   pgtype.Timestamptz
-	Count        int32
-	UaFamily     string
-	ReferrerHost string
-	Country      string
-	WakeID       pgtype.Text
-	InstanceID   pgtype.Text
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Route           string
+	Method          string
+	Status          int32
+	LatencyMs       int32
+	ColdBoot        bool
+	TraceID         pgtype.Text
+	SpansSummary    []byte
+	ReceivedAt      pgtype.Timestamptz
+	Count           int32
+	UaFamily        string
+	ReferrerHost    string
+	Country         string
+	WakeID          pgtype.Text
+	InstanceID      pgtype.Text
+	GuestDurationMs int32
+	GuestRuntime    string
+	GuestOutcome    string
+	GuestErrorClass string
+	ConsumerID      pgtype.UUID
 }
 
 type RequestTelemetry202608 struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	DeploymentID pgtype.UUID
-	Route        string
-	Method       string
-	Status       int32
-	LatencyMs    int32
-	ColdBoot     bool
-	TraceID      pgtype.Text
-	SpansSummary []byte
-	ReceivedAt   pgtype.Timestamptz
-	Count        int32
-	UaFamily     string
-	ReferrerHost string
-	Country      string
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Route           string
+	Method          string
+	Status          int32
+	LatencyMs       int32
+	ColdBoot        bool
+	TraceID         pgtype.Text
+	SpansSummary    []byte
+	ReceivedAt      pgtype.Timestamptz
+	Count           int32
+	UaFamily        string
+	ReferrerHost    string
+	Country         string
+	GuestDurationMs int32
+	GuestRuntime    string
+	GuestOutcome    string
+	GuestErrorClass string
 }
 
 type RequestTelemetry202609 struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	DeploymentID pgtype.UUID
-	Route        string
-	Method       string
-	Status       int32
-	LatencyMs    int32
-	ColdBoot     bool
-	TraceID      pgtype.Text
-	SpansSummary []byte
-	ReceivedAt   pgtype.Timestamptz
-	Count        int32
-	UaFamily     string
-	ReferrerHost string
-	Country      string
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Route           string
+	Method          string
+	Status          int32
+	LatencyMs       int32
+	ColdBoot        bool
+	TraceID         pgtype.Text
+	SpansSummary    []byte
+	ReceivedAt      pgtype.Timestamptz
+	Count           int32
+	UaFamily        string
+	ReferrerHost    string
+	Country         string
+	GuestDurationMs int32
+	GuestRuntime    string
+	GuestOutcome    string
+	GuestErrorClass string
 }
 
 type RequestTelemetry202610 struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	DeploymentID pgtype.UUID
-	Route        string
-	Method       string
-	Status       int32
-	LatencyMs    int32
-	ColdBoot     bool
-	TraceID      pgtype.Text
-	SpansSummary []byte
-	ReceivedAt   pgtype.Timestamptz
-	Count        int32
-	UaFamily     string
-	ReferrerHost string
-	Country      string
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Route           string
+	Method          string
+	Status          int32
+	LatencyMs       int32
+	ColdBoot        bool
+	TraceID         pgtype.Text
+	SpansSummary    []byte
+	ReceivedAt      pgtype.Timestamptz
+	Count           int32
+	UaFamily        string
+	ReferrerHost    string
+	Country         string
+	GuestDurationMs int32
+	GuestRuntime    string
+	GuestOutcome    string
+	GuestErrorClass string
 }
 
 type RequestTelemetryDefault struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	DeploymentID pgtype.UUID
-	Route        string
-	Method       string
-	Status       int32
-	LatencyMs    int32
-	ColdBoot     bool
-	TraceID      pgtype.Text
-	SpansSummary []byte
-	ReceivedAt   pgtype.Timestamptz
-	Count        int32
-	UaFamily     string
-	ReferrerHost string
-	Country      string
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Route           string
+	Method          string
+	Status          int32
+	LatencyMs       int32
+	ColdBoot        bool
+	TraceID         pgtype.Text
+	SpansSummary    []byte
+	ReceivedAt      pgtype.Timestamptz
+	Count           int32
+	UaFamily        string
+	ReferrerHost    string
+	Country         string
+	GuestDurationMs int32
+	GuestRuntime    string
+	GuestOutcome    string
+	GuestErrorClass string
 }
 
 type RuntimeConfigEntry struct {
@@ -1666,6 +1744,29 @@ type RuntimeConfigRevision struct {
 	ActorID   pgtype.UUID
 	Reason    pgtype.Text
 	CreatedAt pgtype.Timestamptz
+}
+
+type RuntimeSnapshot struct {
+	ID                  pgtype.UUID
+	CatalogKey          string
+	Runtime             string
+	Architecture        string
+	KernelDigest        string
+	GuestExecutorDigest string
+	BaseImageDigest     string
+	MemoryMb            int32
+	EphemeralDiskMb     int32
+	FormatVersion       int32
+	StorageKey          string
+	SnapshotDigest      string
+	MemBytes            int64
+	VmStateBytes        int64
+	Sanitized           bool
+	PayloadFree         bool
+	State               string
+	CreatedAt           pgtype.Timestamptz
+	PublishedAt         pgtype.Timestamptz
+	RetiredAt           pgtype.Timestamptz
 }
 
 type Session struct {

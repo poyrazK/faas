@@ -20,6 +20,14 @@ func (f *failingPingStore) Ping(_ context.Context) error {
 	return errors.New("connection refused")
 }
 
+type failingDebugRegressionReadinessStore struct {
+	state.Store
+}
+
+func (f *failingDebugRegressionReadinessStore) CheckDebugRegressionReadiness(_ context.Context) error {
+	return errors.New("undefined table")
+}
+
 func TestReadyz_Healthy(t *testing.T) {
 	e := setup(t, api.PlanFree)
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
@@ -50,5 +58,21 @@ func TestReadyz_UnhealthyWhenStoreFails(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `"status":"unhealthy"`) || !strings.Contains(body, `"database":"unreachable"`) {
 		t.Errorf("body = %q, want status:unhealthy and database:unreachable", body)
+	}
+}
+
+func TestReadyz_UnhealthyWhenDebuggerRegressionReadFails(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	e.s.store = &failingDebugRegressionReadinessStore{Store: e.s.store}
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"status":"unhealthy"`) || !strings.Contains(body, `"database":"ok"`) || !strings.Contains(body, `"debugger":"unavailable"`) {
+		t.Errorf("body = %q, want debugger dependency failure", body)
 	}
 }

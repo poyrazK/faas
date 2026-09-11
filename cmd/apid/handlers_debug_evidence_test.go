@@ -69,6 +69,20 @@ func TestBuildDebugEvidenceExplanation(t *testing.T) {
 	}
 }
 
+func TestBuildDebugEvidenceDegradedExplanation(t *testing.T) {
+	spans := []api.DebugTelemetrySpan{{Name: "db.query", DurationNanos: 25_000_000}}
+	got := buildDebugEvidenceDegradedExplanation(spans)
+	if got.Status != "regression_unavailable" {
+		t.Fatalf("status = %q, want regression_unavailable", got.Status)
+	}
+	if !strings.Contains(got.Headline, "request evidence is otherwise complete") {
+		t.Fatalf("headline = %q", got.Headline)
+	}
+	if got.PrimarySpan == nil || got.PrimarySpan.Name != "db.query" {
+		t.Fatalf("primary span = %+v, want db.query", got.PrimarySpan)
+	}
+}
+
 func TestBuildDebugRequestTimelineJoinsWakeAndMarksError(t *testing.T) {
 	store := state.NewMemStore()
 	appID := "app-timeline"
@@ -115,6 +129,22 @@ func TestBuildDebugRequestTimelineWithoutWake(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Kind != "request.received" || got[1].Kind != "request.completed" {
 		t.Fatalf("warm timeline = %+v", got)
+	}
+}
+
+func TestBuildDebugRequestTimelineIncludesGuestEvidence(t *testing.T) {
+	request := api.DebugTelemetryRequestItem{
+		ReceivedAt: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		LatencyMS:  42,
+		Status:     200,
+		Guest:      &api.DebugGuestExecutionEvidence{Runtime: "node22", DurationMS: 17, Outcome: "ok"},
+	}
+	got, err := (&server{}).buildDebugRequestTimeline(context.Background(), "app", request, nil)
+	if err != nil {
+		t.Fatalf("buildDebugRequestTimeline: %v", err)
+	}
+	if len(got) != 3 || got[1].Kind != "guest.execution" || got[1].DurationMS != 17 {
+		t.Fatalf("guest timeline = %+v", got)
 	}
 }
 
@@ -172,5 +202,23 @@ func TestBuildDebugRequestCorrelationComputesQueueWakeAndDownstream(t *testing.T
 	}
 	if got.Complete {
 		t.Fatal("partial guest and missing billing signals must not be complete")
+	}
+}
+
+func TestBuildDebugRequestCorrelationObservesGuestExecution(t *testing.T) {
+	request := api.DebugTelemetryRequestItem{
+		Guest: &api.DebugGuestExecutionEvidence{Runtime: "python313", DurationMS: 83, Outcome: "handler_error", ErrorClass: "handler_exec"},
+	}
+	timeline := []api.DebugTimelineEvent{{
+		At: "2026-09-09T12:00:00.200Z", Phase: "guest", Kind: "guest.execution",
+		DurationMS: 83, Status: 500, Approximate: true,
+	}}
+	got := buildDebugRequestCorrelation(request, timeline, nil)
+	stage := got.Stages[3]
+	if stage.Status != "observed" || stage.DurationMS != 83 || stage.EvidenceCount != 1 || !stage.Approximate {
+		t.Fatalf("guest stage = %+v", stage)
+	}
+	if !strings.Contains(stage.Reason, "python313") || !strings.Contains(stage.Reason, "handler_exec") {
+		t.Fatalf("guest stage reason = %q", stage.Reason)
 	}
 }

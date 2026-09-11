@@ -245,13 +245,21 @@ customer bucket; the cleanup trap removes the temporary object, bindings,
 credential, and bucket even when a check fails.
 
 This first endpoint slice supports ListBuckets for the credential's one bucket,
-HeadBucket, GetBucketLocation, ListObjectsV2 without delimiters,
+HeadBucket, GetBucketLocation, ListObjectsV2 with delimiter/common-prefix
+listing,
 GetObject/HeadObject/PutObject/DeleteObject, and the standard multipart
-initiate/list-parts/upload-part/complete/abort operations. It validates AWS
+initiate/list-parts/upload-part/complete/abort operations, plus CopyObject with
+COPY/REPLACE metadata and tagging directives. It validates AWS
 Signature V4 in both the `Authorization` header and presigned query form.
 Presigned GET, HEAD, PUT, and DELETE capabilities are limited to seven days and
 remain subject to credential revocation when a request arrives. Uploads
-validate SHA-256 and Content-MD5 before writing upstream. It emits
+validate SHA-256 and Content-MD5 before writing upstream. Ordinary PUT accepts
+the standard HTTP metadata fields, `x-amz-meta-*`, and URL-encoded
+`x-amz-tagging`; GET/HEAD returns customer metadata using the branded
+`x-amz-meta-*` names. `?tagging` supports GET, PUT, and DELETE with up to ten
+tags per object. S3 backends use native tags; GCS stores the tag set in a
+reserved provider-private metadata field (including direct signed uploads) that
+is hidden from customers. It emits
 Gregale-owned S3 XML errors and filters provider response headers, URLs, bucket
 names, and credentials. At most four PUTs per gateway are staged concurrently;
 additional authenticated uploads receive S3 `SlowDown` without consuming more
@@ -260,12 +268,10 @@ provider and are limited by the configured per-part upload ceiling. Use
 `s3api put-object` for simple uploads; the high-level `aws s3 cp` command can
 automatically select multipart uploads.
 
-SigV4 streaming/chunked uploads,
-delimiter/common-prefix listing, CopyObject, object metadata/tags, bucket
-lifecycle APIs, versioning, ACLs, and bucket create/delete through the S3
-protocol are explicit `NotImplemented` gaps. Bucket lifecycle remains on the
-authenticated Gregale API so a customer credential cannot escape its assigned
-logical bucket.
+SigV4 streaming/chunked uploads, bucket lifecycle APIs, versioning, ACLs, and
+bucket create/delete through the S3 protocol are explicit `NotImplemented`
+gaps. Bucket lifecycle remains on the authenticated Gregale API so a customer
+credential cannot escape its assigned logical bucket.
 
 ## Recovery and operator attention
 
@@ -570,7 +576,9 @@ its granted buckets in the bucket list; a management principal sees all buckets.
   pass `next_cursor` without interpreting it, keeping the same prefix.
 - `DELETE /{bucket-id}/objects?key=...`: URL-encode the entire exact key.
 - `POST /{bucket-id}/signed-url`: `{ "method": "PUT", "key": "hello.txt",
-  "size_bytes": 5, "content_type": "text/plain", "expires_in": 300 }`.
+  "size_bytes": 5, "content_type": "text/plain", "metadata": {"owner":"platform"},
+  "tags": {"env":"prod"}, "expires_in": 300 }`. The returned headers must
+  be preserved exactly for the upload.
   Use returned `url`, `method`, `headers` with the exact five-byte body. For
   download request `{ "method": "GET", "key": "hello.txt" }` (read scope).
 - `POST /{bucket-id}/multipart-uploads`: create or recover one upload for a key

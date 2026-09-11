@@ -114,6 +114,11 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// Customer runtime log destinations with durable delivery health.
+			if lslug, ok := parseAppLogDrainsPath(slug); ok {
+				s.renderAppLogDrains(w, r, log, acct, lslug)
+				return
+			}
 			// G10 / issue #1397 — object storage buckets, objects,
 			// signed URLs, and daily storage usage.
 			if sslug, ok := parseAppStoragePath(slug); ok {
@@ -1408,7 +1413,7 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	// Free → paid hand-off (dashboard_upgrade.go): per-plan links to the
 	// /dashboard/upgrade confirmation page when the provider has hosted
 	// checkout and the account has no subscription yet.
-	data.CanCheckout = s.canStartCheckout(acct)
+	data.CanCheckout = s.canStartCheckout(ctx, acct)
 	data.UpgradeOptions = upgradeOptionsFor(acct)
 	data.UpgradeNotice = upgradeNoticeFor(r.URL.Query().Get("upgrade"))
 

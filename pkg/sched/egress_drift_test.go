@@ -5,6 +5,8 @@
 // captures every (nodeID, appID, allowlist) UpdateEgressAllowlist
 // call. PG-backed integration is out of scope here — that lands in
 // the sched pg suite.
+// adr: 043 — keep the routed VMM log-stream surface covered while
+// the app-log transport gains its explicit follow mode.
 
 package sched
 
@@ -179,7 +181,7 @@ func (r *recordingRouterVMM) Stats(_ context.Context, _ string) (*StatsSnapshot,
 // returns a no-op fake stream that closes immediately. Tests that
 // exercise the Move 4 path inject a different fake. PR-B adds the
 // sinceWrittenAt time lower-bound; the fake ignores it.
-func (r *recordingRouterVMM) Logs(_ context.Context, _, _ string, _ int64, _ time.Time) (LogStream, error) {
+func (r *recordingRouterVMM) Logs(_ context.Context, _, _ string, _ int64, _ time.Time, _ bool) (LogStream, error) {
 	return &fakeLogStream{}, nil
 }
 

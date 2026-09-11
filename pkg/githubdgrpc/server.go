@@ -71,6 +71,10 @@ type Service interface {
 	// is hit; bytesStreamed is the post-cap cumulative count for
 	// the deployment row's source_bytes column.
 	StreamSourceRef(ctx context.Context, accountID string, installationID int64, repoFullName, ref string, maxArchiveBytes int64) (rc io.ReadCloser, resolvedCommitSHA string, truncated bool, bytesStreamed int64, err error)
+
+	ListRecoveryQueueItems(ctx context.Context, status string, limit int) (RecoveryQueueItems, error)
+	RetryWebhookDelivery(ctx context.Context, deliveryID string) (bool, error)
+	RetryCheckUpdate(ctx context.Context, deploymentID string) (bool, error)
 }
 
 // Server implements githubdpb.GithubdServer. It wraps a Service so
@@ -235,6 +239,76 @@ func (s *Server) WriteCheck(ctx context.Context, req *githubdpb.WriteCheckReques
 		return nil, toStatusErr(err)
 	}
 	return &githubdpb.WriteCheckResponse{}, nil
+}
+
+// ListRecoveryQueueItems exposes queue metadata without customer webhook
+// payloads. Authentication is enforced by apid before this internal RPC.
+func (s *Server) ListRecoveryQueueItems(ctx context.Context, req *githubdpb.ListRecoveryQueueItemsRequest) (*githubdpb.ListRecoveryQueueItemsResponse, error) {
+	const op = "ListRecoveryQueueItems"
+	start := time.Now()
+	items, err := s.svc.ListRecoveryQueueItems(ctx, req.GetStatus(), int(req.GetLimit()))
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, toStatusErr(err)
+	}
+	return recoveryQueueItemsToProto(items), nil
+}
+
+// RetryWebhookDelivery performs the githubd-owned dead-to-pending CAS.
+func (s *Server) RetryWebhookDelivery(ctx context.Context, req *githubdpb.RetryWebhookDeliveryRequest) (*githubdpb.RetryRecoveryItemResponse, error) {
+	const op = "RetryWebhookDelivery"
+	start := time.Now()
+	retried, err := s.svc.RetryWebhookDelivery(ctx, req.GetDeliveryId())
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, toStatusErr(err)
+	}
+	return &githubdpb.RetryRecoveryItemResponse{Retried: retried}, nil
+}
+
+// RetryCheckUpdate performs the githubd-owned dead-to-pending CAS.
+func (s *Server) RetryCheckUpdate(ctx context.Context, req *githubdpb.RetryCheckUpdateRequest) (*githubdpb.RetryRecoveryItemResponse, error) {
+	const op = "RetryCheckUpdate"
+	start := time.Now()
+	retried, err := s.svc.RetryCheckUpdate(ctx, req.GetDeploymentId())
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, toStatusErr(err)
+	}
+	return &githubdpb.RetryRecoveryItemResponse{Retried: retried}, nil
+}
+
+func recoveryQueueItemsToProto(items RecoveryQueueItems) *githubdpb.ListRecoveryQueueItemsResponse {
+	out := &githubdpb.ListRecoveryQueueItemsResponse{
+		Deliveries:   make([]*githubdpb.WebhookDeliveryRecord, 0, len(items.Deliveries)),
+		CheckUpdates: make([]*githubdpb.CheckUpdateRecord, 0, len(items.CheckUpdates)),
+	}
+	for _, item := range items.Deliveries {
+		out.Deliveries = append(out.Deliveries, &githubdpb.WebhookDeliveryRecord{
+			DeliveryId: item.DeliveryID, EventType: item.EventType, Status: item.Status,
+			Attempts: int32(item.Attempts), NextAttemptAt: formatRecoveryTime(item.NextAttempt),
+			LastError: item.LastError, ReceivedAt: formatRecoveryTime(item.ReceivedAt),
+			ProcessedAt: formatOptionalRecoveryTime(item.ProcessedAt), UpdatedAt: formatRecoveryTime(item.UpdatedAt),
+		})
+	}
+	for _, item := range items.CheckUpdates {
+		out.CheckUpdates = append(out.CheckUpdates, &githubdpb.CheckUpdateRecord{
+			DeploymentId: item.DeploymentID, Generation: item.Generation, Status: item.Status,
+			Attempts: int32(item.Attempts), NextAttemptAt: formatRecoveryTime(item.NextAttempt),
+			LastError: item.LastError, ProcessedAt: formatOptionalRecoveryTime(item.ProcessedAt),
+			UpdatedAt: formatRecoveryTime(item.UpdatedAt),
+		})
+	}
+	return out
+}
+
+func formatRecoveryTime(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
+
+func formatOptionalRecoveryTime(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return formatRecoveryTime(*value)
 }
 
 // VerifyInstallation passes through to Service.VerifyInstallation.
@@ -458,4 +532,16 @@ func (UnimplementedService) MintInstallationToken(string, int64) (string, time.T
 // the codeload-streaming shape before PR-A lands.
 func (UnimplementedService) StreamSourceRef(context.Context, string, int64, string, string, int64) (io.ReadCloser, string, bool, int64, error) {
 	return nil, "", false, 0, status.Error(codes.Unimplemented, "githubd: StreamSourceRef not yet wired (DEPLOY-PROV-4)")
+}
+
+func (UnimplementedService) ListRecoveryQueueItems(context.Context, string, int) (RecoveryQueueItems, error) {
+	return RecoveryQueueItems{}, status.Error(codes.Unimplemented, "githubd: recovery queues not wired")
+}
+
+func (UnimplementedService) RetryWebhookDelivery(context.Context, string) (bool, error) {
+	return false, status.Error(codes.Unimplemented, "githubd: delivery recovery not wired")
+}
+
+func (UnimplementedService) RetryCheckUpdate(context.Context, string) (bool, error) {
+	return false, status.Error(codes.Unimplemented, "githubd: check recovery not wired")
 }

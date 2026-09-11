@@ -3116,8 +3116,12 @@ type LogsRequest struct {
 	SinceSeq       int64                  `protobuf:"varint,2,opt,name=since_seq,json=sinceSeq,proto3" json:"since_seq,omitempty"`
 	WakeId         string                 `protobuf:"bytes,3,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
 	SinceWrittenAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=since_written_at,json=sinceWrittenAt,proto3" json:"since_written_at,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// follow controls whether the stream remains attached after the
+	// retained replay page. When unset, legacy callers retain the live-tail
+	// behavior; explicit false makes this a one-shot snapshot stream.
+	Follow        *bool `protobuf:"varint,5,opt,name=follow,proto3,oneof" json:"follow,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LogsRequest) Reset() {
@@ -3176,6 +3180,13 @@ func (x *LogsRequest) GetSinceWrittenAt() *timestamppb.Timestamp {
 		return x.SinceWrittenAt
 	}
 	return nil
+}
+
+func (x *LogsRequest) GetFollow() bool {
+	if x != nil && x.Follow != nil {
+		return *x.Follow
+	}
+	return false
 }
 
 // LogsResponse is one streamed log line. seq is the per-instance
@@ -5310,12 +5321,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x04mode\x18\x03 \x01(\tR\x04mode\x12\x1d\n" +
 	"\n" +
 	"filter_len\x18\x04 \x01(\x05R\tfilterLen\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\xa5\x01\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xcd\x01\n" +
 	"\vLogsRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tsince_seq\x18\x02 \x01(\x03R\bsinceSeq\x12\x17\n" +
 	"\awake_id\x18\x03 \x01(\tR\x06wakeId\x12D\n" +
-	"\x10since_written_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0esinceWrittenAt\"\x9a\x02\n" +
+	"\x10since_written_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0esinceWrittenAt\x12\x1b\n" +
+	"\x06follow\x18\x05 \x01(\bH\x00R\x06follow\x88\x01\x01B\t\n" +
+	"\a_follow\"\x9a\x02\n" +
 	"\fLogsResponse\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x16\n" +
 	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
@@ -5664,6 +5677,7 @@ func file_onebox_faas_vmmd_v1_vmmd_proto_init() {
 	if File_onebox_faas_vmmd_v1_vmmd_proto != nil {
 		return
 	}
+	file_onebox_faas_vmmd_v1_vmmd_proto_msgTypes[37].OneofWrappers = []any{}
 	file_onebox_faas_vmmd_v1_vmmd_proto_msgTypes[49].OneofWrappers = []any{
 		(*ForwardHTTPStreamRequest_Init)(nil),
 		(*ForwardHTTPStreamRequest_BodyChunk)(nil),

@@ -22,10 +22,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -33,6 +36,7 @@ type pgHandlerEnv struct {
 	h     http.Handler
 	s     *server
 	store state.Store
+	pool  *pgxpool.Pool
 	key   string
 	acct  state.Account
 }
@@ -59,7 +63,7 @@ func setupPGHandler(t *testing.T, plan api.Plan) pgHandlerEnv {
 	ops := wire.NewOpsMetrics("apid_pg_handler_test")
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
 		WithOpsMetrics(context.Background(), ops)
-	return pgHandlerEnv{h: srv.handler(), s: srv, store: store, key: plain, acct: acct}
+	return pgHandlerEnv{h: srv.handler(), s: srv, store: store, pool: pool, key: plain, acct: acct}
 }
 
 func (e pgHandlerEnv) do(t *testing.T, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -199,6 +203,181 @@ func TestPGHandler_AppUsageReadsPgStore(t *testing.T) {
 	}
 }
 
+// TestPGHandler_DebuggerRequestAndRegressionReadPaths exercises the complete
+// customer debugger loop against the real HTTP handler and PgStore: request
+// list/get, an empty regression result, evidence without enrichment, then a
+// non-empty regression result and matching evidence after an upsert.
+func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
+	e := setupPGHandler(t, api.PlanPro)
+	app := seedPGApp(t, e, "pg-debugger")
+	deploymentID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if err := e.store.InsertRequestTelemetry(context.Background(), sqlc.InsertRequestTelemetryParams{
+		AccountID:    pgtype.UUID{Bytes: uuid.MustParse(e.acct.ID), Valid: true},
+		AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
+		DeploymentID: pgtype.UUID{Bytes: deploymentID, Valid: true},
+		Route:        "GET /debug",
+		Method:       "GET",
+		Status:       200,
+		LatencyMs:    87,
+		ColdBoot:     false,
+		TraceID:      pgtype.Text{},
+		ReceivedAt:   pgtype.Timestamptz{Time: now, Valid: true},
+		Count:        1,
+		UaFamily:     "__unknown__",
+		ReferrerHost: "__none__",
+		Country:      "__unknown__",
+	}); err != nil {
+		t.Fatalf("InsertRequestTelemetry: %v", err)
+	}
+
+	listRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/requests?since=24h", nil, nil)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("debug request list status = %d: %s", listRec.Code, listRec.Body.String())
+	}
+	var listed api.DebugTelemetryListResponse
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode debug request list: %v", err)
+	}
+	if len(listed.Requests) != 1 {
+		t.Fatalf("debug request list = %+v, want one row", listed)
+	}
+	reqID := listed.Requests[0].ID
+
+	getRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/requests/"+reqID, nil, nil)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("debug request get status = %d: %s", getRec.Code, getRec.Body.String())
+	}
+	var got api.DebugTelemetryRequestItem
+	if err := json.Unmarshal(getRec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode debug request get: %v", err)
+	}
+	if got.ID != reqID || got.Route != "GET /debug" || got.LatencyMS != 87 {
+		t.Fatalf("debug request get = %+v, want id=%s route=GET /debug latency=87", got, reqID)
+	}
+
+	regRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/regressions?since=24h", nil, nil)
+	if regRec.Code != http.StatusOK {
+		t.Fatalf("empty debug regressions status = %d: %s", regRec.Code, regRec.Body.String())
+	}
+	var empty api.DebugRegressionsResponse
+	if err := json.Unmarshal(regRec.Body.Bytes(), &empty); err != nil {
+		t.Fatalf("decode empty debug regressions: %v", err)
+	}
+	if len(empty.Regressions) != 0 {
+		t.Fatalf("empty debug regressions = %+v, want zero rows", empty.Regressions)
+	}
+
+	evidenceRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/requests/"+reqID+"/evidence", nil, nil)
+	if evidenceRec.Code != http.StatusOK {
+		t.Fatalf("debug evidence without regression status = %d: %s", evidenceRec.Code, evidenceRec.Body.String())
+	}
+	var evidence api.DebugRequestEvidenceResponse
+	if err := json.Unmarshal(evidenceRec.Body.Bytes(), &evidence); err != nil {
+		t.Fatalf("decode debug evidence: %v", err)
+	}
+	if evidence.Request.ID != reqID || evidence.Regression != nil || evidence.Explanation.Status != "unobserved" {
+		t.Fatalf("debug evidence without regression = %+v, want request + nil regression + unobserved", evidence)
+	}
+
+	factor := pgtype.Numeric{}
+	if err := factor.Scan("1.50"); err != nil {
+		t.Fatalf("scan regression factor: %v", err)
+	}
+	if err := e.store.UpsertRegressionObservation(context.Background(), sqlc.UpsertRegressionObservationParams{
+		AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
+		DeploymentID: pgtype.UUID{Bytes: deploymentID, Valid: true},
+		Route:        "GET /debug", P95Ms: 300, P95BaseMs: 200, AffectedCount: 4,
+		RegressionFactor: factor,
+	}); err != nil {
+		t.Fatalf("UpsertRegressionObservation: %v", err)
+	}
+
+	regRec = e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/regressions?since=24h", nil, nil)
+	if regRec.Code != http.StatusOK {
+		t.Fatalf("non-empty debug regressions status = %d: %s", regRec.Code, regRec.Body.String())
+	}
+	var nonEmpty api.DebugRegressionsResponse
+	if err := json.Unmarshal(regRec.Body.Bytes(), &nonEmpty); err != nil {
+		t.Fatalf("decode non-empty debug regressions: %v", err)
+	}
+	if len(nonEmpty.Regressions) != 1 || nonEmpty.Regressions[0].Route != "GET /debug" || nonEmpty.Regressions[0].Factor != "1.50" {
+		t.Fatalf("non-empty debug regressions = %+v, want GET /debug at 1.50x", nonEmpty.Regressions)
+	}
+
+	evidenceRec = e.do(t, http.MethodGet, "/v1/apps/pg-debugger/debug/requests/"+reqID+"/evidence", nil, nil)
+	if evidenceRec.Code != http.StatusOK {
+		t.Fatalf("debug evidence with regression status = %d: %s", evidenceRec.Code, evidenceRec.Body.String())
+	}
+	if err := json.Unmarshal(evidenceRec.Body.Bytes(), &evidence); err != nil {
+		t.Fatalf("decode debug evidence with regression: %v", err)
+	}
+	if evidence.Regression == nil || evidence.Regression.Route != "GET /debug" || evidence.Explanation.Status != "regression_detected" {
+		t.Fatalf("debug evidence with regression = %+v, want matching regression_detected explanation", evidence)
+	}
+}
+
+func TestPGHandler_DebuggerEvidenceDegradesWhenRegressionReadFails(t *testing.T) {
+	e := setupPGHandler(t, api.PlanPro)
+	app := seedPGApp(t, e, "pg-debugger-degraded")
+	if err := e.store.InsertRequestTelemetry(context.Background(), sqlc.InsertRequestTelemetryParams{
+		AccountID:    pgtype.UUID{Bytes: uuid.MustParse(e.acct.ID), Valid: true},
+		AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
+		DeploymentID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		Route:        "GET /degraded",
+		Method:       "GET",
+		Status:       500,
+		LatencyMs:    42,
+		ColdBoot:     false,
+		// request_telemetry.trace_id follows the W3C 32-character lowercase
+		// hexadecimal format; the request row ID is not a valid trace ID.
+		TraceID:      pgtype.Text{String: "0123456789abcdef0123456789abcdef", Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		Count:        1,
+		UaFamily:     "__unknown__",
+		ReferrerHost: "__none__",
+		Country:      "__unknown__",
+	}); err != nil {
+		t.Fatalf("InsertRequestTelemetry: %v", err)
+	}
+	listRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger-degraded/debug/requests?since=24h", nil, nil)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("debug request list status = %d: %s", listRec.Code, listRec.Body.String())
+	}
+	var listed api.DebugTelemetryListResponse
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listed); err != nil || len(listed.Requests) != 1 {
+		t.Fatalf("decode debug request list = %+v (err=%v)", listed, err)
+	}
+
+	if _, err := e.pool.Exec(context.Background(), `drop table debug_regression_observations`); err != nil {
+		t.Fatalf("drop regression table: %v", err)
+	}
+	reqID := listed.Requests[0].ID
+	evidenceRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger-degraded/debug/requests/"+reqID+"/evidence", nil, nil)
+	if evidenceRec.Code != http.StatusOK {
+		t.Fatalf("degraded debug evidence status = %d: %s", evidenceRec.Code, evidenceRec.Body.String())
+	}
+	var evidence api.DebugRequestEvidenceResponse
+	if err := json.Unmarshal(evidenceRec.Body.Bytes(), &evidence); err != nil {
+		t.Fatalf("decode degraded debug evidence: %v", err)
+	}
+	if evidence.Request.ID != reqID || evidence.Regression != nil || evidence.Explanation.Status != "regression_unavailable" {
+		t.Fatalf("degraded debug evidence = %+v, want request + nil regression + regression_unavailable", evidence)
+	}
+
+	regRec := e.do(t, http.MethodGet, "/v1/apps/pg-debugger-degraded/debug/regressions?since=24h", nil, nil)
+	if regRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("degraded debug regressions status = %d: %s", regRec.Code, regRec.Body.String())
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(regRec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode degraded debug regressions problem: %v", err)
+	}
+	if problem.Code != api.CodeDebugRegressionUnavailable {
+		t.Fatalf("degraded debug regressions code = %q, want %q", problem.Code, api.CodeDebugRegressionUnavailable)
+	}
+}
+
 // spec: §7.1, §11 — deployment history is read through the production store
 // and keeps the SQL ordering/cursor contract at the handler boundary.
 func TestPGHandler_DeploymentHistoryPaginates(t *testing.T) {
@@ -245,6 +424,7 @@ func TestPGHandler_DeploymentHistoryPaginates(t *testing.T) {
 func TestPGHandler_AdminCreditIdempotency(t *testing.T) {
 	e := setupPGHandler(t, api.PlanPro)
 	e.s.WithAdminAllowlist(e.acct.Email)
+	e.s.WithBillingProvider(&consumeRefundProvider{})
 	target, err := e.store.CreateAccount(context.Background(), "pg-credit-target-"+uuid.NewString()+"@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatalf("CreateAccount target: %v", err)

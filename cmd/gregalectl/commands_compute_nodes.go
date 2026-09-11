@@ -50,10 +50,9 @@ const dispatchComputeNodes = "compute-nodes"
 // COALESCE, so the operator must land the row first.
 //
 // `list` / `show` are the read-only introspection pair (Cluster C of
-// the gregalectl mega-PR). Mirrors the `compute-nodes` admin API
-// surface (cmd/apid/compute_nodes.go) but goes through state.Store
-// directly so the operator can sanity-check the cluster without
-// standing up apid + auth.
+// the gregalectl mega-PR). They use the authenticated `compute-nodes`
+// admin API by default; direct state.Store reads are reserved for the
+// explicit --break-glass-db path during an apid outage.
 func cmdComputeNodesDispatch(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes: missing subcommand; want add|list|show|drain|drain-status|activate|force-drain")
@@ -80,10 +79,9 @@ func cmdComputeNodesDispatch(args []string) int {
 	}
 }
 
-// computeNodesStoreOpener is the seam tests use to swap in a
-// MemStore without going through FAAS_PG_DSN. Production wires this
-// to openComputeNodesStore; tests wire to a MemStore-returning
-// helper via setComputeNodesStoreOpener.
+// computeNodesStoreOpener is the break-glass/add seam tests use to swap in a
+// MemStore without going through FAAS_PG_DSN. Routine read paths do not call
+// it; production wires it to openComputeNodesStore.
 //
 // The opener returns a `close func()` instead of leaking the
 // *pgxpool.Pool back out — production wires close to pool.Close;
@@ -405,14 +403,14 @@ func effectiveComputeNodeLifecycle(node state.ComputeNode) state.NodeLifecycle {
 //
 // The exit code is 0 when the query succeeds, regardless of row
 // count (an empty fleet is not an error condition — it just means
-// no nodes have been registered yet). The read path uses the same
-// openComputeNodesStore seam the write paths use, so tests can
-// swap in a MemStore via setComputeNodesStoreOpener.
+// no nodes have been registered yet). The normal read path uses apid; the
+// store seam is reached only with --break-glass-db.
 func cmdComputeNodesList(args []string) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	activeOnly := fs.Bool("active-only", false, "filter to active=true rows (default: every row regardless of drain state)")
 	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout")
+	breakGlass := fs.Bool("break-glass-db", false, "read directly from the database during an apid outage")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -420,14 +418,13 @@ func cmdComputeNodesList(args []string) int {
 		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes list: unexpected positional args")
 		return 2
 	}
-	st, closeFn, err := computeNodesStoreOpener()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+	var nodes []state.ComputeNode
+	var err error
+	if *breakGlass {
+		nodes, err = computeNodesListFromDB(*activeOnly)
+	} else {
+		nodes, err = computeNodesListFromAPI(*activeOnly)
 	}
-	defer closeFn()
-
-	nodes, err := st.ListComputeNodes(context.Background(), !*activeOnly)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gregalectl compute-nodes list: %v\n", err)
 		return 1
@@ -437,6 +434,35 @@ func cmdComputeNodesList(args []string) int {
 	}
 	reportComputeNodesList(osStdout, nodes, *activeOnly)
 	return 0
+}
+
+func computeNodesListFromAPI(activeOnly bool) ([]state.ComputeNode, error) {
+	sess, err := loadOperatorSession()
+	if err != nil {
+		return nil, err
+	}
+	path := "/v1/compute-nodes"
+	if !activeOnly {
+		path += "?include_inactive=1"
+	}
+	var response []api.ComputeNodeOperatorResponse
+	if err := newOperatorHTTPClient(&sess).doJSON(context.Background(), http.MethodGet, path, nil, &response, false, nil); err != nil {
+		return nil, err
+	}
+	nodes := make([]state.ComputeNode, 0, len(response))
+	for _, item := range response {
+		nodes = append(nodes, computeNodeFromOperatorResponse(item))
+	}
+	return nodes, nil
+}
+
+func computeNodesListFromDB(activeOnly bool) ([]state.ComputeNode, error) {
+	st, closeFn, err := computeNodesStoreOpener()
+	if err != nil {
+		return nil, err
+	}
+	defer closeFn()
+	return st.ListComputeNodes(context.Background(), !activeOnly)
 }
 
 // reportComputeNodesList prints one line per node in a fixed-width
@@ -478,9 +504,10 @@ type computeNodesListJSON struct {
 }
 
 // computeNodeBrief is the per-node JSON shape. We deliberately
-// drop the heavy pointer fields (HostCertificate, CertFingerprint,
-// ReleaseID, ManifestHash, Generation) that the cmd-line show
-// path exposes; the list is meant for fleet-level assertions
+// drop the detailed pointer fields (CertFingerprint, ReleaseID,
+// ManifestHash, Generation) that the cmd-line show path exposes.
+// HostCertificate never crosses the operator API. The list is meant
+// for fleet-level assertions
 // ("which boxes are registered, what's their role / capacity /
 // dial target") not for per-node audit. The show subcommand is
 // the place that surfaces the heavy fields.
@@ -532,12 +559,14 @@ func emitComputeNodesListJSON(w io.Writer, nodes []state.ComputeNode) int {
 //
 // Missing node is exit 3 (the "row not found" convention that
 // state.Store.ComputeNodeByName returns ErrNotFound for, distinct
-// from the "DB unreachable" exit 1).
+// from the "API unreachable" exit 1). Direct database reads require the
+// explicit --break-glass-db outage flag.
 func cmdComputeNodesShow(args []string) int {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	node := fs.String("node", "", "fqdn / short-hostname of the node to show (required)")
 	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout")
+	breakGlass := fs.Bool("break-glass-db", false, "read directly from the database during an apid outage")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -549,22 +578,57 @@ func cmdComputeNodesShow(args []string) int {
 		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes show: unexpected positional args")
 		return 2
 	}
-	st, closeFn, err := computeNodesStoreOpener()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+	var row state.ComputeNode
+	var live int
+	var err error
+	if *breakGlass {
+		row, live, err = computeNodeShowFromDB(*node)
+	} else {
+		row, live, err = computeNodeShowFromAPI(*node)
 	}
-	defer closeFn()
-
-	ctx := context.Background()
-	row, err := st.ComputeNodeByName(ctx, *node)
 	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
+		var httpErr *operatorHTTPError
+		if errors.Is(err, state.ErrNotFound) || (errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound) {
 			fmt.Fprintf(os.Stderr, "gregalectl compute-nodes show: no compute_node with name=%q\n", *node)
 			return 3
 		}
 		fmt.Fprintf(os.Stderr, "gregalectl compute-nodes show: %v\n", err)
 		return 1
+	}
+	if *jsonOut {
+		return emitComputeNodeShowJSON(osStdout, row, live)
+	}
+	reportComputeNodeShow(os.Stdout, row, live)
+	return 0
+}
+
+func computeNodeShowFromAPI(node string) (state.ComputeNode, int, error) {
+	sess, err := loadOperatorSession()
+	if err != nil {
+		return state.ComputeNode{}, 0, err
+	}
+	var response api.ComputeNodeOperatorResponse
+	path := "/v1/compute-nodes/" + url.PathEscape(node)
+	if err := newOperatorHTTPClient(&sess).doJSON(context.Background(), http.MethodGet, path, nil, &response, false, nil); err != nil {
+		return state.ComputeNode{}, 0, err
+	}
+	live := 0
+	if response.LiveInstanceCount != nil {
+		live = *response.LiveInstanceCount
+	}
+	return computeNodeFromOperatorResponse(response), live, nil
+}
+
+func computeNodeShowFromDB(node string) (state.ComputeNode, int, error) {
+	st, closeFn, err := computeNodesStoreOpener()
+	if err != nil {
+		return state.ComputeNode{}, 0, err
+	}
+	defer closeFn()
+	ctx := context.Background()
+	row, err := st.ComputeNodeByName(ctx, node)
+	if err != nil {
+		return state.ComputeNode{}, 0, err
 	}
 	insts, err := st.ListInstancesOnNodeID(ctx, row.ID)
 	if err != nil {
@@ -581,11 +645,21 @@ func cmdComputeNodesShow(args []string) int {
 			live++
 		}
 	}
-	if *jsonOut {
-		return emitComputeNodeShowJSON(osStdout, row, live)
+	return row, live, nil
+}
+
+func computeNodeFromOperatorResponse(item api.ComputeNodeOperatorResponse) state.ComputeNode {
+	var gatewayTargetURL *string
+	if item.GatewayTargetURL != "" {
+		gatewayTargetURL = &item.GatewayTargetURL
 	}
-	reportComputeNodeShow(os.Stdout, row, live)
-	return 0
+	return state.ComputeNode{
+		ID: item.ID, Name: item.Name, TargetURL: item.TargetURL, GatewayTargetURL: gatewayTargetURL,
+		VPCPUs: item.VPCPUs, MemMB: item.MemMB, MaxConcurrency: item.MaxConcurrency,
+		AdmissionCeilingMB: item.AdmissionCeilingMB, Active: item.Active, Role: item.Role,
+		Region: item.Region, Zone: item.Zone, ReleaseID: item.ReleaseID, ManifestHash: item.ManifestHash,
+		CertFingerprint: item.CertFingerprint, Generation: item.Generation,
+	}
 }
 
 // reportComputeNodeShow dumps the row as a multi-line key=value

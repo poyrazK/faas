@@ -199,14 +199,15 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	commitSHA := sidecar.Ref // informational only; not used by the build pipeline
 
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		AppID:       app.ID,
-		Kind:        state.DeploymentKindTarball,
-		SourcePath:  spoolPath,
-		SourceBytes: spoolBytes,
-		SourceURL:   sourceURL,
-		CommitSHA:   commitSHA,
-		LogSpool:    spoolRoot(),
-		Log:         s.log,
+		AppID:           app.ID,
+		Kind:            state.DeploymentKindTarball,
+		SourcePath:      spoolPath,
+		SourceBytes:     spoolBytes,
+		SourceURL:       sourceURL,
+		CommitSHA:       commitSHA,
+		FunctionRuntime: functionRuntimeForApp(app),
+		LogSpool:        spoolRoot(),
+		Log:             s.log,
 		// Issue #606 / SAFE-RELEASES-E.1: server-stamped actor
 		// attribution (cmd/apid/deploy_actor.go). The local
 		// tarball path is HTTP-routed, so the via classifier is
@@ -232,7 +233,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && sidecar.TrafficPercent == nil && sidecar.Canary == nil,
 	})
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+		s.writeDeploymentCreateError(w, err)
 		return
 	}
 	sourceAccepted = true

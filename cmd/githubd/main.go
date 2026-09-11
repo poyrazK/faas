@@ -439,8 +439,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	webhookSvc.InvalidateInstallationSecrets = secretResolver.Invalidate
 
+	checkUpdates := githubd.NewPGCheckUpdateStore(pool)
 	if checks != nil {
-		checkUpdates := githubd.NewPGCheckUpdateStore(pool)
 		go githubd.RunCheckUpdateWorker(ctx, checkUpdates, func(workerCtx context.Context, deploymentID string) error {
 			return syncDeploymentCheck(workerCtx, pool, checks, deploymentID)
 		}, log)
@@ -453,6 +453,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if realSvc != nil {
 		gRPCImpl = realSvc
 	}
+	gRPCImpl = githubd.NewRecoveryService(gRPCImpl, deliveryStore, checkUpdates)
 
 	// ops: hoisted above (PR-H moved it next to the Auditor
 	// construction so the per-daemon registry is shared by

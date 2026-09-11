@@ -10,6 +10,7 @@ import (
 type readyResponse struct {
 	Status   string `json:"status"`
 	Database string `json:"database"`
+	Debugger string `json:"debugger,omitempty"`
 	Error    string `json:"error,omitempty"`
 }
 
@@ -42,10 +43,22 @@ func (s *server) readyz(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	debuggerChecked, err := debugRegressionReadinessCheck(ctx, s.store)
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(readyResponse{
+			Status:   "unhealthy",
+			Database: "ok",
+			Debugger: "unavailable",
+			Error:    "debugger regression read probe failed",
+		})
+		return
+	}
 
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(readyResponse{
-		Status:   "ready",
-		Database: "ok",
-	})
+	response := readyResponse{Status: "ready", Database: "ok"}
+	if debuggerChecked {
+		response.Debugger = "ready"
+	}
+	_ = json.NewEncoder(w).Encode(response)
 }

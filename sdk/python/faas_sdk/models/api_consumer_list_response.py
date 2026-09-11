@@ -15,6 +15,8 @@ T = TypeVar("T", bound="APIConsumerListResponse")
 
 @_attrs_define
 class APIConsumerListResponse:
+    """Stable API consumer identities for an app."""
+
     consumers: list[APIConsumerResponse]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

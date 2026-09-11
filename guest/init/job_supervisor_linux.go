@@ -2,43 +2,31 @@
 // (issue #1184 Workstream A / ADR-099).
 //
 // This file implements the runJob entry point + signal handling +
-// vsock DGRAM shipping for job-task VMs. Mirrors characterize_linux.go's
-// pattern (dial host CID 2, write framed envelope, await 1-byte ack)
-// but with SOCK_DGRAM (the wire-format discriminator that lets the
-// job-exit port number overlap with characterize's).
+// guest-initiated vsock STREAM shipping for job-task VMs.
 //
 // Flow (single iteration, no restart loop — jobs run once to
 // terminal):
 //
 //  1. Load /etc/faas/job.json (JobManifest).
-//  2. Start a wall-clock timer at task_timeout_s (T).
-//  3. Build merged env (systemEnv ⊕ job.Env ⊕ jobEnvBaseline).
-//  4. Fork+Exec syscall.Exec(command[0], command, env) — replaces
-//     init so signals land directly on the customer process
-//     (proper signal handling: SIGTERM triggers Go's default
-//     handler, not guest-init's).
-//  5. Capture exit_code + signal via syscall.WaitStatus after
-//     exec returns. Wait doesn't actually return on a successful
-//     syscall.Exec — exec replaces the process image — so
-//     catching the exit means we either fell back to os/exec or
-//     exec failed and we re-entered the loop. In practice the
-//     only way to land here is via os/exec.Cmd so we can ship
-//     the vsock DGRAM before poweroff.
-//  6. Write JobExitPayload to vsock DGRAM (port 1026, msg_type 4).
-//  7. poweroff -f.
+//  2. Fork the command into its own process group while guest-init remains PID 1.
+//  3. Forward stop signals and enforce task_timeout_s with TERM→30s→KILL.
+//  4. Capture the direct child's wait status and reap remaining descendants.
+//  5. Write JobExitPayload to the host listener (port 1026, msg_type 4).
+//  6. Power off through the reboot syscall.
 
 package main
 
 import (
-	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
+	osSignal "os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -46,39 +34,27 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const jobTerminationGrace = 30 * time.Second
+
+type jobTerminationReason uint8
+
+const (
+	jobExitedNaturally jobTerminationReason = iota
+	jobTimedOut
+	jobCancelled
+)
+
+type jobWaitResult struct {
+	status    syscall.WaitStatus
+	hasStatus bool
+	err       error
+}
+
 // RunJob is the entry point the boot dispatcher calls when
 // decideMode picks modeJob. It is total — on any internal error
-// it still attempts to ship a vsock DGRAM (so the host's
+// it still attempts to ship a terminal envelope (so the host's
 // HandleJobExit sees a terminal transition, not a hang), then
 // powers off. The VM is single-shot; there's no restart loop.
-//
-// Lifecycle:
-//   - returns nil on clean exec + DGRAM ack
-//   - returns error only if the vsock DGRAM itself fails; in
-//     that case we poweroff anyway so the host doesn't see a
-//     runaway VM. The error is logged at WARN so the reaper's
-//     later sweep of the task slot surfaces the gap.
-//
-// Order matters:
-//  1. loadJobManifest (must succeed; missing manifest = not a
-//     job VM and the boot dispatcher shouldn't have called us)
-//  2. startTimeoutWatcher (sets up the SIGTERM→30s grace→SIGKILL
-//     timer that fires if the customer's command outlives
-//     task_timeout_s)
-//  3. execCommand (syscall.Exec, replacing the supervisor's
-//     process image so signals reach the customer directly)
-//  4. The path after exec.Command returning means exec FAILED
-//     and we're still in the supervisor; we map the error to
-//     an exit envelope and ship it.
-//
-// Note on syscall.Exec semantics: on success, syscall.Exec NEVER
-// returns. So a code path after exec.Command(...) is the
-// "exec failed" branch. We use os/exec.Cmd (not syscall.Exec) for
-// the failure path so the wait status is inspectable, then call
-// exec.Command(command[0], command[1:]...) again — but only as a
-// last resort because we need to ship the DGRAM. If even the
-// os/exec path fails (e.g. command missing in the image), we
-// log + ship a "failed" envelope + poweroff.
 func RunJob(log *slog.Logger) error {
 	manifest, err := loadJobManifest()
 	if err != nil {
@@ -97,157 +73,283 @@ func RunJob(log *slog.Logger) error {
 		}, log)
 	}
 
-	// Start the wall-clock timeout watcher. SIGTERM at the
-	// deadline, SIGKILL after 30s grace. Independent goroutine
-	// so the customer's signal handlers (or absence thereof)
-	// don't affect our cleanup. ctx cancel on clean exit kills
-	// the watcher.
-	if manifest.TaskTimeoutSec > 0 {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		startTimeoutWatcher(ctx, manifest.TaskTimeoutSec, os.Getpid())
-	}
-
 	// Build merged env (systemEnv ⊕ job.Env ⊕ jobEnvBaseline).
 	env := buildEnvForJob(*manifest)
-
-	// Try syscall.Exec first — it replaces the process image
-	// so the customer's signal handlers receive SIGTERM
-	// directly, not guest-init's. On Linux this is the
-	// canonical pattern for "I'm just a thin wrapper".
-	if err := unix.Exec(manifest.Command[0], manifest.Command, env); err != nil {
-		// exec failed — likely ENOENT or EACCES. Fall back to
-		// os/exec.Cmd so we can capture the WaitStatus. If even
-		// os/exec fails (e.g. ENOENT), ship an "infra" envelope
-		// with exit_code=127.
-		log.Warn("runJob: syscall.Exec failed, falling back to os/exec",
-			"err", err, "command", manifest.Command[0])
-		return runViaOSExec(*manifest, env, log)
-	}
-	// Unreachable: unix.Exec replaces the process on success.
-	return nil
+	return runViaOSExec(*manifest, env, log)
 }
 
-// runViaOSExec is the fallback path when syscall.Exec fails
-// (e.g. the command path isn't absolute, or the binary doesn't
-// have the execute bit). It shells out via os/exec.Cmd so we
-// can inspect the WaitStatus and ship a meaningful DGRAM.
-//
-// Returns the exit envelope via shipAndPoweroff.
+// runViaOSExec keeps guest-init alive as PID 1, supervises the workload, ships
+// its terminal result, and powers the VM off.
 func runViaOSExec(m JobManifest, env []string, log *slog.Logger) error {
+	payload := superviseJobCommand(m, env, jobTerminationGrace, log)
+	return shipAndPoweroff(payload, log)
+}
+
+func superviseJobCommand(m JobManifest, env []string, grace time.Duration, log *slog.Logger) JobExitPayload {
+	if log == nil {
+		log = slog.Default()
+	}
+	stopSignals := make(chan os.Signal, 2)
+	osSignal.Notify(stopSignals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP)
+	defer osSignal.Stop(stopSignals)
+	closeControl := listenJobCancellation(stopSignals, log)
+	defer closeControl()
+
 	cmd := exec.Command(m.Command[0], m.Command[1:]...)
 	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Stdout / Stderr → null so the customer's command's output
 	// doesn't get mixed into guest-init's log ring. Logs are
-	// captured via the vsock DGRAM (future M-extra work — M8
+	// captured via the vsock log channel (future M-extra work — M8
 	// ships with stdout discarded; logs land in pkg/fcvm/logbuf
 	// once we add a log forwarder).
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
 		log.Error("runJob: os/exec start", "err", err, "command", m.Command[0])
-		return shipAndPoweroff(JobExitPayload{
-			ExitCode:   127,
-			ErrorClass: "infra",
-			LeaseToken: m.LeaseToken,
-		}, log)
-	}
-	waitErr := cmd.Wait()
-	exitCode := int32(-1)
-	var signal int32
-	if waitErr != nil {
-		var ee *exec.ExitError
-		if errors.As(waitErr, &ee) {
-			if ws, ok := ee.Sys().(syscall.WaitStatus); ok {
-				if ws.Signaled() {
-					signal = int32(ws.Signal())
-					exitCode = 128 + signal
-				} else {
-					exitCode = int32(ws.ExitStatus())
-				}
-			}
+		exitCode := int32(126)
+		if errors.Is(err, os.ErrNotExist) {
+			exitCode = 127
 		}
-	} else {
-		exitCode = 0
+		return JobExitPayload{
+			ExitCode:           exitCode,
+			ErrorClass:         "infra",
+			LeaseToken:         m.LeaseToken,
+			FinishedAtUnixNano: time.Now().UnixNano(),
+		}
 	}
-	return shipAndPoweroff(JobExitPayload{
-		ExitCode:           exitCode,
-		ErrorClass:         mapExitToErrorClass(exitCode, signal),
-		Signal:             signal,
-		FinishedAtUnixNano: time.Now().UnixNano(),
-		LeaseToken:         m.LeaseToken,
-	}, log)
-}
 
-// startTimeoutWatcher fires SIGTERM at the customer's command
-// once task_timeout_s elapses, then SIGKILL after 30s grace if
-// the customer installed a SIGTERM handler that ignores the signal.
-// The goroutine exits when ctx is cancelled (which runJob's
-// caller does via defer).
-//
-// On Linux, SIGTERM lands directly on the customer process
-// because syscall.Exec replaced the supervisor. If the customer
-// process is in a process group of its own, SIGTERM goes to the
-// supervisor's PID (which is now the customer's) — same outcome.
-//
-// Sends SIGKILL to PID once 30s past the SIGTERM if the process
-// is still alive. sendSignal is best-effort; an ESRCH means the
-// process already exited and the watcher can exit cleanly.
-//
-// CR-6 / code-review #6: the previous implementation pre-started
-// both the deadline AND the 30s grace timer at function entry.
-// When task_timeout_s > 30s (the common case — Hobby=300s, Pro
-// =1800s), the grace timer fired at t=30s and its value sat in
-// the buffered channel. After SIGTERM at the deadline, the
-// goroutine did `<-grace.C` which returned immediately (the value
-// was already queued), and SIGKILL was sent with effectively
-// zero grace — a customer that needed the full 30s to drain
-// in-flight work was killed mid-shutdown. Fix: don't arm the
-// grace timer until after SIGTERM is delivered, so the 30s window
-// starts at the SIGTERM moment.
-func startTimeoutWatcher(ctx context.Context, taskTimeoutSec int, pid int) {
-	if taskTimeoutSec <= 0 {
-		return
-	}
-	deadline := time.NewTimer(time.Duration(taskTimeoutSec) * time.Second)
-	defer deadline.Stop()
-	stopDeadline := func() {
-		if !deadline.Stop() {
-			select {
-			case <-deadline.C:
-			default:
+	waitCh := make(chan jobWaitResult, 1)
+	go func() { waitCh <- waitJobCommand(cmd) }()
+
+	timeout := time.NewTimer(time.Duration(m.TaskTimeoutSec) * time.Second)
+	defer timeout.Stop()
+	timeoutC := timeout.C
+	var graceTimer *time.Timer
+	var graceC <-chan time.Time
+	var forceExitTimer *time.Timer
+	var forceExitC <-chan time.Time
+	reason := jobExitedNaturally
+	stopSignal := syscall.SIGTERM
+
+	for {
+		select {
+		case waitResult := <-waitCh:
+			if graceTimer != nil {
+				graceTimer.Stop()
 			}
-		}
-	}
-	go func() {
-		// Clean exit: ctx cancel stops the deadline timer + the
-		// goroutine. (No grace timer exists yet at this point.)
-		select {
-		case <-ctx.Done():
-			stopDeadline()
-			return
-		case <-deadline.C:
-			// SIGTERM at the deadline. Now arm the 30s grace
-			// timer — its 30s window starts at THIS instant,
-			// not at function entry.
-			_ = unix.Kill(pid, unix.SIGTERM)
-		}
-		grace := time.NewTimer(30 * time.Second)
-		defer grace.Stop()
-		select {
-		case <-ctx.Done():
-			if !grace.Stop() {
+			if forceExitTimer != nil {
+				forceExitTimer.Stop()
+			}
+			// A shell may leave background descendants behind. The workload owns
+			// the complete process group, so no child survives terminal reporting.
+			_ = signalJobProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+			reapJobChildren(250 * time.Millisecond)
+			return jobExitPayloadFromWait(waitResult, reason, stopSignal, m.LeaseToken)
+		case <-timeoutC:
+			reason = jobTimedOut
+			stopSignal = syscall.SIGTERM
+			timeoutC = nil
+			_ = signalJobProcessGroup(cmd.Process.Pid, stopSignal)
+			graceTimer = time.NewTimer(grace)
+			graceC = graceTimer.C
+		case raw := <-stopSignals:
+			if reason != jobExitedNaturally {
+				continue
+			}
+			reason = jobCancelled
+			if sig, ok := raw.(syscall.Signal); ok {
+				stopSignal = sig
+			}
+			timeoutC = nil
+			if !timeout.Stop() {
 				select {
-				case <-grace.C:
+				case <-timeout.C:
 				default:
 				}
 			}
-			return
-		case <-grace.C:
-			// 30s grace elapsed; SIGKILL the customer.
-			_ = unix.Kill(pid, unix.SIGKILL)
+			_ = signalJobProcessGroup(cmd.Process.Pid, stopSignal)
+			graceTimer = time.NewTimer(grace)
+			graceC = graceTimer.C
+		case <-graceC:
+			graceC = nil
+			_ = signalJobProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+			forceExitTimer = time.NewTimer(grace)
+			forceExitC = forceExitTimer.C
+		case <-forceExitC:
+			// SIGKILL normally makes Wait return immediately. Bound the pathological
+			// uninterruptible-task case so one guest cannot pin its lease forever.
+			return jobExitPayloadFromWait(jobWaitResult{err: errors.New("job did not exit after SIGKILL")}, reason, stopSignal, m.LeaseToken)
+		}
+	}
+}
+
+func listenJobCancellation(signals chan<- os.Signal, log *slog.Logger) func() {
+	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		log.Debug("job cancel vsock unavailable", "err", err)
+		return func() {}
+	}
+	addr := &unix.SockaddrVM{CID: unix.VMADDR_CID_ANY, Port: VsockJobControlPort}
+	if err := unix.Bind(fd, addr); err != nil {
+		_ = unix.Close(fd)
+		log.Debug("job cancel vsock bind unavailable", "err", err)
+		return func() {}
+	}
+	if err := unix.Listen(fd, 4); err != nil {
+		_ = unix.Close(fd)
+		log.Debug("job cancel vsock listen unavailable", "err", err)
+		return func() {}
+	}
+	go func() {
+		for {
+			raw, peer, err := unix.Accept4(fd, unix.SOCK_CLOEXEC)
+			if err != nil {
+				return
+			}
+			vmPeer, ok := peer.(*unix.SockaddrVM)
+			if !ok || vmPeer.CID != unix.VMADDR_CID_HOST {
+				_ = unix.Close(raw)
+				continue
+			}
+			go handleJobCancellation(raw, signals)
 		}
 	}()
+	return func() { _ = unix.Close(fd) }
+}
+
+func handleJobCancellation(fd int, signals chan<- os.Signal) {
+	f := os.NewFile(uintptr(fd), "job-cancel")
+	if f == nil {
+		_ = unix.Close(fd)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	if err := setSockTimeout(fd, unix.SO_RCVTIMEO, 1500*time.Millisecond); err != nil {
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		return
+	}
+	if err := setSockTimeout(fd, unix.SO_SNDTIMEO, 1500*time.Millisecond); err != nil {
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		return
+	}
+	var frame [8]byte
+	if _, err := io.ReadFull(f, frame[:]); err != nil {
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		return
+	}
+	if binary.BigEndian.Uint32(frame[:4]) != VsockJobCancelMsgType {
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		return
+	}
+	sig := syscall.Signal(binary.BigEndian.Uint32(frame[4:]))
+	switch sig {
+	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP:
+	default:
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		return
+	}
+	select {
+	case signals <- sig:
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckOK})
+	default:
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+	}
+}
+
+func waitJobCommand(cmd *exec.Cmd) jobWaitResult {
+	if os.Getpid() != 1 {
+		err := cmd.Wait()
+		if cmd.ProcessState == nil {
+			return jobWaitResult{err: err}
+		}
+		status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+		return jobWaitResult{status: status, hasStatus: ok, err: err}
+	}
+
+	// As PID 1, own wait4(-1) so daemonized grandchildren adopted by init are
+	// reaped throughout the job instead of accumulating as zombies. Only the
+	// direct command's status terminates supervision; other children are drained.
+	for {
+		var status unix.WaitStatus
+		pid, err := unix.Wait4(-1, &status, 0, nil)
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err != nil {
+			return jobWaitResult{err: err}
+		}
+		if pid == cmd.Process.Pid {
+			return jobWaitResult{status: syscall.WaitStatus(status), hasStatus: true}
+		}
+	}
+}
+
+func signalJobProcessGroup(pgid int, sig syscall.Signal) error {
+	if pgid <= 0 {
+		return nil
+	}
+	err := unix.Kill(-pgid, sig)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return err
+}
+
+func reapJobChildren(budget time.Duration) {
+	if os.Getpid() != 1 {
+		return
+	}
+	deadline := time.Now().Add(budget)
+	for {
+		var status unix.WaitStatus
+		pid, err := unix.Wait4(-1, &status, unix.WNOHANG, nil)
+		if errors.Is(err, syscall.ECHILD) {
+			return
+		}
+		if err != nil {
+			return
+		}
+		if pid > 0 {
+			continue
+		}
+		if !time.Now().Before(deadline) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func jobExitPayloadFromWait(waitResult jobWaitResult, reason jobTerminationReason, stopSignal syscall.Signal, leaseToken string) JobExitPayload {
+	exitCode := int32(1)
+	var signalNumber int32
+	if waitResult.hasStatus {
+		if waitResult.status.Signaled() {
+			signalNumber = int32(waitResult.status.Signal())
+			exitCode = 128 + signalNumber
+		} else {
+			exitCode = int32(waitResult.status.ExitStatus())
+		}
+	}
+	errorClass := mapExitToErrorClass(exitCode, signalNumber)
+	if waitResult.err != nil && !waitResult.hasStatus {
+		errorClass = "infra"
+	}
+	switch reason {
+	case jobTimedOut:
+		exitCode = 124
+		errorClass = "timeout"
+	case jobCancelled:
+		exitCode = 128 + int32(stopSignal)
+		errorClass = "cancelled"
+	}
+	return JobExitPayload{
+		ExitCode:           exitCode,
+		ErrorClass:         errorClass,
+		Signal:             signalNumber,
+		FinishedAtUnixNano: time.Now().UnixNano(),
+		LeaseToken:         leaseToken,
+	}
 }
 
 // loadJobManifest reads + decodes /etc/faas/job.json from the
@@ -272,52 +374,52 @@ func loadJobManifest() (*JobManifest, error) {
 		return nil, fmt.Errorf("open %s: %w", jobManifestPath, err)
 	}
 	defer func() { _ = f.Close() }()
+	if info, err := f.Stat(); err != nil {
+		return nil, fmt.Errorf("stat %s: %w", jobManifestPath, err)
+	} else if info.Size() > JobManifestMaxBytes {
+		return nil, fmt.Errorf("%s is %d bytes (max %d)", jobManifestPath, info.Size(), JobManifestMaxBytes)
+	}
 	var m JobManifest
-	if err := json.NewDecoder(f).Decode(&m); err != nil {
+	decoder := json.NewDecoder(io.LimitReader(f, JobManifestMaxBytes+1))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&m); err != nil {
 		return nil, fmt.Errorf("decode %s: %w", jobManifestPath, err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("decode %s: trailing content", jobManifestPath)
+	}
+	if err := validateJobManifest(m); err != nil {
+		return nil, fmt.Errorf("validate %s: %w", jobManifestPath, err)
 	}
 	return &m, nil
 }
 
-// shipAndPoweroff writes the JobExitPayload envelope to the
-// host via vsock DGRAM (port 1026, msg_type 4), then powers
-// off the VM. Always called from a terminal path (no return).
-//
-// The DGRAM retry matches characterize's STREAM retry (3
-// attempts, 100/250/500ms backoff) — same host-side listener
-// availability window (post-boot, pre-poweroff).
-//
-// poweroff -f is the same fast-shutdown command characterize
-// uses; the kernel ACPI handler does the rest.
+// shipAndPoweroff writes the JobExitPayload envelope to the host, then powers
+// off the VM using the reboot syscall so a customer layer cannot shadow the
+// shutdown binary.
 func shipAndPoweroff(payload JobExitPayload, log *slog.Logger) error {
-	shipExitEnvelope(payload, log)
-	// Best-effort poweroff. If poweroff fails (e.g. the binary
-	// is missing in the customer's image), the reaper on the
-	// host side takes over after the lease TTL elapses.
-	_ = exec.Command("poweroff", "-f").Run()
-	return nil
+	if payload.FinishedAtUnixNano == 0 {
+		payload.FinishedAtUnixNano = time.Now().UnixNano()
+	}
+	shipErr := shipExitEnvelope(payload, log)
+	unix.Sync()
+	_ = unix.Reboot(unix.LINUX_REBOOT_CMD_POWER_OFF)
+	return shipErr
 }
 
-// shipExitEnvelope is the inner DGRAM-writer, factored out so
-// unit tests can drive it with a mock vsock target. Production
-// callers always use shipAndPoweroff.
+// shipExitEnvelope is the inner STREAM writer. Firecracker maps a guest
+// connection to CID 2 / port 1026 onto the host's pre-bound
+// vsock.sock_1026 Unix listener.
 //
 // Format: [4B BE msg_type][4B BE body_len][N B JSON].
 // Matches pkg/fcvm.WaitJobExit's parse (vmm.go).
-//
-// Uses SOCK_DGRAM (NOT SOCK_STREAM) — the discriminator that
-// lets the port number overlap with characterize's STREAM.
-// Connect+Sendto behave identically for DGRAM at this layer;
-// we use Sendto because it's the canonical DGRAM path and
-// doesn't require a Connect step.
-func shipExitEnvelope(payload JobExitPayload, log *slog.Logger) {
+func shipExitEnvelope(payload JobExitPayload, log *slog.Logger) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		log.Error("job-exit marshal", "err", err)
-		return
+		return fmt.Errorf("job-exit marshal: %w", err)
 	}
 	if len(body) > VsockJobExitMaxBody {
-		body = body[:VsockJobExitMaxBody]
+		return fmt.Errorf("job-exit body is %d bytes (max %d)", len(body), VsockJobExitMaxBody)
 	}
 	var hdr [8]byte
 	binary.BigEndian.PutUint32(hdr[0:4], VsockJobExitMsgType)
@@ -330,36 +432,98 @@ func shipExitEnvelope(payload JobExitPayload, log *slog.Logger) {
 	}
 	const attempts = 3
 	backoffs := []time.Duration{100 * time.Millisecond, 250 * time.Millisecond, 500 * time.Millisecond}
+	var lastErr error
 	for i := 0; i < attempts; i++ {
-		sock, sockErr := unix.Socket(unix.AF_VSOCK, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+		sock, sockErr := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 		if sockErr != nil {
+			lastErr = sockErr
 			log.Warn("job-exit vsock socket", "err", sockErr, "attempt", i)
 			if i < attempts-1 {
 				time.Sleep(backoffs[i])
 			}
 			continue
 		}
-		// Per-socket send deadline (1.5s; same as characterize).
-		setSockTimeout(sock, unix.SO_SNDTIMEO, 1500*time.Millisecond)
-		if wErr := unix.Sendto(sock, frame, 0, addr); wErr != nil {
-			log.Warn("job-exit vsock send", "err", wErr, "attempt", i)
+		// Bound connect, write, and ack wait. A missing host listener must not
+		// keep PID 1 alive beyond the scheduler's reaper window.
+		if timeoutErr := setSockTimeout(sock, unix.SO_SNDTIMEO, 1500*time.Millisecond); timeoutErr != nil {
+			lastErr = timeoutErr
+			log.Warn("job-exit vsock send timeout", "err", timeoutErr, "attempt", i)
 			_ = unix.Close(sock)
 			if i < attempts-1 {
 				time.Sleep(backoffs[i])
 			}
 			continue
 		}
+		if timeoutErr := setSockTimeout(sock, unix.SO_RCVTIMEO, 1500*time.Millisecond); timeoutErr != nil {
+			lastErr = timeoutErr
+			log.Warn("job-exit vsock receive timeout", "err", timeoutErr, "attempt", i)
+			_ = unix.Close(sock)
+			if i < attempts-1 {
+				time.Sleep(backoffs[i])
+			}
+			continue
+		}
+		if connectErr := unix.Connect(sock, addr); connectErr != nil {
+			lastErr = connectErr
+			log.Warn("job-exit vsock connect", "err", connectErr, "attempt", i)
+			_ = unix.Close(sock)
+			if i < attempts-1 {
+				time.Sleep(backoffs[i])
+			}
+			continue
+		}
+		if writeErr := writeJobExitFrame(sock, frame); writeErr != nil {
+			lastErr = writeErr
+			log.Warn("job-exit vsock write", "err", writeErr, "attempt", i)
+			_ = unix.Close(sock)
+			if i < attempts-1 {
+				time.Sleep(backoffs[i])
+			}
+			continue
+		}
+		var ack [1]byte
+		n, readErr := unix.Read(sock, ack[:])
 		_ = unix.Close(sock)
-		// DGRAM has no ack; the host either got it or didn't.
-		// The reaper sweep picks up the lease on timeout.
+		if readErr != nil || n != 1 || ack[0] != 0 {
+			if readErr != nil {
+				lastErr = fmt.Errorf("read ack: %w", readErr)
+			} else {
+				lastErr = fmt.Errorf("invalid ack n=%d value=%d", n, ack[0])
+			}
+			log.Warn("job-exit vsock ack", "err", lastErr, "attempt", i)
+			if i < attempts-1 {
+				time.Sleep(backoffs[i])
+			}
+			continue
+		}
 		log.Info("job-exit shipped",
 			"exit_code", payload.ExitCode,
 			"error_class", payload.ErrorClass,
 			"signal", payload.Signal,
 			"attempt", i+1)
-		return
+		return nil
 	}
 	log.Error("job-exit all attempts failed", "attempts", attempts)
+	return fmt.Errorf("job-exit all attempts failed: %w", lastErr)
+}
+
+func writeJobExitFrame(fd int, frame []byte) error {
+	for len(frame) > 0 {
+		n, err := unix.Write(fd, frame)
+		if n > 0 {
+			frame = frame[n:]
+		}
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrUnexpectedEOF
+		}
+	}
+	return nil
 }
 
 // jobManifestFixturePath is a test-only fs.FS fixture path used

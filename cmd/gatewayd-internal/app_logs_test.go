@@ -37,9 +37,11 @@ import (
 // sends a frame, an error, or closes the stream.
 type controllableScheddClient struct {
 	stream scheddgrpc.LogStream
+	follow bool
 }
 
-func (c *controllableScheddClient) StreamAppLogs(_ context.Context, _ string, _ int64, _ time.Time, _ string, _ string, _ string) (scheddgrpc.LogStream, error) {
+func (c *controllableScheddClient) StreamAppLogs(_ context.Context, _ string, _ int64, _ time.Time, follow bool, _ string, _ string, _ string) (scheddgrpc.LogStream, error) {
+	c.follow = follow
 	return c.stream, nil
 }
 
@@ -343,6 +345,31 @@ func TestServeAppLogs_CleanEndEmitsEmptyEndEvent(t *testing.T) {
 	}
 	if strings.Contains(body, `"reason"`) {
 		t.Errorf("clean close must not carry a reason: %q", body)
+	}
+}
+
+func TestServeAppLogs_PropagatesOneShotMode(t *testing.T) {
+	h := &AppLogsHandler{
+		Heartbeat: 10 * time.Second,
+		Backstop:  10 * time.Second,
+		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	stream := newControllableScheddStream()
+	client := &controllableScheddClient{stream: stream}
+	h.ScheddFor = &fixedScheddResolver{c: client}
+	rec := newFlusherRecorder()
+	stream.pushFrame(scheddgrpc.LogFrame{InstanceID: "inst-1", Seq: 1, Stream: "stdout", Line: "alpha"})
+	stream.pushFrame(scheddgrpc.LogFrame{InstanceID: "inst-1", Seq: 2, Stream: "stdout", Line: "beta"})
+	stream.closeStream()
+	h.serveAppLogsWithIdentityFollow(context.Background(), rec, rec, "app-1", "", "app-1", 0, time.Time{}, false, "", "", "")
+	if client.follow {
+		t.Fatal("one-shot handler propagated follow=true")
+	}
+	if got := strings.Count(rec.body.String(), "event: log\n"); got != 2 {
+		t.Fatalf("one-shot log events = %d, want 2: %q", got, rec.body.String())
+	}
+	if !strings.Contains(rec.body.String(), "event: end\ndata: {}\n\n") {
+		t.Fatalf("missing clean terminal frame: %q", rec.body.String())
 	}
 }
 

@@ -76,6 +76,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/webhooks/polar":                   true, // Standard Webhooks-signed webhook
 	"POST /v1/webhooks/resend":                  true, // Svix-signed webhook (issue #246 / ADR-115)
 	"GET /v1/compute-nodes":                     true, // operator-only (ADR-029)
+	"GET /v1/compute-nodes/{name}":              true, // operator-only node detail
 	"POST /v1/compute-nodes":                    true, // operator-only
 	"DELETE /v1/compute-nodes/{name}":           true, // operator-only
 	"GET /v1/compute-nodes/{name}/heartbeats":   true, // CP-1: operator-only (heartbeat history; schedd-owned)
@@ -120,6 +121,9 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/apps/{slug}/force-cold-boot":                 true, // PR #1099 P2b
 	"POST /v1/admin/instances/{id}/force-restart":                true, // PR #1105 P2d
 	"POST /v1/admin/builds/sweep-stuck":                          true, // PR #1099 P2c
+	"GET /v1/admin/ops/github/recovery":                          true, // operator-only githubd queue projection
+	"POST /v1/admin/ops/github/deliveries/{id}/retry":            true, // operator-only githubd delivery recovery
+	"POST /v1/admin/ops/github/check-updates/{id}/retry":         true, // operator-only githubd Check Run recovery
 	"POST /v1/admin/ops/accounts/{id}/suspend":                   true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/restore":                   true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":           true, // operator-only tenant security control
@@ -256,6 +260,7 @@ var dtoExclude = map[string]bool{
 	"CliAuthExchangeRequest":       true, // POST /v1/cli-auth/exchange
 	"CliAuthExchangeResponse":      true, // POST /v1/cli-auth/exchange
 	"CliAuthStatus":                true, // enum used by CLI auth
+	"ComputeNodeOperatorResponse":  true, // authenticated operator-only compute-node projection
 	"StatusPage":                   true, // GET /status/slo.json (public status)
 	"SessionsRevokeRequest":        true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
 	"ManagedPostgresPlanLimits":    true, // internal plan policy, not a wire DTO

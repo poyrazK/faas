@@ -46,13 +46,16 @@ import (
 // the per-instance goroutine fan-out to one deployment; empty =
 // all live instances.
 //
+// follow controls whether the stream remains attached after the
+// retained replay page; false is the CLI's default one-shot mode.
+//
 // level + grep (issue #309 / tier-2 DX) are the customer-facing
 // --level / --grep filter values; both empty = no filter. The
 // gateway already validated the level enum + grep regex at
 // parse time (apislogs.ValidateLogFilters), so this method
 // receives pre-validated strings and forwards them verbatim.
 type logStreamer interface {
-	StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, level string, grep string) (scheddgrpc.LogStream, error)
+	StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool, deploymentID string, level string, grep string) (scheddgrpc.LogStream, error)
 }
 
 // logStreamerResolver is the per-app dial factory the
@@ -187,10 +190,11 @@ func (h *AppLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct sta
 		}
 	}
 	sinceSeq := apislogs.ParseInt64Query(r, "since_seq", 0)
+	follow := r.URL.Query().Get("follow") == "1"
 
 	apislogs.StartSSE(w)
 	flusher, _ := w.(http.Flusher)
-	h.serveAppLogsWithIdentity(r.Context(), w, flusher, app.ID, acct.ID, app.ID, sinceSeq, sinceWrittenAt, deploymentID, level, grep)
+	h.serveAppLogsWithIdentityFollow(r.Context(), w, flusher, app.ID, acct.ID, app.ID, sinceSeq, sinceWrittenAt, follow, deploymentID, level, grep)
 }
 
 // serveAppLogs is the receive-pump body. Mirrors the legacy
@@ -209,6 +213,10 @@ func (h *AppLogsHandler) serveAppLogs(ctx_ context.Context, w http.ResponseWrite
 }
 
 func (h *AppLogsHandler) serveAppLogsWithIdentity(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, accountID, appIdentity string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, level string, grep string) {
+	h.serveAppLogsWithIdentityFollow(ctx_, w, flusher, appID, accountID, appIdentity, sinceSeq, sinceWrittenAt, true, deploymentID, level, grep)
+}
+
+func (h *AppLogsHandler) serveAppLogsWithIdentityFollow(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, accountID, appIdentity string, sinceSeq int64, sinceWrittenAt time.Time, follow bool, deploymentID string, level string, grep string) {
 	// Phase 2 / Gate A: resolve the owner schedd for appID via
 	// the per-node router. The fallback path (legacy single
 	// schedd) is gone — the router covers the single-box
@@ -218,7 +226,7 @@ func (h *AppLogsHandler) serveAppLogsWithIdentity(ctx_ context.Context, w http.R
 		apislogs.RenderAppLogsError(w, flusher, err)
 		return
 	}
-	stream, err := sched.StreamAppLogs(ctx_, appID, sinceSeq, sinceWrittenAt, deploymentID, level, grep)
+	stream, err := sched.StreamAppLogs(ctx_, appID, sinceSeq, sinceWrittenAt, follow, deploymentID, level, grep)
 	if err != nil {
 		// codes.Unimplemented from the stub → "schedd not wired
 		// (dev mode)"; codes.NotFound from a real schedd → "no
@@ -241,10 +249,12 @@ func (h *AppLogsHandler) serveAppLogsWithIdentity(ctx_ context.Context, w http.R
 	streamCtx, cancelStream := context.WithCancel(ctx_)
 	defer cancelStream()
 
-	// Capacity 1 + non-blocking send keeps the receive goroutine
-	// from blocking when the SSE writer is slow; a dropped frame
-	// is no worse than a missed frame on a quiet stream because
-	// the heartbeat keeps the client alive.
+	// Capacity 1 + non-blocking send keeps the follow receive
+	// goroutine from blocking when the SSE writer is slow; a dropped
+	// live frame is no worse than a missed frame on a quiet stream
+	// because the heartbeat keeps the client alive. One-shot snapshots
+	// use a lossless blocking send so a finite `gregale logs` command
+	// never silently omits retained lines.
 	//
 	// Terminal-result carve-out (gatewayd flake surfaced 2026-08-24,
 	// dispatch 32718562570 / TestServeAppLogs_GenericErrorDelegatesToRenderAppLogsError):
@@ -271,17 +281,25 @@ func (h *AppLogsHandler) serveAppLogsWithIdentity(ctx_ context.Context, w http.R
 			default:
 			}
 			if err == nil {
-				// Regular frame — drop rather than block
-				// when the SSE writer is behind.
-				select {
-				case recvCh <- recvResult{frame: f, err: nil}:
-				case <-streamCtx.Done():
-					return
-				default:
-					// Channel full — drop. The heartbeat
-					// keeps the client alive, and the
-					// per-instance ring is the durable
-					// source of truth.
+				if follow {
+					// Follow frame — drop rather than block
+					// when the SSE writer is behind.
+					select {
+					case recvCh <- recvResult{frame: f, err: nil}:
+					case <-streamCtx.Done():
+						return
+					default:
+						// Channel full — drop. The heartbeat
+						// keeps the client alive, and the
+						// ring is the durable source of truth.
+					}
+				} else {
+					// One-shot frame — retain every replayed line.
+					select {
+					case recvCh <- recvResult{frame: f, err: nil}:
+					case <-streamCtx.Done():
+						return
+					}
 				}
 				continue
 			}

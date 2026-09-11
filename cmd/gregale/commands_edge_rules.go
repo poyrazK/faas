@@ -244,6 +244,9 @@ func cmdEdgeRulesCreate(args []string) int {
 	// acct.Plan is the authoritative gate).
 	throttleRPS := fs.Float64("throttle-requests-per-second", 0, "kind=throttle: refill rate (req/s; >0; <=plan.RateLimitRPS)")
 	throttleBurst := fs.Int("throttle-burst", 0, "kind=throttle: token-bucket burst (>0; <=plan.RateLimitBurst)")
+	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim)")
+	throttleJWTClaim := fs.String("throttle-jwt-claim", "", "kind=throttle: JWT claim name when --throttle-key-by=jwt_claim")
+	throttleMaxKeys := fs.Int("throttle-max-keys-per-rule", 0, "kind=throttle: maximum distinct consumer buckets (0=plan default)")
 
 	// cache (ADR-122 §Decision). Per-route TTL primitive.
 	// max-age-seconds is the fresh window (default 60); stale-
@@ -315,6 +318,9 @@ func cmdEdgeRulesCreate(args []string) int {
 		GeoDeny:                    geoDeny,
 		ThrottleRPS:                *throttleRPS,
 		ThrottleBurst:              *throttleBurst,
+		ThrottleKeyBy:              *throttleKeyBy,
+		ThrottleJWTClaim:           *throttleJWTClaim,
+		ThrottleMaxKeys:            *throttleMaxKeys,
 		CacheMaxAgeSeconds:         *cacheMaxAge,
 		CacheStaleIfErrorSeconds:   *cacheStaleIfError,
 		CacheVaryOn:                cacheVaryOn,
@@ -456,6 +462,9 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// here AND the validator rejects it server-side.
 	throttleRPS := fs.Float64("throttle-requests-per-second", 0, "kind=throttle: new refill rate (req/s; >0; <=plan.RateLimitRPS)")
 	throttleBurst := fs.Int("throttle-burst", 0, "kind=throttle: new token-bucket burst (>0; <=plan.RateLimitBurst)")
+	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: new bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim)")
+	throttleJWTClaim := fs.String("throttle-jwt-claim", "", "kind=throttle: new JWT claim name when --throttle-key-by=jwt_claim")
+	throttleMaxKeys := fs.Int("throttle-max-keys-per-rule", 0, "kind=throttle: new maximum distinct consumer buckets (0=plan default)")
 
 	// cache (ADR-122 §Decision). Mirror of the create-side
 	// flags. Same closed-set + cap semantics — the CLI does
@@ -561,6 +570,9 @@ func cmdEdgeRulesUpdate(args []string) int {
 			GeoDeny:                    geoDeny,
 			ThrottleRPS:                *throttleRPS,
 			ThrottleBurst:              *throttleBurst,
+			ThrottleKeyBy:              *throttleKeyBy,
+			ThrottleJWTClaim:           *throttleJWTClaim,
+			ThrottleMaxKeys:            *throttleMaxKeys,
 			CacheMaxAgeSeconds:         *cacheMaxAge,
 			CacheStaleIfErrorSeconds:   *cacheStaleIfError,
 			CacheVaryOn:                cacheVaryOn,
@@ -675,8 +687,11 @@ type edgeRuleActionInputs struct {
 	// ceiling check — the CLI does the structural checks only
 	// (positive rps, positive burst) so the local error mirrors
 	// the server's "0-rps is a leak" message.
-	ThrottleRPS   float64
-	ThrottleBurst int
+	ThrottleRPS      float64
+	ThrottleBurst    int
+	ThrottleKeyBy    string
+	ThrottleJWTClaim string
+	ThrottleMaxKeys  int
 	// cache (ADR-122 §Decision). Per-route TTL primitive.
 	// MaxAgeSeconds defaults to 60 server-side when 0 is passed
 	// (the apid validator applies the default in
@@ -847,17 +862,24 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		a := api.EdgeRuleThrottleAction{
 			RequestsPerSecond: in.ThrottleRPS,
 			Burst:             in.ThrottleBurst,
+			KeyBy:             in.ThrottleKeyBy,
+			JWTClaimName:      in.ThrottleJWTClaim,
+			MaxKeysPerRule:    in.ThrottleMaxKeys,
 		}
 		// The server's EdgeRuleThrottleAction.Validate takes a
-		// ThrottleValidationContext (per-plan ceiling). The CLI
-		// calls Validate with a zero context so the structural
-		// checks fire (ctx.PlanMaxRPS / ctx.PlanMaxBurst are 0,
-		// which the validator treats as "no ceiling", so the
-		// sub-plan check is skipped at the CLI and left to the
-		// server). This matches the "fail OPEN on unknown /
-		// unavailable context" posture documented on the
-		// Validate() method.
-		if err := a.Validate(api.ThrottleValidationContext{}); err != nil {
+		// ThrottleValidationContext (per-plan ceiling). The CLI has
+		// no account plan row, so it leaves the RPS/burst ceilings
+		// unset and uses the platform maximum only for the optional
+		// per-consumer cardinality shape check. The account's actual
+		// plan ceilings remain authoritative in apid.
+		validationContext := api.ThrottleValidationContext{}
+		if api.ThrottleKeyByIsPerConsumer(a.KeyBy) {
+			// The CLI has no plan row, so use the platform maximum for
+			// structural validation. The account's actual plan ceiling
+			// remains authoritative in apid.
+			validationContext.PlanMaxKeysPerRule = api.ThrottleMaxKeysPerRuleDefault * 10
+		}
+		if err := a.Validate(validationContext); err != nil {
 			return nil, errToError(err)
 		}
 		return marshalAction(a)
@@ -1129,6 +1151,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"ip-allow", "ip-deny",
 		"limit-max-body-bytes", "limit-max-body-bytes-streaming",
 		"throttle-requests-per-second", "throttle-burst",
+		"throttle-key-by", "throttle-jwt-claim", "throttle-max-keys-per-rule",
 		// geo + cache were added to the create/update flag sets but
 		// never to this list, so `edge-rules update <id> --geo-allow X`
 		// silently skipped the action rebuild and sent a metadata-only

@@ -431,7 +431,7 @@ func (f *fakeVMM) UpdateStaticEgressIP(_ context.Context, _, _, _ string, _ stri
 // do. Returns a closed fakeLogStream so any accidental caller exits
 // cleanly. PR-B adds the sinceWrittenAt time lower-bound; the fake
 // ignores it but still records the ctx for fan-out assertions.
-func (f *fakeVMM) Logs(ctx context.Context, _, _ string, _ int64, _ time.Time) (LogStream, error) {
+func (f *fakeVMM) Logs(ctx context.Context, _, _ string, _ int64, _ time.Time, _ bool) (LogStream, error) {
 	f.mu.Lock()
 	f.lastLogsCtx = ctx
 	f.mu.Unlock()
@@ -2065,6 +2065,36 @@ func TestEnginePrime_ForwardsInferredRuntimePort(t *testing.T) {
 	}
 	if got := vmm.lastColdBootSpec.Port; got != 3000 {
 		t.Fatalf("prime cold-boot Port = %d, want 3000", got)
+	}
+}
+
+// Functions are packaged behind the Gregale runner, whose generated manifest
+// listens on 8080. Source inference may still describe Node's conventional
+// port 3000; Prime must route to the generated manifest rather than that
+// source-only hint or readiness can never reach the handler.
+func TestEnginePrime_FunctionUsesRunnerManifestPort(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanScale, 1024, 10)
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:   app.ID,
+		Kind:    state.DeploymentKindTarball,
+		Status:  state.DeploySnapshotting,
+		Handler: "handler.handler",
+		InferredProfile: json.RawMessage(
+			`{"version":"v1","framework":"node","port":3000,"health_path":"/healthz","inferred":true}`,
+		),
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	if err := e.Prime(context.Background(), app.ID, dep.ID); err != nil {
+		t.Fatalf("Prime: %v", err)
+	}
+	if got := vmm.lastColdBootSpec.Port; got != api.DefaultAppPort {
+		t.Fatalf("function prime cold-boot Port = %d, want %d", got, api.DefaultAppPort)
 	}
 }
 

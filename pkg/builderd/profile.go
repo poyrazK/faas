@@ -27,6 +27,21 @@ func persistedProfileFramework(dep state.Deployment) (Framework, string, bool) {
 	return fw, profile.FrameworkVer, true
 }
 
+// functionRuntimeFramework selects the builder pipeline from the app's
+// explicit function runtime. Runtime is authoritative for functions because a
+// valid handler-only source has no framework marker for the detector to read.
+func functionRuntimeFramework(app state.App) (Framework, bool) {
+	if app.Type != state.AppTypeFunction {
+		return FrameworkUnknown, false
+	}
+	profile, ok := frameworkprofile.ProfileForFunctionRuntime(app.Runtime)
+	if !ok {
+		return FrameworkUnknown, false
+	}
+	fw, ok := frameworkFromProfile(profile.Framework)
+	return fw, ok
+}
+
 // frameworkFromProfile keeps the persisted profile's specific framework names
 // on the receipt while mapping them to the small set of builder pipelines.
 func frameworkFromProfile(name string) (Framework, bool) {

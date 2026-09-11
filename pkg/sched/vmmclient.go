@@ -132,7 +132,9 @@ type VMM interface {
 	// host-side WrittenAt lower bound on the replay page. Wire
 	// is additive per ADR-016; the zero-time value is the
 	// "no bound" sentinel and is skipped on the wire.
-	Logs(ctx context.Context, instance string, sinceSeq int64, sinceWrittenAt time.Time) (LogStream, error)
+	// follow controls whether vmmd remains subscribed after the
+	// replay page; false is the one-shot CLI mode.
+	Logs(ctx context.Context, instance string, sinceSeq int64, sinceWrittenAt time.Time, follow bool) (LogStream, error)
 	// PrepareLiveMigration (Tier A5 / ADR-066) is Phase 1 of the
 	// four-phase cross-node live-instance handoff. The caller
 	// (schedd's migration_handoff.go) dials the DYING vmmd and
@@ -773,7 +775,7 @@ func (c *VMMClient) UpdateStaticEgressIP(ctx context.Context, accountID, appID s
 // sinceWrittenAt (issue #517 / PR-B acceptance #3) is the host-
 // side WrittenAt lower bound on the replay page; the zero-time
 // value is the "no bound" sentinel and is skipped on the wire.
-func (c *VMMClient) Logs(ctx context.Context, instance string, sinceSeq int64, sinceWrittenAt time.Time) (LogStream, error) {
+func (c *VMMClient) Logs(ctx context.Context, instance string, sinceSeq int64, sinceWrittenAt time.Time, follow bool) (LogStream, error) {
 	if sinceSeq < 0 {
 		sinceSeq = 0
 	}
@@ -787,6 +789,7 @@ func (c *VMMClient) Logs(ctx context.Context, instance string, sinceSeq int64, s
 		Instance: instance,
 		SinceSeq: sinceSeq,
 		WakeId:   fields.WakeID,
+		Follow:   &follow,
 	}
 	if !sinceWrittenAt.IsZero() {
 		req.SinceWrittenAt = timestamppb.New(sinceWrittenAt)

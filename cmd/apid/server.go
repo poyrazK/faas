@@ -699,6 +699,12 @@ func (s *server) billingPortalURLFor(acct state.Account) string {
 // used by the legacy Stripe path. The short timeout keeps plan-change and
 // billing reads from hanging on a provider outage.
 func (s *server) billingPortalURLForProvider(ctx context.Context, acct state.Account) string {
+	resolved, err := s.accountForActiveBillingProvider(ctx, acct)
+	if err != nil {
+		s.log.Warn("billing portal identity unavailable", "account", acct.ID, "err", err)
+		return s.billingPortalURLFor(acct)
+	}
+	acct = resolved
 	if acct.ProviderCustomerID != "" {
 		if provider, ok := s.billingProvider.(billing.CustomerPortalProvider); ok {
 			portalCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -1408,6 +1414,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/openapi/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPIContractDiff)))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.postAppOpenAPIImport))))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi/dry-run", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postAppOpenAPIImportDryRun)))
+	// Explicit OpenAPI policy plan/apply. The write path requires MFA and
+	// deploy scope; the handler itself remains read-only until confirm=true
+	// carries the hash returned by a preceding plan request.
+	mux.HandleFunc("POST /v1/apps/{slug}/openapi/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.postAppOpenAPIPolicyApply)))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppOpenAPIImport))))
 	mux.HandleFunc("GET /v1/deployments/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getDeployment))))
 	// Per-deploy grype scan drill-down (issue #464 / ADR-055).
@@ -1816,6 +1826,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/log-drains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppLogDrains))))
 	mux.HandleFunc("POST /v1/apps/{slug}/log-drains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppLogDrain)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrain))))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}/health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrainHealth))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppLogDrain))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppLogDrain))))
 
@@ -2074,6 +2085,15 @@ func (s *server) handler() http.Handler {
 	// in-flight builds.
 	mux.Handle("POST /v1/admin/builds/sweep-stuck",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postSweepStuckBuilds))))
+	// githubd-owned incident recovery. The read path is MFA-gated and the
+	// retry paths use the strict provider-mutation policy; apid never opens or
+	// writes githubd's queue tables directly.
+	mux.HandleFunc("GET /v1/admin/ops/github/recovery",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getGithubRecoveryStatus))))
+	mux.Handle("POST /v1/admin/ops/github/deliveries/{id}/retry",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postGithubDeliveryRetry))))
+	mux.Handle("POST /v1/admin/ops/github/check-updates/{id}/retry",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postGithubCheckRetry))))
 	// Account and compute-node lifecycle controls. They are deliberately
 	// separate from the read-only /obs namespace and require strict admin
 	// mutation authentication plus confirm=true.
@@ -2317,6 +2337,7 @@ func (s *server) handler() http.Handler {
 	// of /v1/* — a brute-force on admin routes costs the attacker
 	// the same budget they'd burn trying customer keys.
 	mux.HandleFunc("GET /v1/compute-nodes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.listComputeNodes))))
+	mux.HandleFunc("GET /v1/compute-nodes/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getComputeNode))))
 	mux.HandleFunc("POST /v1/compute-nodes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.createOrUpdateComputeNode)))))
 	mux.HandleFunc("DELETE /v1/compute-nodes/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.deleteComputeNode))))
 	// Workstream B (issue #1184 / ADR-137): drain handler.

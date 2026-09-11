@@ -187,6 +187,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 	request := debugTelemetryGetRowToItem(row)
 	spans, truncated := parseDebugEvidenceSpans(row.SpansSummary)
 	var regression *api.DebugRegressionItem
+	var regressionErr error
 	regRows, err := s.store.ListActiveRegressionsByApp(r.Context(), sqlc.ListActiveRegressionsByAppParams{
 		AppID: stringToPgUUID(app.ID),
 		Column2: pgtype.Interval{
@@ -195,15 +196,23 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		},
 	})
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("get debug evidence regressions"))
-		return
+		// Regression observations are enrichment. A schema/query outage must
+		// not discard the request row, wake timeline, or bounded spans that
+		// were already loaded successfully.
+		regressionErr = err
+		if s.log != nil {
+			s.log.Warn("debug evidence regression enrichment unavailable",
+				"app_id", app.ID, "request_id", reqID, "err", err)
+		}
 	}
-	deploymentID := uuidFromPg(row.DeploymentID)
-	for i := range regRows {
-		if uuidFromPg(regRows[i].DeploymentID) == deploymentID && regRows[i].Route == row.Route {
-			item := debugRegressionRowToItem(regRows[i])
-			regression = &item
-			break
+	if regressionErr == nil {
+		deploymentID := uuidFromPg(row.DeploymentID)
+		for i := range regRows {
+			if uuidFromPg(regRows[i].DeploymentID) == deploymentID && regRows[i].Route == row.Route {
+				item := debugRegressionRowToItem(regRows[i])
+				regression = &item
+				break
+			}
 		}
 	}
 	timeline, err := s.buildDebugRequestTimeline(r.Context(), app.ID, request, regression)
@@ -213,6 +222,11 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 	}
 	correlation := buildDebugRequestCorrelation(request, timeline, spans)
 
+	explanation := buildDebugEvidenceExplanation(request, regression, spans)
+	if regressionErr != nil {
+		explanation = buildDebugEvidenceDegradedExplanation(spans)
+	}
+
 	writeJSON(w, http.StatusOK, api.DebugRequestEvidenceResponse{
 		Request:        request,
 		Regression:     regression,
@@ -220,9 +234,21 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		Correlation:    correlation,
 		Spans:          spans,
 		SpansTruncated: truncated,
-		Explanation:    buildDebugEvidenceExplanation(request, regression, spans),
+		Explanation:    explanation,
 		GeneratedAt:    now.Format(time.RFC3339Nano),
 	})
+}
+
+func buildDebugEvidenceDegradedExplanation(spans []api.DebugTelemetrySpan) api.DebugEvidenceExplanation {
+	explanation := api.DebugEvidenceExplanation{
+		Status:   "regression_unavailable",
+		Headline: "Regression enrichment is temporarily unavailable; request evidence is otherwise complete.",
+	}
+	if len(spans) > 0 {
+		primary := spans[0]
+		explanation.PrimarySpan = &primary
+	}
+	return explanation
 }
 
 type debugEvidenceSpan struct {
@@ -331,6 +357,11 @@ func debugTelemetryRowToItem(row sqlc.ListRequestTelemetryByAppRow) api.DebugTel
 		row.ReceivedAt,
 		row.WakeID,
 		row.InstanceID,
+		row.GuestDurationMs,
+		row.GuestRuntime,
+		row.GuestOutcome,
+		row.GuestErrorClass,
+		row.ConsumerID,
 	)
 }
 
@@ -348,6 +379,11 @@ func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIDRow) api.D
 		row.ReceivedAt,
 		row.WakeID,
 		row.InstanceID,
+		row.GuestDurationMs,
+		row.GuestRuntime,
+		row.GuestOutcome,
+		row.GuestErrorClass,
+		row.ConsumerID,
 	)
 }
 
@@ -360,6 +396,8 @@ func debugTelemetryItemFromFields(
 	traceID pgtype.Text,
 	receivedAt pgtype.Timestamptz,
 	wakeID, instanceID pgtype.Text,
+	guestDurationMS int32, guestRuntime, guestOutcome, guestErrorClass string,
+	consumerID pgtype.UUID,
 ) api.DebugTelemetryRequestItem {
 	item := api.DebugTelemetryRequestItem{
 		// pgtype.UUID -> hyphenated hex string. Falls back to "" when
@@ -376,10 +414,17 @@ func debugTelemetryItemFromFields(
 		ReceivedAt:   timeFromPg(receivedAt),
 		WakeID:       textFromPg(wakeID),
 		InstanceID:   textFromPg(instanceID),
+		ConsumerID:   uuidFromPg(consumerID),
 	}
 	if traceID.Valid {
 		s := traceID.String
 		item.TraceID = &s
+	}
+	if guestRuntime != "" && guestRuntime != "__unknown__" && guestOutcome != "" && guestOutcome != "missing" {
+		item.Guest = &api.DebugGuestExecutionEvidence{
+			Runtime: guestRuntime, DurationMS: int(guestDurationMS),
+			Outcome: guestOutcome, ErrorClass: guestErrorClass,
+		}
 	}
 	return item
 }
@@ -416,6 +461,18 @@ func (s *server) buildDebugRequestTimeline(ctx context.Context, appID string, re
 		// so request markers are intentionally labeled approximate.
 		Approximate: true,
 	})
+	if request.Guest != nil {
+		guestAt := receivedAt.Add(-time.Duration(request.Guest.DurationMS) * time.Millisecond)
+		timeline = append(timeline, api.DebugTimelineEvent{
+			At:          guestAt.UTC().Format(time.RFC3339Nano),
+			Phase:       "guest",
+			Kind:        "guest.execution",
+			Summary:     fmt.Sprintf("%s guest execution observed (%s)", request.Guest.Runtime, request.Guest.Outcome),
+			DurationMS:  int64(request.Guest.DurationMS),
+			Status:      request.Status,
+			Approximate: true,
+		})
+	}
 
 	if request.WakeID != "" {
 		events, listErr := s.store.ListEventsByWakeID(ctx, request.WakeID, time.Time{}, debugTimelineMaxEvents+1)
@@ -486,12 +543,14 @@ func debugTimelinePhaseRank(phase string) int {
 	switch phase {
 	case "request":
 		return 0
-	case "wake":
+	case "guest":
 		return 1
-	case "error":
+	case "wake":
 		return 2
-	case "regression":
+	case "error":
 		return 3
+	case "regression":
+		return 4
 	default:
 		return 4
 	}
@@ -557,7 +616,23 @@ func buildDebugRequestCorrelation(request api.DebugTelemetryRequestItem, timelin
 	}
 
 	guest := &stages[3]
-	if event := firstCorrelationEvent(timeline, "wake.proxy_first_byte"); event != nil {
+	if request.Guest != nil {
+		guest.Status = "observed"
+		guest.DurationMS = int64(request.Guest.DurationMS)
+		guest.EvidenceCount = 1 + countCorrelationKinds(timeline, "wake.proxy_first_byte")
+		guest.Approximate = true
+		if event := firstCorrelationEvent(timeline, "guest.execution"); event != nil {
+			guest.StartedAt = event.At
+			guest.CompletedAt = event.At
+			if at, err := time.Parse(time.RFC3339Nano, event.At); err == nil {
+				guest.CompletedAt = at.Add(time.Duration(request.Guest.DurationMS) * time.Millisecond).UTC().Format(time.RFC3339Nano)
+			}
+		}
+		guest.Reason = fmt.Sprintf("runner observed %s execution (%s)", request.Guest.Runtime, request.Guest.Outcome)
+		if request.Guest.ErrorClass != "" {
+			guest.Reason += "; error class " + request.Guest.ErrorClass
+		}
+	} else if event := firstCorrelationEvent(timeline, "wake.proxy_first_byte"); event != nil {
 		guest.Status = "partial"
 		guest.CompletedAt = event.At
 		guest.EvidenceCount = 1
@@ -800,7 +875,11 @@ func (s *server) debugRegressionsHandler(w http.ResponseWriter, r *http.Request,
 		},
 	})
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("list regressions"))
+		if s.log != nil {
+			s.log.Error("debug regression read failed", "app_id", app.ID, "err", err)
+		}
+		api.WriteProblem(w, api.ErrDebugRegressionUnavailable(
+			"regression observations are temporarily unavailable; retry after the debugger database is repaired"))
 		return
 	}
 	if rows == nil {
@@ -814,6 +893,24 @@ func (s *server) debugRegressionsHandler(w http.ResponseWriter, r *http.Request,
 		Since:       echoDebugSince(sinceRaw, sinceDur),
 		Regressions: items,
 	})
+}
+
+// checkDebugRegressionReadiness is intentionally a narrow optional seam so
+// MemStore-backed unit tests keep their fast shape while production's PgStore
+// verifies the relation and parameterized read before apid starts serving.
+func checkDebugRegressionReadiness(ctx context.Context, store state.Store) error {
+	_, err := debugRegressionReadinessCheck(ctx, store)
+	return err
+}
+
+func debugRegressionReadinessCheck(ctx context.Context, store state.Store) (bool, error) {
+	checker, ok := store.(interface {
+		CheckDebugRegressionReadiness(context.Context) error
+	})
+	if !ok {
+		return false, nil
+	}
+	return true, checker.CheckDebugRegressionReadiness(ctx)
 }
 
 // debugRegressionRowToItem maps a sqlc row to the wire DTO.

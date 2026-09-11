@@ -22,8 +22,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +40,67 @@ import (
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func newCreditRefundPolar(t *testing.T) (*httptest.Server, func() int) {
+	t.Helper()
+	var (
+		mu        sync.Mutex
+		refundKey string
+		posts     int
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/products/"):
+			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
+			fixedCents := int64(900)
+			switch id {
+			case "pro-product":
+				fixedCents = 2900
+			case "scale-product":
+				fixedCents = 9900
+			}
+			_, _ = fmt.Fprintf(w, `{"id":%q,"recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"eur","price_amount":%d,"is_archived":false},{"amount_type":"metered_unit","price_currency":"eur","unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`, id, fixedCents)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/meters/meter-1":
+			_, _ = fmt.Fprint(w, `{"id":"meter-1","unit":"scalar","archived_at":null,"filter":{"conjunction":"and","clauses":[{"property":"name","operator":"eq","value":"ram_usage"}]},"aggregation":{"func":"sum","property":"gb_ram_hours"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/refunds":
+			mu.Lock()
+			key := refundKey
+			mu.Unlock()
+			if key == "" {
+				_, _ = fmt.Fprint(w, `{"items":[],"pagination":{"max_page":1}}`)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"items":[{"id":"refund-e2e","amount":250,"currency":"eur","status":"succeeded","metadata":{"faas_idempotency_key":%q}}],"pagination":{"max_page":1}}`, key)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/refunds":
+			var body struct {
+				OrderID  string            `json:"order_id"`
+				Amount   int64             `json:"amount"`
+				Metadata map[string]string `json:"metadata"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if body.OrderID == "" || body.Amount != 250 || body.Metadata["faas_idempotency_key"] == "" {
+				t.Errorf("polar refund request = %+v", body)
+			}
+			mu.Lock()
+			refundKey = body.Metadata["faas_idempotency_key"]
+			posts++
+			mu.Unlock()
+			_, _ = fmt.Fprint(w, `{"id":"refund-e2e","amount":250,"currency":"eur","status":"succeeded"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return posts
+	}
+}
 
 // TestE2E_CreditIssue_AdminKey — POST /v1/admin/accounts/{id}/credits
 // from a verified operator session with the email in FAAS_ADMIN_EMAILS lands a
@@ -237,6 +302,7 @@ func TestE2E_CreditIssue_NonAdminForbidden(t *testing.T) {
 	}
 }
 
+// spec: §14 billing credits must move provider money exactly once.
 // TestE2E_CreditConsume_HappyPathAndIdempotent — POST
 // /v1/invoices/{id}/consume-credits end-to-end. Plants an account
 // + invoice + credit + usage row directly in Postgres (no
@@ -266,10 +332,22 @@ func TestE2E_CreditConsume_HappyPathAndIdempotent(t *testing.T) {
 
 	const adminEmail = "e2e+hobby+admin@test.example"
 	const targetEmail = "e2e+hobby+consume-target@test.example"
+	polarServer, refundPosts := newCreditRefundPolar(t)
 
 	h := e2etest.StartWithEnv(t, pool,
 		e2etest.APID,
-		[]string{"FAAS_ADMIN_EMAILS=" + adminEmail})
+		[]string{
+			"FAAS_ADMIN_EMAILS=" + adminEmail,
+			"FAAS_BILLING_PROVIDER=polar",
+			"FAAS_POLAR_ACCESS_TOKEN=polar_e2e_token",
+			"FAAS_POLAR_WEBHOOK_SECRET=dGVzdA==",
+			"FAAS_POLAR_HOBBY_PRODUCT_ID=hobby-product",
+			"FAAS_POLAR_PRO_PRODUCT_ID=pro-product",
+			"FAAS_POLAR_SCALE_PRODUCT_ID=scale-product",
+			"FAAS_POLAR_USAGE_EVENT_NAME=ram_usage",
+			"FAAS_POLAR_METER_ID=meter-1",
+			"FAAS_POLAR_BASE_URL=" + polarServer.URL,
+		})
 
 	store := state.NewPgStore(pool)
 
@@ -298,15 +376,15 @@ func TestE2E_CreditConsume_HappyPathAndIdempotent(t *testing.T) {
 	invoiceID := uuid.NewString()
 	periodStart := time.Now().UTC().Add(-24 * time.Hour)
 	periodEnd := time.Now().UTC().Add(time.Hour)
-	providerInvoiceID := "in_e2e_consume_" + uuid.NewString()
+	providerInvoiceID := "order_e2e_consume_" + uuid.NewString()
 	if _, err := pool.Exec(ctx,
 		`insert into invoices
-		   (id, account_id, provider, provider_invoice_id, status,
+		   (id, account_id, provider, provider_invoice_id, provider_charge_id, status,
 		    period_start, period_end, subtotal_cents, tax_cents,
-		    total_cents, amount_paid_cents, currency, pdf_available,
+		    total_cents, amount_paid_cents, plan, currency, pdf_available,
 		    created_at, updated_at)
-		 values ($1, $2, 'stripe', $3, 'paid',
-		         $4, $5, 0, 0, 0, 0, 'eur', false,
+		 values ($1, $2, 'polar', $3, $3, 'paid',
+		         $4, $5, 250, 0, 250, 250, 'hobby', 'eur', false,
 		         now(), now())`,
 		invoiceID, targetAcct.ID, providerInvoiceID, periodStart, periodEnd); err != nil {
 		t.Fatalf("seed invoice: %v", err)
@@ -466,6 +544,9 @@ func TestE2E_CreditConsume_HappyPathAndIdempotent(t *testing.T) {
 	}
 	if consumptionRowCount != 1 {
 		t.Fatalf("consumption ledger rows = %d, want 1 (partial unique index)", consumptionRowCount)
+	}
+	if got := refundPosts(); got != 1 {
+		t.Fatalf("provider refund POSTs = %d, want 1 across idempotent replay", got)
 	}
 }
 

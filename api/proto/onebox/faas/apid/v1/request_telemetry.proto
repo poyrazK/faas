@@ -136,6 +136,27 @@ message IncrementRequestTelemetryRequest {
   // instance_id — the selected VM instance that served this request. Empty
   // when the request never reached a routable target.
   string instance_id = 16;
+
+  // guest_duration_ms — bounded handler execution duration measured by the
+  // platform-owned runtime runner. Zero means the runner did not emit
+  // evidence (for example, during a rolling upgrade).
+  int32 guest_duration_ms = 17;
+
+  // guest_runtime — closed runtime identifier (node22, node24, python312,
+  // python313, or go124). Empty means unknown for older runners.
+  string guest_runtime = 18;
+
+  // guest_outcome — one of ok, http_error, handler_error, timeout, canceled,
+  // or missing. Empty means unknown for older runners.
+  string guest_outcome = 19;
+
+  // guest_error_class — bounded failure class; empty for successful calls.
+  string guest_error_class = 20;
+
+  // consumer_id — stable API consumer identity resolved by the gateway's
+  // consumer-key middleware. Empty for anonymous/legacy traffic. The
+  // credential itself is never sent or persisted.
+  string consumer_id = 21;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

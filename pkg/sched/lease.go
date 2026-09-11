@@ -3,7 +3,7 @@
 // ADR-099 Decision 6 requires "lease ownership and idempotency" for
 // dispatched job tasks: every job_task a schedd dispatches carries a
 // lease_token (UUID v7) + lease_expires_at. The token is the
-// idempotency key for the post-exit DGRAM (HandleJobExit) and the
+// idempotency key for the post-exit receipt (HandleJobExit) and the
 // signal for any other schedd that "the lease is mine; don't touch
 // this task until I either release it or it expires". The reaper
 // (M6) scans for tasks where lease_expires_at < now() and treats them

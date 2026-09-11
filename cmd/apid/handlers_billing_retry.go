@@ -41,6 +41,12 @@ func (s *server) postBillingRetry(w http.ResponseWriter, r *http.Request, acct s
 			"no billing provider configured on this box"))
 		return
 	}
+	var err error
+	acct, err = s.accountForActiveBillingProvider(r.Context(), acct)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("billing identity temporarily unavailable"))
+		return
+	}
 	attemptID, refID, err := s.billingProvider.RetryLatestCharge(r.Context(), acct)
 	if err != nil {
 		s.log.Error("billing_retry",

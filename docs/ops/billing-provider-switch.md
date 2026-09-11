@@ -78,9 +78,10 @@ wrong fixed price, wrong meter, or meter-credit benefit prevents startup.
   non-payment ladder continues. A revoke for a subscription that is no
   longer the account's current one is ignored. The customer can upgrade
   again through hosted checkout immediately.
-- `meterd` pushes completed UTC-hour net overage events and replays a durable
-  30-day lookback after restart or provider outage. Usage is not marked
-  complete until the provider call succeeds.
+- `meterd` pushes completed UTC-hour net overage events and replays every
+  retained window without a provider-qualified delivery receipt after restart
+  or provider outage. Usage is not marked complete until the provider call and
+  local receipt both succeed.
 - Overage caps fail closed. A window that would cross the monthly cap is held
   for a later replay rather than partially billed under an hourly dedupe key.
 - Polar invoice PDF generation is retried asynchronously after the webhook is
@@ -140,6 +141,9 @@ Provider switching is a deployment operation, not an account-data migration.
 Set the selector explicitly, provide the complete credentials/catalog for the
 new provider, and restart both daemons together. Do not reuse a Polar customer
 or subscription ID in Paddle or Stripe; provider identifiers are not portable.
+Gregale stores one customer/subscription binding per account and provider;
+checkout, portal, retry, cancellation, metering, webhook lookup, and
+reconciliation ignore another provider's compatibility-cache handles.
 
 For a Paddle compatibility deployment:
 

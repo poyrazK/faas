@@ -142,6 +142,65 @@ func TestS3Presign(t *testing.T) {
 	if head.Method != http.MethodHead || headURL.Query().Has("response-content-disposition") || headURL.Query().Has("response-content-type") {
 		t.Fatalf("invalid HEAD request: %+v", head)
 	}
+	size := int64(5)
+	metadata, err := p.Presign(context.Background(), "gregale-test", SignRequest{
+		Method: http.MethodPut, Key: "metadata.txt", SizeBytes: &size, ContentType: "text/plain", CacheControl: "max-age=60",
+		Metadata: map[string]string{"owner": "platform"}, Tags: map[string]string{"env": "prod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataURL, _ := url.Parse(metadata.URL)
+	if !strings.Contains(metadataURL.Query().Get("X-Amz-SignedHeaders"), "x-amz-meta-owner") || !strings.Contains(metadataURL.Query().Get("X-Amz-SignedHeaders"), "x-amz-tagging") || headerValue(metadata.Headers, "X-Amz-Tagging") != "env=prod" || headerValue(metadata.Headers, "X-Amz-Meta-Owner") != "platform" {
+		t.Fatalf("metadata/tagging was not signed: url=%s headers=%v", metadata.URL, metadata.Headers)
+	}
+}
+
+func headerValue(headers map[string]string, name string) string {
+	for key, value := range headers {
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
+}
+
+func TestS3ObjectTags(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("tagging") {
+			switch r.Method {
+			case http.MethodGet:
+				_, _ = io.WriteString(w, `<Tagging><TagSet><Tag><Key>env</Key><Value>prod</Value></Tag></TagSet></Tagging>`)
+			case http.MethodPut:
+				body, _ := io.ReadAll(r.Body)
+				if !strings.Contains(string(body), `<Key>team</Key>`) {
+					t.Errorf("tagging body = %s", body)
+				}
+			case http.MethodDelete:
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer upstream.Close()
+	c := testBackend()
+	c.Endpoint = upstream.URL
+	p, err := NewS3(c, testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tags, err := p.(ObjectTagger).GetObjectTags(context.Background(), "gregale-test", "file.txt")
+	if err != nil || tags["env"] != "prod" {
+		t.Fatalf("get tags = %v err=%v", tags, err)
+	}
+	if err := p.(ObjectTagger).PutObjectTags(context.Background(), "gregale-test", "file.txt", map[string]string{"team": "core"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.(ObjectTagger).DeleteObjectTags(context.Background(), "gregale-test", "file.txt"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestS3MultipartProtocolAndCompletionRecovery(t *testing.T) {
@@ -283,6 +342,59 @@ func TestS3ProtocolAndErrors(t *testing.T) {
 	}
 	if len(calls) != 4 || !strings.Contains(calls[1], "cors") || !strings.Contains(calls[2], "continuation-token=opaque%2Bcursor") {
 		t.Fatal(calls)
+	}
+}
+
+func TestS3CopyObjectAndDelimitedListing(t *testing.T) {
+	var copyHeader string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2":
+			if r.URL.Query().Get("delimiter") != "/" {
+				t.Errorf("delimiter not forwarded: %s", r.URL.RawQuery)
+			}
+			_, _ = io.WriteString(w, `<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>root.txt</Key><Size>4</Size><LastModified>2026-09-05T00:00:00Z</LastModified></Contents><CommonPrefixes><Prefix>photos/</Prefix></CommonPrefixes></ListBucketResult>`)
+		case r.Method == http.MethodPut && r.Header.Get("X-Amz-Copy-Source") != "":
+			copyHeader = r.Header.Get("X-Amz-Copy-Source")
+			_, _ = io.WriteString(w, `<CopyObjectResult><LastModified>2026-09-07T00:00:00Z</LastModified><ETag>&quot;copy-etag&quot;</ETag></CopyObjectResult>`)
+		case r.Method == http.MethodHead:
+			w.Header().Set("Content-Length", "12")
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer upstream.Close()
+	c := testBackend()
+	c.Endpoint = upstream.URL
+	p, err := NewS3(c, testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lister, ok := p.(DelimitedObjectLister)
+	if !ok {
+		t.Fatal("S3 provider does not expose delimiter listing")
+	}
+	page, err := lister.ListObjectsDelimited(context.Background(), "gregale-test", "", "/", "", 10)
+	if err != nil || len(page.Items) != 1 || len(page.CommonPrefixes) != 1 || page.CommonPrefixes[0] != "photos/" {
+		t.Fatalf("delimited page = %+v err=%v", page, err)
+	}
+	copier, ok := p.(ObjectCopier)
+	if !ok {
+		t.Fatal("S3 provider does not expose CopyObject")
+	}
+	result, err := copier.CopyObject(context.Background(), "gregale-test", CopyObjectRequest{SourceKey: "source.txt", DestinationKey: "copy.txt", MetadataDirective: "REPLACE", Metadata: ObjectMetadata{ContentType: "text/plain", Metadata: map[string]string{"owner": "platform"}}})
+	if err != nil || result.ETag != `"copy-etag"` || !strings.Contains(copyHeader, "gregale-test") || !strings.Contains(copyHeader, "source.txt") {
+		t.Fatalf("copy result = %+v err=%v header=%q", result, err, copyHeader)
+	}
+	sizer, ok := p.(ObjectSizer)
+	if !ok {
+		t.Fatal("S3 provider does not expose object sizing")
+	}
+	size, err := sizer.ObjectSize(context.Background(), "gregale-test", "copy.txt")
+	if err != nil || size != 12 {
+		t.Fatalf("size = %d err=%v", size, err)
 	}
 }
 

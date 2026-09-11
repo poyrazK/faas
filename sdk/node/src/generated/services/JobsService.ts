@@ -446,7 +446,7 @@ export class JobsService {
      */
     id: string,
     /**
-     * The task index within the run (1-indexed).
+     * The task index within the run (zero-indexed).
      */
     idx: number,
     /**

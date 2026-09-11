@@ -111,6 +111,7 @@ func (m *MemStore) DeleteAppLogDrain(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.appLogDrains, id)
+	delete(m.appLogDrainHealth, id)
 	return nil
 }
 

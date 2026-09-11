@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -100,10 +101,14 @@ func (p *S3) DeleteBucket(ctx context.Context, bucket string) error {
 }
 
 func (p *S3) ListObjects(ctx context.Context, bucket, prefix, cursor string, limit int32) (ObjectPage, error) {
+	return p.ListObjectsDelimited(ctx, bucket, prefix, "", cursor, limit)
+}
+
+func (p *S3) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimiter, cursor string, limit int32) (ObjectPage, error) {
 	if limit < 1 || limit > 1000 {
 		return ObjectPage{}, ErrInvalid
 	}
-	in := &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix), MaxKeys: aws.Int32(limit)}
+	in := &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix), Delimiter: aws.String(delimiter), MaxKeys: aws.Int32(limit)}
 	if cursor != "" {
 		in.ContinuationToken = aws.String(cursor)
 	}
@@ -111,9 +116,14 @@ func (p *S3) ListObjects(ctx context.Context, bucket, prefix, cursor string, lim
 	if err != nil {
 		return ObjectPage{}, normalize(err)
 	}
-	page := ObjectPage{Items: make([]Object, 0, len(out.Contents))}
+	page := ObjectPage{Items: make([]Object, 0, len(out.Contents)), CommonPrefixes: make([]string, 0, len(out.CommonPrefixes))}
 	for _, o := range out.Contents {
 		page.Items = append(page.Items, Object{Key: aws.ToString(o.Key), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
+	}
+	for _, prefix := range out.CommonPrefixes {
+		if value := aws.ToString(prefix.Prefix); value != "" {
+			page.CommonPrefixes = append(page.CommonPrefixes, value)
+		}
 	}
 	if aws.ToBool(out.IsTruncated) {
 		page.NextCursor = aws.ToString(out.NextContinuationToken)
@@ -126,6 +136,65 @@ func (p *S3) DeleteObject(ctx context.Context, bucket, key string) error {
 	return normalize(err)
 }
 
+func (p *S3) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest) (CopyObjectResult, error) {
+	if !ValidKey(r.SourceKey) || !ValidKey(r.DestinationKey) {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	if r.MetadataDirective == "" {
+		r.MetadataDirective = "COPY"
+	}
+	if r.MetadataDirective != "COPY" && r.MetadataDirective != "REPLACE" {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	if r.TaggingDirective == "" {
+		r.TaggingDirective = "COPY"
+	}
+	if r.TaggingDirective != "COPY" && r.TaggingDirective != "REPLACE" {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	if r.TaggingDirective == "COPY" && len(r.Metadata.Tags) != 0 {
+		return CopyObjectResult{}, ErrInvalid
+	}
+	if err := ValidateObjectMetadata(r.Metadata); err != nil {
+		return CopyObjectResult{}, err
+	}
+	tagging, err := EncodeObjectTags(r.Metadata.Tags)
+	if err != nil {
+		return CopyObjectResult{}, err
+	}
+	in := &s3.CopyObjectInput{
+		Bucket:             aws.String(bucket),
+		CopySource:         aws.String(url.PathEscape(bucket + "/" + r.SourceKey)),
+		Key:                aws.String(r.DestinationKey),
+		Metadata:           r.Metadata.Metadata,
+		ContentType:        stringPtrOrNil(r.Metadata.ContentType),
+		CacheControl:       stringPtrOrNil(r.Metadata.CacheControl),
+		ContentDisposition: stringPtrOrNil(r.Metadata.ContentDisposition),
+		ContentEncoding:    stringPtrOrNil(r.Metadata.ContentEncoding),
+		ContentLanguage:    stringPtrOrNil(r.Metadata.ContentLanguage),
+		MetadataDirective:  types.MetadataDirective(r.MetadataDirective),
+		TaggingDirective:   types.TaggingDirective(r.TaggingDirective),
+	}
+	if r.TaggingDirective == "REPLACE" {
+		in.Tagging = aws.String(tagging)
+	}
+	out, err := p.client.CopyObject(ctx, in)
+	if err != nil {
+		return CopyObjectResult{}, normalize(err)
+	}
+	if out == nil || out.CopyObjectResult == nil || aws.ToString(out.CopyObjectResult.ETag) == "" {
+		return CopyObjectResult{}, ErrUnavailable
+	}
+	return CopyObjectResult{ETag: aws.ToString(out.CopyObjectResult.ETag), LastModified: aws.ToTime(out.CopyObjectResult.LastModified)}, nil
+}
+
+func stringPtrOrNil(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return aws.String(value)
+}
+
 // ReadObject is intentionally not part of the customer-facing Provider
 // interface. It is used only by the operator-owned OVH access-log collector.
 func (p *S3) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
@@ -134,6 +203,20 @@ func (p *S3) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser,
 		return nil, normalize(err)
 	}
 	return out.Body, nil
+}
+
+func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) {
+	if !ValidKey(key) {
+		return 0, ErrInvalid
+	}
+	out, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		return 0, normalize(err)
+	}
+	if aws.ToInt64(out.ContentLength) < 0 {
+		return 0, ErrUnavailable
+	}
+	return aws.ToInt64(out.ContentLength), nil
 }
 
 func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
@@ -152,7 +235,19 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 		if contentType == "" {
 			contentType = "application/octet-stream"
 		}
-		in := &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(r.Key), ContentLength: r.SizeBytes, ContentType: aws.String(contentType)}
+		tagging, err := EncodeObjectTags(r.Tags)
+		if err != nil {
+			return SignedRequest{}, err
+		}
+		in := &s3.PutObjectInput{
+			Bucket: aws.String(bucket), Key: aws.String(r.Key), ContentLength: r.SizeBytes, ContentType: aws.String(contentType),
+			CacheControl: stringPtrOrNil(r.CacheControl), ContentDisposition: stringPtrOrNil(r.ContentDisposition),
+			ContentEncoding: stringPtrOrNil(r.ContentEncoding), ContentLanguage: stringPtrOrNil(r.ContentLanguage),
+			Metadata: r.Metadata,
+		}
+		if tagging != "" {
+			in.Tagging = aws.String(tagging)
+		}
 		// The SDK does not sign Content-Length: 0. Binding the standard S3
 		// empty-body digest prevents using that URL for a nonempty upload.
 		if *r.SizeBytes == 0 {
@@ -187,6 +282,48 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 		result.URL = out.URL
 	}
 	return result, nil
+}
+
+func (p *S3) GetObjectTags(ctx context.Context, bucket, key string) (map[string]string, error) {
+	if !ValidKey(key) {
+		return nil, ErrInvalid
+	}
+	out, err := p.client.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		return nil, normalize(err)
+	}
+	tags := make(map[string]string, len(out.TagSet))
+	for _, tag := range out.TagSet {
+		key, value := aws.ToString(tag.Key), aws.ToString(tag.Value)
+		tags[key] = value
+	}
+	if err := ValidateObjectMetadata(ObjectMetadata{Tags: tags}); err != nil {
+		return nil, ErrUnavailable
+	}
+	return tags, nil
+}
+
+func (p *S3) PutObjectTags(ctx context.Context, bucket, key string, tags map[string]string) error {
+	if !ValidKey(key) {
+		return ErrInvalid
+	}
+	if err := ValidateObjectMetadata(ObjectMetadata{Tags: tags}); err != nil {
+		return err
+	}
+	tagSet := make([]types.Tag, 0, len(tags))
+	for key, value := range tags {
+		tagSet = append(tagSet, types.Tag{Key: aws.String(key), Value: aws.String(value)})
+	}
+	_, err := p.client.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key), Tagging: &types.Tagging{TagSet: tagSet}})
+	return normalize(err)
+}
+
+func (p *S3) DeleteObjectTags(ctx context.Context, bucket, key string) error {
+	if !ValidKey(key) {
+		return ErrInvalid
+	}
+	_, err := p.client.DeleteObjectTagging(ctx, &s3.DeleteObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	return normalize(err)
 }
 
 const multipartSessionMetadata = "gregale-upload-id"

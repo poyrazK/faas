@@ -3138,7 +3138,9 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 
 const getRequestTelemetryByAppAndID = `-- name: GetRequestTelemetryByAppAndID :one
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id
 FROM request_telemetry
 WHERE app_id = $1
   AND id = $2
@@ -3155,19 +3157,24 @@ type GetRequestTelemetryByAppAndIDParams struct {
 }
 
 type GetRequestTelemetryByAppAndIDRow struct {
-	ID           pgtype.UUID
-	DeploymentID pgtype.UUID
-	Route        string
-	Method       string
-	Status       int32
-	LatencyMs    int32
-	Count        int32
-	ColdBoot     bool
-	TraceID      pgtype.Text
-	ReceivedAt   pgtype.Timestamptz
-	SpansSummary []byte
-	WakeID       pgtype.Text
-	InstanceID   pgtype.Text
+	ID              pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Route           string
+	Method          string
+	Status          int32
+	LatencyMs       int32
+	Count           int32
+	ColdBoot        bool
+	TraceID         pgtype.Text
+	ReceivedAt      pgtype.Timestamptz
+	SpansSummary    []byte
+	WakeID          pgtype.Text
+	InstanceID      pgtype.Text
+	GuestDurationMs int32
+	GuestRuntime    string
+	GuestOutcome    string
+	GuestErrorClass string
+	ConsumerID      pgtype.UUID
 }
 
 // Direct request drill-down for the customer debugger. The app_id
@@ -3195,6 +3202,11 @@ func (q *Queries) GetRequestTelemetryByAppAndID(ctx context.Context, db DBTX, ar
 		&i.SpansSummary,
 		&i.WakeID,
 		&i.InstanceID,
+		&i.GuestDurationMs,
+		&i.GuestRuntime,
+		&i.GuestOutcome,
+		&i.GuestErrorClass,
+		&i.ConsumerID,
 	)
 	return i, err
 }
@@ -3654,31 +3666,41 @@ const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec
 INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
-    ua_family, referrer_host, country, wake_id, instance_id
+    ua_family, referrer_host, country, wake_id, instance_id,
+    guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14, $15, $16
+    $12, $13, $14, $15, $16, $17,
+    COALESCE(NULLIF($18::text, ''), '__unknown__'),
+    COALESCE(NULLIF($19::text, ''), 'missing'),
+    COALESCE($20::text, ''),
+    $21::uuid
 )
 `
 
 type InsertRequestTelemetryParams struct {
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	DeploymentID pgtype.UUID
-	Route        string
-	Method       string
-	Status       int32
-	LatencyMs    int32
-	ColdBoot     bool
-	TraceID      pgtype.Text
-	ReceivedAt   pgtype.Timestamptz
-	Count        int32
-	UaFamily     string
-	ReferrerHost string
-	Country      string
-	WakeID       pgtype.Text
-	InstanceID   pgtype.Text
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Route           string
+	Method          string
+	Status          int32
+	LatencyMs       int32
+	ColdBoot        bool
+	TraceID         pgtype.Text
+	ReceivedAt      pgtype.Timestamptz
+	Count           int32
+	UaFamily        string
+	ReferrerHost    string
+	Country         string
+	WakeID          pgtype.Text
+	InstanceID      pgtype.Text
+	GuestDurationMs int32
+	GuestRuntime    string
+	GuestOutcome    string
+	GuestErrorClass string
+	ConsumerID      pgtype.UUID
 }
 
 // ---------------------------------------------------------------------------
@@ -3733,6 +3755,11 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.Country,
 		arg.WakeID,
 		arg.InstanceID,
+		arg.GuestDurationMs,
+		arg.GuestRuntime,
+		arg.GuestOutcome,
+		arg.GuestErrorClass,
+		arg.ConsumerID,
 	)
 	return err
 }
@@ -5722,7 +5749,9 @@ func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg L
 
 const listRequestTelemetryByApp = `-- name: ListRequestTelemetryByApp :many
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, wake_id, instance_id
+       cold_boot, trace_id, received_at, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
@@ -5741,18 +5770,23 @@ type ListRequestTelemetryByAppParams struct {
 }
 
 type ListRequestTelemetryByAppRow struct {
-	ID           pgtype.UUID
-	DeploymentID pgtype.UUID
-	Route        string
-	Method       string
-	Status       int32
-	LatencyMs    int32
-	Count        int32
-	ColdBoot     bool
-	TraceID      pgtype.Text
-	ReceivedAt   pgtype.Timestamptz
-	WakeID       pgtype.Text
-	InstanceID   pgtype.Text
+	ID              pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Route           string
+	Method          string
+	Status          int32
+	LatencyMs       int32
+	Count           int32
+	ColdBoot        bool
+	TraceID         pgtype.Text
+	ReceivedAt      pgtype.Timestamptz
+	WakeID          pgtype.Text
+	InstanceID      pgtype.Text
+	GuestDurationMs int32
+	GuestRuntime    string
+	GuestOutcome    string
+	GuestErrorClass string
+	ConsumerID      pgtype.UUID
 }
 
 // Canonical read pattern: "give me the last N requests for this app".
@@ -5788,6 +5822,11 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 			&i.ReceivedAt,
 			&i.WakeID,
 			&i.InstanceID,
+			&i.GuestDurationMs,
+			&i.GuestRuntime,
+			&i.GuestOutcome,
+			&i.GuestErrorClass,
+			&i.ConsumerID,
 		); err != nil {
 			return nil, err
 		}
@@ -10165,6 +10204,149 @@ func (q *Queries) RevokeSession(ctx context.Context, db DBTX, arg RevokeSessionP
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const runtimeSnapshotByCatalogKey = `-- name: RuntimeSnapshotByCatalogKey :one
+SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at FROM runtime_snapshots
+WHERE catalog_key = $1
+`
+
+func (q *Queries) RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, catalogKey string) (RuntimeSnapshot, error) {
+	row := db.QueryRow(ctx, runtimeSnapshotByCatalogKey, catalogKey)
+	var i RuntimeSnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.CatalogKey,
+		&i.Runtime,
+		&i.Architecture,
+		&i.KernelDigest,
+		&i.GuestExecutorDigest,
+		&i.BaseImageDigest,
+		&i.MemoryMb,
+		&i.EphemeralDiskMb,
+		&i.FormatVersion,
+		&i.StorageKey,
+		&i.SnapshotDigest,
+		&i.MemBytes,
+		&i.VmStateBytes,
+		&i.Sanitized,
+		&i.PayloadFree,
+		&i.State,
+		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const runtimeSnapshotInsert = `-- name: RuntimeSnapshotInsert :one
+INSERT INTO runtime_snapshots (
+    catalog_key, runtime, architecture, kernel_digest, guest_executor_digest,
+    base_image_digest, memory_mb, ephemeral_disk_mb, format_version,
+    storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized,
+    payload_free, state, created_at, published_at, retired_at
+)
+VALUES (
+    $1, $2, $3,
+    $4, $5,
+    $6, $7, $8,
+    $9, $10, $11,
+    $12, $13, $14,
+    $15, $16, $17,
+    $18, $19
+)
+RETURNING id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at
+`
+
+type RuntimeSnapshotInsertParams struct {
+	CatalogKey          string
+	Runtime             string
+	Architecture        string
+	KernelDigest        string
+	GuestExecutorDigest string
+	BaseImageDigest     string
+	MemoryMb            int32
+	EphemeralDiskMb     int32
+	FormatVersion       int32
+	StorageKey          string
+	SnapshotDigest      string
+	MemBytes            int64
+	VmStateBytes        int64
+	Sanitized           bool
+	PayloadFree         bool
+	State               string
+	CreatedAt           pgtype.Timestamptz
+	PublishedAt         pgtype.Timestamptz
+	RetiredAt           pgtype.Timestamptz
+}
+
+// Runtime snapshot catalog (ADR-171 follow-up / durable publication boundary).
+// Publication is insert-only; retirement is the sole mutable transition.
+func (q *Queries) RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg RuntimeSnapshotInsertParams) (RuntimeSnapshot, error) {
+	row := db.QueryRow(ctx, runtimeSnapshotInsert,
+		arg.CatalogKey,
+		arg.Runtime,
+		arg.Architecture,
+		arg.KernelDigest,
+		arg.GuestExecutorDigest,
+		arg.BaseImageDigest,
+		arg.MemoryMb,
+		arg.EphemeralDiskMb,
+		arg.FormatVersion,
+		arg.StorageKey,
+		arg.SnapshotDigest,
+		arg.MemBytes,
+		arg.VmStateBytes,
+		arg.Sanitized,
+		arg.PayloadFree,
+		arg.State,
+		arg.CreatedAt,
+		arg.PublishedAt,
+		arg.RetiredAt,
+	)
+	var i RuntimeSnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.CatalogKey,
+		&i.Runtime,
+		&i.Architecture,
+		&i.KernelDigest,
+		&i.GuestExecutorDigest,
+		&i.BaseImageDigest,
+		&i.MemoryMb,
+		&i.EphemeralDiskMb,
+		&i.FormatVersion,
+		&i.StorageKey,
+		&i.SnapshotDigest,
+		&i.MemBytes,
+		&i.VmStateBytes,
+		&i.Sanitized,
+		&i.PayloadFree,
+		&i.State,
+		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const runtimeSnapshotRetire = `-- name: RuntimeSnapshotRetire :execrows
+UPDATE runtime_snapshots
+SET state = 'retired', retired_at = $1
+WHERE catalog_key = $2 AND state = 'ready'
+`
+
+type RuntimeSnapshotRetireParams struct {
+	RetiredAt  pgtype.Timestamptz
+	CatalogKey string
+}
+
+func (q *Queries) RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg RuntimeSnapshotRetireParams) (int64, error) {
+	result, err := db.Exec(ctx, runtimeSnapshotRetire, arg.RetiredAt, arg.CatalogKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setAppManifest = `-- name: SetAppManifest :exec

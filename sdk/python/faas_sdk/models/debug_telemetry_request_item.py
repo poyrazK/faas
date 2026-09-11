@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -13,6 +13,10 @@ from ..models.debug_telemetry_request_item_method import (
     check_debug_telemetry_request_item_method,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.debug_guest_execution_evidence import DebugGuestExecutionEvidence
+
 
 T = TypeVar("T", bound="DebugTelemetryRequestItem")
 
@@ -39,6 +43,10 @@ class DebugTelemetryRequestItem:
     """Opaque wake identifier when this request admitted a wake; omitted for warm requests."""
     instance_id: str | Unset = UNSET
     """Opaque instance identifier that served the request; omitted when no target was reached."""
+    consumer_id: UUID | Unset = UNSET
+    """Stable API consumer identity; omitted for anonymous or legacy traffic."""
+    guest: DebugGuestExecutionEvidence | Unset = UNSET
+    """Bounded, platform-owned runtime execution evidence. Omitted when the runner signal was unavailable."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +78,14 @@ class DebugTelemetryRequestItem:
 
         instance_id = self.instance_id
 
+        consumer_id: str | Unset = UNSET
+        if not isinstance(self.consumer_id, Unset):
+            consumer_id = str(self.consumer_id)
+
+        guest: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.guest, Unset):
+            guest = self.guest.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -91,11 +107,17 @@ class DebugTelemetryRequestItem:
             field_dict["wake_id"] = wake_id
         if instance_id is not UNSET:
             field_dict["instance_id"] = instance_id
+        if consumer_id is not UNSET:
+            field_dict["consumer_id"] = consumer_id
+        if guest is not UNSET:
+            field_dict["guest"] = guest
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_guest_execution_evidence import DebugGuestExecutionEvidence
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -128,6 +150,20 @@ class DebugTelemetryRequestItem:
 
         instance_id = d.pop("instance_id", UNSET)
 
+        _consumer_id = d.pop("consumer_id", UNSET)
+        consumer_id: UUID | Unset
+        if isinstance(_consumer_id, Unset):
+            consumer_id = UNSET
+        else:
+            consumer_id = UUID(_consumer_id)
+
+        _guest = d.pop("guest", UNSET)
+        guest: DebugGuestExecutionEvidence | Unset
+        if isinstance(_guest, Unset):
+            guest = UNSET
+        else:
+            guest = DebugGuestExecutionEvidence.from_dict(_guest)
+
         debug_telemetry_request_item = cls(
             id=id,
             deployment_id=deployment_id,
@@ -141,6 +177,8 @@ class DebugTelemetryRequestItem:
             trace_id=trace_id,
             wake_id=wake_id,
             instance_id=instance_id,
+            consumer_id=consumer_id,
+            guest=guest,
         )
 
         debug_telemetry_request_item.additional_properties = d

@@ -114,7 +114,23 @@ type IncrementRequestTelemetryRequest struct {
 	WakeId string `protobuf:"bytes,15,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
 	// instance_id — the selected VM instance that served this request. Empty
 	// when the request never reached a routable target.
-	InstanceId    string `protobuf:"bytes,16,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	InstanceId string `protobuf:"bytes,16,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	// guest_duration_ms — bounded handler execution duration measured by the
+	// platform-owned runtime runner. Zero means the runner did not emit
+	// evidence (for example, during a rolling upgrade).
+	GuestDurationMs int32 `protobuf:"varint,17,opt,name=guest_duration_ms,json=guestDurationMs,proto3" json:"guest_duration_ms,omitempty"`
+	// guest_runtime — closed runtime identifier (node22, node24, python312,
+	// python313, or go124). Empty means unknown for older runners.
+	GuestRuntime string `protobuf:"bytes,18,opt,name=guest_runtime,json=guestRuntime,proto3" json:"guest_runtime,omitempty"`
+	// guest_outcome — one of ok, http_error, handler_error, timeout, canceled,
+	// or missing. Empty means unknown for older runners.
+	GuestOutcome string `protobuf:"bytes,19,opt,name=guest_outcome,json=guestOutcome,proto3" json:"guest_outcome,omitempty"`
+	// guest_error_class — bounded failure class; empty for successful calls.
+	GuestErrorClass string `protobuf:"bytes,20,opt,name=guest_error_class,json=guestErrorClass,proto3" json:"guest_error_class,omitempty"`
+	// consumer_id — stable API consumer identity resolved by the gateway's
+	// consumer-key middleware. Empty for anonymous/legacy traffic. The
+	// credential itself is never sent or persisted.
+	ConsumerId    string `protobuf:"bytes,21,opt,name=consumer_id,json=consumerId,proto3" json:"consumer_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -261,6 +277,41 @@ func (x *IncrementRequestTelemetryRequest) GetInstanceId() string {
 	return ""
 }
 
+func (x *IncrementRequestTelemetryRequest) GetGuestDurationMs() int32 {
+	if x != nil {
+		return x.GuestDurationMs
+	}
+	return 0
+}
+
+func (x *IncrementRequestTelemetryRequest) GetGuestRuntime() string {
+	if x != nil {
+		return x.GuestRuntime
+	}
+	return ""
+}
+
+func (x *IncrementRequestTelemetryRequest) GetGuestOutcome() string {
+	if x != nil {
+		return x.GuestOutcome
+	}
+	return ""
+}
+
+func (x *IncrementRequestTelemetryRequest) GetGuestErrorClass() string {
+	if x != nil {
+		return x.GuestErrorClass
+	}
+	return ""
+}
+
+func (x *IncrementRequestTelemetryRequest) GetConsumerId() string {
+	if x != nil {
+		return x.ConsumerId
+	}
+	return ""
+}
+
 // IncrementRequestTelemetryResponse is the per-record outcome the
 // server returns. outcome ∈ {inserted, rate_limited, db_error}.
 // `inserted` is a successful INSERT; `rate_limited` means the
@@ -328,7 +379,7 @@ var File_onebox_faas_apid_v1_request_telemetry_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
-	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\x8f\x04\n" +
+	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xd2\x05\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -350,7 +401,13 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\acountry\x18\x0e \x01(\tR\acountry\x12\x17\n" +
 	"\awake_id\x18\x0f \x01(\tR\x06wakeId\x12\x1f\n" +
 	"\vinstance_id\x18\x10 \x01(\tR\n" +
-	"instanceId\"c\n" +
+	"instanceId\x12*\n" +
+	"\x11guest_duration_ms\x18\x11 \x01(\x05R\x0fguestDurationMs\x12#\n" +
+	"\rguest_runtime\x18\x12 \x01(\tR\fguestRuntime\x12#\n" +
+	"\rguest_outcome\x18\x13 \x01(\tR\fguestOutcome\x12*\n" +
+	"\x11guest_error_class\x18\x14 \x01(\tR\x0fguestErrorClass\x12\x1f\n" +
+	"\vconsumer_id\x18\x15 \x01(\tR\n" +
+	"consumerId\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs2\xa3\x01\n" +

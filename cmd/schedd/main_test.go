@@ -355,7 +355,7 @@ func (stubVMM) StopInstance(context.Context, string, int32, int32) (*sched.StopI
 // do. Returns nil + io.EOF so any accidental caller exits cleanly.
 // PR-B adds the sinceWrittenAt time lower-bound; the fake ignores
 // it.
-func (stubVMM) Logs(context.Context, string, int64, time.Time) (sched.LogStream, error) {
+func (stubVMM) Logs(context.Context, string, int64, time.Time, bool) (sched.LogStream, error) {
 	return nil, io.EOF
 }
 

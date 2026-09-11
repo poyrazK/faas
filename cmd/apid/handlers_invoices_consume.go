@@ -4,13 +4,9 @@
 //
 //	POST /v1/invoices/{id}/consume-credits   — admin-only, MFA-gated, idempotent
 //
-// Today the reducer is operator-triggered at month-rollover. The same
-// `pkg/billing.ConsumeCreditsForInvoice` will be called by:
-//
-//   - the PR-B `UpsertInvoice` webhook Tx (one-line call from inside
-//     the Tx; no contract change for the reducer)
-//   - a future meterd cron (operator's actor string changes to
-//     "meterd"; same function)
+// The operator path and invoice-paid webhook share the same
+// consumeAndRefundInvoiceCredits primitive, so a consumed local credit always
+// produces an equal provider refund.
 //
 // Auth model: admin-only, two-layer gate (requireScope +
 // adminAllows email allowlist) plus requireMFA — the spec §11 ship
@@ -46,7 +42,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -70,9 +65,17 @@ func (s *server) consumeInvoiceCredits(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
-	const actor = "apid"
-	const reason = "admin endpoint: POST /v1/invoices/{id}/consume-credits"
-	res, inv, err := billing.ConsumeCreditsForInvoice(r.Context(), s.store, invoiceID, actor, reason)
+	inv, err := s.store.GetInvoiceByID(r.Context(), invoiceID)
+	if err == nil {
+		const actor = "apid"
+		const reason = "admin endpoint: POST /v1/invoices/{id}/consume-credits"
+		var res state.ConsumeAccountCreditResult
+		res, inv, err = s.consumeAndRefundInvoiceCredits(r.Context(), inv, actor, reason)
+		if err == nil {
+			s.writeConsumedInvoiceCredits(w, r, res, inv)
+			return
+		}
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
@@ -88,7 +91,9 @@ func (s *server) consumeInvoiceCredits(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrInternal(err.Error()))
 		return
 	}
+}
 
+func (s *server) writeConsumedInvoiceCredits(w http.ResponseWriter, r *http.Request, res state.ConsumeAccountCreditResult, inv state.Invoice) {
 	// One credit.consumed audit row per drained credit. The reducer
 	// already wrote the credit_ledger rows; the audit row carries the
 	// invoice + totals so a SOC 2 reader can correlate without

@@ -19,8 +19,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -51,6 +53,22 @@ func TestTierC_InvocationsList_HappyPath(t *testing.T) {
 	}
 	if f.sawMethod != "GET" || f.sawPath != "/v1/invocations" {
 		t.Errorf("route = %s %s, want GET /v1/invocations", f.sawMethod, f.sawPath)
+	}
+}
+
+func TestTierC_InvocationsList_HumanShowsCursor(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"invocations":[{"id":"i-1","created_at":"2026-08-07T00:00:00Z","state":"completed","method":"POST","path":"/invoke","app_id":"a-1"}],"next_before":"i-1"}`
+	authedFakeAPI(t, body, http.StatusOK)
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	defer func() { osStdout = oldOut }()
+	if code := cmdInvocationsList(nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "--before i-1") {
+		t.Fatalf("human output missing continuation hint: %q", out.String())
 	}
 }
 

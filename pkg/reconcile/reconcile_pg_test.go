@@ -139,7 +139,7 @@ func TestPgReconcile_Quota_BlocksCreateSet(t *testing.T) {
 
 	// Hobby plan cap = 5. Seed 4 existing apps, then attempt 3
 	// creates → projected 7 > 5 → quota_blocked alert.
-	for _, n := range []string{"a", "b", "c", "d"} {
+	for _, n := range []string{"app-a", "app-b", "app-c", "app-d"} {
 		app := state.App{
 			AccountID:     proj.AccountID,
 			ProjectID:     proj.ID,
@@ -156,9 +156,9 @@ func TestPgReconcile_Quota_BlocksCreateSet(t *testing.T) {
 
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "e", Source: "compose.yaml: e", Tier: reposcan.TierCompose},
-			{Name: "f", Source: "compose.yaml: f", Tier: reposcan.TierCompose},
-			{Name: "g", Source: "compose.yaml: g", Tier: reposcan.TierCompose},
+			{Name: "app-e", Source: "compose.yaml: app-e", Tier: reposcan.TierCompose},
+			{Name: "app-f", Source: "compose.yaml: app-f", Tier: reposcan.TierCompose},
+			{Name: "app-g", Source: "compose.yaml: app-g", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
 	}

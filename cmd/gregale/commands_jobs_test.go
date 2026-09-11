@@ -13,6 +13,8 @@ package main
 import (
 	"bytes"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -168,9 +170,10 @@ func TestCmdJobsCancel_BadUUID(t *testing.T) {
 	}
 }
 
-// TestCmdJobsLogs_BadTaskIndex verifies task-index > 0 check.
+// TestCmdJobsLogs_BadTaskIndex verifies negative and malformed indexes are
+// rejected while zero remains a valid persisted task index.
 func TestCmdJobsLogs_BadTaskIndex(t *testing.T) {
-	cases := []string{"zero", "minus-one", "alpha"}
+	cases := []string{"-1", "alpha"}
 	for _, idx := range cases {
 		code, _ := runWithStderr(t, func() int {
 			return cmdJobsLogs([]string{"valid-slug", "00000000-0000-0000-0000-000000000000", idx})
@@ -178,6 +181,28 @@ func TestCmdJobsLogs_BadTaskIndex(t *testing.T) {
 		if code != 1 {
 			t.Errorf("cmdJobsLogs(idx=%q) = %d, want 1", idx, code)
 		}
+	}
+}
+
+func TestCmdJobsLogs_AllowsZeroBasedIndex(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"task_status":"queued","log_content":"","truncated":false,"max_bytes":65536}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	jsonOutput = true
+
+	if code := cmdJobsLogs([]string{"valid-slug", "00000000-0000-0000-0000-000000000000", "0"}); code != 0 {
+		t.Fatalf("cmdJobsLogs(task-index 0) = %d, want 0", code)
+	}
+	if gotPath != "/v1/jobs/valid-slug/runs/00000000-0000-0000-0000-000000000000/tasks/0/logs" {
+		t.Fatalf("request path = %q, want zero-based task path", gotPath)
 	}
 }
 

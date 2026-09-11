@@ -52,6 +52,7 @@ func newIssueCreditEnv(t *testing.T, scopes []string, adminEmail, callerEmail st
 	}
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
 	srv.WithAdminAllowlist(adminEmail)
+	srv.WithBillingProvider(&consumeRefundProvider{})
 	return testEnv{h: srv.handler(), s: srv, store: store, key: pt, acct: acct, ops: ops}
 }
 

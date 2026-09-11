@@ -1,5 +1,6 @@
 //go:build !no_pg
 
+// spec: §14 M7 invoice shadow equals a scripted 24-hour billing scenario.
 // Package e2e — billing_invoice_shadow_test.go is the §14 M7 invoice-
 // shadow acceptance gate wired end-to-end. Mirrors
 // meterd_quota_e2e_test.go (boot apid + schedd + meterd via
@@ -70,10 +71,9 @@ var (
 	shadowTotal   = shadowPerHour * shadowHours             // 22_809_600
 )
 
-// shadowEnv returns the cadence-compressed env slice for one
-// subtest. Per the plan: 1s StripeInterval → 24 ticks fit in ~24s
-// wall-clock; defensive 2s on the other timers so a quota/dunning
-// tick never races the pusher's own loop on the test's resources.
+// shadowEnv returns the cadence-compressed env slice for one subtest. A
+// one-second billing cadence makes the durable pending-window pass run quickly;
+// defensive two-second values on the other timers keep them from racing it.
 //
 // extra env keys (STRIPE_API_KEY, FAAS_PADDLE_API_KEY, …) are
 // appended by the caller. FAAS_BILLING_PROVIDER is the selector;
@@ -96,16 +96,14 @@ func shadowEnv(provider string, extra ...string) []string {
 }
 
 // seedShadowAccount plants one Hobby account, one app, one live
-// instance, and 24 hourly usage rows summing to shadowTotal
-// mb_seconds. Each row's `minute` is the start of one hour-bucket
-// so UsageByHour(acct, start=t+h, end=t+h+1h) returns exactly
-// one row summing to shadowPerHour per meterd tick.
+// instance, and 24 completed hourly usage rows summing to shadowTotal
+// mb_seconds. Each row's `minute` is the start of one hour-bucket, so the
+// durable pending-window scan returns 24 independent shadowPerHour rows.
 //
 // The minute values are spaced 1h apart so AppendUsage's
 // (instance_id, minute) idempotency key (state/store.go:786) does
-// not collapse any two rows. t0 is anchored at the top of the
-// current UTC hour so the first meterd tick (which reads the
-// "previous hour" via HourWindow) lands on the first row.
+// not collapse any two rows. t0 is far enough in the past that every row is
+// completed before meterd's exclusive current-hour boundary.
 func seedShadowAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, t0 time.Time) (state.Account, state.App, state.Instance) {
 	t.Helper()
 	store := state.NewPgStore(pool)
@@ -291,13 +289,9 @@ func filterShadowLogLines(logs, prefix, acctID string, expected int64) []string 
 // and its own harness (StartWithEnv registers t.Cleanup(h.stop)
 // per call). The two subtests cannot leak state into each other.
 //
-// Per subtest: 24 hourly usage rows seeded, FAAS_STRIPE_INTERVAL
-// compressed to 1s, meterd fires 24 PushHour ticks, each tick
-// reads one hour-bucket summing to shadowPerHour. The meterd
-// log is the unified oracle — every successful push emits a
-// "meter: push usage ... mb_seconds=950400" line. The test
-// asserts exactly 24 such lines, then sums the per-tick
-// mb_seconds to shadowTotal.
+// Per subtest: 24 completed hourly usage rows are seeded and meterd's durable
+// backfill attempts each pending window. The provider-neutral log is the oracle:
+// each attempt carries exactly shadowPerHour, and all 24 sum to shadowTotal.
 func TestInvoiceShadow_24h(t *testing.T) {
 	t.Run("stripe", func(t *testing.T) { runShadowSubtest(t, "stripe") })
 	t.Run("paddle", func(t *testing.T) { runShadowSubtest(t, "paddle") })
@@ -314,14 +308,10 @@ func runShadowSubtest(t *testing.T, provider string) {
 	}
 	pgtest.WaitForMigration(t, pool, 13, 10*time.Second)
 
-	// Anchor t0 at the previous top-of-hour. The 24 seeded rows
-	// cover [t0, t0+24h) on hour boundaries. The pusher's
-	// HourWindow(now) returns [now.Truncate-1h, now.Truncate)
-	// (pusher.go:59-63), so as long as the first tick fires
-	// after t0+1h, it reads the [t0, t0+1h) window — exactly the
-	// first row. Each subsequent tick advances one hour. The
-	// anchor is robust to any seed-time clock-second.
-	t0 := time.Now().UTC().Truncate(time.Hour).Add(-time.Hour)
+	// Put all 24 windows immediately before the current UTC hour. PushPending's
+	// end is exclusive, so the first billing pass sees every row and no future
+	// usage is accidentally used to simulate time advancing.
+	t0 := time.Now().UTC().Truncate(time.Hour).Add(-time.Duration(shadowHours) * time.Hour)
 
 	var extraEnv []string
 	if provider == "stripe" {
@@ -338,7 +328,7 @@ func runShadowSubtest(t *testing.T, provider string) {
 
 	hits := pollShadowLog(t, h, acct.ID, int(shadowHours), shadowPerHour)
 	if int64(len(hits)) != shadowHours {
-		t.Fatalf("shadow log hits = %d, want %d (one per hourly PushHour tick)", len(hits), shadowHours)
+		t.Fatalf("shadow log hits = %d, want %d (one per pending hourly window)", len(hits), shadowHours)
 	}
 
 	// Sum check: every hit was filtered for `mb_seconds=` ↔ shadowPerHour

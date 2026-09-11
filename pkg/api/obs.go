@@ -695,6 +695,8 @@ type ObsRateLimitResponse struct {
 // P4 filters (Commit 6 of the operator-side observability
 // mega-PR) so the operator UI can re-render the filter chip
 // strip without a second round-trip.
+// NextBefore is an opaque compound cursor for the next older page;
+// it is omitted when this page reaches the end.
 type ObsAuditLogSearchResponse struct {
 	GeneratedAt      time.Time        `json:"generated_at"`
 	Items            []ObsAuditLogRow `json:"items"`
@@ -706,6 +708,7 @@ type ObsAuditLogSearchResponse struct {
 	ActorEmail       string           `json:"actor_email,omitempty"`
 	OperatorOnly     bool             `json:"operator_only,omitempty"`
 	TargetAccountID  string           `json:"target_account_id,omitempty"`
+	NextBefore       string           `json:"next_before,omitempty"`
 }
 
 // ObsAuditLogRow is one row of the audit-log search. The fields are

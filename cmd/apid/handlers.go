@@ -566,7 +566,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 				"a live deployment already targets this scope on this app; supersede it before creating another"))
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+		s.writeDeploymentCreateError(w, err)
 		return
 	}
 	notifyAndAuditDeployment(r.Context(), s, acct, app, d, prev, &req)
@@ -958,9 +958,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 	return resp
 }
 
-var slugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
-
-func validSlug(s string) bool { return slugRe.MatchString(s) }
+func validSlug(s string) bool { return api.ValidAppSlug(s) }
 
 // digestPinnedRE matches a digest-pinned OCI reference end-to-end:
 //

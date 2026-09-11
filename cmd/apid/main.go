@@ -1111,6 +1111,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if store == nil {
 		return errors.New("apid: store dependency returned nil")
 	}
+	// The debugger's regression read is an optional enrichment for individual
+	// evidence responses, but its relation/query must be healthy before the
+	// production daemon advertises the debugger surface.  PgStore performs the
+	// exact parameterized probe; MemStore-backed lifecycle tests intentionally
+	// skip the optional seam.
+	if err := checkDebugRegressionReadiness(ctx, store); err != nil {
+		return fmt.Errorf("apid: debugger regression readiness: %w", err)
+	}
 
 	// Dev-only: seed a Free account bound to $FAAS_DEV_TOKEN so the CLI can be
 	// exercised end-to-end without the (browser-paste) signup flow. Never set in

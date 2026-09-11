@@ -320,6 +320,7 @@ func polarInvoice(eventType string, data map[string]any) *billing.InvoiceData {
 	}
 	return &billing.InvoiceData{
 		ProviderInvoiceID: id,
+		ProviderChargeID:  id,
 		Number:            firstString(data, "invoice_number", "number"),
 		Status:            status,
 		PeriodStart:       periodStart,

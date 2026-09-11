@@ -1582,11 +1582,16 @@ delete from oidc_exchanged_tokens where id = $1;
 INSERT INTO request_telemetry (
     account_id, app_id, deployment_id, route, method,
     status, latency_ms, cold_boot, trace_id, received_at, count,
-    ua_family, referrer_host, country, wake_id, instance_id
+    ua_family, referrer_host, country, wake_id, instance_id,
+    guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14, $15, $16
+    $12, $13, $14, $15, $16, $17,
+    COALESCE(NULLIF(sqlc.arg('guest_runtime')::text, ''), '__unknown__'),
+    COALESCE(NULLIF(sqlc.arg('guest_outcome')::text, ''), 'missing'),
+    COALESCE(sqlc.arg('guest_error_class')::text, ''),
+    sqlc.arg('consumer_id')::uuid
 );
 
 -- name: ListRequestTelemetryByApp :many
@@ -1596,7 +1601,9 @@ INSERT INTO request_telemetry (
 -- timestamptz; handler-side date parsing is at cmd/apid/
 -- handlers_debug_telemetry.go (parseDebugTelemetryWindow).
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, wake_id, instance_id
+       cold_boot, trace_id, received_at, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
@@ -1610,7 +1617,9 @@ LIMIT $4;
 -- predicate is the database-side tenant boundary; the handler has
 -- already resolved the slug through the caller's account.
 SELECT id, deployment_id, route, method, status, latency_ms, count,
-       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id
 FROM request_telemetry
 WHERE app_id = $1
   AND id = $2
@@ -3271,3 +3280,32 @@ WITH candidates AS (
 DELETE FROM execution_payloads AS payload
 USING candidates
 WHERE payload.execution_id = candidates.execution_id;
+
+-- Runtime snapshot catalog (ADR-171 follow-up / durable publication boundary).
+-- Publication is insert-only; retirement is the sole mutable transition.
+-- name: RuntimeSnapshotInsert :one
+INSERT INTO runtime_snapshots (
+    catalog_key, runtime, architecture, kernel_digest, guest_executor_digest,
+    base_image_digest, memory_mb, ephemeral_disk_mb, format_version,
+    storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized,
+    payload_free, state, created_at, published_at, retired_at
+)
+VALUES (
+    sqlc.arg(catalog_key), sqlc.arg(runtime), sqlc.arg(architecture),
+    sqlc.arg(kernel_digest), sqlc.arg(guest_executor_digest),
+    sqlc.arg(base_image_digest), sqlc.arg(memory_mb), sqlc.arg(ephemeral_disk_mb),
+    sqlc.arg(format_version), sqlc.arg(storage_key), sqlc.arg(snapshot_digest),
+    sqlc.arg(mem_bytes), sqlc.arg(vm_state_bytes), sqlc.arg(sanitized),
+    sqlc.arg(payload_free), sqlc.arg(state), sqlc.arg(created_at),
+    sqlc.arg(published_at), sqlc.arg(retired_at)
+)
+RETURNING *;
+
+-- name: RuntimeSnapshotByCatalogKey :one
+SELECT * FROM runtime_snapshots
+WHERE catalog_key = sqlc.arg(catalog_key);
+
+-- name: RuntimeSnapshotRetire :execrows
+UPDATE runtime_snapshots
+SET state = 'retired', retired_at = sqlc.arg(retired_at)
+WHERE catalog_key = sqlc.arg(catalog_key) AND state = 'ready';

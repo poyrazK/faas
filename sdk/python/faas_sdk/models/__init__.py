@@ -57,6 +57,8 @@ from .app_error_sample_response_headers_sample import AppErrorSampleResponseHead
 from .app_error_summary_item import AppErrorSummaryItem
 from .app_error_summary_item_error_class import AppErrorSummaryItemErrorClass
 from .app_errors_summary_response import AppErrorsSummaryResponse
+from .app_log_drain_health_response import AppLogDrainHealthResponse
+from .app_log_drain_health_response_status import AppLogDrainHealthResponseStatus
 from .app_log_drain_response import AppLogDrainResponse
 from .app_log_drain_response_auth_header_masked import AppLogDrainResponseAuthHeaderMasked
 from .app_log_drain_response_kind import AppLogDrainResponseKind
@@ -77,6 +79,7 @@ from .app_open_api_import_dry_run_response import AppOpenAPIImportDryRunResponse
 from .app_open_api_import_response import AppOpenAPIImportResponse
 from .app_open_api_import_response_openapi_version import AppOpenAPIImportResponseOpenapiVersion
 from .app_open_api_import_response_source import AppOpenAPIImportResponseSource
+from .app_open_api_policy_apply_response import AppOpenAPIPolicyApplyResponse
 from .app_open_api_policy_preview_response import AppOpenAPIPolicyPreviewResponse
 from .app_open_api_policy_preview_route import AppOpenAPIPolicyPreviewRoute
 from .app_open_api_policy_preview_route_method import AppOpenAPIPolicyPreviewRouteMethod
@@ -125,6 +128,7 @@ from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
 from .applied_build import AppliedBuild
+from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
 from .apply_response import ApplyResponse
 from .apply_response_apps_item import ApplyResponseAppsItem
 from .apps_metrics_response import AppsMetricsResponse
@@ -157,7 +161,6 @@ from .build_plan_class_type_3_type_1 import BuildPlanClassType3Type1
 from .build_plan_framework import BuildPlanFramework
 from .build_provenance_response import BuildProvenanceResponse
 from .build_response import BuildResponse
-from .build_response_cache_status import BuildResponseCacheStatus
 from .build_response_cache_status import BuildResponseCacheStatus
 from .build_response_failure_class import BuildResponseFailureClass
 from .build_response_kind import BuildResponseKind
@@ -281,6 +284,10 @@ from .debug_compare_response import DebugCompareResponse
 from .debug_compare_route_stats import DebugCompareRouteStats
 from .debug_evidence_explanation import DebugEvidenceExplanation
 from .debug_evidence_explanation_status import DebugEvidenceExplanationStatus
+from .debug_guest_execution_evidence import DebugGuestExecutionEvidence
+from .debug_guest_execution_evidence_error_class import DebugGuestExecutionEvidenceErrorClass
+from .debug_guest_execution_evidence_outcome import DebugGuestExecutionEvidenceOutcome
+from .debug_guest_execution_evidence_runtime import DebugGuestExecutionEvidenceRuntime
 from .debug_regression_item import DebugRegressionItem
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_response import DebugReplayResponse
@@ -436,6 +443,7 @@ from .get_deployment_stages_response_200_current import GetDeploymentStagesRespo
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
+from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .git_hub_install_mutation_request import GitHubInstallMutationRequest
@@ -443,6 +451,13 @@ from .git_hub_install_status import GitHubInstallStatus
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+from .github_check_update_record import GithubCheckUpdateRecord
+from .github_check_update_record_status import GithubCheckUpdateRecordStatus
+from .github_recovery_retry_response import GithubRecoveryRetryResponse
+from .github_recovery_retry_response_kind import GithubRecoveryRetryResponseKind
+from .github_recovery_status_response import GithubRecoveryStatusResponse
+from .github_webhook_delivery_record import GithubWebhookDeliveryRecord
+from .github_webhook_delivery_record_status import GithubWebhookDeliveryRecordStatus
 from .grace_window_response import GraceWindowResponse
 from .import_app_open_api_body import ImportAppOpenAPIBody
 from .import_app_open_api_body_info import ImportAppOpenAPIBodyInfo
@@ -589,7 +604,9 @@ from .object_s3_credential_secret import ObjectS3CredentialSecret
 from .object_s3_credential_secret_addressing_style import ObjectS3CredentialSecretAddressingStyle
 from .object_s3_credential_status import ObjectS3CredentialStatus
 from .object_sign_request import ObjectSignRequest
+from .object_sign_request_metadata import ObjectSignRequestMetadata
 from .object_sign_request_method import ObjectSignRequestMethod
+from .object_sign_request_tags import ObjectSignRequestTags
 from .object_signed_request import ObjectSignedRequest
 from .object_signed_request_headers import ObjectSignedRequestHeaders
 from .object_signed_request_method import ObjectSignedRequestMethod
@@ -662,6 +679,9 @@ from .payment_method_summary import PaymentMethodSummary
 from .plan_affected_app import PlanAffectedApp
 from .plan_affected_app_action import PlanAffectedAppAction
 from .plan_cron import PlanCron
+from .plan_detected_by import PlanDetectedBy
+from .plan_detected_by_detector import PlanDetectedByDetector
+from .plan_detected_by_merged_from_item import PlanDetectedByMergedFromItem
 from .plan_managed import PlanManaged
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
@@ -675,6 +695,10 @@ from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
+from .prewarm_intent_response import PrewarmIntentResponse
+from .prewarm_intent_response_status import PrewarmIntentResponseStatus
+from .prewarm_intent_response_trigger import PrewarmIntentResponseTrigger
+from .prewarm_request import PrewarmRequest
 from .problem import Problem
 from .programmatic_api_key import ProgrammaticAPIKey
 from .programmatic_auth_response import ProgrammaticAuthResponse
@@ -731,6 +755,8 @@ from .resource_profile import ResourceProfile
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
+from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
+from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
@@ -974,9 +1000,12 @@ __all__ = (
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
     "AppliedBuild",
+    "AppLogDrainHealthResponse",
+    "AppLogDrainHealthResponseStatus",
     "AppLogDrainResponse",
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
+    "ApplyAppOpenAPIPolicyRequest",
     "ApplyResponse",
     "ApplyResponseAppsItem",
     "AppManifest",
@@ -996,6 +1025,7 @@ __all__ = (
     "AppOpenAPIImportResponse",
     "AppOpenAPIImportResponseOpenapiVersion",
     "AppOpenAPIImportResponseSource",
+    "AppOpenAPIPolicyApplyResponse",
     "AppOpenAPIPolicyPreviewResponse",
     "AppOpenAPIPolicyPreviewRoute",
     "AppOpenAPIPolicyPreviewRouteMethod",
@@ -1073,7 +1103,6 @@ __all__ = (
     "BuildPlanFramework",
     "BuildProvenanceResponse",
     "BuildResponse",
-    "BuildResponseCacheStatus",
     "BuildResponseCacheStatus",
     "BuildResponseFailureClass",
     "BuildResponseKind",
@@ -1193,6 +1222,10 @@ __all__ = (
     "DebugCompareRouteStats",
     "DebugEvidenceExplanation",
     "DebugEvidenceExplanationStatus",
+    "DebugGuestExecutionEvidence",
+    "DebugGuestExecutionEvidenceErrorClass",
+    "DebugGuestExecutionEvidenceOutcome",
+    "DebugGuestExecutionEvidenceRuntime",
     "DebugRegressionItem",
     "DebugRegressionsResponse",
     "DebugReplayResponse",
@@ -1244,10 +1277,10 @@ __all__ = (
     "DeploymentResponseRolloutState",
     "DeploymentResponseStageState",
     "DeploymentResponseTag",
+    "DeploymentSummaryResponse",
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
     "DeployTokenResponseStatus",
-    "DeploymentSummaryResponse",
     "DevSessionResponse",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
@@ -1344,6 +1377,7 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItem",
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
+    "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
     "GitHubInstallMutationRequest",
@@ -1351,6 +1385,13 @@ __all__ = (
     "GitHubInstallStatusHealth",
     "GitHubInstallStatusState",
     "GitHubInstallStatusSyncResult",
+    "GithubCheckUpdateRecord",
+    "GithubCheckUpdateRecordStatus",
+    "GithubRecoveryRetryResponse",
+    "GithubRecoveryRetryResponseKind",
+    "GithubRecoveryStatusResponse",
+    "GithubWebhookDeliveryRecord",
+    "GithubWebhookDeliveryRecordStatus",
     "GraceWindowResponse",
     "ImportAppOpenAPIBody",
     "ImportAppOpenAPIBodyInfo",
@@ -1500,7 +1541,9 @@ __all__ = (
     "ObjectSignedRequestHeaders",
     "ObjectSignedRequestMethod",
     "ObjectSignRequest",
+    "ObjectSignRequestMetadata",
     "ObjectSignRequestMethod",
+    "ObjectSignRequestTags",
     "ObjectStorageCharge",
     "ObjectStorageComputeBinding",
     "ObjectStorageComputeBindingList",
@@ -1568,6 +1611,9 @@ __all__ = (
     "PlanAffectedApp",
     "PlanAffectedAppAction",
     "PlanCron",
+    "PlanDetectedBy",
+    "PlanDetectedByDetector",
+    "PlanDetectedByMergedFromItem",
     "PlanManaged",
     "PlanResponse",
     "PlanResponseScanSource",
@@ -1581,6 +1627,10 @@ __all__ = (
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
     "PreviewCreatedWebhookPayload",
+    "PrewarmIntentResponse",
+    "PrewarmIntentResponseStatus",
+    "PrewarmIntentResponseTrigger",
+    "PrewarmRequest",
     "Problem",
     "ProgrammaticAPIKey",
     "ProgrammaticAuthResponse",
@@ -1637,6 +1687,8 @@ __all__ = (
     "RestoreManagedPostgresDatabaseRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
+    "RetryGithubCheckUpdateConfirm",
+    "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",

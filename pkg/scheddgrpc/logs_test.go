@@ -26,7 +26,7 @@ import (
 // multi-instance streams deterministically (acceptance #5).
 func TestStreamAppLogs_HappyPath(t *testing.T) {
 	cl := newServer(t, &fakeEngine{
-		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink scheddgrpc.LogFrameSink) error {
+		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, _ bool, deploymentID string, sink scheddgrpc.LogFrameSink) error {
 			if err := sink(sched.LogFrame{InstanceID: "inst-A", Seq: 1, Stream: "stdout", Line: "alpha", WrittenAt: time.Unix(0, 0).UTC()}); err != nil {
 				return err
 			}
@@ -87,13 +87,45 @@ func TestStreamAppLogs_HappyPath(t *testing.T) {
 	}
 }
 
+// TestStreamAppLogs_OneShotPropagatesFollow pins the explicit false
+// presence bit used by the CLI's finite snapshot mode. An omitted field
+// must continue to default to live-tail for older callers, while an
+// explicitly present false reaches the engine unchanged.
+func TestStreamAppLogs_OneShotPropagatesFollow(t *testing.T) {
+	var gotFollow bool
+	var gotSinceWrittenAt time.Time
+	cl := newServer(t, &fakeEngine{
+		streamLogFn: func(_ context.Context, _ string, _ int64, sinceWrittenAt time.Time, follow bool, _ string, _ scheddgrpc.LogFrameSink) error {
+			gotFollow = follow
+			gotSinceWrittenAt = sinceWrittenAt
+			return nil
+		},
+	})
+	follow := false
+	stream, err := cl.StreamAppLogs(context.Background(), &scheddpb.StreamAppLogsRequest{
+		AppId: "app-1", Follow: &follow,
+	})
+	if err != nil {
+		t.Fatalf("StreamAppLogs dial: %v", err)
+	}
+	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
+		t.Fatalf("Recv err = %v, want io.EOF", err)
+	}
+	if gotFollow {
+		t.Fatal("engine follow = true, want explicit false")
+	}
+	if !gotSinceWrittenAt.IsZero() {
+		t.Fatalf("engine sinceWrittenAt = %v, want zero", gotSinceWrittenAt)
+	}
+}
+
 // TestStreamAppLogs_NotFound pins the empty-instance rejection:
 // when the engine returns state.ErrNotFound (no live instances),
 // the handler must lift it to codes.NotFound so the apid maps it
 // to its 404 "the app is parked; wake it first".
 func TestStreamAppLogs_NotFound(t *testing.T) {
 	cl := newServer(t, &fakeEngine{
-		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink scheddgrpc.LogFrameSink) error {
+		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, _ bool, deploymentID string, sink scheddgrpc.LogFrameSink) error {
 			return state.ErrNotFound
 		},
 	})
@@ -146,7 +178,7 @@ func TestStreamAppLogs_InvalidArgument(t *testing.T) {
 // (or io.EOF) on cancel; not a gRPC error status.
 func TestStreamAppLogs_ContextCancel(t *testing.T) {
 	cl := newServer(t, &fakeEngine{
-		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink scheddgrpc.LogFrameSink) error {
+		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, _ bool, deploymentID string, sink scheddgrpc.LogFrameSink) error {
 			<-ctx.Done()
 			return nil
 		},
@@ -183,7 +215,7 @@ var _ *wire.OpsMetrics = (*wire.OpsMetrics)(nil)
 func TestStreamAppLogs_GapForwardedOverSchedd(t *testing.T) {
 	headAt := time.Date(2026, 8, 1, 13, 0, 0, 0, time.UTC)
 	cl := newServer(t, &fakeEngine{
-		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink scheddgrpc.LogFrameSink) error {
+		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, _ bool, deploymentID string, sink scheddgrpc.LogFrameSink) error {
 			if err := sink(sched.LogFrame{
 				InstanceID:     "inst-A",
 				IsGap:          true,
@@ -278,7 +310,7 @@ func TestStreamAppLogs_GapForwardedOverSchedd(t *testing.T) {
 func TestStreamAppLogs_FilterLevelDropsAndCounts(t *testing.T) {
 	fedAll := make(chan struct{})
 	cl, metrics := newServerWithMetrics(t, &fakeEngine{
-		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink scheddgrpc.LogFrameSink) error {
+		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, _ bool, deploymentID string, sink scheddgrpc.LogFrameSink) error {
 			lines := []sched.LogFrame{
 				{InstanceID: "inst-A", Seq: 1, Stream: "stdout", Line: "[INFO] startup ok"},
 				{InstanceID: "inst-A", Seq: 2, Stream: "stdout", Line: "[WARN] retrying"},
@@ -356,7 +388,7 @@ func TestStreamAppLogs_FilterLevelDropsAndCounts(t *testing.T) {
 func TestStreamAppLogs_FilterGrepDropsAndCounts(t *testing.T) {
 	fedAll := make(chan struct{})
 	cl, metrics := newServerWithMetrics(t, &fakeEngine{
-		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink scheddgrpc.LogFrameSink) error {
+		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, _ bool, deploymentID string, sink scheddgrpc.LogFrameSink) error {
 			lines := []sched.LogFrame{
 				{InstanceID: "inst-A", Seq: 1, Stream: "stdout", Line: "[INFO] startup ok"},
 				{InstanceID: "inst-A", Seq: 2, Stream: "stdout", Line: "[ERROR] timeout exceeded"},
@@ -427,7 +459,7 @@ func TestStreamAppLogs_FilterGrepDropsAndCounts(t *testing.T) {
 func TestStreamAppLogs_GapBypassesFilter(t *testing.T) {
 	headAt := time.Date(2026, 8, 1, 13, 0, 0, 0, time.UTC)
 	cl, metrics := newServerWithMetrics(t, &fakeEngine{
-		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink scheddgrpc.LogFrameSink) error {
+		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, _ bool, deploymentID string, sink scheddgrpc.LogFrameSink) error {
 			if err := sink(sched.LogFrame{
 				InstanceID:     "inst-A",
 				IsGap:          true,
@@ -489,7 +521,7 @@ func TestStreamAppLogs_GapBypassesFilter(t *testing.T) {
 //     --grep to narrow further).
 func TestStreamAppLogs_DualFilterAttribution(t *testing.T) {
 	cl, metrics := newServerWithMetrics(t, &fakeEngine{
-		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink scheddgrpc.LogFrameSink) error {
+		streamLogFn: func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, _ bool, deploymentID string, sink scheddgrpc.LogFrameSink) error {
 			// (1) passes --level=warn, fails --grep=timeout
 			if err := sink(sched.LogFrame{InstanceID: "inst-A", Seq: 1, Stream: "stdout", Line: "[ERROR] db connection OK"}); err != nil {
 				return err
