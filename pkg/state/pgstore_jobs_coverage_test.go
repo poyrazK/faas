@@ -308,7 +308,7 @@ func TestPg_Jobs_JobRunRecompute(t *testing.T) {
 }
 
 func TestPg_Jobs_JobRunCancel(t *testing.T) {
-	s, _, ctx := pgJobsStoreWithPool(t)
+	s, pool, ctx := pgJobsStoreWithPool(t)
 	_, run, _ := pgJobsSeed(t, s, ctx, "run-5")
 
 	cancelled, err := s.JobRunCancel(ctx, run.ID)
@@ -317,6 +317,41 @@ func TestPg_Jobs_JobRunCancel(t *testing.T) {
 	}
 	if cancelled.AggregateStatus != "cancelled" {
 		t.Errorf("JobRunCancel aggregate = %q, want cancelled", cancelled.AggregateStatus)
+	}
+	if cancelled.TasksSucceeded != 0 || cancelled.TasksFailed != 0 || cancelled.TasksCancelled != 3 || cancelled.TasksRunning != 0 {
+		t.Fatalf("JobRunCancel counters = (%d, %d, %d, %d), want (0, 0, 3, 0)",
+			cancelled.TasksSucceeded, cancelled.TasksFailed, cancelled.TasksCancelled, cancelled.TasksRunning)
+	}
+
+	// A run with one terminal success and two non-terminal tasks must
+	// retain the success while counting only the cancelled remainder.
+	mixedJob, mixedRun, _ := pgJobsSeed(t, s, ctx, "run-5-mixed")
+	if err := s.JobTaskMarkTerminal(ctx, mixedRun.ID, 0, "succeeded", 0, "", "", time.Now()); err != nil {
+		t.Fatalf("setup succeeded task: %v", err)
+	}
+	instanceID := pgJobsCreateJobTaskInstance(t, pool, ctx, mixedJob.AccountID, mixedJob.ID)
+	if err := s.JobTaskMarkClaimed(ctx, mixedRun.ID, 1, instanceID, uuid.NewString(), time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
+		t.Fatalf("setup claimed task: %v", err)
+	}
+	mixedCancelled, err := s.JobRunCancel(ctx, mixedRun.ID)
+	if err != nil {
+		t.Fatalf("JobRunCancel (mixed): %v", err)
+	}
+	if mixedCancelled.AggregateStatus != "cancelled" ||
+		mixedCancelled.TasksSucceeded != 1 || mixedCancelled.TasksFailed != 0 ||
+		mixedCancelled.TasksCancelled != 2 || mixedCancelled.TasksRunning != 0 {
+		t.Fatalf("JobRunCancel (mixed) = status %q counters (%d, %d, %d, %d), want cancelled (1, 0, 2, 0)",
+			mixedCancelled.AggregateStatus, mixedCancelled.TasksSucceeded,
+			mixedCancelled.TasksFailed, mixedCancelled.TasksCancelled,
+			mixedCancelled.TasksRunning)
+	}
+
+	second, err := s.JobRunCancel(ctx, mixedRun.ID)
+	if err != nil {
+		t.Fatalf("JobRunCancel (mixed re-call): %v", err)
+	}
+	if second.TasksCancelled != 2 {
+		t.Errorf("JobRunCancel (mixed re-call).TasksCancelled = %d, want 2", second.TasksCancelled)
 	}
 
 	if _, err := s.JobRunCancel(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, state.ErrNotFound) {

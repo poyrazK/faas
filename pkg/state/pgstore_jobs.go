@@ -128,6 +128,10 @@ func scanJobRun(row pgx.Row) (JobRun, error) {
 	return r, nil
 }
 
+type pgxQueryRower interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
 // scanJobTask wraps scanJobTaskCols and maps pgx.ErrNoRows to ErrNotFound.
 func scanJobTask(row pgx.Row) (JobTask, error) {
 	t, err := scanJobTaskCols(row.Scan)
@@ -522,13 +526,20 @@ func (s *PgStore) JobRunListByAccount(ctx context.Context, accountID string, lim
 // satisfied. finished_at is NULL while the run is non-terminal — it
 // is stamped to now() on the first terminal recompute.
 func (s *PgStore) JobRunRecompute(ctx context.Context, runID string) (JobRun, error) {
+	return queryJobRunRecompute(ctx, s.pool, runID, false)
+}
+
+// queryJobRunRecompute updates counters from the task rows visible to q.
+// preserveCancel keeps JobRunCancel's explicit terminal-status semantics
+// while still using the same counter query as ordinary recomputation.
+func queryJobRunRecompute(ctx context.Context, q pgxQueryRower, runID string, preserveCancel bool) (JobRun, error) {
 	// CTE-first form: PG15 UPDATE...FROM with a subquery that
 	// references the UPDATE target (r.id) inside the subquery's
 	// WHERE clause errors with "invalid reference to FROM-clause
 	// entry" — the FROM alias isn't in scope inside the inner
 	// query. Materialising the task counts via a WITH keeps the
 	// same logic and reads identically.
-	row := s.pool.QueryRow(ctx,
+	row := q.QueryRow(ctx,
 		`with counts as (
 		   select
 		     -- 00571 broadened the terminal vocabulary to
@@ -557,6 +568,8 @@ func (s *PgStore) JobRunRecompute(ctx context.Context, runID string) (JobRun, er
 		   tasks_cancelled = coalesce((select canc from counts), 0),
 		   tasks_running   = coalesce((select running from counts), 0),
 		   aggregate_status = case
+		       when $2::boolean and r.aggregate_status in ('queued', 'running') then 'cancelled'
+		       when $2::boolean then r.aggregate_status
 		       when coalesce((select running from counts), 0) > 0 then 'running'
 		       when coalesce((select queued_or_claimed from counts), 0) > 0 then 'running'
 		       when coalesce((select canc from counts), 0) > 0
@@ -568,19 +581,22 @@ func (s *PgStore) JobRunRecompute(ctx context.Context, runID string) (JobRun, er
 		       else 'succeeded'
 		   end,
 		   started_at = case
-		       when r.started_at is null and coalesce((select running from counts), 0) +
-		            coalesce((select queued_or_claimed from counts), 0) > 0 then now()
+		       when r.started_at is null and ($2::boolean or (
+		            coalesce((select running from counts), 0) +
+		            coalesce((select queued_or_claimed from counts), 0) > 0
+		            or r.aggregate_status in ('queued', 'running'))) then now()
 		       else r.started_at
 		   end,
 		   finished_at = case
-		       when coalesce((select queued_or_claimed from counts), 0) = 0
+		       when $2::boolean and r.aggregate_status in ('queued', 'running') then now()
+		       when not $2::boolean and coalesce((select queued_or_claimed from counts), 0) = 0
 		            and coalesce((select running from counts), 0) = 0
 		            and r.finished_at is null then now()
 		       else r.finished_at
 		   end
 		 where r.id = $1::uuid
 		 returning `+jobRunSelectCols,
-		runID)
+		runID, preserveCancel)
 	return scanJobRun(row)
 }
 
@@ -627,25 +643,11 @@ func (s *PgStore) JobRunCancel(ctx context.Context, runID string) (JobRun, error
 		return JobRun{}, fmt.Errorf("state: cancel tasks for run %s: %w", runID, err)
 	}
 
-	// 2. Flip the run's aggregate_status. The CASE keeps an already-
-	//    terminal-cancelled/dead_letter run intact; a 'queued' or
-	//    'running' run flips to 'cancelled'. started_at is stamped
-	//    if it was still NULL (first-touch invariant).
-	row := tx.QueryRow(ctx,
-		`update job_runs set
-		   aggregate_status = case
-		       when aggregate_status in ('queued', 'running') then 'cancelled'
-		       else aggregate_status
-		   end,
-		   started_at  = coalesce(started_at, now()),
-		   finished_at = case
-		       when aggregate_status in ('queued', 'running') then now()
-		       else finished_at
-		   end
-		 where id = $1::uuid
-		 returning `+jobRunSelectCols,
-		runID)
-	run, err := scanJobRun(row)
+	// 2. Recompute the denormalised counters and aggregate status from
+	//    the just-cancelled task rows in the same transaction. Keeping
+	//    this query on tx makes the cancellation response agree with the
+	//    task rows before the commit becomes visible to later reads.
+	run, err := queryJobRunRecompute(ctx, tx, runID, true)
 	if err != nil {
 		return JobRun{}, err
 	}

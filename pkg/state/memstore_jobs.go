@@ -358,23 +358,10 @@ func (m *MemStore) JobRunListByAccount(_ context.Context, accountID string, limi
 	return matched, nil
 }
 
-// JobRunRecompute walks the per-run task slice, counts each status,
-// and applies the same aggregate_status precedence as
-// pgstore_jobs.JobRunRecompute. started_at / finished_at are stamped
-// alongside so the terminal-pair invariant stays satisfied in tests
-// that later write to a live pgstore (the schema CHECK is the same).
-func (m *MemStore) JobRunRecompute(_ context.Context, runID string) (JobRun, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	run, ok := m.jobRuns[runID]
-	if !ok {
-		return JobRun{}, ErrNotFound
-	}
-	tasks, ok := m.jobTasks[runID]
-	if !ok {
-		// No tasks — degenerate case (shouldn't happen post-create).
-		return run, nil
-	}
+// recomputeJobRun applies the same aggregate-status precedence as
+// pgstore_jobs.JobRunRecompute and updates all denormalised counters.
+// Callers hold m.mu when invoking this helper.
+func recomputeJobRun(run JobRun, tasks map[int]JobTask, now time.Time) JobRun {
 	var succ, fail, canc, running, queuedOrClaimed int
 	for _, t := range tasks {
 		switch t.Status {
@@ -394,11 +381,11 @@ func (m *MemStore) JobRunRecompute(_ context.Context, runID string) (JobRun, err
 			queuedOrClaimed++
 		}
 	}
-	now := time.Now().UTC()
 	run.TasksSucceeded = succ
 	run.TasksFailed = fail
 	run.TasksCancelled = canc
 	run.TasksRunning = running
+	wasActive := run.AggregateStatus == "queued" || run.AggregateStatus == "running"
 
 	// Aggregate-status precedence (mirrors pgstore SQL).
 	switch {
@@ -413,12 +400,33 @@ func (m *MemStore) JobRunRecompute(_ context.Context, runID string) (JobRun, err
 	default:
 		run.AggregateStatus = "succeeded"
 	}
-	if run.StartedAt == nil && (running+queuedOrClaimed) > 0 {
+	if run.StartedAt == nil && ((running+queuedOrClaimed) > 0 || wasActive) {
 		run.StartedAt = &now
 	}
 	if queuedOrClaimed == 0 && running == 0 && run.FinishedAt == nil {
 		run.FinishedAt = &now
 	}
+	return run
+}
+
+// JobRunRecompute walks the per-run task slice, counts each status,
+// and applies the same aggregate_status precedence as
+// pgstore_jobs.JobRunRecompute. started_at / finished_at are stamped
+// alongside so the terminal-pair invariant stays satisfied in tests
+// that later write to a live pgstore (the schema CHECK is the same).
+func (m *MemStore) JobRunRecompute(_ context.Context, runID string) (JobRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.jobRuns[runID]
+	if !ok {
+		return JobRun{}, ErrNotFound
+	}
+	tasks, ok := m.jobTasks[runID]
+	if !ok {
+		// No tasks — degenerate case (shouldn't happen post-create).
+		return run, nil
+	}
+	run = recomputeJobRun(run, tasks, time.Now().UTC())
 	m.jobRuns[runID] = run
 	return run, nil
 }
@@ -453,12 +461,20 @@ func (m *MemStore) JobRunCancel(_ context.Context, runID string) (JobRun, error)
 	}
 	m.jobTasks[runID] = tasks
 
-	if run.AggregateStatus == "queued" || run.AggregateStatus == "running" {
+	originalStatus := run.AggregateStatus
+	wasActive := originalStatus == "queued" || originalStatus == "running"
+	run = recomputeJobRun(run, tasks, now)
+	if wasActive {
+		// Cancellation is an explicit terminal transition even when a
+		// task had already failed; preserve the existing cancel contract
+		// while taking the counters from the task rows.
 		run.AggregateStatus = "cancelled"
 		if run.StartedAt == nil {
 			run.StartedAt = &now
 		}
 		run.FinishedAt = &now
+	} else {
+		run.AggregateStatus = originalStatus
 	}
 	m.jobRuns[runID] = run
 	return run, nil

@@ -316,6 +316,9 @@ func TestCancelJobRun_HappyPath(t *testing.T) {
 	if resp.Run.AggregateStatus != "cancelled" {
 		t.Errorf("aggregate_status = %q, want cancelled", resp.Run.AggregateStatus)
 	}
+	if resp.Run.TasksCancelled != 3 {
+		t.Errorf("tasks_cancelled = %d, want 3", resp.Run.TasksCancelled)
+	}
 	if resp.CancelledAt == "" {
 		t.Errorf("cancelled_at empty; want RFC 3339")
 	}
