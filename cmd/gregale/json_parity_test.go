@@ -35,7 +35,6 @@ import (
 // Keep entries in alphabetical order for review diff readability.
 var nonJSONAllowList = map[string]string{
 	"cmdAccount":    "delegate leaves; cmdAccountStatus is the only JSON leaf (covered)",
-	"cmdInit":       "file writes + human template table",
 	"cmdLogin":      "interactive paste-code flow",
 	"cmdMfa":        "enroll is the only JSON leaf (covered); others are write-only",
 	"cmdOverageCap": "side-effect (set/clear both write-only)",

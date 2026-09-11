@@ -718,6 +718,13 @@ func cmdAppsRm(args []string) int {
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
 		return printErr("Delete failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{
+			"slug":    slug,
+			"status":  "deleted",
+			"deleted": true,
+		}))
+	}
 	PrintOK(osStdout, "Deleted %s", slug)
 	return 0
 }
@@ -1727,10 +1734,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 							dirtyFiles++
 						}
 					}
-					if dirtyFiles > 0 && *worktree {
+					if !jsonOutput && dirtyFiles > 0 && *worktree {
 						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying working-tree source (%s)",
 							dirtyFiles, provVal.SHA[:7])
-					} else if dirtyFiles > 0 {
+					} else if !jsonOutput && dirtyFiles > 0 {
 						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying HEAD (%s) only — commit first to include the changes",
 							dirtyFiles, provVal.SHA[:7])
 					}
@@ -2361,6 +2368,13 @@ func cmdPark(args []string) int {
 	if err := client.Park(context.Background(), args[0]); err != nil {
 		return printErr("Park failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]string{
+			"slug":   args[0],
+			"status": "parked",
+			"state":  "cold",
+		}))
+	}
 	PrintOK(osStdout, "Parked (cold)")
 	return 0
 }
@@ -2376,6 +2390,12 @@ func cmdWake(args []string) int {
 	}
 	if err := client.Wake(context.Background(), args[0]); err != nil {
 		return printErr("Wake failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]string{
+			"slug":   args[0],
+			"status": "waking",
+		}))
 	}
 	PrintOK(osStdout, "Waking…")
 	return 0
@@ -2578,6 +2598,9 @@ func cmdCrons(args []string) int {
 		if err != nil {
 			return printErr("Create failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeJSON(c))
+		}
 		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, c.Path)
 		return 0
 	case subUpdate:
@@ -2597,6 +2620,13 @@ func cmdCrons(args []string) int {
 		}
 		if err := client.DeleteCron(context.Background(), args[1]); err != nil {
 			return printErr("Delete failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{
+				"id":      args[1],
+				"status":  "deleted",
+				"deleted": true,
+			}))
 		}
 		PrintOK(osStdout, "Removed")
 		return 0

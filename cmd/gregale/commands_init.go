@@ -46,6 +46,17 @@ import (
 // carries the stable docs site pointer.
 const initCmdUsage = "usage: gregale init --template <name> --path <dir> [--deploy] [--name <slug>] | --list"
 
+// initReceipt is the machine-readable result of a successful scaffolding
+// operation. The path is absolute because that is what the CLI actually
+// created, and because callers should not have to resolve it against a
+// potentially different working directory.
+type initReceipt struct {
+	Template string `json:"template"`
+	Path     string `json:"path"`
+	Status   string `json:"status"`
+	Deployed bool   `json:"deployed,omitempty"`
+}
+
 // initCmdDocsTopic identifies the CLI help topic passed to PrintUsage.
 const initCmdDocsTopic = "init"
 
@@ -166,6 +177,29 @@ func runCmdInit(tpl, dest string, deploy bool, name string, stdout, stderr io.Wr
 	if err := templates.Materialize(tpl, absDest); err != nil {
 		return printErr("Could not write template into "+absDest, err)
 	}
+	if jsonOutput {
+		if !deploy {
+			return writeInitJSON(stdout, initReceipt{Template: tpl, Path: absDest, Status: "created"})
+		}
+		// The deploy composite has its own JSON receipt. Suppress that
+		// nested output so `init --json --deploy` still emits exactly one
+		// parseable document describing the complete operation.
+		deploySlug := name
+		if deploySlug == "" {
+			deploySlug = sanitizeSlug(filepath.Base(absDest))
+		}
+		oldOut := osStdout
+		osStdout = io.Discard
+		code := cmdDeployTarball([]string{
+			"--template", tpl,
+			"--name", deploySlug,
+		})
+		osStdout = oldOut
+		if code != 0 {
+			return code
+		}
+		return writeInitJSON(stdout, initReceipt{Template: tpl, Path: absDest, Status: "created", Deployed: true})
+	}
 
 	// Step 6: surface the customer's next steps. Per-template
 	// `gregale secrets set` hints live in the template README, but we
@@ -196,6 +230,13 @@ func runCmdInit(tpl, dest string, deploy bool, name string, stdout, stderr io.Wr
 		"--template", tpl,
 		"--name", slug,
 	})
+}
+
+func writeInitJSON(stdout io.Writer, receipt initReceipt) int {
+	if err := writeJSONTo(stdout, receipt); err != nil {
+		return printErr("JSON encode failed", err)
+	}
+	return 0
 }
 
 // checkDestEmpty returns an error if path exists and is non-empty.
