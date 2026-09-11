@@ -3026,3 +3026,244 @@ WHERE id=$1 AND kid=$2 AND status='active';
 
 -- name: SnapshotStorageKeys :many
 SELECT storage_key FROM snapshots WHERE deployment_id = $1;
+
+-- name: ExecutionLockAccount :one
+SELECT id, plan FROM accounts WHERE id = sqlc.arg(account_id) FOR UPDATE;
+
+-- name: ExecutionCountActive :one
+SELECT count(*) FROM executions
+WHERE account_id = sqlc.arg(account_id)
+  AND status IN ('queued', 'restoring', 'running');
+
+-- name: ExecutionInsert :one
+INSERT INTO executions (
+  account_id, runtime, status, network_mode, timeout_ms, memory_mb,
+  cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max,
+  source_bytes, input_bytes, deadline_at, created_at, updated_at
+) VALUES (
+  sqlc.arg(account_id), sqlc.arg(runtime), 'queued', sqlc.arg(network_mode),
+  sqlc.arg(timeout_ms), sqlc.arg(memory_mb), sqlc.arg(cpu_millicores),
+  sqlc.arg(ephemeral_disk_mb), sqlc.arg(max_output_bytes), sqlc.arg(pids_max),
+  sqlc.arg(source_bytes), sqlc.arg(input_bytes), sqlc.arg(deadline_at),
+  sqlc.arg(admitted_at), sqlc.arg(admitted_at)
+)
+RETURNING *;
+
+-- name: ExecutionPayloadInsert :exec
+INSERT INTO execution_payloads (execution_id, sealed_payload, kid, created_at)
+VALUES (sqlc.arg(execution_id), sqlc.arg(sealed_payload), sqlc.arg(kid), sqlc.arg(created_at));
+
+-- name: ExecutionGetForAccount :one
+SELECT * FROM executions
+WHERE account_id = sqlc.arg(account_id) AND id = sqlc.arg(execution_id);
+
+-- name: ExecutionListForAccount :many
+SELECT * FROM executions
+WHERE account_id = sqlc.arg(account_id)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
+-- name: ExecutionClaimNext :one
+WITH candidate AS (
+  SELECT id, deadline_at
+  FROM executions
+  WHERE status = 'queued'
+    AND cancel_requested_at IS NULL
+    AND created_at <= sqlc.arg(claimed_at)::timestamptz
+    AND deadline_at > sqlc.arg(claimed_at)::timestamptz
+  ORDER BY created_at, id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+)
+UPDATE executions AS execution
+SET status = 'restoring',
+    lease_token = sqlc.arg(lease_token),
+    lease_owner = sqlc.arg(lease_owner),
+    lease_expires_at = LEAST(sqlc.arg(lease_expires_at)::timestamptz, candidate.deadline_at),
+    updated_at = sqlc.arg(claimed_at)
+FROM candidate
+WHERE execution.id = candidate.id
+RETURNING execution.*;
+
+-- name: ExecutionPayloadForLease :one
+SELECT payload.execution_id, payload.sealed_payload, payload.kid, payload.created_at
+FROM execution_payloads AS payload
+JOIN executions AS execution ON execution.id = payload.execution_id
+WHERE payload.execution_id = sqlc.arg(execution_id)
+  AND execution.status = 'restoring'
+  AND execution.lease_token = sqlc.arg(lease_token);
+
+-- name: ExecutionMarkRunning :one
+UPDATE executions
+SET status = 'running', started_at = sqlc.arg(started_at), updated_at = sqlc.arg(started_at)
+WHERE id = sqlc.arg(execution_id)
+  AND status = 'restoring'
+  AND lease_token = sqlc.arg(lease_token)
+  AND lease_expires_at > sqlc.arg(started_at)
+  AND cancel_requested_at IS NULL
+  AND deadline_at > sqlc.arg(started_at)
+RETURNING *;
+
+-- name: ExecutionLockForLease :one
+SELECT * FROM executions
+WHERE id = sqlc.arg(execution_id)
+  AND status IN ('restoring', 'running')
+  AND lease_token = sqlc.arg(lease_token)
+FOR UPDATE;
+
+-- name: ExecutionRenewLease :execrows
+UPDATE executions
+SET lease_expires_at = LEAST(sqlc.arg(lease_expires_at)::timestamptz, deadline_at),
+    updated_at = sqlc.arg(renewed_at)
+WHERE id = sqlc.arg(execution_id)
+  AND status IN ('restoring', 'running')
+  AND lease_token = sqlc.arg(lease_token)
+  AND lease_expires_at > sqlc.arg(renewed_at)
+  AND cancel_requested_at IS NULL
+  AND deadline_at > sqlc.arg(renewed_at);
+
+-- name: ExecutionMarkTerminal :one
+UPDATE executions
+SET status = sqlc.arg(terminal_status),
+    lease_token = NULL,
+    lease_owner = NULL,
+    lease_expires_at = NULL,
+    result = NULLIF(sqlc.arg(result_json)::text, '')::jsonb,
+    result_bytes = sqlc.arg(result_bytes),
+    stdout = sqlc.arg(stdout),
+    stderr = sqlc.arg(stderr),
+    output_truncated = sqlc.arg(output_truncated),
+    exit_code = sqlc.narg(exit_code),
+    failure_code = NULLIF(sqlc.arg(failure_code), ''),
+    failure_message = NULLIF(sqlc.arg(failure_message), ''),
+    wall_time_ms = sqlc.arg(wall_time_ms),
+    cpu_time_ms = sqlc.arg(cpu_time_ms),
+    peak_memory_mb = sqlc.arg(peak_memory_mb),
+    finished_at = sqlc.arg(finished_at),
+    updated_at = sqlc.arg(finished_at)
+WHERE id = sqlc.arg(execution_id)
+  AND status IN ('restoring', 'running')
+  AND lease_token = sqlc.arg(lease_token)
+RETURNING *;
+
+-- name: ExecutionLockForAccount :one
+SELECT * FROM executions
+WHERE account_id = sqlc.arg(account_id) AND id = sqlc.arg(execution_id)
+FOR UPDATE;
+
+-- name: ExecutionRequestCancel :one
+UPDATE executions
+SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+    cancel_requested_at = COALESCE(cancel_requested_at, sqlc.arg(requested_at)),
+    finished_at = CASE WHEN status = 'queued' THEN sqlc.arg(requested_at) ELSE finished_at END,
+    updated_at = sqlc.arg(requested_at)
+WHERE id = sqlc.arg(execution_id)
+  AND status IN ('queued', 'restoring', 'running')
+RETURNING *;
+
+-- name: ExecutionExpireQueued :many
+WITH candidates AS (
+  SELECT id
+  FROM executions
+  WHERE status = 'queued' AND deadline_at <= sqlc.arg(sweep_at)::timestamptz
+  ORDER BY deadline_at, id
+  FOR UPDATE SKIP LOCKED
+  LIMIT sqlc.arg(batch_limit)::int
+)
+UPDATE executions AS execution
+SET status = 'timed_out', finished_at = sqlc.arg(sweep_at), updated_at = sqlc.arg(sweep_at),
+    failure_code = 'deadline_exceeded', failure_message = 'execution deadline elapsed before dispatch'
+FROM candidates
+WHERE execution.id = candidates.id
+RETURNING execution.*;
+
+-- name: ExecutionRequeueExpiredRestores :many
+WITH candidates AS (
+  SELECT id
+  FROM executions
+  WHERE status = 'restoring'
+    AND lease_expires_at <= sqlc.arg(sweep_at)::timestamptz
+    AND deadline_at > sqlc.arg(sweep_at)::timestamptz
+    AND cancel_requested_at IS NULL
+  ORDER BY lease_expires_at, id
+  FOR UPDATE SKIP LOCKED
+  LIMIT sqlc.arg(batch_limit)::int
+)
+UPDATE executions AS execution
+SET status = 'queued', lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+    updated_at = sqlc.arg(sweep_at)
+FROM candidates
+WHERE execution.id = candidates.id
+RETURNING execution.*;
+
+-- name: ExecutionFinishExpiredRestores :many
+WITH candidates AS (
+  SELECT id
+  FROM executions
+  WHERE status = 'restoring'
+    AND lease_expires_at <= sqlc.arg(sweep_at)::timestamptz
+    AND (deadline_at <= sqlc.arg(sweep_at)::timestamptz OR cancel_requested_at IS NOT NULL)
+  ORDER BY lease_expires_at, id
+  FOR UPDATE SKIP LOCKED
+  LIMIT sqlc.arg(batch_limit)::int
+)
+UPDATE executions AS execution
+SET status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE 'timed_out' END,
+    lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+    failure_code = CASE WHEN cancel_requested_at IS NULL THEN 'deadline_exceeded' ELSE NULL END,
+    failure_message = CASE WHEN cancel_requested_at IS NULL THEN 'execution deadline elapsed during restore' ELSE NULL END,
+    finished_at = sqlc.arg(sweep_at), updated_at = sqlc.arg(sweep_at)
+FROM candidates
+WHERE execution.id = candidates.id
+RETURNING execution.*;
+
+-- name: ExecutionFinishExpiredRuns :many
+WITH candidates AS (
+  SELECT id
+  FROM executions
+  WHERE status = 'running' AND lease_expires_at <= sqlc.arg(sweep_at)::timestamptz
+  ORDER BY lease_expires_at, id
+  FOR UPDATE SKIP LOCKED
+  LIMIT sqlc.arg(batch_limit)::int
+)
+UPDATE executions AS execution
+SET status = CASE
+      WHEN cancel_requested_at IS NOT NULL THEN 'cancelled'
+      WHEN deadline_at <= sqlc.arg(sweep_at)::timestamptz THEN 'timed_out'
+      ELSE 'failed'
+    END,
+    lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+    failure_code = CASE
+      WHEN cancel_requested_at IS NOT NULL THEN NULL
+      WHEN deadline_at <= sqlc.arg(sweep_at)::timestamptz THEN 'deadline_exceeded'
+      ELSE 'lease_expired'
+    END,
+    failure_message = CASE
+      WHEN cancel_requested_at IS NOT NULL THEN NULL
+      WHEN deadline_at <= sqlc.arg(sweep_at)::timestamptz THEN 'execution deadline elapsed while running'
+      ELSE 'scheduler lease expired after execution dispatch'
+    END,
+    finished_at = sqlc.arg(sweep_at), updated_at = sqlc.arg(sweep_at)
+FROM candidates
+WHERE execution.id = candidates.id
+RETURNING execution.*;
+
+-- name: ExecutionPayloadDelete :execrows
+DELETE FROM execution_payloads WHERE execution_id = sqlc.arg(execution_id);
+
+-- name: ExecutionPayloadDeleteMany :execrows
+DELETE FROM execution_payloads WHERE execution_id = ANY(sqlc.arg(execution_ids)::uuid[]);
+
+-- name: ExecutionPayloadDeleteTerminal :execrows
+WITH candidates AS (
+  SELECT payload.execution_id
+  FROM execution_payloads AS payload
+  JOIN executions AS execution ON execution.id = payload.execution_id
+  WHERE execution.status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+  ORDER BY payload.created_at, payload.execution_id
+  FOR UPDATE OF payload SKIP LOCKED
+  LIMIT sqlc.arg(batch_limit)::int
+)
+DELETE FROM execution_payloads AS payload
+USING candidates
+WHERE payload.execution_id = candidates.execution_id;
