@@ -6269,7 +6269,7 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 // fields default to zero-values that produce bit-identical behaviour
 // to PR #887's bucket key (appID+"\x00"+ruleID):
 //
-//   - KeyBy ∈ {"", "none", "api_key", "jwt_subject", "jwt_claim"}.
+//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim"}.
 //     Empty string and "none" are equivalent — the empty value is the
 //     pre-Phase-3 shape; "none" is the explicit Phase-3 opt-out. Both
 //     preserve back-compat (the bucket key is unchanged).
@@ -6303,6 +6303,7 @@ type EdgeRuleThrottleAction struct {
 const (
 	ThrottleKeyByNone       = "none"
 	ThrottleKeyByAPIKey     = "api_key"
+	ThrottleKeyByConsumerID = "consumer_id"
 	ThrottleKeyByJWTSubject = "jwt_subject"
 	ThrottleKeyByJWTClaim   = "jwt_claim"
 )
@@ -6323,8 +6324,8 @@ const ThrottleMaxKeysPerRuleDefault = 1000
 // value opts the rule into per-consumer bucket keying
 // (ADR-104, issue #881 Phase 3). Empty string is treated as
 // back-compat (PR #887's `appID+"\x00"+ruleID` shape) — only
-// the explicit "none" and the four other close-vocab values
-// trigger per-consumer routing. The single source of truth for
+// the non-empty per-consumer values trigger per-consumer routing;
+// "none" remains an explicit opt-out. The single source of truth for
 // "is this a per-consumer KeyBy?" — pkg/gateway/handler.go and
 // cmd/gatewayd-internal/edge_rules.go both consult this rather
 // than duplicating the membership test, so adding a future
@@ -6332,7 +6333,7 @@ const ThrottleMaxKeysPerRuleDefault = 1000
 // update.
 func ThrottleKeyByIsPerConsumer(keyBy string) bool {
 	switch keyBy {
-	case ThrottleKeyByAPIKey, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim:
 		return true
 	default:
 		return false
@@ -6409,7 +6410,7 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		if a.MaxKeysPerRule != 0 {
 			return ErrValidation("throttle action: max_keys_per_rule requires key_by != \"none\" (got key_by=\"\")")
 		}
-	case ThrottleKeyByAPIKey, ThrottleKeyByJWTSubject:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject:
 		if a.JWTClaimName != "" {
 			return ErrValidation(fmt.Sprintf(
 				"throttle action: jwt_claim_name is only valid with key_by=\"jwt_claim\" (got key_by=%q)",
@@ -6432,7 +6433,7 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		}
 	default:
 		return ErrValidation(fmt.Sprintf(
-			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"jwt_subject\", \"jwt_claim\")",
+			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"consumer_id\", \"jwt_subject\", \"jwt_claim\")",
 			a.KeyBy))
 	}
 	return nil

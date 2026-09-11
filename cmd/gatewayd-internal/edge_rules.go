@@ -1403,7 +1403,7 @@ func compileThrottleRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleThrott
 			// preserve PR #887 behaviour bit-for-bit (the
 			// per-consumer branch in applyEdgeRuleThrottle
 			// only fires when KeyBy ∈
-			// {api_key, jwt_subject, jwt_claim}).
+			// {api_key, consumer_id, jwt_subject, jwt_claim}).
 			KeyBy:          r.Action.Throttle.KeyBy,
 			JWTClaimName:   r.Action.Throttle.JWTClaimName,
 			MaxKeysPerRule: maxKeys,

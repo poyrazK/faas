@@ -3,7 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-08-14
 - **Decision:** Per-rule `kind=throttle` buckets key by an optional consumer
-  dimension (`key_by ∈ {"none", "api_key", "jwt_subject", "jwt_claim"}`) chosen
+  dimension (`key_by ∈ {"none", "api_key", "consumer_id", "jwt_subject", "jwt_claim"}`) chosen
   at rule-create time. The cardinality is bounded per-rule by
   `max_keys_per_rule` (Free 100 / Hobby 1000 / Pro 5000 / Scale 10000).
   When the per-rule consumer set exceeds the cap, all over-cap callers
@@ -13,7 +13,9 @@
   only by `appID + "\x00" + ruleID`. Customers asked for two follow-ups
   that the v1 bucket shape cannot express:
   1. **Per-API-key limits** — "this route, only key K-A1, gets 10 rps".
-  2. **Per-JWT-bracket limits** — "this route, only JWTs with
+  2. **Per-API-consumer limits** — "all credentials for customer C share
+     one route bucket", so rotating a credential cannot reset its quota.
+  3. **Per-JWT-bracket limits** — "this route, only JWTs with
      `tier=enterprise`, gets 100 rps".
 
   Without per-consumer keying, every authenticated caller of an app shares
@@ -44,7 +46,8 @@
   - New `Authenticated` struct on the request context, populated by
     `enforceRequireAuthn` (API key) and `applyEdgeRuleJWT` (subject +
     claims). Identity flows through to the throttle applier, which
-    constructs the bucket key per `KeyBy`.
+    constructs the bucket key per `KeyBy`; `consumer_id` uses the stable
+    API consumer identity and therefore survives credential rotation.
   - New `Limiter.AllowWithConsumerKey` (sibling of `AllowWithParams`)
     that owns the `__other__` collapse. Separate LRU scope
     `routeConsumerLimiter` (cap `EdgeRuleConsumerCacheCap = 100_000`,
