@@ -3280,3 +3280,32 @@ WITH candidates AS (
 DELETE FROM execution_payloads AS payload
 USING candidates
 WHERE payload.execution_id = candidates.execution_id;
+
+-- Runtime snapshot catalog (ADR-171 follow-up / durable publication boundary).
+-- Publication is insert-only; retirement is the sole mutable transition.
+-- name: RuntimeSnapshotInsert :one
+INSERT INTO runtime_snapshots (
+    catalog_key, runtime, architecture, kernel_digest, guest_executor_digest,
+    base_image_digest, memory_mb, ephemeral_disk_mb, format_version,
+    storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized,
+    payload_free, state, created_at, published_at, retired_at
+)
+VALUES (
+    sqlc.arg(catalog_key), sqlc.arg(runtime), sqlc.arg(architecture),
+    sqlc.arg(kernel_digest), sqlc.arg(guest_executor_digest),
+    sqlc.arg(base_image_digest), sqlc.arg(memory_mb), sqlc.arg(ephemeral_disk_mb),
+    sqlc.arg(format_version), sqlc.arg(storage_key), sqlc.arg(snapshot_digest),
+    sqlc.arg(mem_bytes), sqlc.arg(vm_state_bytes), sqlc.arg(sanitized),
+    sqlc.arg(payload_free), sqlc.arg(state), sqlc.arg(created_at),
+    sqlc.arg(published_at), sqlc.arg(retired_at)
+)
+RETURNING *;
+
+-- name: RuntimeSnapshotByCatalogKey :one
+SELECT * FROM runtime_snapshots
+WHERE catalog_key = sqlc.arg(catalog_key);
+
+-- name: RuntimeSnapshotRetire :execrows
+UPDATE runtime_snapshots
+SET state = 'retired', retired_at = sqlc.arg(retired_at)
+WHERE catalog_key = sqlc.arg(catalog_key) AND state = 'ready';

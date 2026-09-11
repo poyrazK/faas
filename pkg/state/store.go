@@ -3062,6 +3062,11 @@ type Store interface {
 	// durable boundary.
 	ExecutionStore
 
+	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
+	// trusted and insert-only; scheduler reads may observe retired rows and
+	// safely choose a same-identity cold boot.
+	RuntimeSnapshotStore
+
 	// Workflows (ADR-081 / issue #669).
 	// Multi-step durable execution workflows land in the timestamped workflow
 	// schema migration.
