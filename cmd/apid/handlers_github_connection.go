@@ -161,7 +161,7 @@ func (s *server) syncGitHubApp(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.store.GitHubInstallForAccountInstallation(r.Context(), acct.ID, binding.InstallID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "github_install_not_found",
-				"GitHub installation is no longer available", " reconnect GitHub before syncing this app"))
+				"GitHub installation is no longer available", "reconnect GitHub before syncing this app"))
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not read GitHub installation"))
