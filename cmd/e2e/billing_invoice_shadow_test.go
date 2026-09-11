@@ -171,11 +171,20 @@ func seedShadowAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, t0
 // identifiers only need the provider-shaped prefixes; placeholder API keys
 // make the subsequent SDK call fail locally or with authentication, which
 // still exercises the daemon-to-provider log path.
-func seedShadowBillingIdentity(t *testing.T, ctx context.Context, store state.Store, acct state.Account, provider string) {
+func seedShadowBillingIdentity(t *testing.T, ctx context.Context, store state.Store, acct state.Account, provider string, billingFrom time.Time) {
 	t.Helper()
 	customerID, subscriptionID := "cus_test_e2e_dummy", "si_test_e2e_dummy"
 	if provider == "paddle" {
 		customerID, subscriptionID = "ctm_test_e2e_dummy", "sub_test_e2e_dummy"
+	}
+	// The scripted usage represents an account that was already billable at
+	// t0. Seed the provider-qualified boundary explicitly; the legacy account
+	// mirrors below intentionally preserve it.
+	if err := store.UpsertBillingIdentity(ctx, state.BillingIdentity{
+		AccountID: acct.ID, Provider: provider, CustomerID: customerID,
+		SubscriptionID: subscriptionID, BillingFrom: billingFrom,
+	}); err != nil {
+		t.Fatalf("UpsertBillingIdentity: %v", err)
 	}
 	if err := store.UpdateAccountProviderCustomerID(ctx, acct.ID, customerID); err != nil {
 		t.Fatalf("UpdateAccountProviderCustomerID: %v", err)
@@ -324,7 +333,7 @@ func runShadowSubtest(t *testing.T, provider string) {
 		shadowEnv(provider, extraEnv...))
 
 	acct, _, _ := seedShadowAccount(t, ctx, pool, t0)
-	seedShadowBillingIdentity(t, ctx, state.NewPgStore(pool), acct, provider)
+	seedShadowBillingIdentity(t, ctx, state.NewPgStore(pool), acct, provider, t0)
 
 	hits := pollShadowLog(t, h, acct.ID, int(shadowHours), shadowPerHour)
 	if int64(len(hits)) != shadowHours {

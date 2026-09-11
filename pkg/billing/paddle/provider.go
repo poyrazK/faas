@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -190,7 +191,7 @@ func (p *Provider) claimedBy() string {
 // capability-set composition (e.g. adding CapRefund) localised to
 // this file.
 func PaddleCapabilities() billing.CapabilitySet {
-	return billing.CapabilitySet(billing.CapHostedCheckout | billing.CapUsageLineItem | billing.CapRefund | billing.CapSandbox)
+	return billing.CapabilitySet(billing.CapHostedCheckout | billing.CapUsageLineItem | billing.CapRefund | billing.CapUsageReconcile | billing.CapSandbox)
 }
 
 func NewProvider(apiKey, webhookSecret string, sandbox bool, log *slog.Logger) (*Provider, error) {
@@ -366,8 +367,8 @@ func (p *Provider) SetDedupeForTest(d PaddleOverageDedupe) {
 var _ billing.Provider = (*Provider)(nil)
 
 // Capabilities returns the Paddle provider's supported optional surfaces.
-// Paddle adjustments provide refunds; usage reconciliation remains absent
-// because Paddle does not expose a provider usage-summary endpoint.
+// Usage reconciliation reads the overage transactions' deterministic
+// CustomData ledger back from Paddle.
 func (p *Provider) Capabilities() billing.CapabilitySet {
 	return PaddleCapabilities()
 }
@@ -496,11 +497,49 @@ func (p *Provider) VerifyWebhook(payload []byte, headers map[string]string, tole
 	return parsePaddleEvent(payload, p)
 }
 
-// ReconcileUsage is the drift detector seam (ADR-049 §B.1). Paddle
-// Billing does not yet expose a usage-summary endpoint, so the
-// reconciler observes ErrNotImplemented and skips Paddle accounts.
-// When Paddle adds the surface, this implementation will call it
-// and return the mb_seconds total for [start, end).
-func (p *Provider) ReconcileUsage(_ context.Context, _ state.Account, _, _ time.Time) (int64, error) {
-	return 0, billing.ErrNotImplemented
+// ReconcileUsage reads the exact mb_seconds audit value stamped on every
+// overage transaction. Duplicate provider transactions are deliberately all
+// summed: the resulting positive drift is precisely what reconciliation must
+// surface to operators.
+func (p *Provider) ReconcileUsage(ctx context.Context, acct state.Account, start, end time.Time) (int64, error) {
+	if p.client == nil {
+		return 0, ErrNoAPIKey
+	}
+	if acct.ProviderCustomerID == "" {
+		return 0, errors.New("paddle: reconcile usage requires provider customer id")
+	}
+	perPage := 30
+	orderBy := "created_at[DESC]"
+	collection, err := p.client.ListTransactions(ctx, &paddle.ListTransactionsRequest{
+		CustomerID: []string{acct.ProviderCustomerID},
+		PerPage:    &perPage,
+		OrderBy:    &orderBy,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("paddle: reconcile list transactions: %w", err)
+	}
+	start, end = start.UTC(), end.UTC()
+	var total int64
+	for {
+		result := collection.Next(ctx)
+		if !result.Ok() {
+			if result.Err() != nil {
+				return 0, fmt.Errorf("paddle: reconcile page transactions: %w", result.Err())
+			}
+			return total, nil
+		}
+		txn := result.Value()
+		if txn == nil || fmt.Sprint(txn.CustomData["faas_account_id"]) != acct.ID {
+			continue
+		}
+		window, err := time.Parse(time.RFC3339, fmt.Sprint(txn.CustomData["window_start"]))
+		if err != nil || window.Before(start) || !window.Before(end) {
+			continue
+		}
+		mbSeconds, err := strconv.ParseInt(fmt.Sprint(txn.CustomData["mb_seconds"]), 10, 64)
+		if err != nil || mbSeconds < 0 {
+			return 0, fmt.Errorf("paddle: transaction %s has invalid mb_seconds audit value", txn.ID)
+		}
+		total += mbSeconds
+	}
 }

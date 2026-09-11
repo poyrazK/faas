@@ -4215,11 +4215,15 @@ type Invoice struct {
 	// the account's mutable current plan.
 	Plan                api.Plan
 	AmountRefundedCents int64
-	CreditsAppliedCents int64
-	Currency            string
-	PDFAvailable        bool
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// AmountRefundPendingCents reserves accepted-but-unsettled refunds so
+	// concurrent requests cannot exceed the invoice's paid amount without
+	// presenting them as completed money movement.
+	AmountRefundPendingCents int64
+	CreditsAppliedCents      int64
+	Currency                 string
+	PDFAvailable             bool
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
 }
 
 // InvoiceRefund is the durable local projection of a provider refund. The
@@ -4246,8 +4250,12 @@ type BillingIdentity struct {
 	Provider       string // stripe | paddle | polar
 	CustomerID     string
 	SubscriptionID string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// BillingFrom is the immutable lower bound for provider usage. It prevents
+	// a newly selected backend from charging usage accrued before checkout or
+	// while a different provider owned the account.
+	BillingFrom time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // AccountCredit is one positive-cents balance issued by an operator
@@ -4294,6 +4302,7 @@ type CreditLedgerEntry struct {
 	Actor             string
 	CreatedAt         time.Time
 	ProviderInvoiceID *string
+	RefundReversalID  *string
 }
 
 // UpdateAppParams is the partial-update payload for PATCH /v1/apps/{slug}.

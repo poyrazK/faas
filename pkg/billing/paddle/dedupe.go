@@ -45,6 +45,9 @@ type PaddleOverageDedupe interface {
 	HasPaddleOverageMonth(ctx context.Context, accountID string, month time.Time) (bool, error)
 	RecordPaddleOverageMonth(ctx context.Context, accountID string, month time.Time) error
 
+	// PaddleOverageWindowExists is read before Claim so the provider can
+	// distinguish a first delivery from recovery of an ambiguous prior POST.
+	PaddleOverageWindowExists(ctx context.Context, accountID string, windowStart time.Time) (bool, error)
 	ClaimPaddleOverageWindow(ctx context.Context, accountID string, windowStart time.Time, claimedBy string, lease time.Duration) (claimed bool, err error)
 	CompletePaddleOverageWindow(ctx context.Context, accountID string, windowStart time.Time, mbSeconds int64) error
 	ReapStalePaddleOverageClaims(ctx context.Context, olderThan time.Duration) (int, error)

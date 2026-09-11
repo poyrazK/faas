@@ -29,13 +29,51 @@ func TestMapStripeTypeToEventType(t *testing.T) {
 		{"invoice.payment_failed", billing.EventPaymentFailed},
 		{"invoice.payment_succeeded", billing.EventPaymentSucceeded},
 		{"customer.created", billing.EventUnknown},
-		{"charge.refunded", billing.EventUnknown},
+		{"charge.refunded", billing.EventRefundProcessed},
 		{"", billing.EventUnknown},
 	}
 	for _, c := range cases {
 		if got := mapStripeTypeToEventType(c.in); got != c.want {
 			t.Errorf("mapStripeTypeToEventType(%q) = %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestNormalizeStripeWebhookRefundUsesIndividualRefund(t *testing.T) {
+	var envelope stripeWebhookEnvelope
+	if err := json.Unmarshal([]byte(`{
+		"id":"evt_refund","type":"charge.refunded","data":{"object":{
+			"id":"ch_123","customer":"cus_123","currency":"eur",
+			"amount_refunded":9000,"refunds":{"data":[{
+				"id":"re_latest","amount":2500,"status":"pending","currency":"eur"
+			}]}
+		}}
+	}`), &envelope); err != nil {
+		t.Fatal(err)
+	}
+
+	event := normalizeStripeWebhook(envelope, []byte(`{"id":"evt_refund"}`))
+	if event.Type != billing.EventRefundProcessed || event.ProviderRefundID != "re_latest" ||
+		event.ChargeID != "ch_123" || event.AmountCents != 2500 || event.RefundStatus != "pending" {
+		t.Fatalf("normalized refund = %+v", event)
+	}
+}
+
+func TestNormalizeStripeWebhookInvoiceKeepsMinorUnits(t *testing.T) {
+	var envelope stripeWebhookEnvelope
+	if err := json.Unmarshal([]byte(`{
+		"id":"evt_invoice","type":"invoice.payment_succeeded","data":{"object":{
+			"id":"in_123","customer":"cus_123","currency":"eur","status":"paid",
+			"subtotal":1234,"tax":234,"total":1468,"amount_paid":1468
+		}}
+	}`), &envelope); err != nil {
+		t.Fatal(err)
+	}
+
+	event := normalizeStripeWebhook(envelope, []byte(`{"id":"evt_invoice"}`))
+	if event.Invoice == nil || event.Invoice.SubtotalCents != 1234 || event.Invoice.TaxCents != 234 ||
+		event.Invoice.TotalCents != 1468 || event.Invoice.AmountPaidCents != 1468 {
+		t.Fatalf("normalized invoice = %+v", event.Invoice)
 	}
 }
 

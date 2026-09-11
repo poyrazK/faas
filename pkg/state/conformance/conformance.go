@@ -55,6 +55,7 @@ func Run(t *testing.T, open Open) {
 		{"billing_identity_is_provider_qualified", testBillingIdentity},
 		{"invoice_refunds_are_cumulative_and_idempotent", testInvoiceRefunds},
 		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
+		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
@@ -159,28 +160,139 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, refund); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("excess refund error = %v, want ErrConflict", err)
 	}
+
+	pending := state.InvoiceRefund{
+		InvoiceID: inv.ID, ProviderRefundID: "refund-pending-" + uuid.NewString(),
+		IdempotencyKey: "refund-pending-key-" + uuid.NewString(),
+		AmountCents:    100, Source: "operator", Status: "pending",
+	}
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, pending); err != nil {
+		t.Fatalf("RecordInvoiceRefund(pending): %v", err)
+	}
+	inv, err = fx.Store.GetInvoiceByID(fx.Ctx, inv.ID)
+	if err != nil || inv.AmountRefundedCents != 250 || inv.AmountRefundPendingCents != 100 {
+		t.Fatalf("pending totals = (%+v, %v), want settled=250 pending=100", inv, err)
+	}
+	pending.IdempotencyKey = "webhook-" + pending.ProviderRefundID
+	pending.Source = "webhook"
+	pending.Status = "succeeded"
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, pending); err != nil {
+		t.Fatalf("RecordInvoiceRefund(pending->succeeded): %v", err)
+	}
+	inv, err = fx.Store.GetInvoiceByID(fx.Ctx, inv.ID)
+	if err != nil || inv.AmountRefundedCents != 350 || inv.AmountRefundPendingCents != 0 {
+		t.Fatalf("settled totals = (%+v, %v), want settled=350 pending=0", inv, err)
+	}
+
+	failed := state.InvoiceRefund{
+		InvoiceID: inv.ID, ProviderRefundID: "refund-failed-" + uuid.NewString(),
+		IdempotencyKey: "refund-failed-key-" + uuid.NewString(),
+		AmountCents:    50, Source: "operator", Status: "pending",
+	}
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, failed); err != nil {
+		t.Fatalf("RecordInvoiceRefund(failed pending): %v", err)
+	}
+	failed.Status = "failed"
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, failed); err != nil {
+		t.Fatalf("RecordInvoiceRefund(pending->failed): %v", err)
+	}
+	inv, err = fx.Store.GetInvoiceByID(fx.Ctx, inv.ID)
+	if err != nil || inv.AmountRefundedCents != 350 || inv.AmountRefundPendingCents != 0 {
+		t.Fatalf("failed totals = (%+v, %v), want settled=350 pending=0", inv, err)
+	}
+
+	credit, err := fx.Store.CreateAccountCredit(fx.Ctx, state.AccountCredit{
+		AccountID: fx.Account.ID, CentsRemaining: 100, Reason: "async refund",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccountCredit(async refund): %v", err)
+	}
+	consumed, err := fx.Store.ConsumeAccountCredit(fx.Ctx, state.ConsumeAccountCreditParams{
+		AccountID: fx.Account.ID, TargetCents: 100, Provider: "polar",
+		ProviderInvoiceID: providerInvoiceID, InvoiceID: inv.ID,
+		Reason: "async refund", Actor: "apid",
+	})
+	if err != nil || consumed.ConsumedCents != 100 {
+		t.Fatalf("ConsumeAccountCredit(async refund) = (%+v, %v)", consumed, err)
+	}
+	creditRefund := state.InvoiceRefund{
+		InvoiceID: inv.ID, ProviderRefundID: "refund-credit-failed-" + uuid.NewString(),
+		IdempotencyKey: "refund-credit-failed-key-" + uuid.NewString(),
+		AmountCents:    100, Source: "credit", Status: "pending",
+	}
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, creditRefund); err != nil {
+		t.Fatalf("RecordInvoiceRefund(credit pending): %v", err)
+	}
+	creditRefund.Status = "failed"
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, creditRefund); err != nil {
+		t.Fatalf("RecordInvoiceRefund(credit failed): %v", err)
+	}
+	active, err := fx.Store.ListActiveCreditsForConsumption(fx.Ctx, fx.Account.ID)
+	if err != nil || len(active) != 1 || active[0].ID != credit.ID || active[0].CentsRemaining != 100 {
+		t.Fatalf("restored credits = (%+v, %v), want %s with 100 cents", active, err, credit.ID)
+	}
+	replay, err := fx.Store.ConsumeAccountCredit(fx.Ctx, state.ConsumeAccountCreditParams{
+		AccountID: fx.Account.ID, TargetCents: 100, Provider: "polar",
+		ProviderInvoiceID: providerInvoiceID, InvoiceID: inv.ID,
+		Reason: "async refund replay", Actor: "apid",
+	})
+	if err != nil || !replay.AlreadyConsumedForInvoice || replay.ConsumedCents != 0 {
+		t.Fatalf("replayed reversed consumption = (%+v, %v), want idempotent zero", replay, err)
+	}
 }
 
 func testBillingUsageDelivery(t *testing.T, fx *Fixture) {
 	hour := time.Now().UTC().Truncate(time.Hour).Add(-2 * time.Hour)
 	const mbSeconds = int64(321)
+	for _, provider := range []string{"paddle", "polar"} {
+		if err := fx.Store.UpsertBillingIdentity(fx.Ctx, state.BillingIdentity{
+			AccountID: fx.Account.ID, Provider: provider,
+			CustomerID:  provider + "-usage-" + uuid.NewString(),
+			BillingFrom: hour,
+		}); err != nil {
+			t.Fatalf("UpsertBillingIdentity(%s): %v", provider, err)
+		}
+	}
 	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, uuid.NewString(), hour.Add(5*time.Minute), mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("AppendUsage: %v", err)
 	}
-	pending, err := fx.Store.PendingBillingUsageWindows(fx.Ctx, "paddle", hour.Add(time.Hour))
+	pending, err := fx.Store.PendingBillingUsageWindows(fx.Ctx, "paddle", hour, hour.Add(time.Hour))
 	if err != nil || len(pending) != 1 || pending[0].AccountID != fx.Account.ID || !pending[0].Hour.Equal(hour) || pending[0].MBSeconds != mbSeconds {
 		t.Fatalf("PendingBillingUsageWindows = (%+v, %v), want one %d-MB-second window", pending, err, mbSeconds)
 	}
 	if err := fx.Store.RecordBillingUsageDelivery(fx.Ctx, "paddle", fx.Account.ID, hour, mbSeconds); err != nil {
 		t.Fatalf("RecordBillingUsageDelivery: %v", err)
 	}
-	pending, err = fx.Store.PendingBillingUsageWindows(fx.Ctx, "paddle", hour.Add(time.Hour))
+	pending, err = fx.Store.PendingBillingUsageWindows(fx.Ctx, "paddle", hour, hour.Add(time.Hour))
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("paddle pending after delivery = (%+v, %v), want empty", pending, err)
 	}
-	pending, err = fx.Store.PendingBillingUsageWindows(fx.Ctx, "polar", hour.Add(time.Hour))
+	pending, err = fx.Store.PendingBillingUsageWindows(fx.Ctx, "polar", hour, hour.Add(time.Hour))
 	if err != nil || len(pending) != 1 || pending[0].AccountID != fx.Account.ID || !pending[0].Hour.Equal(hour) || pending[0].MBSeconds != mbSeconds {
 		t.Fatalf("polar pending after paddle delivery = (%+v, %v), want original window", pending, err)
+	}
+}
+
+func testPaddleOverageWindowExistence(t *testing.T, fx *Fixture) {
+	window := time.Now().UTC().Truncate(time.Hour).Add(-time.Hour)
+	exists, err := fx.Store.PaddleOverageWindowExists(fx.Ctx, fx.Account.ID, window)
+	if err != nil || exists {
+		t.Fatalf("PaddleOverageWindowExists(fresh) = (%v, %v), want false", exists, err)
+	}
+	claimed, err := fx.Store.ClaimPaddleOverageWindow(fx.Ctx, fx.Account.ID, window, "conformance", time.Minute)
+	if err != nil || !claimed {
+		t.Fatalf("ClaimPaddleOverageWindow = (%v, %v), want true", claimed, err)
+	}
+	exists, err = fx.Store.PaddleOverageWindowExists(fx.Ctx, fx.Account.ID, window)
+	if err != nil || !exists {
+		t.Fatalf("PaddleOverageWindowExists(pending) = (%v, %v), want true", exists, err)
+	}
+	if err := fx.Store.CompletePaddleOverageWindow(fx.Ctx, fx.Account.ID, window, 321); err != nil {
+		t.Fatalf("CompletePaddleOverageWindow: %v", err)
+	}
+	exists, err = fx.Store.PaddleOverageWindowExists(fx.Ctx, fx.Account.ID, window)
+	if err != nil || !exists {
+		t.Fatalf("PaddleOverageWindowExists(completed) = (%v, %v), want true", exists, err)
 	}
 }
 

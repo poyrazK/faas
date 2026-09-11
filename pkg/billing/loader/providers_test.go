@@ -1,3 +1,4 @@
+// adr: 032
 // Tests for the Providers() registry + the CapabilitySet shape.
 // Companion to loader_test.go (which covers the FAAS_BILLING_PROVIDER
 // selector). The capability surface is the new contract added in
@@ -68,8 +69,8 @@ func TestProviders_Paddle(t *testing.T) {
 		if m.Name != "paddle" {
 			continue
 		}
-		// Paddle exposes: hosted checkout, refunds, line-item usage, sandbox.
-		// No usage_reconcile (Paddle Billing has no usage-summary endpoint).
+		// Paddle exposes hosted checkout, refunds, line-item usage, provider
+		// transaction reconciliation, and sandbox mode.
 		if !m.Capabilities.Has(billing.CapHostedCheckout) {
 			t.Error("paddle missing CapHostedCheckout")
 		}
@@ -82,8 +83,8 @@ func TestProviders_Paddle(t *testing.T) {
 		if !m.Capabilities.Has(billing.CapRefund) {
 			t.Error("paddle missing CapRefund")
 		}
-		if m.Capabilities.Has(billing.CapUsageReconcile) {
-			t.Error("paddle should NOT include CapUsageReconcile — Paddle has no usage-summary endpoint")
+		if !m.Capabilities.Has(billing.CapUsageReconcile) {
+			t.Error("paddle missing CapUsageReconcile")
 		}
 		if m.Capabilities.Has(billing.CapUsageMetered) {
 			t.Error("paddle should NOT include CapUsageMetered — pushes line items")

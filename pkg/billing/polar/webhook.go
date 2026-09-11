@@ -161,6 +161,7 @@ func parsePolarEvent(payload []byte, eventID string, p *Provider) (billing.Event
 		}
 		event.ChargeID = firstString(data, "order_id", nestedString(data, "order", "id"))
 		event.AmountCents = firstNumber(data, "amount", "refunded_amount", "amount_refunded")
+		event.RefundStatus = strings.ToLower(firstString(data, "status"))
 	} else if strings.HasPrefix(raw.Type, "order.") {
 		event.ChargeID = stringValue(data["id"])
 		event.AmountCents = firstNumber(data, "total_amount", "net_amount", "amount")

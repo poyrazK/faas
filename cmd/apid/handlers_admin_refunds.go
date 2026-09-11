@@ -127,7 +127,7 @@ func (s *server) refundAccount(w http.ResponseWriter, r *http.Request, acct stat
 			"Invoice cannot be refunded", "the invoice has no paid amount"))
 		return
 	}
-	remainingRefundable := paidCents - invoice.AmountRefundedCents
+	remainingRefundable := paidCents - invoice.AmountRefundedCents - invoice.AmountRefundPendingCents
 	if remainingRefundable <= 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Invoice cannot be refunded", "the invoice has already been fully refunded"))

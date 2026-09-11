@@ -64,7 +64,6 @@ ClaimNextDueWorkflowRun
 ClaimNextPendingRun
 ClaimNextQueuedBuild
 ClaimNextQueuedBuildWithFairness
-ClaimPaddleOverageWindow
 ClaimPendingFireNowRequest
 ClaimPendingOperatorIntent
 ClaimPendingRuntimeConfigOperation
@@ -82,7 +81,6 @@ ColdWakeRatePctSince
 CompleteBuild
 CompleteGdprRequest
 CompleteInvocation
-CompletePaddleOverageWindow
 ComputeNodeByID
 ComputeNodeByName
 ComputeNodeUsedMB
@@ -255,7 +253,6 @@ GetGithubInstallBindingForApp
 GetGithubWebhookSecret
 GetIdempotent
 GetInstanceTailCount
-GetInvoiceByID
 GetMFADisableRequest
 GetMirrorRuleByID
 GetOIDCExchangedTokenByHash
