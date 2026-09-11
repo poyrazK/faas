@@ -168,7 +168,11 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 					PrintWarn(osStderr, "upload session ended; restarting source upload (%d/%d)", restart, resumableUploadMaxRestarts)
 				}
 			}
-			session, err = c.StartUpload(ctx, slug, info.Size(), archiveSHA256, options...)
+			startCtx := ctx
+			if baseKey := api.IdempotencyKeyFromContext(ctx); baseKey != "" {
+				startCtx = api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(baseKey, "resumable-start"))
+			}
+			session, err = c.StartUpload(startCtx, slug, info.Size(), archiveSHA256, options...)
 			if err != nil {
 				if errors.Is(err, api.ErrResumableUploadUnsupported) {
 					return api.DeploymentResponse{}, "", false, nil
@@ -312,7 +316,12 @@ func uploadSessionChunks(ctx context.Context, c *Client, session api.ResumableUp
 		}
 
 		chunk := buf[:n]
-		next, err := appendUploadWithRetry(ctx, c, session.UploadID, offset, chunk)
+		appendCtx := ctx
+		if baseKey := api.IdempotencyKeyFromContext(ctx); baseKey != "" {
+			operation := "resumable-append-" + session.UploadID + "-" + strconv.FormatInt(offset, 10)
+			appendCtx = api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(baseKey, operation))
+		}
+		next, err := appendUploadWithRetry(appendCtx, c, session.UploadID, offset, chunk)
 		if err != nil {
 			return err
 		}
@@ -354,8 +363,12 @@ func appendUploadWithRetry(ctx context.Context, c *Client, uploadID string, offs
 }
 
 func commitUploadWithRetry(ctx context.Context, c *Client, uploadID string) (api.DeploymentResponse, error) {
+	commitCtx := ctx
+	if baseKey := api.IdempotencyKeyFromContext(ctx); baseKey != "" {
+		commitCtx = api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(baseKey, "resumable-commit-"+uploadID))
+	}
 	for attempt := 0; attempt < resumableUploadMaxAttempts; attempt++ {
-		dep, err := c.CommitUpload(ctx, uploadID)
+		dep, err := c.CommitUpload(commitCtx, uploadID)
 		if err == nil {
 			return dep, nil
 		}
@@ -461,5 +474,8 @@ func cancelUploadBestEffort(ctx context.Context, c *Client, uploadID string) {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resumableUploadCancelWait)
 	defer cancel()
+	if baseKey := api.IdempotencyKeyFromContext(ctx); baseKey != "" {
+		ctx = api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(baseKey, "resumable-cancel-"+uploadID))
+	}
 	_ = c.CancelUpload(ctx, uploadID)
 }

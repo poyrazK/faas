@@ -624,6 +624,8 @@ var cliCommands = []cliCommand{
 			{Name: "no-triggers", Short: "skip gregale.yaml trigger fan-out"},
 			{Name: "wait", Short: "wait for deployment to become live (default)"},
 			{Name: "no-wait", Short: "return after deployment is queued"},
+			{Name: "timeout", Short: "maximum wait seconds for deploy (default 300)", Value: "SECONDS"},
+			{Name: "idempotency-key", Short: "stable logical retry key for this deployment", Value: "KEY"},
 			{Name: "secret-scan", Short: "scan .env files before packing", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			{Name: "diff", Short: "preview what would change without deploying"},
 			{Name: "dry-run", Short: "run deploy preflight without uploading or changing remote state"},
