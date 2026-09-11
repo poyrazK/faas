@@ -2515,6 +2515,11 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.getGitHubInstallStatus))))
 	mux.Handle("DELETE /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.unbindGitHubApp))))
 	mux.Handle("POST /v1/apps/{slug}/install/sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.syncGitHubApp))))
+	// Server-rendered dashboard forms for the same customer-scoped
+	// connection actions. These redirect back with a flash instead of
+	// leaving a browser on a JSON response.
+	mux.Handle("POST /dashboard/apps/{slug}/github/sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubSync))))
+	mux.Handle("POST /dashboard/apps/{slug}/github/disconnect", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubDisconnect))))
 	// Issue #961 / Mega-B PR-3 — GET /v1/templates is the dashboard's
 	// source of truth for the template catalog (handlers_templates.go).
 	// Mirrors cmd/gregale/templates.Names without importing the CLI's

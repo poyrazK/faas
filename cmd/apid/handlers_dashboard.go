@@ -778,10 +778,12 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	}
 	analyticsRoute, analyticsMethod, _ := parseRequestAnalyticsRouteFilter(r.URL.Query().Get("analytics_route"), r.URL.Query().Get("analytics_method"))
 	analyticsGroupBy, _ := parseRequestAnalyticsGroupBy(r.URL.Query().Get("analytics_by"), "route")
+	githubConnection := s.dashboardGitHubConnection(ctx, log, w, acct, app, githubDashboardFlash(r))
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
-		App:             appRow,
-		Manifest:        dashboardManifestView(app),
-		EffectiveLimits: appEffectiveLimits(app, acct.Plan),
+		App:              appRow,
+		Manifest:         dashboardManifestView(app),
+		GitHubConnection: githubConnection,
+		EffectiveLimits:  appEffectiveLimits(app, acct.Plan),
 		ConfiguredResources: api.AppConfiguredResources{
 			MemoryMB: app.RAMMB, CPUMillicores: effectiveAppCPUMillicores(app, acct.Plan),
 		},
