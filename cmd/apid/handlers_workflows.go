@@ -288,7 +288,13 @@ func (s *server) injectWorkflowEvent(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 
-	if run.Status != state.WorkflowRunStatusRunning && run.Status != state.WorkflowRunStatusAwaitingEvent {
+	// Events may arrive before schedd claims a newly-created run, and recording
+	// an unrelated event atomically wakes an awaiting run back to pending for
+	// re-evaluation. Accept every active state while continuing to reject
+	// terminal runs.
+	if run.Status != state.WorkflowRunStatusPending &&
+		run.Status != state.WorkflowRunStatusRunning &&
+		run.Status != state.WorkflowRunStatusAwaitingEvent {
 		api.WriteProblem(w, api.ErrWorkflowNotRunning())
 		return
 	}
