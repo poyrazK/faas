@@ -111,10 +111,56 @@ func TestVmmdExecutionBackendRequiresBothWiringFunctions(t *testing.T) {
 	}
 }
 
+// adr: 171 — the routed constructor pins restore, execute, and destroy to the
+// same node and rejects a VM identity that does not match the claimed intent.
+func TestNewRoutedVmmdExecutionBackendPinsNodeAndInstance(t *testing.T) {
+	router := &recordingRoutedExecutionVMM{}
+	backend := NewRoutedVmmdExecutionBackend(router, func(context.Context, []byte, string) (string, json.RawMessage, error) {
+		return "return true", json.RawMessage("null"), nil
+	})
+	req := ExecutionRestoreRequest{
+		ID: "exec-routed", NodeID: "node-a", Plan: api.PlanPro,
+		Runtime: api.ExecutionRuntimeNode22, NetworkMode: api.ExecutionNetworkNone,
+		Limits: api.ResolvedExecutionLimits{TimeoutMS: 1000, MaxOutputBytes: 1024},
+	}
+	session, err := backend.Restore(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if _, err := session.Execute(context.Background(), ExecutionPayload{Sealed: []byte("sealed")}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if err := session.Destroy(context.Background()); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if router.restoreNode != "node-a" || router.executeNode != "node-a" || router.destroyNode != "node-a" || router.instance != "exec-routed" {
+		t.Fatalf("router calls = %#v", router)
+	}
+}
+
 type recordingExecutionTransport struct {
 	request      executionproto.Request
 	result       executionproto.Result
 	destroyCalls int
+}
+
+type recordingRoutedExecutionVMM struct {
+	restoreNode, executeNode, destroyNode, instance string
+}
+
+func (r *recordingRoutedExecutionVMM) RestoreExecution(_ context.Context, nodeID string, req ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error) {
+	r.restoreNode, r.instance = nodeID, req.ID
+	return &ExecutionRestoreOutcome{Instance: req.ID}, nil
+}
+
+func (r *recordingRoutedExecutionVMM) ExecuteExecution(_ context.Context, nodeID, instance string, _ executionproto.Request) (executionproto.Result, error) {
+	r.executeNode, r.instance = nodeID, instance
+	return executionproto.Result{Status: api.ExecutionStatusSucceeded, Result: json.RawMessage("null")}, nil
+}
+
+func (r *recordingRoutedExecutionVMM) Destroy(_ context.Context, nodeID, instance string) error {
+	r.destroyNode, r.instance = nodeID, instance
+	return nil
 }
 
 func (t *recordingExecutionTransport) Execute(_ context.Context, request executionproto.Request) (executionproto.Result, error) {

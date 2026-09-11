@@ -34,6 +34,43 @@ func TestColdBootConfigTwoDrives(t *testing.T) {
 	}
 }
 
+// adr: 171 — an execution VM has no tenant-facing interface. Vsock remains
+// attached by BuildColdBootConfig for the post-restore execution protocol.
+func TestColdBootConfigNetworklessOmitsInterfaces(t *testing.T) {
+	spec := validColdSpec()
+	spec.Tap = ""
+	spec.Networkless = true
+	cfg := BuildColdBootConfig(spec, 0)
+	if len(cfg.NetworkInterfaces) != 0 {
+		t.Fatalf("networkless config interfaces = %#v, want none", cfg.NetworkInterfaces)
+	}
+	if cfg.VsockDevice == nil {
+		t.Fatal("networkless execution config must retain vsock")
+	}
+	if strings.Contains(cfg.BootSource.BootArgs, " ip=") || strings.Contains(cfg.BootSource.BootArgs, "eth0") {
+		t.Fatalf("networkless boot args contain tenant networking: %q", cfg.BootSource.BootArgs)
+	}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("networkless cold-boot spec rejected: %v", err)
+	}
+}
+
+// adr: 171 — a networkless execution guest must not reference a netns that
+// was never created, while ordinary app wakes keep the --netns argument.
+func TestJailerCommandNetworklessOmitsNetns(t *testing.T) {
+	argv := JailerCommand(JailerSpec{Instance: "exec-1", UID: 20001, GID: 20001, Netns: "fc-exec-1", Networkless: true})
+	for _, arg := range argv {
+		if arg == "--netns" || arg == "/run/netns/fc-exec-1" {
+			t.Fatalf("networkless jailer command contains netns argument: %v", argv)
+		}
+	}
+	ordinary := JailerCommand(JailerSpec{Instance: "app-1", UID: 20001, GID: 20001, Netns: "fc-app-1"})
+	joined := strings.Join(ordinary, " ")
+	if !strings.Contains(joined, "--netns /run/netns/fc-app-1") {
+		t.Fatalf("ordinary jailer command lost netns argument: %v", ordinary)
+	}
+}
+
 // TestColdBootConfig_SidecarTopology (issue #463 / ADR-069 / PR-B
 // AC #6) pins the drive topology for the sidecar Workloads
 // branch of BuildColdBootConfig. The contract:

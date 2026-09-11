@@ -92,3 +92,35 @@ func TestManagerExecuteExecutionDestroysExecutionOnlyInstance(t *testing.T) {
 		t.Fatalf("destroy calls = %v, want [exec-vm-1]", vmm.destroyedWithExport)
 	}
 }
+
+// adr: 171 — the dedicated constructor allocates lifecycle identity and a
+// cgroup-backed VM but never invokes tenant netns/veth/tap setup commands.
+func TestManagerWakeExecutionIsNetworkless(t *testing.T) {
+	runner := &fakeRunner{}
+	vmm := &fakeVMM{}
+	m := NewManager(runner, vmm, Paths{Kernel: "kernel/test"}, "1.0.0", nil, nil)
+	inst, err := m.WakeExecution(context.Background(), ExecutionWakeRequest{
+		Instance: "exec-wake-1", AccountID: "acct-1", Plan: api.PlanPro,
+		Runtime: string(api.ExecutionRuntimeNode22), KernelKey: "kernel/test",
+		BaseKey: "base/test", LayerKey: "layer/test", VcpuCount: 2,
+		MemSizeMiB: 256, CPUMillicores: 500,
+	})
+	if err != nil {
+		t.Fatalf("WakeExecution: %v", err)
+	}
+	if inst == nil || !inst.ExecutionOnly || !inst.Lease.Networkless {
+		t.Fatalf("execution instance = %#v, want execution-only networkless lease", inst)
+	}
+	vmm.mu.Lock()
+	spec := vmm.coldBootSpecs[len(vmm.coldBootSpecs)-1]
+	vmm.mu.Unlock()
+	if !spec.Networkless || spec.Tap != "" {
+		t.Fatalf("cold-boot spec = %#v, want networkless empty tap", spec)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("network commands = %#v, want none", runner.commands)
+	}
+	if err := m.Destroy(context.Background(), inst.Lease.Instance); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+}

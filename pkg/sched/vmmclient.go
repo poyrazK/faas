@@ -170,6 +170,46 @@ type ExecutionVMM interface {
 	ExecuteExecution(context.Context, string, executionproto.Request) (executionproto.Result, error)
 }
 
+// ExecutionRestoreVMM is the optional capability that creates a fresh,
+// networkless execution VM. Kept separate from ExecutionVMM so old nodes and
+// test doubles can negotiate the post-restore surface independently.
+type ExecutionRestoreVMM interface {
+	RestoreExecution(context.Context, ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error)
+}
+
+type ExecutionRestoreOutcome struct {
+	Instance        string
+	LeaseUID        int
+	Method          fcvm.WakeMethod
+	RequestedMethod fcvm.WakeMethod
+}
+
+// RestoreExecution creates the fresh networkless VM and returns only its
+// lifecycle identity. The caller must subsequently use ExecuteExecution for
+// source/input delivery; this RPC never carries either field.
+func (c *VMMClient) RestoreExecution(ctx context.Context, req ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error) {
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	wireReq := &vmmdpb.RestoreExecutionRequest{
+		Instance: req.ID, AccountId: req.AccountID, Plan: string(req.Plan),
+		Runtime: string(req.Runtime), KernelKey: req.KernelKey, BaseKey: req.BaseKey,
+		LayerKey: req.LayerKey, VcpuCount: int32(req.VcpuCount),
+		MemSizeMib: int32(req.MemSizeMiB), CpuMillicores: int32(req.CPUMillicores),
+	}
+	if req.Snapshot.StorageKey != "" || req.Snapshot.VMStateStorageKey != "" || req.Snapshot.VMStatePath != "" {
+		wireReq.Snapshot = &vmmdpb.SnapshotRef{
+			DeploymentId: req.Snapshot.DeploymentID, VmstatePath: req.Snapshot.VMStatePath,
+			FcVersion: req.Snapshot.FCVersion, StorageKey: req.Snapshot.StorageKey,
+			VmstateStorageKey: req.Snapshot.VMStateStorageKey, Networkless: true,
+		}
+	}
+	resp, err := c.cli.RestoreExecution(ctx, wireReq)
+	if err != nil {
+		return nil, liftErr(err)
+	}
+	return &ExecutionRestoreOutcome{Instance: resp.GetInstance(), LeaseUID: int(resp.GetLeaseUid()), Method: fcvm.WakeMethod(resp.GetMethod()), RequestedMethod: fcvm.WakeMethod(resp.GetRequestedMethod())}, nil
+}
+
 // LogReceiver is the per-instance callback the vmmd Logs RPC hands
 // each frame to. It returns a non-nil error to abort the stream;
 // the vmmd handler surfaces that error over the gRPC trailer.
@@ -443,6 +483,8 @@ type AppSpec struct {
 // only populates one for a given wake: empty for default-local, the
 // canonical key for remote nodes. Cold-boot-fallback still requires
 // StorageKey (mem F-1 contract).
+// Networkless is reserved for the runtime snapshot catalog and is only
+// serialized by RestoreExecution; ordinary app wakes leave it false.
 type SnapshotRef struct {
 	DeploymentID string
 	VMStatePath  string
@@ -452,6 +494,7 @@ type SnapshotRef struct {
 	// vmstate blob (issue #121 / ADR-025 axis 2 slice 4). Empty on
 	// default-local; populated on remote compute nodes.
 	VMStateStorageKey string
+	Networkless       bool
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -685,6 +728,7 @@ func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app
 			FcVersion:         snap.FCVersion,
 			StorageKey:        snap.StorageKey,
 			VmstateStorageKey: snap.VMStateStorageKey,
+			Networkless:       snap.Networkless,
 		},
 		WakeId: fields.WakeID,
 	})

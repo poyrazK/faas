@@ -172,6 +172,13 @@ type ExecutionVMMAPI interface {
 	ExecuteExecution(context.Context, string, executionproto.Request) (executionproto.Result, error)
 }
 
+// ExecutionRestoreVMMAPI is the dedicated pre-dispatch capability. It is
+// separate from ExecuteExecution so a node cannot receive caller source until
+// it has returned a fresh execution-only VM.
+type ExecutionRestoreVMMAPI interface {
+	WakeExecution(context.Context, fcvm.ExecutionWakeRequest) (*fcvm.Instance, error)
+}
+
 // flowCounter is the compute-side conntrack seam. Keeping it local to the
 // gRPC package avoids widening VmmdAPI (and every test fake) while allowing
 // production to inject flowcount.Reader and tests to inject a tiny fake.
@@ -674,6 +681,42 @@ func (s *Server) ExecuteExecution(ctx context.Context, req *vmmdpb.ExecuteExecut
 	}
 	s.ops.Observe(op, time.Since(start), nil)
 	return executionResponseFromResult(wireReq.ExecutionID, result), nil
+}
+
+// RestoreExecution creates one fresh networkless execution VM. The request is
+// payload-free; source and input are delivered only by ExecuteExecution after
+// this handler returns successfully.
+func (s *Server) RestoreExecution(ctx context.Context, req *vmmdpb.RestoreExecutionRequest) (*vmmdpb.RestoreExecutionResponse, error) {
+	const op = "RestoreExecution"
+	start := time.Now()
+	executionVMM, ok := s.vmm.(ExecutionRestoreVMMAPI)
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Execution unavailable", "vmmd execution restore is not configured")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	wakeReq, err := executionWakeRequestFromProto(req)
+	if err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	inst, err := executionVMM.WakeExecution(ctx, wakeReq)
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	if inst == nil {
+		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Execution restore failed", "vmmd returned an empty instance")
+		return nil, grpcerr.ToStatus(err)
+	}
+	return &vmmdpb.RestoreExecutionResponse{
+		Instance:        inst.Lease.Instance,
+		LeaseUid:        int32(inst.Lease.UID),
+		Method:          wakeMethodFrom(inst.Method),
+		RequestedMethod: wakeMethodFrom(fcvm.PlanWake(wakeReq.Snapshot, s.fcVer)),
+	}, nil
 }
 
 // WaitJobExit waits for the guest supervisor's terminal job receipt. The

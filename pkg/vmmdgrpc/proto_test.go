@@ -89,6 +89,35 @@ func TestToWakeRequest_NoSnapshot(t *testing.T) {
 	}
 }
 
+// adr: 171 — the restore envelope contains catalog metadata only and accepts
+// snapshots marked networkless, never an ordinary app snapshot.
+func TestExecutionWakeRequestFromProto(t *testing.T) {
+	req := &vmmdpb.RestoreExecutionRequest{
+		Instance: "exec-1", AccountId: "acct-1", Plan: string(api.PlanPro),
+		Runtime: string(api.ExecutionRuntimeNode22), KernelKey: "kernel/node22",
+		BaseKey: "base/node22", LayerKey: "layer/execution",
+		VcpuCount: 2, MemSizeMib: 256, CpuMillicores: 500,
+		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/exec/mem", VmstateStorageKey: "snap/exec/vmstate", Networkless: true},
+	}
+	got, err := executionWakeRequestFromProto(req)
+	if err != nil {
+		t.Fatalf("executionWakeRequestFromProto: %v", err)
+	}
+	if got.Instance != req.Instance || got.Runtime != req.Runtime || got.Snapshot == nil || !got.Snapshot.Networkless {
+		t.Fatalf("execution wake = %#v", got)
+	}
+	if got.Snapshot.StorageKey != req.Snapshot.StorageKey || got.Snapshot.VMStateStorageKey != req.Snapshot.VmstateStorageKey {
+		t.Fatalf("snapshot locators = %#v", got.Snapshot)
+	}
+	if _, err := executionWakeRequestFromProto(func() *vmmdpb.RestoreExecutionRequest {
+		copy := *req
+		copy.Snapshot = &vmmdpb.SnapshotRef{StorageKey: "snap/app/mem", VmstateStorageKey: "snap/app/vmstate"}
+		return &copy
+	}()); err == nil {
+		t.Fatal("ordinary snapshot accepted by execution restore converter")
+	}
+}
+
 // TestToWakeRequest_BuildSpecExportDir pins the builder-VM contract for
 // snapshot restore (issue #473): the restore envelope must carry the same
 // export directory and timeout as the cold-boot envelope so vmmd retains
