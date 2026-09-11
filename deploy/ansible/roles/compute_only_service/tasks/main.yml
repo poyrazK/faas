@@ -381,6 +381,20 @@
     mode: "0644"
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
+# API-hosting release safety (issue #1973): public-beta compute nodes must
+# execute the post-readiness smoke against the public gateway. Without this
+# drop-in the receipt records smoke_not_configured and a broken public route
+# can still be promoted after internal readiness succeeds.
+- name: compute_only_service — require public API-hosting smoke
+  notify: restart faas-imaged
+  ansible.builtin.template:
+    src: zz-faas-api-hosting-smoke.conf.j2
+    dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-api-hosting-smoke.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
 - name: compute_only_service — reload systemd after imaged drop-ins
   ansible.builtin.systemd:
     daemon_reload: true

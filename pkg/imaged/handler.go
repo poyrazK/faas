@@ -96,6 +96,10 @@ type Handler struct {
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
+	// hostingSmokeRequired is enabled by the public-beta compute deployment.
+	// It keeps the safety invariant in the handler rather than relying only on
+	// cmd/imaged wiring: a misconfigured verifier fails the candidate closed.
+	hostingSmokeRequired bool
 	// nodeName is the compute_node identity of this imaged process. A
 	// snapshot_boot notification is fleet-wide, while the builder's OCI
 	// export is local to the node that produced it. Named multi-box daemons
@@ -544,6 +548,14 @@ func (h *Handler) WithNodeName(name string) *Handler {
 // WithHostingSmoke installs the post-readiness public HTTP verifier.
 func (h *Handler) WithHostingSmoke(fn func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)) *Handler {
 	h.hostingSmoke = fn
+	return h
+}
+
+// WithHostingSmokeRequired makes an absent hosting verifier a deployment
+// failure. Single-box and offline handlers keep the legacy optional behavior;
+// public-beta compute nodes enable this alongside WithHostingSmoke.
+func (h *Handler) WithHostingSmokeRequired(required bool) *Handler {
+	h.hostingSmokeRequired = required
 	return h
 }
 
@@ -2564,7 +2576,7 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	// it to failed and retain the failed receipt when possible.
 	var hostingApp state.App
 	verificationStarted := time.Now()
-	hostingReceiptEnabled := h.hostingSmoke != nil
+	hostingReceiptEnabled := h.hostingSmoke != nil || h.hostingSmokeRequired
 	if _, ok := h.store.(state.DeploymentHostingReceiptStore); ok {
 		hostingReceiptEnabled = true
 	}
@@ -2629,13 +2641,27 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	}
 
 	if hostingReceiptEnabled {
-		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(hostingApp, dep), ErrorCode: "smoke_not_configured"}
+		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(hostingApp, dep), ErrorCode: apihostingreceipt.SmokeErrorNotConfigured}
 		if smoke.Path == "" {
 			smoke.Path = defaultHealthzPath
+		}
+		if h.hostingSmoke == nil && h.hostingSmokeRequired {
+			smoke.Status = apihostingreceipt.SmokeFailed
+			smoke.ErrorCode = apihostingreceipt.SmokeErrorVerifierNotConfigured
+			smoke.Error = "public hosting smoke verifier is required but not configured"
 		}
 		if h.hostingSmoke != nil {
 			var smokeErr error
 			smoke, smokeErr = h.hostingSmoke(ctx, hostingApp, dep)
+			if smokeErr == nil && h.hostingSmokeRequired && smoke.Status != apihostingreceipt.SmokeVerified {
+				if smoke.ErrorCode == "" {
+					smoke.ErrorCode = apihostingreceipt.SmokeErrorVerifierNotConfigured
+				}
+				if smoke.Error == "" {
+					smoke.Error = "public hosting smoke verifier did not verify deployment"
+				}
+				smoke.Status = apihostingreceipt.SmokeFailed
+			}
 			if smokeErr == nil {
 				smokeErr = hostingSmokeFailure(smoke)
 			}
@@ -2649,6 +2675,16 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
 				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
 			}
+		}
+		if h.hostingSmoke == nil && h.hostingSmokeRequired {
+			if h.ops != nil {
+				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
+			}
+			_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
+			restorePrevious("post-readiness smoke verifier not configured")
+			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, smoke.Error)
+			_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), smoke.Error)
+			return fmt.Errorf("imaged: post-readiness smoke: %s", smoke.Error)
 		}
 		if err := h.persistHostingReceipt(ctx, hostingApp, dep, smoke); err != nil {
 			if h.ops != nil {

@@ -55,3 +55,29 @@ func TestVerifierFailureDoesNotPersistBody(t *testing.T) {
 		t.Fatalf("unexpected smoke result: %#v", got)
 	}
 }
+
+func TestVerifierRequiredWithoutBaseURLFailsClosed(t *testing.T) {
+	got, err := (Verifier{Required: true}).Verify(context.Background(), "demo", "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != SmokeFailed {
+		t.Fatalf("status = %q, want failed", got.Status)
+	}
+	if got.ErrorCode != SmokeErrorVerifierNotConfigured {
+		t.Fatalf("error_code = %q, want %q", got.ErrorCode, SmokeErrorVerifierNotConfigured)
+	}
+	if got.Error == "" || got.Path != "/healthz" || !got.VerifiedAt.IsZero() {
+		t.Fatalf("unexpected required-missing result: %+v", got)
+	}
+}
+
+func TestVerifierOptionalWithoutBaseURLKeepsCompatibilitySkip(t *testing.T) {
+	got, err := (Verifier{}).Verify(context.Background(), "demo", "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != SmokeSkipped || got.ErrorCode != SmokeErrorNotConfigured {
+		t.Fatalf("unexpected optional-missing result: %+v", got)
+	}
+}

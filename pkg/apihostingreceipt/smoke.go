@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	SmokeErrorNotConfigured         = "smoke_not_configured"
+	SmokeErrorVerifierNotConfigured = "smoke_verifier_not_configured"
+)
+
 // Verifier performs the post-readiness public HTTP check. BaseURL is the
 // gateway's public origin; AppsDomain is used to construct the tenant Host
 // header when the origin is shared by many apps.
@@ -17,13 +22,23 @@ type Verifier struct {
 	BaseURL    string
 	AppsDomain string
 	Timeout    time.Duration
+	// Required makes an unset BaseURL a failed verification rather than a
+	// compatibility skip. Public-beta compute nodes set this so a missing
+	// verifier cannot promote a deployment with an unverified public route.
+	Required bool
 }
 
 func (v Verifier) Verify(ctx context.Context, slug, path string) (SmokeResult, error) {
 	path = normalizePath(path)
 	result := SmokeResult{Status: SmokeSkipped, Path: path}
 	if strings.TrimSpace(v.BaseURL) == "" {
-		result.ErrorCode = "smoke_not_configured"
+		if v.Required {
+			result.Status = SmokeFailed
+			result.ErrorCode = SmokeErrorVerifierNotConfigured
+			result.Error = "public hosting smoke verifier is required but not configured"
+		} else {
+			result.ErrorCode = SmokeErrorNotConfigured
+		}
 		return result, nil
 	}
 
