@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.audit_log_entry import AuditLogEntry
 
@@ -27,6 +29,8 @@ class ListAuditLogResponse:
     entries: list[AuditLogEntry]
     limit: int
     """Effective page size applied (always 1..100; mirrors the customer and operator /v1/audit-log routes)."""
+    next_before: str | Unset = UNSET
+    """Opaque cursor for the next older page; omitted when this page reaches the end."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +41,8 @@ class ListAuditLogResponse:
 
         limit = self.limit
 
+        next_before = self.next_before
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -45,6 +51,8 @@ class ListAuditLogResponse:
                 "limit": limit,
             }
         )
+        if next_before is not UNSET:
+            field_dict["next_before"] = next_before
 
         return field_dict
 
@@ -62,9 +70,12 @@ class ListAuditLogResponse:
 
         limit = d.pop("limit")
 
+        next_before = d.pop("next_before", UNSET)
+
         list_audit_log_response = cls(
             entries=entries,
             limit=limit,
+            next_before=next_before,
         )
 
         list_audit_log_response.additional_properties = d

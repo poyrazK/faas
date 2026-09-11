@@ -1,3 +1,4 @@
+// adr: 032
 // Whitebox tests for the small-but-uncovered surfaces in
 // pkg/billing/paddle: WebhookTolerance/SetWebhookTolerance,
 // claimedBy env-var fallback, PaddleCapabilities (static),
@@ -167,6 +168,9 @@ func (s *stubDedupe) HasPaddleOverageMonth(_ context.Context, _ string, _ time.T
 func (s *stubDedupe) RecordPaddleOverageMonth(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
+func (s *stubDedupe) PaddleOverageWindowExists(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (s *stubDedupe) ClaimPaddleOverageWindow(_ context.Context, _ string, _ time.Time, _ string, _ time.Duration) (bool, error) {
 	return true, nil
 }
@@ -246,11 +250,11 @@ func TestRefund_NilClientReturnsError(t *testing.T) {
 	}
 }
 
-func TestReconcileUsage_NotImplemented(t *testing.T) {
+func TestReconcileUsage_NilClient(t *testing.T) {
 	p := &Provider{}
 	total, err := p.ReconcileUsage(context.Background(), state.Account{ID: "acct-1"}, time.Now(), time.Now())
 	if err == nil {
-		t.Fatal("ReconcileUsage: expected error (not implemented)")
+		t.Fatal("ReconcileUsage: expected nil-client error")
 	}
 	if total != 0 {
 		t.Errorf("ReconcileUsage: total = %d, want 0 on error", total)

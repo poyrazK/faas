@@ -15,7 +15,7 @@ T = TypeVar("T", bound="RequestAnalyticsGroup")
 @_attrs_define
 class RequestAnalyticsGroup:
     """Bounded aggregate for a selected analytics dimension. Value is a route, country, hostname, normalized client family,
-    status code, or __other__.
+    status code, stable consumer UUID, __anonymous__, or __other__.
 
     """
 

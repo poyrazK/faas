@@ -6821,6 +6821,20 @@ type RekeyProgress struct {
 	LastID  string `json:"last_id,omitempty"`
 }
 
+// ComputeNodeEnrollmentRequest is the operator-only payload for registering or
+// updating a compute node. DeferActivation keeps a newly enrolled node out of
+// placement until the provisioning workflow explicitly activates it.
+type ComputeNodeEnrollmentRequest struct {
+	Name               string `json:"name"`
+	TargetURL          string `json:"target_url"`
+	GatewayTargetURL   string `json:"gateway_target_url,omitempty"`
+	VPCPUs             int    `json:"vpcpus"`
+	MemMB              int    `json:"mem_mb"`
+	MaxConcurrency     int    `json:"max_concurrency"`
+	AdmissionCeilingMB int    `json:"admission_ceiling_mb"`
+	DeferActivation    bool   `json:"defer_activation,omitempty"`
+}
+
 // ComputeNodeOperatorResponse is the authenticated operator projection used by
 // GET /v1/compute-nodes and GET /v1/compute-nodes/{name}. It exposes the
 // routing and release metadata needed for fleet diagnosis, but never returns
@@ -6845,6 +6859,7 @@ type ComputeNodeOperatorResponse struct {
 	LastHeartbeatAt    string  `json:"last_heartbeat_at,omitempty"`
 	CreatedAt          string  `json:"created_at"`
 	LiveInstanceCount  *int    `json:"live_instance_count,omitempty"`
+	TraceID            string  `json:"trace_id,omitempty"`
 }
 
 // OperatorIntentAcceptedResponse is the wire shape returned by
@@ -7421,7 +7436,9 @@ type RequestAnalyticsRoute struct {
 
 // RequestAnalyticsGroup is one top-N aggregate for the selected analytics
 // dimension. Value is a route for group_by=route, an ISO country, hostname,
-// normalized user-agent family, or status code for the other groupings.
+// normalized user-agent family, status code, or stable API consumer UUID for
+// the other groupings. Consumer-scoped results use __anonymous__ for requests
+// without a consumer identity and __other__ for groups outside the top-N.
 type RequestAnalyticsGroup struct {
 	Value         string  `json:"value"`
 	Method        string  `json:"method,omitempty"`

@@ -1,6 +1,6 @@
 # ADR-029 · apid Compute-Nodes Admin Surface
 
-- **Status:** accepted v1.1 (2026-07-31). The CRUD surface is live; v1.1 adds the §6.4 audit-trail cross-reference — admin actions remain un-emitted into `events` (deferred to a v1.2 follow-up; see Consequences). The §6.4 failure-mode catalogue (spec §6.4) lists the per-error-mode contract for the admin surface (default-local hard-delete protection, typo'd `target_url`, admin-allowlist rotation, the 47600 MB literal backfill anti-goal).
+- **Status:** accepted v1.2 (2026-09-11). v1.2 moves routine CLI enrollment behind the authenticated API, makes deferred activation atomic, preserves metadata outside the enrollment payload, and emits trace-linked audit events.
 - **Superseded (in part, PR-E):** prose referred to the monolithic
   `cmd/gatewayd/` daemon split by ADR-070 into `gatewayd-public` (TLS-only
   edge) and `gatewayd-internal` (routing + wake + proxy). Body is preserved
@@ -8,11 +8,11 @@
   routing/wake/proxy path and "gatewayd-public" for the certmagic/TLS path.
   `cmd/gatewayd/<file>.go` citations in this body are stale; see PR-E for
   the new file locations.
-- **Date:** 2026-07-22 (proposed); 2026-07-31 (accepted v1.1)
+- **Date:** 2026-07-22 (proposed); 2026-07-31 (accepted v1.1); 2026-09-11 (accepted v1.2)
 - **Issue:** #98
 - **Decision:** Add operator-facing CRUD on `compute_nodes` to apid:
-  `GET /v1/compute-nodes`, `POST /v1/compute-nodes`, `DELETE
-  /v1/compute-nodes/{name}`. Gated on an email allowlist loaded
+  `GET /v1/compute-nodes`, `GET /v1/compute-nodes/{name}`, `POST
+  /v1/compute-nodes`, `DELETE /v1/compute-nodes/{name}`. Gated on an email allowlist loaded
   from `FAAS_ADMIN_EMAILS`. RFC 7807 errors throughout.
 
 ## Context
@@ -30,11 +30,12 @@ audit active vs drained rows, and remove retired boxes.
 
 ## Decision
 
-Three routes, all admin-gated, all RFC 7807:
+Four routes, all admin-gated, all RFC 7807:
 
 | Method | Path                            | Purpose                                  |
 |--------|---------------------------------|------------------------------------------|
 | GET    | `/v1/compute-nodes`             | list; `?include_inactive=1` shows drained |
+| GET    | `/v1/compute-nodes/{name}`      | detail plus live-instance count           |
 | POST   | `/v1/compute-nodes`             | upsert by name (admin POST = idempotent) |
 | DELETE | `/v1/compute-nodes/{name}`      | soft-delete (default) or `?hard=1`        |
 
@@ -79,13 +80,19 @@ config editing, billing overrides) — that's a v1.1 conversation.
 
 - **Operator workflow:** A new box is added in three steps:
   1. Provision the box via the `overlay` ansible role.
-  2. `POST /v1/compute-nodes` with name, target_url, capacity.
+  2. `gregalectl compute-nodes add` authenticates and `POST`s name,
+     target_url, and capacity to apid. `--defer-activation` atomically stores
+     lifecycle `unavailable` until readiness checks pass.
   3. vmmd self-registration UPSERTs the same row on first boot.
-- **Audit trail:** pg_notify `compute_node_changed` fires on every
-  mutation, so the admin dashboard (future SSE) sees live state.
-  The `events` audit table is not yet populated for admin actions;
-  a follow-up slice adds the AppendEvent call. Today's slice is
-  the bare CRUD surface.
+- **Metadata ownership:** re-enrollment preserves release, PKI, topology, and
+  routing metadata not exposed by the request instead of clearing it through
+  the state layer's full-set upsert.
+- **Audit trail:** pg_notify `compute_node_changed` fires on every mutation,
+  and successful enrollment emits `operator.action.node_enroll` with actor,
+  reason, action, deferred-activation state, and request trace ID.
+- **Break glass:** routine CLI enrollment never opens PostgreSQL. Direct
+  mutation remains available only with explicit `--break-glass-db --yes` and
+  an incident reason during an apid outage.
 - **Default-local protection:** Hard-delete on `default-local` is
   refused at the handler; soft-delete is allowed (an operator
   draining the box is a valid operation). This matches the
@@ -93,7 +100,6 @@ config editing, billing overrides) — that's a v1.1 conversation.
 
 ## Out of scope
 
-- Audit-log emission (AppendEvent) for admin actions — v1.1.
 - Per-row RBAC beyond the email allowlist — a future slice adds
   scopes (e.g. "view-only operator").
 - Live config editing of an existing node's `target_url` outside

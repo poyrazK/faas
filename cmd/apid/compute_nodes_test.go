@@ -30,6 +30,12 @@ import (
 
 func newComputeNodeTestServer(t *testing.T, adminCSV, email string) (*httptest.Server, string) {
 	t.Helper()
+	ts, key, _ := newComputeNodeTestServerWithStore(t, adminCSV, email)
+	return ts, key
+}
+
+func newComputeNodeTestServerWithStore(t *testing.T, adminCSV, email string) (*httptest.Server, string, *state.MemStore) {
+	t.Helper()
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(context.Background(), email, api.PlanPro)
 	if err != nil {
@@ -46,7 +52,7 @@ func newComputeNodeTestServer(t *testing.T, adminCSV, email string) (*httptest.S
 	srv.WithAdminAllowlist(adminCSV)
 	ts := httptest.NewServer(srv.handler())
 	t.Cleanup(ts.Close)
-	return ts, key
+	return ts, key, store
 }
 
 func doJSON(t *testing.T, method, url, body, token string, ts *httptest.Server) *http.Response {
@@ -150,6 +156,91 @@ func TestComputeNodes_AllowlistHitUpsertsAndLists(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("GET missing detail: status=%d, want 404", resp.StatusCode)
+	}
+}
+
+// ADR-029: enrollment is an authenticated, trace-linked operator mutation.
+// Re-enrollment must preserve metadata outside the request shape, and deferred
+// activation must land atomically as unavailable rather than briefly active.
+func TestComputeNodes_EnrollmentPreservesMetadataAndAuditsTrace(t *testing.T) {
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	ts, tok, store := newComputeNodeTestServerWithStore(t, "ops@example.com", "ops@example.com")
+	scheddTarget := "tcp://schedd-2.faas:50052"
+	gatewayTarget := "tcp://gateway-2.faas:8080"
+	releaseID := "0123456789abcdef0123456789abcdef01234567"
+	manifestHash := "sha256:manifest"
+	hostCertificate := "private-node-certificate"
+	fingerprint := "sha256:fingerprint"
+	role := "compute-only"
+	generation := 7
+	seeded, err := store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name: "box-enroll", TargetURL: "tcp://old-vmmd.faas:50051",
+		VPCPUs: 8, MemMB: 8192, MaxConcurrency: 16, AdmissionCeilingMB: 4096,
+		VCPUBudget: 64, Lifecycle: state.NodeLifecycleActive,
+		ScheddTargetURL: &scheddTarget, GatewayTargetURL: &gatewayTarget,
+		ReleaseID: &releaseID, ManifestHash: &manifestHash,
+		HostCertificate: &hostCertificate, CertFingerprint: &fingerprint,
+		Role: &role, Generation: &generation,
+	})
+	if err != nil {
+		t.Fatalf("seed compute node: %v", err)
+	}
+
+	body := `{"name":"box-enroll","target_url":"tcp://new-vmmd.faas:50051","vpcpus":16,"mem_mb":16384,"max_concurrency":32,"admission_ceiling_mb":8192,"defer_activation":true}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/compute-nodes?reason=fleet_expansion", bytes.NewBufferString(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Trace-Id", traceID)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST enrollment: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST enrollment: status=%d", resp.StatusCode)
+	}
+	var response computeNodeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.ID != seeded.ID || response.Active || response.TraceID != traceID {
+		t.Errorf("response = %+v", response)
+	}
+
+	stored, err := store.ComputeNodeByName(context.Background(), "box-enroll")
+	if err != nil {
+		t.Fatalf("read enrolled node: %v", err)
+	}
+	if stored.Lifecycle != state.NodeLifecycleUnavailable || stored.Active {
+		t.Errorf("lifecycle = %q active=%v", stored.Lifecycle, stored.Active)
+	}
+	if stored.ScheddTargetURL == nil || *stored.ScheddTargetURL != scheddTarget ||
+		stored.GatewayTargetURL == nil || *stored.GatewayTargetURL != gatewayTarget ||
+		stored.ReleaseID == nil || *stored.ReleaseID != releaseID ||
+		stored.ManifestHash == nil || *stored.ManifestHash != manifestHash ||
+		stored.HostCertificate == nil || *stored.HostCertificate != hostCertificate ||
+		stored.CertFingerprint == nil || *stored.CertFingerprint != fingerprint ||
+		stored.Role == nil || *stored.Role != role ||
+		stored.Generation == nil || *stored.Generation != generation || stored.VCPUBudget != 64 {
+		t.Errorf("re-enrollment erased metadata: %+v", stored)
+	}
+
+	events, err := store.ListEventsByTraceID(context.Background(), traceID, 10)
+	if err != nil {
+		t.Fatalf("list audit events: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != "operator.action.node_enroll" {
+		t.Fatalf("audit events = %+v", events)
+	}
+	var auditData map[string]any
+	if err := json.Unmarshal(events[0].Data, &auditData); err != nil {
+		t.Fatalf("decode audit data: %v", err)
+	}
+	if auditData["reason"] != "fleet_expansion" || auditData["action"] != "updated" || auditData["defer_activation"] != true {
+		t.Errorf("audit data = %+v", auditData)
 	}
 }
 

@@ -176,6 +176,10 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 		}
 		pushStart := time.Now()
 		perr := p.pusher.PushUsageRecord(ctx, acct, start, billableMBSeconds)
+		if errors.Is(perr, billing.ErrUsageDeliveryInProgress) {
+			p.log.Debug("meter: billing usage delivery held by peer", "account", acct.ID, "hour", start)
+			continue
+		}
 		code := ops.classify(perr)
 		dur := time.Since(pushStart)
 		p.ops.ObserveCode(ops.opLabel, code, dur)
@@ -208,12 +212,13 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	if p.pusher == nil {
 		return 0, errors.New("meter: billing pusher not configured")
 	}
-	// Kept in the signature for config/API compatibility. Delivery receipts,
-	// rather than a wall-clock lookback, now define replay completeness.
-	_ = lookback
+	if lookback <= 0 {
+		lookback = 30 * 24 * time.Hour
+	}
 	end := p.now().UTC().Truncate(time.Hour)
+	start := end.Add(-lookback)
 	ops := providerOpsFor(p.pusher)
-	windows, err := p.store.PendingBillingUsageWindows(ctx, ops.opLabel, end)
+	windows, err := p.store.PendingBillingUsageWindows(ctx, ops.opLabel, start, end)
 	if err != nil {
 		return 0, err
 	}
@@ -300,6 +305,10 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 		}
 		pushStart := time.Now()
 		perr := p.pusher.PushUsageRecord(ctx, acct, window.Hour, billableMBSeconds)
+		if errors.Is(perr, billing.ErrUsageDeliveryInProgress) {
+			p.log.Debug("meter: billing usage delivery held by peer", "account", acct.ID, "hour", window.Hour, "replay", true)
+			continue
+		}
 		code := ops.classify(perr)
 		dur := time.Since(pushStart)
 		p.ops.ObserveCode(ops.opLabel, code, dur)

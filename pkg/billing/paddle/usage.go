@@ -62,7 +62,14 @@ func (p *Provider) flushOverageLocked(ctx context.Context, acct state.Account, h
 		return nil
 	}
 	windowStart := windowStartFromHour(hour.UTC())
+	recovery := false
 	if p.dedupe != nil {
+		var err error
+		recovery, err = p.dedupe.PaddleOverageWindowExists(ctx, acct.ID, windowStart)
+		if err != nil {
+			return fmt.Errorf("paddle: inspect dedupe window=%s acct=%s: %w",
+				windowStart.Format(time.RFC3339), acct.ID, err)
+		}
 		claimed, err := p.dedupe.ClaimPaddleOverageWindow(ctx, acct.ID, windowStart, p.claimedBy(), paddleOverageLease)
 		if err != nil {
 			return fmt.Errorf("paddle: dedupe claim window=%s acct=%s: %w",
@@ -70,12 +77,30 @@ func (p *Provider) flushOverageLocked(ctx context.Context, acct state.Account, h
 		}
 		if !claimed {
 			// Another pod holds a non-stale claim for this window.
-			// Skip the SDK POST; the holder will Complete it.
-			return nil
+			// Keep the caller from recording a false delivery receipt; the
+			// holder will Complete it and a later pass will reconcile.
+			return billing.ErrUsageDeliveryInProgress
 		}
 	}
 	flusher := p.flushFn
 	if flusher == nil {
+		// A pre-existing claim may represent a successful provider POST whose
+		// local completion write failed. Paddle does not guarantee idempotency
+		// for this endpoint, so reconcile by our deterministic CustomData key
+		// before issuing another money-moving request.
+		if recovery {
+			found, err := p.paddleOverageTransactionExists(ctx, acct, windowStart)
+			if err != nil {
+				return err
+			}
+			if found {
+				if err := p.dedupe.CompletePaddleOverageWindow(ctx, acct.ID, windowStart, mbSeconds); err != nil {
+					return fmt.Errorf("paddle: dedupe complete recovered window=%s acct=%s: %w",
+						windowStart.Format(time.RFC3339), acct.ID, err)
+				}
+				return nil
+			}
+		}
 		flusher = defaultFlushLocked
 	}
 	if err := flusher(ctx, p, acct, windowStart, mbSeconds); err != nil {
@@ -88,6 +113,36 @@ func (p *Provider) flushOverageLocked(ctx context.Context, acct state.Account, h
 		}
 	}
 	return nil
+}
+
+func (p *Provider) paddleOverageTransactionExists(ctx context.Context, acct state.Account, windowStart time.Time) (bool, error) {
+	if p.client == nil {
+		return false, ErrNoAPIKey
+	}
+	idem := fmt.Sprintf("faas-overage-%s-%s", acct.ID, windowStart.Format(time.RFC3339))
+	perPage := 30
+	orderBy := "created_at[DESC]"
+	collection, err := p.client.ListTransactions(ctx, &paddle.ListTransactionsRequest{
+		CustomerID: []string{acct.ProviderCustomerID},
+		PerPage:    &perPage,
+		OrderBy:    &orderBy,
+	})
+	if err != nil {
+		return false, fmt.Errorf("paddle: list transactions for recovery: %w", err)
+	}
+	for {
+		result := collection.Next(ctx)
+		if !result.Ok() {
+			if result.Err() != nil {
+				return false, fmt.Errorf("paddle: page transactions for recovery: %w", result.Err())
+			}
+			return false, nil
+		}
+		txn := result.Value()
+		if txn != nil && fmt.Sprint(txn.CustomData["faas_paddle_idem_key"]) == idem {
+			return true, nil
+		}
+	}
 }
 
 // windowStartFromHour returns the [start, start+1h) window

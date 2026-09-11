@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Bounded aggregate for a selected analytics dimension. Value is a route, country, hostname, normalized client family, status code, or __other__.
+ * Bounded aggregate for a selected analytics dimension. Value is a route, country, hostname, normalized client family, status code, stable consumer UUID, __anonymous__, or __other__.
  */
 export type RequestAnalyticsGroup = {
   value: string;

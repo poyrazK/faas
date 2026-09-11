@@ -36,7 +36,20 @@ WEBHOOK_ALLOWED_PATHS=/stripe,/github
 WEBHOOK_ALLOWED_PATHS=/stripe/*,/github/*,/internal/*
 ```
 
-## Set the secret
+## First deploy with a secret
+
+Create the file outside this directory, restrict it to your user, and
+deploy. Gregale creates the app, seals the secret, and only then starts
+the runtime:
+
+```sh
+printf 'WEBHOOK_SECRET=%s\n' "$(openssl rand -hex 32)" > ../webhook-receiver.secrets
+# Optional: printf 'WEBHOOK_ALLOWED_PATHS=/stripe,/github\n' >> ../webhook-receiver.secrets
+chmod 600 ../webhook-receiver.secrets
+gregale deploy --secrets-file ../webhook-receiver.secrets
+```
+
+## Rotate or update secrets
 
 ```sh
 gregale secrets set --app <slug> WEBHOOK_SECRET=$(openssl rand -hex 32)

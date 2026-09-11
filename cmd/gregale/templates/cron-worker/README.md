@@ -20,7 +20,23 @@ cold boots.
   customer can answer "how many times has my cron fired?" with a
   single Redis GET.
 
-## Set the secrets
+## First deploy with secrets
+
+Create the file outside this directory, restrict it to your user, and
+deploy. Gregale creates the app, seals the credentials, and only then
+starts the runtime:
+
+```sh
+cat > ../cron-worker.secrets <<'EOF'
+QSTASH_TOKEN=<qstash-signing-key>
+UPSTASH_REDIS_REST_URL=https://<instance>.upstash.io
+UPSTASH_REDIS_REST_TOKEN=<redis-rest-token>
+EOF
+chmod 600 ../cron-worker.secrets
+gregale deploy --secrets-file ../cron-worker.secrets
+```
+
+## Rotate or update secrets
 
 ```sh
 gregale secrets set --app <slug> QSTASH_TOKEN=<qstash-signing-key> \

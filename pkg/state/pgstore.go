@@ -990,11 +990,11 @@ func (s *PgStore) AccountByProviderCustomerID(ctx context.Context, stripeCustome
 func (s *PgStore) BillingIdentity(ctx context.Context, accountID, provider string) (BillingIdentity, error) {
 	var identity BillingIdentity
 	err := s.pool.QueryRow(ctx,
-		`select account_id, provider, customer_id, subscription_id, created_at, updated_at
+		`select account_id, provider, customer_id, subscription_id, billing_from, created_at, updated_at
 		   from billing_identities
 		  where account_id = $1 and provider = $2`, accountID, provider).Scan(
 		&identity.AccountID, &identity.Provider, &identity.CustomerID,
-		&identity.SubscriptionID, &identity.CreatedAt, &identity.UpdatedAt)
+		&identity.SubscriptionID, &identity.BillingFrom, &identity.CreatedAt, &identity.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BillingIdentity{}, ErrNotFound
 	}
@@ -1008,14 +1008,19 @@ func (s *PgStore) UpsertBillingIdentity(ctx context.Context, identity BillingIde
 		(identity.Provider != "stripe" && identity.Provider != "paddle" && identity.Provider != "polar") {
 		return errors.New("state: valid billing identity account, provider, and customer are required")
 	}
+	var billingFrom *time.Time
+	if !identity.BillingFrom.IsZero() {
+		value := identity.BillingFrom.UTC()
+		billingFrom = &value
+	}
 	_, err := s.pool.Exec(ctx,
-		`insert into billing_identities (account_id, provider, customer_id, subscription_id)
-		 values ($1, $2, $3, $4)
+		`insert into billing_identities (account_id, provider, customer_id, subscription_id, billing_from)
+		 values ($1, $2, $3, $4, coalesce($5, now()))
 		 on conflict (account_id, provider) do update set
 		   customer_id = excluded.customer_id,
 		   subscription_id = excluded.subscription_id,
 		   updated_at = now()`,
-		identity.AccountID, identity.Provider, identity.CustomerID, identity.SubscriptionID)
+		identity.AccountID, identity.Provider, identity.CustomerID, identity.SubscriptionID, billingFrom)
 	return err
 }
 
@@ -14136,9 +14141,10 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 
 // UpsertComputeNodeFromOperator is the apid POST /v1/compute-nodes
 // write path. The operator owns target_url; the on-conflict
-// branch re-applies target_url from the excluded row so the
-// operator's POST wins on every field. Identical schema to
-// UpsertComputeNode today — split out as a distinct method so
+// branch re-applies target_url and lifecycle from the excluded row so the
+// operator's POST wins on every field. Empty lifecycle defaults to active;
+// an explicit unavailable lifecycle supports atomic deferred enrollment.
+// Split out as a distinct method so
 // the ownership boundary is visible at the call site
 // (cmd/apid/compute_nodes.go) and so future divergence (e.g.
 // an operator-side COALESCE for region/zone that vmmd shouldn't
@@ -14152,6 +14158,10 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 	if vcpuBudget <= 0 {
 		vcpuBudget = api.VCPUSlots
 	}
+	lifecycle := node.Lifecycle
+	if lifecycle == "" {
+		lifecycle = NodeLifecycleActive
+	}
 	// Operator owns the release-bundle metadata too: PR-X secrets init
 	// stamps host_certificate / cert_fingerprint at first contact, the
 	// renderer (PR-2) stamps manifest_hash + role, release install
@@ -14162,13 +14172,13 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 	row := s.pool.QueryRow(ctx, `
 		insert into compute_nodes
 		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
-		     region, zone, gateway_target_url,
+		     region, zone, schedd_target_url, gateway_target_url,
 		     public_ip, public_ip_set_at,
 		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
-		values ($1, $2, $3, $4, $5, $6, $7, 'active'::compute_node_lifecycle,
-		        $8, $9, $10,
-		        $11, $12,
-		        $13, $14, $15, $16, $17, $18)
+		values ($1, $2, $3, $4, $5, $6, $7, $8::compute_node_lifecycle,
+		        $9, $10, $11, $12,
+		        $13, $14,
+		        $15, $16, $17, $18, $19, $20)
 		on conflict (name) do update
 		  set target_url          = excluded.target_url,
 		      vpcpus              = excluded.vpcpus,
@@ -14176,7 +14186,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		      max_concurrency     = excluded.max_concurrency,
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
-		      lifecycle           = 'active'::compute_node_lifecycle,
+		      lifecycle           = excluded.lifecycle,
 		      region              = excluded.region,
 		      zone                = excluded.zone,
 		      schedd_target_url   = excluded.schedd_target_url,
@@ -14194,8 +14204,8 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		          lifecycle
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
-		node.AdmissionCeilingMB, vcpuBudget,
-		node.Region, node.Zone, node.GatewayTargetURL,
+		node.AdmissionCeilingMB, vcpuBudget, lifecycle,
+		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
 		node.Role, node.Generation)
@@ -15631,7 +15641,7 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 			        period_start, period_end,
 			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-			        plan, amount_refunded_cents, credits_applied_cents,
+		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
 			        currency, pdf_available, created_at, updated_at
 			   from invoices
 			  where account_id = $1
@@ -15647,7 +15657,7 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 			        period_start, period_end,
 			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-			        plan, amount_refunded_cents, credits_applied_cents,
+		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
 			        currency, pdf_available, created_at, updated_at
 			   from invoices
 			  where account_id = $1
@@ -15662,7 +15672,7 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 			        period_start, period_end,
 			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-			        plan, amount_refunded_cents, credits_applied_cents,
+		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
 			        currency, pdf_available, created_at, updated_at
 			   from invoices
 			  where account_id = $1
@@ -15675,7 +15685,7 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 			        period_start, period_end,
 			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-			        plan, amount_refunded_cents, credits_applied_cents,
+		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
 			        currency, pdf_available, created_at, updated_at
 			   from invoices
 			  where account_id = $1
@@ -15695,7 +15705,7 @@ func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, 
 			&inv.Number, &inv.Status,
 			&inv.PeriodStart, &inv.PeriodEnd,
 			&inv.SubtotalCents, &inv.TaxCents, &inv.TotalCents, &inv.AmountPaidCents,
-			&inv.Plan, &inv.AmountRefundedCents, &inv.CreditsAppliedCents,
+			&inv.Plan, &inv.AmountRefundedCents, &inv.AmountRefundPendingCents, &inv.CreditsAppliedCents,
 			&inv.Currency, &inv.PDFAvailable,
 			&inv.CreatedAt, &inv.UpdatedAt,
 		); err != nil {
@@ -15718,7 +15728,7 @@ func (s *PgStore) GetInvoiceByID(ctx context.Context, id string) (Invoice, error
 		`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 		        period_start, period_end,
 		        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-		        plan, amount_refunded_cents, credits_applied_cents,
+		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
 		        currency, pdf_available, created_at, updated_at
 		   from invoices
 		  where id = $1`,
@@ -15727,7 +15737,7 @@ func (s *PgStore) GetInvoiceByID(ctx context.Context, id string) (Invoice, error
 		&inv.Number, &inv.Status,
 		&inv.PeriodStart, &inv.PeriodEnd,
 		&inv.SubtotalCents, &inv.TaxCents, &inv.TotalCents, &inv.AmountPaidCents,
-		&inv.Plan, &inv.AmountRefundedCents, &inv.CreditsAppliedCents,
+		&inv.Plan, &inv.AmountRefundedCents, &inv.AmountRefundPendingCents, &inv.CreditsAppliedCents,
 		&inv.Currency, &inv.PDFAvailable,
 		&inv.CreatedAt, &inv.UpdatedAt,
 	)
@@ -15749,7 +15759,7 @@ func (s *PgStore) GetInvoiceByProviderID(ctx context.Context, accountID, provide
 		`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
 		        period_start, period_end,
 		        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-		        plan, amount_refunded_cents, credits_applied_cents,
+		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
 		        currency, pdf_available, created_at, updated_at
 		   from invoices
 		  where account_id = $1 and provider = $2
@@ -15758,7 +15768,7 @@ func (s *PgStore) GetInvoiceByProviderID(ctx context.Context, accountID, provide
 		&inv.ID, &inv.AccountID, &inv.Provider, &inv.ProviderInvoiceID, &inv.ProviderChargeID,
 		&inv.Number, &inv.Status, &inv.PeriodStart, &inv.PeriodEnd,
 		&inv.SubtotalCents, &inv.TaxCents, &inv.TotalCents, &inv.AmountPaidCents,
-		&inv.Plan, &inv.AmountRefundedCents, &inv.CreditsAppliedCents,
+		&inv.Plan, &inv.AmountRefundedCents, &inv.AmountRefundPendingCents, &inv.CreditsAppliedCents,
 		&inv.Currency, &inv.PDFAvailable, &inv.CreatedAt, &inv.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Invoice{}, ErrNotFound
@@ -15813,9 +15823,37 @@ func (s *PgStore) UpsertInvoice(ctx context.Context, inv Invoice) error {
 	return err
 }
 
-// RecordInvoiceRefund stores a provider refund and advances cumulative invoice
-// state in one transaction. Both provider and client idempotency identities are
-// unique, so a webhook and the initiating API response converge safely.
+type invoiceRefundLifecycle uint8
+
+const (
+	invoiceRefundPending invoiceRefundLifecycle = iota
+	invoiceRefundSettled
+	invoiceRefundFailed
+)
+
+func normalizeInvoiceRefundStatus(status string) string {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "" {
+		return "succeeded"
+	}
+	return status
+}
+
+func classifyInvoiceRefundStatus(status string) invoiceRefundLifecycle {
+	switch normalizeInvoiceRefundStatus(status) {
+	case "succeeded", "completed", "confirmed", "approved", "refunded":
+		return invoiceRefundSettled
+	case "failed", "canceled", "cancelled", "rejected":
+		return invoiceRefundFailed
+	default:
+		return invoiceRefundPending
+	}
+}
+
+// RecordInvoiceRefund stores a provider refund and advances its lifecycle in
+// one transaction. Pending refunds reserve refundable value separately from
+// settled money; a later webhook updates the same row and moves the aggregate
+// exactly once. Terminal state cannot be regressed by an out-of-order event.
 func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund) error {
 	if refund.InvoiceID == "" || refund.ProviderRefundID == "" || refund.IdempotencyKey == "" || refund.AmountCents <= 0 {
 		return errors.New("state: invoice refund requires invoice, provider refund, idempotency key, and positive amount")
@@ -15828,46 +15866,177 @@ func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund)
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var insertedID string
-	err = tx.QueryRow(ctx,
-		`insert into invoice_refunds (invoice_id, provider_refund_id, idempotency_key, amount_cents, source, status)
-		 values ($1, $2, $3, $4, $5, $6)
-		 on conflict do nothing
-		 returning id`,
-		refund.InvoiceID, refund.ProviderRefundID, refund.IdempotencyKey,
-		refund.AmountCents, refund.Source, refund.Status).Scan(&insertedID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return tx.Commit(ctx)
-	}
-	if err != nil {
-		return err
-	}
-	creditCents := int64(0)
-	if refund.Source == "credit" {
-		creditCents = refund.AmountCents
-	}
-	tag, err := tx.Exec(ctx,
-		`update invoices
-		    set amount_refunded_cents = amount_refunded_cents + $2,
-		        credits_applied_cents = credits_applied_cents + $3,
-		        updated_at = now()
-		  where id = $1
-		    and amount_refunded_cents + $2 <= greatest(amount_paid_cents, total_cents)`,
-		refund.InvoiceID, refund.AmountCents, creditCents)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		var exists bool
-		if err := tx.QueryRow(ctx, `select exists(select 1 from invoices where id = $1)`, refund.InvoiceID).Scan(&exists); err != nil {
-			return err
-		}
-		if !exists {
+	var invoiceAccountID, providerInvoiceID string
+	var paid, total, settled, pending, credits int64
+	if err := tx.QueryRow(ctx,
+		`select account_id, provider_invoice_id,
+		        amount_paid_cents, total_cents, amount_refunded_cents,
+		        amount_refund_pending_cents, credits_applied_cents
+		   from invoices where id = $1 for update`, refund.InvoiceID).Scan(
+		&invoiceAccountID, &providerInvoiceID,
+		&paid, &total, &settled, &pending, &credits); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
+		return err
+	}
+	if paid <= 0 {
+		paid = total
+	}
+
+	refund.Status = normalizeInvoiceRefundStatus(refund.Status)
+	newState := classifyInvoiceRefundStatus(refund.Status)
+	var existing InvoiceRefund
+	err = tx.QueryRow(ctx,
+		`select id, invoice_id, provider_refund_id, idempotency_key,
+		        amount_cents, source, status, created_at
+		   from invoice_refunds
+		  where invoice_id = $1
+		    and (provider_refund_id = $2 or idempotency_key = $3)
+		  order by (provider_refund_id = $2) desc
+		  limit 1 for update`,
+		refund.InvoiceID, refund.ProviderRefundID, refund.IdempotencyKey).Scan(
+		&existing.ID, &existing.InvoiceID, &existing.ProviderRefundID,
+		&existing.IdempotencyKey, &existing.AmountCents, &existing.Source,
+		&existing.Status, &existing.CreatedAt)
+
+	var settledDelta, pendingDelta, creditDelta int64
+	var reverseCredit bool
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		if newState != invoiceRefundFailed && (paid <= 0 || settled+pending+refund.AmountCents > paid) {
+			return ErrConflict
+		}
+		if err := tx.QueryRow(ctx,
+			`insert into invoice_refunds
+			   (invoice_id, provider_refund_id, idempotency_key, amount_cents, source, status, updated_at)
+			 values ($1, $2, $3, $4, $5, $6, now()) returning id`,
+			refund.InvoiceID, refund.ProviderRefundID, refund.IdempotencyKey,
+			refund.AmountCents, refund.Source, refund.Status).Scan(&refund.ID); err != nil {
+			if isUniqueViolation(err) {
+				return ErrConflict
+			}
+			return err
+		}
+		if newState == invoiceRefundSettled {
+			settledDelta = refund.AmountCents
+			if refund.Source == "credit" {
+				creditDelta = refund.AmountCents
+			}
+		} else if newState == invoiceRefundPending {
+			pendingDelta = refund.AmountCents
+		} else if refund.Source == "credit" {
+			reverseCredit = true
+		}
+	case err != nil:
+		return err
+	default:
+		if existing.AmountCents != refund.AmountCents ||
+			(existing.ProviderRefundID != refund.ProviderRefundID && existing.IdempotencyKey == refund.IdempotencyKey) {
+			return ErrConflict
+		}
+		oldState := classifyInvoiceRefundStatus(existing.Status)
+		if existing.Source == "webhook" && refund.Source != "webhook" {
+			existing.Source = refund.Source
+			if oldState == invoiceRefundSettled && refund.Source == "credit" {
+				creditDelta = refund.AmountCents
+			} else if oldState == invoiceRefundFailed && refund.Source == "credit" {
+				reverseCredit = true
+			}
+		}
+		// Pending is the only non-terminal state. Ignore stale provider events
+		// that would move a completed/failed refund backwards.
+		if oldState == invoiceRefundPending && newState != oldState {
+			pendingDelta = -refund.AmountCents
+			if newState == invoiceRefundSettled {
+				settledDelta = refund.AmountCents
+				if existing.Source == "credit" {
+					creditDelta = refund.AmountCents
+				}
+			} else if newState == invoiceRefundFailed && existing.Source == "credit" {
+				reverseCredit = true
+			}
+			existing.Status = refund.Status
+		} else if oldState == invoiceRefundPending {
+			existing.Status = refund.Status
+		}
+		if _, err := tx.Exec(ctx,
+			`update invoice_refunds set source = $2, status = $3, updated_at = now() where id = $1`,
+			existing.ID, existing.Source, existing.Status); err != nil {
+			return err
+		}
+	}
+	if reverseCredit {
+		refundID := refund.ID
+		if existing.ID != "" {
+			refundID = existing.ID
+		}
+		if err := reverseInvoiceCreditConsumption(ctx, tx, invoiceAccountID, providerInvoiceID, refundID, refund.AmountCents); err != nil {
+			return err
+		}
+	}
+
+	newSettled := settled + settledDelta
+	newPending := pending + pendingDelta
+	newCredits := credits + creditDelta
+	if newSettled < 0 || newPending < 0 || newCredits < 0 || newCredits > newSettled ||
+		newSettled+newPending > paid {
 		return ErrConflict
 	}
+	if _, err := tx.Exec(ctx,
+		`update invoices
+		    set amount_refunded_cents = $2,
+		        amount_refund_pending_cents = $3,
+		        credits_applied_cents = $4,
+		        updated_at = now()
+		  where id = $1`,
+		refund.InvoiceID, newSettled, newPending, newCredits); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
+}
+
+// reverseInvoiceCreditConsumption compensates an asynchronous failed refund.
+// The positive ledger rows keep the history append-only; refund_reversal_id
+// makes webhook replay idempotent and the transaction keeps balance + ledger
+// atomic.
+func reverseInvoiceCreditConsumption(ctx context.Context, tx pgx.Tx, accountID, providerInvoiceID, refundID string, expectedCents int64) error {
+	if providerInvoiceID == "" || refundID == "" || expectedCents <= 0 {
+		return ErrConflict
+	}
+	if _, err := tx.Exec(ctx,
+		`with consumed as (
+		   select credit_id, sum(-delta_cents)::bigint as cents
+		     from credit_ledger
+		    where provider_invoice_id = $1 and delta_cents < 0
+		    group by credit_id
+		 ), inserted as (
+		   insert into credit_ledger
+		     (account_id, credit_id, delta_cents, reason, actor, provider_invoice_id, refund_reversal_id)
+		   select $2, credit_id, cents, 'provider refund failed', 'apid-refund-reversal', $1, $3
+		     from consumed
+		   on conflict (refund_reversal_id, credit_id)
+		     where refund_reversal_id is not null
+		     do nothing
+		   returning credit_id, delta_cents
+		 )
+		 update account_credits c
+		    set cents_remaining = c.cents_remaining + inserted.delta_cents
+		   from inserted
+		  where c.id = inserted.credit_id`,
+		providerInvoiceID, accountID, refundID); err != nil {
+		return fmt.Errorf("state: reverse invoice credits: %w", err)
+	}
+	var reversed int64
+	if err := tx.QueryRow(ctx,
+		`select coalesce(sum(delta_cents), 0)
+		   from credit_ledger where refund_reversal_id = $1`, refundID).Scan(&reversed); err != nil {
+		return fmt.Errorf("state: verify reversed invoice credits: %w", err)
+	}
+	if reversed != expectedCents {
+		return fmt.Errorf("state: reverse invoice credits: ledger total %d does not match refund %d: %w", reversed, expectedCents, ErrConflict)
+	}
+	return nil
 }
 
 // --- account credits (issue #279) -------------------------------------------
@@ -16065,36 +16234,25 @@ func (s *PgStore) ListActiveCreditsForConsumption(ctx context.Context, accountID
 // per credit is atomic against a concurrent operator issuance on a
 // different credit.
 //
-// Idempotency is the partial unique index credit_ledger_invoice_credit_idx
-// (provider_invoice_id, credit_id) WHERE provider_invoice_id IS NOT NULL
-// (migration 00058). The INSERT uses ON CONFLICT DO NOTHING so a second
-// call for the same invoice sees zero rows returned for every (invoice,
-// credit) pair and reports AlreadyConsumedForInvoice=true.
-//
-// Concurrent-operator race window: the prior_check reads
-// credit_ledger for the invoice's existing consumption rows; without
-// a lock, two operators firing the endpoint simultaneously could
-// both observe hasPrior=false and both drain. The end state would
-// be correct (no double-decrement — the per-pair partial unique index
-// catches it), but PerCredit and AlreadyConsumedForInvoice would
-// differ between the two callers. Closing the window: at the top of
-// the Tx we take a SHARE lock on every existing credit_ledger row
-// for this provider_invoice_id. A concurrent INSERT ... ON CONFLICT
-// DO NOTHING in another Tx blocks until we commit, so the second
-// operator's prior_check reads our committed rows and reports
-// AlreadyConsumedForInvoice=true with the SAME ConsumedCents.
+// Idempotency is enforced twice: a transaction-scoped advisory lock
+// serializes every call for one provider invoice (including the first,
+// when no ledger row exists yet), and the partial unique index
+// credit_ledger_invoice_credit_idx(provider_invoice_id, credit_id) is
+// the durable backstop. The ledger reservation is inserted before the
+// credit balance is decremented, so a uniqueness conflict can never
+// consume money.
 //
 // Per credit:
 //  1. amount = min(credit.CentsRemaining, remaining).
-//  2. UPDATE account_credits SET cents_remaining = cents_remaining - $amount
-//     WHERE id = $id AND cents_remaining >= $amount RETURNING
-//     cents_remaining. Zero rows ⇒ the credit was drained concurrently
-//     (issuance took it to 0 or a parallel reducer won) — skip the
-//     INSERT and try the next credit.
-//  3. INSERT INTO credit_ledger (... provider_invoice_id) ... ON
+//  2. INSERT INTO credit_ledger (... provider_invoice_id) ... ON
 //     CONFLICT DO NOTHING RETURNING id. Zero rows ⇒ the (invoice,
 //     credit) pair was already drained on a prior call — set
-//     AlreadyConsumedForInvoice=true and skip.
+//     AlreadyConsumedForInvoice=true and skip without touching money.
+//  3. UPDATE account_credits SET cents_remaining = cents_remaining - $amount
+//     WHERE id = $id AND cents_remaining >= $amount RETURNING
+//     cents_remaining. Zero rows is an invariant violation: the credit
+//     rows are already locked by loadActiveForUpdate, so the transaction
+//     aborts and rolls back the ledger reservation.
 //  4. remaining -= amount. Break when 0.
 //
 // Final ConsumedCents = TargetCents - remaining. If the loop ended
@@ -16120,8 +16278,15 @@ func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCred
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 
-	// Race-safe idempotency: lock + check existing consumption
-	// rows for this invoice. See priorLockAndCheck docstring.
+	// A row lock cannot serialize the first two callers because there is no
+	// ledger row to lock yet. A transaction advisory lock gives the natural
+	// provider-invoice key a lockable object before its first insert.
+	if _, err := tx.Exec(ctx,
+		`select pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		"consume-account-credit:"+p.ProviderInvoiceID); err != nil {
+		return ConsumeAccountCreditResult{}, fmt.Errorf("state: consume_credits invoice_lock: %w", err)
+	}
+
 	hasPrior, priorCents, err := priorLockAndCheck(ctx, tx, p.ProviderInvoiceID)
 	if err != nil {
 		return ConsumeAccountCreditResult{}, err
@@ -16180,34 +16345,11 @@ func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCred
 	return res, nil
 }
 
-// priorLockAndCheck takes a SHARE lock on every existing credit_ledger
-// row for the provider_invoice_id and reports whether prior
-// consumption rows exist. The SHARE lock conflicts with INSERT (which
-// takes ROW EXCLUSIVE) so a concurrent operator call blocks here
-// until our Tx commits. The second operator's prior_check then reads
-// our committed rows and reports AlreadyConsumedForInvoice=true with
-// the SAME ConsumedCents. Without the lock, two simultaneous
-// operators can both observe hasPrior=false and both proceed to
-// drain — the end state is still correct (no double-decrement via
-// the per-pair partial unique index), but PerCredit and
-// AlreadyConsumedForInvoice differ between the two callers.
-//
-// The FOR SHARE on a zero-row set is a no-op — Postgres acquires a
-// table-level intention lock and proceeds. When another Tx already
-// holds the SHARE lock, INSERT ... ON CONFLICT DO NOTHING blocks at
-// lock acquisition (before uniqueness evaluation), so the hasPrior
-// read below reflects committed state.
-//
-// Returns (hasPrior, priorCents, err). Caller commits/rolls back.
+// priorLockAndCheck reports whether the invoice already has consumption
+// rows. The caller must hold the provider-invoice advisory lock; locking
+// the matching ledger rows is insufficient because the first call has no
+// row to lock.
 func priorLockAndCheck(ctx context.Context, tx pgx.Tx, providerInvoiceID string) (bool, int64, error) {
-	if _, err := tx.Exec(ctx,
-		`select 1
-		   from credit_ledger
-		  where provider_invoice_id = $1
-		  for share`,
-		providerInvoiceID); err != nil {
-		return false, 0, fmt.Errorf("state: consume_credits prior_lock: %w", err)
-	}
 	var priorCents int64
 	var hasPrior bool
 	if err := tx.QueryRow(ctx,
@@ -16256,7 +16398,7 @@ func loadActiveForUpdate(ctx context.Context, tx pgx.Tx, accountID string) ([]Ac
 	return out, nil
 }
 
-// drainActive runs the per-credit conditional UPDATE + INSERT ON
+// drainActive runs the per-credit INSERT reservation + conditional UPDATE
 // CONFLICT DO NOTHING loop, capped at p.TargetCents. Returns the
 // per-credit rows plus the total drained and whether any row was
 // successfully inserted (the latter distinguishes a fresh drain from
@@ -16264,11 +16406,11 @@ func loadActiveForUpdate(ctx context.Context, tx pgx.Tx, accountID string) ([]Ac
 //
 // Per credit:
 //  1. amount = min(credit.CentsRemaining, remaining).
-//  2. UPDATE … WHERE cents_remaining >= $amount RETURNING …
-//     Zero rows ⇒ concurrent drain won; skip and try the next.
-//  3. INSERT … ON CONFLICT DO NOTHING RETURNING id.
+//  2. INSERT … ON CONFLICT DO NOTHING RETURNING id.
 //     Zero rows ⇒ (invoice, credit) pair was already drained on a
 //     prior call; mark AlreadyConsumedForInvoice=true and skip.
+//  3. UPDATE … WHERE cents_remaining >= $amount RETURNING …
+//     Zero rows ⇒ an invariant violation; abort so the insert rolls back.
 //  4. remaining -= amount. Break when 0.
 //
 // Returns (res, anyInserted, err). Errors abort the loop and surface
@@ -16291,42 +16433,24 @@ func drainActive(ctx context.Context, tx pgx.Tx, active []AccountCredit, p Consu
 			continue
 		}
 
-		// Step 2: conditional decrement.
-		var newBalance int64
-		err := tx.QueryRow(ctx,
-			`update account_credits
-			    set cents_remaining = cents_remaining - $1
-			  where id = $2
-			    and cents_remaining >= $1
-			  returning cents_remaining`,
-			amount, c.ID).Scan(&newBalance)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				// Concurrent drain won this credit — skip and try
-				// the next. The transaction stays valid.
-				continue
-			}
-			return res, anyInserted, fmt.Errorf("state: consume_credits update: %w", err)
-		}
-
-		// Step 3: ledger insert with ON CONFLICT DO NOTHING.
+		// Step 2: reserve the dedupe key before touching the balance.
 		//
 		// Postgres requires ON CONFLICT inference to use a unique
 		// index whose column list AND WHERE clause match the
 		// conflict target. The partial unique index
 		// credit_ledger_invoice_credit_idx carries `WHERE
-		// provider_invoice_id IS NOT NULL` (migration 00058), so
+		// provider_invoice_id IS NOT NULL AND delta_cents < 0`, so
 		// the inference clause must repeat it — without the WHERE,
 		// Postgres errors with SQLSTATE 42P10 "there is no unique
 		// or exclusion constraint matching the ON CONFLICT
 		// specification".
 		var insertedID string
-		err = tx.QueryRow(ctx,
+		err := tx.QueryRow(ctx,
 			`insert into credit_ledger
 			   (account_id, credit_id, delta_cents, reason, actor, provider_invoice_id)
 			 values ($1, $2, $3, $4, $5, $6)
 			 on conflict (provider_invoice_id, credit_id)
-			   where provider_invoice_id is not null
+			   where provider_invoice_id is not null and delta_cents < 0
 			   do nothing
 			 returning id`,
 			p.AccountID, c.ID, -amount, p.Reason, p.Actor, p.ProviderInvoiceID,
@@ -16342,6 +16466,23 @@ func drainActive(ctx context.Context, tx pgx.Tx, active []AccountCredit, p Consu
 			return res, anyInserted, fmt.Errorf("state: consume_credits ledger: %w", err)
 		}
 		_ = insertedID // observational; consumed via RETURNING id
+
+		// Step 3: decrement the already-locked credit. Any failure aborts the
+		// transaction and rolls the ledger reservation back with it.
+		var newBalance int64
+		err = tx.QueryRow(ctx,
+			`update account_credits
+			    set cents_remaining = cents_remaining - $1
+			  where id = $2
+			    and cents_remaining >= $1
+			  returning cents_remaining`,
+			amount, c.ID).Scan(&newBalance)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return res, anyInserted, fmt.Errorf("state: consume_credits update: locked credit %s no longer has %d cents", c.ID, amount)
+			}
+			return res, anyInserted, fmt.Errorf("state: consume_credits update: %w", err)
+		}
 
 		res.PerCredit = append(res.PerCredit, ConsumedCreditRow{
 			CreditID:   c.ID,
@@ -16372,17 +16513,15 @@ func sumActiveCents(ctx context.Context, tx pgx.Tx, accountID string) (int64, er
 	return remSum, nil
 }
 
-// rederiveConsumed sums the negative-delta ledger rows for the
-// invoice (the partial unique index guarantees exactly one row per
-// (invoice, credit) pair). Used when drainActive inserted nothing —
-// the operator's replay path.
+// rederiveConsumed returns the net debit for an invoice. A failed async
+// refund appends positive reversal rows, making the net zero while retaining
+// the original immutable consumption evidence.
 func rederiveConsumed(ctx context.Context, tx pgx.Tx, providerInvoiceID string) (int64, error) {
 	var rederived int64
 	if err := tx.QueryRow(ctx,
 		`select coalesce(sum(-delta_cents), 0)
 		   from credit_ledger
-		  where provider_invoice_id = $1
-		    and delta_cents < 0`,
+		  where provider_invoice_id = $1`,
 		providerInvoiceID).Scan(&rederived); err != nil {
 		return 0, fmt.Errorf("state: consume_credits rederive: %w", err)
 	}
@@ -16527,19 +16666,22 @@ func (s *PgStore) UsageWindows(ctx context.Context, start, end time.Time) ([]Usa
 	return out, rows.Err()
 }
 
-// PendingBillingUsageWindows returns retained positive hourly usage without a
-// pusher-owned receipt for provider. Retention bounds the scan; the 10k batch
-// cap prevents a first post-upgrade backfill from monopolising one meterd tick.
-func (s *PgStore) PendingBillingUsageWindows(ctx context.Context, provider string, end time.Time) ([]UsageWindow, error) {
+// PendingBillingUsageWindows returns bounded positive hourly usage without a
+// pusher-owned receipt for provider. billing_identities.billing_from prevents
+// a newly selected backend from charging pre-checkout/provider-switch usage.
+func (s *PgStore) PendingBillingUsageWindows(ctx context.Context, provider string, start, end time.Time) ([]UsageWindow, error) {
 	rows, err := s.pool.Query(ctx,
 		`with hourly as (
-		   select account_id,
-		          date_trunc('hour', minute at time zone 'UTC') at time zone 'UTC' as window_start,
-		          sum(mb_seconds)::bigint as mb_seconds
-		     from usage_minutes
-		    where minute < $2
-		    group by account_id, window_start
-		   having sum(mb_seconds) > 0
+		   select u.account_id,
+		          date_trunc('hour', u.minute at time zone 'UTC') at time zone 'UTC' as window_start,
+		          sum(u.mb_seconds)::bigint as mb_seconds
+		     from usage_minutes u
+		     join billing_identities bi
+		       on bi.account_id = u.account_id and bi.provider = $1
+		    where u.minute >= $2 and u.minute < $3
+		      and u.minute >= bi.billing_from
+		    group by u.account_id, window_start
+		   having sum(u.mb_seconds) > 0
 			 ), pending as (
 			   select h.*,
 			          row_number() over (partition by h.account_id order by h.window_start) as account_rank
@@ -16552,7 +16694,7 @@ func (s *PgStore) PendingBillingUsageWindows(ctx context.Context, provider strin
 			 select account_id, window_start, mb_seconds
 			   from pending
 			  order by account_rank, window_start, account_id
-		  limit 10000`, provider, end.UTC())
+		  limit 10000`, provider, start.UTC(), end.UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -17106,6 +17248,19 @@ func (s *PgStore) ClaimPaddleOverageWindow(ctx context.Context, accountID string
 		return false, fmt.Errorf("paddle dedupe claim acct=%s window=%s: %w", accountID, windowStart.Format(time.RFC3339), err)
 	}
 	return claimed, nil
+}
+
+// PaddleOverageWindowExists distinguishes a first delivery from recovery of a
+// pre-existing claim. The Paddle adapter uses it to query the provider by its
+// deterministic CustomData key before retrying a potentially successful POST.
+func (s *PgStore) PaddleOverageWindowExists(ctx context.Context, accountID string, windowStart time.Time) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`select exists(
+		   select 1 from paddle_overage_dedupe
+		    where account_id = $1 and window_start = $2
+		 )`, accountID, windowStart.UTC()).Scan(&exists)
+	return exists, err
 }
 
 // CompletePaddleOverageWindow transitions (account_id, window_start)

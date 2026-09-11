@@ -32,7 +32,7 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -42,6 +42,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -98,15 +99,7 @@ func (s *server) adminAllows(acct state.Account) (bool, *api.Problem) {
 // heartbeat goroutine. Operators pre-registering a box (before
 // vmmd boots) leave overlay_ip empty; vmmd's startup will overwrite
 // it via UpsertComputeNode on first contact.
-type computeNodePayload struct {
-	Name               string `json:"name"`
-	TargetURL          string `json:"target_url"`
-	GatewayTargetURL   string `json:"gateway_target_url,omitempty"`
-	VPCPUs             int    `json:"vpcpus"`
-	MemMB              int    `json:"mem_mb"`
-	MaxConcurrency     int    `json:"max_concurrency"`
-	AdmissionCeilingMB int    `json:"admission_ceiling_mb"`
-}
+type computeNodePayload = api.ComputeNodeEnrollmentRequest
 
 // computeNodeResponse retains the package-local name used by the handler tests
 // while sharing the authenticated operator wire contract with gregalectl.
@@ -218,68 +211,119 @@ func (s *server) createOrUpdateComputeNode(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	var p computeNodePayload
-	if err := decodeJSON(r, &p); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "bad_request",
-			"Bad JSON", err.Error()))
+	p, reason, problem := decodeComputeNodeEnrollment(r)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	if p.Name == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "bad_request",
-			"Missing name", "name is required"))
-		return
-	}
-	if p.TargetURL == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "bad_request",
-			"Missing target_url", "target_url is required (unix:///... or tcp://...)"))
-		return
-	}
-	if value := strings.TrimSpace(p.GatewayTargetURL); value != "" {
-		if err := validateGatewayTargetURL(value); err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "bad_request",
-				"Invalid gateway_target_url", err.Error()))
-			return
-		}
-	}
-	// Resource-size sanity mirrors vmmd's registerComputeNode: zero
-	// values are a config bug, not a meaningful "I want a node with
-	// zero RAM" state. Same 400 surface so the operator's UI can
-	// show the same message the daemon would.
-	if p.VPCPUs <= 0 || p.MemMB <= 0 || p.MaxConcurrency <= 0 || p.AdmissionCeilingMB <= 0 {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "bad_request",
-			"Invalid capacity",
-			"vpcpus, mem_mb, max_concurrency, admission_ceiling_mb must all be > 0"))
-		return
-	}
-	var gatewayTargetURL *string
-	if strings.TrimSpace(p.GatewayTargetURL) != "" {
-		value := strings.TrimSpace(p.GatewayTargetURL)
-		gatewayTargetURL = &value
-	} else if existing, lookupErr := s.store.ComputeNodeByName(r.Context(), p.Name); lookupErr == nil {
-		// Older operator clients do not send gateway_target_url. Preserve a
-		// previously enrolled endpoint rather than silently removing a live
-		// node from the public data-plane pool on an unrelated capacity edit.
-		gatewayTargetURL = existing.GatewayTargetURL
-	} else if !errors.Is(lookupErr, state.ErrNotFound) {
+	node, existed, err := s.prepareComputeNodeEnrollment(r.Context(), p)
+	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-			"Lookup failed", lookupErr.Error()))
+			"Lookup failed", err.Error()))
 		return
 	}
-	row, err := s.store.UpsertComputeNodeFromOperator(r.Context(), state.ComputeNode{
-		Name:               p.Name,
-		TargetURL:          p.TargetURL,
-		GatewayTargetURL:   gatewayTargetURL,
-		VPCPUs:             p.VPCPUs,
-		MemMB:              p.MemMB,
-		MaxConcurrency:     p.MaxConcurrency,
-		AdmissionCeilingMB: p.AdmissionCeilingMB,
-	})
+	row, err := s.store.UpsertComputeNodeFromOperator(r.Context(), node)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
 			"Upsert failed", err.Error()))
 		return
 	}
-	writeJSON(w, http.StatusOK, toComputeNodeResponse(row))
+	s.emitComputeNodeEnrollmentAudit(r, acct, row, reason, existed, p.DeferActivation)
+	response := toComputeNodeResponse(row)
+	if traceID := middleware.TraceIDFrom(r); traceID != nil {
+		response.TraceID = *traceID
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func decodeComputeNodeEnrollment(r *http.Request) (computeNodePayload, string, *api.Problem) {
+	var p computeNodePayload
+	if err := decodeJSON(r, &p); err != nil {
+		return p, "", api.NewProblem(http.StatusBadRequest, "bad_request", "Bad JSON", err.Error())
+	}
+	if p.Name == "" {
+		return p, "", api.NewProblem(http.StatusBadRequest, "bad_request", "Missing name", "name is required")
+	}
+	if p.TargetURL == "" {
+		return p, "", api.NewProblem(http.StatusBadRequest, "bad_request", "Missing target_url", "target_url is required (unix:///... or tcp://...)")
+	}
+	if value := strings.TrimSpace(p.GatewayTargetURL); value != "" {
+		if err := validateGatewayTargetURL(value); err != nil {
+			return p, "", api.NewProblem(http.StatusBadRequest, "bad_request", "Invalid gateway_target_url", err.Error())
+		}
+	}
+	if p.VPCPUs <= 0 || p.MemMB <= 0 || p.MaxConcurrency <= 0 || p.AdmissionCeilingMB <= 0 {
+		return p, "", api.NewProblem(http.StatusBadRequest, "bad_request", "Invalid capacity",
+			"vpcpus, mem_mb, max_concurrency, admission_ceiling_mb must all be > 0")
+	}
+	reason := r.URL.Query().Get("reason")
+	if reason == "" {
+		reason = "operator_node_enroll"
+	}
+	if len(reason) > obsOpsReasonMaxLen || !obsOpsReasonShape.MatchString(reason) {
+		return p, "", api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"invalid reason", "reason must match [a-z0-9_]{1,64}")
+	}
+	return p, reason, nil
+}
+
+func (s *server) prepareComputeNodeEnrollment(ctx context.Context, p computeNodePayload) (state.ComputeNode, bool, error) {
+	lifecycle := state.NodeLifecycleActive
+	if p.DeferActivation {
+		lifecycle = state.NodeLifecycleUnavailable
+	}
+	node := state.ComputeNode{
+		Name: p.Name, TargetURL: p.TargetURL, VPCPUs: p.VPCPUs,
+		MemMB: p.MemMB, MaxConcurrency: p.MaxConcurrency,
+		AdmissionCeilingMB: p.AdmissionCeilingMB,
+		VCPUBudget:         p.VPCPUs * api.CPUOvercommit,
+		Lifecycle:          lifecycle,
+	}
+	if value := strings.TrimSpace(p.GatewayTargetURL); value != "" {
+		node.GatewayTargetURL = &value
+	}
+	existing, err := s.store.ComputeNodeByName(ctx, p.Name)
+	if errors.Is(err, state.ErrNotFound) {
+		return node, false, nil
+	}
+	if err != nil {
+		return state.ComputeNode{}, false, err
+	}
+	preserveComputeNodeEnrollmentMetadata(&node, existing)
+	return node, true, nil
+}
+
+func preserveComputeNodeEnrollmentMetadata(node *state.ComputeNode, existing state.ComputeNode) {
+	node.VCPUBudget = existing.VCPUBudget
+	node.Region = existing.Region
+	node.Zone = existing.Zone
+	node.ScheddTargetURL = existing.ScheddTargetURL
+	if node.GatewayTargetURL == nil {
+		node.GatewayTargetURL = existing.GatewayTargetURL
+	}
+	node.PublicIp = existing.PublicIp
+	node.PublicIpSetAt = existing.PublicIpSetAt
+	node.ReleaseID = existing.ReleaseID
+	node.ManifestHash = existing.ManifestHash
+	node.HostCertificate = existing.HostCertificate
+	node.CertFingerprint = existing.CertFingerprint
+	node.Role = existing.Role
+	node.Generation = existing.Generation
+}
+
+func (s *server) emitComputeNodeEnrollmentAudit(r *http.Request, acct state.Account, row state.ComputeNode, reason string, existed, deferred bool) {
+	if s.audit == nil {
+		return
+	}
+	action := "created"
+	if existed {
+		action = "updated"
+	}
+	subject := row.ID
+	s.audit.Emit(r.Context(), "operator.action.node_enroll", &subject, map[string]any{
+		"actor": acct.ID, "node_id": row.ID, "node_name": row.Name,
+		"action": action, "reason": reason, "defer_activation": deferred,
+	})
 }
 
 func validateGatewayTargetURL(raw string) error {
@@ -382,7 +426,3 @@ func (s *server) deleteComputeNode(w http.ResponseWriter, r *http.Request, acct 
 	row.Active = false
 	writeJSON(w, http.StatusOK, toComputeNodeResponse(row))
 }
-
-// _ keeps the json import alive for future inline decode paths; the
-// handler uses decodeJSON from server.go today.
-var _ = json.Unmarshal

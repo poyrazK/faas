@@ -522,6 +522,7 @@
             · {{if eq .Data.RequestAnalytics.GroupBy "referrer_host"}}<strong>referrer</strong>{{else}}<a href="?analytics_by=referrer_host">referrer</a>{{end}}
             · {{if eq .Data.RequestAnalytics.GroupBy "ua_family"}}<strong>client</strong>{{else}}<a href="?analytics_by=ua_family">client</a>{{end}}
             · {{if eq .Data.RequestAnalytics.GroupBy "status"}}<strong>status</strong>{{else}}<a href="?analytics_by=status">status</a>{{end}}
+            · {{if eq .Data.RequestAnalytics.GroupBy "consumer_id"}}<strong>consumer</strong>{{else}}<a href="?analytics_by=consumer_id">consumer</a>{{end}}
           </p>
           {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
           {{if .Data.RequestAnalytics.LatencySparklineHTML}}

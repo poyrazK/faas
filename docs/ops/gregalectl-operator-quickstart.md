@@ -160,7 +160,9 @@ gregalectl compute-nodes add \
     --name fsn-2 \
     --target-url tcp://vmmd-2.faas:50051 \
     --gateway-target-url tcp://fsn-2.gregale.dev:8080 \
-    --vpcpus 32 --mem-mb 65536 --max-concurrency 200
+    --vpcpus 32 --mem-mb 65536 --max-concurrency 200 \
+    --admission-ceiling-mb 55705 \
+    --reason fleet_expansion
 
 # List every registered node (--json for CI gates)
 gregalectl compute-nodes list [--active-only] [--json]
@@ -174,17 +176,18 @@ gregalectl compute-nodes drain-status --node fsn-2   # exit 0 only in maintenanc
 gregalectl compute-nodes activate --node fsn-2 --reason planned_kernel_upgrade
 ```
 
-`list` / `show` are read-only introspection added in Cluster C1
-(gregalectl mega-PR). The state package owns the underlying
-`ListComputeNodes` / `ComputeNodeByName` calls; the dispatcher never
-bypasses the schema.
+`add`, `list`, and `show` use the authenticated operator API by default. Add
+returns a trace ID and emits `operator.action.node_enroll`; re-enrollment
+preserves PKI, release, topology, and routing metadata not present in the
+request. Use `--defer-activation` to commit the row as unavailable until the
+readiness workflow activates it.
 
-The Operations console and `gregalectl` now use the same authenticated API.
-Every mutation requires an MFA-stepped-up operator session and creates a
-durable `operator_intents` receipt retaining actor, reason, trace, preflight
-impact, and terminal outcome. Refresh the five-minute proof with
-`gregalectl auth step-up`; inspect or revoke it with `auth status` / `auth
-logout`.
+The Operations console and `gregalectl` lifecycle commands use the same
+authenticated API. Lifecycle mutations require an MFA-stepped-up operator
+session and create a durable `operator_intents` receipt retaining actor,
+reason, trace, preflight impact, and terminal outcome. Refresh the five-minute
+proof with `gregalectl auth step-up`; inspect or revoke it with `auth status` /
+`auth logout`.
 
 A successful drain finishes in the non-admitting `maintenance` lifecycle; it
 never automatically reactivates the node. Direct database mutation exists only
@@ -269,19 +272,21 @@ no routine direct-database fallback for account mutations; use the reviewed
 [`database-repair`](../break-glass/database-repair.md) procedure only during an
 apid outage.
 
-### Compute-node inventory
+### Compute-node enrollment and inventory
 
-Routine fleet reads use the authenticated operator API and do not require
-database credentials:
+Routine fleet enrollment and reads use the authenticated operator API and do
+not require database credentials:
 
 ```
+gregalectl compute-nodes add --name <fqdn> ... --reason fleet_expansion
 gregalectl compute-nodes list
 gregalectl compute-nodes show --node <fqdn>
 ```
 
-Use `--break-glass-db` only during an apid outage under the reviewed database
-repair procedure. These read commands do not affect provisioning or deployment
-latency.
+The add command's direct PostgreSQL path requires the loud
+`--break-glass-db --yes --reason <incident_slug>` combination. Use it only
+during an apid outage under the reviewed database repair procedure. These
+commands are outside the customer deployment hot path.
 
 `target_url` is the VM manager endpoint. `gateway_target_url` is the
 separate private HTTP data-plane endpoint; the manifest/Ansible pipeline

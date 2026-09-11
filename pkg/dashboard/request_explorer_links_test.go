@@ -36,6 +36,7 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 		"Top routes",
 		"Inspect requests",
 		"/dashboard/apps/demo/debug?route=%2Fcheckout&amp;since=24h",
+		"?analytics_by=consumer_id",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\n--- body ---\n%s", want, body)

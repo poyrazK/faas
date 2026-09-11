@@ -238,6 +238,24 @@ func TestUpsertComputeNodeFromOperator_OverwritesOnConflict_MemStore(t *testing.
 	}
 }
 
+// ADR-029: the operator upsert owns lifecycle. An explicit unavailable state
+// must be committed in the same write as enrollment so deferred nodes are
+// never momentarily eligible for placement.
+func TestUpsertComputeNodeFromOperator_HonorsDeferredLifecycle_MemStore(t *testing.T) {
+	st := state.NewMemStore()
+	got, err := st.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name: "deferred-mem", TargetURL: "tcp://vmmd-deferred.faas:50051",
+		VPCPUs: 1, MemMB: 1024, MaxConcurrency: 1, AdmissionCeilingMB: 512,
+		VCPUBudget: 1, Lifecycle: state.NodeLifecycleUnavailable,
+	})
+	if err != nil {
+		t.Fatalf("operator upsert: %v", err)
+	}
+	if got.Lifecycle != state.NodeLifecycleUnavailable || got.Active {
+		t.Errorf("got lifecycle=%q active=%v", got.Lifecycle, got.Active)
+	}
+}
+
 // TestUpsertComputeNode_DeprecatedPreservesOriginalBehavior_MemStore:
 // the deprecated UpsertComputeNode keeps the old "everything
 // clobbers everything" behavior. This is the seam used by tests
@@ -408,6 +426,32 @@ func TestUpsertComputeNodeFromOperator_OverwritesOnConflict_PgStore(t *testing.T
 	}
 	if second.TargetURL != "tcp://second:50051" {
 		t.Errorf("pgstore operator re-POST did not overwrite target_url: got %q", second.TargetURL)
+	}
+}
+
+// ADR-029: PostgreSQL must mirror the atomic deferred-enrollment lifecycle
+// contract and round-trip the schedd endpoint carried by the operator row.
+func TestUpsertComputeNodeFromOperator_HonorsDeferredLifecycle_PgStore(t *testing.T) {
+	_, pool, ctx := pgStoreWithPool(t)
+	name := "ownership-deferred-" + time.Now().UTC().Format("20060102T150405.000000000")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `delete from compute_nodes where name = $1`, name)
+	})
+	scheddTarget := "tcp://schedd-deferred.faas:50052"
+	got, err := state.NewPgStore(pool).UpsertComputeNodeFromOperator(ctx, state.ComputeNode{
+		Name: name, TargetURL: "tcp://vmmd-deferred.faas:50051",
+		VPCPUs: 1, MemMB: 1024, MaxConcurrency: 1, AdmissionCeilingMB: 512,
+		VCPUBudget: 1, Lifecycle: state.NodeLifecycleUnavailable,
+		ScheddTargetURL: &scheddTarget,
+	})
+	if err != nil {
+		t.Fatalf("operator upsert: %v", err)
+	}
+	if got.Lifecycle != state.NodeLifecycleUnavailable || got.Active {
+		t.Errorf("got lifecycle=%q active=%v", got.Lifecycle, got.Active)
+	}
+	if got.ScheddTargetURL == nil || *got.ScheddTargetURL != scheddTarget {
+		t.Errorf("schedd target = %v, want %q", got.ScheddTargetURL, scheddTarget)
 	}
 }
 

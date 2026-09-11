@@ -28,6 +28,7 @@ package state_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,81 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
+
+// TestPgStoreRequestTelemetry_ConsumerDimension verifies that the customer
+// analytics grouping keeps stable consumer identities separate and gives
+// anonymous traffic an explicit, non-UUID bucket. This is the read-side
+// contract used by consumer dashboards and future usage ledgers.
+func TestPgStoreRequestTelemetry_ConsumerDimension(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+
+	accountID := uuid.NewString()
+	appID := uuid.NewString()
+	deploymentID := uuid.NewString()
+	consumerA := uuid.NewString()
+	consumerB := uuid.NewString()
+	now := time.Now().UTC()
+	rows := []struct {
+		consumer string
+		status   int32
+		latency  int32
+		count    int32
+	}{
+		{consumer: consumerA, status: 200, latency: 10, count: 2},
+		{consumer: consumerB, status: 500, latency: 20, count: 1},
+		{consumer: "", status: 200, latency: 30, count: 3},
+	}
+	for i, row := range rows {
+		params := sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        "GET /consumer-analytics",
+			Method:       "GET",
+			Status:       row.status,
+			LatencyMs:    row.latency,
+			ReceivedAt:   pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
+			Count:        row.count,
+			UaFamily:     "__unknown__",
+			ReferrerHost: "__none__",
+			Country:      "__unknown__",
+		}
+		if row.consumer != "" {
+			params.ConsumerID = pgtype.UUID{Bytes: parseUUID(t, row.consumer), Valid: true}
+		}
+		if err := store.InsertRequestTelemetry(ctx, params); err != nil {
+			t.Fatalf("Insert %d: %v", i, err)
+		}
+	}
+
+	got, err := store.RequestTelemetryAnalyticsByDimension(ctx, sqlc.RequestTelemetryAnalyticsByDimensionParams{
+		AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+		AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		GroupBy:      "consumer_id",
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("ConsumerDimension: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("ConsumerDimension: got %d groups, want 3", len(got))
+	}
+	want := map[string]int64{
+		consumerA:       2,
+		consumerB:       1,
+		"__anonymous__": 3,
+	}
+	for _, row := range got {
+		value := fmt.Sprint(row.Dimension)
+		if wantCount, ok := want[value]; !ok {
+			t.Errorf("unexpected consumer group %q", value)
+		} else if row.Requests != wantCount {
+			t.Errorf("consumer %q requests = %d, want %d", value, row.Requests, wantCount)
+		}
+	}
+}
 
 // TestPgStoreRequestTelemetry_RoundTrip exercises the per-request
 // INSERT path and the per-app LIST path. The list is scoped by

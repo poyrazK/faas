@@ -1,5 +1,6 @@
 package paddle
 
+// adr: 032
 // usage_test covers the pure helpers in usage.go + products.go's
 // money conversion functions — primitives that PR #3's
 // integration test will exercise end-to-end but should also be
@@ -29,6 +30,7 @@ import (
 
 	paddle "github.com/PaddleHQ/paddle-go-sdk/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -271,6 +273,13 @@ func (d *recordingDedupe) RecordPaddleOverageMonth(_ context.Context, accountID 
 		}
 	}
 	return nil
+}
+
+func (d *recordingDedupe) PaddleOverageWindowExists(_ context.Context, accountID string, windowStart time.Time) (bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, ok := d.rows[paddleWindowKey{accountID: accountID, windowStart: windowStart.UTC()}]
+	return ok, nil
 }
 
 func (d *recordingDedupe) ClaimPaddleOverageWindow(_ context.Context, accountID string, windowStart time.Time, claimedBy string, lease time.Duration) (bool, error) {
@@ -873,10 +882,10 @@ func TestFlushOverageLocked_ClaimRaceSecondSkips(t *testing.T) {
 	now = now.Add(time.Second)
 
 	// pB races; Claim sees the pending row, lease not expired,
-	// returns claimed=false, flushOverageLocked returns nil
+	// returns claimed=false, flushOverageLocked leaves the delivery pending
 	// without invoking the flusher.
-	if err := pB.flushOverageLocked(context.Background(), acct, hour12, 100); err != nil {
-		t.Fatalf("pB push (race-loss): %v", err)
+	if err := pB.flushOverageLocked(context.Background(), acct, hour12, 100); !errors.Is(err, billing.ErrUsageDeliveryInProgress) {
+		t.Fatalf("pB push (race-loss) error = %v, want ErrUsageDeliveryInProgress", err)
 	}
 
 	if callsA != 1 {

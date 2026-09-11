@@ -7,7 +7,7 @@
 //
 // Command shape:
 //
-//	gregale init --template <name> --path <dir> [--deploy] [--name <slug>]
+//	gregale init --template <name> --path <dir> [--deploy] [--name <slug>] [--secrets-file <path>]
 //
 // `--template` is required and validated against templates.Exists (the
 // authoritative list in cmd/gregale/templates/embed.go). `--path` is the
@@ -15,18 +15,18 @@
 // fail-fast contract lives in the templates themselves (each handler
 // exits / 500s with the exact `gregale secrets set` hint), not here.
 //
-// `--deploy` chains into cmdDeployTarball with --template + --name
-// passed through. cmdDeployTarball's --template branch (commands2.go:291)
-// re-materializes the template into its own tmpdir and tar.gz's it; the
-// customer's `--path` stays as their working copy. We never chdir —
-// the chain runs in the caller's cwd, the deployment is independent.
+// `--deploy` chains into cmdDeployTarball with --template + --name passed
+// through. `--secrets-file` is forwarded too, so cmdDeployTarball creates the
+// app, seals the supplied secrets, and only then starts the first deployment.
+// The customer's `--path` stays as their working copy. We never chdir — the
+// chain runs in the caller's cwd, the deployment is independent.
 //
 // What this command does NOT do (UX spec §8 doesn't promise it):
 //   - list templates (`--list` is implicit; customers run with a bad
 //     name and see "unknown template foo (known: ...)")
 //   - update templates (`gregale init` is a one-time scaffolder)
-//   - validate `gregale secrets set` calls (that's a server-side check;
-//     the template README is the source of truth)
+//   - set secrets from inline arguments (use a --secrets-file so values stay
+//     out of shell history)
 package main
 
 import (
@@ -44,7 +44,7 @@ import (
 // initCmdUsage is the top-of-failure-line shown for `gregale init` errors.
 // Mirrors PrintUsage's docs URL convention (output.go:144) so the line
 // carries the stable docs site pointer.
-const initCmdUsage = "usage: gregale init --template <name> --path <dir> [--deploy] [--name <slug>] | --list"
+const initCmdUsage = "usage: gregale init --template <name> --path <dir> [--deploy] [--name <slug>] [--secrets-file <path>] | --list"
 
 // initReceipt is the machine-readable result of a successful scaffolding
 // operation. The path is absolute because that is what the CLI actually
@@ -69,6 +69,7 @@ func cmdInit(args []string) int {
 	dest := fs.String("path", "", "destination directory (created if missing; refused if non-empty)")
 	deploy := fs.Bool("deploy", false, "after materializing, chain into `gregale deploy --template <name> --name <slug>`")
 	name := fs.String("name", "", "app slug to pass to --deploy (default: derive from --path basename)")
+	secretsFile := fs.String("secrets-file", "", "read KEY=VALUE pairs and set them before the first deployment (requires --deploy)")
 	list := fs.Bool("list", false, "print available templates grouped by category and exit")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -91,7 +92,7 @@ func cmdInit(args []string) int {
 		PrintUsage(os.Stderr, initCmdUsage+"\n  error: --path is required", initCmdDocsTopic)
 		return 1
 	}
-	return runCmdInit(*tpl, *dest, *deploy, *name, osStdout, os.Stderr)
+	return runCmdInitWithSecrets(*tpl, *dest, *deploy, *name, *secretsFile, osStdout, os.Stderr)
 }
 
 // runCmdInitList prints the 13 templates grouped by category, in the
@@ -137,6 +138,16 @@ func runCmdInitList(stdout io.Writer) int {
 // The function is total — every error path prints a UX-spec §3.2 line
 // and returns an int exit code; no panics, no os.Exit inside.
 func runCmdInit(tpl, dest string, deploy bool, name string, stdout, stderr io.Writer) int {
+	return runCmdInitWithSecrets(tpl, dest, deploy, name, "", stdout, stderr)
+}
+
+// runCmdInitWithSecrets is the implementation behind runCmdInit. Keeping the
+// original helper signature preserves the local scaffolder test seam while
+// letting the CLI pass a secret file into the safe first-deploy path.
+func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile string, stdout, stderr io.Writer) int {
+	if secretsFile != "" && !deploy {
+		return printErr("Invalid flags", errors.New("--secrets-file requires --deploy"))
+	}
 	// Step 1: validate the template name against the embedded list.
 	// We use Exists (which wraps NameIsValid + Names membership) so a
 	// bad flag like "--template ../../etc/passwd" is rejected before we
@@ -188,12 +199,16 @@ func runCmdInit(tpl, dest string, deploy bool, name string, stdout, stderr io.Wr
 		if deploySlug == "" {
 			deploySlug = sanitizeSlug(filepath.Base(absDest))
 		}
-		oldOut := osStdout
-		osStdout = io.Discard
-		code := cmdDeployTarball([]string{
+		deployArgs := []string{
 			"--template", tpl,
 			"--name", deploySlug,
-		})
+		}
+		if secretsFile != "" {
+			deployArgs = append(deployArgs, "--secrets-file", secretsFile)
+		}
+		oldOut := osStdout
+		osStdout = io.Discard
+		code := cmdDeployTarball(deployArgs)
 		osStdout = oldOut
 		if code != 0 {
 			return code
@@ -226,10 +241,14 @@ func runCmdInit(tpl, dest string, deploy bool, name string, stdout, stderr io.Wr
 		slug = sanitizeSlug(filepath.Base(absDest))
 	}
 	PrintProgress(stdout, "Deploying %s as %s", tpl, slug)
-	return cmdDeployTarball([]string{
+	deployArgs := []string{
 		"--template", tpl,
 		"--name", slug,
-	})
+	}
+	if secretsFile != "" {
+		deployArgs = append(deployArgs, "--secrets-file", secretsFile)
+	}
+	return cmdDeployTarball(deployArgs)
 }
 
 func writeInitJSON(stdout io.Writer, receipt initReceipt) int {
@@ -265,69 +284,111 @@ func pluralY(n int) string {
 	return "ies"
 }
 
+// validateTemplateSecrets catches an incomplete first-deploy bundle before
+// CreateApp runs. The handler remains the runtime source of truth, but this
+// local guard turns the common missing-secret case into a no-side-effect CLI
+// error. Optional template settings are intentionally not listed here.
+func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
+	present := make(map[string]struct{}, len(pairs))
+	values := make(map[string]string, len(pairs))
+	for _, pair := range pairs {
+		present[pair.Key] = struct{}{}
+		values[pair.Key] = pair.Value
+	}
+	required := map[string][]string{
+		"s3-uploader":       []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
+		"slack-bot":         []string{"SLACK_SIGNING_SECRET"},
+		"rest-api-postgres": []string{"DATABASE_URL"},
+		"cron-worker":       []string{"QSTASH_TOKEN", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
+	}
+	var missing []string
+	for _, key := range required[tpl] {
+		if _, ok := present[key]; !ok || strings.TrimSpace(values[key]) == "" {
+			missing = append(missing, key)
+		}
+	}
+	if tpl == "ai-chat" {
+		openAI := strings.TrimSpace(values["OPENAI_API_KEY"]) != ""
+		anthropic := strings.TrimSpace(values["ANTHROPIC_API_KEY"]) != ""
+		if openAI == anthropic {
+			return errors.New("ai-chat requires exactly one of OPENAI_API_KEY or ANTHROPIC_API_KEY")
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required secret(s): %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
 // nextStepsFor returns the customer-facing "next:" lines printed after
-// a successful materialization. The list is template-specific so the
-// `gregale secrets set` command lines up with the README — and so the
-// common-deploy pattern (`cd && gregale deploy`) appears for every
-// template. The CLI always emits the docs link afterwards, so this
-// helper omits it; see the print loop in runCmdInit.
+// a successful materialization. Service templates use --secrets-file for
+// their first deploy so app creation, secret sealing, and runtime startup
+// happen in one supported sequence. The CLI always emits the docs link
+// afterwards, so this helper omits it; see the print loop in runCmdInit.
 //
-// Adding a template: append a case below AND add a secrets-set line
-// in the template's README so the README and the CLI hint stay in
-// lockstep. The init_test.go TestCmdInit_NextStepsFor test pins both.
+// Adding a service template: append a case below AND add the matching
+// --secrets-file example plus post-deploy `gregale secrets set` guidance in
+// the template README so the README and CLI hint stay in lockstep.
 func nextStepsFor(tpl string) []string {
 	switch tpl {
 	case "s3-uploader":
 		return []string{
-			"Set the S3 / R2 / B2 secrets:",
-			"  gregale secrets set --app <slug> S3_BUCKET=... S3_REGION=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...",
-			"  (optionally: S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com for R2/B2)",
-			"Deploy from the new directory:",
-			"  cd <dest> && gregale deploy",
+			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
+			"  S3_BUCKET=...",
+			"  S3_REGION=...",
+			"  S3_ACCESS_KEY_ID=...",
+			"  S3_SECRET_ACCESS_KEY=...",
+			"  (optionally S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com for R2/B2)",
+			"First deploy with secrets sealed before startup:",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
 		}
 	case "slack-bot":
 		return []string{
-			"Set the Slack signing secret + bot token:",
-			"  gregale secrets set --app <slug> SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=xoxb-...",
-			"Deploy from the new directory:",
-			"  cd <dest> && gregale deploy",
+			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
+			"  SLACK_SIGNING_SECRET=...",
+			"  (optional SLACK_BOT_TOKEN=xoxb-...)",
+			"First deploy with secrets sealed before startup:",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
 		}
 	case "rest-api-postgres":
 		return []string{
-			"Set the database URL (Neon / Supabase / PlanetScale / CockroachDB Cloud):",
-			"  gregale secrets set --app <slug> DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
-			"Deploy from the new directory:",
-			"  cd <dest> && gregale deploy",
+			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
+			"  DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
+			"First deploy with secrets sealed before startup:",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
 		}
 	case "cron-worker":
 		return []string{
-			"Set the Upstash QStash + Redis credentials:",
-			"  gregale secrets set --app <slug> QSTASH_TOKEN=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
-			"Wire QStash to invoke the function (curl or the QStash dashboard):",
-			"  curl -X POST https://qstash.upstash.io/v2/publish/<slug> -H \"Authorization: Bearer $QSTASH_TOKEN\"",
-			"Deploy from the new directory:",
-			"  cd <dest> && gregale deploy",
+			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
+			"  QSTASH_TOKEN=...",
+			"  UPSTASH_REDIS_REST_URL=...",
+			"  UPSTASH_REDIS_REST_TOKEN=...",
+			"First deploy with secrets sealed before startup:",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"Then wire QStash to invoke the function (curl or the QStash dashboard).",
+			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
 		}
 	case "webhook-receiver":
 		return []string{
-			"Set the shared webhook secret (a 32-byte hex string):",
-			"  gregale secrets set --app <slug> WEBHOOK_SECRET=$(openssl rand -hex 32)",
-			"Optional: scope the receiver to specific paths:",
-			"  gregale secrets set --app <slug> WEBHOOK_ALLOWED_PATHS=/stripe,/github",
-			"Wire the provider's webhook URL to https://<slug>.gregale.dev/<your-path>",
-			"Deploy from the new directory:",
-			"  cd <dest> && gregale deploy",
+			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
+			"  WEBHOOK_SECRET=$(openssl rand -hex 32)",
+			"  (optional WEBHOOK_ALLOWED_PATHS=/stripe,/github)",
+			"First deploy with secrets sealed before startup:",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"Wire the provider's webhook URL to https://<slug>.gregale.dev/<your-path>.",
+			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
 		}
 	case "ai-chat":
 		return []string{
-			"Pick a provider — set exactly one of:",
-			"  gregale secrets set --app <slug> OPENAI_API_KEY=sk-...",
-			"  gregale secrets set --app <slug> ANTHROPIC_API_KEY=sk-ant-...",
-			"Optional: pin a model or prepend a system prompt:",
-			"  gregale secrets set --app <slug> OPENAI_MODEL=gpt-4o",
-			"  gregale secrets set --app <slug> SYSTEM_PROMPT='You are a helpful assistant for ...'",
-			"Deploy from the new directory:",
-			"  cd <dest> && gregale deploy",
+			"Create a 0600 secrets file outside this directory (set exactly one provider key):",
+			"  OPENAI_API_KEY=sk-...  (or ANTHROPIC_API_KEY=sk-ant-...)",
+			"  (optional OPENAI_MODEL=... and SYSTEM_PROMPT=...)",
+			"First deploy with secrets sealed before startup:",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
 		}
 	default:
 		// The seven pre-existing templates don't need secrets; print

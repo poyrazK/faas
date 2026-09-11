@@ -129,11 +129,10 @@ type Provider interface {
 	// specific quota costs live inside the implementation, not
 	// the interface).
 	//
-	// Stripe: stripe.UsageRecordSummaries.list(subscription_item,
-	// start, end) summed. Paddle: Paddle Billing does not yet
-	// expose a usage-summary endpoint, so the Paddle
-	// implementation returns ErrNotImplemented until the upstream
-	// adds one. Polar: the configured meter quantities endpoint is
+	// Stripe: legacy usage summaries cannot represent an arbitrary rolling
+	// window, so the implementation returns ErrNotImplemented rather than
+	// report a misleading total. Paddle: the deterministic mb_seconds audit
+	// value is summed from provider transactions. Polar: the configured meter quantities endpoint is
 	// summed when FAAS_POLAR_METER_ID is set; without a meter ID it
 	// returns ErrNotImplemented for direct callers (startup validation
 	// rejects that configuration).
@@ -443,6 +442,11 @@ type Event struct {
 	// `refund.processed` audit row.
 	ProviderRefundID string
 
+	// RefundStatus is the provider lifecycle value (for example pending,
+	// succeeded, or failed). State persistence uses it to distinguish a
+	// reservation from money that has actually settled.
+	RefundStatus string
+
 	// ChargeID is the provider's charge handle (Stripe: ch_…; Paddle:
 	// tx_…). Only populated for refund events. apid logs it so an
 	// operator can correlate the audit row with the provider
@@ -480,6 +484,11 @@ var ErrBadSignature = errors.New("billing: bad webhook signature")
 // docs_url pointing at the spec — the operator picks a backend that
 // supports the surface they need.
 var ErrNotImplemented = errors.New("billing: provider does not implement this method")
+
+// ErrUsageDeliveryInProgress means another worker owns the durable provider
+// claim. Callers must leave the window pending, but should not treat normal
+// cross-process coordination as a provider outage.
+var ErrUsageDeliveryInProgress = errors.New("billing: usage delivery in progress")
 
 // ErrNoAPIKey is the sentinel the Stripe Client's requireAPI() helper
 // returns when its SDK *client.API is nil — the operator set

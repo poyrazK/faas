@@ -4216,8 +4216,9 @@ type Store interface {
 	// schedd/gatewayd dial); vmmd's self-registration preserves it.
 	// ON CONFLICT (name) DO UPDATE SET target_url = excluded.target_url,
 	// vpcpus, mem_mb, max_concurrency, admission_ceiling_mb,
-	// vcpu_budget, active=true — full set, the operator's POST
-	// wins on every field.
+	// vcpu_budget, lifecycle = excluded.lifecycle — full set, the operator's
+	// POST wins on every field. An explicit unavailable lifecycle makes
+	// deferred enrollment atomic; an empty lifecycle defaults to active.
 	UpsertComputeNodeFromOperator(ctx context.Context, node ComputeNode) (ComputeNode, error)
 	// UpsertComputeNodeFromVmmd is the vmmd self-registration
 	// write path (cmd/vmmd/register.go). Writes only the
@@ -4924,10 +4925,11 @@ type Store interface {
 	// backfill source for meterd: a restart or provider outage can safely
 	// replay these rows because every provider records its own idempotency key.
 	UsageWindows(ctx context.Context, start, end time.Time) ([]UsageWindow, error)
-	// PendingBillingUsageWindows returns every retained positive hour without a
-	// successful pusher-owned delivery receipt for provider. There is no fixed
-	// lookback, so prolonged outages cannot silently strand usage.
-	PendingBillingUsageWindows(ctx context.Context, provider string, end time.Time) ([]UsageWindow, error)
+	// PendingBillingUsageWindows returns positive usage in [start,end) without
+	// a successful pusher-owned delivery receipt for provider. The provider's
+	// billing_from boundary also excludes usage accrued before that identity
+	// existed, so switching providers cannot rebill historical windows.
+	PendingBillingUsageWindows(ctx context.Context, provider string, start, end time.Time) ([]UsageWindow, error)
 	RecordBillingUsageDelivery(ctx context.Context, provider, accountID string, windowStart time.Time, mbSeconds int64) error
 
 	// StripePushDedup is the dedupe table for hourly usage pushes. The
@@ -5010,6 +5012,7 @@ type Store interface {
 	// pending row whose claimed_at is older than lease is fair game
 	// for re-claim. Mirrors the ClaimInvocation pattern at
 	// pgstore.go:1297.
+	PaddleOverageWindowExists(ctx context.Context, accountID string, windowStart time.Time) (bool, error)
 	ClaimPaddleOverageWindow(ctx context.Context, accountID string, windowStart time.Time, claimedBy string, lease time.Duration) (claimed bool, err error)
 	// CompletePaddleOverageWindow transitions the row from pending
 	// to completed after a successful SDK POST. Only the pod that

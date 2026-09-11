@@ -184,6 +184,58 @@ func TestDeployZeroConfig_HappyPath_NewApp(t *testing.T) {
 	}
 }
 
+// TestDeployZeroConfig_SecretsBeforeFirstUpload pins issue #2016: a service
+// template (or any source deploy) can create the app, seal its secret bundle,
+// and only then submit the first deployment. A failed first boot is no longer
+// the required way to discover that the app slug did not exist yet.
+func TestDeployZeroConfig_SecretsBeforeFirstUpload(t *testing.T) {
+	repo := initZeroConfigRepo(t)
+	withCwd(t, repo)
+	secretsPath := filepath.Join(t.TempDir(), "demo.secrets")
+	if err := os.WriteFile(secretsPath, []byte("DATABASE_URL=postgres://user:pass@host/db?sslmode=require\n"), 0o600); err != nil {
+		t.Fatalf("write secrets file: %v", err)
+	}
+	var (
+		calls       []string
+		secretValue string
+	)
+	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *zeroConfigStubServer) {
+		switch {
+		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			calls = append(calls, "create")
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "demo-secrets"})
+		case r.URL.Path == "/v1/apps/demo-secrets/secrets/DATABASE_URL" && r.Method == http.MethodPut:
+			calls = append(calls, "secret")
+			var body struct {
+				Value string `json:"value"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode secret body: %v", err)
+			}
+			secretValue = body.Value
+			w.WriteHeader(http.StatusNoContent)
+		case r.URL.Path == "/v1/apps/demo-secrets/deployments" && r.Method == http.MethodPost:
+			calls = append(calls, "deploy")
+			_, _ = io.Copy(io.Discard, r.Body)
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "demo-secrets"})
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	})
+	t.Setenv("FAAS_API", stub.srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdDeployTarball([]string{"--name", "demo-secrets", "--secrets-file", secretsPath, "--no-wait"}); code != 0 {
+		t.Fatalf("zero-config deploy exit = %d, want 0", code)
+	}
+	if secretValue != "postgres://user:pass@host/db?sslmode=require" {
+		t.Errorf("secret value = %q, want the configured database URL", secretValue)
+	}
+	if len(calls) != 3 || calls[0] != "create" || calls[1] != "secret" || calls[2] != "deploy" {
+		t.Errorf("remote call order = %v, want [create secret deploy]", calls)
+	}
+}
+
 func TestDeployZeroConfig_GitHeadGoFunctionStaysFunction(t *testing.T) {
 	repo := initZeroConfigRepo(t)
 	if err := os.Remove(filepath.Join(repo, "package.json")); err != nil {
