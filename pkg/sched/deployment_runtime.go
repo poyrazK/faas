@@ -3,6 +3,7 @@ package sched
 import (
 	"encoding/json"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -22,6 +23,14 @@ func deploymentRuntimePort(dep state.Deployment) int {
 func DeploymentRuntimePort(dep state.Deployment) int {
 	if dep.OverridePort != 0 {
 		return dep.OverridePort
+	}
+	// Function layers always use the Gregale runner manifest, which listens on
+	// DefaultAppPort. Framework inference describes the uploaded source and can
+	// still report a conventional framework port (for example Node's 3000), but
+	// imaged deliberately does not stamp that port into a function manifest.
+	// Handler is the durable function discriminator carried on the deployment.
+	if dep.Handler != "" {
+		return api.DefaultAppPort
 	}
 	if len(dep.InferredProfile) == 0 {
 		return 0

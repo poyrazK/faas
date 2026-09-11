@@ -2068,6 +2068,36 @@ func TestEnginePrime_ForwardsInferredRuntimePort(t *testing.T) {
 	}
 }
 
+// Functions are packaged behind the Gregale runner, whose generated manifest
+// listens on 8080. Source inference may still describe Node's conventional
+// port 3000; Prime must route to the generated manifest rather than that
+// source-only hint or readiness can never reach the handler.
+func TestEnginePrime_FunctionUsesRunnerManifestPort(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanScale, 1024, 10)
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:   app.ID,
+		Kind:    state.DeploymentKindTarball,
+		Status:  state.DeploySnapshotting,
+		Handler: "handler.handler",
+		InferredProfile: json.RawMessage(
+			`{"version":"v1","framework":"node","port":3000,"health_path":"/healthz","inferred":true}`,
+		),
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	if err := e.Prime(context.Background(), app.ID, dep.ID); err != nil {
+		t.Fatalf("Prime: %v", err)
+	}
+	if got := vmm.lastColdBootSpec.Port; got != api.DefaultAppPort {
+		t.Fatalf("function prime cold-boot Port = %d, want %d", got, api.DefaultAppPort)
+	}
+}
+
 func TestEnginePark_SnapshotFailureStops(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)

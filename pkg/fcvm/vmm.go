@@ -3593,8 +3593,11 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 		// boot as a misconfigured listener.
 		connRefusedCount := 0
 		for {
-			if ctx.Err() != nil {
-				return ctx.Err()
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				if errors.Is(ctxErr, context.DeadlineExceeded) {
+					return v.notReadyProblem(l, healthcheckPath, connRefusedCount, readyTimeout)
+				}
+				return ctxErr
 			}
 			probeCount++
 			conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
@@ -3623,22 +3626,30 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 	// every iteration. The host loop is bounded by ctx.Done() and
 	// the deadline.
 	client := v.healthcheckClient()
+	responseCount := 0
 	for {
-		if err := ctx.Err(); err != nil {
-			return err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if errors.Is(ctxErr, context.DeadlineExceeded) {
+				return v.healthcheckNotReadyProblem(l, healthcheckPath, responseCount, readyTimeout)
+			}
+			return ctxErr
 		}
 		if time.Now().After(deadline) {
-			return api.NewProblem(422, api.CodeAppStartupTimeout,
-				"app did not become ready in time",
-				fmt.Sprintf("guest %s not ready (healthcheck %s) after %s", l.Instance, healthcheckPath, readyTimeout))
+			return v.healthcheckNotReadyProblem(l, healthcheckPath, responseCount, readyTimeout)
 		}
 		probeCount++
-		if ok, err := healthcheckProbe(ctx, client, addr, healthcheckPath); err == nil && ok {
-			v.emitReadiness200(ctx, l, healthcheckPath, probeCount, readinessStartedAt)
-			return nil
+		if ok, probeErr := healthcheckProbe(ctx, client, addr, healthcheckPath); probeErr == nil {
+			responseCount++
+			if ok {
+				v.emitReadiness200(ctx, l, healthcheckPath, probeCount, readinessStartedAt)
+				return nil
+			}
 		}
 		select {
 		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return v.healthcheckNotReadyProblem(l, healthcheckPath, responseCount, readyTimeout)
+			}
 			return ctx.Err()
 		case <-time.After(10 * time.Millisecond):
 		}
@@ -3666,12 +3677,27 @@ func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefused
 	if connRefusedCount > 0 {
 		return api.NewProblem(422, api.CodeAppNotListening,
 			"no process listening on $PORT",
-			fmt.Sprintf("readiness probe dialed :8080 and got ECONNREFUSED on every attempt (refused_count=%d, deadline=%s, instance=%s)",
+			fmt.Sprintf("startup_phase=handler_boot: readiness probe dialed :8080 and got ECONNREFUSED (refused_count=%d, deadline=%s, instance=%s)",
 				connRefusedCount, readyTimeout, l.Instance))
 	}
 	return api.NewProblem(422, api.CodeAppStartupTimeout,
 		"app did not become ready in time",
-		fmt.Sprintf("guest %s not ready after %s (no probes connected)", l.Instance, readyTimeout))
+		fmt.Sprintf("guest %s not ready after %s: startup_phase=guest_startup; no readiness connection was accepted", l.Instance, readyTimeout))
+}
+
+// healthcheckNotReadyProblem distinguishes a reachable handler returning an
+// unhealthy status from a guest/network path that never answered at all.
+func (v *JailerVMM) healthcheckNotReadyProblem(l Lease, healthcheckPath string, responseCount int, readyTimeout time.Duration) *api.Problem {
+	if responseCount > 0 {
+		return api.NewProblem(422, api.CodeAppStartupTimeout,
+			"app healthcheck did not become ready in time",
+			fmt.Sprintf("startup_phase=handler_healthcheck: guest %s answered %d readiness probes at %s without a 2xx response before %s",
+				l.Instance, responseCount, healthcheckPath, readyTimeout))
+	}
+	return api.NewProblem(422, api.CodeAppStartupTimeout,
+		"app did not become ready in time",
+		fmt.Sprintf("startup_phase=guest_startup: guest %s never answered readiness probe %s before %s",
+			l.Instance, healthcheckPath, readyTimeout))
 }
 
 // isConnRefusedErr returns true when the dial error is the kernel's

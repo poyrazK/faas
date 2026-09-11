@@ -2148,6 +2148,9 @@ func TestNotReadyProblem_ConnRefusedLocksAppNotListening(t *testing.T) {
 	if !strings.Contains(p.Detail, "ECONNREFUSED") {
 		t.Errorf("connRefused=42: detail should mention ECONNREFUSED, got %q", p.Detail)
 	}
+	if !strings.Contains(p.Detail, "startup_phase=handler_boot") {
+		t.Errorf("connRefused=42: detail should identify handler boot, got %q", p.Detail)
+	}
 
 	p2 := v.notReadyProblem(l, "", 0)
 	if p2.Code != api.CodeAppStartupTimeout {
@@ -2155,6 +2158,24 @@ func TestNotReadyProblem_ConnRefusedLocksAppNotListening(t *testing.T) {
 	}
 	if p2.Status != 422 {
 		t.Errorf("connRefused=0: status = %d, want 422", p2.Status)
+	}
+	if !strings.Contains(p2.Detail, "startup_phase=guest_startup") {
+		t.Errorf("connRefused=0: detail should identify guest startup, got %q", p2.Detail)
+	}
+}
+
+func TestHealthcheckNotReadyProblemDistinguishesGuestAndHandler(t *testing.T) {
+	v := &JailerVMM{}
+	l := Lease{Instance: "i-health"}
+
+	guest := v.healthcheckNotReadyProblem(l, "/healthz", 0, 35*time.Second)
+	if guest.Code != api.CodeAppStartupTimeout || !strings.Contains(guest.Detail, "startup_phase=guest_startup") {
+		t.Fatalf("guest problem = %+v", guest)
+	}
+
+	handler := v.healthcheckNotReadyProblem(l, "/healthz", 3, 35*time.Second)
+	if handler.Code != api.CodeAppStartupTimeout || !strings.Contains(handler.Detail, "startup_phase=handler_healthcheck") {
+		t.Fatalf("handler problem = %+v", handler)
 	}
 }
 
