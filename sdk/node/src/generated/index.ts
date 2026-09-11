@@ -39,6 +39,9 @@ export type { AppErrorSampleResponse } from './models/AppErrorSampleResponse.js'
 export type { AppErrorsSummaryResponse } from './models/AppErrorsSummaryResponse.js';
 export type { AppErrorSummaryItem } from './models/AppErrorSummaryItem.js';
 export type { AppliedBuild } from './models/AppliedBuild.js';
+export type { AppLogDrainAnalyticsBucket } from './models/AppLogDrainAnalyticsBucket.js';
+export type { AppLogDrainAnalyticsResponse } from './models/AppLogDrainAnalyticsResponse.js';
+export type { AppLogDrainAnalyticsSummary } from './models/AppLogDrainAnalyticsSummary.js';
 export type { AppLogDrainHealthResponse } from './models/AppLogDrainHealthResponse.js';
 export type { AppLogDrainResponse } from './models/AppLogDrainResponse.js';
 export type { ApplyAppOpenAPIPolicyRequest } from './models/ApplyAppOpenAPIPolicyRequest.js';

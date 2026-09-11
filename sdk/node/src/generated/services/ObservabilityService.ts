@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppLogDrainAnalyticsResponse } from '../models/AppLogDrainAnalyticsResponse.js';
 import type { AppLogDrainHealthResponse } from '../models/AppLogDrainHealthResponse.js';
 import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
 import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
@@ -229,6 +230,57 @@ export class ObservabilityService {
         'id': id,
       },
       errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Fetch hourly delivery analytics for a runtime log destination.
+   * Returns bounded, customer-safe hourly delivery history. The default
+   * window is 24 hours; supported windows are 1h, 24h, 7d, and 30d.
+   * Success rate is delivered records divided by delivered, failed, and
+   * dropped terminal outcomes. Average latency includes queue wait and
+   * endpoint time. The platform retains at least 30 days of samples.
+   *
+   * @returns AppLogDrainAnalyticsResponse Hourly customer-safe log-drain delivery analytics.
+   * @throws ApiError
+   */
+  public static getAppLogDrainAnalytics({
+    slug,
+    id,
+    window = '24h',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * History window. Defaults to 24h.
+     */
+    window?: '1h' | '24h' | '7d' | '30d',
+  }): CancelablePromise<AppLogDrainAnalyticsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-drains/{id}/analytics',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'window': window,
+      },
+      errors: {
+        400: `code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.`,
         401: `code: unauthorized`,
         402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
         404: `code: not_found`,
