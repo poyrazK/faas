@@ -2996,6 +2996,48 @@ func TestPg_CreateDeployment_DefaultsTrafficPercent100(t *testing.T) {
 	_ = acctID
 }
 
+// spec: §9 — a source deployment's progressive rollout policy must survive
+// the production PgStore INSERT and be returned unchanged on the next read.
+func TestPg_CreateDeployment_PreservesCanaryPolicy(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx, "custom-canary")
+	started := time.Now().UTC().Add(-time.Second)
+	stages := json.RawMessage(`[{"percent":10,"duration":"15s"},{"percent":100,"duration":"0s"}]`)
+
+	created, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID:                  appID,
+		Kind:                   state.DeploymentKindTarball,
+		Status:                 state.DeployPending,
+		TrafficPercent:         10,
+		TrafficPercentExplicit: true,
+		CanaryPreset:           "custom",
+		CanaryStep:             0,
+		CanaryTotalSteps:       2,
+		CanaryStepStartedAt:    &started,
+		CanaryStages:           stages,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+
+	got, err := s.DeploymentByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if got.CanaryPreset != "custom" || got.CanaryStep != 0 || got.CanaryTotalSteps != 2 {
+		t.Fatalf("canary metadata = preset:%q step:%d/%d; want custom 0/2", got.CanaryPreset, got.CanaryStep, got.CanaryTotalSteps)
+	}
+	if !got.TrafficPercentExplicit || got.TrafficPercent != 10 {
+		t.Fatalf("traffic policy = explicit:%v percent:%d; want explicit 10", got.TrafficPercentExplicit, got.TrafficPercent)
+	}
+	if got.CanaryStepStartedAt == nil || !got.CanaryStepStartedAt.Equal(started) {
+		t.Fatalf("canary step timestamp = %v; want %v", got.CanaryStepStartedAt, started)
+	}
+	if string(got.CanaryStages) != string(stages) {
+		t.Fatalf("canary stages = %s; want %s", got.CanaryStages, stages)
+	}
+}
+
 // TestPg_CreateDeployment_SupersedeZeroesPriorTrafficPercent pins
 // the second half of the Σ=100 invariant. A prior live row at 100
 // must flip to 0 on supersede; the new row lands at its explicit
