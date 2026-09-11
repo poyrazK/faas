@@ -666,6 +666,11 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %s\n", "overflow node:", *a.OverflowNode)
 		}
 		fmt.Printf("%-30s %s\n", "status:", a.Status)
+		// Issue #1053: the API already returns the trailing 30-day
+		// cache hit-rate rollup. Keep it visible in the default app
+		// view so developers can tell whether repeat deploys are
+		// benefiting from the builder cache without switching to JSON.
+		fmt.Printf("%-30s %.1f%% (last 30d)\n", "build cache hit rate:", a.BuildCacheHitRatePct)
 		// Issue #1395 / A4: show a best-effort wake-tier recommendation
 		// only for apps with enough recent wake history. JSON output stays
 		// a stable AppResponse payload, so this is text-mode only.
