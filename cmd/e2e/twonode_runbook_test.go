@@ -76,7 +76,7 @@ func TestRunbook_Drill2_DrainCascade(t *testing.T) {
 	// 'active' (the recovery arbiter migrates the live
 	// instances first, then re-activates the row). For the
 	// fixture-only harness this happens via the API; the live
-	// path requires make metal-lima-2node-fault. We assert the
+	// path requires the native M9 acceptance target. We assert the
 	// lifecycle landed at least at 'draining' as the
 	// intermediate-state proof.
 	var lc string

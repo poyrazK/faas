@@ -8,18 +8,21 @@ is the exact regression the test exists to catch.
 
 ## Scope
 
-Two control-plane nodes (`fsn-a`, `fsn-b`) running one schedd +
-one vmmd each, sharing one apid (the Tier A7 multi-host-single-
-apid pattern from ADR-070). Drill scope: failure-mode coverage,
-not load. The goal is to verify the recovery arbiter, drain
-handler, and pg_notify fan-out recover cleanly within budget.
+The native M9 acceptance pair consists of two x86 nodes, each running one
+schedd and one vmmd against the shared control-plane database. Drill scope is
+failure-mode coverage, not load. The current single-schedd split-box pair is
+not eligible for this gate until per-node schedds are deployed; the native
+gate's preflight reports that mismatch. The remaining drain and two-schedd
+scenarios use the fixture harness described below.
 
 ## Pre-flight
 
 ```bash
-# 1. Confirm both schedd + vmmd are healthy
+# 1. Confirm the native pair is healthy
+ssh faas-fsn-1 'systemctl is-active faas-schedd'
+ssh faas-fsn-2 'systemctl is-active faas-vmmd'
 faasctl nodes list --format=tsv | awk '$4=="active"'
-# Expected: fsn-a, fsn-b
+# Expected: fsn-1 and fsn-2.faas
 
 # 2. Confirm no in-flight drain
 faasctl nodes drain --all --status
@@ -28,12 +31,12 @@ faasctl nodes drain --all --status
 
 ## Drill 1 — Heartbeat gap → node.unavailable
 
-Step 1: On the disposable drill fleet, pause vmmd on fsn-b long enough to
-cross the 90s heartbeat threshold. This exercises the real failure path
-without changing database state by hand.
+Step 1: On the designated acceptance pair, stop vmmd on fsn-2.faas long
+enough to cross the 90s heartbeat threshold. This exercises the real failure
+path without changing database state by hand.
 
 ```bash
-ssh fsn-b 'sudo systemctl kill -s SIGSTOP faas-vmmd'
+ssh faas-fsn-2 'sudo systemctl stop faas-vmmd'
 # Wait at least 120s, then continue to observation.
 ```
 
@@ -46,12 +49,12 @@ faasctl events list --topic=recovery --since=5m
 ```
 
 Expected outcome: lifecycle='unavailable', event row present,
-no customer-facing 5xx on fsn-a traffic.
+no customer-facing 5xx on fsn-1 traffic.
 
-Resume vmmd after the unavailable transition is visible:
+Restart vmmd after the unavailable transition is visible:
 
 ```bash
-ssh fsn-b 'sudo systemctl kill -s SIGCONT faas-vmmd'
+ssh faas-fsn-2 'sudo systemctl start faas-vmmd'
 ```
 
 ## Drill 2 — Drain cascade
@@ -59,7 +62,7 @@ ssh fsn-b 'sudo systemctl kill -s SIGCONT faas-vmmd'
 Step 1: Issue the drain.
 
 ```bash
-faasctl nodes drain fsn-a --wait
+faasctl nodes drain fsn-2.faas --wait
 # --wait blocks until drained_at lands. The recovery arbiter
 # owns the migration; ?wait=1 returns 200 with the timestamp.
 ```
@@ -67,16 +70,16 @@ faasctl nodes drain fsn-a --wait
 Step 2: Verify the cascade completed.
 
 ```bash
-faasctl nodes list --format=tsv | awk '$1=="fsn-a" && $4=="active"'
+faasctl nodes list --format=tsv | awk '$1=="fsn-2.faas" && $4=="active"'
 # Lifecycle back to 'active'. drain_initiated_at + drain_completed_at
 # stamped on the row. Per-instance live-migration events present.
 ```
 
-Expected outcome: fsn-a back to 'active' with zero live
-instances, every previously-running app migrated to fsn-b
-without customer-visible 5xx.
+Expected outcome: fsn-2.faas back to 'active' with zero live
+instances, every previously-running app migrated to another live compute
+node without customer-visible 5xx.
 
-## Drill 3 — pg_notify fan-out recovery
+## Drill 3 — pg_notify fan-out recovery (fixture-only)
 
 Step 1: Kill a schedd's pg_notify subscriber.
 

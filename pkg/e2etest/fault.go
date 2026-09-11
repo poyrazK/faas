@@ -21,7 +21,9 @@ package e2etest
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -53,17 +55,48 @@ type FaultInjector interface {
 // *exec.Cmd pointers + the row-level patch helpers. Tests get one
 // from StartTwoNode and pass it to every fault scenario.
 type CmdFaultInjector struct {
-	t        *testing.T
-	pool     *pgxpool.Pool
-	procs    map[string]*exec.Cmd // keyed by node name (or "schedd-a" etc.)
-	iptables []string             // accumulated rules; cleared on RestoreAll
+	t             *testing.T
+	pool          *pgxpool.Pool
+	procs         map[string]*exec.Cmd // keyed by node name (or "schedd-a" etc.)
+	remote        map[string]string    // node name -> SSH target in native mode
+	remoteStopped map[string]string    // node name -> SSH target for stopped services
+	iptables      []iptablesRule       // local rules; cleared on RestoreAll
+	remoteRules   []remoteRule         // remote rules; cleared on RestoreAll
+}
+
+type iptablesRule struct {
+	args []string
+}
+
+type remoteRule struct {
+	target string
+	args   []string
 }
 
 // NewCmdFaultInjector returns an injector wired to t.Cleanup so
 // a panicking test still sees RestoreAll. t is required.
 func NewCmdFaultInjector(t *testing.T, pool *pgxpool.Pool) *CmdFaultInjector {
 	t.Helper()
-	fi := &CmdFaultInjector{t: t, pool: pool, procs: map[string]*exec.Cmd{}}
+	fi := &CmdFaultInjector{
+		t:             t,
+		pool:          pool,
+		procs:         map[string]*exec.Cmd{},
+		remote:        map[string]string{},
+		remoteStopped: map[string]string{},
+	}
+	if os.Getenv("FAAS_TWO_NODE_REMOTE") == "1" {
+		for _, suffix := range []string{"A", "B"} {
+			name := os.Getenv("FAAS_TWO_NODE_NODE_" + suffix)
+			target := os.Getenv("FAAS_TWO_NODE_SSH_" + suffix)
+			if name == "" || target == "" {
+				t.Fatalf("fault: FAAS_TWO_NODE_NODE_%s and FAAS_TWO_NODE_SSH_%s are required in remote mode", suffix, suffix)
+			}
+			if strings.ContainsAny(target, " \t\r\n") || strings.HasPrefix(target, "-") {
+				t.Fatalf("fault: invalid SSH target %q", target)
+			}
+			fi.remote[name] = target
+		}
+	}
 	t.Cleanup(func() { _ = fi.RestoreAll() })
 	return fi
 }
@@ -76,8 +109,20 @@ func (f *CmdFaultInjector) RegisterProc(name string, cmd *exec.Cmd) {
 	f.procs[name] = cmd
 }
 
-// KillVmmd sends SIGKILL. Used to simulate a node crash mid-flight.
+// KillVmmd simulates a node crash mid-flight. Native mode stops the unit so
+// systemd's Restart=on-failure cannot hide the outage before the probe tick;
+// local mode keeps the original SIGKILL behavior.
 func (f *CmdFaultInjector) KillVmmd(node string) error {
+	if target, ok := f.remote[node]; ok {
+		// Stop instead of only sending SIGKILL: the unit has Restart=on-failure,
+		// so a bare signal can recover before the heartbeat sweep observes the
+		// outage. RestoreAll starts the service again after the assertion.
+		if err := f.remoteCommand(target, "sudo", "systemctl", "stop", "faas-vmmd"); err != nil {
+			return err
+		}
+		f.remoteStopped[node] = target
+		return nil
+	}
 	cmd, ok := f.procs["vmmd-"+node]
 	if !ok {
 		return fmt.Errorf("fault: no vmmd registered for node %s", node)
@@ -87,6 +132,9 @@ func (f *CmdFaultInjector) KillVmmd(node string) error {
 
 // FreezeSchedd pauses a schedd so its heartbeat stops landing.
 func (f *CmdFaultInjector) FreezeSchedd(node string) error {
+	if target, ok := f.remote[node]; ok {
+		return f.remoteSystemctl(target, "--kill-who=main", "--signal=SIGSTOP", "faas-schedd")
+	}
 	cmd, ok := f.procs["schedd-"+node]
 	if !ok {
 		return fmt.Errorf("fault: no schedd registered for node %s", node)
@@ -96,6 +144,9 @@ func (f *CmdFaultInjector) FreezeSchedd(node string) error {
 
 // ThawSchedd resumes a previously-frozen schedd.
 func (f *CmdFaultInjector) ThawSchedd(node string) error {
+	if target, ok := f.remote[node]; ok {
+		return f.remoteSystemctl(target, "--kill-who=main", "--signal=SIGCONT", "faas-schedd")
+	}
 	cmd, ok := f.procs["schedd-"+node]
 	if !ok {
 		return fmt.Errorf("fault: no schedd registered for node %s", node)
@@ -107,12 +158,43 @@ func (f *CmdFaultInjector) ThawSchedd(node string) error {
 // CAP_NET_ADMIN; the metal harness grants it via setpriv. The
 // rule is appended to f.iptables so RestoreAll can roll it back.
 func (f *CmdFaultInjector) Partition(a, b string) error {
-	rule := fmt.Sprintf("-A OUTPUT -d %s -j DROP", b)
-	if err := exec.Command("iptables", rule).Run(); err != nil {
-		return fmt.Errorf("fault: iptables %s: %w", rule, err)
+	if target, ok := f.remote[a]; ok {
+		addr := os.Getenv("FAAS_TWO_NODE_ADDR_" + nodeSuffix(b))
+		if addr == "" {
+			return fmt.Errorf("fault: missing FAAS_TWO_NODE_ADDR_%s for remote partition", nodeSuffix(b))
+		}
+		args := []string{"-A", "OUTPUT", "-d", addr, "-j", "DROP"}
+		if err := f.remoteCommand(target, append([]string{"sudo", "iptables"}, args...)...); err != nil {
+			return fmt.Errorf("fault: remote iptables %s -> %s: %w", a, b, err)
+		}
+		f.remoteRules = append(f.remoteRules, remoteRule{target: target, args: args})
+		return nil
 	}
-	f.iptables = append(f.iptables, rule)
+	args := []string{"-A", "OUTPUT", "-d", b, "-j", "DROP"}
+	if err := exec.Command("iptables", args...).Run(); err != nil {
+		return fmt.Errorf("fault: iptables %s: %w", strings.Join(args, " "), err)
+	}
+	f.iptables = append(f.iptables, iptablesRule{args: args})
 	return nil
+}
+
+func (f *CmdFaultInjector) remoteSystemctl(target string, args ...string) error {
+	return f.remoteCommand(target, append([]string{"sudo", "systemctl", "kill"}, args...)...)
+}
+
+func (f *CmdFaultInjector) remoteCommand(target string, args ...string) error {
+	sshArgs := append([]string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target}, args...)
+	return exec.Command("ssh", sshArgs...).Run()
+}
+
+func nodeSuffix(name string) string {
+	if name == os.Getenv("FAAS_TWO_NODE_NODE_A") {
+		return "A"
+	}
+	if name == os.Getenv("FAAS_TWO_NODE_NODE_B") {
+		return "B"
+	}
+	return ""
 }
 
 // StaleHeartbeat rewinds the heartbeat stamp so the next
@@ -154,11 +236,23 @@ func (f *CmdFaultInjector) Reactivate(node string) error {
 // responsible for respawning them.
 func (f *CmdFaultInjector) RestoreAll() error {
 	for i := len(f.iptables) - 1; i >= 0; i-- {
-		// -D instead of -A to remove the same rule.
-		rule := "-D " + f.iptables[i][2:] // strip the leading "-A "
-		_ = exec.Command("iptables", rule).Run()
+		rule := append([]string(nil), f.iptables[i].args...)
+		rule[0] = "-D"
+		_ = exec.Command("iptables", rule...).Run()
 	}
 	f.iptables = nil
+	for i := len(f.remoteRules) - 1; i >= 0; i-- {
+		rule := append([]string(nil), f.remoteRules[i].args...)
+		rule[0] = "-D"
+		_ = f.remoteCommand(f.remoteRules[i].target, append([]string{"sudo", "iptables"}, rule...)...)
+	}
+	f.remoteRules = nil
+	for node, target := range f.remoteStopped {
+		if err := f.remoteCommand(target, "sudo", "systemctl", "start", "faas-vmmd"); err != nil {
+			f.t.Logf("fault: failed to restore vmmd on %s: %v", node, err)
+		}
+	}
+	f.remoteStopped = nil
 	for name, cmd := range f.procs {
 		if cmd == nil || cmd.Process == nil {
 			continue

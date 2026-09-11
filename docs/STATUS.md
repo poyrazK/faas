@@ -537,7 +537,7 @@ The §14 M8 gates still on the board are listed in [What's next](#whats-next).
 - **ADR-110** (declarative split-box manifest, accepted 2026-08-16): versioned YAML + typed schema at `deploy/manifest/splitbox.yaml` + `pkg/manifest/`; SemVer `schema_version (1.0.0)`; canonical validation through `gregalectl manifest validate` + the renderer + the release bundle installer + the doctor + the metal harness. PR-cluster shipped (PRs #912 #913 #914 #915 #917 #918 #919 #920 #921 #922 #923 #924).
 - **ADR-141** (durable imaged→apid audit delivery, accepted 2026-09-03): migration 00590 adds a deduplicated `audit_event_outbox`; imaged keeps `pg_notify` as the fast wakeup, while apid transactionally writes the audit row and replays pending or expired-lease handoffs every two seconds. Failed deliveries back off, dead-letter after twelve attempts, and queue metadata is pruned after 90 days without deleting audit evidence. This closes the signature-audit loss window identified in ADR-058.
 
-End-to-end smoke: `make metal-lima-2node` exercises the full four-phase handoff against a two-node Lima fleet. The acceptance row in spec §14 M9 is the gating test for the cluster.
+End-to-end smoke: `make native-m9-acceptance` exercises the native x86 per-node heartbeat/failure-safe path. It replaces the retired two-node Lima gate; the target requires the acceptance marker, explicit `FAAS_M9_CONFIRM=native-x86`, and a schedd+vmmd pair on each node. The current single-schedd split-box manifest fails that preflight until per-node schedds are deployed. The remaining live-migration/partition fixtures are tracked as follow-up work in the M9 runbook.
 
 ### M8 — alert pipeline. ✅ (this PR)
 

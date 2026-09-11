@@ -483,6 +483,10 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo ./deploy/lima/run-metal.sh
 
+.PHONY: native-m9-acceptance
+native-m9-acceptance: ## M9: run the guarded two-node failure-safe drill on the native x86 split-box pair
+	@bash scripts/ci/run-native-m9-acceptance.sh
+
 .PHONY: metal-lima-m5
 metal-lima-m5: ## Run the M5 §14 deploy-to-park cold-boot acceptance on Lima (subtest 1 only)
 	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false
@@ -499,11 +503,9 @@ metal-soak: ## Issue #587 PR-A.8: 30-min mixed WS/HTTP/Upgrade drain soak on Lim
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo ./deploy/lima/run-metal-soak.sh
 
 .PHONY: metal-lima-2node
-metal-lima-2node: ## Tier A5 / ADR-066: two-node Lima fleet for the cross-node live-instance migration acceptance (§14 M9)
-	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false
-	@limactl list -q 2>/dev/null | grep -qx faas-metal-2b || limactl start deploy/lima/faas-metal-2node-b.yaml --tty=false
-	limactl shell --workdir "$(CURDIR)" faas-metal sudo env FAAS_NODE_NAME=node-a ./deploy/lima/run-metal.sh
-	limactl shell --workdir "$(CURDIR)" faas-metal-2b sudo env FAAS_NODE_NAME=node-b ./deploy/lima/run-metal.sh
+metal-lima-2node: ## Deprecated M9 compatibility alias; run the native x86 split-box acceptance
+	@echo "metal-lima-2node is retired; use 'make native-m9-acceptance' on the native x86 pair" >&2
+	@$(MAKE) native-m9-acceptance
 
 .PHONY: metal-lima-splitbox
 metal-lima-splitbox: ## Issue #911 / ADR-110 PR-7: two-role Lima harness (control-plane + compute-only) — drives gregalectl manifest validate + render + release install + doctor end-to-end
