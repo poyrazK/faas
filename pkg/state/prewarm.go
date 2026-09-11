@@ -56,6 +56,15 @@ type PrewarmStore interface {
 	CancelPrewarmIntent(ctx context.Context, id, accountID string) error
 }
 
+// PrewarmExpiryStore is an optional scheduler capability. Expired pending
+// intents are terminalized as failed rows with outcome "expired" so API
+// clients do not see a stale pending intent forever. It is separate from
+// PrewarmStore to preserve compatibility with older integrations and fakes.
+type PrewarmExpiryStore interface {
+	ListExpiredPrewarmIntents(ctx context.Context, now time.Time, limit int) ([]PrewarmIntent, error)
+	ExpirePrewarmIntent(ctx context.Context, id string, expiredAt time.Time) (bool, error)
+}
+
 // ValidatePrewarmIntent contains the store-independent invariants shared by
 // the API and both persistence implementations.
 func ValidatePrewarmIntent(count int, wakeAt, expiresAt, now time.Time, trigger string) error {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 const (
@@ -53,6 +54,7 @@ type Options struct {
 	Clock     func() time.Time
 	Logger    *slog.Logger
 	Auditor   Auditor
+	Metrics   *wire.PrewarmMetrics
 }
 
 type Trigger struct {
@@ -64,6 +66,7 @@ type Trigger struct {
 	now       func() time.Time
 	log       *slog.Logger
 	auditor   Auditor
+	metrics   *wire.PrewarmMetrics
 }
 
 func New(store IntentStore, engine Engine, opts Options) *Trigger {
@@ -82,7 +85,7 @@ func New(store IntentStore, engine Engine, opts Options) *Trigger {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Trigger{store: store, engine: engine, leadTime: opts.LeadTime, interval: opts.Interval, batchSize: opts.BatchSize, now: opts.Clock, log: opts.Logger, auditor: opts.Auditor}
+	return &Trigger{store: store, engine: engine, leadTime: opts.LeadTime, interval: opts.Interval, batchSize: opts.BatchSize, now: opts.Clock, log: opts.Logger, auditor: opts.Auditor, metrics: opts.Metrics}
 }
 
 func (t *Trigger) Interval() time.Duration {
@@ -100,6 +103,9 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		return nil
 	}
 	now := t.now().UTC()
+	if err := t.expirePending(ctx, now); err != nil {
+		return err
+	}
 	intents, err := t.store.ListDuePrewarmIntents(ctx, now.Add(t.leadTime), now, t.batchSize)
 	if err != nil {
 		return fmt.Errorf("prewarm: list due intents: %w", err)
@@ -130,12 +136,14 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				if markErr := t.store.CompletePrewarmIntent(ctx, intent.ID, now, admitted, partial); markErr != nil {
 					t.log.Warn("prewarm: failed to persist partial completion", "intent_id", intent.ID, "err", markErr)
 				}
+				t.metrics.ObserveFired("partial", admitted, intent.WakeAt, intent.CreatedAt, now)
 				t.emitFired(ctx, intent, admitted, "partial", partial)
 				continue
 			}
 			if markErr := t.store.FailPrewarmIntent(ctx, intent.ID, now, admitErr.Error()); markErr != nil {
 				t.log.Warn("prewarm: failed to persist failure", "intent_id", intent.ID, "err", markErr)
 			}
+			t.metrics.ObserveFired("failed", 0, intent.WakeAt, intent.CreatedAt, now)
 			t.emitFired(ctx, intent, 0, "failed", admitErr.Error())
 			t.log.Warn("prewarm: admission failed", "intent_id", intent.ID, "app_id", intent.AppID, "err", admitErr)
 			continue
@@ -147,7 +155,35 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			}
 			t.log.Warn("prewarm: failed to persist completion", "intent_id", intent.ID, "err", completeErr)
 		}
+		t.metrics.ObserveFired("succeeded", admitted, intent.WakeAt, intent.CreatedAt, now)
 		t.emitFired(ctx, intent, admitted, "succeeded", outcome)
+	}
+	return nil
+}
+
+func (t *Trigger) expirePending(ctx context.Context, now time.Time) error {
+	expirer, ok := t.store.(state.PrewarmExpiryStore)
+	if !ok {
+		return nil
+	}
+	expired, err := expirer.ListExpiredPrewarmIntents(ctx, now, t.batchSize)
+	if err != nil {
+		return fmt.Errorf("prewarm: list expired intents: %w", err)
+	}
+	for _, candidate := range expired {
+		changed, expireErr := expirer.ExpirePrewarmIntent(ctx, candidate.ID, now)
+		if expireErr != nil {
+			if errors.Is(expireErr, context.Canceled) {
+				return expireErr
+			}
+			t.log.Warn("prewarm: expire failed", "intent_id", candidate.ID, "err", expireErr)
+			continue
+		}
+		if !changed {
+			continue
+		}
+		t.metrics.ObserveExpired()
+		t.emitExpired(ctx, candidate, now)
 	}
 	return nil
 }
@@ -170,5 +206,25 @@ func (t *Trigger) emitFired(ctx context.Context, intent state.PrewarmIntent, adm
 		"expires_at":     intent.ExpiresAt,
 		"status":         status,
 		"outcome":        outcome,
+	})
+}
+
+func (t *Trigger) emitExpired(ctx context.Context, intent state.PrewarmIntent, expiredAt time.Time) {
+	if t == nil || t.auditor == nil {
+		return
+	}
+	var accountID *string
+	if intent.AccountID != "" {
+		id := intent.AccountID
+		accountID = &id
+	}
+	t.auditor.Emit(ctx, "prewarm.expired", accountID, map[string]any{
+		"intent_id":  intent.ID,
+		"app_id":     intent.AppID,
+		"count":      intent.Count,
+		"wake_at":    intent.WakeAt,
+		"expires_at": intent.ExpiresAt,
+		"expired_at": expiredAt,
+		"status":     "expired",
 	})
 }

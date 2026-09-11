@@ -102,6 +102,30 @@ func (m *MemStore) ListDuePrewarmIntents(_ context.Context, before, now time.Tim
 	return out, nil
 }
 
+func (m *MemStore) ListExpiredPrewarmIntents(_ context.Context, now time.Time, limit int) ([]PrewarmIntent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	out := make([]PrewarmIntent, 0)
+	for _, intent := range m.prewarmIntents {
+		if intent.Status == PrewarmStatusPending && !intent.ExpiresAt.After(now) {
+			out = append(out, clonePrewarmIntent(intent))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ExpiresAt.Equal(out[j].ExpiresAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ExpiresAt.Before(out[j].ExpiresAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (m *MemStore) ActivePrewarmFloor(_ context.Context, appID string, now time.Time) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -176,6 +200,25 @@ func (m *MemStore) FailPrewarmIntent(_ context.Context, id string, firedAt time.
 	intent.LastError = cause
 	m.prewarmIntents[id] = intent
 	return nil
+}
+
+func (m *MemStore) ExpirePrewarmIntent(_ context.Context, id string, expiredAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	intent, ok := m.prewarmIntents[id]
+	if !ok {
+		return false, ErrNotFound
+	}
+	if intent.Status != PrewarmStatusPending || intent.ExpiresAt.After(expiredAt) {
+		return false, nil
+	}
+	expiredAt = expiredAt.UTC()
+	intent.Status = PrewarmStatusFailed
+	intent.FiredAt = &expiredAt
+	intent.Outcome = "expired"
+	intent.LastError = "expired"
+	m.prewarmIntents[id] = intent
+	return true, nil
 }
 
 func (m *MemStore) CancelPrewarmIntent(_ context.Context, id, accountID string) error {
