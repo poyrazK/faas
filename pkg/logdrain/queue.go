@@ -150,14 +150,13 @@ func NewQueue(cfg QueueConfig) (*Queue, error) {
 func (q *Queue) recoverCompactionLocked() error {
 	oldPath := q.recordsPath + ".old"
 	compactPath := q.recordsPath + ".compact"
-	oldInfo, oldErr := os.Stat(oldPath)
+	_, oldErr := os.Stat(oldPath)
 	currentInfo, currentErr := os.Stat(q.recordsPath)
 	if oldErr == nil {
 		if currentErr != nil && errors.Is(currentErr, os.ErrNotExist) {
 			if err := os.Rename(oldPath, q.recordsPath); err != nil {
 				return fmt.Errorf("log drain: recover durable queue: %w", err)
 			}
-			currentInfo = oldInfo
 		} else if currentErr == nil {
 			if err := os.Remove(oldPath); err != nil {
 				return fmt.Errorf("log drain: remove compacted queue backup: %w", err)
@@ -250,7 +249,7 @@ func (q *Queue) rebuildStatsLocked() error {
 }
 
 func (q *Queue) scanRecordsLocked() error {
-	file, err := os.Open(q.recordsPath)
+	file, err := os.Open(q.recordsPath) //nolint:forbidigo // recordsPath is a server-owned queue file under the validated per-drain spool root, never a customer path.
 	if err != nil {
 		return fmt.Errorf("log drain: open durable queue: %w", err)
 	}
@@ -321,13 +320,15 @@ func (q *Queue) Enqueue(record Record, enqueuedAt time.Time) error {
 	if err != nil {
 		return fmt.Errorf("log drain: open durable queue for append: %w", err)
 	}
-	if err := writeAll(file, payload); err == nil {
-		err = file.Sync()
-	}
-	closeErr := file.Close()
-	if err != nil {
+	if err := writeAll(file, payload); err != nil {
+		_ = file.Close()
 		return fmt.Errorf("log drain: append durable queue: %w", err)
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("log drain: sync durable queue: %w", err)
+	}
+	closeErr := file.Close()
 	if closeErr != nil {
 		return fmt.Errorf("log drain: close durable queue: %w", closeErr)
 	}
@@ -347,7 +348,7 @@ func (q *Queue) Next() (QueueItem, bool, error) {
 	if q.pendingRecords == 0 {
 		return QueueItem{}, false, nil
 	}
-	file, err := os.Open(q.recordsPath)
+	file, err := os.Open(q.recordsPath) //nolint:forbidigo // recordsPath is a server-owned queue file under the validated per-drain spool root, never a customer path.
 	if err != nil {
 		return QueueItem{}, false, fmt.Errorf("log drain: open durable queue head: %w", err)
 	}
@@ -450,13 +451,15 @@ func (q *Queue) DeadLetter(item QueueItem, attempts int, deliveryErr error) erro
 	if err != nil {
 		return fmt.Errorf("log drain: open dead-letter queue: %w", err)
 	}
-	if err := writeAll(file, payload); err == nil {
-		err = file.Sync()
-	}
-	closeErr := file.Close()
-	if err != nil {
+	if err := writeAll(file, payload); err != nil {
+		_ = file.Close()
 		return fmt.Errorf("log drain: append dead-letter queue: %w", err)
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("log drain: sync dead-letter queue: %w", err)
+	}
+	closeErr := file.Close()
 	if closeErr != nil {
 		return fmt.Errorf("log drain: close dead-letter queue: %w", closeErr)
 	}
@@ -501,7 +504,7 @@ func (q *Queue) compactIfNeededLocked() error {
 	}
 	compactPath := q.recordsPath + ".compact"
 	oldPath := q.recordsPath + ".old"
-	src, err := os.Open(q.recordsPath)
+	src, err := os.Open(q.recordsPath) //nolint:forbidigo // recordsPath is a server-owned queue file under the validated per-drain spool root, never a customer path.
 	if err != nil {
 		return fmt.Errorf("log drain: open queue for compaction: %w", err)
 	}
@@ -592,7 +595,7 @@ func (q *Queue) nextEnqueuedAtLocked() time.Time {
 }
 
 func (q *Queue) nextLocked() (QueueItem, bool, error) {
-	file, err := os.Open(q.recordsPath)
+	file, err := os.Open(q.recordsPath) //nolint:forbidigo // recordsPath is a server-owned queue file under the validated per-drain spool root, never a customer path.
 	if err != nil {
 		return QueueItem{}, false, err
 	}
@@ -624,13 +627,15 @@ func (q *Queue) writeStateLocked() error {
 	if err != nil {
 		return fmt.Errorf("log drain: open durable queue cursor: %w", err)
 	}
-	if err := writeAll(file, payload); err == nil {
-		err = file.Sync()
-	}
-	closeErr := file.Close()
-	if err != nil {
+	if err := writeAll(file, payload); err != nil {
+		_ = file.Close()
 		return fmt.Errorf("log drain: write durable queue cursor: %w", err)
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("log drain: sync durable queue cursor: %w", err)
+	}
+	closeErr := file.Close()
 	if closeErr != nil {
 		return fmt.Errorf("log drain: close durable queue cursor: %w", closeErr)
 	}
@@ -655,7 +660,7 @@ func writeAll(file *os.File, payload []byte) error {
 }
 
 func countLines(path string) (int64, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) //nolint:forbidigo // path is a server-owned dead-letter queue under the validated per-drain spool root, never a customer path.
 	if err != nil {
 		return 0, err
 	}

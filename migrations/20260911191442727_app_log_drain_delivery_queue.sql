@@ -1,7 +1,7 @@
--- filename: 20260911190000000_app_log_drain_delivery_queue.sql
+-- filename: 20260911191442727_app_log_drain_delivery_queue.sql
+
 -- +goose Up
 -- +goose StatementBegin
-
 -- Durable gateway-local outboxes report their backlog through the existing
 -- customer-safe health snapshot. The byte capacity is separate from the
 -- legacy in-memory queue fields so the dashboard does not mix units.
@@ -15,7 +15,6 @@ ALTER TABLE app_log_drain_health
     ADD COLUMN IF NOT EXISTS dead_letter_total bigint NOT NULL DEFAULT 0
         CHECK (dead_letter_total >= 0),
     ADD COLUMN IF NOT EXISTS oldest_pending_at timestamptz;
-
 -- +goose StatementEnd
 
 -- +goose Down
