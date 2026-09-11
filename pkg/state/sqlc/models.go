@@ -1541,6 +1541,7 @@ type RequestTelemetry struct {
 	GuestRuntime    string
 	GuestOutcome    string
 	GuestErrorClass string
+	ConsumerID      pgtype.UUID
 }
 
 type RequestTelemetry202608 struct {

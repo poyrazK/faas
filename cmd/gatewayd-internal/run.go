@@ -2275,6 +2275,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestRuntime:     row.GuestRuntime,
 					GuestOutcome:     row.GuestOutcome,
 					GuestErrorClass:  row.GuestErrorClass,
+					ConsumerId:       row.ConsumerID,
 				}
 				if row.Count < 1 {
 					req.Count = 1

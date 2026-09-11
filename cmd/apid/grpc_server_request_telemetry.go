@@ -144,6 +144,16 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		out.Outcome = rtOutcomeDBError
 		return out
 	}
+	var consumerID pgtype.UUID
+	if raw := req.GetConsumerId(); raw != "" {
+		parsed, parseErr := uuid.Parse(raw)
+		if parseErr != nil {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
+		consumerID = state.NewPgtypeUUID(parsed)
+	}
 
 	// ---- 2. Resolve per-account rate cap ----
 	limits, ok := r.limiter.CachedLimits(accountID)
@@ -237,6 +247,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		GuestRuntime:    guestRuntime,
 		GuestOutcome:    guestOutcome,
 		GuestErrorClass: guestErrorClass,
+		ConsumerID:      consumerID,
 	})
 	if insertErr != nil {
 		if isConstraintViolation(insertErr) {

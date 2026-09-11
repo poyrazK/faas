@@ -7192,6 +7192,7 @@ type DebugTelemetryRequestItem struct {
 	ReceivedAt   string                       `json:"received_at"`
 	WakeID       string                       `json:"wake_id,omitempty"`
 	InstanceID   string                       `json:"instance_id,omitempty"`
+	ConsumerID   string                       `json:"consumer_id,omitempty"`
 	Guest        *DebugGuestExecutionEvidence `json:"guest,omitempty"`
 }
 

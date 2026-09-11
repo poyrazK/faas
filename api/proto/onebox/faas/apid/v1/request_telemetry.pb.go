@@ -127,8 +127,12 @@ type IncrementRequestTelemetryRequest struct {
 	GuestOutcome string `protobuf:"bytes,19,opt,name=guest_outcome,json=guestOutcome,proto3" json:"guest_outcome,omitempty"`
 	// guest_error_class — bounded failure class; empty for successful calls.
 	GuestErrorClass string `protobuf:"bytes,20,opt,name=guest_error_class,json=guestErrorClass,proto3" json:"guest_error_class,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// consumer_id — stable API consumer identity resolved by the gateway's
+	// consumer-key middleware. Empty for anonymous/legacy traffic. The
+	// credential itself is never sent or persisted.
+	ConsumerId    string `protobuf:"bytes,21,opt,name=consumer_id,json=consumerId,proto3" json:"consumer_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
@@ -301,6 +305,13 @@ func (x *IncrementRequestTelemetryRequest) GetGuestErrorClass() string {
 	return ""
 }
 
+func (x *IncrementRequestTelemetryRequest) GetConsumerId() string {
+	if x != nil {
+		return x.ConsumerId
+	}
+	return ""
+}
+
 // IncrementRequestTelemetryResponse is the per-record outcome the
 // server returns. outcome ∈ {inserted, rate_limited, db_error}.
 // `inserted` is a successful INSERT; `rate_limited` means the
@@ -368,7 +379,7 @@ var File_onebox_faas_apid_v1_request_telemetry_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
-	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xb1\x05\n" +
+	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xd2\x05\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -394,7 +405,9 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x11guest_duration_ms\x18\x11 \x01(\x05R\x0fguestDurationMs\x12#\n" +
 	"\rguest_runtime\x18\x12 \x01(\tR\fguestRuntime\x12#\n" +
 	"\rguest_outcome\x18\x13 \x01(\tR\fguestOutcome\x12*\n" +
-	"\x11guest_error_class\x18\x14 \x01(\tR\x0fguestErrorClass\"c\n" +
+	"\x11guest_error_class\x18\x14 \x01(\tR\x0fguestErrorClass\x12\x1f\n" +
+	"\vconsumer_id\x18\x15 \x01(\tR\n" +
+	"consumerId\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs2\xa3\x01\n" +

@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/geoip"
@@ -6280,6 +6281,15 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			}
 			uaFamily, referrerHost, country := h.requestTelemetryDimensions(r)
 			guestEvidence, _ := guestExecutionEvidenceFromContext(r.Context())
+			var consumerID string
+			if identity, ok := authmw.ConsumerFromContext(r); ok {
+				// Consumer IDs are UUIDs in the control-plane store. Keep
+				// malformed/legacy context stamps out of the nullable DB
+				// column rather than turning telemetry into a request failure.
+				if parsed, err := uuid.Parse(identity.ID); err == nil {
+					consumerID = parsed.String()
+				}
+			}
 			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
 				AccountID:       acctUUID,
 				AppID:           appUUID,
@@ -6300,6 +6310,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				GuestRuntime:    guestEvidence.Runtime,
 				GuestOutcome:    guestEvidence.Outcome,
 				GuestErrorClass: guestEvidence.ErrorClass,
+				ConsumerID:      consumerID,
 			})
 		}
 	}
