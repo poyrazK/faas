@@ -665,7 +665,6 @@ UpdateAccountStatus
 UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus
 UpdateAlertRule
-UpdateApp
 UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
