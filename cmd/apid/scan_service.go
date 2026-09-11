@@ -1175,7 +1175,14 @@ func (s *server) scanService(
 	preCanApply, preNotAllowed, preReasons, _ := evaluateQuotaGate(result.Workloads, limits, observedApps, observedCrons)
 	canApply, notAllowed, reasons, _ = evaluateQuotaGate(filteredW, limits, observedApps, observedCrons)
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasons(result.Workloads, acctApps, projectID)
-	admissionReasons := reconcile.WorkloadAdmissionReasons(filteredW, acctApps, projectID)
+	var admissionReasons []string
+	if len(filteredW) > 0 || len(result.Workloads) == 0 {
+		// An actually empty scan is unsafe and must carry the reconcile
+		// package's stable empty-plan reason. A non-empty scan that the
+		// operator deliberately reduced to zero with --exclude is an
+		// applicable no-op; the skipped partition records that intent.
+		admissionReasons = reconcile.WorkloadAdmissionReasons(filteredW, acctApps, projectID)
+	}
 	if len(preAdmissionReasons) > 0 {
 		preCanApply = false
 		preReasons = append(preReasons, preAdmissionReasons...)
