@@ -25,9 +25,9 @@ import (
 //
 //   - cmdLogin (commands.go)             — interactive paste-code prompt
 //   - cmdLogout (commands.go)            — emits a small status object
-//   - cmdInit / runCmdInit* (commands_init.go) — file writes and the
-//     --deploy composite retain progress-oriented output; --list has a
-//     machine-readable template slice
+//   - cmdInit / runCmdInit* (commands_init.go) — successful scaffolding
+//     emits a machine-readable receipt; --list has a machine-readable
+//     template slice. The optional --deploy composite emits one receipt.
 //   - cmdBackup / cmdBackupUnsealRclone  — operator fs writes; no body
 //   - cmdMfa enroll                      — QR PNG is written to disk
 //     (JSON shape is the path)
