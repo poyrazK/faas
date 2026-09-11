@@ -89,3 +89,31 @@ func TestRuntimeConfigRollback_RejectsStaleExpectedVersion(t *testing.T) {
 		t.Fatalf("stale rollback changed config = %#v, want unchanged v2 true", row)
 	}
 }
+
+func TestRuntimeConfigPatch_PropagatesTraceToAuditEvent(t *testing.T) {
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	e := newObsEnv(t, []string{"admin"}, "ops@faas.dev", "ops@faas.dev")
+	response := e.doAdmin(t, http.MethodPatch, "/v1/admin/config/data_placement_enabled", map[string]any{
+		"value": false, "reason": "incident mitigation",
+	}, map[string]string{"X-Trace-Id": traceID})
+	if response.Code != http.StatusOK {
+		t.Fatalf("runtime config patch status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("X-Trace-Id"); got != traceID {
+		t.Fatalf("response trace id = %q, want %q", got, traceID)
+	}
+	events, err := e.store.ListEvents(t.Context(), "", 20)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	for _, event := range events {
+		if event.Kind != "operator.runtime_config_changed" {
+			continue
+		}
+		if event.TraceID == nil || *event.TraceID != traceID {
+			t.Fatalf("runtime config audit trace id = %v, want %q", event.TraceID, traceID)
+		}
+		return
+	}
+	t.Fatal("operator.runtime_config_changed audit event not found")
+}

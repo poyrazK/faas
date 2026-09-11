@@ -505,6 +505,23 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchConfig,
+		DocSlug: "config",
+		Short:   "Inspect and safely change hot runtime configuration",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List desired and effective runtime configuration"},
+			{Name: "show", Short: "Show one runtime configuration entry", Flags: []cliFlag{
+				{Name: "key", Short: "runtime configuration key", Req: true},
+			}},
+			{Name: "history", Short: "Show append-only revisions for one key", Flags: []cliFlag{
+				{Name: "key", Short: "runtime configuration key", Req: true},
+				{Name: "limit", Short: "maximum revisions to return (1..200)"},
+			}},
+			{Name: "set", Short: "Change a hot setting without a rollout", Flags: configMutationCLIFlags(true)},
+			{Name: "rollback", Short: "Restore an older hot-setting revision", Flags: configMutationCLIFlags(false)},
+		},
+	},
+	{
 		// P2c of the operator-side observability mega-PR
 		// (Commit 5c). Operator-side build-recovery primitive —
 		// `sweep-stuck` opens a state.Store via FAAS_PG_DSN
@@ -770,4 +787,17 @@ func accountMutationCLIFlags() []cliFlag {
 		{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
 		{Name: "yes", Short: "acknowledge the account mutation", Req: true},
 	}
+}
+
+func configMutationCLIFlags(set bool) []cliFlag {
+	flags := []cliFlag{
+		{Name: "key", Short: "runtime configuration key", Req: true},
+		{Name: "reason", Short: "audit reason (3..500 characters)", Req: true},
+		{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+		{Name: "yes", Short: "acknowledge the runtime configuration mutation", Req: true},
+	}
+	if set {
+		return append(flags, cliFlag{Name: "value", Short: "new JSON scalar or plain string", Req: true})
+	}
+	return append(flags, cliFlag{Name: "version", Short: "historical version to restore", Req: true})
 }
