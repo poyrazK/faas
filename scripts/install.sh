@@ -12,7 +12,7 @@
 # in, so a new release tag is live in this installer the moment its assets
 # exist — there is no publish step for this channel (ADR-172 "Why").
 #
-# Every download is verified against the release's own SHA256SUMS before
+# Every download is verified against the release's own CLI-SHA256SUMS before
 # anything is placed on PATH. A checksum failure aborts with no install.
 
 set -eu
@@ -184,7 +184,8 @@ fi
 
 archive="${BIN_NAME}_${semver}_${os}_${arch}.tar.gz"
 archive_url="${DOWNLOAD_BASE}/${tag}/${archive}"
-sums_url="${DOWNLOAD_BASE}/${tag}/SHA256SUMS"
+sums_url="${DOWNLOAD_BASE}/${tag}/CLI-SHA256SUMS"
+legacy_sums_url="${DOWNLOAD_BASE}/${tag}/SHA256SUMS"
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gregale-install.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT INT HUP TERM
@@ -193,18 +194,24 @@ log "installing gregale ${tag} (${os}/${arch})"
 
 fetch "$archive_url" "$tmp/$archive" ||
 	die "download failed: $archive_url (is ${tag} a real release with ${os}/${arch} assets?)"
-fetch "$sums_url" "$tmp/SHA256SUMS" ||
-	die "download failed: $sums_url"
+if ! fetch "$sums_url" "$tmp/CLI-SHA256SUMS"; then
+	# Releases published before the CLI/daemon checksum assets were split
+	# used SHA256SUMS for the CLI. Keep explicit old-version installs working
+	# without allowing a current daemon checksum file to replace the CLI file.
+	log "warning: ${tag} has no CLI-SHA256SUMS; trying the legacy SHA256SUMS asset"
+	fetch "$legacy_sums_url" "$tmp/CLI-SHA256SUMS" ||
+		die "download failed: $sums_url (legacy fallback also unavailable)"
+fi
 
-expected="$(sed -n "s/^\([0-9a-f]\{64\}\)[[:space:]]\{1,\}[*]\{0,1\}${archive}$/\1/p" "$tmp/SHA256SUMS" | head -n 1)"
-[ -n "$expected" ] || die "SHA256SUMS for ${tag} has no entry for ${archive}"
+expected="$(sed -n "s/^\([0-9a-f]\{64\}\)[[:space:]]\{1,\}[*]\{0,1\}${archive}$/\1/p" "$tmp/CLI-SHA256SUMS" | head -n 1)"
+[ -n "$expected" ] || die "CLI-SHA256SUMS for ${tag} has no entry for ${archive}"
 actual="$(sha256_of "$tmp/$archive")"
 if [ "$expected" != "$actual" ]; then
 	die "checksum mismatch for ${archive}
   expected ${expected}
   actual   ${actual}
 Refusing to install. Re-run, and if it persists open an issue — this means
-the release asset and its SHA256SUMS disagree."
+the release asset and its CLI-SHA256SUMS disagree."
 fi
 
 tar -xzf "$tmp/$archive" -C "$tmp" ||
