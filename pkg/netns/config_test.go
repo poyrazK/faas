@@ -289,6 +289,15 @@ func TestNftCommandsPublishGuestPort(t *testing.T) {
 	}
 }
 
+func TestNftCommandsPublishCustomGuestPortBehindStableHostPort(t *testing.T) {
+	c := testConfig()
+	c.GuestAppPort = 3000
+	rules := flatten(c.NftCommands())
+	if !strings.Contains(rules, "iifname vp7 tcp dport 8080 dnat to 10.0.0.2:3000") {
+		t.Fatalf("custom guest port DNAT missing:\n%s", rules)
+	}
+}
+
 func TestNftCommandsEnforceEgressPolicy(t *testing.T) {
 	rules := flatten(testConfig().NftCommands())
 	// §11 ship-blocking egress denies, scoped to the guest side (iifname tap0) so

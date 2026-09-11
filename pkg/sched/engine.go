@@ -1317,7 +1317,8 @@ type WakeResult struct {
 	// path is the only short-circuit there).
 	AtCapacity bool
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment
-	// override port copied from dep.OverridePort. 0 = legacy 8080.
+	// runtime port resolved from an explicit override or a persisted
+	// source profile. 0 = legacy 8080.
 	// On the Phase-1 fast path this comes from a LiveDeployment
 	// lookup so the gateway sees the same value AdmitInstance would
 	// have produced; on the admit path it comes from bootInput.spec.
@@ -1443,7 +1444,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		//  2. Otherwise resolve from LiveDeployment — legacy
 		//     single-deployment behaviour, unchanged.
 		//
-		// The LiveDeployment lookup also feeds `port` (OverridePort);
+		// The LiveDeployment lookup also feeds the effective runtime port;
 		// when the caller passes a non-empty deploymentID we still
 		// need the lookup unless port defaults are acceptable. vmmd
 		// defaults to 8080 when port=0, so a transient lookup failure
@@ -1464,7 +1465,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 			dep, depErr = e.store.LiveDeploymentForScope(ctx, appID, scope)
 		}
 		if depErr == nil {
-			port = dep.OverridePort
+			port = deploymentRuntimePort(dep)
 			if resolvedDeploymentID == "" {
 				resolvedDeploymentID = dep.ID
 			}
@@ -2628,13 +2629,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// fires UpdateStaticEgressIP gRPC to patch them
 		// (pkg/sched/egress_drift.go).
 		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
-		// Issue #460 / ADR-053 (PR-C): per-deployment override
-		// port the customer's app binds inside the guest. 0 =
-		// legacy 8080 (vmmd's wire-level default). The host's
-		// waitReady + DNAT stay fixed on 8080 (ADR-009 +
-		// guest/init/portnorm_linux.go); only vmmd's ForwardHTTP
-		// bridge uses this port to dial the guest.
-		Port: dep.OverridePort,
+		// Issue #460 / ADR-053 (PR-C): per-deployment runtime port
+		// resolved from the explicit override or persisted source
+		// profile. The host-facing readiness port stays on 8080;
+		// vmmd DNATs it to this guest port and the request bridge
+		// dials the same target.
+		Port: deploymentRuntimePort(dep),
 		// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment
 		// override readiness probe path. Empty = legacy TCP-accept
 		// on :8080 (pre-PR-D default). Non-empty → vmmd's
@@ -4198,9 +4198,9 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
 		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
-		// Issue #460 / ADR-053 (PR-C): per-deployment override
+		// Issue #460 / ADR-053 (PR-C): effective deployment runtime
 		// port. 0 = legacy 8080 (vmmd wire default).
-		Port: dep.OverridePort,
+		Port: deploymentRuntimePort(dep),
 		// Issue #460 / ADR-053, ADR-057 (PR-D): per-deployment
 		// override readiness probe path. "" = legacy TCP-accept.
 		HealthcheckPath: healthcheckPathFromDep(dep),

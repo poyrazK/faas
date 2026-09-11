@@ -70,6 +70,11 @@ type Config struct {
 	VethHost string     // root-ns end, enslaved to br-tenants
 	VethPeer string     // netns end, holds HostIP
 	HostIP   netip.Addr // routable identity, 10.100.x.y
+	// GuestAppPort is the port the customer process binds inside the guest.
+	// The host-facing identity remains fixed at :8080; prerouting translates
+	// that stable port to this deployment-specific target. Zero or an invalid
+	// value preserves the legacy :8080 -> :8080 contract.
+	GuestAppPort int
 	// TapUID is the jailer UID that will open the persistent tap device.
 	// When set, SetupCommands assigns tap ownership to that UID so the
 	// unprivileged Firecracker process can attach to the existing device.
@@ -161,6 +166,13 @@ func NewConfigWithBridge(instance, netnsName, vethHost, vethPeer string, hostIP,
 // hostCIDR renders HostIP with its prefix, e.g. "10.100.0.2/16".
 func (c Config) hostCIDR() string {
 	return fmt.Sprintf("%s/%d", c.HostIP, c.HostBits)
+}
+
+func (c Config) guestAppPort() int {
+	if c.GuestAppPort < 1 || c.GuestAppPort > 65535 {
+		return AppPort
+	}
+	return c.GuestAppPort
 }
 
 // SetupCommands returns the ordered argv list that creates the namespace, veth
@@ -320,7 +332,7 @@ func (c Config) NftCommands() [][]string {
 	}
 	// NAT: publish :8080 to the guest; masquerade the guest's egress.
 	add("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}")
-	add("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, AppPort))
+	add("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort()))
 	add("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
 	add("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade")
 	// ADR-119 redesign: per-netns SNAT rule was REMOVED. The legacy
