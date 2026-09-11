@@ -1303,14 +1303,20 @@ func resolveQueuePayload(s string) ([]byte, error) { return resolvePayload(s) }
 // non-flag token; without this helper the help text "queue send
 // <slug> --payload J" silently drops the payload. The reorder is
 // a one-pass scan: positional tokens land in `pos`, flag tokens
-// (and their values, when separated) land in `flags`. Bool flags
-// (`--async`) and bare `--` markers pass through unchanged.
+// (and their values, when separated) land in `flags`. Callers pass
+// the names of bool flags so their following positional argument is
+// not mistaken for a flag value. Bare `--` markers pass through
+// unchanged.
 //
 // `--` is treated as "everything after this is positional" so the
 // queue subcommand can carry messages that themselves contain
 // leading dashes (rare but possible for JSON payloads starting
 // with `-`).
-func splitArgsForFlags(args []string) (flags, pos []string) {
+func splitArgsForFlags(args []string, boolFlags ...string) (flags, pos []string) {
+	boolFlag := make(map[string]struct{}, len(boolFlags))
+	for _, name := range boolFlags {
+		boolFlag[name] = struct{}{}
+	}
 	flags = make([]string, 0, len(args))
 	pos = make([]string, 0, len(args))
 	i := 0
@@ -1334,6 +1340,10 @@ func splitArgsForFlags(args []string) (flags, pos []string) {
 			// --flag value: peek the next token; if it's not
 			// flag-shaped it belongs to this flag.
 			flags = append(flags, a)
+			if _, ok := boolFlag[a[2:]]; ok {
+				i++
+				continue
+			}
 			if i+1 < len(args) && !looksLikeFlag(args[i+1]) {
 				flags = append(flags, args[i+1])
 				i += 2

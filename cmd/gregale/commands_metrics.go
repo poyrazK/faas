@@ -53,14 +53,15 @@ func cmdMetrics(args []string) int {
 	fs := flag.NewFlagSet("metrics", flag.ContinueOnError)
 	rng := fs.String("range", "5m", "time window (5m, 15m, 1h, 6h, 24h)")
 	account := fs.Bool("account", false, "account-wide rollup (GET /v1/apps/metrics) — mutually exclusive with <slug>")
-	if err := fs.Parse(args); err != nil {
+	flags, pos := splitArgsForFlags(args, "account")
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if *account && fs.NArg() != 0 {
+	if *account && len(pos) != 0 {
 		PrintUsage(os.Stderr, metricsCmdUsage, metricsCmdDocsTopic)
 		return 1
 	}
-	if !*account && fs.NArg() != 1 {
+	if !*account && len(pos) != 1 {
 		PrintUsage(os.Stderr, metricsCmdUsage, metricsCmdDocsTopic)
 		return 1
 	}
@@ -79,7 +80,7 @@ func cmdMetrics(args []string) int {
 		renderAppsMetrics(osStdout, m)
 		return 0
 	}
-	slug := fs.Arg(0)
+	slug := pos[0]
 	m, err := client.GetAppMetrics(context.Background(), slug, *rng)
 	if err != nil {
 		return printErr("Could not fetch metrics", err)
@@ -197,10 +198,11 @@ func cmdThrottleSuggestions(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "preview pass: ask the server to count sub-windows where observed rps exceeds --candidate-rps")
 	candidateRPS := fs.Float64("candidate-rps", 0, "candidate rps (required when --dry-run; positive float)")
 	candidateBurst := fs.Int("candidate-burst", 0, "candidate burst (optional when --dry-run; non-negative int)")
-	if err := fs.Parse(args); err != nil {
+	flags, pos := splitArgsForFlags(args, "dry-run")
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		PrintUsage(os.Stderr, throttleSuggestionsCmdUsage, throttleSuggestionsCmdDocsTopic)
 		return 1
 	}
@@ -227,7 +229,7 @@ func cmdThrottleSuggestions(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	slug := fs.Arg(0)
+	slug := pos[0]
 	resp, err := client.GetAppThrottleSuggestionsOpts(context.Background(), slug, *rng, api.ThrottleSuggestionsOpts{
 		DryRun:         *dryRun,
 		CandidateRPS:   *candidateRPS,

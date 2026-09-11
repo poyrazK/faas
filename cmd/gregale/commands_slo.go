@@ -53,14 +53,15 @@ const sloAccountCmdDocsTopic = "account-slo"
 func cmdSLO(args []string) int {
 	fs := flag.NewFlagSet("slo", flag.ContinueOnError)
 	window := fs.String("window", "24h", "SLO window (1h, 24h, 7d)")
-	if err := fs.Parse(args); err != nil {
+	flags, pos := splitArgsForFlags(args)
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		PrintUsage(os.Stderr, sloCmdUsage, sloCmdDocsTopic)
 		return 1
 	}
-	slug := fs.Arg(0)
+	slug := pos[0]
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
