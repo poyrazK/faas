@@ -173,6 +173,50 @@ func NewRealServiceLegacy(auth *AppAuth, tokens *TokenCache, checks *ChecksAPI, 
 	return NewRealService(auth, tokens, checks, store, nil, nil, nil, nil)
 }
 
+// InvalidateInstallation drops all in-process state associated with a GitHub
+// App installation after GitHub reports deletion or suspension. Durable state
+// is cleared by InstallationLifecycleStore; this method closes the warm-cache
+// window so the next request cannot reuse a revoked credential or binding.
+func (s *RealService) InvalidateInstallation(installationID int64) {
+	if installationID <= 0 {
+		return
+	}
+	if s.Tokens != nil {
+		s.Tokens.Invalidate(installationID)
+	}
+	installID := strconv.FormatInt(installationID, 10)
+	s.installsMu.Lock()
+	for accountID, st := range s.installs {
+		if st.InstID == installID {
+			delete(s.installs, accountID)
+		}
+	}
+	s.installsMu.Unlock()
+	s.InvalidateInstallationBindings(installationID)
+}
+
+// InvalidateInstallationBindings drops cached binding lookups for an
+// installation without evicting its still-valid install token. Repository
+// removal and rename events use this narrower invalidation path.
+func (s *RealService) InvalidateInstallationBindings(installationID int64) {
+	if installationID <= 0 {
+		return
+	}
+	installID := installationID
+	s.bindingsCacheMu.Lock()
+	for accountID, bindings := range s.bindingsCache {
+		for appID, binding := range bindings {
+			if binding.InstallID == installID {
+				delete(bindings, appID)
+			}
+		}
+		if len(bindings) == 0 {
+			delete(s.bindingsCache, accountID)
+		}
+	}
+	s.bindingsCacheMu.Unlock()
+}
+
 // WithStreamer wires a SourceRefStreamer implementation for
 // the DEPLOY-PROV-4 / ADR-092 (issue #739) headless source-ref
 // deploy path. Returns the receiver so the wiring reads as a

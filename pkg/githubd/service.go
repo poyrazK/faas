@@ -200,6 +200,19 @@ type Service struct {
 	// preview status comment. It is installation-scoped so a repository
 	// can never accidentally publish another customer's preview details.
 	WritePreviewCommentForInstallation WritePreviewCommentForInstallationFunc
+	// Lifecycle reconciles GitHub App installation and repository access
+	// changes. It is optional for embedded/test services; production wires
+	// the Postgres-backed adapter so revoked access fails closed.
+	Lifecycle InstallationLifecycleStore
+	// InvalidateInstallation drops in-memory install/binding credentials after
+	// GitHub revokes or suspends an installation.
+	InvalidateInstallation func(installationID int64)
+	// InvalidateInstallationBindings drops only binding lookups after GitHub
+	// removes or renames a repository while the installation remains active.
+	InvalidateInstallationBindings func(installationID int64)
+	// InvalidateInstallationSecrets drops the compatibility resolver cache when
+	// an installation is revoked.
+	InvalidateInstallationSecrets func(installationID int64)
 	// WorkDir is the root directory under which githubd
 	// stages the per-app source tarballs that the apid
 	// bridge passes to builderd. Defaults to /var/lib/faas/
@@ -262,6 +275,8 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, eventType string, body
 		}
 		_, err = s.handlePullRequest(ctx, body)
 		return err
+	case "installation", "installation_repositories", "repository":
+		return s.HandleInstallationLifecycle(ctx, eventType, body)
 	default:
 		return fmt.Errorf("githubd: unsupported webhook event %q", eventType)
 	}

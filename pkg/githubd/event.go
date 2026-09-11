@@ -180,13 +180,20 @@ func (ev PushEvent) DeploySkipMarker() string {
 // needs to look up the binding. FullName is the canonical
 // "owner/name" handle used in the app bindings table.
 type PushRepository struct {
-	FullName string `json:"full_name"`
-	Name     string `json:"name"`
-	HTMLURL  string `json:"html_url"`
+	FullName string              `json:"full_name"`
+	Name     string              `json:"name"`
+	HTMLURL  string              `json:"html_url"`
+	Owner    PushRepositoryOwner `json:"owner"`
 	// DefaultBranch is the binding key used for tag deployments. A tag
 	// has no branch of its own, so githubd resolves it against the
 	// repository's configured default production branch.
 	DefaultBranch string `json:"default_branch"`
+}
+
+// PushRepositoryOwner is the repository owner identity used to reconstruct
+// the previous full name in GitHub repository rename events.
+type PushRepositoryOwner struct {
+	Login string `json:"login"`
 }
 
 // PushPusher is the actor who triggered the push. Captured for the
@@ -253,6 +260,108 @@ func DecodePullRequest(body []byte) (PullRequestEvent, error) {
 	}
 	if ev.Installation.ID == 0 {
 		return ev, errors.New("githubd: pull_request missing installation.id")
+	}
+	return ev, nil
+}
+
+// InstallationEvent is the subset of an installation webhook needed for
+// access revocation. GitHub sends deleted and suspend actions when the App
+// loses access; both must be treated as a hard revoke locally.
+type InstallationEvent struct {
+	Action       string              `json:"action"`
+	Installation InstallationPayload `json:"installation"`
+	Sender       SenderPayload       `json:"sender"`
+}
+
+func DecodeInstallation(body []byte) (InstallationEvent, error) {
+	var ev InstallationEvent
+	if len(body) == 0 {
+		return ev, errors.New("githubd: empty installation body")
+	}
+	if err := json.Unmarshal(body, &ev); err != nil {
+		return ev, err
+	}
+	if ev.Installation.ID <= 0 {
+		return ev, errors.New("githubd: installation missing installation.id")
+	}
+	if ev.Action == "" {
+		return ev, errors.New("githubd: installation missing action")
+	}
+	return ev, nil
+}
+
+// InstallationRepositoriesEvent reports repositories added to or removed
+// from an installation. Added repositories require no local mutation; removed
+// repositories must stop future deploys immediately.
+type InstallationRepositoriesEvent struct {
+	Action              string              `json:"action"`
+	Installation        InstallationPayload `json:"installation"`
+	RepositoriesAdded   []PushRepository    `json:"repositories_added"`
+	RepositoriesRemoved []PushRepository    `json:"repositories_removed"`
+	Sender              SenderPayload       `json:"sender"`
+}
+
+func DecodeInstallationRepositories(body []byte) (InstallationRepositoriesEvent, error) {
+	var ev InstallationRepositoriesEvent
+	if len(body) == 0 {
+		return ev, errors.New("githubd: empty installation_repositories body")
+	}
+	if err := json.Unmarshal(body, &ev); err != nil {
+		return ev, err
+	}
+	if ev.Installation.ID <= 0 {
+		return ev, errors.New("githubd: installation_repositories missing installation.id")
+	}
+	if ev.Action == "" {
+		return ev, errors.New("githubd: installation_repositories missing action")
+	}
+	return ev, nil
+}
+
+// RepositoryEvent covers repository lifecycle notifications emitted to GitHub
+// Apps. A deleted or archived repository is detached; a rename updates the
+// binding so future pushes continue to resolve.
+type RepositoryEvent struct {
+	Action       string              `json:"action"`
+	Repository   PushRepository      `json:"repository"`
+	Installation InstallationPayload `json:"installation"`
+	Changes      RepositoryChanges   `json:"changes"`
+	Sender       SenderPayload       `json:"sender"`
+}
+
+type RepositoryChanges struct {
+	Repository RepositoryNameChange  `json:"repository"`
+	Owner      RepositoryOwnerChange `json:"owner"`
+}
+
+type RepositoryNameChange struct {
+	Name RepositoryNameFrom `json:"name"`
+}
+
+type RepositoryNameFrom struct {
+	From string `json:"from"`
+}
+
+type RepositoryOwnerChange struct {
+	From PushRepositoryOwner `json:"from"`
+}
+
+func DecodeRepository(body []byte) (RepositoryEvent, error) {
+	var ev RepositoryEvent
+	if len(body) == 0 {
+		return ev, errors.New("githubd: empty repository body")
+	}
+	if err := json.Unmarshal(body, &ev); err != nil {
+		return ev, err
+	}
+	if ev.Installation.ID <= 0 {
+		return ev, errors.New("githubd: repository missing installation.id")
+	}
+	if ev.Action == "" {
+		return ev, errors.New("githubd: repository missing action")
+	}
+	if ev.Repository.FullName == "" {
+		return ev, errors.New("githubd: repository missing repository.full_name")
 	}
 	return ev, nil
 }

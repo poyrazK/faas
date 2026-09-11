@@ -108,3 +108,14 @@ searches the repository's deployments for the stable local deployment marker
 before creating a new record. The status projection is driven by the existing
 coalescing `github_check_updates` outbox, so a stopped daemon catches up from
 Postgres rather than losing a provider transition.
+
+## §11 GitHub App lifecycle reconciliation (2026-09-11)
+
+The durable webhook inbox accepts `installation`,
+`installation_repositories`, and `repository` events in addition to push and
+pull requests. Uninstall/suspend events atomically mark previews stale, clear
+all installation bindings, remove installation-scoped webhook secrets and
+credentials, and invalidate githubd's in-memory caches. Repository removal or
+archival detaches only the affected repository; rename/transfer updates the
+binding to the new full name. The operations are idempotent so GitHub retries
+cannot resurrect revoked access or duplicate state.

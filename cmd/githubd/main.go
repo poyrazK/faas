@@ -421,6 +421,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("githubd: GitHub App credentials not provisioned; wiring unavailable ChangedFiles stub (path-filter falls back to full rebuild with error-mode metric)")
 	}
 
+	// GitHub App lifecycle events are acknowledged through the durable inbox.
+	// Revocation clears bindings, install secrets, and preview leases in one
+	// state transaction; the live RealService cache is invalidated afterwards.
+	webhookSvc.Lifecycle = newStateLifecycleAdapter(pool)
+	if realSvc != nil {
+		webhookSvc.InvalidateInstallation = realSvc.InvalidateInstallation
+		webhookSvc.InvalidateInstallationBindings = realSvc.InvalidateInstallationBindings
+	}
+	webhookSvc.InvalidateInstallationSecrets = secretResolver.Invalidate
+
 	if checks != nil {
 		checkUpdates := githubd.NewPGCheckUpdateStore(pool)
 		go githubd.RunCheckUpdateWorker(ctx, checkUpdates, func(workerCtx context.Context, deploymentID string) error {
