@@ -51,6 +51,7 @@ type listBucketResult struct {
 	MaxKeys               int32          `xml:"MaxKeys"`
 	IsTruncated           bool           `xml:"IsTruncated"`
 	Contents              []listedObject `xml:"Contents"`
+	CommonPrefixes        []commonPrefix `xml:"CommonPrefixes,omitempty"`
 	NextContinuationToken string         `xml:"NextContinuationToken,omitempty"`
 }
 
@@ -59,6 +60,10 @@ type listedObject struct {
 	LastModified string `xml:"LastModified"`
 	Size         int64  `xml:"Size"`
 	StorageClass string `xml:"StorageClass"`
+}
+
+type commonPrefix struct {
+	Prefix string `xml:"Prefix"`
 }
 
 type initiateMultipartResult struct {
@@ -119,17 +124,28 @@ type completeMultipartResult struct {
 	UploadID string   `xml:"UploadId,omitempty"`
 }
 
+type copyObjectResult struct {
+	XMLName      xml.Name `xml:"CopyObjectResult"`
+	XMLNS        string   `xml:"xmlns,attr"`
+	LastModified string   `xml:"LastModified,omitempty"`
+	ETag         string   `xml:"ETag"`
+}
+
 func listObjectsResult(bucket, prefix string, limit int32, page objectstorage.ObjectPage) listBucketResult {
 	result := listBucketResult{
-		XMLNS: s3XMLNamespace, Name: bucket, Prefix: prefix, KeyCount: len(page.Items), MaxKeys: limit,
+		XMLNS: s3XMLNamespace, Name: bucket, Prefix: prefix, KeyCount: len(page.Items) + len(page.CommonPrefixes), MaxKeys: limit,
 		IsTruncated: page.NextCursor != "", NextContinuationToken: page.NextCursor,
-		Contents: make([]listedObject, 0, len(page.Items)),
+		Contents:       make([]listedObject, 0, len(page.Items)),
+		CommonPrefixes: make([]commonPrefix, 0, len(page.CommonPrefixes)),
 	}
 	for _, object := range page.Items {
 		result.Contents = append(result.Contents, listedObject{
 			Key: object.Key, LastModified: object.LastModified.UTC().Format(time.RFC3339Nano),
 			Size: object.Size, StorageClass: "STANDARD",
 		})
+	}
+	for _, value := range page.CommonPrefixes {
+		result.CommonPrefixes = append(result.CommonPrefixes, commonPrefix{Prefix: value})
 	}
 	return result
 }

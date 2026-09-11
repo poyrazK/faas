@@ -61,6 +61,8 @@ func (s *gatewayTestStore) AdmitObjectURL(_ context.Context, _, _, key string, _
 
 type gatewayTestProvider struct {
 	objects          objectstorage.ObjectPage
+	objectSize       int64
+	copyRequests     []objectstorage.CopyObjectRequest
 	deleted          string
 	multipart        map[string]map[int32]objectstorage.MultipartPart
 	completedUploads []string
@@ -87,6 +89,16 @@ func (*gatewayTestProvider) CreateBucket(context.Context, string) error { return
 func (*gatewayTestProvider) DeleteBucket(context.Context, string) error { return nil }
 func (p *gatewayTestProvider) ListObjects(context.Context, string, string, string, int32) (objectstorage.ObjectPage, error) {
 	return p.objects, nil
+}
+func (p *gatewayTestProvider) ListObjectsDelimited(context.Context, string, string, string, string, int32) (objectstorage.ObjectPage, error) {
+	return p.objects, nil
+}
+func (p *gatewayTestProvider) ObjectSize(context.Context, string, string) (int64, error) {
+	return p.objectSize, nil
+}
+func (p *gatewayTestProvider) CopyObject(_ context.Context, _ string, request objectstorage.CopyObjectRequest) (objectstorage.CopyObjectResult, error) {
+	p.copyRequests = append(p.copyRequests, request)
+	return objectstorage.CopyObjectResult{ETag: `"copy-etag"`, LastModified: time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)}, nil
 }
 func (p *gatewayTestProvider) DeleteObject(_ context.Context, _ string, key string) error {
 	p.deleted = key
@@ -402,6 +414,54 @@ func TestGatewayListsOnlyCredentialBucket(t *testing.T) {
 		if err := xml.Unmarshal(recorder.Body.Bytes(), new(any)); err != nil {
 			t.Fatalf("invalid XML: %v", err)
 		}
+	}
+}
+
+func TestGatewayListsCommonPrefixes(t *testing.T) {
+	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(*http.Request) (*http.Response, error) {
+		t.Fatal("delimiter listing must use provider capability")
+		return nil, nil
+	})
+	provider.objects = objectstorage.ObjectPage{
+		Items:          []objectstorage.Object{{Key: "root.txt", Size: 4, LastModified: time.Date(2026, 9, 7, 1, 2, 3, 0, time.UTC)}},
+		CommonPrefixes: []string{"photos/", "videos/"},
+	}
+	recorder := httptest.NewRecorder()
+	request := signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets?list-type=2&delimiter=%2F&x-id=ListObjectsV2", nil, "UNSIGNED-PAYLOAD")
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<CommonPrefixes><Prefix>photos/</Prefix></CommonPrefixes>") || !strings.Contains(recorder.Body.String(), "<KeyCount>3</KeyCount>") {
+		t.Fatalf("delimiter listing = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayCopyObjectWithReplacementMetadata(t *testing.T) {
+	handler, store, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(*http.Request) (*http.Response, error) {
+		t.Fatal("copy must use provider capability")
+		return nil, nil
+	})
+	provider.objectSize = 12
+	request := httptest.NewRequest(http.MethodPut, "https://s3.gregale.dev/assets/archive/copy.txt", nil)
+	request.Host = "s3.gregale.dev"
+	request.Header.Set("X-Amz-Copy-Source", "/assets/source.txt")
+	request.Header.Set("X-Amz-Metadata-Directive", "REPLACE")
+	request.Header.Set("X-Amz-Meta-Owner", "platform")
+	request.Header.Set("Content-Type", "text/plain")
+	request.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+	request.Header.Set("X-Amz-Date", "20260907T120000Z")
+	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "CopyObjectResult") || len(provider.copyRequests) != 1 {
+		t.Fatalf("copy = %d %s requests=%+v", recorder.Code, recorder.Body.String(), provider.copyRequests)
+	}
+	copy := provider.copyRequests[0]
+	if copy.SourceKey != "source.txt" || copy.DestinationKey != "archive/copy.txt" || copy.MetadataDirective != "REPLACE" || copy.Metadata.ContentType != "text/plain" || copy.Metadata.Metadata["owner"] != "platform" {
+		t.Fatalf("copy request = %+v", copy)
+	}
+	if len(store.admitted) == 0 || store.admitted[len(store.admitted)-1] != "archive/copy.txt" {
+		t.Fatalf("copy was not admitted: %v", store.admitted)
 	}
 }
 
