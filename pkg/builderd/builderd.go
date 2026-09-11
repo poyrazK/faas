@@ -114,6 +114,11 @@ type Config struct {
 	// behaves like the pre-B2.2 FIFO claim). Default 30s; a longer
 	// window trades queue latency for fairness.
 	FairnessWindow time.Duration `toml:"fairness_window"`
+	// WarmIdle is how long a captured builder snapshot remains eligible for
+	// reuse. The transport driver keeps warm mode disabled until the full
+	// capture/restore handoff is available, but the lifecycle policy is
+	// initialized here so every future path uses the same bound.
+	WarmIdle time.Duration `toml:"warm_idle"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
 	// #197 B3.1). Defaulted to "default-local" on the one-box by
@@ -166,6 +171,10 @@ type Builderd struct {
 	// deployments. Local/single-box deployments leave it nil and continue to
 	// read the source spool directly.
 	sourceStorage storage.StorageBackend
+	// warm owns the guaranteed-slot state machine. It is deliberately kept
+	// separate from VM so an implementation can add warm capture/restore
+	// without changing the existing cold-build interface.
+	warm *WarmLifecycle
 	// lifecycleMu closes the admission race between ProcessOne/ProcessNext and
 	// Drain. Once draining is true no new process call can increment processWG.
 	lifecycleMu sync.Mutex
@@ -192,6 +201,9 @@ func New(store state.Store, notif Notifier, vm VM, cache *Cache, det *Detector, 
 	if cfg.SourceWaitTimeout == 0 {
 		cfg.SourceWaitTimeout = 10 * time.Second
 	}
+	if cfg.WarmIdle <= 0 {
+		cfg.WarmIdle = DefaultWarmIdle
+	}
 	if cfg.BuildLogMaxBytes <= 0 {
 		cfg.BuildLogMaxBytes = DefaultBuildLogMaxBytes
 	}
@@ -208,7 +220,43 @@ func New(store state.Store, notif Notifier, vm VM, cache *Cache, det *Detector, 
 		cfg:           cfg,
 		log:           log,
 		builderNodeID: cfg.BuilderNodeID,
+		warm:          NewWarmLifecycle(cfg.WarmIdle),
 	}
+}
+
+// StartWarmBuilder reserves the guaranteed warm slot and returns the
+// consumed snapshot, if any. The caller must remove that snapshot from its
+// storage backend after a miss or stale result. Restore hits retain the same
+// snapshot metadata for the VM driver to consume.
+func (b *Builderd) StartWarmBuilder(now time.Time, currentFCVersion string) (WarmRestoreResult, WarmSnapshot, error) {
+	result, snapshot, err := b.warm.StartWithSnapshot(now, currentFCVersion)
+	if err == nil && b.ops != nil {
+		b.ops.ObserveBuilderWarmRestore(string(result))
+	}
+	return result, snapshot, err
+}
+
+// CompleteWarmBuilder publishes a successfully captured snapshot into the
+// lifecycle. Invalid metadata returns the lifecycle to cold.
+func (b *Builderd) CompleteWarmBuilder(now time.Time, snapshot WarmSnapshot) error {
+	return b.warm.Complete(now, snapshot)
+}
+
+// ExpireWarmBuilder evicts an idle snapshot and returns its metadata so the
+// VM driver can delete the backing-store objects.
+func (b *Builderd) ExpireWarmBuilder(now time.Time) (WarmSnapshot, bool) {
+	return b.warm.ExpireSnapshot(now)
+}
+
+// InvalidateWarmBuilder returns the warm slot to cold and returns retained
+// snapshot metadata for best-effort backing-store cleanup.
+func (b *Builderd) InvalidateWarmBuilder() (WarmSnapshot, bool) {
+	return b.warm.InvalidateSnapshot()
+}
+
+// WarmState reports the current guaranteed-slot lifecycle state.
+func (b *Builderd) WarmState() WarmState {
+	return b.warm.State()
 }
 
 // WithOpsMetrics attaches the build-metrics sink (ADR-030) and returns the

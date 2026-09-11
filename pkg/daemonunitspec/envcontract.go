@@ -149,6 +149,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_BUILDERD_ROLE", Owners: []string{"builderd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_BUILDER_BASE_PATH", Owners: []string{"imaged", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_BUILDER_BASE_REF", Owners: []string{"imaged"}, Source: EnvSourceDropin},
+	{Name: "FAAS_BUILDER_WARM_IDLE_MS", Owners: []string{"builderd"}, Source: EnvSourceDefault, Note: "optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes"},
 	{Name: "FAAS_CANARY_PROGRESSION_TOKEN", Owners: []string{"meterd"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); Safe Deploy activation requires this and FAAS_SAFEDEPLOY_TOKEN together"},
 	{Name: "FAAS_CERT_EXPIRY_REFRESHER_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_CLI_AUTH_URL_BASE", Owners: []string{"apid"}, Source: EnvSourceDefault},
