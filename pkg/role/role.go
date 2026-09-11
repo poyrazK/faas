@@ -8,7 +8,8 @@
 //   - RoleControlPlane: a multi-box install where this host runs the
 //     control-plane daemons (apid, schedd, gatewayd-public, githubd,
 //     meterd). Compute-only daemons (vmmd, gatewayd-internal,
-//     builderd, imaged) must refuse to start.
+//     builderd, imaged) must refuse to start. M9 also runs schedd on
+//     compute hosts, so schedd accepts both production roles.
 //   - RoleComputeOnly: a multi-box install where this host runs the
 //     compute-only daemons. Control-plane daemons must refuse to
 //     start.
@@ -72,10 +73,9 @@ const (
 	// refuse to start under this role.
 	RoleControlPlane Role = "control-plane"
 
-	// RoleComputeOnly is the multi-box shape where this host
-	// runs the compute-only daemons (vmmd, gatewayd-internal,
-	// builderd, imaged). Control-plane daemons refuse to start
-	// under this role.
+	// RoleComputeOnly is the multi-box shape where this host runs the
+	// compute daemons (vmmd, gatewayd-internal, builderd, imaged) and its
+	// node-local schedd. Control-plane-only daemons still refuse this role.
 	RoleComputeOnly Role = "compute-only"
 )
 

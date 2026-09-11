@@ -1,9 +1,10 @@
 # Gate-B (issue #297 / ADR-025 §Tier 2) compute-only box.
-# fsn-2 runs vmmd, gatewayd-internal, builderd, imaged.
-# Postgres + the Tier 1 PKI CA live on fsn-1; this box dials schedd over
-# the overlay network (Tail/wg) with the per-node client cert vmmd's
-# `gregalectl pki init --box-role=compute-only` (PR-3) lays out under
-# /etc/faas/tls/vmmd/schedd-client.{crt,key}.
+# fsn-2 runs vmmd, schedd, gatewayd-internal, builderd, imaged.
+# Postgres + the Tier 1 PKI CA live on fsn-1; this box runs its own schedd
+# beside vmmd and reaches the control plane over the overlay network.
+# M9 also consumes the shared schedd
+# server/client leaves that `gregalectl pki init --box-role=compute-only`
+# lays out under /etc/faas/tls/schedd/.
 #
 # The role gate (pkg/role, PR-1) refuses to start vmmd/gatewayd-internal/
 # builderd/imaged under RoleControlPlane; the var below is the deploy-time
@@ -28,6 +29,8 @@ ansible_python_interpreter: /usr/bin/python3
 # is required.
 faas_vmmd_listen_addr: "tcp://0.0.0.0:50051"
 faas_vmmd_target_url: "tcp://fsn-2.gregale.dev:50051"
+faas_vmmd_schedd_target: "tcp://fsn-2.gregale.dev:9091"
+faas_gatewayd_schedd_target: "tcp://fsn-2.gregale.dev:9091"
 
 # The control-plane public gateway discovers this endpoint from the
 # compute_nodes registry. It is deliberately separate from vmmd's gRPC

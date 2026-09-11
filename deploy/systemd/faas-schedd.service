@@ -2,7 +2,8 @@
 Description=onebox-faas schedd — scheduler + lifecycle owner
 After=network.target postgresql.service faas-cp.slice faas-brokerq.slice
 Wants=faas-cp.slice faas-brokerq.slice
-Requires=postgresql.service
+# PostgreSQL is local on the control plane and remote on compute-node
+# schedds. The daemon readiness probe owns the actual DATABASE_URL check.
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 

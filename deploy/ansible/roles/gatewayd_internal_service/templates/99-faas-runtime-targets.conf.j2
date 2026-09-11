@@ -4,7 +4,7 @@
 # older operators that invoke the binary without its unit wrapper.
 Environment=FAAS_GATEWAYD_CONFIG={{ gatewayd_config_path }}
 # The warm-hint/log stream client uses this target. Compute-only hosts get
-# the generated control-plane TCP URL; single-box hosts retain the Unix path.
+# their node-local schedd TCP URL; single-box hosts retain the Unix path.
 Environment=FAAS_SCHEDD_SOCKET={{ faas_gatewayd_schedd_target | default(faas_vmmd_schedd_target | default('/run/faas/schedd.sock')) }}
 {% if gatewayd_app_errors_target | default('') | length > 0 %}
 # Compute-only gatewayd reports grouped application errors to the control

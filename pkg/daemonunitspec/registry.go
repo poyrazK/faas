@@ -31,6 +31,11 @@ type Entry struct {
 	// (role_convergence + fleet_verify) and deployctl's per-role trees all
 	// used to copy by hand (ADR-143).
 	Role Role
+	// AdditionalRoles lists roles that also run this daemon. M9 gives each
+	// compute node its own schedd while retaining the control-plane schedd;
+	// keeping the primary Role preserves the existing registry shape for
+	// callers that need one canonical owner.
+	AdditionalRoles []Role
 }
 
 // Role is a split-box host role.
@@ -46,11 +51,20 @@ const (
 func DaemonsForRole(role Role) []string {
 	var out []string
 	for _, e := range Registry {
-		if e.Role == role {
+		if e.Role == role || containsRole(e.AdditionalRoles, role) {
 			out = append(out, e.Name)
 		}
 	}
 	return out
+}
+
+func containsRole(roles []Role, want Role) bool {
+	for _, role := range roles {
+		if role == want {
+			return true
+		}
+	}
+	return false
 }
 
 type Probe string
@@ -90,7 +104,7 @@ func ActivationOrder() []string {
 var Registry = []Entry{
 	{Name: "vmmd", Unit: UnitVmmd, Role: RoleComputeOnly, Critical: true, Lifecycle: Lifecycle{Probe: ProbeUnix, ProbeTarget: "/run/faas/vmmd.sock", ReadyzURL: "http://127.0.0.1:9104/readyz"}},
 	{Name: "apid", Unit: UnitApid, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{Probe: ProbeSystemd, ReadyzURL: "http://127.0.0.1:9101/readyz"}},
-	{Name: "schedd", Unit: UnitSchedd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/schedd.sock", ReadyzURL: "http://127.0.0.1:9103/readyz"}},
+	{Name: "schedd", Unit: UnitSchedd, Role: RoleControlPlane, AdditionalRoles: []Role{RoleComputeOnly}, Critical: true, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/schedd.sock", ReadyzURL: "http://127.0.0.1:9103/readyz"}},
 	{Name: "gatewayd-internal", Unit: UnitGatewaydInternal, Role: RoleComputeOnly, Critical: true, Lifecycle: Lifecycle{After: []string{"schedd", "apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9090", ReadyzURL: "http://127.0.0.1:9090/readyz"}},
 	{Name: "gatewayd-public", Unit: UnitGatewaydPublic, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8080", ReadyzURL: "http://127.0.0.1:9092/readyz"}},
 	{Name: "meterd", Unit: UnitMeterd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd, ReadyzURL: "http://127.0.0.1:9106/readyz"}},

@@ -33,10 +33,11 @@
 - name: role_convergence — select the forbidden daemon set
   ansible.builtin.set_fact:
     faas_role_forbidden_units: >-
-      {{ (faas_compute_only_units + faas_legacy_units)
-         if faas_box_role == 'control-plane'
-         else (faas_control_plane_units + faas_legacy_units
-               + faas_control_plane_observability_units) }}
+      {{ ((faas_compute_only_units + faas_legacy_units)
+          if faas_box_role == 'control-plane'
+          else (faas_control_plane_units + faas_legacy_units
+                + faas_control_plane_observability_units))
+         | difference(faas_role_allowed_units) }}
 
 - name: role_convergence — stop and disable opposite-role services when present
   ansible.builtin.systemd:

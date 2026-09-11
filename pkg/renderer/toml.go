@@ -218,6 +218,20 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		}
 		return "", nil
 	case "vmmd_target":
+		// M9 gives every compute host a node-local schedd. Its
+		// scheduler must drive the vmmd on the same host rather than
+		// inheriting the manifest's control-plane compatibility target
+		// (often vmmd.faas, which is intentionally only an alias for
+		// the first compute host). Preserve an explicit unix target for
+		// local development by leaving vmmd_target empty so vmmd_socket
+		// carries the path; production compute nodes use vmmd's local
+		// TCP listener.
+		if daemon == "schedd" && hostRole == "compute-only" {
+			if dc.Outbound != nil && strings.HasPrefix(dc.Outbound.Target, "unix://") {
+				return "", nil
+			}
+			return "tcp://127.0.0.1:50051", nil
+		}
 		if daemon == "builderd" && hostAddress != "" {
 			return manifest.TCPURL(hostAddress)
 		}
@@ -250,6 +264,13 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		}
 		return "", nil
 	case "gateway_synth_target":
+		// Synthetic cron dispatch from a compute-owned schedd stays on
+		// the same host. The split-box manifest's public target belongs
+		// to the control-plane scheduler and would otherwise send this
+		// node's cron traffic across the fleet edge.
+		if daemon == "schedd" && hostRole == "compute-only" {
+			return "unix:///run/faas/gatewayd-internal.sock", nil
+		}
 		return dc.GatewaySynthTarget, nil
 	case "gateway_metrics_url":
 		return dc.GatewayMetricsURL, nil

@@ -32,10 +32,13 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // ships across fsn-1 / fsn-2.
 func UnitSchedd() daemonunit.Unit {
 	return daemonunit.Unit{
-		Description:           "onebox-faas schedd — scheduler + lifecycle owner",
-		After:                 []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-brokerq.slice"},
-		Wants:                 []string{"faas-cp.slice", "faas-brokerq.slice"},
-		Requires:              []string{"postgresql.service"},
+		Description: "onebox-faas schedd — scheduler + lifecycle owner",
+		After:       []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-brokerq.slice"},
+		Wants:       []string{"faas-cp.slice", "faas-brokerq.slice"},
+		// PostgreSQL is local on the control plane and remote on
+		// compute-node schedds. Readiness owns the DATABASE_URL
+		// dependency, so a missing local postgres unit must not prevent
+		// the node-local daemon from starting.
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 

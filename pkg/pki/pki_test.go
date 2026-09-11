@@ -474,10 +474,9 @@ func TestRolesIncludesEveryDaemon(t *testing.T) {
 //   - The two per-box sets are non-empty (a future operator who
 //     accidentally zeroes the filter would not silently leave a box
 //     with no PKI material).
-//   - The two per-box sets are disjoint — no daemon directory
-//     appears on both boxes (a future operator who double-listed
-//     a directory would issue the leaf twice; the stdlib verifier
-//     would still accept it but the on-disk write would race).
+//   - The per-box sets only overlap for the explicitly shared schedd
+//     directory. M9 runs schedd on both roles; every other directory
+//     remains owned by one role so a future accidental overlap is caught.
 func TestRolesForBoxIsSubsetOfRoles(t *testing.T) {
 	canonical := Roles()
 	canonicalDirs := map[string]bool{}
@@ -519,8 +518,8 @@ func TestRolesForBoxIsSubsetOfRoles(t *testing.T) {
 		cpDirs[r.Directory] = true
 	}
 	for _, r := range co {
-		if cpDirs[r.Directory] {
-			t.Errorf("RolesForBox(compute-only) emitted %q which RolesForBox(control-plane) also emitted; per-box sets must be disjoint", r.Directory)
+		if cpDirs[r.Directory] && r.Directory != "schedd" {
+			t.Errorf("RolesForBox(compute-only) emitted %q which RolesForBox(control-plane) also emitted; only schedd may be shared", r.Directory)
 		}
 	}
 }

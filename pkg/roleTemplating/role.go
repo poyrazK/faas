@@ -100,11 +100,10 @@ var ErrUnknownRole = errors.New("roleTemplating: role is not control-plane|compu
 //     role.Require(daemon, cfg.Role, allow...). Must match
 //     cmd/<daemon>/main.go's role.Require call site byte-for-byte.
 //
-// Why a hand-rolled table here rather than reading the registry: the
-// registry has a single global `Registry` slice and doesn't tag each
-// entry with a role — the role-mapping is operational knowledge that
-// belongs here, not in the daemon spec. PR-B's future "tag the
-// registry with roles" ADR would lift this const to the registry.
+// Why keep the allow-list here as well as the registry role metadata: the
+// role-templating table mirrors the daemon binary's boot contract and its
+// exact environment key. The registry owns placement and activation order;
+// this table owns the values rendered into each daemon's role drop-in.
 type daemonInfo struct {
 	EnvKey string
 	Allows map[Role]bool
@@ -143,7 +142,7 @@ var daemonInfoTable = map[string]daemonInfo{
 	},
 	"schedd": {
 		EnvKey: "FAAS_SCHEDD_ROLE",
-		Allows: map[Role]bool{RoleSingleBox: true, RoleControlPlane: true},
+		Allows: map[Role]bool{RoleSingleBox: true, RoleControlPlane: true, RoleComputeOnly: true},
 	},
 	"meterd": {
 		EnvKey: "FAAS_METERD_ROLE",

@@ -2,7 +2,9 @@
 # (issue #911 / ADR-110).
 #
 # This file is the canonical example for a multi-box Fleet:
-# one control-plane host (fsn-1) and one compute-only host (fsn-2).
+# one control-plane host (fsn-1) and one or more compute-only hosts
+# (fsn-2, ...). The control plane and each compute host run a schedd;
+# compute hosts also run vmmd for node-local placement and lifecycle.
 # It is loaded by `gregalectl manifest validate` and by the `make
 # lint-manifest` CI gate. The same shape (minus the Fleet block)
 # works for a single-box install — replace the Fleet with a single
@@ -84,17 +86,18 @@ daemons:
       ca_path: /etc/faas/tls/ca/ca.crt
       mode: "0400"
     # This is the static compatibility fallback. Per-node routing comes
-    # from compute_nodes.target_url, which the renderer derives from each
-    # compute host's endpoint. Static cron/metrics traffic uses the primary
-    # compute gatewayd-internal.
+    # from compute_nodes.schedd_target_url, which vmmd self-registration
+    # receives from each host's generated node-local target. The control
+    # plane keeps its stable schedd entrypoint; compute hosts use their own
+    # schedd bind endpoint.
     outbound:
       target: tcp://vmmd.faas:50051
       tls:
         cert_path: /etc/faas/tls/schedd/vmmd-client.crt
         key_path: /etc/faas/tls/schedd/vmmd-client.key
         ca_path: /etc/faas/tls/ca/ca.crt
-    # The control-plane edge owns the stable scheduler entrypoint and
-    # selects an active compute gateway from compute_nodes.
+    # The control-plane schedd uses the stable edge target; compute schedds
+    # are rewritten to their local gatewayd-internal socket by the renderer.
     gateway_synth_target: tcp://127.0.0.1:8080
   vmmd:
     bind: tcp://0.0.0.0:50051

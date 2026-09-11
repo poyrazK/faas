@@ -72,7 +72,7 @@ func TestSubset(t *testing.T) {
 		{
 			"compute-only subset",
 			RoleComputeOnly,
-			[]string{"vmmd", "gatewayd-internal", "imaged", "builderd"},
+			[]string{"vmmd", "schedd", "gatewayd-internal", "imaged", "builderd"},
 		},
 	}
 	for _, tt := range tests {
@@ -113,7 +113,7 @@ func TestSubsetHonorsDaemonRoleGates(t *testing.T) {
 	dmnAllows := map[string]map[Role]bool{
 		"vmmd":              {RoleSingleBox: true, RoleComputeOnly: true},
 		"apid":              {RoleSingleBox: true, RoleControlPlane: true},
-		"schedd":            {RoleSingleBox: true, RoleControlPlane: true},
+		"schedd":            {RoleSingleBox: true, RoleControlPlane: true, RoleComputeOnly: true},
 		"meterd":            {RoleSingleBox: true, RoleControlPlane: true},
 		"githubd":           {RoleSingleBox: true, RoleControlPlane: true},
 		"gatewayd-public":   {RoleSingleBox: true, RoleControlPlane: true},
@@ -381,13 +381,15 @@ func TestMutateControlPlaneToComputeOnly(t *testing.T) {
 		t.Fatalf("Mutate error: %v", err)
 	}
 
-	// Stop: 5 control-plane-only daemons (apid, schedd,
-	// gatewayd-public, meterd, githubd). Note gatewayd-public
+	// Stop: 4 control-plane-only daemons (apid, gatewayd-public,
+	// meterd, githubd). schedd is shared by both roles and remains
+	// active while the host transitions to a compute-only node.
+	// Note gatewayd-public
 	// REJECTS compute-only (per cmd/gatewayd-public/main.go:144),
 	// so it IS in the stop list under the corrected model — the
 	// pre-review expectation was wrong.
 	wantStopped := map[string]bool{
-		"apid": true, "schedd": true, "gatewayd-public": true,
+		"apid": true, "gatewayd-public": true,
 		"meterd": true, "githubd": true,
 	}
 	for _, d := range stopped {
@@ -445,9 +447,10 @@ func TestMutateComputeOnlyToControlPlane(t *testing.T) {
 	if len(stopped) != len(wantStopped) {
 		t.Errorf("Mutate stopped %d daemons (%v), want exactly %v", len(stopped), stopped, wantStopped)
 	}
-	// Start: 5 control-plane daemons (apid, schedd, gatewayd-public, meterd, githubd).
+	// Start: 4 control-plane-only daemons (apid, gatewayd-public,
+	// meterd, githubd). schedd is already running on the compute node.
 	wantStarted := map[string]bool{
-		"apid": true, "schedd": true, "gatewayd-public": true,
+		"apid": true, "gatewayd-public": true,
 		"meterd": true, "githubd": true,
 	}
 	for _, d := range started {

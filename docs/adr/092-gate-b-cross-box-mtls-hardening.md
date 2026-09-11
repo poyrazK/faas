@@ -2,7 +2,7 @@
 
 - **Status:** accepted v1.0 (2026-08-10)
 - **Date:** 2026-08-10 (proposed + accepted)
-- **Decision:** Split the FaaS daemon fleet across two physical hosts and harden the cross-box mTLS posture so the production cutover from a single-box loopback deployment (`127.0.0.1` on fsn-1) to a decoupled two-box topology (control-plane on fsn-1, compute-only on fsn-2) is operator-reproducible and CI-pinned. No new cryptography is introduced; Gate-B is the **operational scaffolding** on top of ADR-052 (chain + SAN + EKU + PeerCN), ADR-056 (`pkg/wire.PGNodeVerifier`), and ADR-070 (gatewayd-public / gatewayd-internal split).
+- **Decision:** Split the FaaS daemon fleet across a control-plane host and one or more compute hosts, and harden the cross-box mTLS posture so the production cutover from a single-box loopback deployment (`127.0.0.1` on fsn-1) is operator-reproducible and CI-pinned. M9 runs a peer schedd beside vmmd on every compute host while retaining the control-plane schedd. No new cryptography is introduced; Gate-B is the **operational scaffolding** on top of ADR-052 (chain + SAN + EKU + PeerCN), ADR-056 (`pkg/wire.PGNodeVerifier`), and ADR-070 (gatewayd-public / gatewayd-internal split).
 - **Why:** ADR-025 §Tier 2 has retired all five Tier 1 pre-requisites plus #250. ADR-025 lines 39-43 list the remaining cutover gates; this ADR closes the first. Without the split the fleet's `fsn-1` + `fsn-2` boxes both run the full daemon set, which (a) lets a single host compromise expose every surface (apid, vmmd, builderd, imaged, meterd, gatewayd-public, gatewayd-internal, githubd), (b) wastes control-plane memory on boxes that don't need to run vmmd/builderd/imaged, and (c) prevents the operator from running the multi-host cutover at all because the per-daemon role is not enforced anywhere. The role gate + per-box ansible split + per-box PKI subset close the operational surface; verifier wiring is a follow-up slice (see §Future work).
 - **Consequences:**
   - **Role gate (PR-1):** every daemon refuses to start under the wrong observed role. The PR-1 `pkg/role` package + per-daemon `[faas].role` field + `role.Require(daemon, observed, allow...)` enforce the per-box assignment listed below. Single-box dev (`make bootstrap` against `127.0.0.1`) defaults to `RoleSingleBox` and every daemon is allowed to start; back-compat is preserved.
@@ -16,7 +16,7 @@
 | Daemon            | Allowed roles                            | Lives on |
 |-------------------|------------------------------------------|----------|
 | apid              | single-box, control-plane                | fsn-1    |
-| schedd            | single-box, control-plane                | fsn-1    |
+| schedd            | single-box, control-plane, compute-only | fsn-1 + every compute node |
 | gatewayd-public   | single-box, control-plane                | fsn-1    |
 | githubd           | single-box, control-plane                | fsn-1    |
 | meterd            | single-box, control-plane                | fsn-1    |
@@ -34,11 +34,16 @@ The filter is Directory-based: each per-daemon subdirectory under `/etc/faas/tls
 | Box role         | Directories it owns                                                                             |
 |------------------|-------------------------------------------------------------------------------------------------|
 | `control-plane`  | `schedd`, `apid`, `meterd`, `githubd`, `gatewayd-public`                                        |
-| `compute-only`   | `vmmd`, `builderd`, `imaged`, `gatewayd`, `egress`, `gatewayd-internal-public`                  |
+| `compute-only`   | `schedd`, `vmmd`, `builderd`, `imaged`, `gatewayd`, `egress`, `gatewayd-internal-public`       |
 | `single-box` / `""` | All directories (the legacy pre-Gate-B posture; equivalent to `pkg/pki.Roles()`)               |
 | anything else    | Empty slice (fail-closed; operator sees "0 leaves written" rather than a silent full-fleet issuance) |
 
-The two per-box sets are **disjoint** (a daemon directory does not appear on both boxes). Pinned by `pkg/pki/pki_test.go::TestRolesForBoxIsSubsetOfRoles` invariants — every per-role set is a subset of `Roles()`, both per-box sets are non-empty, `RoleSingleBox` returns `Roles()` verbatim, and the two per-box sets are disjoint.
+The two per-box sets are disjoint except for the explicitly shared `schedd`
+directory, which is present on both roles now that M9 runs a node-local
+schedd on every compute host. The invariant is pinned by
+`pkg/pki/pki_test.go::TestRolesForBoxIsSubsetOfRoles`: every per-role set is a
+subset of `Roles()`, both per-box sets are non-empty, `RoleSingleBox` returns
+`Roles()` verbatim, and no directory other than `schedd` overlaps.
 
 ## Reused primitives (no change)
 
@@ -72,7 +77,7 @@ Gate-B is the deployment-shape layer on top of these three. No new mTLS primitiv
 ### PR-3 — `gregalectl pki init --box-role` + PGNodeVerifier extension (merged; verifier wiring deferred)
 
 - `pkg/pki.RolesForBox(role role.Role) []Role` — per-box subset filter; canonical `pkg/pki.Roles()` unchanged.
-- `pkg/pki/pki_test.go::TestRolesForBoxIsSubsetOfRoles` — four invariants (subset, non-empty, single-box back-compat, disjoint).
+- `pkg/pki/pki_test.go::TestRolesForBoxIsSubsetOfRoles` — four invariants (subset, non-empty, single-box back-compat, and only the M9 `schedd` overlap).
 - `cmd/gregale/commands_pki.go` — `--box-role` flag threaded through `ensureAllLeaves`, `ensureAllLeavesFiltered`, `reportLeafStatusAll`, `cmdPKIInit`, `cmdPKIRotate`, `cmdPKIStatus`. Empty / unset preserves the full-set posture. Invalid values fail-closed.
 - **PGNodeVerifier wiring on the remaining five daemons was scoped to a follow-up slice.** On closer review, **none of apid / gatewayd-internal / meterd / githubd / builderd have a cross-box mTLS dial in v1** — apid dials githubd (fsn-1 → fsn-1), gatewayd-internal talks to schedd via `pg_notify` only, meterd dials schedd + egress (fsn-1 → fsn-1), githubd serves on unix socket, builderd dials vmmd (fsn-2 → fsn-2). The stdlib chain + SAN + EKU path is sufficient for same-box dials (every leaf on a box is issued by the same CA). `PGNodeVerifier` is load-bearing for cross-box hops; those land later as new dial relationships are added. See §Future work.
 

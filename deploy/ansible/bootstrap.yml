@@ -20,7 +20,7 @@
 #
 # Per-box daemons:
 #   fsn-1 (control-plane): apid, schedd, meterd, gatewayd-public, githubd
-#   fsn-2 (compute-only):  vmmd, gatewayd-internal, builderd, imaged
+#   fsn-2 (compute-only):  vmmd, schedd, gatewayd-internal, builderd, imaged
 #
 # The vars_file is loaded only on the control-plane host; the
 # off_host_backup_* vars are read from /etc/faas/sealed.env at
@@ -136,6 +136,8 @@
     - role: node_exporter
     # Compute-only:
     - role: vmmd_service
+    # M9: every compute node owns a node-local schedd for heartbeat and
+    # recovery decisions. The shared database is remote on this host.
     # ADR-143: stage the GeoIP database BEFORE gatewayd-internal so its
     # first start finds the file at the FAAS_GEOIP_DB_PATH default.
     - role: geoip
