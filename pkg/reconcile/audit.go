@@ -23,10 +23,10 @@ const (
 	KindWorkloadAdded    = "project.workload.added"
 	KindWorkloadChanged  = "project.workload.changed"
 	KindWorkloadRemoved  = "project.workload.removed"
-	// KindWorkloadSkipped fires once per operator --exclude row at
-	// preview time (cmd/apid.scan_service.emitWorkloadSkippedRow).
-	// The apply path runs the same scan partition so re-emitting
-	// would double-count; preview is the source of truth. SOC 2
+	// KindWorkloadSkipped fires once per operator --exclude row after
+	// a successful apply (cmd/apid.handlers_decompose emits it from
+	// the completed apply response). Read-only previews deliberately
+	// do not write audit rows. SOC 2
 	// CC7.2 ("who deployed v3 and what did they skip?") needs a
 	// durable row per skip — slog alone is not auditable. The
 	// kind sits in the project.workload.<verb> shape so the
@@ -47,11 +47,11 @@ const (
 	// push → reconcile → build.
 	KindBuildEnqueued = "project.build.enqueued"
 	// KindProjectScopeExcluded fires once per persisted --exclude
-	// row folded into the apply path (ADR-124 follow-up #3,
+	// row folded into a successfully applied path (ADR-124 follow-up #3,
 	// migration 00418). Distinct from KindWorkloadSkipped: the
-	// skipped kind is preview-time only and emits for every
-	// operator --exclude; the scope-excluded kind is apply-time
-	// only and emits only for slugs that came from the persisted
+	// skipped kind emits for every operator --exclude after a
+	// successful apply; the scope-excluded kind is apply-time only
+	// and emits only for slugs that came from the persisted
 	// deployment_scope_exclusions table. The "scope" prefix
 	// mirrors the §table name and makes the data-flow audit
 	// legible: scope-excluded rows answer "what did the operator

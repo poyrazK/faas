@@ -19,6 +19,7 @@ package main
 // auth/middleware/orchestration seam only.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -371,7 +372,70 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 		}
 	}
 
+	// Audit operator exclusions only after every apply-side mutation
+	// above has completed successfully. The scan endpoint deliberately
+	// returns the same Skipped partition without writing audit rows.
+	s.emitProjectApplyExclusionAudits(r.Context(), r, acct, insertedProject, resp, added, changed)
+
 	writeJSON(w, http.StatusOK, out)
+}
+
+// emitProjectApplyExclusionAudits records the exclusion decisions made by a
+// completed project apply. Keeping this seam after reconcile, cron stamping,
+// and persisted-scope writes ensures a read-only scan (or a failed apply)
+// cannot leave durable audit history behind.
+func (s *server) emitProjectApplyExclusionAudits(
+	ctx context.Context,
+	r *http.Request,
+	acct state.Account,
+	project state.Project,
+	resp *scanPlanResponse,
+	added, changed []state.App,
+) {
+	if s.audit == nil || resp == nil {
+		return
+	}
+	actor := resolvedActorString(routeKindForRequest(r), acct.ID, "")
+	appIDs := make(map[string]string, len(resp.Skipped)+len(added)+len(changed))
+	for _, row := range resp.Skipped {
+		if row.ID != "" {
+			appIDs[strings.ToLower(row.Slug)] = row.ID
+		}
+	}
+	for _, app := range added {
+		appIDs[strings.ToLower(app.Slug)] = app.ID
+	}
+	for _, app := range changed {
+		appIDs[strings.ToLower(app.Slug)] = app.ID
+	}
+
+	if len(resp.Skipped) > 0 {
+		rows := append([]api.PlanAffectedApp(nil), resp.Skipped...)
+		for i := range rows {
+			if rows[i].ID == "" {
+				rows[i].ID = appIDs[strings.ToLower(rows[i].Slug)]
+			}
+		}
+		emitSkippedAuditRows(ctx, s.audit, actor, acct.ID, project.ID, resp.SourceSHA256, rows)
+	}
+
+	if len(resp.PersistedExclusions) == 0 {
+		return
+	}
+	// Persisted rows carry the last known app snapshot, including the
+	// deterministic synthetic id used for a brand-new excluded workload.
+	// Resolve that snapshot after the apply so the audit event remains tied
+	// to the project that actually completed.
+	if persisted, err := s.store.LookupDeploymentScopeExclusions(ctx, acct.ID, project.ID); err == nil {
+		for _, row := range persisted {
+			if appIDs[strings.ToLower(row.Slug)] == "" {
+				appIDs[strings.ToLower(row.Slug)] = row.AppID
+			}
+		}
+	} else {
+		s.log.Warn("apid: load persisted exclusions for audit", "project_id", project.ID, "err", err)
+	}
+	emitPersistedExcludedAuditRows(ctx, s.audit, actor, acct.ID, project.ID, resp.SourceSHA256, resp.PersistedExclusions, appIDs)
 }
 
 // appSummary is the per-app line in the apply response. Declared at

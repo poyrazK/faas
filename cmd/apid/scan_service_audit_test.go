@@ -4,7 +4,8 @@ package main
 // blocker #2 audit emission (emitWorkloadSkippedRow +
 // KindWorkloadSkipped). The audit row is the durable SOC 2
 // CC7.2 paper trail the operator needs to answer "who deployed
-// v3 and what did they skip?" — slog alone isn't auditable.
+// v3 and what did they skip?" — it is emitted after apply; a
+// read-only scan must not create durable history.
 // These tests pin:
 //
 //  1. kind = project.workload.skipped
@@ -16,12 +17,22 @@ package main
 //     one row per entry, not coalesced)
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
+	"errors"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reconcile"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // skippedStubAudit satisfies auditEmitterAs. Records every EmitAs
@@ -33,6 +44,183 @@ import (
 type skippedStubAudit struct {
 	mu    sync.Mutex
 	calls []skippedAuditCall
+}
+
+func scanAuditRegressionTarGz(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	entries := []struct {
+		name string
+		body string
+	}{
+		{"repo/apps/included/Dockerfile", "FROM alpine\n"},
+		{"repo/apps/excluded/Dockerfile", "FROM alpine\n"},
+	}
+	for _, entry := range entries {
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     entry.name,
+			Mode:     0o644,
+			ModTime:  time.Unix(0, 0),
+			Size:     int64(len(entry.body)),
+			Typeflag: tar.TypeReg,
+		}); err != nil {
+			t.Fatalf("tar header %s: %v", entry.name, err)
+		}
+		if _, err := tw.Write([]byte(entry.body)); err != nil {
+			t.Fatalf("tar body %s: %v", entry.name, err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar close: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func scanAuditRegressionRequest(t *testing.T, key string, source []byte, fields map[string]string) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("source", "project.tar.gz")
+	if err != nil {
+		t.Fatalf("create source part: %v", err)
+	}
+	if _, err := fw.Write(source); err != nil {
+		t.Fatalf("write source part: %v", err)
+	}
+	for name, value := range fields {
+		if err := mw.WriteField(name, value); err != nil {
+			t.Fatalf("write field %s: %v", name, err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/scan", &body)
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	return req
+}
+
+// TestScanProject_ExclusionsRemainReadOnly pins issue #1978: the scan
+// endpoint preserves the affected-workload projection, but neither a
+// per-deploy --exclude nor --persist-exclude may append durable audit rows or
+// create a project before the operator applies the plan.
+func TestScanProject_ExclusionsRemainReadOnly(t *testing.T) {
+	t.Setenv("FAAS_SCAN_SPOOL_ROOT", t.TempDir())
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+
+	cases := []struct {
+		name       string
+		fields     map[string]string
+		wantStatus int
+		wantSkip   bool
+	}{
+		{
+			name:       "exclude",
+			fields:     map[string]string{"project_slug": "scan-exclude", "exclude": "excluded"},
+			wantStatus: http.StatusOK,
+			wantSkip:   true,
+		},
+		{
+			name:       "persist-exclude",
+			fields:     map[string]string{"project_slug": "scan-persist", "exclude": "excluded", "persist_exclude": "true"},
+			wantStatus: http.StatusOK,
+			wantSkip:   true,
+		},
+		{
+			name:       "unknown-exclude",
+			fields:     map[string]string{"project_slug": "scan-invalid", "exclude": "missing"},
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, _ := newTestServerWithCapturingNotifier(t, api.PlanPro)
+			req := scanAuditRegressionRequest(t, e.key, scanAuditRegressionTarGz(t), tc.fields)
+			rec := httptest.NewRecorder()
+			e.h.ServeHTTP(rec, req)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("scan status = %d, want %d; body=%s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.wantSkip {
+				var resp scanPlanResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("scan response is not JSON: %v", err)
+				}
+				if len(resp.Skipped) != 1 || resp.Skipped[0].Slug != "excluded" {
+					t.Fatalf("scan skipped = %#v, want the excluded workload preserved", resp.Skipped)
+				}
+			}
+			events, err := e.store.ListEvents(context.Background(), "", 100)
+			if err != nil {
+				t.Fatalf("list audit events: %v", err)
+			}
+			if len(events) != 0 {
+				t.Fatalf("scan wrote %d audit events: %#v", len(events), events)
+			}
+			if _, err := e.store.ProjectBySlug(context.Background(), e.acct.ID, tc.fields["project_slug"]); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("scan created project: err=%v, want %v", err, state.ErrNotFound)
+			}
+		})
+	}
+}
+
+// TestApplyProject_ExclusionAuditAfterSuccess is the positive counterpart to
+// the read-only regression: the same skipped partition is audited once the
+// apply has completed, and the event is tied to the persisted project.
+func TestApplyProject_ExclusionAuditAfterSuccess(t *testing.T) {
+	spool := t.TempDir()
+	t.Setenv("FAAS_SCAN_SPOOL_ROOT", spool)
+	t.Setenv("FAAS_SPOOL_ROOT", spool)
+	e, _ := newTestServerWithCapturingNotifier(t, api.PlanPro)
+	req := scanAuditRegressionRequest(t, e.key, scanAuditRegressionTarGz(t), map[string]string{
+		"project_slug": "apply-audit",
+		"exclude":      "excluded",
+	})
+	req.URL.Path = "/v1/projects"
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		ProjectID string `json:"project_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("apply response is not JSON: %v", err)
+	}
+	if resp.ProjectID == "" {
+		t.Fatal("apply response omitted project_id")
+	}
+	events, err := e.store.ListEvents(context.Background(), "", 100)
+	if err != nil {
+		t.Fatalf("list audit events: %v", err)
+	}
+	var skipped []state.Event
+	for _, event := range events {
+		if event.Kind == reconcile.KindWorkloadSkipped {
+			skipped = append(skipped, event)
+		}
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("skipped audit events = %d, want 1; events=%#v", len(skipped), events)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(skipped[0].Data, &data); err != nil {
+		t.Fatalf("skipped audit data is not JSON: %v", err)
+	}
+	if data["project_id"] != resp.ProjectID {
+		t.Errorf("audit project_id = %v, want %s", data["project_id"], resp.ProjectID)
+	}
+	if data["workload_name"] != "excluded" {
+		t.Errorf("audit workload_name = %v, want excluded", data["workload_name"])
+	}
 }
 
 type skippedAuditCall struct {

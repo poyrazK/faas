@@ -142,6 +142,10 @@ type scanPlanResponse struct {
 	// response when the persisted set carries forward, and via
 	// audit log rows of kind=project.scope.excluded).
 	PersistExclude bool `json:"-"`
+	// SourceSHA256 is retained internally so apply-time audit rows can
+	// carry the same source identity as the scan. It is never exposed
+	// on the wire.
+	SourceSHA256 string `json:"-"`
 	// ADR-124 blast-radius partition. WillDeploy + Unaffected
 	// enumerate the scan-workload existence against every non-deleted
 	// app in the account keyed by (RootDir, Name). Skipped is the
@@ -453,11 +457,10 @@ type auditEmitterAs interface {
 	EmitAs(ctx context.Context, actor, kind string, accountID *string, data map[string]any)
 }
 
-// emitSkippedAuditRows is the loop body extracted from
-// scanService so a regression test can drive the call site
-// directly (without standing up a full scanService server). It
-// emits one project.workload.skipped row per partition.Skipped
-// entry. `row.Slug` IS the scan workload's `Name` — for a
+// emitSkippedAuditRows emits one project.workload.skipped row per
+// partition.Skipped entry. It is intentionally called only after a
+// successful apply; scan previews must remain side-effect free.
+// `row.Slug` IS the scan workload's `Name` — for a
 // brand-new excluded workload (row.ID == "", the common case
 // when the scan emits a workload that hasn't been deployed
 // yet), `row.Slug` carries the name we need to stamp the audit
@@ -478,14 +481,9 @@ func emitSkippedAuditRows(
 	}
 }
 
-// emitWorkloadSkippedRow fires one project.workload.skipped row
-// per operator --exclude entry. Called from scanService right after
-// computeAffectedPartition so each partition.Skipped row gets a
-// durable audit row before the response is marshalled.
-//
-// The apply path runs the same scan partition so re-emitting on
-// apply would double-count; preview-time emission is the source of
-// truth (per pkg/reconcile.KindWorkloadSkipped doc).
+// emitWorkloadSkippedRow fires one project.workload.skipped row per
+// operator --exclude entry. It is called from the successful apply
+// path after the project and reconcile mutations have completed.
 //
 // sourceSHA is the SHA-256 of the uploaded source tarball (req.
 // SourceSHA256) — a stable identifier the audit-events table can
@@ -519,14 +517,9 @@ func emitWorkloadSkippedRow(
 
 // emitPersistedExcludedAuditRows fires one project.scope.excluded
 // audit row per slug carried forward from the persisted
-// deployment_scope_exclusions table (code-review fix #5). Tagged
-// with reason="persisted" so SOC 2 reviewers can distinguish a
-// persisted fold-in from a per-deploy --exclude (which is
-// emitted as reason="unchanged via exclude" via
-// emitWorkloadSkippedRow above). appID is left empty here because
-// the persisted set's app rows are not yet resolved at scan
-// time — the apply-side handler stamps a synthetic UUID on the
-// brand-new path (see handlers_decompose.go::syntheticExclusionAppID).
+// deployment_scope_exclusions table (code-review fix #5). It is
+// called only after a successful apply, so the event references the
+// persisted project and the app snapshot when one is available.
 func emitPersistedExcludedAuditRows(
 	ctx context.Context,
 	auditor auditEmitterAs,
@@ -535,18 +528,23 @@ func emitPersistedExcludedAuditRows(
 	projectID string,
 	sourceSHA string,
 	slugs []string,
+	appIDs map[string]string,
 ) {
 	if auditor == nil || len(slugs) == 0 {
 		return
 	}
 	for _, slug := range slugs {
 		acctID := accountID
-		auditor.EmitAs(ctx, actor, reconcile.KindProjectScopeExcluded, &acctID, map[string]any{
+		data := map[string]any{
 			"project_id":    projectID,
 			"workload_name": slug,
 			"reason":        "persisted",
 			"commit_sha":    sourceSHA,
-		})
+		}
+		if appID := appIDs[strings.ToLower(slug)]; appID != "" {
+			data["app_id"] = appID
+		}
+		auditor.EmitAs(ctx, actor, reconcile.KindProjectScopeExcluded, &acctID, data)
 	}
 }
 
@@ -1251,38 +1249,6 @@ func (s *server) scanService(
 
 	partition := computeAffectedPartition(filteredW, result.Workloads, acctApps, req.Exclude, projectID)
 
-	// Emit one project.workload.skipped audit row per operator
-	// --exclude entry (SOC 2 CC7.2 "who deployed v3 and what did
-	// they skip?"). Preview-time emission is the source of truth;
-	// the apply path runs the same partition so re-emitting there
-	// would double-count. `partition.Skipped` rows are scan workloads
-	// (`reposcan.Workload`s emitted by the scanner), NOT apps —
-	// `row.Slug` IS the scan workload's `Name`. For a brand-new
-	// excluded workload (the common case where no app with that
-	// Slug exists yet), `row.ID == ""` and `row.Slug` carries the
-	// workload name we need to stamp the audit row. Earlier code
-	// looked `slugToApp[row.Slug]` in the app table and silently
-	// skipped brand-new excludes — fixing the SOC 2 trail gap.
-	actor := resolvedActorString(routeKindForRequest(r), acct.ID, "")
-	sourceSHA := req.SourceSHA256
-	emitSkippedAuditRows(r.Context(), s.audit, actor, acct.ID, projectID, sourceSHA, partition.Skipped)
-
-	// Code-review fix #5: emit one project.scope.excluded audit
-	// row per carried-forward persisted slug, tagged with
-	// reason="persisted" so operators can trace which slugs
-	// came from persistence vs the operator's per-deploy
-	// --exclude. Without this row, the SOC 2 trail showed the
-	// skip but couldn't tell you whether the operator typed
-	// it today or whether it was the long-haul persisted
-	// intent from a prior deploy. Preview-time emission is the
-	// source of truth (same precedent as
-	// emitSkippedAuditRows); the apply-side persist-write
-	// handler emits an additional row tagged
-	// reason="persisted_via_flag" for the write itself.
-	if len(persistedSlugs) > 0 {
-		emitPersistedExcludedAuditRows(r.Context(), s.audit, actor, acct.ID, projectID, sourceSHA, persistedSlugs)
-	}
-
 	// Convert the reposcan carrier slice into the wire-shape DTO so
 	// the JSON marshal sees string Tier (matching OpenAPI enum +
 	// pkg/api.PlanWorkload.Tier) instead of the raw int the
@@ -1326,6 +1292,7 @@ func (s *server) scanService(
 		// successful apply. The scan path accepts the field but
 		// does nothing with it (default-OFF posture).
 		PersistExclude: req.PersistExclude,
+		SourceSHA256:   req.SourceSHA256,
 		// ADR-124 partition projection. Skipped is the operator --exclude
 		// subset; Unaffected is every account app not in the scan keys;
 		// WillDeploy keeps reposcan's order so the i-alignment with
