@@ -176,7 +176,7 @@ func TestEgressMetering_GETUsage_SurfacesTxAndNetTxBytes(t *testing.T) {
 	// counter. Future billing will pick the unit; this is a
 	// dashboard-only surface today.
 	gotGB := rows[0].TotalEgressGB()
-	wantBytes := float64(1_000_000+4_000_000) / (1024 * 1024 * 1024)
+	wantBytes := float64(4_000_000) / (1024 * 1024 * 1024)
 	if diff := gotGB - wantBytes; diff < -1e-9 || diff > 1e-9 {
 		t.Errorf("TotalEgressGB = %g, want %g", gotGB, wantBytes)
 	}

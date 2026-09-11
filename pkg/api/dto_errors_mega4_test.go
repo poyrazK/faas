@@ -105,8 +105,8 @@ func TestUsageResponseTotalEgressGB_Mega4(t *testing.T) {
 		t.Errorf("zero: %v", got)
 	}
 	gb := int64(1024 * 1024 * 1024)
-	if got := (UsageResponse{TXBytes: gb, NetTxBytes: gb}).TotalEgressGB(); got != 2.0 {
-		t.Errorf("2 GB: %v", got)
+	if got := (UsageResponse{TXBytes: gb, NetTxBytes: gb}).TotalEgressGB(); got != 1.0 {
+		t.Errorf("canonical 1 GB (tx_bytes must not be added): %v", got)
 	}
 }
 

@@ -226,8 +226,8 @@ func TestRenderUsageSummary_PinsColumnLayout(t *testing.T) {
 		// realistic order of magnitude for a Hobby app doing
 		// bursty work, picked for a clean 4-decimal render.
 		UsedCPUHours: 0.002778,
-		// ADR-046: informational egress (tx_bytes + net_tx_bytes,
-		// rolled up at the server). 1.234 GB is a non-zero
+		// ADR-046: informational canonical interface egress
+		// (net_tx_bytes, rolled up at the server). 1.234 GB is a non-zero
 		// value so the line is exercised by this test.
 		UsedEgressGB: 1.234,
 	})

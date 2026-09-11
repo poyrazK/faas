@@ -227,6 +227,15 @@ type Provider interface {
 	PaymentMethodSummary(ctx context.Context, acct state.Account) (PaymentMethod, error)
 }
 
+// MeterUsageProvider is the optional multi-meter usage surface. The base
+// Provider remains compute-compatible for existing integrations; an adapter
+// must implement this interface and advertise CapEgressUsage before meterd may
+// send canonical net_tx_bytes to it. Quantity units are fixed by meter:
+// compute is MB-seconds and egress is interface bytes.
+type MeterUsageProvider interface {
+	PushMeterUsageRecord(ctx context.Context, acct state.Account, hour time.Time, meter state.BillingMeter, quantity int64) error
+}
+
 // UsageModeProvider is an optional provider contract for usage semantics.
 // Providers that return UsageModeOverage receive only the portion above
 // Gregale's included calendar-month quota. Providers without this optional
@@ -605,6 +614,12 @@ const (
 	// for the admin/CLI surface so operators can see the
 	// push-model a provider uses.
 	CapUsageLineItem
+
+	// CapEgressUsage means the provider has a separately configured egress
+	// meter and implements MeterUsageProvider. No current provider advertises
+	// this by default; adding the capability is the explicit charge-enable
+	// boundary after pricing and included quota are defined.
+	CapEgressUsage
 )
 
 // CapabilitySet is the bitmask of capabilities a Provider exposes.
@@ -626,7 +641,7 @@ func (s CapabilitySet) String() string {
 	if s == 0 {
 		return "none"
 	}
-	parts := make([]string, 0, 6)
+	parts := make([]string, 0, 7)
 	for _, c := range []struct {
 		cap  Capability
 		name string
@@ -637,6 +652,7 @@ func (s CapabilitySet) String() string {
 		{CapSandbox, "sandbox"},
 		{CapUsageMetered, "usage_metered"},
 		{CapUsageLineItem, "usage_line_item"},
+		{CapEgressUsage, "egress_usage"},
 	} {
 		if s.Has(c.cap) {
 			parts = append(parts, c.name)

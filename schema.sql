@@ -1553,6 +1553,23 @@ CREATE TABLE public.billing_identities (
 
 
 --
+-- Name: billing_meter_usage_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_meter_usage_deliveries (
+    provider text NOT NULL,
+    account_id uuid NOT NULL,
+    meter text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    quantity bigint NOT NULL,
+    delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT billing_meter_usage_deliveries_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'egress'::text]))),
+    CONSTRAINT billing_meter_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
+    CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0))
+);
+
+
+--
 -- Name: billing_usage_deliveries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2802,6 +2819,23 @@ CREATE TABLE public.meterd_tenant_surface_cert_expiry_state (
 
 
 --
+-- Name: meter_network_checkpoints; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.meter_network_checkpoints (
+    instance_id uuid NOT NULL,
+    net_tx_bytes bigint NOT NULL,
+    net_rx_bytes bigint NOT NULL,
+    net_tx_valid boolean DEFAULT false NOT NULL,
+    net_rx_valid boolean DEFAULT false NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT meter_network_checkpoints_net_rx_bytes_check CHECK ((net_rx_bytes >= 0)),
+    CONSTRAINT meter_network_checkpoints_net_tx_bytes_check CHECK ((net_tx_bytes >= 0))
+);
+
+
+--
 -- Name: mirror_invocation_results; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4018,6 +4052,14 @@ ALTER TABLE ONLY public.billing_identities
 
 
 --
+-- Name: billing_meter_usage_deliveries billing_meter_usage_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_meter_usage_deliveries
+    ADD CONSTRAINT billing_meter_usage_deliveries_pkey PRIMARY KEY (provider, account_id, meter, window_start);
+
+
+--
 -- Name: billing_usage_deliveries billing_usage_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4551,6 +4593,14 @@ ALTER TABLE ONLY public.instance_billing_intervals
 
 ALTER TABLE ONLY public.instances
     ADD CONSTRAINT instances_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_pkey PRIMARY KEY (instance_id);
 
 
 --
@@ -6016,6 +6066,13 @@ CREATE UNIQUE INDEX billing_identities_provider_subscription_idx ON public.billi
 
 
 --
+-- Name: billing_meter_usage_deliveries_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_meter_usage_deliveries_window_idx ON public.billing_meter_usage_deliveries USING btree (window_start);
+
+
+--
 -- Name: billing_usage_deliveries_window_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7384,6 +7441,14 @@ ALTER TABLE ONLY public.billing_identities
 
 
 --
+-- Name: billing_meter_usage_deliveries billing_meter_usage_deliveries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_meter_usage_deliveries
+    ADD CONSTRAINT billing_meter_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: billing_usage_deliveries billing_usage_deliveries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8285,6 +8350,14 @@ ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
 
 ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
     ADD CONSTRAINT meterd_tenant_surface_cert_expiry_state_tenant_surface_id_fkey FOREIGN KEY (tenant_surface_id) REFERENCES public.tenant_surfaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
 
 
 --

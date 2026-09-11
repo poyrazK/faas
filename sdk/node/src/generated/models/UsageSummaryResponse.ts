@@ -20,7 +20,7 @@ export type UsageSummaryResponse = {
    */
   used_cpu_hours?: number;
   /**
-   * Per-month egress GB (informational; not billed). Σ tx_bytes + net_tx_bytes across all apps, converted to GB. ADR-046.
+   * Per-month canonical interface egress GB (informational; not billed). Σ net_tx_bytes across all apps; tx_bytes is a diagnostic subset and is not added. ADR-046.
    */
   used_egress_gb?: number;
   /**

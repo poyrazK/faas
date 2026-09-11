@@ -60,6 +60,7 @@ type AppWindowSummary struct {
 	GBHours        float64
 	Requests       int64
 	TxBytes        int64
+	NetTxBytes     int64
 	BuilderSeconds float64 // informational; surfaced as builder_seconds on the wire
 	ColdBootCount  int64
 }
@@ -112,6 +113,7 @@ func BuildAppWindowSummary(
 		sum.MBSeconds += u.MBSeconds
 		sum.Requests += u.Requests
 		sum.TxBytes += u.TXBytes
+		sum.NetTxBytes += u.NetTxBytes
 		// cpu_usec is host cgroup CPU-µs consumed; convert to
 		// CPU-seconds for the wire shape so the dashboard's
 		// builder-seconds figure is comparable to its

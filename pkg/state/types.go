@@ -4176,6 +4176,26 @@ type UsageWindow struct {
 	MBSeconds int64
 }
 
+// BillingMeter is the durable meter identity used by provider delivery
+// receipts. Keep it separate from the provider name: one provider can receive
+// compute and egress usage for the same account and UTC hour.
+type BillingMeter string
+
+const (
+	BillingMeterCompute BillingMeter = "compute"
+	BillingMeterEgress  BillingMeter = "egress"
+)
+
+// BillingMeterWindow is one positive account-level quantity for a completed
+// UTC hour. Quantity's unit is fixed by Meter: compute is MB-seconds and egress
+// is host-interface bytes (usage_minutes.net_tx_bytes).
+type BillingMeterWindow struct {
+	AccountID string
+	Hour      time.Time
+	Meter     BillingMeter
+	Quantity  int64
+}
+
 // DailyUsage is the per-(account, app, day) row read by
 // Store.UsageDaily (ADR-048 §5). Mirrors the columns declared
 // in migrations/00067_extend_metering_telemetry.sql::usage_daily.

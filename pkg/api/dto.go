@@ -2863,8 +2863,10 @@ func (u UsageResponse) CPUHours() float64 {
 	return float64(u.CPUUsageUsec) / 3.6e9
 }
 
-// TotalEgressGB returns (TXBytes + NetTxBytes) converted to GB
-// (1 GB = 1024^3 bytes).
+// TotalEgressGB returns the canonical NetTxBytes interface counter converted
+// to GB (1 GB = 1024^3 bytes). TXBytes is a diagnostic HTTP-payload subset of
+// NetTxBytes and MUST NOT be added or the same response traffic is counted
+// twice.
 //
 // IMPORTANT (ADR-046, PR-414 I5): the value INCLUDES Ethernet
 // framing (~14 + 20 bytes per packet) because net_tx_bytes
@@ -2878,15 +2880,14 @@ func (u UsageResponse) CPUHours() float64 {
 // For HTTP-payload-only bytes, callers should use TXBytes
 // directly (do not divide by 1 GiB and call it "egress GB").
 // The future billing PR will pick the unit; this convenience
-// getter exists so the SDK and the CLI have a single
-// "all-bytes" surface for informational dashboards.
+// getter exists so the SDK and the CLI have a single canonical egress surface.
 //
 // Convention:
 //   - TotalEgressGB = interface bytes, includes framing.
 //   - TXBytes = HTTP response bytes, exact.
 //   - NetTxBytes = interface bytes on root-side vethHost.rx_bytes.
 func (u UsageResponse) TotalEgressGB() float64 {
-	return float64(u.TXBytes+u.NetTxBytes) / (1024 * 1024 * 1024)
+	return float64(u.NetTxBytes) / (1024 * 1024 * 1024)
 }
 
 // DeploymentListResponse is the page shape for GET /v1/deployments and
@@ -3191,10 +3192,8 @@ type DailyUsagePoint struct {
 // surface in a separate panel without affecting the billing total.
 //
 // ADR-046 (step 10): UsedEgressGB is informational and NOT
-// billed. The two egress columns (tx_bytes + net_tx_bytes) are
-// exposed separately at the per-app UsageResponse level; the
-// summary rolls them up for the dashboard's single-number
-// panel.
+// billed. NetTxBytes is the canonical interface counter; TXBytes is its
+// gateway-payload diagnostic subset and is never added to the total.
 type UsageSummaryResponse struct {
 	Month           string  `json:"month"`             // YYYY-MM
 	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 1024 / 3600
@@ -3206,8 +3205,8 @@ type UsageSummaryResponse struct {
 	// Issue #279 / PR-B. The customer dashboard renders this
 	// alongside the other account summary dimensions.
 	UsedCPUHours float64 `json:"used_cpu_hours"`
-	// UsedEgressGB is the per-month egress Σ (TXBytes +
-	// NetTxBytes) / 1024^3. Informational only — not
+	// UsedEgressGB is the per-month egress Σ NetTxBytes / 1024^3.
+	// Informational only — not
 	// billed (ADR-046 §6). The two columns are exposed
 	// separately at the per-app level; this is the
 	// single-number roll-up for the dashboard's
@@ -4548,19 +4547,22 @@ type WakeTimelineApp struct {
 //   - AsOf: RFC3339Nano UTC stamping the envelope's authoritative
 //     "as of" instant.
 type AppUsageSummaryResponse struct {
-	Slug                string    `json:"slug"`
-	PeriodStart         time.Time `json:"period_start"`
-	PeriodEnd           time.Time `json:"period_end"`
-	MBSeconds           int64     `json:"mb_seconds"`
-	GBHours             float64   `json:"gb_hours"`
-	Requests            int64     `json:"requests"`
-	TxBytes             int64     `json:"tx_bytes"`
-	BuilderSeconds      float64   `json:"builder_seconds"`
-	ColdBootCount       int64     `json:"cold_boot_count"`
-	PlanIncludedGBHours float64   `json:"plan_included_gb_hours"`
-	OverageGBHours      float64   `json:"overage_gb_hours"`
-	Source              string    `json:"source"`
-	AsOf                string    `json:"as_of"`
+	Slug        string    `json:"slug"`
+	PeriodStart time.Time `json:"period_start"`
+	PeriodEnd   time.Time `json:"period_end"`
+	MBSeconds   int64     `json:"mb_seconds"`
+	GBHours     float64   `json:"gb_hours"`
+	Requests    int64     `json:"requests"`
+	TxBytes     int64     `json:"tx_bytes"`
+	// NetTxBytes is canonical host-interface egress. TxBytes is retained as
+	// an HTTP-payload diagnostic and is already contained in this value.
+	NetTxBytes          int64   `json:"net_tx_bytes"`
+	BuilderSeconds      float64 `json:"builder_seconds"`
+	ColdBootCount       int64   `json:"cold_boot_count"`
+	PlanIncludedGBHours float64 `json:"plan_included_gb_hours"`
+	OverageGBHours      float64 `json:"overage_gb_hours"`
+	Source              string  `json:"source"`
+	AsOf                string  `json:"as_of"`
 }
 
 // WakeTimelineJSONRow is one row of AppWakeTimelineResponse.Rows.

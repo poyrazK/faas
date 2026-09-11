@@ -84,6 +84,27 @@ func TestAppUsage_HobbyPlanReturns200(t *testing.T) {
 	}
 }
 
+func TestAppUsage_ExposesCanonicalAndDiagnosticEgressSeparately(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	appID := mustSeedApp(t, e, "my-api")
+	minute := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	if err := e.store.AppendUsage(t.Context(), e.acct.ID, appID, "instance-egress", minute,
+		1, 0, 0, 100, 250, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "GET", "/v1/apps/my-api/usage?since=2026-09-01T00:00:00Z&until=2026-09-03T00:00:00Z", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out api.AppUsageSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.TxBytes != 100 || out.NetTxBytes != 250 {
+		t.Fatalf("egress fields = tx:%d net_tx:%d, want diagnostic/canonical 100/250", out.TxBytes, out.NetTxBytes)
+	}
+}
+
 // TestAppUsage_InvalidSinceReturns400 pins the validation branch:
 // a malformed `since` is a 400 (the dashboard sends a parse error
 // chip rather than a 5xx).

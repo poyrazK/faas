@@ -443,6 +443,15 @@ type BillingIdentity struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type BillingMeterUsageDelivery struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	Meter       string
+	WindowStart pgtype.Timestamptz
+	Quantity    int64
+	DeliveredAt pgtype.Timestamptz
+}
+
 type BillingUsageDelivery struct {
 	Provider    string
 	AccountID   pgtype.UUID
@@ -1198,6 +1207,16 @@ type MailSuppression struct {
 	ProviderEventID string
 	ExpiresAt       pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
+}
+
+type MeterNetworkCheckpoint struct {
+	InstanceID pgtype.UUID
+	NetTxBytes int64
+	NetRxBytes int64
+	NetTxValid bool
+	NetRxValid bool
+	ObservedAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {

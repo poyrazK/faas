@@ -9,6 +9,12 @@
   `cmd/gatewayd/<file>.go` citations in this body are stale; see PR-E for
   the new file locations.
 - **Date:** 2026-07-29
+- **Amended:** 2026-09-11. Customer totals use `net_tx_bytes` alone (gateway
+  `tx_bytes` is a diagnostic subset); meterd checkpoints vmmd's cumulative
+  counters transactionally; failed gateway stream sends are requeued; and
+  provider delivery receipts are meter-qualified. Charging remains disabled
+  until a provider explicitly advertises the egress capability and product
+  pricing/included quota are approved.
 - **Decision:** Land a per-instance customer egress byte counter (vmmd tc/veth
   scrape + gateway response byte counter) end-to-end into `usage_minutes` and
   `GET /v1/usage` / `/v1/usage/summary` / `/v1/account/export` / `faas usage`,
@@ -113,8 +119,9 @@ vmmd netstats.Cache (cumulative rx_bytes per instance, regression-safe)
           └─ schedd instancestats.Poller (per-instance accumulator)
               └─ pkg/scheddgrpc.ListInstanceStats RPC (additive tx_bytes field)
                   └─ meterd scheddEgressAdapter (mirror of scheddCPUAdapter)
-                      └─ pkg/meter.Sampler.SampleAndRoll
-                          └─ pkg/state.AppendUsage(tx_bytes, net_tx_bytes)
+                  └─ pkg/meter.Sampler.SampleAndRoll
+                          └─ pkg/state.AppendNetworkUsageObservation
+                              (checkpoint + usage delta in one transaction)
                               └─ usage_monthly view (SUM(tx_bytes), SUM(net_tx_bytes))
                                   └─ apid /v1/usage, /v1/usage/summary, /v1/account/export
                                       └─ faas usage (informational panel)
@@ -162,8 +169,9 @@ AppendUsage callers (PK-1, M7 hardening) are not affected.
 
 `GET /v1/usage`, `/v1/usage/summary`, `/v1/account/export`, and the `faas usage`
 CLI all expose `tx_bytes` and `net_tx_bytes` (and `used_egress_gb` for parity
-with `used_cpu_hours`). OpenAPI mirrors via `make spec-sync`. The informational
-disclaimer mirrors `cpu_usec` — `description: "Informational; not billed."`
+with `used_cpu_hours`). `used_egress_gb` is derived from `net_tx_bytes` only;
+adding the gateway payload counter would double-count HTTP responses. OpenAPI
+mirrors via `make spec-sync`. The informational disclaimer mirrors `cpu_usec`.
 
 `pkg/appmetrics` gains a `gateway_response_bytes_total{app,plan}` rollup so
 the dashboard surfaces per-app egress rate (bytes/sec). No per-instance
@@ -172,10 +180,13 @@ account.
 
 ### 6. Billing boundary
 
-No `billing.Provider` change. No Stripe / Paddle push. No pricing constant
-change. No plan limit change. No financial-model edit. The files
-`pkg/billing/{provider.go,stripe/usage.go,stripe/client.go,paddle/usage.go}`
-and `pkg/meter/pusher.go` are explicitly not touched.
+No Stripe / Paddle / Polar egress push. No pricing constant change. No plan
+limit change. No financial-model edit. The provider abstraction exposes an
+optional multi-meter interface and capability, but no current provider
+advertises it. A separate meter ledger uses the durable delivery key
+`(provider, account_id, meter, window_start)` while the existing compute ledger
+stays unchanged for rolling compatibility. An egress receipt therefore cannot
+suppress compute delivery for the same hour.
 
 The seam is `usage_minutes.tx_bytes` and `usage_minutes.net_tx_bytes`. The
 follow-up PR adds `Provider.PushUsageRecord` (or a sibling) and a parallel
@@ -204,8 +215,10 @@ pusher; both are out of scope for ADR-046.
   bytes) before pushing; this ADR freezes the unit as **interface bytes on
   root-side `vethHost.rx_bytes`**.
 - **The sampler keeps a 30 s TTL on the schedd source.** If schedd is
-  unreachable for >30 s, the sampler writes 0 `tx_bytes` and `net_tx_bytes`
-  for that minute (same operational shape as `cpu_usec`).
+  temporarily unreachable, no network observation is committed. Once the
+  same cumulative counter returns, the durable checkpoint catches up the
+  missing delta instead of treating the gap as zero. A counter reset is
+  regression-safe and starts a new baseline without unsigned wraparound.
 - **The OpenAPI / apid handler / CLI panels mirror `cpu_usec`.** The smoke
   test that proves "billable fields use the same query and code path as the
   invoice" must be updated to assert that the `tx_bytes` / `net_tx_bytes`

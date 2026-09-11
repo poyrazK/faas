@@ -189,9 +189,10 @@ type parkInstanceParker interface {
 
 // scheddEgressAdapter (ADR-046, step 8) exposes the schedd gRPC
 // client as a meter.EgressSource for the net_tx_bytes column
-// (root-side vethHost.rx_bytes). It reuses the scheddCPUAdapter
-// 's snapshot machinery so the egress and CPU readings share a
-// single gRPC round trip and refresh cadence.
+// (root-side vethHost.rx_bytes). It forwards cumulative values so the state
+// Store can derive deltas with a durable checkpoint. It reuses the
+// scheddCPUAdapter's snapshot machinery so egress and CPU share one gRPC round
+// trip and refresh cadence.
 //
 // The tx_bytes column (gateway response bytes) is sourced from
 // gatewayEgressAdapter below — the two columns are NOT the
@@ -199,14 +200,7 @@ type parkInstanceParker interface {
 // (vmmd is the canonical producer for that column; the
 // gateway is the canonical producer for tx_bytes).
 type scheddEgressAdapter struct {
-	cpu      *scheddCPUAdapter
-	mu       sync.Mutex
-	baseline map[string]networkBaseline
-}
-
-type networkBaseline struct {
-	tx uint64
-	rx uint64
+	cpu *scheddCPUAdapter
 }
 
 func (a *scheddEgressAdapter) ReadUsageDeltas(instanceID string) (meter.UsageDeltas, bool) {
@@ -223,21 +217,17 @@ func (a *scheddEgressAdapter) ReadUsageDeltas(instanceID string) (meter.UsageDel
 	if row.TxValid != 0 && row.RxValid != 0 {
 		return meter.UsageDeltas{}, false
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.baseline == nil {
-		a.baseline = make(map[string]networkBaseline)
-	}
-	prev, have := a.baseline[instanceID]
-	var out meter.UsageDeltas
-	if have && row.TxValid == 0 && row.NetTxBytes >= prev.tx {
-		out.NetTXBytes = row.NetTxBytes - prev.tx
-	}
-	if have && row.RxValid == 0 && row.NetRxBytes >= prev.rx {
-		out.NetRXBytes = row.NetRxBytes - prev.rx
-	}
-	a.baseline[instanceID] = networkBaseline{tx: row.NetTxBytes, rx: row.NetRxBytes}
-	return out, true
+	// Return vmmd's cumulative counters unchanged. The state Store advances a
+	// durable per-instance checkpoint in the same transaction that appends the
+	// derived delta to usage_minutes; keeping a second in-memory baseline here
+	// would lose the interval spanning a meterd restart.
+	return meter.UsageDeltas{
+		NetTXBytes:        row.NetTxBytes,
+		NetRXBytes:        row.NetRxBytes,
+		NetworkCumulative: true,
+		NetTXValid:        row.TxValid == 0,
+		NetRXValid:        row.RxValid == 0,
+	}, true
 }
 
 // gatewayEgressAdapter (ADR-046, step 8; PR-2 = stream consumer)
@@ -539,6 +529,9 @@ func (a *egressAggregator) ReadUsageDeltas(instanceID string) (meter.UsageDeltas
 		schedd, okSchedd = a.schedd.ReadUsageDeltas(instanceID)
 		out.NetTXBytes = schedd.NetTXBytes
 		out.NetRXBytes = schedd.NetRXBytes
+		out.NetworkCumulative = schedd.NetworkCumulative
+		out.NetTXValid = schedd.NetTXValid
+		out.NetRXValid = schedd.NetRXValid
 	}
 	if a.gw != nil {
 		var gateway meter.UsageDeltas

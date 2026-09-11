@@ -23548,7 +23548,7 @@ components:
         otherwise. The Stripe pusher bills overage at €0.01/GB-h
         (CLAUDE.md integer-cents-only rule).
       type: object
-      required: [slug, period_start, period_end, mb_seconds, gb_hours, requests, tx_bytes, builder_seconds, cold_boot_count, plan_included_gb_hours, overage_gb_hours, source, as_of]
+      required: [slug, period_start, period_end, mb_seconds, gb_hours, requests, tx_bytes, net_tx_bytes, builder_seconds, cold_boot_count, plan_included_gb_hours, overage_gb_hours, source, as_of]
       properties:
         slug:
           type: string
@@ -23575,7 +23575,11 @@ components:
         tx_bytes:
           type: integer
           format: int64
-          description: "Cumulative HTTP response body bytes (ADR-046; informational; not billed)."
+          description: "Cumulative HTTP response body bytes (ADR-046; diagnostic subset of net_tx_bytes; never add both)."
+        net_tx_bytes:
+          type: integer
+          format: int64
+          description: "Canonical cumulative host-interface egress bytes for the window (ADR-046; includes framing)."
         builder_seconds:
           type: number
           description: "Cumulative builder-microVM CPU-seconds (informational; surfaced as a sidebar line on the dashboard)."
@@ -23939,7 +23943,7 @@ components:
           x-issue: "279"
         used_egress_gb:
           type: number
-          description: 'Per-month egress GB (informational; not billed). Σ tx_bytes + net_tx_bytes across all apps, converted to GB. ADR-046.'
+          description: 'Per-month canonical interface egress GB (informational; not billed). Σ net_tx_bytes across all apps; tx_bytes is a diagnostic subset and is not added. ADR-046.'
           x-since: "2026-08"
           x-issue: "415"
         used_ingress_gb:
