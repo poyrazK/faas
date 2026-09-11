@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -2431,6 +2432,46 @@ func TestUsageSummary_HappyPath(t *testing.T) {
 	}
 	if out.Daily == nil {
 		t.Errorf("daily = nil, want an empty array")
+	}
+}
+
+type usageSummaryEgressProvider struct {
+	fakeBillingProvider
+	mode billing.MeterDeliveryMode
+}
+
+func (p *usageSummaryEgressProvider) MeterUsagePolicy(plan api.Plan, meter state.BillingMeter) (billing.MeterUsagePolicy, bool) {
+	if plan == api.PlanFree || meter != state.BillingMeterEgress {
+		return billing.MeterUsagePolicy{}, false
+	}
+	return billing.MeterUsagePolicy{
+		Mode:              p.mode,
+		EffectiveFrom:     time.Unix(0, 0).UTC(),
+		IncludedQuantity:  1 << 30,
+		UnitQuantity:      1 << 30,
+		MillicentsPerUnit: 2_000,
+	}, true
+}
+
+func TestUsageSummary_LiveEgressIncludedInOverageCents(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	e.s.WithBillingProvider(&usageSummaryEgressProvider{mode: billing.MeterDeliveryLive})
+	now := time.Now().UTC()
+	if err := e.store.AppendUsage(t.Context(), e.acct.ID, "app-egress", "instance-egress", now,
+		0, 0, 0, 0, 2*(1<<30), 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, "GET", "/v1/usage/summary", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out api.UsageSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.EgressBillingMode != string(billing.MeterDeliveryLive) || out.EgressOverageGB != 1 || out.OverageCents != 2 {
+		t.Fatalf("live egress summary = %+v, want one GiB and two cents of overage", out)
 	}
 }
 

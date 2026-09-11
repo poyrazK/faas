@@ -4154,7 +4154,8 @@ type Usage struct {
 	// vethHost.rx_bytes for this app in this month. Source:
 	// vmmd pkg/fcvm/netstats.Cache → vmmd.Stats → schedd
 	// instancestats.Poller → meterd Sampler.SampleAndRoll →
-	// AppendUsage. ADR-046. Informational — not billed. Unit
+	// AppendUsage. ADR-046. This is the canonical optional egress billing
+	// source; it remains informational while the provider policy is off. Unit
 	// = interface bytes (includes Ethernet/IP framing).
 	NetTxBytes int64
 	// NetRxBytes is the cumulative byte delta on root-side

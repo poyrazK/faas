@@ -232,7 +232,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	}
 	mode := providerUsageMode(p.pusher)
 	var caps map[string]int64
-	if mode == billing.UsageModeOverage {
+	if _, hasSecondaryMeters := p.pusher.(billing.MeterUsagePolicyProvider); mode == billing.UsageModeOverage || hasSecondaryMeters {
 		// A cap is a billing safety boundary, so a read failure must fail
 		// closed. The bulk read keeps replay at one database round-trip
 		// instead of turning every usage window into an account lookup.
@@ -332,7 +332,236 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 		p.log.Info("meter: push usage", "account", acct.ID, "hour", window.Hour,
 			"replay", true, "code", code, "mb_seconds", window.MBSeconds, "billable_mb_seconds", billableMBSeconds)
 	}
+	meterPushed, meterErr := p.pushPendingMeter(ctx, ops, byID, caps, start, end, state.BillingMeterEgress)
+	pushed += meterPushed
+	if firstErr == nil {
+		firstErr = meterErr
+	}
 	return pushed, firstErr
+}
+
+// pushPendingMeter processes a configured secondary meter after the compute
+// replay. Shadow mode calculates the same net calendar-month overage as live,
+// records a durable receipt, and logs the would-be event without calling the
+// provider. Those receipts make the later shadow->live transition explicitly
+// non-retroactive.
+func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map[string]state.Account, caps map[string]int64, start, end time.Time, meter state.BillingMeter) (int, error) {
+	policyProvider, ok := p.pusher.(billing.MeterUsagePolicyProvider)
+	if !ok {
+		return 0, nil
+	}
+	configured := false
+	for _, plan := range []api.Plan{api.PlanHobby, api.PlanPro, api.PlanScale} {
+		if _, enabled := policyProvider.MeterUsagePolicy(plan, meter); enabled {
+			configured = true
+			break
+		}
+	}
+	if !configured {
+		return 0, nil
+	}
+	windows, err := p.store.PendingBillingMeterUsageWindows(ctx, ops.opLabel, meter, start, end)
+	if err != nil {
+		return 0, err
+	}
+	sort.SliceStable(windows, func(i, j int) bool {
+		if !windows[i].Hour.Equal(windows[j].Hour) {
+			return windows[i].Hour.Before(windows[j].Hour)
+		}
+		return windows[i].AccountID < windows[j].AccountID
+	})
+	cursors := make(map[string]meterOverageCursor)
+	pushed := 0
+	var firstErr error
+	for _, window := range windows {
+		acct, exists := byID[window.AccountID]
+		if !exists || acct.Plan == api.PlanFree || acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending {
+			continue
+		}
+		policy, configured := policyProvider.MeterUsagePolicy(acct.Plan, meter)
+		if !configured {
+			continue
+		}
+		if err := validateMeterUsagePolicy(policy); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			p.log.Warn("meter: invalid usage policy", "provider", ops.opLabel, "meter", meter, "plan", acct.Plan, "err", err)
+			continue
+		}
+		acct, err = p.accountForProvider(ctx, acct)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			p.log.Warn("meter: load provider billing identity", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "err", err)
+			continue
+		}
+		if acct.ProviderCustomerID == "" || acct.StripeSubscriptionItem == "" {
+			p.log.Warn("meter: billing identity incomplete", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "replay", true)
+			continue
+		}
+		if window.Hour.Before(policy.EffectiveFrom) {
+			if err := p.store.RecordBillingMeterUsageDelivery(ctx, ops.opLabel, acct.ID, meter, window.Hour, 0); err != nil && firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		billable, totalBillable, err := p.billablePendingMeterUsage(ctx, acct, window, policy, cursors)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			p.log.Warn("meter: calculate meter overage", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "hour", window.Hour, "quantity", window.Quantity, "err", err)
+			continue
+		}
+		if policy.Mode == billing.MeterDeliveryShadow {
+			if err := p.store.RecordBillingMeterUsageDelivery(ctx, ops.opLabel, acct.ID, meter, window.Hour, billable); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				p.log.Warn("meter: record shadow meter delivery", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "hour", window.Hour, "err", err)
+				continue
+			}
+			p.log.Info("meter: shadow usage", "account", acct.ID, "provider", ops.opLabel, "meter", meter,
+				"hour", window.Hour, "raw_quantity", window.Quantity, "billable_quantity", billable,
+				"included_quantity", policy.IncludedQuantity, "unit_quantity", policy.UnitQuantity,
+				"millicents_per_unit", policy.MillicentsPerUnit)
+			continue
+		}
+		if capCents, capped := caps[acct.ID]; capped && billable > 0 {
+			monthStart := time.Date(window.Hour.UTC().Year(), window.Hour.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
+			computeRaw, sumErr := sumUsageRows(ctx, p.store, acct.ID, monthStart, window.Hour.UTC().Truncate(time.Hour).Add(time.Hour))
+			if sumErr != nil {
+				if firstErr == nil {
+					firstErr = sumErr
+				}
+				continue
+			}
+			computeCents := api.OverageCentsForMBSeconds(acct.Plan, computeRaw)
+			beforeCents := saturatedAdd(computeCents, billing.MeterUsageCents(policy, totalBillable-billable))
+			afterCents := saturatedAdd(computeCents, billing.MeterUsageCents(policy, totalBillable))
+			if beforeCents >= capCents || afterCents > capCents {
+				p.log.Info("meter: egress overage cap reached", "account", acct.ID, "hour", window.Hour,
+					"cap_cents", capCents, "before_cents", beforeCents, "after_cents", afterCents)
+				continue
+			}
+		}
+		meterPusher, supportsPush := p.pusher.(billing.MeterUsageProvider)
+		if !supportsPush || !p.pusher.Capabilities().Has(billing.CapEgressUsage) {
+			err := errors.New("meter: live egress policy requires provider egress capability")
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if billable <= 0 {
+			if err := p.store.RecordBillingMeterUsageDelivery(ctx, ops.opLabel, acct.ID, meter, window.Hour, 0); err != nil && firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		pushStart := time.Now()
+		perr := meterPusher.PushMeterUsageRecord(ctx, acct, window.Hour, meter, billable)
+		code := ops.classify(perr)
+		dur := time.Since(pushStart)
+		p.ops.ObserveCode(ops.opLabel+"_"+string(meter), code, dur)
+		ops.observe(p.ops, code, dur)
+		if perr != nil {
+			if firstErr == nil {
+				firstErr = perr
+			}
+			p.log.Warn("meter: push meter usage", "account", acct.ID, "provider", ops.opLabel, "meter", meter,
+				"hour", window.Hour, "code", code, "raw_quantity", window.Quantity, "billable_quantity", billable, "err", perr)
+			continue
+		}
+		if err := p.store.RecordBillingMeterUsageDelivery(ctx, ops.opLabel, acct.ID, meter, window.Hour, billable); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			p.log.Warn("meter: record meter delivery", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "hour", window.Hour, "err", err)
+			continue
+		}
+		pushed++
+		p.log.Info("meter: push meter usage", "account", acct.ID, "provider", ops.opLabel, "meter", meter,
+			"hour", window.Hour, "code", code, "raw_quantity", window.Quantity, "billable_quantity", billable)
+	}
+	return pushed, firstErr
+}
+
+type meterOverageCursor struct {
+	rawBefore int64
+}
+
+func validateMeterUsagePolicy(policy billing.MeterUsagePolicy) error {
+	if policy.Mode != billing.MeterDeliveryShadow && policy.Mode != billing.MeterDeliveryLive {
+		return fmt.Errorf("unsupported delivery mode %q", policy.Mode)
+	}
+	if policy.EffectiveFrom.IsZero() || !policy.EffectiveFrom.Equal(policy.EffectiveFrom.UTC().Truncate(time.Hour)) {
+		return errors.New("effective-from must be a UTC-hour boundary")
+	}
+	if policy.IncludedQuantity < 0 || policy.UnitQuantity <= 0 || policy.MillicentsPerUnit <= 0 {
+		return errors.New("included quantity, unit quantity, or price is invalid")
+	}
+	return nil
+}
+
+func (p *Pusher) billablePendingMeterUsage(ctx context.Context, acct state.Account, window state.BillingMeterWindow, policy billing.MeterUsagePolicy, cursors map[string]meterOverageCursor) (delta, total int64, err error) {
+	hour := window.Hour.UTC().Truncate(time.Hour)
+	monthStart := time.Date(hour.Year(), hour.Month(), 1, 0, 0, 0, 0, time.UTC)
+	usageStart := monthStart
+	if policy.EffectiveFrom.After(usageStart) {
+		usageStart = policy.EffectiveFrom
+	}
+	key := acct.ID + "\x00" + string(window.Meter) + "\x00" + usageStart.Format(time.RFC3339)
+	cursor, ok := cursors[key]
+	if !ok {
+		prior, err := sumMeterUsageRows(ctx, p.store, acct.ID, window.Meter, usageStart, hour)
+		if err != nil {
+			return 0, 0, err
+		}
+		cursor = meterOverageCursor{rawBefore: prior}
+	}
+	before := max(cursor.rawBefore-policy.IncludedQuantity, 0)
+	if window.Quantity > math.MaxInt64-cursor.rawBefore {
+		return 0, 0, errors.New("meter quantity overflow")
+	}
+	cursor.rawBefore += window.Quantity
+	after := max(cursor.rawBefore-policy.IncludedQuantity, 0)
+	cursors[key] = cursor
+	return after - before, after, nil
+}
+
+func saturatedAdd(left, right int64) int64 {
+	if right > math.MaxInt64-left {
+		return math.MaxInt64
+	}
+	return left + right
+}
+
+func sumMeterUsageRows(ctx context.Context, store state.Store, accountID string, meter state.BillingMeter, start, end time.Time) (int64, error) {
+	if !start.Before(end) {
+		return 0, nil
+	}
+	rows, err := store.UsageByHour(ctx, accountID, start, end)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, row := range rows {
+		var quantity int64
+		switch meter {
+		case state.BillingMeterEgress:
+			quantity = row.NetTxBytes
+		default:
+			return 0, fmt.Errorf("unsupported billing meter %q", meter)
+		}
+		if quantity > math.MaxInt64-total {
+			return 0, errors.New("meter quantity overflow")
+		}
+		total += quantity
+	}
+	return total, nil
 }
 
 type overageCursor struct {

@@ -64,6 +64,11 @@
         <article><small>Ingress</small><strong class="kv">{{printf "%.3f" $d.UsedIngressGB}} GB</strong></article>
         <article><small>Cold boots</small><strong class="kv">{{$d.ColdBoots}}</strong></article>
       </section>
+      {{if $d.EgressBillingMode}}
+        <p>Egress billing: <strong>{{$d.EgressBillingMode}}</strong> from {{$d.EgressBillingFrom}}. Included: {{printf "%.0f" $d.IncludedEgressGB}} GB/month;
+        current overage: {{printf "%.3f" $d.EgressOverageGB}} GB at {{$d.EgressPriceCentsPerGB}} cents/GB.
+        {{if eq $d.EgressBillingMode "shadow"}}Shadow usage is not sent to the billing provider.{{end}}</p>
+      {{end}}
 
       <section aria-labelledby="daily-heading">
         <h2 id="daily-heading">Daily trend <small class="muted">(last 30 UTC days)</small></h2>

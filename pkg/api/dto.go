@@ -3213,27 +3213,34 @@ type DailyUsagePoint struct {
 // second). The CPU dimension is a measurement the dashboard will
 // surface in a separate panel without affecting the billing total.
 //
-// ADR-046 (step 10): UsedEgressGB is informational and NOT
-// billed. NetTxBytes is the canonical interface counter; TXBytes is its
-// gateway-payload diagnostic subset and is never added to the total.
+// ADR-046 (step 10): NetTxBytes is the canonical interface counter; TXBytes is
+// its gateway-payload diagnostic subset and is never added to the total.
+// Egress remains informational unless EgressBillingMode is shadow or live.
 type UsageSummaryResponse struct {
 	Month           string  `json:"month"`             // YYYY-MM
 	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 1024 / 3600
 	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
 	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
-	OverageCents    int64   `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
+	OverageCents    int64   `json:"overage_cents"`     // compute plus live egress overage, in integer cents
 	// UsedCPUHours is the per-month CPU-hours Σ CPUUsageUsec /
 	// 3.6e9. Informational only — billing is on UsedGBHours.
 	// Issue #279 / PR-B. The customer dashboard renders this
 	// alongside the other account summary dimensions.
 	UsedCPUHours float64 `json:"used_cpu_hours"`
 	// UsedEgressGB is the per-month egress Σ NetTxBytes / 1024^3.
-	// Informational only — not
-	// billed (ADR-046 §6). The two columns are exposed
-	// separately at the per-app level; this is the
-	// single-number roll-up for the dashboard's
-	// "egress this month" panel.
+	// It is the single-number roll-up for the dashboard's "egress this
+	// month" panel and the raw input to the optional egress policy below.
 	UsedEgressGB float64 `json:"used_egress_gb"`
+	// EgressBillingMode is omitted while egress billing is off. Shadow means
+	// the displayed overage is audited locally but cannot reach the provider;
+	// live means later completed hourly windows are delivered to Polar.
+	EgressBillingMode string `json:"egress_billing_mode,omitempty"`
+	EgressBillingFrom string `json:"egress_billing_from,omitempty"`
+	// IncludedEgressGB and EgressOverageGB use the provider policy's billing
+	// unit (GiB for Polar). EgressMillicentsPerGB is the configured unit price.
+	IncludedEgressGB      float64 `json:"included_egress_gb,omitempty"`
+	EgressOverageGB       float64 `json:"egress_overage_gb,omitempty"`
+	EgressMillicentsPerGB int64   `json:"egress_millicents_per_gb,omitempty"`
 	// UsedIngressGB (ADR-048) is the per-month ingress Σ
 	// NetRxBytes / 1024^3. Informational only — not billed
 	// (ADR-048 §5). Same Ethernet-framing caveat as
@@ -4151,11 +4158,12 @@ type AppMetricsResponse struct {
 	// queried from vmmd_egress_net_tx_bytes_total{app}
 	// (the Prometheus mirror of usage_minutes.net_tx_bytes;
 	// the gateway-side tx_bytes mirror lands in PR-2).
-	// Informational only — not billed. 0 when Prometheus
+	// Observational only; billing uses durable usage_minutes rows, never this
+	// Prometheus projection. 0 when Prometheus
 	// is degraded or the metric hasn't been emitted yet.
 	// Unit: interface bytes (includes framing). The
-	// future egress-billing PR picks the unit; this field
-	// reports the Prometheus counter verbatim.
+	// billing unit is canonical interface bytes; this field reports the
+	// Prometheus counter verbatim.
 	EgressBytes int64 `json:"egress_bytes"`
 	// TxBytes (ADR-046 PR-2 / issue #415 PR-2) is the
 	// gateway-side mirror of EgressBytes. Source:

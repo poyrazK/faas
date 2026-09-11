@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -116,7 +117,7 @@ func (s *server) obsTenant360(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrCapacity("could not load tenant usage"))
 		return
 	}
-	billing, err := projectObsTenantBilling(r, s.store, target.ID)
+	billing, err := projectObsTenantBilling(r, s.store, s.billingProvider, target, month)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load tenant billing"))
 		return
@@ -182,33 +183,37 @@ func projectObsTenantUsage(r *http.Request, st state.Store, acct state.Account, 
 	return usage, nil
 }
 
-func projectObsTenantBilling(r *http.Request, st state.Store, accountID string) (api.ObsTenantBilling, error) {
-	billing := api.ObsTenantBilling{Invoices: make([]api.ObsInvoiceSummary, 0)}
-	overage, err := st.CurrentMonthOverageCents(r.Context(), accountID)
+func projectObsTenantBilling(r *http.Request, st state.Store, provider billing.Provider, acct state.Account, month time.Time) (api.ObsTenantBilling, error) {
+	billingView := api.ObsTenantBilling{Invoices: make([]api.ObsInvoiceSummary, 0)}
+	overage, err := st.CurrentMonthOverageCents(r.Context(), acct.ID)
 	if err != nil {
 		return api.ObsTenantBilling{}, err
 	}
-	billing.CurrentMonthOverageCents = overage
-	capCents, hasCap, err := st.GetAccountOverageCapCents(r.Context(), accountID)
+	eligibleEgressBytes, err := egressUsageBytesForPolicy(r.Context(), st, provider, acct, month)
+	if err != nil {
+		return api.ObsTenantBilling{}, err
+	}
+	billingView.CurrentMonthOverageCents = combinedOverageCents(provider, acct.Plan, eligibleEgressBytes, overage)
+	capCents, hasCap, err := st.GetAccountOverageCapCents(r.Context(), acct.ID)
 	if err != nil {
 		return api.ObsTenantBilling{}, err
 	}
 	if hasCap {
-		billing.OverageCapCents = &capCents
+		billingView.OverageCapCents = &capCents
 	}
-	credits, err := st.ListAccountCredits(r.Context(), accountID, true)
+	credits, err := st.ListAccountCredits(r.Context(), acct.ID, true)
 	if err != nil {
 		return api.ObsTenantBilling{}, err
 	}
 	for _, credit := range credits {
-		billing.ActiveCreditsCents += credit.CentsRemaining
+		billingView.ActiveCreditsCents += credit.CentsRemaining
 	}
-	invoices, err := st.ListInvoicesForAccount(r.Context(), accountID, nil, time.Time{}, 12)
+	invoices, err := st.ListInvoicesForAccount(r.Context(), acct.ID, nil, time.Time{}, 12)
 	if err != nil {
 		return api.ObsTenantBilling{}, err
 	}
 	for _, invoice := range invoices {
-		billing.Invoices = append(billing.Invoices, api.ObsInvoiceSummary{
+		billingView.Invoices = append(billingView.Invoices, api.ObsInvoiceSummary{
 			ID:              invoice.ID,
 			Provider:        invoice.Provider,
 			Number:          invoice.Number,
@@ -220,5 +225,5 @@ func projectObsTenantBilling(r *http.Request, st state.Store, accountID string) 
 			AmountPaidCents: invoice.AmountPaidCents,
 		})
 	}
-	return billing, nil
+	return billingView, nil
 }

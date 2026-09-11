@@ -245,6 +245,38 @@ func ApplyBillingEnvOverlay(cfg *RootBillingConfig, env func(string) string) *Ro
 	if v := env("FAAS_POLAR_METER_ID"); v != "" {
 		cfg.Polar.MeterID = v
 	}
+	if v := env("FAAS_POLAR_EGRESS_BILLING_MODE"); v != "" {
+		cfg.Polar.EgressBillingMode = v
+	}
+	if v := env("FAAS_POLAR_EGRESS_BILLING_FROM"); v != "" {
+		cfg.Polar.EgressBillingFrom = v
+	}
+	if v := env("FAAS_POLAR_EGRESS_USAGE_EVENT_NAME"); v != "" {
+		cfg.Polar.EgressUsageEventName = v
+	}
+	if v := env("FAAS_POLAR_EGRESS_METER_ID"); v != "" {
+		cfg.Polar.EgressMeterID = v
+	}
+	if v := env("FAAS_POLAR_EGRESS_MILLICENTS_PER_GIB"); v != "" {
+		if n, parseErr := strconv.ParseInt(v, 10, 64); parseErr == nil {
+			cfg.Polar.EgressMillicentsPerGiB = n
+		}
+	}
+	if v := env("FAAS_POLAR_HOBBY_INCLUDED_EGRESS_GIB"); v != "" {
+		if n, parseErr := strconv.ParseInt(v, 10, 64); parseErr == nil {
+			cfg.Polar.HobbyIncludedEgressGiB = n
+		}
+	}
+	if v := env("FAAS_POLAR_PRO_INCLUDED_EGRESS_GIB"); v != "" {
+		if n, parseErr := strconv.ParseInt(v, 10, 64); parseErr == nil {
+			cfg.Polar.ProIncludedEgressGiB = n
+		}
+	}
+	if v := env("FAAS_POLAR_SCALE_INCLUDED_EGRESS_GIB"); v != "" {
+		if n, parseErr := strconv.ParseInt(v, 10, 64); parseErr == nil {
+			cfg.Polar.ScaleIncludedEgressGiB = n
+		}
+	}
 	if v := env("FAAS_POLAR_SUCCESS_URL"); v != "" {
 		cfg.Polar.SuccessURL = v
 	}

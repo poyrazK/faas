@@ -13368,7 +13368,7 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 	return out, nil
 }
 
-// CurrentMonthOverageCents sums the account's usage_minutes.mb_seconds
+// CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
 // from the UTC month start, removes the account plan's included calendar-
 // month allowance, and converts the remainder to integer cents. Integer
 // math only — never float on money (CLAUDE.md).

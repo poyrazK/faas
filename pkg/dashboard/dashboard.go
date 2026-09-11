@@ -1968,20 +1968,21 @@ type UsageData struct {
 	OverageGBHours  float64
 	UsedPct         float64 // 0..100+
 	Requests        int64
-	// UsedEgressGB (ADR-046, step 10) is the per-month
-	// informational egress roll-up (Σ net_tx_bytes across all apps).
-	// tx_bytes is a diagnostic subset and is not added. Not billed; the
-	// template renders it next to the GB-h panel as a
-	// "this much egress" line. The gateway-side tx_bytes
-	// producer lands in PR-2; until then the value is
-	// 0 because NetTxBytes is the only source populated.
-	UsedEgressGB       float64
-	UsedIngressGB      float64
-	UsedCPUHours       float64
-	ColdBoots          int64
-	PerApp             []UsageAppData
-	Daily              []UsageDailyPoint
-	DailySparklineHTML template.HTML
+	// UsedEgressGB is the canonical Σ net_tx_bytes roll-up. The policy fields
+	// are empty while billing is off and make shadow/live status visible before
+	// a customer can receive an egress charge.
+	UsedEgressGB          float64
+	EgressBillingMode     string
+	EgressBillingFrom     string
+	IncludedEgressGB      float64
+	EgressOverageGB       float64
+	EgressPriceCentsPerGB int64
+	UsedIngressGB         float64
+	UsedCPUHours          float64
+	ColdBoots             int64
+	PerApp                []UsageAppData
+	Daily                 []UsageDailyPoint
+	DailySparklineHTML    template.HTML
 }
 
 // BillingData is the /dashboard/billing page payload (issue #253).
@@ -2016,9 +2017,14 @@ type BillingData struct {
 	MaxConcurrency int
 
 	// Current-month usage (informational; not billed here).
-	UsedGBHours  float64
-	UsedPct      float64
-	UsedEgressGB float64 // mirrors renderUsage; informational (eth framing caveat)
+	UsedGBHours           float64
+	UsedPct               float64
+	UsedEgressGB          float64
+	EgressBillingMode     string
+	EgressBillingFrom     string
+	IncludedEgressGB      float64
+	EgressOverageGB       float64
+	EgressPriceCentsPerGB int64
 
 	// Last invoice (empty fields for free or no-invoice accounts).
 	LastInvoiceDate           string

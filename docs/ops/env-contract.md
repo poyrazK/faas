@@ -232,11 +232,19 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_POLAR_ACCESS_TOKEN` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_API_KEY` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_BASE_URL` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_POLAR_EGRESS_BILLING_FROM` | shared | `secrets-env` |  |  | `` | activation hour; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_EGRESS_BILLING_MODE` | shared | `secrets-env` |  |  | `` | off (default), shadow, or live; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_EGRESS_METER_ID` | shared | `secrets-env` |  |  | `` | separate Polar meter UUID; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_EGRESS_MILLICENTS_PER_GIB` | shared | `secrets-env` |  |  | `` | whole-cent price per GiB; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_EGRESS_USAGE_EVENT_NAME` | shared | `secrets-env` |  |  | `` | defaults to faas_egress_usage; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_HOBBY_INCLUDED_EGRESS_GIB` | shared | `secrets-env` |  |  | `` | Hobby monthly allowance; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_HOBBY_PRODUCT_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_METER_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_POLAR_PRO_INCLUDED_EGRESS_GIB` | shared | `secrets-env` |  |  | `` | Pro monthly allowance; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_PRO_PRODUCT_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_RETURN_URL` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_SANDBOX` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_POLAR_SCALE_INCLUDED_EGRESS_GIB` | shared | `secrets-env` |  |  | `` | Scale monthly allowance; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_SCALE_PRODUCT_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_SUCCESS_URL` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_USAGE_EVENT_NAME` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |

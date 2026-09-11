@@ -84,6 +84,14 @@ egress_tls_ca_path = ""
 # pro_product_id         = "" # recurring Polar product UUID
 # scale_product_id       = "" # recurring Polar product UUID
 # usage_event_name       = "faas_ram_usage" # meter event filter name
+# egress_billing_mode    = "off" # off | shadow | live; disabled by default
+# egress_billing_from    = "" # RFC3339 UTC-hour activation boundary required for shadow/live
+# egress_meter_id        = "" # separate meter summing metadata.egress_gib
+# egress_usage_event_name = "faas_egress_usage"
+# egress_millicents_per_gib = 0 # explicit whole-cent price required for shadow/live
+# hobby_included_egress_gib = 0 # explicit positive allowances required for shadow/live
+# pro_included_egress_gib   = 0
+# scale_included_egress_gib = 0
 # base_url               = "" # empty = https://api.polar.sh
 #
 # [billing.paddle]            # explicit legacy provider

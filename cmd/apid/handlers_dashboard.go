@@ -1239,6 +1239,12 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 	// docstring on api.UsageResponse.TotalEgressGB — see
 	// pkg/api/dto.go for the wire-side semantics.
 	usedEgressGB := float64(egressBytes) / (1024 * 1024 * 1024)
+	eligibleEgressBytes, err := egressUsageBytesForPolicy(r.Context(), s.store, s.billingProvider, acct, month)
+	if err != nil {
+		renderProblem(w, log, err)
+		return
+	}
+	egressMode, egressFrom, includedEgress, egressOverage, egressPrice := egressUsagePolicyView(s.billingProvider, acct.Plan, eligibleEgressBytes)
 	apps, err := s.store.ListApps(r.Context(), acct.ID)
 	if err != nil {
 		log.Warn("dashboard renderUsage: list apps", "account_id", acct.ID, "err", err)
@@ -1264,19 +1270,24 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		appCount = 0
 	}
 	page := dashboard.Page{Title: "Usage", Body: "usage", Account: dashboardAccountView(view, appCount), Data: dashboard.UsageData{
-		Month:              month.Format("2006-01"),
-		UsedGBHours:        used,
-		IncludedGBHours:    included,
-		OverageGBHours:     max(0, used-float64(included)),
-		UsedPct:            pct,
-		Requests:           requests,
-		UsedEgressGB:       usedEgressGB,
-		UsedIngressGB:      float64(ingressBytes) / (1024 * 1024 * 1024),
-		UsedCPUHours:       meter.CPUHours(cpuUsec),
-		ColdBoots:          coldBoots,
-		PerApp:             perApp,
-		Daily:              daily,
-		DailySparklineHTML: dailySparkline,
+		Month:                 month.Format("2006-01"),
+		UsedGBHours:           used,
+		IncludedGBHours:       included,
+		OverageGBHours:        max(0, used-float64(included)),
+		UsedPct:               pct,
+		Requests:              requests,
+		UsedEgressGB:          usedEgressGB,
+		EgressBillingMode:     egressMode,
+		EgressBillingFrom:     egressFrom,
+		IncludedEgressGB:      includedEgress,
+		EgressOverageGB:       egressOverage,
+		EgressPriceCentsPerGB: egressPrice / api.MillicentsPerCent,
+		UsedIngressGB:         float64(ingressBytes) / (1024 * 1024 * 1024),
+		UsedCPUHours:          meter.CPUHours(cpuUsec),
+		ColdBoots:             coldBoots,
+		PerApp:                perApp,
+		Daily:                 daily,
+		DailySparklineHTML:    dailySparkline,
 	}}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
@@ -1323,6 +1334,12 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	}
 	used := meter.GBHours(mbSec)
 	usedEgressGB := float64(egressBytes) / (1024 * 1024 * 1024)
+	eligibleEgressBytes, eligibleErr := egressUsageBytesForPolicy(ctx, s.store, s.billingProvider, acct, month)
+	if eligibleErr != nil {
+		log.Warn("dashboard renderBilling: eligible egress usage", "account_id", acct.ID, "err", eligibleErr)
+		eligibleEgressBytes = 0
+	}
+	egressMode, egressFrom, includedEgress, egressOverage, egressPrice := egressUsagePolicyView(s.billingProvider, acct.Plan, eligibleEgressBytes)
 	pct := 0.0
 	if limits.IncludedGBHours > 0 {
 		pct = used / float64(limits.IncludedGBHours) * 100
@@ -1377,6 +1394,8 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	if obsErr != nil {
 		log.Warn("dashboard renderBilling: current month overage", "account_id", acct.ID, "err", obsErr)
 		overageCents = 0
+	} else {
+		overageCents = combinedOverageCents(s.billingProvider, acct.Plan, eligibleEgressBytes, overageCents)
 	}
 	var overageRatio float64
 	if capOK && capCents > 0 && overageCents > 0 {
@@ -1400,6 +1419,11 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		UsedGBHours:               used,
 		UsedPct:                   pct,
 		UsedEgressGB:              usedEgressGB,
+		EgressBillingMode:         egressMode,
+		EgressBillingFrom:         egressFrom,
+		IncludedEgressGB:          includedEgress,
+		EgressOverageGB:           egressOverage,
+		EgressPriceCentsPerGB:     egressPrice / api.MillicentsPerCent,
 		LastInvoiceDate:           lastInvDate,
 		LastInvoiceStatus:         lastInvStatus,
 		LastInvoiceTotalFormatted: lastInvTotal,

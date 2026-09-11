@@ -1,4 +1,4 @@
-# ADR-046 — Per-instance egress metering, visibility only (issue #<TBD>)
+# ADR-046 — Per-instance egress metering and gated billing
 
 - **Status:** Accepted
 - **Superseded (in part, PR-E):** prose referred to the monolithic
@@ -15,6 +15,11 @@
   provider delivery receipts are meter-qualified. Charging remains disabled
   until a provider explicitly advertises the egress capability and product
   pricing/included quota are approved.
+- **Amended:** 2026-09-12. Polar can deliver net calendar-month egress
+  overage through a separate meter. The feature defaults off; shadow sends no
+  provider events; live requires explicit per-plan allowances, price, meter,
+  event, and non-retroactive activation hour. The existing customer overage
+  cap includes live egress, and the policy is visible in API/CLI/dashboard.
 - **Decision:** Land a per-instance customer egress byte counter (vmmd tc/veth
   scrape + gateway response byte counter) end-to-end into `usage_minutes` and
   `GET /v1/usage` / `/v1/usage/summary` / `/v1/account/export` / `faas usage`,

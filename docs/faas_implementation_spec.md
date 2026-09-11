@@ -1408,9 +1408,9 @@ The §9.A payoff multiplies with each compute box added at M9. On a single-node 
 
 - Unit: GB-RAM-hour, billed on provisioned `ram_mb + 8` per running second (§4.7). Definition published verbatim in docs — no surprise-RSS billing.
 - Included quotas per plan per calendar month (UTC): 5 / 50 / 250 / 1,500 GB-h. Overage €0.01/GB-h, metered in millicents, Stripe usage records hourly, idempotent by `(subscription_item, hour)`.
-- Requests are counted but not billed (v1). Per-instance customer egress bytes are metered and exposed through the usage surfaces (`usage_minutes.tx_bytes`, `usage_minutes.net_tx_bytes`, `usage_monthly.tx_bytes`, `usage_monthly.net_tx_bytes`, `GET /v1/usage*`), but **not** billed in this change. The host uplink remains 1 Gbit flat; per-plan shaping (10/25/100/250 Mbit, §7) is unchanged. Stripe/Paddle push shapes remain `gb_ram_hour` only. The columns are the seam for the future egress-billing PR which extends `Provider.PushUsageRecord` (ADR-046).
+- Requests are counted but not billed (v1). Canonical customer egress is `usage_minutes.net_tx_bytes`; gateway `tx_bytes` remains a diagnostic subset and is never added. Polar egress billing is independently gated `off` (default) / `shadow` / `live`, with explicit per-plan monthly GiB allowances and a whole-cent per-GiB price. Shadow records local, non-retroactive receipts and sends no provider events. Live uses a separate Polar meter. Stripe/Paddle remain compute-only. The host uplink and per-plan shaping (10/25/100/250 Mbit, §7) are unchanged.
 - Plan changes: upgrade immediate + prorated by Stripe; downgrade at period end; quota checks (deployed count, RAM sizes) run pre-downgrade and block with a task list ("delete 3 apps or reduce RAM…").
-- The `usage` API (`GET /v1/usage?month=`) returns the billable fields (`mb_seconds`, `requests`) via the same query and code path as the invoice; the informational `cpu_usec`, `tx_bytes`, and `net_tx_bytes` fields are telemetry only and are not pushed to a billing provider. Future billing integration extends `Provider.PushUsageRecord` without changing the "invoice = usage" invariant for billable dimensions.
+- The `usage` API (`GET /v1/usage?month=`) returns compute billing math plus canonical egress usage. When the Polar egress policy is configured, the summary also returns its mode, included amount, current overage, and unit price. `cpu_usec`, gateway `tx_bytes`, ingress `net_rx_bytes`, requests, and cold boots remain informational.
 
 ---
 
@@ -1908,7 +1908,7 @@ POST   /v1/apps/{app}/rollback
 GET    /v1/apps/{app}/logs?follow=1
 GET    /v1/apps/{app}/instances          read-only
 POST   /v1/apps/{app}/park · /wake       manual overrides
-GET    /v1/usage?month=YYYY-MM          per-app monthly mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes (CPU and egress informational; not billed)
+GET    /v1/usage?month=YYYY-MM          per-app monthly mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes; account summary exposes optional egress billing policy
 POST   /v1/domains · DELETE /v1/domains/{domain}
 POST   /v1/crons · PATCH/DELETE /v1/crons/{id}
 GET    /v1/account · PATCH /v1/account/plan

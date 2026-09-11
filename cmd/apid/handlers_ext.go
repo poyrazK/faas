@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/netip"
 	"os"
@@ -4999,14 +5000,25 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	// are the production default. Storing cents as int64 keeps
 	// floats away from money (spec §Conventions).
 	overageCents := int64(overage * 1.0)
+	eligibleEgressBytes, err := egressUsageBytesForPolicy(ctx, s.store, s.billingProvider, acct, month)
+	if err != nil {
+		return api.UsageSummaryResponse{}, err
+	}
+	egressMode, egressFrom, includedEgress, egressOverage, egressPrice := egressUsagePolicyView(s.billingProvider, acct.Plan, eligibleEgressBytes)
+	overageCents = combinedOverageCents(s.billingProvider, acct.Plan, eligibleEgressBytes, overageCents)
 	return api.UsageSummaryResponse{
-		Month:           monthStr,
-		UsedGBHours:     usedGB,
-		IncludedGBHours: included,
-		OverageGBHours:  overage,
-		OverageCents:    overageCents,
-		UsedCPUHours:    usedCPUHours,
-		UsedEgressGB:    float64(egressBytes) / (1024 * 1024 * 1024),
+		Month:                 monthStr,
+		UsedGBHours:           usedGB,
+		IncludedGBHours:       included,
+		OverageGBHours:        overage,
+		OverageCents:          overageCents,
+		UsedCPUHours:          usedCPUHours,
+		UsedEgressGB:          float64(egressBytes) / (1024 * 1024 * 1024),
+		EgressBillingMode:     egressMode,
+		EgressBillingFrom:     egressFrom,
+		IncludedEgressGB:      includedEgress,
+		EgressOverageGB:       egressOverage,
+		EgressMillicentsPerGB: egressPrice,
 		// ADR-048: ingress Σ + cold-boot Σ across every
 		// app on this account for the month. Both
 		// informational, not billed.
@@ -5014,6 +5026,77 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 		ColdBootTotal: coldBoots,
 		Daily:         daily,
 	}, nil
+}
+
+func egressUsagePolicyView(provider billing.Provider, plan api.Plan, usedBytes int64) (mode, effectiveFrom string, included, overage float64, millicentsPerUnit int64) {
+	policyProvider, ok := provider.(billing.MeterUsagePolicyProvider)
+	if !ok {
+		return "", "", 0, 0, 0
+	}
+	policy, configured := policyProvider.MeterUsagePolicy(plan, state.BillingMeterEgress)
+	if !configured || policy.UnitQuantity <= 0 {
+		return "", "", 0, 0, 0
+	}
+	billableBytes := usedBytes - policy.IncludedQuantity
+	if billableBytes < 0 {
+		billableBytes = 0
+	}
+	return string(policy.Mode), policy.EffectiveFrom.UTC().Format(time.RFC3339),
+		float64(policy.IncludedQuantity) / float64(policy.UnitQuantity),
+		float64(billableBytes) / float64(policy.UnitQuantity),
+		policy.MillicentsPerUnit
+}
+
+func egressUsageBytesForPolicy(ctx context.Context, store state.Store, provider billing.Provider, acct state.Account, month time.Time) (int64, error) {
+	policyProvider, ok := provider.(billing.MeterUsagePolicyProvider)
+	if !ok {
+		return 0, nil
+	}
+	policy, configured := policyProvider.MeterUsagePolicy(acct.Plan, state.BillingMeterEgress)
+	if !configured {
+		return 0, nil
+	}
+	monthStart := time.Date(month.UTC().Year(), month.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
+	start := monthStart
+	if policy.EffectiveFrom.After(start) {
+		start = policy.EffectiveFrom
+	}
+	end := monthStart.AddDate(0, 1, 0)
+	if !start.Before(end) {
+		return 0, nil
+	}
+	rows, err := store.UsageByHour(ctx, acct.ID, start, end)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, row := range rows {
+		if row.NetTxBytes > math.MaxInt64-total {
+			return math.MaxInt64, nil
+		}
+		total += row.NetTxBytes
+	}
+	return total, nil
+}
+
+func combinedOverageCents(provider billing.Provider, plan api.Plan, usedEgressBytes, computeCents int64) int64 {
+	policyProvider, ok := provider.(billing.MeterUsagePolicyProvider)
+	if !ok {
+		return computeCents
+	}
+	policy, configured := policyProvider.MeterUsagePolicy(plan, state.BillingMeterEgress)
+	if !configured || policy.Mode != billing.MeterDeliveryLive {
+		return computeCents
+	}
+	billableBytes := usedEgressBytes - policy.IncludedQuantity
+	if billableBytes < 0 {
+		billableBytes = 0
+	}
+	egressCents := billing.MeterUsageCents(policy, billableBytes)
+	if egressCents > math.MaxInt64-computeCents {
+		return math.MaxInt64
+	}
+	return computeCents + egressCents
 }
 
 // accountUsage serves the account-level usage projection. Compute remains

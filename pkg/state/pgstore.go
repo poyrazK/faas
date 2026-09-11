@@ -16719,14 +16719,15 @@ func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64,
 	return out, rows.Err()
 }
 
-// CurrentMonthOverageCents returns the account's derived overage in
+// CurrentMonthOverageCents returns the account's derived compute overage in
 // integer cents for the current UTC month. It removes the account plan's
 // included calendar-month allowance before converting the remainder to
 // cents. Integer math only — never float on money (CLAUDE.md).
 //
 // Hand-written: the formula is meterd-internal and not on the read
 // surface. The migration on usage_minutes is unchanged; we SELECT
-// against the existing table.
+// against the existing table. Provider-policy secondary meters are added by
+// meterd/apid before comparing the total with the account cap.
 func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string) (int64, error) {
 	// Anchor the month lower bound in UTC on the Go side. The previous
 	// shape `minute >= date_trunc('month', now())` returned the local

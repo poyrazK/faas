@@ -26,10 +26,34 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+func TestRunQuotaOnce_EgressCountsTowardOverageCap(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	now := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	acct := makeAccount(t, ctx, store, api.PlanHobby)
+	store.SetClockForTest(func() time.Time { return now })
+	store.SetOverageCapCentsForTest(acct.ID, 1)
+	const gib = int64(1 << 30)
+	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1", now.Add(-time.Minute), 0, 0, 0, 0, 2*gib, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
+	ops := wire.NewOpsMetrics("meter_test_egress_cap")
+	cfg := &meter.Config{}
+	cfg.Defaults()
+	loop := meter.NewLoop(store, nil, &fakeParker{}, provider, &fakeNotifier{}, nil, nil, nil, nil,
+		func() time.Time { return now }, discardLog(), cfg, ops)
+	loop.RunQuotaOnce(ctx)
+	if body := scrapeBody(t, ops); !strings.Contains(body, `meter_test_egress_cap_billing_cap_exceeded_total{plan="hobby"} 1`) {
+		t.Fatalf("egress did not count toward cap:\n%s", body)
+	}
+}
 
 // TestRunQuotaOnce_OverageCapHonored — a paid account at 120% of its
 // monthly overage ceiling skips the quota ladder and the counter
