@@ -6324,8 +6324,17 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 		}
 		pending = append(pending, request)
 	}
+	var importedDoc []byte
+	err = tx.QueryRow(ctx, `
+		select doc
+		  from app_openapi_docs
+		 where app_id = $1::uuid
+	`, dep.AppID).Scan(&importedDoc)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return OpenAPISnapshot{}, fmt.Errorf("state: read imported OpenAPI document for snapshot: %w", err)
+	}
 	scope := normalizedDeploymentScope(dep.Scope)
-	snap, err := getOpenAPICapture()(ctx, tx, dep.ID, dep.AppID, scope, pending)
+	snap, err := getOpenAPICapture()(ctx, tx, dep.ID, dep.AppID, scope, pending, importedDoc)
 	if err != nil {
 		return OpenAPISnapshot{}, fmt.Errorf("state: capture snapshot for %s: %w", dep.ID, err)
 	}

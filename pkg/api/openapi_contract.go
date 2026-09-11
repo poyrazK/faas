@@ -9,6 +9,7 @@ import "time"
 type OpenAPIContractDiffResponse struct {
 	AppID                string                    `json:"app_id"`
 	Scope                string                    `json:"scope"`
+	Source               string                    `json:"source"`
 	BaselineDeploymentID string                    `json:"baseline_deployment_id,omitempty"`
 	BaselineSHA256       string                    `json:"baseline_sha256,omitempty"`
 	ProposedSHA256       string                    `json:"proposed_sha256"`

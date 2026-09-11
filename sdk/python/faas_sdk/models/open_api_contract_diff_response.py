@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.open_api_contract_diff_response_source import (
+    OpenAPIContractDiffResponseSource,
+    check_open_api_contract_diff_response_source,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -20,8 +24,9 @@ T = TypeVar("T", bound="OpenAPIContractDiffResponse")
 
 @_attrs_define
 class OpenAPIContractDiffResponse:
-    """Read-only OpenAPI contract comparison for the current projected
-    edge-rule surface and the latest captured deployment snapshot.
+    """Read-only OpenAPI contract comparison for the authoritative imported
+    app document (or the projected edge-rule fallback) and the latest
+    captured deployment snapshot.
     `blocking` is true when a production promotion would be rejected
     while the contract-diff feature flag is enabled.
 
@@ -29,6 +34,8 @@ class OpenAPIContractDiffResponse:
 
     app_id: UUID
     scope: str
+    source: OpenAPIContractDiffResponseSource
+    """Contract source used for the proposed snapshot."""
     proposed_sha256: str
     blocking: bool
     breaks: list[OpenAPIContractBreak]
@@ -42,6 +49,8 @@ class OpenAPIContractDiffResponse:
         app_id = str(self.app_id)
 
         scope = self.scope
+
+        source: str = self.source
 
         proposed_sha256 = self.proposed_sha256
 
@@ -73,6 +82,7 @@ class OpenAPIContractDiffResponse:
             {
                 "app_id": app_id,
                 "scope": scope,
+                "source": source,
                 "proposed_sha256": proposed_sha256,
                 "blocking": blocking,
                 "breaks": breaks,
@@ -97,6 +107,8 @@ class OpenAPIContractDiffResponse:
         app_id = UUID(d.pop("app_id"))
 
         scope = d.pop("scope")
+
+        source = check_open_api_contract_diff_response_source(d.pop("source"))
 
         proposed_sha256 = d.pop("proposed_sha256")
 
@@ -135,6 +147,7 @@ class OpenAPIContractDiffResponse:
         open_api_contract_diff_response = cls(
             app_id=app_id,
             scope=scope,
+            source=source,
             proposed_sha256=proposed_sha256,
             blocking=blocking,
             breaks=breaks,

@@ -588,6 +588,7 @@ from .open_api_contract_break import OpenAPIContractBreak
 from .open_api_contract_break_kind import OpenAPIContractBreakKind
 from .open_api_contract_break_method import OpenAPIContractBreakMethod
 from .open_api_contract_diff_response import OpenAPIContractDiffResponse
+from .open_api_contract_diff_response_source import OpenAPIContractDiffResponseSource
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -1461,6 +1462,7 @@ __all__ = (
     "OpenAPIContractBreakKind",
     "OpenAPIContractBreakMethod",
     "OpenAPIContractDiffResponse",
+    "OpenAPIContractDiffResponseSource",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",

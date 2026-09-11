@@ -914,7 +914,11 @@ Preview uncovered routes without importing the document
 
 ### openapi preview
 
-Preview declared routes, observed routes, and matching edge policies
+Preview routes, edge policies, and the read-only OpenAPI contract diff
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <scope>` | deployment scope to compare |  |
 
 ### openapi rm
 
