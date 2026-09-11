@@ -569,6 +569,7 @@ var cliCommands = []cliCommand{
 			{Name: "handler", Short: "function handler", Value: "HANDLER"},
 			{Name: "name", Short: "app name (default: selected source directory, or current directory)", Value: "SLUG"},
 			{Name: "profile", Short: "named app resource profile", Value: "PROFILE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
+			{Name: "vcpu", Short: "assert the plan guest vCPU shape (omit to use the plan default)", Value: "N"},
 			{Name: "function", Short: "deploy as a function; skip shape auto-detection"},
 			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
