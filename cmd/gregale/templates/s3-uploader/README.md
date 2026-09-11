@@ -14,7 +14,26 @@ Plug in any S3-compatible provider:
 - **Cloudflare R2** — set `S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com`.
 - **Backblaze B2** — set `S3_ENDPOINT=https://s3.<region>.backblazeb2.com`.
 
-## Set the secrets
+## First deploy with secrets
+
+Create the file outside this directory so it is not uploaded with the
+source, restrict it to your user, and deploy. Gregale creates the app,
+seals the secrets, and only then starts the runtime:
+
+```sh
+cat > ../s3-uploader.secrets <<'EOF'
+S3_BUCKET=my-bucket
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+# Optional for R2 / B2:
+# S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+EOF
+chmod 600 ../s3-uploader.secrets
+gregale deploy --secrets-file ../s3-uploader.secrets
+```
+
+## Rotate or update secrets
 
 ```sh
 gregale secrets set --app <slug> S3_BUCKET=my-bucket S3_REGION=us-east-1 S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...

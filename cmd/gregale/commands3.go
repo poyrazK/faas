@@ -377,6 +377,63 @@ func parseSecretsPair(s string) (secretsPair, error) {
 	return secretsPair{Key: key, Value: value}, nil
 }
 
+// readSecretsFile loads the KEY=VALUE input used by deploy's
+// --secrets-file flag. The file is deliberately parsed before any network
+// mutation so a typo cannot create an app and leave the first deploy without
+// its configuration. Values never appear in returned errors or diagnostics.
+func readSecretsFile(path string) ([]secretsPair, error) {
+	f, err := openCustomerFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+	pairs := make([]secretsPair, 0, 8)
+	seen := make(map[string]struct{})
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		pair, parseErr := parseSecretsPair(line)
+		if parseErr != nil {
+			return nil, fmt.Errorf("line %d: %w", lineNo, parseErr)
+		}
+		if _, ok := seen[pair.Key]; ok {
+			return nil, fmt.Errorf("line %d: duplicate secret key %s", lineNo, pair.Key)
+		}
+		if problem := api.ValidateSecretKey(pair.Key); problem != nil {
+			return nil, fmt.Errorf("line %d: %s", lineNo, problem.Detail)
+		}
+		seen[pair.Key] = struct{}{}
+		pairs = append(pairs, pair)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(pairs) == 0 {
+		return nil, errors.New("no KEY=VALUE pairs found")
+	}
+	return pairs, nil
+}
+
+// setDeploySecrets seals a validated secret bundle after CreateApp and before
+// the deployment upload. It is intentionally separate from secretsSet: deploy
+// must not perform the extra list/quota reads or print one line per key, and
+// JSON deploys must keep stdout as a single receipt.
+func setDeploySecrets(ctx context.Context, client *Client, app string, pairs []secretsPair) error {
+	for _, pair := range pairs {
+		if err := client.SetSecret(ctx, app, pair.Key, pair.Value); err != nil {
+			return fmt.Errorf("set %s: %w", pair.Key, err)
+		}
+	}
+	return nil
+}
+
 // --- unset -----------------------------------------------------------------
 
 func secretsUnset(args []string) int {

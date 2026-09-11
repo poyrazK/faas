@@ -17,7 +17,23 @@ This is a SCAFFOLD. It logs incoming events to stdout (visible via
 
 Slack Events API.
 
-## Set the secrets
+## First deploy with secrets
+
+Create the file outside this directory, restrict it to your user, and
+deploy. Gregale creates the app, seals the secrets, and only then starts
+the runtime:
+
+```sh
+cat > ../slack-bot.secrets <<'EOF'
+SLACK_SIGNING_SECRET=<your-signing-secret>
+# Optional, only if you uncomment chat.postMessage:
+# SLACK_BOT_TOKEN=xoxb-...
+EOF
+chmod 600 ../slack-bot.secrets
+gregale deploy --secrets-file ../slack-bot.secrets
+```
+
+## Rotate or update secrets
 
 ```sh
 gregale secrets set --app <slug> SLACK_SIGNING_SECRET=<your-signing-secret>

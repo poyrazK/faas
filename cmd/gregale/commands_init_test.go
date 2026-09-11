@@ -266,6 +266,60 @@ func TestCmdInit_NextStepsFor(t *testing.T) {
 	}
 }
 
+func TestReadSecretsFile_ParsesAndValidatesWithoutEchoingValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deploy.secrets")
+	const sensitive = "sk_live_customer_value"
+	if err := os.WriteFile(path, []byte("# comment\nDATABASE_URL=postgres://user:pass@host/db?sslmode=require\nAPI_KEY="+sensitive+"\n"), 0o600); err != nil {
+		t.Fatalf("write secrets file: %v", err)
+	}
+	pairs, err := readSecretsFile(path)
+	if err != nil {
+		t.Fatalf("readSecretsFile() error = %v", err)
+	}
+	if len(pairs) != 2 || pairs[1].Value != sensitive {
+		t.Fatalf("parsed pairs = %#v, want two pairs with the original value", pairs)
+	}
+
+	badPath := filepath.Join(t.TempDir(), "bad.secrets")
+	if err := os.WriteFile(badPath, []byte("DATABASE_URL=one\nDATABASE_URL=two\n"), 0o600); err != nil {
+		t.Fatalf("write duplicate secrets file: %v", err)
+	}
+	badErr := func() error {
+		_, err := readSecretsFile(badPath)
+		return err
+	}()
+	if badErr == nil || !strings.Contains(badErr.Error(), "duplicate secret key DATABASE_URL") || strings.Contains(badErr.Error(), "two") {
+		t.Errorf("duplicate error = %v, want key-only diagnostic without a value", badErr)
+	}
+}
+
+func TestValidateTemplateSecrets(t *testing.T) {
+	tests := []struct {
+		tpl   string
+		pairs []secretsPair
+		want  string
+		noErr bool
+	}{
+		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}}, want: "S3_REGION"},
+		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}, {Key: "S3_REGION", Value: "region"}, {Key: "S3_ACCESS_KEY_ID", Value: "access"}, {Key: "S3_SECRET_ACCESS_KEY", Value: "secret"}}, noErr: true},
+		{tpl: "ai-chat", pairs: []secretsPair{{Key: "OPENAI_API_KEY"}, {Key: "ANTHROPIC_API_KEY"}}, want: "exactly one"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.tpl+tc.want, func(t *testing.T) {
+			err := validateTemplateSecrets(tc.tpl, tc.pairs)
+			if tc.noErr {
+				if err != nil {
+					t.Fatalf("validateTemplateSecrets() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateTemplateSecrets() error = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // TestCmdInit_HelpFlagShowsDocs: the --help branch of cmdInit prints
 // usage + the docs URL via PrintUsage. The flag package prints its
 // own usage on Parse failure when --help is supplied, but the
