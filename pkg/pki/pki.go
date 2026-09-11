@@ -181,9 +181,9 @@ func MergeProductionSANs(cnA, cnB string) AltNames {
 
 // Roles returns the canonical set of leaves every box on the fleet
 // needs. The list is intentionally redundant across roles (every box
-// gets a schedd server leaf even if it doesn't run schedd) because the
-// CA path and dial path are independent — a compute-01 that doesn't
-// run schedd still needs the CA to verify schedd's responses.
+// gets the shared schedd server and client leaves) because the
+// CA path and dial path are independent and M9 runs a schedd on
+// every compute host as well as the control plane.
 //
 // This is the one place the operator changes when a new daemon is
 // added or a new dial relationship lands; the rest of the package
@@ -276,8 +276,9 @@ func RoleUsesNodeIdentity(role Role) bool {
 // cert footprint shrinks to what the box actually dials and listens on.
 //
 // The filter is Directory-based; each per-daemon subdirectory under
-// /etc/faas/tls/ is either wholly owned by a single box role or wholly
-// absent on that box. The mapping mirrors the role-to-daemon table in
+// /etc/faas/tls/ is either owned by a single box role or explicitly shared
+// when the same service runs on both roles. The mapping mirrors the
+// role-to-daemon table in
 // pkg/role/role.go (allowed roles per daemon) and the per-box ansible
 // host_vars (deploy/ansible/host_vars/faas-fsn-{1,2}.yml). Adding a
 // new daemon or a new dial relationship means updating Roles() and
@@ -303,8 +304,8 @@ func RolesForBox(role string) []Role {
 	}
 }
 
-// rolesForControlPlane returns the leaves fsn-1 (control-plane box)
-// needs. fsn-1 runs apid + schedd + meterd + gatewayd-public + githubd,
+// rolesForControlPlane returns the leaves the control-plane box needs.
+// It runs apid + schedd + meterd + gatewayd-public + githubd,
 // so it needs:
 //
 //   - server leaves for the five daemons it runs
@@ -320,10 +321,10 @@ func RolesForBox(role string) []Role {
 // on fsn-2 — gatewayd-internal is the listener) and the
 // gatewayd-internal-public/leader-client leaf (fsn-2's outbound
 // dialer; not fsn-1's). The directory-based filter below is
-// correct because each per-daemon directory either wholly lives on
-// fsn-1 or wholly lives on fsn-2 — there is no mixed ownership
-// because pkg/pki.Roles() puts the client leaf next to the
-// dialer's home dir.
+// correct because each per-daemon directory either belongs to one role or is
+// deliberately shared. The schedd directory is shared now that M9 runs a
+// node-local schedd on every compute host; pkg/pki.Roles() keeps its server
+// and client leaves together so both roles receive the complete pair.
 func rolesForControlPlane() []Role {
 	keep := map[string]bool{
 		// server + client dirs that live on fsn-1:
@@ -336,11 +337,11 @@ func rolesForControlPlane() []Role {
 	return filterRolesByDirectory(keep)
 }
 
-// rolesForComputeOnly returns the leaves fsn-2 (compute-only box)
-// needs. fsn-2 runs vmmd + gatewayd-internal + builderd + imaged, so
+// rolesForComputeOnly returns the leaves a compute-only box needs. It runs
+// schedd + vmmd + gatewayd-internal + builderd + imaged, so
 // it needs:
 //
-//   - server leaves for the daemons it runs (vmmd + builderd + imaged)
+//   - server leaves for the daemons it runs (schedd + vmmd + builderd + imaged)
 //   - the gatewayd/egress server leaf (gatewayd-internal's listener
 //     side per cmd/gatewayd-internal/config.go:87 — leaf path is
 //     /etc/faas/tls/gatewayd/egress.crt)
@@ -359,6 +360,10 @@ func rolesForControlPlane() []Role {
 // fsn-2.
 func rolesForComputeOnly() []Role {
 	keep := map[string]bool{
+		// M9 runs a node-local scheduler beside vmmd. The same
+		// schedd/server and schedd/vmmd-client leaves are valid on
+		// both the control-plane and compute roles.
+		"schedd": true,
 		// server + client dirs that live on fsn-2:
 		"vmmd":                     true, // vmmd/server + vmmd/{schedd-client,apid-client}
 		"builderd":                 true, // builderd/server + builderd/vmmd-client

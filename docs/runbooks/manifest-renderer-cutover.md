@@ -21,7 +21,7 @@ Two hosts:
 | FQDN | Role | Daemons (per `bootstrap.yml` plays) |
 |---|---|---|
 | `fsn-1` | control-plane | apid, schedd, meterd, gatewayd-public, githubd, postgres, postgres_backup |
-| `fsn-2` | compute-only | vmmd, gatewayd-internal, builderd, imaged |
+| `fsn-2` | compute-only | schedd, vmmd, gatewayd-internal, builderd, imaged |
 
 The cross-box mesh is the per-box `ansible_host` value living in the
 manifest-generated host vars (Tailscale / Wireguard / internal LAN —
@@ -143,8 +143,8 @@ gregalectl pki init --box-role compute-only
 ```
 
 expect: each box drops the per-role cert + key chain under
-`/etc/faas/tls/` (apid / schedd / githubd on fsn-1; vmmd-client
-cert on fsn-2). Mode 0400 root:root per §11.
+`/etc/faas/tls/` (apid / schedd / githubd on fsn-1; schedd plus
+vmmd-client certs on fsn-2). Mode 0400 root:root per §11.
 
 ### 5. Initialize host.age
 

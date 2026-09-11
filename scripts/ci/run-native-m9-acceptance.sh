@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Run the M9 heartbeat/failure-safe acceptance against the Ansible-managed
-# native x86 split-box pair. This replaces the retired Lima two-node target.
+# native x86 compute pair. This replaces the retired Lima two-node target.
 # The control-plane checkout runs the Go test; the test stops the designated
-# node's vmmd over SSH and verifies its owning schedd reconciles the failure.
+# compute node's vmmd over SSH and verifies its owning schedd reconciles the
+# failure. The control-plane host is the database/test runner and is not one
+# of the two fault-injection peers.
 
 set -Eeuo pipefail
 
@@ -17,12 +19,12 @@ die() {
   die "/etc/faas/m9-acceptance-host is missing; this node is not designated for the native M9 gate"
 
 : "${DATABASE_URL:?set DATABASE_URL to the production-shaped Postgres DSN}"
-: "${FAAS_TWO_NODE_NODE_A:?set FAAS_TWO_NODE_NODE_A (for example fsn-1)}"
-: "${FAAS_TWO_NODE_NODE_B:?set FAAS_TWO_NODE_NODE_B (for example fsn-2.faas)}"
-: "${FAAS_TWO_NODE_SSH_A:?set FAAS_TWO_NODE_SSH_A (the control-plane SSH target)}"
-: "${FAAS_TWO_NODE_SSH_B:?set FAAS_TWO_NODE_SSH_B (the compute SSH target)}"
-: "${FAAS_TWO_NODE_ADDR_A:?set FAAS_TWO_NODE_ADDR_A (the control-plane IPv4 address)}"
-: "${FAAS_TWO_NODE_ADDR_B:?set FAAS_TWO_NODE_ADDR_B (the compute IPv4 address)}"
+: "${FAAS_TWO_NODE_NODE_A:?set FAAS_TWO_NODE_NODE_A (a compute node, for example fsn-2.faas)}"
+: "${FAAS_TWO_NODE_NODE_B:?set FAAS_TWO_NODE_NODE_B (a second compute node, for example fsn-3.faas)}"
+: "${FAAS_TWO_NODE_SSH_A:?set FAAS_TWO_NODE_SSH_A (SSH target for compute node A)}"
+: "${FAAS_TWO_NODE_SSH_B:?set FAAS_TWO_NODE_SSH_B (SSH target for compute node B)}"
+: "${FAAS_TWO_NODE_ADDR_A:?set FAAS_TWO_NODE_ADDR_A (compute node A IPv4 address)}"
+: "${FAAS_TWO_NODE_ADDR_B:?set FAAS_TWO_NODE_ADDR_B (compute node B IPv4 address)}"
 : "${FAAS_M9_CONFIRM:?set FAAS_M9_CONFIRM=native-x86 to enable the fault drill}"
 [[ "${FAAS_M9_CONFIRM}" == "native-x86" ]] ||
   die "refusing to run a fault drill without FAAS_M9_CONFIRM=native-x86"
@@ -62,7 +64,7 @@ restore_remote_services() {
 }
 trap restore_remote_services EXIT HUP INT TERM
 
-echo "native M9 acceptance: checking native x86 split-box services"
+echo "native M9 acceptance: checking native x86 compute-pair services"
 remote_systemctl "${FAAS_TWO_NODE_SSH_A}" is-active --quiet faas-schedd faas-vmmd ||
   die "node A schedd/vmmd services are not active; native M9 requires per-node ownership"
 remote_systemctl "${FAAS_TWO_NODE_SSH_B}" is-active --quiet faas-schedd faas-vmmd ||

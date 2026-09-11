@@ -219,18 +219,16 @@ type Config struct {
 	// always present, so the verifier, when wired, finds at least
 	// one entry to bind against.
 	//
-	// The field is intentionally not backed by [compute_node] TOML
-	// subsection for schedd: schedd is the control-plane trust
-	// anchor across every compute node, not a self-registrant.
-	// Operators set node_name = "schedd-<box>" through this field
-	// and the [compute_nodes] row is provisioned by `faas node
-	// register` (out of scope for ADR-056).
+	// The field is intentionally not backed by a [compute_node] TOML
+	// subsection: the node identity is deployment-owned and is injected
+	// through FAAS_NODE_NAME on each node-local schedd. The control-plane
+	// schedd leaves it empty; compute schedds resolve their own active
+	// compute_nodes row before serving requests.
 	NodeName string `toml:"node_name"`
 
 	// Role is the box shape this schedd inhabits (Gate-B; env
-	// override FAAS_SCHEDD_ROLE wins when set). schedd is a
-	// control-plane daemon — it refuses to start under
-	// RoleComputeOnly. RoleSingleBox is the default and lets
+	// override FAAS_SCHEDD_ROLE wins when set). M9 permits a
+	// node-local schedd under RoleComputeOnly. RoleSingleBox is the default and lets
 	// single-box dev boot unmoved. The host_vars setting
 	// `faas_box_role: control-plane` propagates through ansible
 	// to FAAS_SCHEDD_ROLE on the schedd unit; a missing env

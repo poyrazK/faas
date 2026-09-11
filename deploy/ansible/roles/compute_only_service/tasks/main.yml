@@ -26,6 +26,85 @@
       deploy/ansible/bootstrap.yml; verify host_vars/faas-fsn-N.yml
       sets faas_box_role correctly for this host.
 
+# M9 / ADR-062: every compute node owns a schedd alongside vmmd. The
+# control-plane role still installs the central schedd; this copy gives the
+# native pair a node-local scheduler without bringing apid or meterd onto the
+# compute box.
+- name: compute_only_service — ensure faas-schedd user exists (M9)
+  ansible.builtin.user:
+    name: faas-schedd
+    group: faas
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+
+- name: compute_only_service — install node-local schedd unit (M9)
+  notify: restart faas-schedd
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/roles/control_plane_service/files/faas-schedd.service"
+    dest: /etc/systemd/system/faas-schedd.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: compute_only_service — install schedd config example (M9)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/roles/control_plane_service/files/schedd.toml.example"
+    dest: /etc/faas/schedd.toml.example
+    owner: root
+    group: faas
+    mode: "0640"
+
+- name: compute_only_service — create schedd drop-in directory (M9)
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-schedd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: compute_only_service — install schedd role gate (M9)
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: 99-faas-schedd-role.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-role.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: compute_only_service — install schedd node identity (M9)
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: 99-faas-schedd-node-name.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-node-name.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+
+- name: compute_only_service — assert schedd PKI leaves exist (M9)
+  ansible.builtin.stat:
+    path: "/etc/faas/tls/schedd/{{ item }}"
+  loop:
+    - server.crt
+    - server.key
+    - vmmd-client.crt
+    - vmmd-client.key
+  register: faas_schedd_pki_stat
+  failed_when: not faas_schedd_pki_stat.stat.exists
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: compute_only_service — grant schedd group access to PKI leaves (M9)
+  ansible.builtin.file:
+    path: "/etc/faas/tls/schedd/{{ item }}"
+    owner: root
+    group: faas
+    mode: "0440"
+  loop:
+    - server.key
+    - vmmd-client.key
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
 # The imaged → vmmd hop is a split-box production dependency. Keep the
 # node-specific private endpoint in the target URL so grpc-go verifies the
 # endpoint SAN on the matching vmmd server leaf. The leaf retains vmmd.faas
@@ -225,8 +304,9 @@
 
 # Split-box local-backend fallback. Public multi-node deployments should use
 # FAAS_STORAGE_BACKEND=oci; this helper exists for an installation that keeps
-# local storage while placing imaged on compute and schedd on control. It is
-# only invoked when FAAS_ARTIFACT_REPLICATOR is present in imaged.env.
+# local storage while keeping the node-local schedd and imaged on this
+# compute host. It is only invoked when FAAS_ARTIFACT_REPLICATOR is present
+# in imaged.env.
 - name: compute_only_service — ensure artifact helper directory exists
   ansible.builtin.file:
     path: /usr/local/libexec

@@ -40,8 +40,9 @@ Specifically:
   each node has a durable cursor. The node-local `vmmd` consumes only events
   newer than its cursor, claims work with row locking, drains both blobs
   through the read-through cache, and marks the pair `ready` only after both
-  reads succeed. vmmd is used because the current compute-only Ansible role
-  runs vmmd on every compute box while schedd remains a control-plane service.
+reads succeed. vmmd is used because the compute-only Ansible role runs vmmd on
+every compute box; M9 deploys a node-local schedd beside it for ownership and
+liveness.
 - `snapshot_origins` records the producing node and region. New
   snapshots fan out only inside that region; legacy rows without
   origin metadata remain eligible for safe catch-up.

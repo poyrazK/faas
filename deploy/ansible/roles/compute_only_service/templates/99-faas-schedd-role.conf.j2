@@ -1,0 +1,5 @@
+[Service]
+# M9 runs a scheduler on every compute node. Keep the daemon's role explicit
+# so a stale single-box default cannot make a node-local schedd claim the
+# wrong topology.
+Environment=FAAS_SCHEDD_ROLE={{ faas_box_role }}

@@ -132,14 +132,12 @@ has_directive_value() {
 }
 
 control_plane_db_units=(
-  "deploy/ansible/roles/control_plane_service/files/faas-apid.service"
-  "deploy/ansible/roles/control_plane_service/files/faas-schedd.service"
-  "deploy/ansible/roles/control_plane_service/files/faas-meterd.service"
-  "deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.service"
-  "deploy/ansible/roles/githubd_service/files/faas-githubd.service"
-  "deploy/systemd/faas-apid.service"
-  "deploy/systemd/faas-schedd.service"
-  "deploy/systemd/faas-gatewayd-public.service"
+	"deploy/ansible/roles/control_plane_service/files/faas-apid.service"
+	"deploy/ansible/roles/control_plane_service/files/faas-meterd.service"
+	"deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.service"
+	"deploy/ansible/roles/githubd_service/files/faas-githubd.service"
+	"deploy/systemd/faas-apid.service"
+	"deploy/systemd/faas-gatewayd-public.service"
 )
 
 for rel in "${control_plane_db_units[@]}"; do
@@ -155,6 +153,31 @@ for rel in "${control_plane_db_units[@]}"; do
   fi
   if ! has_directive_value "$file" Requires postgresql.service; then
     echo "systemd-hardening-check: ${rel}: database daemon must require postgresql.service" >&2
+    errors=$((errors + 1))
+  fi
+done
+
+# schedd is shared by the control plane and every compute node in M9. Keep
+# the ordering hint for the control-plane boot, but do not make the unit
+# require a local PostgreSQL service: compute hosts load DATABASE_URL from
+# compute-db.env and intentionally have no postgresql.service.
+shared_schedd_units=(
+  "deploy/ansible/roles/control_plane_service/files/faas-schedd.service"
+  "deploy/systemd/faas-schedd.service"
+)
+for rel in "${shared_schedd_units[@]}"; do
+  file="${root}/${rel}"
+  if [[ ! -f "$file" ]]; then
+    echo "systemd-hardening-check: missing ${file}" >&2
+    errors=$((errors + 1))
+    continue
+  fi
+  if ! has_directive_value "$file" After postgresql.service; then
+    echo "systemd-hardening-check: ${rel}: shared schedd must retain postgresql.service ordering" >&2
+    errors=$((errors + 1))
+  fi
+  if has_directive_value "$file" Requires postgresql.service; then
+    echo "systemd-hardening-check: ${rel}: shared schedd must not require a local postgresql.service" >&2
     errors=$((errors + 1))
   fi
 done

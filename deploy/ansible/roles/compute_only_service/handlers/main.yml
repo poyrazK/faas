@@ -11,9 +11,16 @@
     daemon_reload: true
   listen:
     - restart faas-imaged
+    - restart faas-schedd
 
 - name: compute_only_service — try-restart faas-imaged
   ansible.builtin.command: systemctl try-restart faas-imaged.service  # noqa: command-instead-of-module (systemd module has no try-restart)
   changed_when: true
   listen: restart faas-imaged
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: compute_only_service — try-restart faas-schedd
+  ansible.builtin.command: systemctl try-restart faas-schedd.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: restart faas-schedd
   when: not (faas_join_defer_service_handlers | default(false) | bool)

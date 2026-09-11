@@ -265,11 +265,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	// Gate-B box-role gate. schedd is a control-plane daemon — it
-	// refuses to start under RoleComputeOnly. The role is set
+	// Gate-B box-role gate. M9 runs one schedd per compute node as well
+	// as the control-plane schedd. The role is set
 	// from TOML or FAAS_SCHEDD_ROLE at deploy time; default is
 	// RoleSingleBox so single-box dev boots unmoved.
-	if err := role.Require("schedd", cfg.Role, role.RoleSingleBox, role.RoleControlPlane); err != nil {
+	if err := role.Require("schedd", cfg.Role, role.RoleSingleBox, role.RoleControlPlane, role.RoleComputeOnly); err != nil {
 		return err
 	}
 	listenTarget := cfg.ResolveListenTarget()
