@@ -36,6 +36,16 @@ chmod 600 ../cron-worker.secrets
 gregale deploy --secrets-file ../cron-worker.secrets
 ```
 
+## Reserve then configure separately
+
+If you prefer to set secrets through the app API, reserve the app first:
+
+```sh
+gregale deploy --create-only --template cron-worker --name <slug>
+gregale secrets set --app <slug> QSTASH_TOKEN=<qstash-signing-key> UPSTASH_REDIS_REST_URL=https://<instance>.upstash.io UPSTASH_REDIS_REST_TOKEN=<redis-rest-token>
+cd <this-directory> && gregale deploy
+```
+
 ## Rotate or update secrets
 
 ```sh

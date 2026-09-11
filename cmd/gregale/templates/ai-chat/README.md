@@ -28,6 +28,16 @@ chmod 600 ../ai-chat.secrets
 gregale deploy --secrets-file ../ai-chat.secrets
 ```
 
+## Reserve then configure separately
+
+If you prefer to set secrets through the app API, reserve the app first:
+
+```sh
+gregale deploy --create-only --template ai-chat --name <slug>
+gregale secrets set --app <slug> OPENAI_API_KEY=sk-...  # or ANTHROPIC_API_KEY=sk-ant-...
+cd <this-directory> && gregale deploy
+```
+
 ## Rotate or update secrets
 
 After the app exists, use `gregale secrets set --app <slug> KEY=VALUE`

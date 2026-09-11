@@ -33,6 +33,16 @@ chmod 600 ../rest-api-postgres.secrets
 gregale deploy --secrets-file ../rest-api-postgres.secrets
 ```
 
+## Reserve then configure separately
+
+If you prefer to set secrets through the app API, reserve the app first:
+
+```sh
+gregale deploy --create-only --template rest-api-postgres --name <slug>
+gregale secrets set --app <slug> DATABASE_URL='postgres://user:pass@host:port/db?sslmode=require'
+cd <this-directory> && gregale deploy
+```
+
 ## Rotate or update secrets
 
 ```sh
