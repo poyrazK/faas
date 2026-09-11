@@ -310,7 +310,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	})
 	cancelQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, buildNotificationWorkers, func(workCtx context.Context, buildID string) {
-		cancelBuild(workCtx, driver, buildID, log)
+		cancelBuild(workCtx, driver, ops, buildID, log)
 	})
 
 	// PR-B: durable worker. LISTEN/NOTIFY above is the fast path
@@ -455,18 +455,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 // flip already happened inside CancelDeploymentTx; this function asks the VM
 // driver to drop the in-flight VM. A cancellation error is logged; the
 // transaction has already persisted a cleanup obligation that ReaperLoop can
-// retry after notification loss or a daemon restart.
-func cancelBuild(ctx context.Context, driver any, buildID string, log *slog.Logger) {
+// retry after notification loss or a daemon restart. Record the result on the
+// same OpsMetrics registry that serves /metrics so cancellation failures do
+// not disappear into logs only.
+func cancelBuild(ctx context.Context, driver any, ops *wire.OpsMetrics, buildID string, log *slog.Logger) {
 	vm, ok := driver.(builderdpkg.VM)
 	if !ok || vm == nil {
-		// vm is the unit-test stub (interface{} nil) — nothing to do.
+		// vm is the unit-test stub (interface{} nil) — nothing to do. Keep
+		// the outcome visible because a not-wired production driver means
+		// the durable cleanup obligation is relying entirely on the reaper.
+		ops.ObserveBuildCancelled("not_wired")
 		return
 	}
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := vm.Cancel(cctx, buildID); err != nil {
+		ops.ObserveBuildCancelled("vmmd_error")
 		log.Warn("builderd: build cancel", "build", buildID, "err", err)
+		return
 	}
+	ops.ObserveBuildCancelled("ok")
 }
 
 // workerLoop is the durable build-queue worker (PR-B). On each tick it

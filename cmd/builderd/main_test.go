@@ -13,8 +13,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/builderd"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // discardLog matches cmd/schedd/main_test.go: tests don't want slog output
@@ -121,6 +125,46 @@ func TestBuilderNotificationChannelsIncludeCancellation(t *testing.T) {
 		if !seen {
 			t.Errorf("notification channels missing %q: %v", channel, got)
 		}
+	}
+}
+
+type cancelOutcomeVM struct {
+	countVM
+	err error
+}
+
+func (v *cancelOutcomeVM) Cancel(context.Context, string) error { return v.err }
+
+func TestCancelBuildRecordsOutcome(t *testing.T) {
+	tests := []struct {
+		name   string
+		driver any
+		want   string
+	}{
+		{name: "success", driver: &cancelOutcomeVM{}, want: "ok"},
+		{name: "vmmd error", driver: &cancelOutcomeVM{err: errors.New("stop failed")}, want: "vmmd_error"},
+		{name: "driver not wired", driver: nil, want: "not_wired"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ops := wire.NewOpsMetrics("builderd")
+			cancelBuild(context.Background(), tt.driver, ops, "build-1", discardLog())
+
+			req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+			rec := httptest.NewRecorder()
+			ops.Handler().ServeHTTP(rec, req)
+			result := rec.Result()
+			defer result.Body.Close()
+			body, err := io.ReadAll(result.Body)
+			if err != nil {
+				t.Fatalf("read metrics: %v", err)
+			}
+			want := `builderd_ops_total{code="` + tt.want + `",op="build_cancel"} 1`
+			if !strings.Contains(string(body), want) {
+				t.Fatalf("metrics missing %q:\n%s", want, body)
+			}
+		})
 	}
 }
 
