@@ -3198,21 +3198,18 @@ const (
 	// edit moves the whole observation window; the guest and the host
 	// mirror against this single source.
 	//
-	// CharacterizationDeadline bounds the GUEST's observation window
-	// (guest/init/characterize_linux.go::waitForBind). 10 s covers the
-	// L7 probe budget (2 s) + shipReport's 4-attempt retry budget
-	// (~1.85 s with backoff) + headroom for a slow customer app boot.
-	// Never below the host's wait (CharacterizationHostDeadline) — the
-	// guest gives up earlier than the host and both sides fall back to
-	// the scan-hint class without failing the deploy (per
-	// ADR-051 §"Failure messages become specific").
+	// CharacterizationDeadline bounds the GUEST's bind observation window
+	// (guest/init/characterize_linux.go::waitForBind). Ten seconds gives a slow
+	// customer app time to bind before no-bind classification.
+	// The host receiver stays open longer than this window so a no-bind
+	// worker can use the entire observation budget before reporting.
 	CharacterizationDeadline = 10 * time.Second
-	// CharacterizationHostDeadline bounds the HOST's
-	// WaitCharacterizationReport dial+read inside Wake
-	// (pkg/fcvm/manager.go::characterizationWait). 4 s gives margin
-	// for the guest's 4 shipReport attempts + slow vsock proxies on
-	// nested KVM (Lima caveat, spec §14).
-	CharacterizationHostDeadline = 4 * time.Second
+	// CharacterizationHostDeadline bounds the HOST receiver started during
+	// cold boot. It must outlive the guest's full observation window; otherwise
+	// a legitimate no-bind worker report is rejected before the guest is due to
+	// send it. Five seconds covers vsock delivery and scheduling jitter after
+	// the ten-second guest window, including nested KVM (spec §14).
+	CharacterizationHostDeadline = CharacterizationDeadline + 5*time.Second
 
 	// LogRingBufferBytes is the capacity of the Supervisor's
 	// stdout/stderr ring buffer (ADR-051 Phase 4 Slice A PR-B).
@@ -3221,11 +3218,8 @@ const (
 	// forcing a multi-page journal capture on every cold boot.
 	// Characterized at plan time: a typical FastAPI app's
 	// first-second log volume is ~4-8 KiB, so 64 KiB preserves the
-	// entire boot window with margin. The wire-side truncation
-	// (VsockCharacterizationMaxBody, 32 KiB) still clamps the
-	// reported LogTail; this buffer is the over-budget source the
-	// report reads from. A future bump to VsockCharacterizationMaxBody
-	// must be matched here.
+	// entire boot window with margin. The 128 KiB wire body accommodates this
+	// entire buffer while leaving room for metadata and a bounded OpenAPI doc.
 	LogRingBufferBytes = 64 * 1024
 
 	// Build artifact export (M6): vmmd loopback-mounts the chroot-local drive1

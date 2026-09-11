@@ -1,5 +1,7 @@
 //go:build linux
 
+// adr: 051
+
 // Linux-only pure tests for characterize_linux.go. The wire / vsock /
 // real-/proc paths are not exercised here — those need a live AF_VSOCK
 // listener + a customer app and live in the //go:build metal suite.
@@ -39,6 +41,30 @@ func TestCountOutboundLinux_NoChildEarlyOut(t *testing.T) {
 		if got := countOutboundLinux(pid); got != 0 {
 			t.Errorf("countOutboundLinux(%d) = %d, want 0", pid, got)
 		}
+	}
+}
+
+func TestDeriveGuestCharacterizationClass(t *testing.T) {
+	tests := []struct {
+		name     string
+		port     int
+		hint     string
+		exitCode int
+		exited   bool
+		want     string
+	}{
+		{name: "bound defaults http", port: 8080, exitCode: -1, want: classHTTP},
+		{name: "bound keeps l7", port: 8080, hint: classGraphQL, exitCode: -1, want: classGraphQL},
+		{name: "running no-bind", exitCode: -1, want: classWorker},
+		{name: "clean no-bind", exitCode: 0, exited: true, want: classJob},
+		{name: "failed no-bind", exitCode: 7, exited: true, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deriveGuestCharacterizationClass(tt.port, tt.hint, tt.exitCode, tt.exited); got != tt.want {
+				t.Fatalf("class = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

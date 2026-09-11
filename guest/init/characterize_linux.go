@@ -17,14 +17,11 @@
 // the stateless advisory (1025 DGRAM); ports 1024/1025/1026 stay
 // distinct so a host-side prefix collision is impossible.
 //
-// Lifecycle: caller (boot()) calls runCharacterization AFTER the
-// supervisor starts running the app. The supervisor's Restart hook
-// fires the characterize probe's exit-code capture path so we
-// track crashes correctly. The probe runs in a goroutine; it
-// returns when the app exits AND its report lands (or the deadline
-// expires with a `result=ack_timeout` audit row the host honors as
-// "fall back to scan-hint class", never "fail the deploy" — the
-// current 30s `:8080` accept failure path is worse than timeout).
+// Lifecycle: caller (boot()) calls runCharacterization after the supervisor
+// starts running the app. The probe reports as soon as a listener is observed,
+// when the supervisor reaches a terminal outcome, or when the observation
+// window expires. A missing signal falls back to the host readiness probe; a
+// reported non-zero startup exit is a deploy failure with the captured log.
 
 package main
 
@@ -91,6 +88,7 @@ var vsockCharacterizationBackoff = []time.Duration{
 const (
 	classHTTP    = "http"
 	classJob     = "job"
+	classWorker  = "worker"
 	classGraphQL = "graphql"
 	classGRPC    = "grpc"
 )
@@ -102,7 +100,7 @@ const (
 type CharacterizationResult struct {
 	Mode          PortNormMode // "none" | "dnat" | "forward" — what rung
 	Port          int          // the observed bind port (0 if none)
-	ExitCode      int          // 0=clean, -1=crash-loop exhausted
+	ExitCode      int          // 0=clean, -1=still running, 1..255=failure
 	ObservedClass string       // guest best-guess (host re-derives)
 	Duration      time.Duration
 	Shipped       bool   // true if the report landed with an ack
@@ -113,10 +111,10 @@ type CharacterizationResult struct {
 // out so the test (characterize_linux_test.go) can drive a synthetic
 // scenario without spinning up a real customer app.
 type RunArgs struct {
-	Manifest       api.AppManifest     // for the healthz / port-8080 baseline
-	AppPID         func() int          // the supervisor's child PID; -1 = no child
-	WaitForExit    func() (int, error) // blocks until app exits or deadline
-	RingBufferTail func() string       // the supervisor's log ring buffer tail
+	Manifest       api.AppManifest    // for the healthz / port-8080 baseline
+	AppPID         func() int         // the supervisor's child PID; -1 = no child
+	ExitStatus     func() (int, bool) // latest exit code + whether an exit happened
+	RingBufferTail func() string      // the supervisor's log ring buffer tail
 	Log            *slog.Logger
 	Now            func() time.Time // injectable for tests
 }
@@ -134,7 +132,7 @@ func runCharacterization(ctx context.Context, args RunArgs) CharacterizationResu
 	}
 
 	start := args.Now()
-	res := CharacterizationResult{Reason: "ok"}
+	res := CharacterizationResult{Reason: "ok", ExitCode: -1}
 	defer func() {
 		res.Duration = args.Now().Sub(start)
 		args.Log.Info("characterization complete",
@@ -146,22 +144,25 @@ func runCharacterization(ctx context.Context, args RunArgs) CharacterizationResu
 	// 1. Observe the bind: watch /proc/net/tcp{,6} filtered to the
 	// supervisor's child PID's socket inodes. First LISTEN entry
 	// wins; cap the wait at the characterization deadline.
-	obs, observedAddr := waitForBind(ctx, args, &res)
+	obs, observedAddr, exitCode, exited := waitForBind(ctx, args, &res)
+	if exited {
+		res.ExitCode = exitCode
+	}
 	if !obs {
 		res.Reason = "bind_timeout"
 	}
 
 	// 2. Run L7 probes against the observed port. Each probe is a
 	// goroutine; we record the first positive outcome and move on.
-	// If no bind, every probe is a fast-fail; the report still
-	// tells the host `class=job, exit=...`.
+	// If no bind, every probe is a fast-fail; exit status distinguishes a
+	// completed job, a running worker, and a startup failure.
 	//
 	// ADR-122 §D4: probeHTTP now always runs and may capture an
 	// OpenAPI doc. The tuple carries (class, openapi_doc, truncated).
 	// The doc fields survive the round-trip regardless of which
 	// probe won the class hint.
 	classHint, openAPIDoc, openAPIDocTruncated := runL7Probes(ctx, args, res.Port)
-	res.ObservedClass = classHint
+	res.ObservedClass = deriveGuestCharacterizationClass(res.Port, classHint, res.ExitCode, exited)
 
 	// 3. Pick a portnorm mode. Only a positive observed port is a
 	// meaningful normalization target. A bind timeout is a valid
@@ -191,19 +192,11 @@ func runCharacterization(ctx context.Context, args RunArgs) CharacterizationResu
 		args.Log.Debug("portnorm skipped: no observed listener", "port", res.Port)
 	}
 
-	// 4. Wait for the supervisor to exit (clean or crash-loop
-	// exhausted). Log the exit code on the report so the deploy
-	// row can show it. The deadline is the same as bindTimeout.
-	exitCh := make(chan int, 1)
-	go func() { code, _ := args.WaitForExit(); exitCh <- code }()
-	select {
-	case res.ExitCode = <-exitCh:
-	case <-ctx.Done():
-		res.Reason = "shutdown_timeout"
-		res.ExitCode = -1
-	}
-
-	// 5. Build the report and ship it.
+	// 4. Build the report and ship it. A bound server is reported
+	// immediately with exit_code=-1; waiting for a long-running server to exit
+	// would deadlock the readiness handshake. No-bind workloads consume the
+	// observation window (or stop early on exit) to distinguish job, worker,
+	// and startup failure.
 	addr := observedAddr
 	if addr == "" {
 		addr = fmt.Sprintf("127.0.0.1:%d", res.Port)
@@ -235,26 +228,48 @@ func runCharacterization(ctx context.Context, args RunArgs) CharacterizationResu
 	return res
 }
 
+func deriveGuestCharacterizationClass(port int, l7Hint string, exitCode int, exited bool) string {
+	if port > 0 {
+		if l7Hint == "" {
+			return classHTTP
+		}
+		return l7Hint
+	}
+	if !exited {
+		return classWorker
+	}
+	if exitCode == 0 {
+		return classJob
+	}
+	return ""
+}
+
 // waitForBind polls /proc/net/tcp{,6} for a LISTEN socket owned by
 // the app's PID tree. Returns the first match and the address
 // string for the report. On timeout returns observed=false and
-// observedAddr="" — the host treats this as `class=job`. The
+// observedAddr="" — the host derives job, worker, or startup failure from the
+// terminal status. The
 // deadline comes from api.CharacterizationDeadline (ADR-051
 // §"Characterization window"), the single source shared with the
 // host's wait in pkg/fcvm/manager.go.
-func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult) (bool, string) {
+func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult) (bool, string, int, bool) {
 	deadline := args.Now().Add(api.CharacterizationDeadline)
 	for {
 		if port, addr, ok := probeListening(args.AppPID()); ok {
 			res.Port = port
-			return true, addr
+			return true, addr, 0, false
+		}
+		if args.ExitStatus != nil {
+			if code, exited := args.ExitStatus(); exited {
+				return false, "", code, true
+			}
 		}
 		if args.Now().After(deadline) {
-			return false, ""
+			return false, "", 0, false
 		}
 		select {
 		case <-ctx.Done():
-			return false, ""
+			return false, "", 0, false
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
@@ -427,9 +442,9 @@ func collectSocketInodes(pid int, depth int, out map[uint64]struct{}, visited ma
 // is unchanged (first non-empty wins).
 func runL7Probes(ctx context.Context, _ RunArgs, port int) (string, []byte, bool) {
 	if port <= 0 {
-		// No bind → can't probe. Engine interprets "no bind, exit 0"
-		// as `job`. We surface that hint, host re-derives.
-		return classJob, nil, false
+		// No bind means there is no L7 class hint. The caller combines the
+		// terminal status with this observation; the host re-derives it again.
+		return "", nil, false
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()

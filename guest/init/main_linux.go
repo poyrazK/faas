@@ -2182,17 +2182,17 @@ func lookupUID(user string) int {
 // runCharacterizationForSup is the boot-side glue between the
 // characterize_linux.go probe and the supervisor. It owns the
 // "what PID is the customer app" lifecycle and the "what was the
-// last exit code" visibility that runCharacterization needs:
+// last exit status" visibility that runCharacterization needs:
 //
 //   - `AppPID()` is polled by waitForBind every 50 ms until the
 //     supervisor's lastCmd pointer is non-nil. If the supervisor
 //     finishes without ever forking (e.g. a test-only stub Start),
 //     AppPID returns -1 forever and the probe times out at the
-//     bind-dealine → classified `job`.
-//   - `WaitForExit()` blocks until the supervisor's Run returns.
-//     We bridge by polling the supervisor's lastExitCode via
-//     reflection-free access (every 50 ms) and surfacing it as
-//     the report's ExitCode.
+//     bind deadline; the terminal status then determines job, worker, or
+//     startup failure.
+//   - `ExitStatus()` distinguishes "still running" from exit code 0.
+//     runCharacterization polls it alongside the socket observation, so a
+//     short job or startup crash stops the characterization window early.
 //
 // Returns when runCharacterization returns (duration: ~10s
 // deadline or earlier on bind+probe). Errors are warn-logged;
@@ -2202,22 +2202,10 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	// Exit-code visibility is exposed via WaitForExit below, which
-	// polls sup.LastExitCode synchronously. The supervisor's trackExit
-	// fires synchronously inside Run() before it returns, so the polling
-	// loop unblocks as soon as the app exits — no separate gate goroutine
-	// or `done` channel is needed here.
-
 	args := RunArgs{
-		Manifest: manifest,
-		AppPID:   func() int { return sup.LastAppPID() },
-		WaitForExit: func() (int, error) {
-			// Block until the supervisor's exit code stabilises.
-			for sup.LastExitCode() == -1 {
-				time.Sleep(50 * time.Millisecond)
-			}
-			return sup.LastExitCode(), nil
-		},
+		Manifest:   manifest,
+		AppPID:     func() int { return sup.LastAppPID() },
+		ExitStatus: func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {
 			// Populated from the supervisor's ring buffer (Slice A
 			// PR-B). The buffer is allocated lazily on the first
@@ -2225,9 +2213,8 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 			// so a sup without a forked app returns "" — same
 			// shape as the pre-PR-B empty string. The wire-side
 			// truncateLog at characterize_linux.go:198 clamps the
-			// returned bytes to VsockCharacterizationMaxBody (32
-			// KiB), so the 64 KiB buffer's over-budget tail never
-			// overflows the JSON body.
+			// returned bytes to the wire body's 128 KiB ceiling, so the
+			// 64 KiB buffer cannot overflow the JSON body on its own.
 			if sup == nil {
 				return ""
 			}

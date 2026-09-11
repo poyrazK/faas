@@ -75,6 +75,13 @@ func TestWaitCharacterizationReportAcceptsGuestInitiatedStream(t *testing.T) {
 	if _, err := os.Stat(v.characterizationUDSSock(lease.Instance)); !os.IsNotExist(err) {
 		t.Fatalf("characterization listener survived receipt: %v", err)
 	}
+	cached, err := v.WaitCharacterizationReport(context.Background(), lease, time.Second)
+	if err != nil {
+		t.Fatalf("read cached receipt: %v", err)
+	}
+	if !reflect.DeepEqual(cached, want) {
+		t.Fatalf("cached report = %+v, want %+v", cached, want)
+	}
 }
 
 func TestWaitCharacterizationReportRetriesAfterInvalidFrame(t *testing.T) {
@@ -151,6 +158,55 @@ func TestReadCharacterizationEnvelopeRejectsTrailingJSON(t *testing.T) {
 	binary.BigEndian.PutUint32(hdr[4:], uint32(len(body)))
 	if _, err := readCharacterizationEnvelope(io.MultiReader(bytes.NewReader(hdr[:]), bytes.NewReader(body))); err == nil {
 		t.Fatal("trailing JSON accepted")
+	}
+}
+
+func TestNormalizeCharacterizationReportDerivesAuthoritativeClass(t *testing.T) {
+	tests := []struct {
+		name       string
+		report     api.CharacterizationReport
+		wantClass  string
+		wantErr    bool
+		bootReady  bool
+		bootFailed bool
+	}{
+		{name: "bound defaults http", report: api.CharacterizationReport{ObservedClass: "job", ObservedPort: 8080, ExitCode: -1}, wantClass: "http"},
+		{name: "bound graphql refinement", report: api.CharacterizationReport{ObservedClass: "graphql", ObservedPort: 8080, ExitCode: -1}, wantClass: "graphql"},
+		{name: "clean no-bind is job", report: api.CharacterizationReport{ObservedClass: "http", ExitCode: 0}, wantClass: "job", bootReady: true},
+		{name: "running no-bind is worker", report: api.CharacterizationReport{ObservedClass: "grpc", ExitCode: -1}, wantClass: "worker", bootReady: true},
+		{name: "failed no-bind has no class", report: api.CharacterizationReport{ObservedClass: "worker", ExitCode: 17, LogTail: "boom"}, bootReady: true, bootFailed: true},
+		{name: "invalid port", report: api.CharacterizationReport{ObservedPort: 70000, ExitCode: -1}, wantErr: true},
+		{name: "invalid mode", report: api.CharacterizationReport{ObservedPort: 8080, ExitCode: -1, PortNormalizationMode: "magic"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			report := tt.report
+			err := normalizeCharacterizationReport(&report)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("normalize error = %v, wantErr=%v", err, tt.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if report.ObservedClass != tt.wantClass {
+				t.Fatalf("class = %q, want %q", report.ObservedClass, tt.wantClass)
+			}
+			terminal, bootErr := characterizationBootOutcome(report)
+			if terminal != tt.bootReady || (bootErr != nil) != tt.bootFailed {
+				t.Fatalf("boot outcome = (terminal=%v, err=%v), want (terminal=%v, failed=%v)", terminal, bootErr, tt.bootReady, tt.bootFailed)
+			}
+		})
+	}
+}
+
+func TestReadCharacterizationEnvelopeRejectsNonObject(t *testing.T) {
+	for _, body := range [][]byte{[]byte(`null`), []byte(`{}`)} {
+		var hdr [8]byte
+		binary.BigEndian.PutUint32(hdr[:4], VsockCharacterizationMsgType)
+		binary.BigEndian.PutUint32(hdr[4:], uint32(len(body)))
+		if _, err := readCharacterizationEnvelope(io.MultiReader(bytes.NewReader(hdr[:]), bytes.NewReader(body))); err == nil {
+			t.Fatalf("invalid characterization body %s accepted", body)
+		}
 	}
 }
 

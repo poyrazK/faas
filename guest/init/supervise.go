@@ -39,9 +39,13 @@ type Supervisor struct {
 	// swapped atomically on every restart. nil until the first fork.
 	// Read by characterize_linux.go's AppPID() callback.
 	lastCmd atomic.Pointer[exec.Cmd]
-	// lastExitCode is the terminal exit code observed by the most-
-	// recent successful Start. -1 until the first observation.
+	// lastExitCode is the terminal exit code observed when Run stops.
+	// exitObserved distinguishes its zero value from a clean exit.
 	lastExitCode atomic.Int64
+	// exitObserved separates the valid exit code 0 from atomic.Int64's zero
+	// value. Without this bit a running process looks like it already exited
+	// successfully and characterization can misclassify it as a job.
+	exitObserved atomic.Bool
 	// lastLog is the supervisor's stdout/stderr ring buffer, allocated
 	// lazily on the first LogBuffer() call. Reset on every restart by
 	// TrackCommand (see TrackCommand's doc comment for the reset-
@@ -108,11 +112,24 @@ func (s *Supervisor) markHealthy() {
 	}
 }
 
-// LastExitCode returns -1 if no fork has observed an exit yet;
-// otherwise the exit code of the most-recently-completed Start.
+// LastExitCode returns -1 while Run has no terminal outcome; otherwise it
+// returns the final exit code after the restart policy is exhausted.
 // Thread-safe.
 func (s *Supervisor) LastExitCode() int {
+	if s == nil || !s.exitObserved.Load() {
+		return -1
+	}
 	return int(s.lastExitCode.Load())
+}
+
+// LastExitStatus reports the terminal exit code and whether Run has reached a
+// terminal outcome. The bool distinguishes a clean exit (code 0) from the
+// atomic field's zero value while the workload is still running.
+func (s *Supervisor) LastExitStatus() (int, bool) {
+	if s == nil || !s.exitObserved.Load() {
+		return 0, false
+	}
+	return int(s.lastExitCode.Load()), true
 }
 
 // TrackCommand records the *exec.Cmd the supervisor most-recently
@@ -198,9 +215,12 @@ func (s *Supervisor) resetLog() {
 	}
 }
 
-// trackExit is called when Start returns; -1 indicates non-ExitError.
+// trackExit is called only when Run reaches a terminal outcome. Code 255 is
+// used when Start failed without an OS exit status; -1 stays reserved for the
+// wire meaning "still running".
 func (s *Supervisor) trackExit(code int) {
 	s.lastExitCode.Store(int64(code))
+	s.exitObserved.Store(true)
 }
 
 // lastErr (issue #463 / ADR-069 / PR-B) returns the terminal
@@ -269,37 +289,30 @@ func (s *Supervisor) Run() error {
 	restarts := 0
 	for {
 		if s.stopRequested.Load() {
+			s.trackExit(0)
 			s.trackRunErr(nil)
 			return nil
 		}
 		err := s.Start()
-		// Record the most-recent exit (or -1) so characterize can
-		// surface it on the report. Mirrors what Run sees.
-		if err != nil {
-			var ee *exec.ExitError
-			if errors.As(err, &ee) {
-				s.trackExit(ee.ExitCode())
-			} else {
-				s.trackExit(-1)
-			}
-		} else {
-			s.trackExit(0)
-		}
 		if !s.shouldRestart(err) {
 			if err == nil || s.stopRequested.Load() {
+				s.trackExit(0)
 				s.trackRunErr(nil)
 				return nil
 			}
+			s.trackExit(supervisorExitCode(err))
 			s.trackRunErr(err)
 			return err
 		}
 		if restarts >= s.Max {
 			if err == nil {
 				final := fmt.Errorf("app restart budget exhausted after %d restart(s)", restarts)
+				s.trackExit(255)
 				s.trackRunErr(final)
 				return final
 			}
 			final := fmt.Errorf("app crash-looped after %d restart(s): %w", restarts, err)
+			s.trackExit(supervisorExitCode(err))
 			s.trackRunErr(final)
 			return final
 		}
@@ -308,6 +321,19 @@ func (s *Supervisor) Run() error {
 			s.OnCrash(restarts, err)
 		}
 	}
+}
+
+func supervisorExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if code := exitErr.ExitCode(); code >= 0 && code <= 255 {
+			return code
+		}
+	}
+	return 255
 }
 
 // Stop (M-2 / ADR-138 §Decision 1) is the graceful-stop hook the
