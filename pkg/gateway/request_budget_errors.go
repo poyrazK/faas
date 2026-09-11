@@ -57,11 +57,15 @@ func writeBurstCapacityError(w http.ResponseWriter, r *http.Request, err error) 
 // When the response has not started, a platform budget expiry gets the same
 // stable 504 envelope as the outer budget middleware.
 func handleForwardRequestCancellation(w http.ResponseWriter, r *http.Request, canWrite bool) bool {
-	if r == nil || r.Context().Err() == nil {
+	if r == nil {
 		return false
 	}
-	if canWrite && requestBudgetExpired(r.Context()) {
-		writeRequestBudgetExceeded(w)
+	ctx := r.Context()
+	if requestBudgetExpired(ctx) {
+		if canWrite {
+			writeRequestBudgetExceeded(w)
+		}
+		return true
 	}
-	return true
+	return ctx.Err() != nil
 }
