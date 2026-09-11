@@ -112,6 +112,11 @@ func (m *MemStore) DeleteAppLogDrain(_ context.Context, id string) error {
 	}
 	delete(m.appLogDrains, id)
 	delete(m.appLogDrainHealth, id)
+	for key, sample := range m.appLogDrainAnalytics {
+		if sample.DrainID == id {
+			delete(m.appLogDrainAnalytics, key)
+		}
+	}
 	return nil
 }
 

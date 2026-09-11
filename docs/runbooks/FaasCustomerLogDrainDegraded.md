@@ -40,6 +40,10 @@ current per-drain snapshot, use
 health page; the snapshot includes queue, delivery, retry, drop, gap, and
 last-success/failure state without exposing credentials or raw endpoint
 errors.
+For customer-scoped history, use
+`GET /v1/apps/{slug}/log-drains/{id}/analytics?window=24h`; it reports hourly
+terminal outcomes, retry volume, backlog, success rate, and average
+end-to-end delivery latency for the selected drain.
 
 ## Interpret the alert
 

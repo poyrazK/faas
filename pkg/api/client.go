@@ -4094,6 +4094,15 @@ func (c *Client) GetAppLogDrainHealth(ctx context.Context, slug, id string) (App
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains/"+id+"/health", nil, &out)
 }
 
+func (c *Client) GetAppLogDrainAnalytics(ctx context.Context, slug, id, window string) (AppLogDrainAnalyticsResponse, error) {
+	var out AppLogDrainAnalyticsResponse
+	path := "/v1/apps/" + slug + "/log-drains/" + id + "/analytics"
+	if window != "" {
+		path += "?window=" + url.QueryEscape(window)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 func (c *Client) UpdateAppLogDrain(ctx context.Context, slug, id string, req UpdateAppLogDrainRequest) (AppLogDrainResponse, error) {
 	var out AppLogDrainResponse
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/log-drains/"+id, req, &out)

@@ -106,6 +106,42 @@ type AppLogDrainHealthResponse struct {
 	UpdatedAt             string `json:"updated_at"`
 }
 
+// AppLogDrainAnalyticsResponse is the bounded customer-facing delivery
+// history for one runtime log destination. Rates are derived from terminal
+// outcomes (delivered, failed, or dropped); an empty interval has a zero rate.
+type AppLogDrainAnalyticsResponse struct {
+	LogDrainID     string                       `json:"log_drain_id"`
+	Window         string                       `json:"window"`
+	BucketInterval string                       `json:"bucket_interval"`
+	From           string                       `json:"from"`
+	To             string                       `json:"to"`
+	Buckets        []AppLogDrainAnalyticsBucket `json:"buckets"`
+	Summary        AppLogDrainAnalyticsSummary  `json:"summary"`
+}
+
+type AppLogDrainAnalyticsBucket struct {
+	Start            string  `json:"start"`
+	Delivered        int64   `json:"delivered"`
+	Failed           int64   `json:"failed"`
+	Dropped          int64   `json:"dropped"`
+	Retries          int64   `json:"retries"`
+	DeadLetters      int64   `json:"dead_letters"`
+	PendingRecords   int     `json:"pending_records"`
+	PendingBytes     int64   `json:"pending_bytes"`
+	SuccessRate      float64 `json:"success_rate"`
+	AverageLatencyMS float64 `json:"average_latency_ms"`
+}
+
+type AppLogDrainAnalyticsSummary struct {
+	Delivered        int64   `json:"delivered"`
+	Failed           int64   `json:"failed"`
+	Dropped          int64   `json:"dropped"`
+	Retries          int64   `json:"retries"`
+	DeadLetters      int64   `json:"dead_letters"`
+	SuccessRate      float64 `json:"success_rate"`
+	AverageLatencyMS float64 `json:"average_latency_ms"`
+}
+
 func AppLogDrainResponseFromRow(r AppLogDrainRow) AppLogDrainResponse {
 	masked := ""
 	if r.HasAuthHeader {

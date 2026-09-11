@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
@@ -54,8 +56,28 @@ func (s *server) renderAppLogDrains(w http.ResponseWriter, r *http.Request, log 
 				healthByID[health.DrainID] = health
 			}
 			data.Drains = make([]dashboard.LogDrainPageItem, 0, len(drains))
+			now := time.Now().UTC()
+			from := now.Add(-24 * time.Hour)
+			firstBucket := from.Truncate(appLogDrainAnalyticsBucketInterval).Add(appLogDrainAnalyticsBucketInterval)
 			for _, drain := range drains {
-				data.Drains = append(data.Drains, dashboardLogDrainPageItem(drain, healthByID[drain.ID]))
+				item := dashboardLogDrainPageItem(drain, healthByID[drain.ID])
+				samples, analyticsErr := s.store.ListAppLogDrainDeliveryAnalytics(ctx, drain.ID,
+					firstBucket.Add(-appLogDrainAnalyticsBucketInterval), now.Truncate(appLogDrainAnalyticsBucketInterval))
+				if analyticsErr != nil {
+					log.Warn("dashboard log drains: list analytics", "account_id", acct.ID, "drain_id", drain.ID, "err", analyticsErr)
+				} else {
+					analytics := appLogDrainAnalyticsResponse(samples, drain.ID, "24h", from, now)
+					if len(analytics.Buckets) > 0 {
+						item.AnalyticsAvailable = true
+						item.AnalyticsDelivered = analytics.Summary.Delivered
+						item.AnalyticsFailed = analytics.Summary.Failed
+						item.AnalyticsDropped = analytics.Summary.Dropped
+						item.AnalyticsRetries = analytics.Summary.Retries
+						item.AnalyticsSuccessRate = fmt.Sprintf("%.2f%%", analytics.Summary.SuccessRate*100)
+						item.AnalyticsAverageLatency = fmt.Sprintf("%.1f ms", analytics.Summary.AverageLatencyMS)
+					}
+				}
+				data.Drains = append(data.Drains, item)
 			}
 		}
 	}

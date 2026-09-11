@@ -545,6 +545,13 @@ type LogDrainPageItem struct {
 	LastFailureAt         string
 	LastError             string
 	UpdatedAt             string
+	AnalyticsAvailable    bool
+	AnalyticsDelivered    int64
+	AnalyticsFailed       int64
+	AnalyticsDropped      int64
+	AnalyticsRetries      int64
+	AnalyticsSuccessRate  string
+	AnalyticsAverageLatency string
 }
 
 // TenantSurfacesData is the customer-facing projection for the per-app
