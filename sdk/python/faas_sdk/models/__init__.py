@@ -441,8 +441,16 @@ from .get_deployment_stages_response_200_current import GetDeploymentStagesRespo
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
+from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .github_check_update_record import GithubCheckUpdateRecord
+from .github_check_update_record_status import GithubCheckUpdateRecordStatus
+from .github_recovery_retry_response import GithubRecoveryRetryResponse
+from .github_recovery_retry_response_kind import GithubRecoveryRetryResponseKind
+from .github_recovery_status_response import GithubRecoveryStatusResponse
+from .github_webhook_delivery_record import GithubWebhookDeliveryRecord
+from .github_webhook_delivery_record_status import GithubWebhookDeliveryRecordStatus
 from .grace_window_response import GraceWindowResponse
 from .import_app_open_api_body import ImportAppOpenAPIBody
 from .import_app_open_api_body_info import ImportAppOpenAPIBodyInfo
@@ -738,6 +746,8 @@ from .resource_profile import ResourceProfile
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
+from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
+from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
@@ -1356,8 +1366,16 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItem",
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
+    "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
+    "GithubCheckUpdateRecord",
+    "GithubCheckUpdateRecordStatus",
+    "GithubRecoveryRetryResponse",
+    "GithubRecoveryRetryResponseKind",
+    "GithubRecoveryStatusResponse",
+    "GithubWebhookDeliveryRecord",
+    "GithubWebhookDeliveryRecordStatus",
     "GraceWindowResponse",
     "ImportAppOpenAPIBody",
     "ImportAppOpenAPIBodyInfo",
@@ -1651,6 +1669,8 @@ __all__ = (
     "RestoreManagedPostgresDatabaseRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
+    "RetryGithubCheckUpdateConfirm",
+    "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",

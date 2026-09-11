@@ -231,6 +231,8 @@ func run(args []string) int {
 		// dispatcher for PR-C follow-ons.
 		return cmdDebugDispatch(args[1:])
 	case dispatchGithub:
+		// Authenticated queue inspection and recovery through apid → githubd.
+		// The CLI never receives webhook payloads or opens PostgreSQL.
 		return cmdGithubDispatch(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregalectl: unknown command %q\nRun 'gregalectl help' for usage.\n", args[0])

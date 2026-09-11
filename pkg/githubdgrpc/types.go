@@ -4,6 +4,8 @@
 // confined to this one. Mirrors scheddgrpc.types (ADR-018).
 package githubdgrpc
 
+import "time"
+
 // InstallState is the per-account GitHub App install lifecycle. Maps
 // to githubdpb.InstallState. Mirrors the dashboard "Connect GitHub"
 // state machine (UX spec §5.1).
@@ -44,4 +46,37 @@ type AppBinding struct {
 	RepoFullName     string
 	ProductionBranch string
 	BindingID        string
+}
+
+// WebhookDeliveryRecord is the operator-safe projection of one durable
+// inbound GitHub delivery. The webhook payload never crosses this boundary.
+type WebhookDeliveryRecord struct {
+	DeliveryID  string
+	EventType   string
+	Status      string
+	Attempts    int
+	NextAttempt time.Time
+	LastError   string
+	ReceivedAt  time.Time
+	ProcessedAt *time.Time
+	UpdatedAt   time.Time
+}
+
+// CheckUpdateRecord is the operator-safe projection of one durable Check Run
+// update. It contains queue state only, never installation credentials.
+type CheckUpdateRecord struct {
+	DeploymentID string
+	Generation   int64
+	Status       string
+	Attempts     int
+	NextAttempt  time.Time
+	LastError    string
+	ProcessedAt  *time.Time
+	UpdatedAt    time.Time
+}
+
+// RecoveryQueueItems groups the two githubd-owned recovery queues.
+type RecoveryQueueItems struct {
+	Deliveries   []WebhookDeliveryRecord
+	CheckUpdates []CheckUpdateRecord
 }

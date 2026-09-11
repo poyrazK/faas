@@ -42,6 +42,9 @@ type stubSvc struct {
 	createDeployment  func(string, string, string, string) (string, string, error)
 	writeCheck        func(string, string, githubdgrpc.CheckPhase, string, string) error
 	mintInstallToken  func(string, int64) (string, time.Time, error)
+	listRecovery      func(context.Context, string, int) (githubdgrpc.RecoveryQueueItems, error)
+	retryDelivery     func(context.Context, string) (bool, error)
+	retryCheckUpdate  func(context.Context, string) (bool, error)
 
 	// Recorded call state (single-goroutine tests).
 	gotGetInstallAccountID string
@@ -70,6 +73,10 @@ type stubSvc struct {
 	gotCheckSummary        string
 	gotMintAcct            string
 	gotMintInstallID       int64
+	gotRecoveryStatus      string
+	gotRecoveryLimit       int
+	gotRetryDeliveryID     string
+	gotRetryDeploymentID   string
 }
 
 // Per-method overrides for stubSvc.
@@ -161,6 +168,31 @@ func (s *stubSvc) MintInstallationToken(accountID string, installationID int64) 
 		return s.mintInstallToken(accountID, installationID)
 	}
 	return s.UnimplementedService.MintInstallationToken(accountID, installationID)
+}
+
+func (s *stubSvc) ListRecoveryQueueItems(ctx context.Context, queueStatus string, limit int) (githubdgrpc.RecoveryQueueItems, error) {
+	s.gotRecoveryStatus = queueStatus
+	s.gotRecoveryLimit = limit
+	if s.listRecovery != nil {
+		return s.listRecovery(ctx, queueStatus, limit)
+	}
+	return s.UnimplementedService.ListRecoveryQueueItems(ctx, queueStatus, limit)
+}
+
+func (s *stubSvc) RetryWebhookDelivery(ctx context.Context, deliveryID string) (bool, error) {
+	s.gotRetryDeliveryID = deliveryID
+	if s.retryDelivery != nil {
+		return s.retryDelivery(ctx, deliveryID)
+	}
+	return s.UnimplementedService.RetryWebhookDelivery(ctx, deliveryID)
+}
+
+func (s *stubSvc) RetryCheckUpdate(ctx context.Context, deploymentID string) (bool, error) {
+	s.gotRetryDeploymentID = deploymentID
+	if s.retryCheckUpdate != nil {
+		return s.retryCheckUpdate(ctx, deploymentID)
+	}
+	return s.UnimplementedService.RetryCheckUpdate(ctx, deploymentID)
 }
 
 // newStubServer wires a stubSvc-backed Server into a bufconn listener
@@ -582,6 +614,69 @@ func TestClient_WriteCheck_RoundTrip(t *testing.T) {
 
 	if err := c.WriteCheck(context.Background(), "x/y", "abc", githubdgrpc.CheckPhaseQueued, "https://example.test/l", "queued"); err != nil {
 		t.Fatalf("write check via client: %v", err)
+	}
+}
+
+func TestClient_Recovery_RoundTrip(t *testing.T) {
+	now := time.Date(2026, time.September, 11, 10, 0, 0, 123, time.UTC)
+	processed := now.Add(-time.Minute)
+	stub := &stubSvc{
+		listRecovery: func(context.Context, string, int) (githubdgrpc.RecoveryQueueItems, error) {
+			return githubdgrpc.RecoveryQueueItems{
+				Deliveries: []githubdgrpc.WebhookDeliveryRecord{{
+					DeliveryID: "delivery-1", EventType: "push", Status: "dead", Attempts: 5,
+					NextAttempt: now, LastError: "boom", ReceivedAt: now.Add(-time.Hour),
+					ProcessedAt: &processed, UpdatedAt: now,
+				}},
+				CheckUpdates: []githubdgrpc.CheckUpdateRecord{{
+					DeploymentID: "deployment-1", Generation: 7, Status: "dead", Attempts: 4,
+					NextAttempt: now, LastError: "failed", ProcessedAt: &processed, UpdatedAt: now,
+				}},
+			}, nil
+		},
+		retryDelivery:    func(context.Context, string) (bool, error) { return true, nil },
+		retryCheckUpdate: func(context.Context, string) (bool, error) { return true, nil },
+	}
+	conn := newBufConn(t, newProtoServerWithStub(t, stub))
+	defer func() { _ = conn.Close() }()
+	client := githubdgrpc.NewClient(conn)
+
+	items, err := client.ListRecoveryQueueItems(context.Background(), "dead", 25)
+	if err != nil {
+		t.Fatalf("list recovery queues: %v", err)
+	}
+	if len(items.Deliveries) != 1 || items.Deliveries[0].DeliveryID != "delivery-1" ||
+		!items.Deliveries[0].NextAttempt.Equal(now) || items.Deliveries[0].ProcessedAt == nil {
+		t.Fatalf("deliveries = %+v", items.Deliveries)
+	}
+	if len(items.CheckUpdates) != 1 || items.CheckUpdates[0].DeploymentID != "deployment-1" ||
+		items.CheckUpdates[0].Generation != 7 || !items.CheckUpdates[0].UpdatedAt.Equal(now) {
+		t.Fatalf("check updates = %+v", items.CheckUpdates)
+	}
+	if stub.gotRecoveryStatus != "dead" || stub.gotRecoveryLimit != 25 {
+		t.Fatalf("list args = (%q, %d)", stub.gotRecoveryStatus, stub.gotRecoveryLimit)
+	}
+
+	retried, err := client.RetryWebhookDelivery(context.Background(), "delivery-1")
+	if err != nil || !retried || stub.gotRetryDeliveryID != "delivery-1" {
+		t.Fatalf("retry delivery = (%v, %v, %q)", retried, err, stub.gotRetryDeliveryID)
+	}
+	retried, err = client.RetryCheckUpdate(context.Background(), "deployment-1")
+	if err != nil || !retried || stub.gotRetryDeploymentID != "deployment-1" {
+		t.Fatalf("retry check = (%v, %v, %q)", retried, err, stub.gotRetryDeploymentID)
+	}
+}
+
+func TestClient_ListRecoveryQueueItemsRejectsInt32Overflow(t *testing.T) {
+	const overflow64 = int64(1) << 31
+	limit := int(overflow64)
+	if int64(limit) != overflow64 {
+		t.Skip("int is already 32-bit on this architecture")
+	}
+
+	client := githubdgrpc.NewClient(nil)
+	if _, err := client.ListRecoveryQueueItems(context.Background(), "dead", limit); err == nil {
+		t.Fatal("expected an out-of-range limit error")
 	}
 }
 

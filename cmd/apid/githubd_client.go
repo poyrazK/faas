@@ -65,6 +65,15 @@ type GithubdClient interface {
 	Close() error
 }
 
+// githubdRecoveryClient is kept separate from GithubdClient so existing
+// customer-path fakes do not need to know about operator-only recovery RPCs.
+// Production's liveClient implements both interfaces.
+type githubdRecoveryClient interface {
+	ListRecoveryQueueItems(context.Context, string, int) (githubdgrpc.RecoveryQueueItems, error)
+	RetryWebhookDelivery(context.Context, string) (bool, error)
+	RetryCheckUpdate(context.Context, string) (bool, error)
+}
+
 // StreamSourceRefResult mirrors pkg/githubdgrpc.StreamSourceRefResult
 // so handler tests can construct it without importing the gRPC
 // package. Stay field-for-field compatible with the wire
@@ -253,6 +262,18 @@ func (l *liveClient) CreateDeploymentFromPush(ctx context.Context, repoFullName,
 // WriteCheck passes through to githubdgrpc.Client.WriteCheck.
 func (l *liveClient) WriteCheck(ctx context.Context, repoFullName, commitSHA string, phase CheckPhase, logsURL, summary string) error {
 	return l.c.WriteCheck(ctx, repoFullName, commitSHA, phase, logsURL, summary)
+}
+
+func (l *liveClient) ListRecoveryQueueItems(ctx context.Context, status string, limit int) (githubdgrpc.RecoveryQueueItems, error) {
+	return l.c.ListRecoveryQueueItems(ctx, status, limit)
+}
+
+func (l *liveClient) RetryWebhookDelivery(ctx context.Context, deliveryID string) (bool, error) {
+	return l.c.RetryWebhookDelivery(ctx, deliveryID)
+}
+
+func (l *liveClient) RetryCheckUpdate(ctx context.Context, deploymentID string) (bool, error) {
+	return l.c.RetryCheckUpdate(ctx, deploymentID)
 }
 
 // VerifyInstallation passes through to githubdgrpc.Client.VerifyInstallation.

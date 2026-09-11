@@ -120,6 +120,9 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/apps/{slug}/force-cold-boot":                 true, // PR #1099 P2b
 	"POST /v1/admin/instances/{id}/force-restart":                true, // PR #1105 P2d
 	"POST /v1/admin/builds/sweep-stuck":                          true, // PR #1099 P2c
+	"GET /v1/admin/ops/github/recovery":                          true, // operator-only githubd queue projection
+	"POST /v1/admin/ops/github/deliveries/{id}/retry":            true, // operator-only githubd delivery recovery
+	"POST /v1/admin/ops/github/check-updates/{id}/retry":         true, // operator-only githubd Check Run recovery
 	"POST /v1/admin/ops/accounts/{id}/suspend":                   true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/restore":                   true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":           true, // operator-only tenant security control

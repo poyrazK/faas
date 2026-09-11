@@ -29,6 +29,8 @@ func TestAdminMutationRoutesRejectBearerKeys(t *testing.T) {
 		{http.MethodPost, "/v1/admin/apps/security-test/force-cold-boot"},
 		{http.MethodPost, "/v1/admin/instances/" + instanceID + "/force-restart"},
 		{http.MethodPost, "/v1/admin/builds/sweep-stuck"},
+		{http.MethodPost, "/v1/admin/ops/github/deliveries/00000000-0000-0000-0000-000000000003/retry"},
+		{http.MethodPost, "/v1/admin/ops/github/check-updates/00000000-0000-0000-0000-000000000004/retry"},
 		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/suspend"},
 		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/restore"},
 		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/revoke-sessions"},
