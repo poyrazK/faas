@@ -1,0 +1,3 @@
+function:
+  runtime: python312
+  handler: handler.handler

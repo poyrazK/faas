@@ -1000,18 +1000,42 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 	return nil
 }
 
+// templateFunctionConfig returns the wire defaults for templates whose
+// source is a function handler. The same values are recorded in each
+// template's gregale.yaml so a materialized project and a direct template
+// deploy select the same runtime and handler.
+func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
+	switch name {
+	case "function-node":
+		return runtimeNode22, defaultTemplateHandler, true
+	case "function-node24":
+		return runtimeNode24, defaultTemplateHandler, true
+	case "function-python":
+		return runtimePython312, defaultTemplateHandler, true
+	case "function-python313":
+		return runtimePython313, defaultTemplateHandler, true
+	case "function-go":
+		// The Go handler is a static binary; the wire handler value is
+		// vestigial, but the deploy API still requires it to be non-empty.
+		return runtimeGo124, "handler.go", true
+	case "cron-worker":
+		return runtimeNode22, defaultTemplateHandler, true
+	default:
+		return "", "", false
+	}
+}
+
 // cmdDeployTarball implements `gregale deploy` (image / tarball / repo
 // / template / zero-config). Zero-config (issue #313) packs the selected source directory
 // and proceeds down the --tarball path. Issue #737 / ADR-083 added the
 // function-vs-app auto-detect on the zero-config path and the
 // --function / --app explicit-shape flags.
 //
-// `--template NAME` materializes one of the eleven embedded starter
+// `--template NAME` materializes one of the embedded starter
 // projects (cmd/gregale/templates/embed.go) into a tempdir, tars+gzip it,
 // and proceeds down the --tarball path. For the function templates
-// (function-node, function-python) we force --runtime / --handler so
-// the runner wires up correctly without the customer having to know
-// those flags.
+// we force --runtime / --handler so the runner wires up correctly without
+// the customer having to know those flags.
 func cmdDeployTarball(args []string) int {
 	return cmdDeployTarballToExisting(context.Background(), args, false)
 }
@@ -1511,44 +1535,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				*templateName, strings.Join(templates.Names, ", "))
 			return 1
 		}
-		switch *templateName {
-		case "function-node":
+		if rt, hnd, ok := templateFunctionConfig(*templateName); ok {
 			*function = true
-			// Default Node runtime is node22 (per docs/runtimes/go124.md
-			// tier-1 stance: no default-flip in the same PR that adds a
-			// new runtime). Use function-node24 for the Node 24 variant.
-			*runtime = runtimeNode22
-			*handler = defaultTemplateHandler
-		case "function-node24":
-			*function = true
-			// Tier 1 PR 1 row: parallel to function-node, runtime is
-			// node24 (Node 24 LTS). The handler filename
-			// convention is the same; imaged's function-layer
-			// manifest sets `--handler /app/node24.js`.
-			*runtime = "node24"
-			*handler = defaultTemplateHandler
-		case "function-python":
-			*function = true
-			// Default Python runtime is python312 (no default-flip in
-			// Tier 1; python313 stays opt-in via function-python313).
-			*runtime = runtimePython312
-			*handler = defaultTemplateHandler
-		case "function-python313":
-			*function = true
-			// Tier 1 PR 1 row: parallel to function-python, runtime
-			// is python313. Handler filename is identical
-			// (/app/handler.py in the microVM, version-neutral).
-			*runtime = "python313"
-			*handler = defaultTemplateHandler
-		case "function-go":
-			*function = true
-			// The customer's handler is a static Go binary; the
-			// --handler wire field is vestigial for go124 (the imaged
-			// manifest locks the entrypoint to /app/handler). We set
-			// a non-empty value so the multipart writer doesn't skip
-			// the field, but the value is never read by the runtime.
-			*runtime = runtimeGo124
-			*handler = "handler.go"
+			*runtime = rt
+			*handler = hnd
 		}
 		f, err := os.CreateTemp("", "gregale-template-*.tar.gz")
 		if err != nil {
