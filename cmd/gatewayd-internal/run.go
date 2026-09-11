@@ -1635,14 +1635,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
 	// DB-IP Lite .mmdb file at FAAS_GEOIP_DB_PATH. The Reader
 	// is nil-safe: a missing file logs a WARN and the reader
-	// stays nil so the daemon boots cleanly (the gate fail-opens
-	// at request time). The watcher is optional and only
+	// stays nil so the daemon boots cleanly; matching geo rules then receive
+	// 503 rather than bypassing the rule. The watcher is optional and only
 	// spawned when FAAS_GEOIP_AUTO_REFRESH=1 — the default is
 	// operator-owned file (rsync / ConfigMap / volume mount).
 	if geoipDBPath != "" {
 		reader, gerr := geoip.Open(geoipDBPath, geoip.SourceDBIP, geoip.DBIPAttribution, log)
 		if gerr != nil {
-			log.Warn("geoip: open failed; geo kind disabled (fail-open)",
+			log.Warn("geoip: open failed; matching geo rules will fail closed",
 				"path", geoipDBPath,
 				"err", gerr)
 		} else {

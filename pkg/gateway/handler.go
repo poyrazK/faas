@@ -1333,10 +1333,9 @@ func (h *Handler) WithRouteMetricsEnabled(enabled bool) *Handler {
 // production passes the *pkg/auth.Middleware from cmd/gatewayd-internal/
 // (which exposes its Authn field). audit may be nil (audit-
 // disabled mode); the authz branch still fires but the
-// instances.authn_* rows are dropped. nil authn = the authz
-// branch is silently disabled (matches the pre-issue behaviour
-// where every app is public-by-default) so unit tests that
-// don't exercise require_authn don't have to wire the chain.
+// instances.authn_* rows are dropped. A nil authenticator is tolerated only
+// for apps that do not request the gate; protected apps receive 503 so a
+// wiring regression cannot make them public.
 //
 // The setter returns *Handler for fluent chaining (same shape as
 // every other Handler.With*).
@@ -1482,12 +1481,20 @@ func (h *Handler) WithMirrorRoundTripper(rt MirrorRoundTripper) *Handler {
 // stamp). Best-effort — a failed emit never blocks the deny
 // response (matches the gatewaydAuditor.Emit contract).
 func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
-	// Disabled path: not gated, or no auth chain wired.
-	// Both branches preserve the pre-issue "public by default"
-	// behaviour so unit tests + dev boxes don't need to set
-	// up a fake authenticator.
-	if !app.RequireAuthn || h.requireAuthnAuthn == nil {
+	if !app.RequireAuthn {
 		return true
+	}
+	if h.requireAuthnAuthn == nil {
+		rec.status = http.StatusServiceUnavailable
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Authentication unavailable", "this app requires authentication, but the gateway verifier is unavailable"))
+		h.emitAuthnAudit(r, app, nil, "instances.authn_unavailable", map[string]any{
+			"app_id": app.ID,
+			"slug":   r.Host,
+			"reason": "authenticator_not_configured",
+		})
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
 	}
 	// (1) Bearer extraction — fail-fast at 401 if no token.
 	tok := bearerTokenFromHeader(r.Header.Get("Authorization"))
@@ -2197,10 +2204,10 @@ func corsResponseOps(rule *EdgeRuleCORSResolved, allowedOrigin string) []EdgeRul
 //     also have require_authn=true which is enforced downstream).
 //
 // Returns true if the helper wrote a 401 (caller must `return`).
-// nil-safe: h.edgeRules nil OR h.jwtVerifier nil short-circuit to
-// fall-through. Same-account posture mirrors matchAndSubstituteRoute.
+// A missing matcher means the feature is disabled. Once a JWT rule matches,
+// a missing verifier is a 503 rather than an authentication bypass.
 func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app App) bool {
-	if h.edgeRules == nil || h.jwtVerifier == nil {
+	if h.edgeRules == nil {
 		return false
 	}
 	rule := h.edgeRules.MatchJWT(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
@@ -2224,6 +2231,10 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 		})
 		return false
 	}
+	if h.jwtVerifier == nil {
+		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_verifier_not_configured")
+		return true
+	}
 	raw := bearerTokenFromHeader(r.Header.Get("Authorization"))
 	if raw == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
@@ -2235,7 +2246,7 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, rule)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
-			api.CodeUnauthorized, "JWT verification failed", err.Error()))
+			api.CodeUnauthorized, "JWT verification failed", "the bearer token did not satisfy this edge rule"))
 		h.jwtEmit(r.Context(), "jwt", "failed", rule.ID, r.Host, nil, map[string]any{"err": err.Error()})
 		return true
 	}
@@ -2291,6 +2302,22 @@ func (h *Handler) jwtEmit(ctx context.Context, kind, outcome, ruleID, fromHost s
 		case "blocked":
 			h.metrics.ObserveEdgeRuleApply(kind, "success")
 		}
+	}
+}
+
+func (h *Handler) rejectUnavailableEdgeRule(w http.ResponseWriter, r *http.Request, kind, ruleID, reason string) {
+	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+		"Edge security unavailable", "a configured edge security dependency is temporarily unavailable"))
+	if h.edgeRuleAudit != nil {
+		h.edgeRuleAudit.Emit(r.Context(), "edge_rule."+kind+"_unavailable", nil, map[string]any{
+			"rule_id":   ruleID,
+			"from_host": r.Host,
+			"reason":    reason,
+		})
+	}
+	if h.metrics != nil {
+		h.metrics.ObserveEdgeRuleMatch(kind, "failed")
+		h.metrics.ObserveEdgeRuleApply(kind, "error")
 	}
 }
 
@@ -2778,7 +2805,8 @@ func (h *Handler) applyEdgeRuleMaintenance(w http.ResponseWriter, r *http.Reques
 // Returns false on a clean match (audit + metric "match"), a
 // rule miss ("miss"), a same-account mismatch ("blocked"), a
 // streaming skip (rule.ApplyWhileStreaming=false + upgrade request),
-// or when both h.edgeRules and h.validator are nil (dev mode).
+// or when h.edgeRules is nil (dev mode). A matched rule with no validator is
+// rejected with 503.
 //
 // Body restore: the buffered body is re-installed as r.Body so
 // the downstream proxy leg reads the same bytes. This is the
@@ -2787,7 +2815,7 @@ func (h *Handler) applyEdgeRuleMaintenance(w http.ResponseWriter, r *http.Reques
 // pkg/gateway/dns01_provider_hetzner_test.go:48-49 informed the choice of
 // io.NopCloser(bytes.NewReader(buf)).
 func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) bool {
-	if h.edgeRules == nil || h.validator == nil {
+	if h.edgeRules == nil {
 		return false
 	}
 	rule := h.edgeRules.MatchValidate(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
@@ -2816,6 +2844,11 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 			h.metrics.ObserveEdgeRuleApply("validate", "success")
 		}
 		return false
+	}
+	if h.validator == nil {
+		rec.status = http.StatusServiceUnavailable
+		h.rejectUnavailableEdgeRule(w, r, "validate", rule.ID, "schema_validator_not_configured")
+		return true
 	}
 	// Upgrade / streaming short-circuit: the body for an
 	// upgraded request is read by the proxy leg's hijacker,
@@ -3531,18 +3564,14 @@ func contentTypeAllowed(ct string, allowed []string) bool {
 // against the trusted XFF client IP via the configured
 // pkg/geoip.Reader.
 //
-// Failure mode (§11 spirit): the lookup is fail-open. A missing
-// DB, a corrupt file, an IP outside the dataset, or a decode
-// error returns ("", false, err_or_nil) from the reader; the rule
-// does not fire (we increment "failed" and emit a Warn log, but
-// the request flows through). The operator sees the metric tick
-// + the audit + the log so a missing-DB incident is detectable
-// even though traffic is unaffected.
+// Failure mode: a missing/corrupt DB, an address outside the dataset, or a
+// decode error returns 503. A configured access rule must never disappear
+// because an optional runtime dependency is unavailable.
 //
-// nil-safe: h.edgeRules nil OR h.geoReader nil short-circuits to
-// fall-through. Same-account posture mirrors applyEdgeRuleIP.
+// A nil matcher disables the feature; a matched rule with no reader fails
+// closed. Same-account posture mirrors applyEdgeRuleIP.
 func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app App) bool {
-	if h.edgeRules == nil || h.geoReader == nil {
+	if h.edgeRules == nil {
 		return false
 	}
 	rule := h.edgeRules.MatchGeo(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
@@ -3565,6 +3594,10 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 			h.metrics.ObserveEdgeRuleMatch("geo", "blocked")
 		}
 		return false
+	}
+	if h.geoReader == nil {
+		h.rejectUnavailableEdgeRule(w, r, "geo", rule.ID, "geo_reader_not_configured")
+		return true
 	}
 	clientIP, ok := clientIPFromTrustedXFF(r)
 	if !ok {
@@ -3598,20 +3631,8 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 		}
 	}
 	if lerr != nil || !found {
-		// Fail-open: the rule does not fire. The metric + audit
-		// surface lets the operator see the failure rate and
-		// the customer is not affected.
-		if h.edgeRuleAudit != nil {
-			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_failed", nil, map[string]any{
-				"rule_id":   rule.ID,
-				"from_host": r.Host,
-				"reason":    geoFailReason(lerr, found),
-			})
-		}
-		if h.metrics != nil {
-			h.metrics.ObserveEdgeRuleMatch("geo", "failed")
-		}
-		return false
+		h.rejectUnavailableEdgeRule(w, r, "geo", rule.ID, geoFailReason(lerr, found))
+		return true
 	}
 	// Deny walks first.
 	if _, denied := rule.Deny[country]; denied {
