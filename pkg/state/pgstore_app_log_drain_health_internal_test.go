@@ -28,12 +28,14 @@ func (r appLogDrainHealthScanRowStub) Scan(dest ...any) error {
 	*dest[11].(*int64) = 2
 	*dest[12].(*int64) = 1
 	*dest[13].(*int64) = 3
-	*dest[14].(*int64) = 2
-	*dest[15].(*int64) = 1
-	*dest[16].(**time.Time) = nil
-	*dest[17].(**time.Time) = nil
-	*dest[18].(*string) = "source log gap observed"
-	*dest[19].(*time.Time) = time.Date(2026, 9, 11, 16, 0, 0, 0, time.UTC)
+	*dest[14].(*int64) = int64(500 * time.Millisecond)
+	*dest[15].(*int64) = 2
+	*dest[16].(*int64) = 2
+	*dest[17].(*int64) = 1
+	*dest[18].(**time.Time) = nil
+	*dest[19].(**time.Time) = nil
+	*dest[20].(*string) = "source log gap observed"
+	*dest[21].(*time.Time) = time.Date(2026, 9, 11, 16, 0, 0, 0, time.UTC)
 	return nil
 }
 
@@ -49,7 +51,7 @@ func TestAppLogDrainHealthHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scanAppLogDrainHealth: %v", err)
 	}
-	if got.DrainID != "drain-id" || got.Status != "degraded" || !got.Active || got.QueueDepth != 4 || got.LastError != "source log gap observed" || !got.UpdatedAt.Equal(time.Date(2026, 9, 11, 16, 0, 0, 0, time.UTC)) {
+	if got.DrainID != "drain-id" || got.Status != "degraded" || !got.Active || got.QueueDepth != 4 || got.DeliveryLatencyNanosTotal != int64(500*time.Millisecond) || got.DeliveryLatencySamples != 2 || got.LastError != "source log gap observed" || !got.UpdatedAt.Equal(time.Date(2026, 9, 11, 16, 0, 0, 0, time.UTC)) {
 		t.Fatalf("scanned health = %+v", got)
 	}
 	if !got.LastSuccessAt.IsZero() || !got.LastFailureAt.IsZero() {

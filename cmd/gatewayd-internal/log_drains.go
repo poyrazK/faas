@@ -18,6 +18,8 @@ import (
 
 const appLogDrainReconcileInterval = 30 * time.Second
 const appLogDrainHealthFlushInterval = 15 * time.Second
+const appLogDrainAnalyticsRetention = 31 * 24 * time.Hour
+const appLogDrainAnalyticsPruneInterval = time.Hour
 const appLogDrainSecretSealLabel = "APP_LOG_DRAIN_AUTH_HEADER"
 
 const (
@@ -33,6 +35,10 @@ type appLogDrainStore interface {
 
 type appLogDrainHealthStore interface {
 	UpsertAppLogDrainHealth(context.Context, state.AppLogDrainHealth) error
+}
+
+type appLogDrainAnalyticsPruner interface {
+	PruneAppLogDrainDeliveryAnalytics(context.Context, time.Time) error
 }
 
 type appLogDrainHealthLookupStore interface {
@@ -51,11 +57,12 @@ type appLogDrainManager struct {
 	log       *slog.Logger
 	spoolRoot string
 
-	mu       sync.Mutex
-	workers  map[string]*appLogDrainWorker
-	active   map[string]int
-	healthMu sync.Mutex
-	health   map[string]state.AppLogDrainHealth
+	mu                 sync.Mutex
+	workers            map[string]*appLogDrainWorker
+	active             map[string]int
+	healthMu           sync.Mutex
+	health             map[string]state.AppLogDrainHealth
+	lastAnalyticsPrune time.Time
 }
 
 type appLogDrainWorker struct {
@@ -218,6 +225,10 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		},
 		OnDeliveredLatency: func(_ logdrain.Record, latency time.Duration) {
 			m.metrics.ObserveLogDrainDeliveryLatency(spec.AppID, string(spec.Kind), latency)
+			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
+				health.DeliveryLatencyNanosTotal += latency.Nanoseconds()
+				health.DeliveryLatencySamples++
+			})
 		},
 		OnDurableQueue: func(stats logdrain.QueueStats) {
 			m.metrics.SetLogDrainDurableQueue(spec.AppID, string(spec.Kind), stats.PendingRecords, stats.PendingBytes, stats.CapacityBytes, stats.DeadLetterTotal, stats.OldestPendingAt)
@@ -434,6 +445,20 @@ func (m *appLogDrainManager) flushHealth(ctx context.Context) {
 				}
 			}
 			m.log.WarnContext(ctx, "persist app log drain health", slog.String("drain_id", health.DrainID), slog.String("err", err.Error()))
+		}
+	}
+	if pruner, ok := m.store.(appLogDrainAnalyticsPruner); ok {
+		now := time.Now().UTC()
+		m.healthMu.Lock()
+		shouldPrune := m.lastAnalyticsPrune.IsZero() || now.Sub(m.lastAnalyticsPrune) >= appLogDrainAnalyticsPruneInterval
+		if shouldPrune {
+			m.lastAnalyticsPrune = now
+		}
+		m.healthMu.Unlock()
+		if shouldPrune {
+			if err := pruner.PruneAppLogDrainDeliveryAnalytics(ctx, now.Add(-appLogDrainAnalyticsRetention)); err != nil {
+				m.log.WarnContext(ctx, "prune app log drain analytics", slog.String("err", err.Error()))
+			}
 		}
 	}
 }

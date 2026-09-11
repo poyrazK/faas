@@ -1829,6 +1829,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/log-drains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppLogDrain)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrain))))
 	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}/health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrainHealth))))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}/analytics", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrainAnalytics))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppLogDrain))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppLogDrain))))
 

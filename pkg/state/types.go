@@ -6702,26 +6702,47 @@ type AppLogDrain struct {
 // than written once per log record, so the health surface cannot add a
 // database round-trip to the application request path.
 type AppLogDrainHealth struct {
-	DrainID               string
-	Status                string
-	Active                bool
-	QueueDepth            int
-	QueueCapacity         int
-	PendingRecords        int
-	PendingBytes          int64
-	PendingBytesCapacity  int64
-	DeadLetterTotal       int64
-	OldestPendingAt       time.Time
-	DeliveredTotal        int64
-	FailedTotal           int64
-	DroppedTotal          int64
-	RetriesTotal          int64
-	StreamReconnectsTotal int64
-	GapsTotal             int64
-	LastSuccessAt         time.Time
-	LastFailureAt         time.Time
-	LastError             string
-	UpdatedAt             time.Time
+	DrainID                   string
+	Status                    string
+	Active                    bool
+	QueueDepth                int
+	QueueCapacity             int
+	PendingRecords            int
+	PendingBytes              int64
+	PendingBytesCapacity      int64
+	DeadLetterTotal           int64
+	OldestPendingAt           time.Time
+	DeliveredTotal            int64
+	FailedTotal               int64
+	DroppedTotal              int64
+	RetriesTotal              int64
+	DeliveryLatencyNanosTotal int64
+	DeliveryLatencySamples    int64
+	StreamReconnectsTotal     int64
+	GapsTotal                 int64
+	LastSuccessAt             time.Time
+	LastFailureAt             time.Time
+	LastError                 string
+	UpdatedAt                 time.Time
+}
+
+// AppLogDrainDeliveryAnalytics is an hourly cumulative delivery snapshot.
+// The counters mirror AppLogDrainHealth so a gateway restart can continue
+// the same series from the durable health row. Readers derive hourly deltas
+// and rates without exposing endpoint credentials or raw errors.
+type AppLogDrainDeliveryAnalytics struct {
+	DrainID                   string
+	BucketStart               time.Time
+	DeliveredTotal            int64
+	FailedTotal               int64
+	DroppedTotal              int64
+	RetriesTotal              int64
+	DeadLetterTotal           int64
+	DeliveryLatencyNanosTotal int64
+	DeliveryLatencySamples    int64
+	PendingRecords            int
+	PendingBytes              int64
+	SampledAt                 time.Time
 }
 
 // UpdateAppLogDrainParams carries the optional fields of UpdateAppLogDrain.

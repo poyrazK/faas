@@ -258,6 +258,7 @@ type MemStore struct {
 	appWebhookDeliveries map[string]AppWebhookDelivery
 	appLogDrains         map[string]AppLogDrain
 	appLogDrainHealth    map[string]AppLogDrainHealth
+	appLogDrainAnalytics map[string]AppLogDrainDeliveryAnalytics
 	// deploymentScopeExclusions backs the ADR-124 follow-up #3
 	// persistent --exclude history (migration 00418). Keyed by row
 	// id (uuid string) for symmetry with appWebhooks; the (account,
@@ -844,6 +845,7 @@ func NewMemStore() *MemStore {
 		appWebhookDeliveries:      map[string]AppWebhookDelivery{},
 		appLogDrains:              map[string]AppLogDrain{},
 		appLogDrainHealth:         map[string]AppLogDrainHealth{},
+		appLogDrainAnalytics:      map[string]AppLogDrainDeliveryAnalytics{},
 		deploymentScopeExclusions: map[string]DeploymentScopeExclusion{}, // ADR-124 follow-up #3
 		uploadSessions:            map[string]sqlc.UploadSession{},
 		uploadCommitOutcomes:      map[string]sqlc.UploadCommitOutcome{},

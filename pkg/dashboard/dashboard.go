@@ -522,29 +522,36 @@ type AppLogDrainsData struct {
 }
 
 type LogDrainPageItem struct {
-	ID                    string
-	Kind                  string
-	TargetURL             string
-	Enabled               bool
-	Status                string
-	Active                bool
-	QueueDepth            int
-	QueueCapacity         int
-	PendingRecords        int
-	PendingBytes          int64
-	PendingBytesCapacity  int64
-	DeadLetterTotal       int64
-	OldestPendingAt       string
-	DeliveredTotal        int64
-	FailedTotal           int64
-	DroppedTotal          int64
-	RetriesTotal          int64
-	StreamReconnectsTotal int64
-	GapsTotal             int64
-	LastSuccessAt         string
-	LastFailureAt         string
-	LastError             string
-	UpdatedAt             string
+	ID                      string
+	Kind                    string
+	TargetURL               string
+	Enabled                 bool
+	Status                  string
+	Active                  bool
+	QueueDepth              int
+	QueueCapacity           int
+	PendingRecords          int
+	PendingBytes            int64
+	PendingBytesCapacity    int64
+	DeadLetterTotal         int64
+	OldestPendingAt         string
+	DeliveredTotal          int64
+	FailedTotal             int64
+	DroppedTotal            int64
+	RetriesTotal            int64
+	StreamReconnectsTotal   int64
+	GapsTotal               int64
+	LastSuccessAt           string
+	LastFailureAt           string
+	LastError               string
+	UpdatedAt               string
+	AnalyticsAvailable      bool
+	AnalyticsDelivered      int64
+	AnalyticsFailed         int64
+	AnalyticsDropped        int64
+	AnalyticsRetries        int64
+	AnalyticsSuccessRate    string
+	AnalyticsAverageLatency string
 }
 
 // TenantSurfacesData is the customer-facing projection for the per-app

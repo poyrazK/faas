@@ -323,27 +323,44 @@ type AppLogDrain struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type AppLogDrainDeliveryAnalytic struct {
+	DrainID                   pgtype.UUID
+	BucketStart               pgtype.Timestamptz
+	DeliveredTotal            int64
+	FailedTotal               int64
+	DroppedTotal              int64
+	RetriesTotal              int64
+	DeadLetterTotal           int64
+	DeliveryLatencyNanosTotal int64
+	DeliveryLatencySamples    int64
+	PendingRecords            int32
+	PendingBytes              int64
+	SampledAt                 pgtype.Timestamptz
+}
+
 type AppLogDrainHealth struct {
-	DrainID               pgtype.UUID
-	Status                string
-	Active                bool
-	QueueDepth            int32
-	QueueCapacity         int32
-	PendingRecords        int32
-	PendingBytes          int64
-	PendingBytesCapacity  int64
-	DeadLetterTotal       int64
-	OldestPendingAt       pgtype.Timestamptz
-	DeliveredTotal        int64
-	FailedTotal           int64
-	DroppedTotal          int64
-	RetriesTotal          int64
-	StreamReconnectsTotal int64
-	GapsTotal             int64
-	LastSuccessAt         pgtype.Timestamptz
-	LastFailureAt         pgtype.Timestamptz
-	LastError             pgtype.Text
-	UpdatedAt             pgtype.Timestamptz
+	DrainID                   pgtype.UUID
+	Status                    string
+	Active                    bool
+	QueueDepth                int32
+	QueueCapacity             int32
+	PendingRecords            int32
+	PendingBytes              int64
+	PendingBytesCapacity      int64
+	DeadLetterTotal           int64
+	OldestPendingAt           pgtype.Timestamptz
+	DeliveredTotal            int64
+	FailedTotal               int64
+	DroppedTotal              int64
+	RetriesTotal              int64
+	DeliveryLatencyNanosTotal int64
+	DeliveryLatencySamples    int64
+	StreamReconnectsTotal     int64
+	GapsTotal                 int64
+	LastSuccessAt             pgtype.Timestamptz
+	LastFailureAt             pgtype.Timestamptz
+	LastError                 pgtype.Text
+	UpdatedAt                 pgtype.Timestamptz
 }
 
 type AppOpenapiDoc struct {

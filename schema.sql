@@ -1301,6 +1301,37 @@ CREATE TABLE public.app_log_drains (
 
 
 --
+-- Name: app_log_drain_delivery_analytics; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_log_drain_delivery_analytics (
+    drain_id uuid NOT NULL,
+    bucket_start timestamp with time zone NOT NULL,
+    delivered_total bigint DEFAULT 0 NOT NULL,
+    failed_total bigint DEFAULT 0 NOT NULL,
+    dropped_total bigint DEFAULT 0 NOT NULL,
+    retries_total bigint DEFAULT 0 NOT NULL,
+    dead_letter_total bigint DEFAULT 0 NOT NULL,
+    delivery_latency_nanos_total bigint DEFAULT 0 NOT NULL,
+    delivery_latency_samples bigint DEFAULT 0 NOT NULL,
+    pending_records integer DEFAULT 0 NOT NULL,
+    pending_bytes bigint DEFAULT 0 NOT NULL,
+    sampled_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_log_drain_delivery_analytics_delivered_chk CHECK ((delivered_total >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_drain_id_fkey FOREIGN KEY (drain_id) REFERENCES public.app_log_drains(id) ON DELETE CASCADE,
+    CONSTRAINT app_log_drain_delivery_analytics_dropped_chk CHECK ((dropped_total >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_failed_chk CHECK ((failed_total >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_latency_nanos_chk CHECK ((delivery_latency_nanos_total >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_latency_samples_chk CHECK ((delivery_latency_samples >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_pkey PRIMARY KEY (drain_id, bucket_start),
+    CONSTRAINT app_log_drain_delivery_analytics_pending_bytes_chk CHECK ((pending_bytes >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_pending_records_chk CHECK ((pending_records >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_retries_chk CHECK ((retries_total >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_dead_letter_chk CHECK ((dead_letter_total >= 0))
+);
+
+
+--
 -- Name: app_log_drain_health; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1319,6 +1350,8 @@ CREATE TABLE public.app_log_drain_health (
     failed_total bigint DEFAULT 0 NOT NULL,
     dropped_total bigint DEFAULT 0 NOT NULL,
     retries_total bigint DEFAULT 0 NOT NULL,
+    delivery_latency_nanos_total bigint DEFAULT 0 NOT NULL,
+    delivery_latency_samples bigint DEFAULT 0 NOT NULL,
     stream_reconnects_total bigint DEFAULT 0 NOT NULL,
     gaps_total bigint DEFAULT 0 NOT NULL,
     last_success_at timestamp with time zone,
@@ -1338,6 +1371,8 @@ CREATE TABLE public.app_log_drain_health (
     CONSTRAINT app_log_drain_health_failed_chk CHECK ((failed_total >= 0)),
     CONSTRAINT app_log_drain_health_dropped_chk CHECK ((dropped_total >= 0)),
     CONSTRAINT app_log_drain_health_retries_chk CHECK ((retries_total >= 0)),
+    CONSTRAINT app_log_drain_health_latency_nanos_chk CHECK ((delivery_latency_nanos_total >= 0)),
+    CONSTRAINT app_log_drain_health_latency_samples_chk CHECK ((delivery_latency_samples >= 0)),
     CONSTRAINT app_log_drain_health_reconnects_chk CHECK ((stream_reconnects_total >= 0)),
     CONSTRAINT app_log_drain_health_gaps_chk CHECK ((gaps_total >= 0))
 );
@@ -5403,6 +5438,13 @@ CREATE INDEX app_webhooks_account_idx ON public.app_webhooks USING btree (accoun
 --
 
 CREATE INDEX app_log_drains_enabled_idx ON public.app_log_drains USING btree (enabled, app_id);
+
+
+--
+-- Name: app_log_drain_delivery_analytics_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_log_drain_delivery_analytics_retention_idx ON public.app_log_drain_delivery_analytics USING btree (bucket_start);
 
 
 --

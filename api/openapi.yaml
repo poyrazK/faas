@@ -10560,6 +10560,37 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/log-drains/{id}/analytics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [observability]
+      operationId: getAppLogDrainAnalytics
+      summary: Fetch hourly delivery analytics for a runtime log destination.
+      description: |
+        Returns bounded, customer-safe hourly delivery history. The default
+        window is 24 hours; supported windows are 1h, 24h, 7d, and 30d.
+        Success rate is delivered records divided by delivered, failed, and
+        dropped terminal outcomes. Average latency includes queue wait and
+        endpoint time. The platform retains at least 30 days of samples.
+      parameters:
+        - in: query
+          name: window
+          description: History window. Defaults to 24h.
+          schema: { type: string, enum: [1h, 24h, 7d, 30d], default: 24h }
+      responses:
+        '200':
+          description: Hourly customer-safe log-drain delivery analytics.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppLogDrainAnalyticsResponse' }
+        '400': { $ref: '#/components/responses/AppLogDrainInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Event-driven surface (Move 2) ─────────────────────────────────────────
   # Customer-facing surface for the Move 1 invocations backend. The five
   # shapes — async_invoke, queue_send, queue_receive, queue_ack, delayed_task
@@ -25467,6 +25498,51 @@ components:
         last_failure_at: { type: string, format: date-time }
         last_error: { type: string, description: Sanitized delivery summary; never raw transport output. }
         updated_at: { type: string, format: date-time }
+
+    AppLogDrainAnalyticsResponse:
+      type: object
+      description: Bounded hourly, customer-safe delivery analytics for one runtime log destination.
+      required: [log_drain_id, window, bucket_interval, from, to, buckets, summary]
+      properties:
+        log_drain_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        window: { type: string, enum: [1h, 24h, 7d, 30d] }
+        bucket_interval: { type: string, enum: [1h] }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        buckets:
+          type: array
+          maxItems: 720
+          items: { $ref: '#/components/schemas/AppLogDrainAnalyticsBucket' }
+        summary: { $ref: '#/components/schemas/AppLogDrainAnalyticsSummary' }
+
+    AppLogDrainAnalyticsBucket:
+      type: object
+      description: One hourly customer-safe delivery analytics bucket.
+      required: [start, delivered, failed, dropped, retries, dead_letters, pending_records, pending_bytes, success_rate, average_latency_ms]
+      properties:
+        start: { type: string, format: date-time }
+        delivered: { type: integer, format: int64, minimum: 0 }
+        failed: { type: integer, format: int64, minimum: 0 }
+        dropped: { type: integer, format: int64, minimum: 0 }
+        retries: { type: integer, format: int64, minimum: 0 }
+        dead_letters: { type: integer, format: int64, minimum: 0 }
+        pending_records: { type: integer, minimum: 0 }
+        pending_bytes: { type: integer, format: int64, minimum: 0 }
+        success_rate: { type: number, format: double, minimum: 0, maximum: 1 }
+        average_latency_ms: { type: number, format: double, minimum: 0 }
+
+    AppLogDrainAnalyticsSummary:
+      type: object
+      description: Aggregate customer-safe delivery analytics over the requested window.
+      required: [delivered, failed, dropped, retries, dead_letters, success_rate, average_latency_ms]
+      properties:
+        delivered: { type: integer, format: int64, minimum: 0 }
+        failed: { type: integer, format: int64, minimum: 0 }
+        dropped: { type: integer, format: int64, minimum: 0 }
+        retries: { type: integer, format: int64, minimum: 0 }
+        dead_letters: { type: integer, format: int64, minimum: 0 }
+        success_rate: { type: number, format: double, minimum: 0, maximum: 1 }
+        average_latency_ms: { type: number, format: double, minimum: 0 }
 
     CreateAppLogDrainRequest:
       type: object
