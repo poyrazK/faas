@@ -214,7 +214,8 @@ func TestReapOrphanedJails_MissingJailRootIsNotAnError(t *testing.T) {
 // found on 2026-09-11: a failed teardown had removed the jail directory but
 // left Firecracker and its tenant cgroup resident. Directory-only discovery
 // could never find it on the next vmmd startup.
-// spec: §6.2-4 — a parked app consumes zero resident RAM.
+// spec: §6.2
+// Acceptance item 4 requires a parked app to consume zero resident RAM.
 func TestReapOrphanedJails_ReapsProcessWithoutChroot(t *testing.T) {
 	root := t.TempDir()
 	proc := fakeProc(t, map[int][]string{
