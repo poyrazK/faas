@@ -11429,7 +11429,7 @@ paths:
         - name: before
           in: query
           schema: { type: string }
-          description: "Opaque cursor returned as `next_before`; fetches the next older page. Pass verbatim without decoding or re-encoding."
+          description: "Operator-only opaque cursor returned as `next_before`; fetches the next older page. Pass verbatim without decoding or re-encoding."
         - name: kind_prefix
           in: query
           schema: { type: string }
