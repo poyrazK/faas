@@ -4842,6 +4842,12 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// onto the vmmd AppSpec so the per-netns renderer
 		// emits the SNAT-to-customer sibling rule.
 		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
+		// ADR-053: snapshot priming is the first cold boot for a source
+		// deployment, so it must use the same resolved guest port as later
+		// wakes. Without this field vmmd falls back to guest :8080 while the
+		// inferred profile starts Node/Python apps on their framework port.
+		Port:            deploymentRuntimePort(dep),
+		HealthcheckPath: healthcheckPathFromDep(dep),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
