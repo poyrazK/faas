@@ -4033,6 +4033,10 @@ type AuditLogFilter struct {
 	// Since is the inclusive lower bound on received_at. Zero
 	// value means "no floor" — the full table is scanned.
 	Since time.Time
+	// Before is an exclusive compound cursor for the stable
+	// (received_at DESC, id DESC) ordering. A nil value starts at the
+	// newest row; when set, rows at or after the cursor are skipped.
+	Before *AuditLogCursor
 	// IncludeAnonymous controls whether rows with account_id IS
 	// NULL are returned. Customer endpoint always sets this false;
 	// operator endpoint reads ?include_anonymous=.
@@ -4064,6 +4068,15 @@ type AuditLogFilter struct {
 	// GIN index on data (verified at PR-open) is used.
 	// Operator-only filter. Empty pointer = no constraint.
 	TargetAccountID *string
+}
+
+// AuditLogCursor is the keyset boundary used by AuditLogFilter. The
+// handler owns the opaque wire encoding; the store receives the parsed
+// timestamp + UUID so both PostgreSQL and the in-memory implementation
+// apply the exact same ordering predicate.
+type AuditLogCursor struct {
+	ReceivedAt time.Time
+	ID         uuid.UUID
 }
 
 // AuditLogKindAccountDeleted is the canonical kind value emitted into

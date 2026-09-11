@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11911,12 +11912,13 @@ func (m *MemStore) appendAuditLogLocked(entry AuditLog) {
 	})
 }
 
-// ListAuditLog (issue #755 / PR-6) is the dashboard read path. Walks
-// m.auditLog in reverse (newest-first) and applies the same WHERE
+// ListAuditLog (issue #755 / PR-6) is the dashboard read path. Sorts
+// a snapshot newest-first and applies the same WHERE
 // semantics as pgstore.ListAuditLog: AccountID is "match-or-null",
 // KindPrefix is a LIKE prefix match, Since is an inclusive lower
-// bound on ReceivedAt, IncludeAnonymous gates the AccountID-is-nil
-// rows. Limit defaults to 100 when zero / negative.
+// bound on ReceivedAt, Before is an exclusive (ReceivedAt, ID)
+// cursor, and IncludeAnonymous gates the AccountID-is-nil rows.
+// Limit defaults to 100 when zero / negative.
 //
 // Returned slice is a fresh copy of each AuditLog row (Data
 // included) so a caller can hold it past the next store mutation.
@@ -11934,9 +11936,16 @@ func (m *MemStore) ListAuditLog(_ context.Context, filter AuditLogFilter) ([]Aud
 	if filter.OperatorOnly {
 		kindPrefix = "operator.action."
 	}
+	rows := append([]AuditLog(nil), m.auditLog...)
+	sort.SliceStable(rows, func(i, j int) bool {
+		if !rows[i].ReceivedAt.Equal(rows[j].ReceivedAt) {
+			return rows[i].ReceivedAt.After(rows[j].ReceivedAt)
+		}
+		return bytes.Compare(rows[i].ID[:], rows[j].ID[:]) > 0
+	})
+
 	var out []AuditLog
-	for i := len(m.auditLog) - 1; i >= 0; i-- {
-		row := m.auditLog[i]
+	for _, row := range rows {
 		if filter.AccountID != nil {
 			if row.AccountID == nil || *row.AccountID != *filter.AccountID {
 				continue
@@ -11946,6 +11955,11 @@ func (m *MemStore) ListAuditLog(_ context.Context, filter AuditLogFilter) ([]Aud
 			continue
 		}
 		if !filter.Since.IsZero() && row.ReceivedAt.Before(filter.Since) {
+			continue
+		}
+		if filter.Before != nil && (row.ReceivedAt.After(filter.Before.ReceivedAt) ||
+			(row.ReceivedAt.Equal(filter.Before.ReceivedAt) &&
+				bytes.Compare(row.ID[:], filter.Before.ID[:]) >= 0)) {
 			continue
 		}
 		if !filter.IncludeAnonymous && row.AccountID == nil {

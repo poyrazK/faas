@@ -3990,11 +3990,12 @@ type AuditLogEntry struct {
 // (received_at DESC, id DESC) per the audit_log_received_at_idx so the
 // dashboard can render top-of-list without re-sorting. Limit echoes
 // the effective limit applied by the handler (capped at
-// listAuditLogLimitMax) so the SDK can display "showing 50 of N"
-// without re-issuing the request.
+// listAuditLogLimitMax). NextBefore is an opaque compound cursor for
+// the next older page; it is omitted when this page reaches the end.
 type ListAuditLogResponse struct {
-	Entries []AuditLogEntry `json:"entries"`
-	Limit   int             `json:"limit"`
+	Entries    []AuditLogEntry `json:"entries"`
+	Limit      int             `json:"limit"`
+	NextBefore string          `json:"next_before,omitempty"`
 }
 
 // --- GitHub install bind picker (PR-B; §11) ---------------------------------

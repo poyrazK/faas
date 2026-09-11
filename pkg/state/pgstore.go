@@ -21920,6 +21920,11 @@ func (s *PgStore) ListAuditLog(ctx context.Context, filter AuditLogFilter) ([]Au
 	if filter.TargetAccountID != nil {
 		targetAccountIDParam = *filter.TargetAccountID
 	}
+	var beforeAtParam, beforeIDParam interface{}
+	if filter.Before != nil {
+		beforeAtParam = filter.Before.ReceivedAt
+		beforeIDParam = filter.Before.ID
+	}
 
 	rows, err := s.pool.Query(ctx,
 		`select id, kind, account_id, account_email, actor, received_at, data
@@ -21930,14 +21935,19 @@ func (s *PgStore) ListAuditLog(ctx context.Context, filter AuditLogFilter) ([]Au
 		    and ($4::bool or account_id is not null)
 		    and ($5::text is null or account_email = $5::text)
 		    and ($6::text is null or data @> jsonb_build_object('target_account_id', $6::text))
+		    and ($7::timestamptz is null
+		         or received_at < $7::timestamptz
+		         or (received_at = $7::timestamptz and id < $8::uuid))
 		  order by received_at desc, id desc
-		  limit $7`,
+		  limit $9`,
 		filter.AccountID,
 		kindPrefix,
 		sinceParam,
 		filter.IncludeAnonymous,
 		actorEmailParam,
 		targetAccountIDParam,
+		beforeAtParam,
+		beforeIDParam,
 		limit,
 	)
 	if err != nil {

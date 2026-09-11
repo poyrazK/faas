@@ -23,12 +23,10 @@
 //     parameters; admins can read across accounts and can opt into
 //     account_id IS NULL rows with ?include_anonymous=true.
 //
-// What this surface deliberately does NOT do
+// This surface deliberately keeps writes and payload search out of the
+// dashboard path. The append-only history is paged with an opaque compound
+// cursor so equal timestamps cannot cause duplicates or gaps.
 //
-//   - No pagination beyond a fixed limit (default 50, max 100). The
-//     full-history read is the GDPR export bundle (spec §17 G6); this
-//     endpoint is the dashboard "what was hard-deleted for this
-//     account?" UI surface.
 //   - No PATCH / DELETE on individual rows. The audit_log table is
 //     append-only by spec (ISO 27001 SoA A.5.33 — retention forever);
 //     there is no UPDATE / DELETE permission on the table in
@@ -48,6 +46,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -74,17 +73,18 @@ const (
 //
 // Query params (all optional):
 //
-//	since        RFC 3339 timestamp; rows strictly older are skipped
+//	since        RFC 3339 timestamp; rows older than this floor are skipped
+//	before       opaque cursor from a previous response's next_before
 //	kind_prefix  e.g. "account." returns only "account.deleted"
 //	limit        1..100; defaults to 50
 //
-// Malformed since → 400 invalid_since (not silent drop, per the
+// Malformed since/before → 400 invalid cursor (not silent drop, per the
 // /v1/audit-events precedent — silently ignoring the time floor would
 // let a buggy SDK pin a customer to "everything since forever").
 // Limit > Max is silently capped per the spec convention used by the
 // rest of apid's list handlers.
 func (s *server) listAuditLog(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	since, prefix, limit, ok := parseAuditLogQuery(w, r)
+	since, prefix, before, limit, ok := parseAuditLogQuery(w, r)
 	if !ok {
 		return
 	}
@@ -100,6 +100,7 @@ func (s *server) listAuditLog(w http.ResponseWriter, r *http.Request, acct state
 		AccountID:        &accountUUID,
 		KindPrefix:       prefix,
 		Since:            since,
+		Before:           before,
 		IncludeAnonymous: false,
 		Limit:            listAuditLogOverRead,
 	})
@@ -128,7 +129,7 @@ func (s *server) listAuditLog(w http.ResponseWriter, r *http.Request, acct state
 // admin moving between the two endpoints sees the same posture.
 func (s *server) listAuditLogAll(w http.ResponseWriter, r *http.Request, _ state.Account) {
 	q := r.URL.Query()
-	since, prefix, limit, ok := parseAuditLogQuery(w, r)
+	since, prefix, before, limit, ok := parseAuditLogQuery(w, r)
 	if !ok {
 		return
 	}
@@ -147,6 +148,7 @@ func (s *server) listAuditLogAll(w http.ResponseWriter, r *http.Request, _ state
 		AccountID:        accountFilter,
 		KindPrefix:       prefix,
 		Since:            since,
+		Before:           before,
 		IncludeAnonymous: includeAnonymous,
 		Limit:            listAuditLogOverRead,
 	})
@@ -163,20 +165,36 @@ func (s *server) listAuditLogAll(w http.ResponseWriter, r *http.Request, _ state
 // the caller must return.
 //
 // since is zero when the param is absent or empty (handler treats
-// zero as "no floor"). limit defaults to listAuditLogLimitDefault
+// zero as "no floor"). before is nil when the param is absent.
+// limit defaults to listAuditLogLimitDefault
 // when absent; values <1 also fall back to the default. Values
 // >listAuditLogLimitMax are silently capped per the /v1/audit-events
 // convention.
-func parseAuditLogQuery(w http.ResponseWriter, r *http.Request) (since time.Time, prefix string, limit int, ok bool) {
+func parseAuditLogQuery(w http.ResponseWriter, r *http.Request) (since time.Time, prefix string, before *state.AuditLogCursor, limit int, ok bool) {
 	q := r.URL.Query()
 	if raw := q.Get("since"); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid since", "since must be RFC 3339 (e.g. 2026-07-25T00:00:00Z)"))
-			return time.Time{}, "", 0, false
+			return time.Time{}, "", nil, 0, false
 		}
 		since = t
+	}
+	if raw := q.Get("before"); raw != "" {
+		key, err := cursor.Decode(raw)
+		if err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid before", "before must be an opaque cursor returned as next_before"))
+			return time.Time{}, "", nil, 0, false
+		}
+		id, err := uuid.Parse(key.ID)
+		if err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid before", "before must be an opaque cursor returned as next_before"))
+			return time.Time{}, "", nil, 0, false
+		}
+		before = &state.AuditLogCursor{ReceivedAt: key.CreatedAt, ID: id}
 	}
 	prefix = q.Get("kind_prefix")
 	limit = listAuditLogLimitDefault
@@ -185,14 +203,14 @@ func parseAuditLogQuery(w http.ResponseWriter, r *http.Request) (since time.Time
 		if err != nil || n < 1 {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid limit", "limit must be a positive integer"))
-			return time.Time{}, "", 0, false
+			return time.Time{}, "", nil, 0, false
 		}
 		if n > listAuditLogLimitMax {
 			n = listAuditLogLimitMax
 		}
 		limit = n
 	}
-	return since, prefix, limit, true
+	return since, prefix, before, limit, true
 }
 
 // writeListAuditLogResponse converts the store rows into the wire DTO,
@@ -200,11 +218,12 @@ func parseAuditLogQuery(w http.ResponseWriter, r *http.Request) (since time.Time
 // listAuditLog and listAuditLogAll share the same truncation / DTO
 // conversion code path.
 //
-// The since / kind_prefix filters are pushed down to SQL inside
+// The since / before / kind_prefix filters are pushed down to SQL inside
 // pgstore.ListAuditLog (and memstore.ListAuditLog) — the SQL WHERE
 // clause honours audit_log_received_at_idx so the over-read is an
-// index scan, not a sequential read. The handler just truncates the
-// already-filtered result to the caller's limit.
+// index scan, not a sequential read. The handler truncates the
+// already-filtered result to the caller's limit and emits a cursor when
+// the bounded over-read proves another page exists.
 func writeListAuditLogResponse(w http.ResponseWriter, rows []state.AuditLog, limit int) {
 	out := make([]api.AuditLogEntry, 0, listAuditLogLimitMax)
 	for _, r := range rows {
@@ -214,10 +233,15 @@ func writeListAuditLogResponse(w http.ResponseWriter, rows []state.AuditLog, lim
 			break
 		}
 	}
-	writeJSON(w, http.StatusOK, api.ListAuditLogResponse{
-		Entries: out,
-		Limit:   limit,
-	})
+	resp := api.ListAuditLogResponse{Entries: out, Limit: limit}
+	if len(rows) > limit && len(out) > 0 {
+		last := rows[len(out)-1]
+		resp.NextBefore = cursor.Encode(cursor.Key{
+			CreatedAt: last.ReceivedAt,
+			ID:        last.ID.String(),
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // auditLogEntry converts one state.AuditLog row into the wire shape.
