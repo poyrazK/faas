@@ -296,6 +296,9 @@ func TestMemStoreCoverageInstancesSnapshotsAndNodes(t *testing.T) {
 	if err != nil || updatedInstance.Mode != string(InstanceModeMirror) || updatedInstance.RequestCount != 3 || !updatedInstance.LastRequestAt.Equal(requestAt) {
 		t.Fatalf("updated instance = %+v, %v", updatedInstance, err)
 	}
+	if used, err := m.ComputeNodeUsedMBByNode(ctx, []string{"node", "missing"}); err != nil || len(used) != 2 || used["node"] != 0 || used["missing"] != 0 {
+		t.Fatalf("node usage = %+v, %v", used, err)
+	}
 	if err := m.DeleteInstance(ctx, instance.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -314,6 +317,9 @@ func TestMemStoreCoverageInstancesSnapshotsAndNodes(t *testing.T) {
 	}
 	if err := m.MarkSnapshotStale(ctx, snap.ID); err != nil {
 		t.Fatal(err)
+	}
+	if stale, err := m.ListSnapshotsStaleOlderThan(ctx, 0); err != nil || len(stale) != 1 || stale[0].StorageKey != "snap/1" {
+		t.Fatalf("stale snapshots = %+v, %v", stale, err)
 	}
 	if _, err := m.LatestSnapshot(ctx, deployment.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("stale latest snapshot = %v", err)
