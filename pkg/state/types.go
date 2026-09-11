@@ -1462,13 +1462,17 @@ type GitHubBinding struct {
 // seal time, used by cold-start re-verification to assert the
 // session envelope's expected_login matches the durable record.
 type GitHubInstall struct {
-	AccountID        string
-	InstallationID   int64
-	DefaultBranch    string
-	SealedToken      []byte
-	TokenExpiresAt   time.Time
-	SealedAt         time.Time
-	AuditGithubLogin string
+	AccountID                    string
+	InstallationID               int64
+	DefaultBranch                string
+	SealedToken                  []byte
+	TokenExpiresAt               time.Time
+	SealedAt                     time.Time
+	AuditGithubLogin             string
+	LastReconciledAt             *time.Time
+	LastReconcileError           string
+	LastReconcileRepositoryCount int
+	LastReconcileDetachedCount   int
 }
 
 // MarshalJSON encodes a zero-value Manifest as {} so the jsonb default

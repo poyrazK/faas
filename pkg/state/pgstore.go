@@ -4494,7 +4494,9 @@ func (s *PgStore) GitHubInstallForAccount(ctx context.Context, accountID string)
 	err := s.pool.QueryRow(ctx,
 		`select installation_id, default_branch,
 		        sealed_install_token, token_expires_at, sealed_at,
-		        audit_github_login
+		        audit_github_login, last_reconciled_at,
+		        last_reconcile_error, last_reconcile_repository_count,
+		        last_reconcile_detached_count
 		   from github_installations
 		  where account_id = $1::uuid
 		  order by sealed_at desc, installation_id desc
@@ -4503,7 +4505,9 @@ func (s *PgStore) GitHubInstallForAccount(ctx context.Context, accountID string)
 	).Scan(
 		&inst.InstallationID, &inst.DefaultBranch,
 		&inst.SealedToken, &inst.TokenExpiresAt, &inst.SealedAt,
-		&inst.AuditGithubLogin,
+		&inst.AuditGithubLogin, &inst.LastReconciledAt,
+		&inst.LastReconcileError, &inst.LastReconcileRepositoryCount,
+		&inst.LastReconcileDetachedCount,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -4526,14 +4530,18 @@ func (s *PgStore) GitHubInstallForAccountInstallation(ctx context.Context, accou
 	err := s.pool.QueryRow(ctx,
 		`select installation_id, default_branch,
 		        sealed_install_token, token_expires_at, sealed_at,
-		        audit_github_login
+		        audit_github_login, last_reconciled_at,
+		        last_reconcile_error, last_reconcile_repository_count,
+		        last_reconcile_detached_count
 		   from github_installations
 		  where account_id = $1::uuid and installation_id = $2`,
 		accountID, installationID,
 	).Scan(
 		&inst.InstallationID, &inst.DefaultBranch,
 		&inst.SealedToken, &inst.TokenExpiresAt, &inst.SealedAt,
-		&inst.AuditGithubLogin,
+		&inst.AuditGithubLogin, &inst.LastReconciledAt,
+		&inst.LastReconcileError, &inst.LastReconcileRepositoryCount,
+		&inst.LastReconcileDetachedCount,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -4543,6 +4551,118 @@ func (s *PgStore) GitHubInstallForAccountInstallation(ctx context.Context, accou
 	}
 	inst.AccountID = accountID
 	return inst, nil
+}
+
+// ListGitHubInstallations returns every durable installation, including
+// installations that have not been reconciled yet. The caller must still
+// verify remote access before mutating any binding rows.
+func (s *PgStore) ListGitHubInstallations(ctx context.Context) ([]GitHubInstall, error) {
+	rows, err := s.pool.Query(ctx,
+		`select account_id::text, installation_id, default_branch,
+		        sealed_install_token, token_expires_at, sealed_at,
+		        audit_github_login, last_reconciled_at,
+		        last_reconcile_error, last_reconcile_repository_count,
+		        last_reconcile_detached_count
+		   from github_installations
+		  order by account_id, installation_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	installs := make([]GitHubInstall, 0)
+	for rows.Next() {
+		var inst GitHubInstall
+		if err := rows.Scan(
+			&inst.AccountID, &inst.InstallationID, &inst.DefaultBranch,
+			&inst.SealedToken, &inst.TokenExpiresAt, &inst.SealedAt,
+			&inst.AuditGithubLogin, &inst.LastReconciledAt,
+			&inst.LastReconcileError, &inst.LastReconcileRepositoryCount,
+			&inst.LastReconcileDetachedCount,
+		); err != nil {
+			return nil, err
+		}
+		installs = append(installs, inst)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return installs, nil
+}
+
+// ListGitHubInstallBindingsForInstallation returns active repository bindings
+// owned by one installation. Deleted apps are excluded because their rows no
+// longer represent deploy edges and should not affect drift reconciliation.
+func (s *PgStore) ListGitHubInstallBindingsForInstallation(ctx context.Context, installationID int64) ([]GitHubBinding, error) {
+	if installationID <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, account_id::text, github_install_binding_id,
+		        github_install_linked_at, github_install_id,
+		        github_repo_full_name, github_production_branch
+		   from apps
+		  where github_install_id = $1
+		    and github_repo_full_name is not null
+		    and status <> 'deleted'`, installationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	bindings := make([]GitHubBinding, 0)
+	for rows.Next() {
+		var b GitHubBinding
+		var bindingID *string
+		var linkedAt *time.Time
+		var installID *int64
+		var repo, branch *string
+		if err := rows.Scan(&b.AppID, &b.AccountID, &bindingID, &linkedAt, &installID, &repo, &branch); err != nil {
+			return nil, err
+		}
+		if bindingID != nil {
+			b.BindingID = *bindingID
+		}
+		if linkedAt != nil {
+			b.LinkedAt = *linkedAt
+		}
+		if installID != nil {
+			b.InstallID = *installID
+		}
+		if repo != nil {
+			b.RepoFullName = *repo
+		}
+		if branch != nil {
+			b.ProductionBranch = *branch
+		}
+		bindings = append(bindings, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return bindings, nil
+}
+
+// RecordGitHubInstallationSync stores the latest reconciliation outcome.
+// A missing row is treated as success: a concurrent webhook revocation has
+// already removed the installation and there is nothing left to update.
+func (s *PgStore) RecordGitHubInstallationSync(ctx context.Context, installationID int64, syncedAt time.Time, syncErr string, remoteRepoCount, detachedCount int) error {
+	if installationID <= 0 {
+		return nil
+	}
+	if remoteRepoCount < 0 {
+		remoteRepoCount = 0
+	}
+	if detachedCount < 0 {
+		detachedCount = 0
+	}
+	_, err := s.pool.Exec(ctx,
+		`update github_installations
+		    set last_reconciled_at = $2,
+		        last_reconcile_error = left($3, 2048),
+		        last_reconcile_repository_count = $4,
+		        last_reconcile_detached_count = $5
+		  where installation_id = $1`,
+		installationID, syncedAt, syncErr, remoteRepoCount, detachedCount)
+	return err
 }
 
 // RevokeGitHubInstallation atomically removes all access derived from a

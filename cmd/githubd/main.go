@@ -189,6 +189,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	webhookSecret := loadGithubWebhookSecret(os.Getenv)
 	deliveryStore := githubd.NewPGWebhookDeliveryStore(pool)
 	ops.Registry().MustRegister(githubd.NewRecoveryCollector(pool))
+	installationSyncMetrics := githubd.NewInstallationSyncMetrics()
+	ops.Registry().MustRegister(installationSyncMetrics)
 
 	// Legacy installation-scoped webhook secret resolver. The
 	// pool is the same one state.Store wires through; the adapter
@@ -424,10 +426,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// GitHub App lifecycle events are acknowledged through the durable inbox.
 	// Revocation clears bindings, install secrets, and preview leases in one
 	// state transaction; the live RealService cache is invalidated afterwards.
-	webhookSvc.Lifecycle = newStateLifecycleAdapter(pool)
+	lifecycleAdapter := newStateLifecycleAdapter(pool)
+	webhookSvc.Lifecycle = lifecycleAdapter
 	if realSvc != nil {
 		webhookSvc.InvalidateInstallation = realSvc.InvalidateInstallation
 		webhookSvc.InvalidateInstallationBindings = realSvc.InvalidateInstallationBindings
+	}
+	if realSvc != nil {
+		syncer := githubd.NewInstallationSyncer(lifecycleAdapter, realSvc)
+		syncer.Metrics = installationSyncMetrics
+		go githubd.RunInstallationSyncWorker(ctx, syncer, githubd.DefaultInstallationSyncInterval, log)
 	}
 	webhookSvc.InvalidateInstallationSecrets = secretResolver.Invalidate
 
