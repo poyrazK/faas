@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ConsumerKeyResponse } from './ConsumerKeyResponse.js';
+/**
+ * Credential metadata for an API consumer.
+ */
 export type ConsumerKeyListResponse = {
   keys: Array<ConsumerKeyResponse>;
 };

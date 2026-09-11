@@ -79,6 +79,9 @@ export class ConsumersService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Target API consumer identity UUID.
+     */
     consumerId: string,
   }): CancelablePromise<APIConsumerResponse> {
     return __request(OpenAPI, {
@@ -107,6 +110,9 @@ export class ConsumersService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Target API consumer identity UUID.
+     */
     consumerId: string,
   }): CancelablePromise<APIConsumerResponse> {
     return __request(OpenAPI, {
@@ -135,6 +141,9 @@ export class ConsumersService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * API consumer identity UUID owning these credentials.
+     */
     consumerId: string,
   }): CancelablePromise<ConsumerKeyListResponse> {
     return __request(OpenAPI, {
@@ -164,6 +173,9 @@ export class ConsumersService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * API consumer identity UUID owning these credentials.
+     */
     consumerId: string,
     requestBody: CreateConsumerKeyRequest,
   }): CancelablePromise<ConsumerKeyResponse> {
@@ -197,7 +209,13 @@ export class ConsumersService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * API consumer identity UUID for the key being revoked.
+     */
     consumerId: string,
+    /**
+     * Consumer credential UUID.
+     */
     keyId: string,
   }): CancelablePromise<ConsumerKeyResponse> {
     return __request(OpenAPI, {

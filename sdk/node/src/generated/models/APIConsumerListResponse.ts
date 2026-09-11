@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APIConsumerResponse } from './APIConsumerResponse.js';
+/**
+ * Stable API consumer identities for an app.
+ */
 export type APIConsumerListResponse = {
   consumers: Array<APIConsumerResponse>;
 };
