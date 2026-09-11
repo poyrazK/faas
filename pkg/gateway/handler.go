@@ -4499,7 +4499,11 @@ func (h *Handler) setupStreamingWriter(w http.ResponseWriter, rec *statusRecorde
 		}
 	}
 
-	flusher, _ := w.(http.Flusher)
+	// Flush the original client writer. Here w is commonly rec itself (or an
+	// outer cache writer that wraps rec); installing w as rec's downstream
+	// flusher creates a recursive Flush cycle and eventually OOM-kills the
+	// gateway on the first response body.
+	flusher, _ := rec.ResponseWriter.(http.Flusher)
 	if flusher == nil {
 		// The wrapped writer isn't an http.Flusher. The buffered
 		// path stays; we still install the onFlush hook so the
@@ -4522,7 +4526,7 @@ func (h *Handler) setupStreamingWriter(w http.ResponseWriter, rec *statusRecorde
 	// goroutine writes the 413 problem+json and disables
 	// further writes via the capWriter.disabled flag.
 	cw := &capWriter{
-		ResponseWriter: rec,
+		ResponseWriter: w,
 		cap:            cap,
 		onCap: func() {
 			api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeStreamingNotAvailable,

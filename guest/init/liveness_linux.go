@@ -48,6 +48,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -98,6 +99,7 @@ const (
 // livenessReq is the inbound JSON body from the host's dial.
 type livenessReq struct {
 	Path      string `json:"path"`
+	Port      int    `json:"port,omitempty"`
 	TimeoutMs int    `json:"timeout_ms"`
 }
 
@@ -256,16 +258,13 @@ func handleLivenessConn(f *os.File, log *slog.Logger) {
 	if timeoutMs > VsockLivenessHardTimeoutMs {
 		timeoutMs = VsockLivenessHardTimeoutMs
 	}
-	status, errStr, wwwAuth := runLivenessProbe(req.Path, timeoutMs)
+	status, errStr, wwwAuth := runLivenessProbe(req.Path, timeoutMs, req.Port)
 	writeLivenessResp(f, livenessResp{Status: status, Err: errStr, WWWAuthenticate: wwwAuth})
 }
 
-// runLivenessProbe hits the runner's :8080<path> and returns the
+// runLivenessProbe hits the configured runtime port and returns the
 // status + err classification + the WWW-Authenticate response header
-// (verbatim). The runner's :8080 is the canonical liveness target —
-// every shipped runner (node22, python312) binds :8080 + registers
-// /healthz returning 200 ahead of the customer's HTTP handler so the
-// probe targets the runtime surface, not the customer's app.
+// (verbatim). Port 0 is the backward-compatible legacy :8080 target.
 //
 // Returns:
 //   - status: the HTTP status code (0 = no response / conn_refused /
@@ -278,14 +277,17 @@ func handleLivenessConn(f *os.File, log *slog.Logger) {
 //     conventionally carry the header per RFC 7235). Empty
 //     otherwise. Cluster A forward-compat — the host reads the
 //     field defensively.
-func runLivenessProbe(path string, timeoutMs int) (int, string, string) {
-	// Build the URL. The runner's :8080 is loopback; the path is
+func runLivenessProbe(path string, timeoutMs, port int) (int, string, string) {
+	// Build the URL. The runner is on loopback; the path is
 	// already validated to start with "/". We use the http
 	// package's Get with a per-call Client so the timeout is
 	// honored atomically — http.Client.Timeout covers the DNS
 	// resolve + connect + transfer budget (loopback resolves in
 	// 0 ms, no DNS budget burn).
-	url := "http://127.0.0.1:8080" + path
+	if port < 1 || port > 65535 {
+		port = 8080
+	}
+	url := "http://127.0.0.1:" + strconv.Itoa(port) + path
 	client := &http.Client{Timeout: time.Duration(timeoutMs) * time.Millisecond}
 	resp, err := client.Get(url)
 	if err != nil {

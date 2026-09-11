@@ -1147,10 +1147,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return nil, err
 			}
-			live := make(map[string]struct{}, len(liveDeployments))
+			live := make(map[string]int, len(liveDeployments))
 			for _, deployment := range liveDeployments {
 				if deployment.ID != "" {
-					live[deployment.ID] = struct{}{}
+					live[deployment.ID] = schedpkg.DeploymentRuntimePort(deployment)
 				}
 			}
 			instances, err := pgStore.ListInstancesForApp(ctx, appID)
@@ -1162,7 +1162,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 				if instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
 					continue
 				}
-				if _, ok := live[instance.DeploymentID]; !ok {
+				port, ok := live[instance.DeploymentID]
+				if !ok {
 					continue
 				}
 				targets = append(targets, gateway.Target{
@@ -1170,6 +1171,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 					NodeID:       instance.NodeID,
 					WakeID:       instance.WakeID,
 					DeploymentID: instance.DeploymentID,
+					Port:         port,
 				})
 			}
 			return targets, nil

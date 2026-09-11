@@ -106,7 +106,7 @@ func TestLivenessProbeOutcomes(t *testing.T) {
 		addr := ln.Addr().String()
 		_ = addr
 		_ = ln.Close()
-		status, errStr, wwwAuth := runLivenessProbe("/healthz", 500)
+		status, errStr, wwwAuth := runLivenessProbe("/healthz", 500, 8080)
 		if status != 0 {
 			t.Errorf("status = %d, want 0", status)
 		}
@@ -117,6 +117,22 @@ func TestLivenessProbeOutcomes(t *testing.T) {
 			t.Errorf("wwwAuth = %q, want \"\" (no header on conn_refused)", wwwAuth)
 		}
 	})
+}
+
+func TestLivenessProbeUsesConfiguredRuntimePort(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			t.Errorf("path = %q, want /healthz", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+	status, errStr, wwwAuth := runLivenessProbe("/healthz", 500, port)
+	if status != http.StatusOK || errStr != "" || wwwAuth != "" {
+		t.Fatalf("probe = (%d, %q, %q), want (200, empty, empty)", status, errStr, wwwAuth)
+	}
 }
 
 // runOnPort8080 brings up a one-shot HTTP server on :8080 returning
@@ -162,7 +178,7 @@ func runOnPort8080WithHandler(t *testing.T, path string, h http.HandlerFunc, che
 	// Run the probe. timeout_ms = 500ms is comfortable for the
 	// happy path but tight enough to fire the timeout subtest
 	// when the handler blocks.
-	status, errStr, wwwAuth := runLivenessProbe(path, 500)
+	status, errStr, wwwAuth := runLivenessProbe(path, 500, 8080)
 	if wwwAuth != "" {
 		t.Errorf("wwwAuth = %q, want \"\" (no header on 2xx)", wwwAuth)
 	}
