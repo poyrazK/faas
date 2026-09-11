@@ -61,6 +61,64 @@ type listedObject struct {
 	StorageClass string `xml:"StorageClass"`
 }
 
+type initiateMultipartResult struct {
+	XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
+	XMLNS    string   `xml:"xmlns,attr"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	UploadID string   `xml:"UploadId"`
+}
+
+type listedMultipartUpload struct {
+	Key       string `xml:"Key"`
+	UploadID  string `xml:"UploadId"`
+	Initiated string `xml:"Initiated"`
+}
+
+type listMultipartUploadsResult struct {
+	XMLName          xml.Name                `xml:"ListMultipartUploadsResult"`
+	XMLNS            string                  `xml:"xmlns,attr"`
+	Bucket           string                  `xml:"Bucket"`
+	KeyMarker        string                  `xml:"KeyMarker,omitempty"`
+	UploadMarker     string                  `xml:"UploadIdMarker,omitempty"`
+	NextKeyMarker    string                  `xml:"NextKeyMarker,omitempty"`
+	NextUploadMarker string                  `xml:"NextUploadIdMarker,omitempty"`
+	Prefix           string                  `xml:"Prefix,omitempty"`
+	MaxUploads       int32                   `xml:"MaxUploads"`
+	IsTruncated      bool                    `xml:"IsTruncated"`
+	Uploads          []listedMultipartUpload `xml:"Upload,omitempty"`
+}
+
+type listedMultipartPart struct {
+	PartNumber   int32  `xml:"PartNumber"`
+	LastModified string `xml:"LastModified"`
+	ETag         string `xml:"ETag"`
+	Size         int64  `xml:"Size"`
+}
+
+type listMultipartPartsResult struct {
+	XMLName              xml.Name              `xml:"ListPartsResult"`
+	XMLNS                string                `xml:"xmlns,attr"`
+	Bucket               string                `xml:"Bucket"`
+	Key                  string                `xml:"Key"`
+	UploadID             string                `xml:"UploadId"`
+	PartNumberMarker     int32                 `xml:"PartNumberMarker"`
+	NextPartNumberMarker int32                 `xml:"NextPartNumberMarker,omitempty"`
+	MaxParts             int32                 `xml:"MaxParts"`
+	IsTruncated          bool                  `xml:"IsTruncated"`
+	Parts                []listedMultipartPart `xml:"Part,omitempty"`
+}
+
+type completeMultipartResult struct {
+	XMLName  xml.Name `xml:"CompleteMultipartUploadResult"`
+	XMLNS    string   `xml:"xmlns,attr"`
+	Location string   `xml:"Location,omitempty"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	ETag     string   `xml:"ETag,omitempty"`
+	UploadID string   `xml:"UploadId,omitempty"`
+}
+
 func listObjectsResult(bucket, prefix string, limit int32, page objectstorage.ObjectPage) listBucketResult {
 	result := listBucketResult{
 		XMLNS: s3XMLNamespace, Name: bucket, Prefix: prefix, KeyCount: len(page.Items), MaxKeys: limit,

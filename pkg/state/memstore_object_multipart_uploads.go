@@ -19,7 +19,9 @@ func (m *MemStore) ReserveObjectMultipartUpload(_ context.Context, upload Object
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	bucket, ok := m.objectBuckets[upload.BucketID]
-	if !ok || bucket.AccountID != upload.AccountID || bucket.AppID != upload.AppID || bucket.State != "ready" || upload.ID == "" || upload.Key == "" || upload.SizeBytes <= 0 || upload.PartSizeBytes <= 0 || upload.PartCount < 1 || upload.ExpiresAt.IsZero() || limit < 1 {
+	unknownSize := upload.SizeBytes == 0 && upload.PartSizeBytes == 0 && upload.PartCount == 0
+	knownSize := upload.SizeBytes > 0 && upload.PartSizeBytes > 0 && upload.PartCount > 0
+	if !ok || bucket.AccountID != upload.AccountID || bucket.AppID != upload.AppID || bucket.State != "ready" || upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	count := 0
@@ -145,6 +147,19 @@ func (m *MemStore) ActivateObjectMultipartUpload(_ context.Context, id, token, p
 	upload.LeaseToken, upload.LeaseUntil = "", time.Time{}
 	upload.AttemptCount, upload.LastErrorCode = 0, ""
 	upload.UpdatedAt, upload.RetryAt = time.Now().UTC(), time.Now().UTC()
+	m.objectMultipartUploads[id] = upload
+	return nil
+}
+
+func (m *MemStore) SetObjectMultipartUploadSize(_ context.Context, id, token string, size int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	upload, ok := m.objectMultipartUploads[id]
+	if !ok || upload.State != ObjectMultipartCompleting || upload.LeaseToken != token || size < 1 || size > api.MaxObjectUploadBytes {
+		return ErrConflict
+	}
+	upload.SizeBytes = size
+	upload.UpdatedAt = time.Now().UTC()
 	m.objectMultipartUploads[id] = upload
 	return nil
 }

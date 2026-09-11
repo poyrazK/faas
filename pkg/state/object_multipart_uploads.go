@@ -40,6 +40,7 @@ type ObjectMultipartUploadStore interface {
 	GetObjectMultipartUpload(context.Context, string, string, string, string) (ObjectMultipartUpload, error)
 	ClaimObjectMultipartUpload(context.Context, string, string, string, string, string, string, []api.ObjectMultipartCompletedPart, bool) (ObjectMultipartUpload, error)
 	ActivateObjectMultipartUpload(context.Context, string, string, string) error
+	SetObjectMultipartUploadSize(context.Context, string, string, int64) error
 	FinishObjectMultipartUpload(context.Context, string, string, string) error
 	RetryObjectMultipartUpload(context.Context, string, string, string, time.Duration) error
 	DueObjectMultipartUploads(context.Context, int32) ([]ObjectMultipartUpload, error)

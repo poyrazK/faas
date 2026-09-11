@@ -192,7 +192,7 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 const multipartSessionMetadata = "gregale-upload-id"
 
 func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r MultipartCreateRequest) (string, error) {
-	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes <= 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateContentType(r.ContentType) != nil {
+	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateContentType(r.ContentType) != nil {
 		return "", ErrInvalid
 	}
 	// A Gregale bucket does not expose native provider credentials. Combined
@@ -315,10 +315,12 @@ func (p *S3) CompleteMultipartUpload(ctx context.Context, bucket string, r Multi
 		return ErrInvalid
 	}
 	parts := make([]types.CompletedPart, 0, len(r.Parts))
-	for i, part := range r.Parts {
-		if part.PartNumber != int32(i+1) || part.ETag == "" {
+	var previousPart int32
+	for _, part := range r.Parts {
+		if part.PartNumber < 1 || part.PartNumber > 10000 || part.PartNumber <= previousPart || part.ETag == "" {
 			return ErrInvalid
 		}
+		previousPart = part.PartNumber
 		parts = append(parts, types.CompletedPart{PartNumber: aws.Int32(part.PartNumber), ETag: aws.String(part.ETag)})
 	}
 	_, err := p.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{

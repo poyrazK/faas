@@ -40,7 +40,9 @@ func multipartPartsJSON(parts []api.ObjectMultipartCompletedPart) ([]byte, error
 }
 
 func (s *PgStore) ReserveObjectMultipartUpload(ctx context.Context, upload ObjectMultipartUpload, limit int) (ObjectMultipartUpload, error) {
-	if upload.ID == "" || upload.Key == "" || upload.SizeBytes <= 0 || upload.PartSizeBytes <= 0 || upload.PartCount < 1 || upload.ExpiresAt.IsZero() || limit < 1 {
+	unknownSize := upload.SizeBytes == 0 && upload.PartSizeBytes == 0 && upload.PartCount == 0
+	knownSize := upload.SizeBytes > 0 && upload.PartSizeBytes > 0 && upload.PartCount > 0
+	if upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -163,6 +165,22 @@ func (s *PgStore) ActivateObjectMultipartUpload(ctx context.Context, id, token, 
 	}
 	n, err := sqlc.New().ObjectMultipartActivate(ctx, s.pool, sqlc.ObjectMultipartActivateParams{
 		ID: mustPgUUID(id), LeaseToken: pgtype.Text{String: token, Valid: true}, ProviderUploadID: providerID,
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) SetObjectMultipartUploadSize(ctx context.Context, id, token string, size int64) error {
+	if token == "" || size < 1 || size > api.MaxObjectUploadBytes {
+		return ErrConflict
+	}
+	n, err := sqlc.New().ObjectMultipartSetSize(ctx, s.pool, sqlc.ObjectMultipartSetSizeParams{
+		ID: mustPgUUID(id), LeaseToken: pgtype.Text{String: token, Valid: true}, SizeBytes: size,
 	})
 	if err != nil {
 		return mapErr(err)

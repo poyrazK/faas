@@ -130,6 +130,34 @@ func objectMultipartUploadStoreSuite(t *testing.T, base state.Store) {
 	if err = uploads.FinishObjectMultipartUpload(ctx, expired.ID, "abort", state.ObjectMultipartAborted); err != nil {
 		t.Fatal(err)
 	}
+	public := state.ObjectMultipartUpload{
+		ID: uuid.NewString(), AccountID: account.ID, AppID: app.ID, BucketID: bucket.ID, Key: "public.bin",
+		ContentType: "application/octet-stream", ExpiresAt: time.Now().Add(time.Hour),
+	}
+	publicUpload, err := uploads.ReserveObjectMultipartUpload(ctx, public, 2)
+	if err != nil || publicUpload.PartCount != 0 || publicUpload.SizeBytes != 0 {
+		t.Fatal("public S3 layout rejected", publicUpload, err)
+	}
+	if _, err = uploads.ClaimObjectMultipartUpload(ctx, account.ID, app.ID, bucket.ID, publicUpload.ID, "public-init", state.ObjectMultipartInitiating, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err = uploads.ActivateObjectMultipartUpload(ctx, publicUpload.ID, "public-init", "provider-public"); err != nil {
+		t.Fatal(err)
+	}
+	publicParts := []api.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: "one"}, {PartNumber: 3, ETag: "three"}}
+	if _, err = uploads.ClaimObjectMultipartUpload(ctx, account.ID, app.ID, bucket.ID, publicUpload.ID, "public-complete", state.ObjectMultipartCompleting, publicParts, false); err != nil {
+		t.Fatal(err)
+	}
+	if err = uploads.SetObjectMultipartUploadSize(ctx, publicUpload.ID, "public-complete", 10); err != nil {
+		t.Fatal(err)
+	}
+	if err = uploads.FinishObjectMultipartUpload(ctx, publicUpload.ID, "public-complete", state.ObjectMultipartCompleted); err != nil {
+		t.Fatal(err)
+	}
+	completedPublic, err := uploads.GetObjectMultipartUpload(ctx, account.ID, app.ID, bucket.ID, publicUpload.ID)
+	if err != nil || completedPublic.SizeBytes != 10 || completedPublic.PartCount != 0 {
+		t.Fatal("public completion not persisted", completedPublic, err)
+	}
 	if _, err = buckets.ClaimObjectBucket(ctx, account.ID, app.ID, bucket.ID, "delete", "deleting"); err != nil {
 		t.Fatal("terminal uploads blocked bucket deletion", err)
 	}

@@ -9,7 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,8 +60,11 @@ func (s *gatewayTestStore) AdmitObjectURL(_ context.Context, _, _, key string, _
 }
 
 type gatewayTestProvider struct {
-	objects objectstorage.ObjectPage
-	deleted string
+	objects          objectstorage.ObjectPage
+	deleted          string
+	multipart        map[string]map[int32]objectstorage.MultipartPart
+	completedUploads []string
+	abortedUploads   []string
 }
 
 type gatewayRequestMetrics struct {
@@ -89,31 +95,173 @@ func (p *gatewayTestProvider) DeleteObject(_ context.Context, _ string, key stri
 func (*gatewayTestProvider) Presign(_ context.Context, bucket string, request objectstorage.SignRequest) (objectstorage.SignedRequest, error) {
 	return objectstorage.SignedRequest{URL: "https://provider.invalid/" + bucket + "/" + request.Key, Method: request.Method, Headers: map[string]string{"Content-Type": request.ContentType}}, nil
 }
-func (*gatewayTestProvider) EnsureMultipartUpload(context.Context, string, objectstorage.MultipartCreateRequest) (string, error) {
-	panic("not used")
+func (p *gatewayTestProvider) EnsureMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartCreateRequest) (string, error) {
+	if p.multipart == nil {
+		p.multipart = map[string]map[int32]objectstorage.MultipartPart{}
+	}
+	const id = "provider-upload-id"
+	if p.multipart[id] == nil {
+		p.multipart[id] = map[int32]objectstorage.MultipartPart{}
+	}
+	return id, nil
 }
-func (*gatewayTestProvider) PresignMultipartPart(context.Context, string, objectstorage.MultipartPartRequest) (objectstorage.SignedRequest, error) {
-	panic("not used")
+func (p *gatewayTestProvider) PresignMultipartPart(_ context.Context, _ string, r objectstorage.MultipartPartRequest) (objectstorage.SignedRequest, error) {
+	if p.multipart == nil {
+		p.multipart = map[string]map[int32]objectstorage.MultipartPart{}
+	}
+	if p.multipart[r.ProviderUploadID] == nil {
+		p.multipart[r.ProviderUploadID] = map[int32]objectstorage.MultipartPart{}
+	}
+	p.multipart[r.ProviderUploadID][r.PartNumber] = objectstorage.MultipartPart{
+		PartNumber: r.PartNumber, ETag: `"etag-` + strconv.FormatInt(int64(r.PartNumber), 10) + `"`, SizeBytes: r.SizeBytes,
+		LastModified: time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC),
+	}
+	return objectstorage.SignedRequest{URL: "https://provider.invalid/upload/" + r.ProviderUploadID + "/" + strconv.FormatInt(int64(r.PartNumber), 10), Method: http.MethodPut, Headers: map[string]string{"Content-Length": strconv.FormatInt(r.SizeBytes, 10)}}, nil
 }
-func (*gatewayTestProvider) ListMultipartParts(context.Context, string, objectstorage.MultipartListPartsRequest) (objectstorage.MultipartPartsPage, error) {
-	panic("not used")
+func (p *gatewayTestProvider) ListMultipartParts(_ context.Context, _ string, r objectstorage.MultipartListPartsRequest) (objectstorage.MultipartPartsPage, error) {
+	parts := make([]objectstorage.MultipartPart, 0, len(p.multipart[r.ProviderUploadID]))
+	for _, part := range p.multipart[r.ProviderUploadID] {
+		if part.PartNumber > r.PartNumberMarker {
+			parts = append(parts, part)
+		}
+	}
+	sort.Slice(parts, func(i, j int) bool { return parts[i].PartNumber < parts[j].PartNumber })
+	if len(parts) > int(r.Limit) {
+		next := parts[r.Limit-1].PartNumber
+		return objectstorage.MultipartPartsPage{Items: parts[:r.Limit], NextPartNumberMarker: next}, nil
+	}
+	return objectstorage.MultipartPartsPage{Items: parts}, nil
 }
-func (*gatewayTestProvider) CompleteMultipartUpload(context.Context, string, objectstorage.MultipartCompleteRequest) error {
-	panic("not used")
+func (p *gatewayTestProvider) CompleteMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartCompleteRequest) error {
+	p.completedUploads = append(p.completedUploads, r.ProviderUploadID)
+	return nil
 }
-func (*gatewayTestProvider) AbortMultipartUpload(context.Context, string, objectstorage.MultipartAbortRequest) error {
-	panic("not used")
+func (p *gatewayTestProvider) AbortMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartAbortRequest) error {
+	p.abortedUploads = append(p.abortedUploads, r.ProviderUploadID)
+	return nil
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+type gatewayMultipartStore struct {
+	mu      sync.Mutex
+	uploads map[string]state.ObjectMultipartUpload
+}
+
+func newGatewayMultipartStore() *gatewayMultipartStore {
+	return &gatewayMultipartStore{uploads: map[string]state.ObjectMultipartUpload{}}
+}
+
+func (s *gatewayMultipartStore) ReserveObjectMultipartUpload(_ context.Context, upload state.ObjectMultipartUpload, _ int) (state.ObjectMultipartUpload, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.uploads {
+		if existing.Key == upload.Key && existing.BucketID == upload.BucketID && existing.State != state.ObjectMultipartCompleted && existing.State != state.ObjectMultipartAborted {
+			return existing, nil
+		}
+	}
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	upload.State, upload.CreatedAt, upload.UpdatedAt = state.ObjectMultipartInitiating, now, now
+	upload.Parts = []api.ObjectMultipartCompletedPart{}
+	s.uploads[upload.ID] = upload
+	return upload, nil
+}
+
+func (s *gatewayMultipartStore) ListObjectMultipartUploads(_ context.Context, account, app, bucket string, limit int32, _ string) ([]state.ObjectMultipartUpload, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows := make([]state.ObjectMultipartUpload, 0)
+	for _, upload := range s.uploads {
+		if upload.AccountID == account && upload.AppID == app && upload.BucketID == bucket {
+			rows = append(rows, upload)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+	if len(rows) > int(limit) {
+		return rows[:limit], rows[limit-1].ID, nil
+	}
+	return rows, "", nil
+}
+
+func (s *gatewayMultipartStore) GetObjectMultipartUpload(_ context.Context, account, app, bucket, id string) (state.ObjectMultipartUpload, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	upload, ok := s.uploads[id]
+	if !ok || upload.AccountID != account || upload.AppID != app || upload.BucketID != bucket {
+		return state.ObjectMultipartUpload{}, state.ErrNotFound
+	}
+	return upload, nil
+}
+
+func (s *gatewayMultipartStore) ClaimObjectMultipartUpload(_ context.Context, account, app, bucket, id, token, operation string, parts []api.ObjectMultipartCompletedPart, _ bool) (state.ObjectMultipartUpload, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	upload, ok := s.uploads[id]
+	if !ok || upload.AccountID != account || upload.AppID != app || upload.BucketID != bucket || token == "" {
+		return state.ObjectMultipartUpload{}, state.ErrConflict
+	}
+	if operation == state.ObjectMultipartInitiating && upload.State != state.ObjectMultipartInitiating || operation == state.ObjectMultipartCompleting && upload.State != state.ObjectMultipartActive || operation == state.ObjectMultipartAborting && upload.State != state.ObjectMultipartActive {
+		return state.ObjectMultipartUpload{}, state.ErrConflict
+	}
+	upload.State, upload.LeaseToken = operation, token
+	if operation == state.ObjectMultipartCompleting {
+		upload.Parts = append([]api.ObjectMultipartCompletedPart(nil), parts...)
+	}
+	s.uploads[id] = upload
+	return upload, nil
+}
+
+func (s *gatewayMultipartStore) ActivateObjectMultipartUpload(_ context.Context, id, token, providerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	upload, ok := s.uploads[id]
+	if !ok || upload.State != state.ObjectMultipartInitiating || upload.LeaseToken != token || providerID == "" {
+		return state.ErrConflict
+	}
+	upload.State, upload.ProviderUploadID, upload.LeaseToken = state.ObjectMultipartActive, providerID, ""
+	s.uploads[id] = upload
+	return nil
+}
+
+func (s *gatewayMultipartStore) SetObjectMultipartUploadSize(_ context.Context, id, token string, size int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	upload, ok := s.uploads[id]
+	if !ok || upload.State != state.ObjectMultipartCompleting || upload.LeaseToken != token {
+		return state.ErrConflict
+	}
+	upload.SizeBytes = size
+	s.uploads[id] = upload
+	return nil
+}
+
+func (s *gatewayMultipartStore) FinishObjectMultipartUpload(_ context.Context, id, token, next string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	upload, ok := s.uploads[id]
+	if !ok || upload.LeaseToken != token || next != state.ObjectMultipartCompleted && next != state.ObjectMultipartAborted {
+		return state.ErrConflict
+	}
+	upload.State, upload.LeaseToken = next, ""
+	s.uploads[id] = upload
+	return nil
+}
+
+func (*gatewayMultipartStore) RetryObjectMultipartUpload(context.Context, string, string, string, time.Duration) error {
+	return state.ErrConflict
+}
+
+func (*gatewayMultipartStore) DueObjectMultipartUploads(context.Context, int32) ([]state.ObjectMultipartUpload, error) {
+	return nil, nil
+}
+
 func newGatewayTestHandler(t *testing.T, permission string, roundTrip roundTripFunc) (*Handler, *gatewayTestStore, *gatewayTestProvider) {
 	t.Helper()
 	provider := &gatewayTestProvider{objects: objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: "folder/a.txt", Size: 3, LastModified: time.Date(2026, 9, 7, 1, 2, 3, 0, time.UTC)}}}}
 	registry, err := objectstorage.NewRegistry(objectstorage.Config{
-		DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "test"}, MaxUploadBytes: 1024,
+		DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "test"}, MaxUploadBytes: 16 << 20,
 		Backends: []objectstorage.BackendConfig{{ID: "test", Driver: "test", Region: "us-east-1", Namespace: "fixture"}},
 	}, func(string) string { return "" }, map[string]objectstorage.Factory{"test": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
 		return provider, nil
@@ -159,6 +307,32 @@ func signedGatewayRequest(t *testing.T, method, target string, body []byte, payl
 		t.Fatal(err)
 	}
 	return request
+}
+
+func presignedGatewayRequest(t *testing.T, method, target string, body []byte) *http.Request {
+	t.Helper()
+	request := httptest.NewRequest(method, target, bytes.NewReader(body))
+	request.Host = "s3.gregale.dev"
+	query := request.URL.Query()
+	query.Set("X-Amz-Expires", "300")
+	request.URL.RawQuery = query.Encode()
+	signed, headers, err := awsv4.NewSigner().PresignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := http.NewRequest(method, signed, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.Host = "s3.gregale.dev"
+	for name, values := range headers {
+		for _, value := range values {
+			if !strings.EqualFold(name, "Host") {
+				parsed.Header.Add(name, value)
+			}
+		}
+	}
+	return parsed
 }
 
 func TestGatewayPutAndGetHideProvider(t *testing.T) {
@@ -282,15 +456,17 @@ func TestGatewayPermissionAndUnsupportedMultipart(t *testing.T) {
 
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets/key?uploads=", nil, "UNSIGNED-PAYLOAD"))
-	if recorder.Code != http.StatusNotImplemented || !strings.Contains(recorder.Body.String(), "NotImplemented") {
-		t.Fatalf("multipart = %d %s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "AccessDenied") {
+		t.Fatalf("multipart permission = %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 
-func TestGatewayRejectsTamperedSignatureAndReportsPresignGap(t *testing.T) {
-	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(*http.Request) (*http.Response, error) {
-		t.Fatal("rejected request reached provider")
-		return nil, nil
+func TestGatewayRejectsTamperedSignatureAndAcceptsPresignedRequests(t *testing.T) {
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPut {
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Length": {"5"}}, Body: io.NopCloser(strings.NewReader("hello")), Request: r}, nil
 	})
 
 	tampered := signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/file.txt", nil, "UNSIGNED-PAYLOAD")
@@ -301,12 +477,19 @@ func TestGatewayRejectsTamperedSignatureAndReportsPresignGap(t *testing.T) {
 		t.Fatalf("tampered signature = %d %s", recorder.Code, recorder.Body.String())
 	}
 
-	presigned := httptest.NewRequest(http.MethodGet, "https://s3.gregale.dev/assets/file.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256", nil)
-	presigned.Host = "s3.gregale.dev"
+	presigned := presignedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/file.txt", nil)
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, presigned)
-	if recorder.Code != http.StatusNotImplemented || !strings.Contains(recorder.Body.String(), "NotImplemented") {
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "hello" {
 		t.Fatalf("presigned query = %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	presignedPut := presignedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/presigned.txt", []byte("body"))
+	presignedPut.Header.Set("Content-Type", "application/octet-stream")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, presignedPut)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("presigned PUT = %d %s", recorder.Code, recorder.Body.String())
 	}
 
 	streaming := httptest.NewRequest(http.MethodPut, "https://s3.gregale.dev/assets/file.txt", strings.NewReader("chunked"))
@@ -316,5 +499,65 @@ func TestGatewayRejectsTamperedSignatureAndReportsPresignGap(t *testing.T) {
 	handler.ServeHTTP(recorder, streaming)
 	if recorder.Code != http.StatusNotImplemented || !strings.Contains(recorder.Body.String(), "NotImplemented") {
 		t.Fatalf("streaming payload = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayPublicMultipartLifecycle(t *testing.T) {
+	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/upload/") {
+			part := strings.TrimPrefix(r.URL.Path, "/upload/provider-upload-id/")
+			header := make(http.Header)
+			header.Set("ETag", `"etag-`+part+`"`)
+			return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		}
+		t.Fatalf("unexpected provider request: %s %s", r.Method, r.URL.String())
+		return nil, nil
+	})
+	handler.multipartStore = newGatewayMultipartStore()
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets/archive.bin?uploads=", nil, "UNSIGNED-PAYLOAD"))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("initiate = %d %s", recorder.Code, recorder.Body.String())
+	}
+	var initiated initiateMultipartResult
+	if err := xml.Unmarshal(recorder.Body.Bytes(), &initiated); err != nil || initiated.UploadID == "" {
+		t.Fatalf("initiate response = %q %v", recorder.Body.String(), err)
+	}
+
+	for partNumber, body := range map[int]string{1: strings.Repeat("a", int(api.MinMultipartPartBytes)), 2: "world"} {
+		target := "https://s3.gregale.dev/assets/archive.bin?partNumber=" + strconv.Itoa(partNumber) + "&uploadId=" + initiated.UploadID
+		recorder = httptest.NewRecorder()
+		handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPut, target, []byte(body), "UNSIGNED-PAYLOAD"))
+		if recorder.Code != http.StatusOK || recorder.Header().Get("ETag") != `"etag-`+strconv.Itoa(partNumber)+`"` {
+			t.Fatalf("part %d = %d headers=%v body=%s", partNumber, recorder.Code, recorder.Header(), recorder.Body.String())
+		}
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/archive.bin?uploadId="+initiated.UploadID, nil, "UNSIGNED-PAYLOAD"))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<PartNumber>1</PartNumber>") || !strings.Contains(recorder.Body.String(), "<PartNumber>2</PartNumber>") {
+		t.Fatalf("list parts = %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	completeBody := []byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"etag-1"</ETag></Part><Part><PartNumber>2</PartNumber><ETag>"etag-2"</ETag></Part></CompleteMultipartUpload>`)
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets/archive.bin?uploadId="+initiated.UploadID, completeBody, "UNSIGNED-PAYLOAD"))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "CompleteMultipartUploadResult") || len(provider.completedUploads) != 1 {
+		t.Fatalf("complete = %d %s completed=%v", recorder.Code, recorder.Body.String(), provider.completedUploads)
+	}
+
+	// A second upload can be initiated for a different key and aborted without
+	// leaking the provider upload identifier through the public response.
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPost, "https://s3.gregale.dev/assets/discard.bin?uploads=", nil, "UNSIGNED-PAYLOAD"))
+	var discarded initiateMultipartResult
+	if recorder.Code != http.StatusOK || xml.Unmarshal(recorder.Body.Bytes(), &discarded) != nil {
+		t.Fatalf("second initiate = %d %s", recorder.Code, recorder.Body.String())
+	}
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodDelete, "https://s3.gregale.dev/assets/discard.bin?uploadId="+discarded.UploadID, nil, "UNSIGNED-PAYLOAD"))
+	if recorder.Code != http.StatusNoContent || len(provider.abortedUploads) != 1 {
+		t.Fatalf("abort = %d %s aborted=%v", recorder.Code, recorder.Body.String(), provider.abortedUploads)
 	}
 }

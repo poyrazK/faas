@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/url"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +29,8 @@ type sigV4Request struct {
 	Signature    string
 	ScopeDate    string
 }
+
+const maxPresignTTL = 7 * 24 * time.Hour
 
 func parseSigV4(r *http.Request, region string, now time.Time) (sigV4Request, error) {
 	authorization := r.Header.Get("Authorization")
@@ -88,6 +93,138 @@ func parseSigV4(r *http.Request, region string, now time.Time) (sigV4Request, er
 		AccessKeyID: credential[0], PayloadHash: payloadHash, SignedAt: signedAt,
 		SignedHeader: attributes["SignedHeaders"], Signature: signature, ScopeDate: credential[1],
 	}, nil
+}
+
+// parsePresignedSigV4 validates the non-cryptographic parts of a query
+// signature and returns the same request shape used by header signatures.
+// Cryptographic verification is deliberately separate because the credential
+// secret is resolved by the caller after the access key has been parsed.
+func parsePresignedSigV4(r *http.Request, region string, now time.Time) (sigV4Request, error) {
+	query := r.URL.Query()
+	if query.Get("X-Amz-Algorithm") != sigV4Algorithm || len(query["X-Amz-Algorithm"]) != 1 {
+		return sigV4Request{}, errSignature
+	}
+	credential := strings.Split(query.Get("X-Amz-Credential"), "/")
+	if len(credential) != 5 || credential[0] == "" || credential[1] == "" || credential[2] != region || credential[3] != "s3" || credential[4] != "aws4_request" {
+		return sigV4Request{}, errSignature
+	}
+	if len(query["X-Amz-Credential"]) != 1 || len(query["X-Amz-Date"]) != 1 || len(query["X-Amz-Expires"]) != 1 || len(query["X-Amz-SignedHeaders"]) != 1 || len(query["X-Amz-Signature"]) != 1 {
+		return sigV4Request{}, errSignature
+	}
+	signedAt, err := time.Parse("20060102T150405Z", query.Get("X-Amz-Date"))
+	if err != nil || credential[1] != signedAt.UTC().Format("20060102") {
+		return sigV4Request{}, errSignature
+	}
+	expires, err := strconv.ParseInt(query.Get("X-Amz-Expires"), 10, 64)
+	if err != nil || expires < 1 || expires > int64(maxPresignTTL/time.Second) {
+		return sigV4Request{}, errSignature
+	}
+	if signedAt.After(now.Add(15*time.Minute)) || now.After(signedAt.Add(time.Duration(expires)*time.Second)) {
+		return sigV4Request{}, errSignature
+	}
+	signedHeaders := strings.Split(query.Get("X-Amz-SignedHeaders"), ";")
+	if len(signedHeaders) == 0 || !sort.StringsAreSorted(signedHeaders) {
+		return sigV4Request{}, errSignature
+	}
+	seen := map[string]bool{}
+	for _, name := range signedHeaders {
+		if name == "" || name != strings.ToLower(name) || seen[name] {
+			return sigV4Request{}, errSignature
+		}
+		seen[name] = true
+		if name != "host" && name != "content-length" && headerOrQueryValue(r, name) == "" {
+			return sigV4Request{}, errSignature
+		}
+	}
+	if !seen["host"] {
+		return sigV4Request{}, errSignature
+	}
+	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
+	if payloadHash == "" {
+		payloadHash = queryValue(query, "x-amz-content-sha256")
+	}
+	if payloadHash == "" {
+		payloadHash = "UNSIGNED-PAYLOAD"
+	}
+	if strings.HasPrefix(payloadHash, "STREAMING-") {
+		return sigV4Request{}, errSignature
+	}
+	if payloadHash != "UNSIGNED-PAYLOAD" {
+		decoded, err := hex.DecodeString(payloadHash)
+		if err != nil || len(decoded) != 32 || payloadHash != strings.ToLower(payloadHash) {
+			return sigV4Request{}, errSignature
+		}
+	}
+	signature := query.Get("X-Amz-Signature")
+	decodedSignature, err := hex.DecodeString(signature)
+	if err != nil || len(decodedSignature) != 32 || signature != strings.ToLower(signature) {
+		return sigV4Request{}, errSignature
+	}
+	return sigV4Request{
+		AccessKeyID: credential[0], PayloadHash: payloadHash, SignedAt: signedAt,
+		SignedHeader: query.Get("X-Amz-SignedHeaders"), Signature: signature, ScopeDate: credential[1],
+	}, nil
+}
+
+// verifyPresignedSigV4 rebuilds the canonical query signature using the AWS
+// signer. The incoming signature parameter is removed before rebuilding; all
+// other query parameters remain part of the canonical request.
+func verifyPresignedSigV4(ctx context.Context, r *http.Request, parsed sigV4Request, secret, region string) error {
+	if secret == "" {
+		return errSignature
+	}
+	clone := r.Clone(ctx)
+	clone.Body, clone.GetBody = nil, nil
+	originalHeaders := r.Header
+	clone.Header = make(http.Header)
+	for _, name := range strings.Split(parsed.SignedHeader, ";") {
+		if name == "host" || name == "content-length" {
+			continue
+		}
+		for _, value := range originalHeaders.Values(name) {
+			clone.Header.Add(name, value)
+		}
+		if clone.Header.Get(name) == "" {
+			if value := queryValue(clone.URL.Query(), name); value != "" {
+				clone.Header.Set(name, value)
+			}
+		}
+	}
+	if slices.Contains(strings.Split(parsed.SignedHeader, ";"), "content-length") {
+		clone.ContentLength = r.ContentLength
+	}
+	query := clone.URL.Query()
+	query.Del("X-Amz-Signature")
+	clone.URL.RawQuery = query.Encode()
+	signed, _, err := awsv4.NewSigner().PresignHTTP(ctx, aws.Credentials{AccessKeyID: parsed.AccessKeyID, SecretAccessKey: secret}, clone, parsed.PayloadHash, "s3", region, parsed.SignedAt)
+	if err != nil {
+		return errSignature
+	}
+	signedURL, err := url.Parse(signed)
+	if err != nil {
+		return errSignature
+	}
+	calculated := signedURL.Query().Get("X-Amz-Signature")
+	if subtle.ConstantTimeCompare([]byte(calculated), []byte(parsed.Signature)) != 1 {
+		return errSignature
+	}
+	return nil
+}
+
+func queryValue(query url.Values, name string) string {
+	for key, values := range query {
+		if strings.EqualFold(key, name) && len(values) == 1 {
+			return values[0]
+		}
+	}
+	return ""
+}
+
+func headerOrQueryValue(r *http.Request, name string) string {
+	if value := r.Header.Get(name); value != "" {
+		return value
+	}
+	return queryValue(r.URL.Query(), name)
 }
 
 func verifySigV4(ctx context.Context, r *http.Request, parsed sigV4Request, secret, region string) error {

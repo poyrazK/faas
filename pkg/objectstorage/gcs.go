@@ -319,7 +319,7 @@ func (p *GCS) signedURL(ctx context.Context, bucket, key string, opts storage.Si
 }
 
 func (p *GCS) EnsureMultipartUpload(ctx context.Context, bucket string, r MultipartCreateRequest) (string, error) {
-	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes <= 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateContentType(r.ContentType) != nil {
+	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateContentType(r.ContentType) != nil {
 		return "", ErrInvalid
 	}
 	var found, keyMarker, uploadMarker string
@@ -424,10 +424,12 @@ func (p *GCS) CompleteMultipartUpload(ctx context.Context, bucket string, r Mult
 		return ErrInvalid
 	}
 	body := gcsCompleteMultipartUpload{Parts: make([]gcsCompletedPart, 0, len(r.Parts))}
-	for i, part := range r.Parts {
-		if part.PartNumber != int32(i+1) || part.ETag == "" || len(part.ETag) > 256 {
+	var previousPart int32
+	for _, part := range r.Parts {
+		if part.PartNumber < 1 || part.PartNumber > 10000 || part.PartNumber <= previousPart || part.ETag == "" || len(part.ETag) > 256 {
 			return ErrInvalid
 		}
+		previousPart = part.PartNumber
 		body.Parts = append(body.Parts, gcsCompletedPart(part))
 	}
 	payload, err := xml.Marshal(body)
