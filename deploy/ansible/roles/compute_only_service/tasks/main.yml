@@ -46,7 +46,6 @@
     owner: root
     group: root
     mode: "0644"
-  register: schedd_unit
 
 - name: compute_only_service — install schedd config example (M9)
   ansible.builtin.copy:
@@ -82,10 +81,6 @@
     group: root
     mode: "0644"
 
-- name: compute_only_service — daemon-reload after schedd unit (M9)
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: schedd_unit.changed
 
 - name: compute_only_service — assert schedd PKI leaves exist (M9)
   ansible.builtin.stat:
