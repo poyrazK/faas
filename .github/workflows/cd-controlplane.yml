@@ -143,6 +143,24 @@ jobs:
           ssh-keyscan -H ${{ env.CP_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Quarantine invalid legacy node exporter unit
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} 'set -euo pipefail
+            unit=/etc/systemd/system/node_exporter.service
+            if [[ ! -f "$unit" ]] || ! grep -Fq "{{" "$unit"; then
+              exit 0
+            fi
+            systemctl is-active --quiet prometheus-node-exporter.service
+            curl --fail --silent --max-time 2 http://127.0.0.1:9100/metrics >/dev/null
+            systemctl disable --now node_exporter.service
+            mv "$unit" "${unit}.invalid-placeholder"
+            systemctl daemon-reload
+            systemctl reset-failed node_exporter.service || true
+            curl --fail --silent --max-time 2 http://127.0.0.1:9100/metrics >/dev/null
+          '
+
       - name: Build immutable release bundle
         run: |
           set -euo pipefail

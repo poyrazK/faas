@@ -251,8 +251,10 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 
 	// 7. Fleet wake p95 (unlabeled — single scalar, same as the
 	// per-app handler).
-	wakeQ := fmt.Sprintf(
-		`histogram_quantile(0.95, sum by (le)(rate(gateway_wake_latency_seconds_bucket[%s]))) * 1000`, rng)
+	wakeQ := appmetrics.HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le)(rate(gateway_wake_latency_seconds_bucket[%s]))`, rng),
+		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, rng))
 	wakeV, err := s.promqlClient.QueryScalar(r.Context(), wakeQ)
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "wake_p95")

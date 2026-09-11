@@ -552,8 +552,10 @@ func (s *server) obsNodeWakeLatency(w http.ResponseWriter, r *http.Request, acct
 	}
 	// Fleet p95 — same window so the per-node numbers are
 	// directly comparable to the fleet number.
-	fleetV, err := s.promqlClient.QueryScalar(r.Context(),
-		fmt.Sprintf(`histogram_quantile(0.95, sum by (le)(rate(gateway_wake_latency_seconds_bucket[%s]))) * 1000`, window))
+	fleetV, err := s.promqlClient.QueryScalar(r.Context(), appmetrics.HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le)(rate(gateway_wake_latency_seconds_bucket[%s]))`, window),
+		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, window)))
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not evaluate fleet wake p95"))
 		return

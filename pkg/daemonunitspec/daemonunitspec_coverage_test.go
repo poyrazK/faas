@@ -283,7 +283,7 @@ func TestUnitMeterd_Shape(t *testing.T) {
 	if !hasReadWrite(u, "/var/log/faas") {
 		t.Errorf("meterd: missing ReadWritePaths=/var/log/faas")
 	}
-	if !hasEnvironment(u, "FAAS_PROMETHEUS_URL", "http://127.0.0.1:9090") {
+	if !hasEnvironment(u, "FAAS_PROMETHEUS_URL", "http://127.0.0.1:9095") {
 		t.Error("meterd: missing local Prometheus endpoint for alert evaluation")
 	}
 	if !hasEnvironment(u, "FAAS_HOST_AGE_IDENTITY_PATH", "%d/faas_host_age_identity") {

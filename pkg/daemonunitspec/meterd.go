@@ -44,7 +44,7 @@ func UnitMeterd() daemonunit.Unit {
 
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/meterd/billing.env",
 		Environment: []daemonunit.KV{
-			{Key: "FAAS_PROMETHEUS_URL", Value: "http://127.0.0.1:9090"},
+			{Key: "FAAS_PROMETHEUS_URL", Value: "http://127.0.0.1:9095"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
