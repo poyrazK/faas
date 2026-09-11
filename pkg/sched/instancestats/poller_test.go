@@ -22,6 +22,7 @@
 // real scheduler loop or a real Postgres; MemStore covers the
 // Store surface, a hand-rolled fakeDialer covers the Dialer
 // surface, and a hand-rolled fakeVMM covers the VMM surface.
+// adr: 043 — keep the shared VMM log-stream contract compile-covered.
 
 package instancestats
 
@@ -156,7 +157,7 @@ func (v *statsFakeVMM) UpdateStaticEgressIP(context.Context, string, string, str
 // tests do. Returns nil + an error so the caller's "no log stream"
 // branch is exercised. PR-B adds the sinceWrittenAt time lower-bound;
 // the fake ignores it.
-func (v *statsFakeVMM) Logs(context.Context, string, int64, time.Time) (sched.LogStream, error) {
+func (v *statsFakeVMM) Logs(context.Context, string, int64, time.Time, bool) (sched.LogStream, error) {
 	return nil, errors.New("instancestats test stubs Logs; use scheddgrpc for Move 4 path")
 }
 

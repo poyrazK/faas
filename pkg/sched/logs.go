@@ -91,7 +91,9 @@ type LogFrame struct {
 //
 // A follow opened while the app is parked remains attached and discovers the
 // instance created by a later wake. A node-level vmmd RPC failure is retried
-// on the discovery cadence; surviving instances keep streaming.
+// on the discovery cadence; surviving instances keep streaming. A one-shot
+// request (follow=false) replays each currently live instance and returns as
+// soon as every per-instance stream reaches EOF.
 //
 // Implementation notes:
 //
@@ -109,7 +111,7 @@ type LogFrame struct {
 //     marshal is serialised with the gRPC Send). The per-
 //     instance readers send over a buffered channel; the writer
 //     selects on sink err first to short-circuit on cancellation.
-func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink LogFrameSink) error {
+func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool, deploymentID string, sink LogFrameSink) error {
 	if e.vmm == nil {
 		return errors.New("sched: StreamAppLogs requires a vmm router")
 	}
@@ -126,9 +128,11 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 	type readerDone struct {
 		instanceID string
 		retry      bool
+		err        error
 	}
-	done := make(chan readerDone, 32)
+	done := make(chan readerDone, len(rows)+1)
 	seen := make(map[string]bool)
+	pending := 0
 
 	matches := func(ins state.Instance) bool {
 		if !state.IsLive(ins.State) || ins.NodeID == "" {
@@ -141,26 +145,37 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 			return
 		}
 		seen[ins.ID] = true
+		if !follow {
+			pending++
+		}
 		go func() {
-			stream, err := e.vmm.Logs(streamCtx, ins.NodeID, ins.ID, sinceSeq, sinceWrittenAt)
+			stream, err := e.vmm.Logs(streamCtx, ins.NodeID, ins.ID, sinceSeq, sinceWrittenAt, follow)
 			if err != nil {
 				select {
-				case done <- readerDone{instanceID: ins.ID, retry: true}:
+				case done <- readerDone{instanceID: ins.ID, retry: follow, err: err}:
 				case <-streamCtx.Done():
 				}
 				return
 			}
 			retry := false
+			var terminalErr error
 			defer func() {
 				select {
-				case done <- readerDone{instanceID: ins.ID, retry: retry}:
+				case done <- readerDone{instanceID: ins.ID, retry: retry, err: terminalErr}:
 				case <-streamCtx.Done():
 				}
 			}()
 			for {
 				line, err := stream.Recv()
 				if err != nil {
-					retry = !errors.Is(err, io.EOF)
+					retry = follow && !errors.Is(err, io.EOF)
+					if errors.Is(err, io.EOF) {
+						terminalErr = nil
+					} else if follow {
+						terminalErr = nil
+					} else {
+						terminalErr = err
+					}
 					return
 				}
 				frame := LogFrame{
@@ -181,6 +196,39 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 	}
 	for _, ins := range rows {
 		attach(ins)
+	}
+	if !follow {
+		if pending == 0 {
+			return state.ErrNotFound
+		}
+		for pending > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case f := <-frames:
+				if err := sink(f); err != nil {
+					return err
+				}
+			case ended := <-done:
+				pending--
+				if ended.err != nil {
+					return ended.err
+				}
+			}
+		}
+		// Every reader queues its final done notification only after
+		// queuing all preceding frames. Drain those buffered frames
+		// before returning so a ready EOF cannot race the last log line.
+		for {
+			select {
+			case f := <-frames:
+				if err := sink(f); err != nil {
+					return err
+				}
+			default:
+				return nil
+			}
+		}
 	}
 
 	// Instance IDs change whenever an app parks and wakes. Keep discovering

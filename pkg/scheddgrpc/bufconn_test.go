@@ -36,7 +36,7 @@ type fakeEngine struct {
 	// in the StreamAppLogs handler tests. Default nil = no-op
 	// (returns nil immediately), so the existing test suite stays
 	// broken-free.
-	streamLogFn func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink scheddgrpc.LogFrameSink) error
+	streamLogFn func(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool, deploymentID string, sink scheddgrpc.LogFrameSink) error
 	// streamWarmHintsFn (ADR-025 axis 4) drives the per-event
 	// fan-out in the StreamWarmHints handler tests. Default nil =
 	// no-op (returns nil immediately).
@@ -153,9 +153,9 @@ func (f *fakeEngine) ForceRestart(ctx context.Context, instanceID, reason string
 // default impl ignores them and the existing test using
 // streamLogFn must update its signature to match (see
 // pkg/scheddgrpc/logs_test.go::TestStreamAppLogs_HappyPath).
-func (f *fakeEngine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, sink scheddgrpc.LogFrameSink) error {
+func (f *fakeEngine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool, deploymentID string, sink scheddgrpc.LogFrameSink) error {
 	if f.streamLogFn != nil {
-		return f.streamLogFn(ctx, appID, sinceSeq, sinceWrittenAt, deploymentID, sink)
+		return f.streamLogFn(ctx, appID, sinceSeq, sinceWrittenAt, follow, deploymentID, sink)
 	}
 	return nil
 }

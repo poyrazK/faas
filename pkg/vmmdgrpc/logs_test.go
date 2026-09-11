@@ -115,6 +115,45 @@ func TestLogs_HappyPath(t *testing.T) {
 	}
 }
 
+// TestLogs_OneShotReplaysAndCloses pins the non-follow contract used by
+// `gregale logs`: an omitted cursor replays the retained page, then the
+// server closes instead of waiting for a future line or the backstop.
+func TestLogs_OneShotReplaysAndCloses(t *testing.T) {
+	ring := logbuf.New(1 << 20)
+	for _, ln := range []string{"alpha\n", "beta\n", "gamma\n"} {
+		if _, err := ring.Write("stdout", []byte(ln)); err != nil {
+			t.Fatalf("seed Write: %v", err)
+		}
+	}
+	cl := startLogsTestClient(t, &fakeVMM{
+		logRingFn: func(string) *logbuf.Ring { return ring },
+	})
+	follow := false
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stream, err := cl.Logs(ctx, &vmmdpb.LogsRequest{Instance: "inst-1", Follow: &follow})
+	if err != nil {
+		t.Fatalf("Logs dial: %v", err)
+	}
+	for i, want := range []string{"alpha", "beta", "gamma"} {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			t.Fatalf("Recv[%d]: %v", i, recvErr)
+		}
+		if resp.GetLine() != want {
+			t.Errorf("line[%d] = %q, want %q", i, resp.GetLine(), want)
+		}
+	}
+	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
+		t.Fatalf("one-shot Recv after replay = %v, want io.EOF", err)
+	}
+	// A line committed after the one-shot snapshot must not reopen the
+	// completed stream or be delivered to a later receive.
+	if _, err := ring.Write("stdout", []byte("after-close\n")); err != nil {
+		t.Fatalf("post-close Write: %v", err)
+	}
+}
+
 func TestLogs_StructuredLevelRoundTrip(t *testing.T) {
 	ring := logbuf.New(1 << 20)
 	line := `{"severity":"WARNING","message":"slow"}`

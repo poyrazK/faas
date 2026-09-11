@@ -71,7 +71,7 @@ type ScheddClient interface {
 	// to schedd (issue #254 / Move 4). Both empty = no filter;
 	// schedd applies them at the per-instance fan-out and
 	// increments apid_logs_dropped_total{reason=...} on drop.
-	StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, deploymentID string, level string, grep string) (LogStream, error)
+	StreamAppLogs(ctx context.Context, appID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool, deploymentID string, level string, grep string) (LogStream, error)
 	StreamWarmHints(ctx context.Context) (WarmHintStream, error)
 	Close() error
 }

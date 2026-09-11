@@ -58,7 +58,7 @@ func (a *fakeScheddClientAdapter) Wake(context.Context, string, string, string) 
 func (a *fakeScheddClientAdapter) ParkInstance(context.Context, string, string, string) error {
 	panic("fakeScheddClientAdapter.ParkInstance: not wired")
 }
-func (a *fakeScheddClientAdapter) StreamAppLogs(context.Context, string, int64, time.Time, string, string, string) (scheddgrpc.LogStream, error) {
+func (a *fakeScheddClientAdapter) StreamAppLogs(context.Context, string, int64, time.Time, bool, string, string, string) (scheddgrpc.LogStream, error) {
 	panic("fakeScheddClientAdapter.StreamAppLogs: not wired")
 }
 func (a *fakeScheddClientAdapter) StreamWarmHints(context.Context) (scheddgrpc.WarmHintStream, error) {
