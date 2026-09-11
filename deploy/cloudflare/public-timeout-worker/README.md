@@ -4,7 +4,9 @@ Cloudflare Free can replace an origin `502`/`504` body with a generic error
 page. Gregale marks its own request-budget timeout with
 `X-Faas-Error-Code: request_budget_exceeded`; this Worker preserves or
 reconstructs that RFC 7807 response while leaving unmarked CDN/origin failures
-unchanged.
+unchanged. If a TLS/proxy frontend strips the marker but preserves the
+canonical `application/problem+json` body, the Worker accepts that exact
+`code=request_budget_exceeded` envelope as a compatibility fallback.
 
 ## Deploy
 

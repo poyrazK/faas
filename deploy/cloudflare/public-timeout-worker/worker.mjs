@@ -91,15 +91,27 @@ export async function handleRequest(request, env, fetchImpl = globalThis.fetch) 
     });
   }
 
-  if (
-    upstream.status !== 504 ||
-    upstream.headers.get(ERROR_CODE_HEADER) !== ERROR_CODE
-  ) {
+  if (upstream.status !== 504) {
     return upstream;
   }
 
   const headers = removeHopByHopHeaders(new Headers(upstream.headers));
   const contentType = headers.get("content-type") || "";
+  const marked = headers.get(ERROR_CODE_HEADER) === ERROR_CODE;
+  let body;
+  if (!marked) {
+    // Some TLS/proxy frontends drop X-Faas-Error-Code while preserving the
+    // origin's canonical problem envelope. Read only a problem+json 504 and
+    // require the exact platform error code; generic/unmarked failures pass
+    // through unchanged so CDN errors are never reclassified.
+    if (!contentType.toLowerCase().includes(PROBLEM_CONTENT_TYPE)) {
+      return upstream;
+    }
+    body = await upstream.clone().text();
+    if (!isStructuredBudgetBody(body, contentType)) {
+      return upstream;
+    }
+  }
   const id = requestID(request, headers);
   headers.set(ERROR_CODE_HEADER, ERROR_CODE);
   headers.set(REQUEST_ID_HEADER, id);
@@ -109,7 +121,7 @@ export async function handleRequest(request, env, fetchImpl = globalThis.fetch) 
   // The origin normally already supplied the RFC 7807 body. If an upstream
   // proxy replaced it, reconstruct a bounded, stable envelope from the
   // marker header instead of forwarding a generic CDN page.
-  const body = await upstream.text();
+  body ||= await upstream.text();
   const responseBody = isStructuredBudgetBody(body, contentType)
     ? body
     : fallbackProblem(id);
