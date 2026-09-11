@@ -283,7 +283,7 @@ func (c *RuntimeSnapshotCatalog) Resolve(ctx context.Context, request RuntimeSna
 	}
 	if err := entry.Validate(); err != nil {
 		plan.FallbackReason = RuntimeSnapshotFallbackCorrupt
-		return plan, nil
+		return plan, nil //nolint:nilerr // invalid cache metadata is an explicit cold-boot fallback.
 	}
 	if !entry.Identity.equal(identity) {
 		plan.FallbackReason = RuntimeSnapshotFallbackIncompatible
