@@ -1665,6 +1665,10 @@ type DebugPageData struct {
 	WindowEnd           string
 	WindowClamped       bool
 	Route               string
+	Cursor              string
+	NextCursor          string
+	Complete            bool
+	NextPageURL         string
 	ErrorMessage        string
 	ActionMessage       string
 	ActionError         bool

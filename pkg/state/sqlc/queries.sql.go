@@ -5756,17 +5756,22 @@ FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
   AND received_at <  $3
-  AND ($5::text = '' OR route = $5::text)
-ORDER BY received_at DESC
-LIMIT $4
+  AND ($4::timestamptz IS NULL
+       OR (received_at, id) < ($4::timestamptz,
+                               $5::uuid))
+  AND ($6::text = '' OR route = $6::text)
+ORDER BY received_at DESC, id DESC
+LIMIT $7::int
 `
 
 type ListRequestTelemetryByAppParams struct {
-	AppID        pgtype.UUID
-	ReceivedAt   pgtype.Timestamptz
-	ReceivedAt_2 pgtype.Timestamptz
-	Limit        int32
-	Route        string
+	AppID            pgtype.UUID
+	ReceivedAt       pgtype.Timestamptz
+	ReceivedAt_2     pgtype.Timestamptz
+	CursorReceivedAt pgtype.Timestamptz
+	CursorID         pgtype.UUID
+	Route            string
+	Limit            int32
 }
 
 type ListRequestTelemetryByAppRow struct {
@@ -5793,14 +5798,17 @@ type ListRequestTelemetryByAppRow struct {
 // Backs GET /v1/apps/{slug}/debug/requests. Uses
 // request_telemetry_app_received_idx. The (since, until) pair is
 // timestamptz; handler-side date parsing is at cmd/apid/
-// handlers_debug_telemetry.go (parseDebugTelemetryWindow).
+// handlers_debug_telemetry.go (parseDebugSinceFromString). Cursor pages use
+// the strict (received_at, id) tuple so equal timestamps cannot reorder rows.
 func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg ListRequestTelemetryByAppParams) ([]ListRequestTelemetryByAppRow, error) {
 	rows, err := db.Query(ctx, listRequestTelemetryByApp,
 		arg.AppID,
 		arg.ReceivedAt,
 		arg.ReceivedAt_2,
-		arg.Limit,
+		arg.CursorReceivedAt,
+		arg.CursorID,
 		arg.Route,
+		arg.Limit,
 	)
 	if err != nil {
 		return nil, err

@@ -1072,7 +1072,11 @@ export class AppsService {
    * The window is clamped to `DebugTelemetryRetentionDays`
    * (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
    * effective `since` is returned in the response so the
-   * dashboard can render a "you widened past the cap" tile.
+   * dashboard can render a "you widened past the cap" tile. Results are
+   * cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
+   * cursor pins the effective window and route, so callers can safely
+   * walk pages while new telemetry arrives. `complete` is true only when
+   * every retained row in that bounded window is present in the page.
    * Returns 200 with `requests: []` when no rows exist in the
    * window — never 404. Cross-account slug is 404 (IDOR-safe;
    * byte-identical to "no such app").
@@ -1085,6 +1089,7 @@ export class AppsService {
     since,
     limit,
     route,
+    cursor,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1102,6 +1107,10 @@ export class AppsService {
      * Exact route-template filter.
      */
     route?: string | null,
+    /**
+     * Opaque next_cursor from a previous response. The cursor must be reused with the same app and route.
+     */
+    cursor?: string | null,
   }): CancelablePromise<DebugTelemetryListResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1113,6 +1122,7 @@ export class AppsService {
         'since': since,
         'limit': limit,
         'route': route,
+        'cursor': cursor,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

@@ -332,6 +332,67 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 	}
 }
 
+func TestPGHandler_DebuggerRequestListCursorWalkIsStable(t *testing.T) {
+	e := setupPGHandler(t, api.PlanPro)
+	app := seedPGApp(t, e, "pg-debugger-cursor")
+	deploymentID := uuid.New()
+	receivedAt := time.Now().UTC().Truncate(time.Microsecond)
+	for i := 0; i < 3; i++ {
+		if err := e.store.InsertRequestTelemetry(context.Background(), sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: uuid.MustParse(e.acct.ID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: deploymentID, Valid: true},
+			Route:        "GET /cursor",
+			Method:       "GET",
+			Status:       200,
+			LatencyMs:    int32(10 + i),
+			ReceivedAt:   pgtype.Timestamptz{Time: receivedAt, Valid: true},
+			Count:        1,
+			UaFamily:     "__unknown__",
+			ReferrerHost: "__none__",
+			Country:      "__unknown__",
+		}); err != nil {
+			t.Fatalf("InsertRequestTelemetry(%d): %v", i, err)
+		}
+	}
+
+	seen := make(map[string]bool)
+	next := ""
+	for page := 0; page < 3; page++ {
+		path := "/v1/apps/pg-debugger-cursor/debug/requests?since=24h&route=GET+%2Fcursor&limit=1"
+		if next != "" {
+			path += "&cursor=" + next
+		}
+		rec := e.do(t, http.MethodGet, path, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("cursor page %d status = %d: %s", page+1, rec.Code, rec.Body.String())
+		}
+		var listed api.DebugTelemetryListResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+			t.Fatalf("decode cursor page %d: %v", page+1, err)
+		}
+		if listed.WindowStart == "" || listed.WindowEnd == "" {
+			t.Fatalf("cursor page %d missing pinned window: %+v", page+1, listed)
+		}
+		if len(listed.Requests) != 1 {
+			t.Fatalf("cursor page %d rows = %d, want 1", page+1, len(listed.Requests))
+		}
+		id := listed.Requests[0].ID
+		if seen[id] {
+			t.Fatalf("cursor page %d repeated request %s", page+1, id)
+		}
+		seen[id] = true
+		if page < 2 {
+			if listed.Complete || listed.NextCursor == "" {
+				t.Fatalf("cursor page %d metadata = %+v, want another page", page+1, listed)
+			}
+			next = listed.NextCursor
+		} else if !listed.Complete || listed.NextCursor != "" {
+			t.Fatalf("final cursor page metadata = %+v, want complete without cursor", listed)
+		}
+	}
+}
+
 func TestPGHandler_DebuggerEvidenceDegradesWhenRegressionReadFails(t *testing.T) {
 	e := setupPGHandler(t, api.PlanPro)
 	app := seedPGApp(t, e, "pg-debugger-degraded")

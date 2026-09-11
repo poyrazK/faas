@@ -170,6 +170,11 @@
           </tbody>
         </table>
         <p class="muted">Showing up to 50 newest telemetry rows. Collapsed rows retain their represented request count.</p>
+        {{if .Data.Complete}}
+          <p class="muted">This page contains every retained row in the selected window.</p>
+        {{else if .Data.NextPageURL}}
+          <p><a href="{{.Data.NextPageURL}}">Next 50 requests →</a> <span class="muted">The window is pinned while you page through results.</span></p>
+        {{end}}
       {{else}}
         <p class="empty muted">No request telemetry in this window. Send traffic to the app, then refresh.</p>
       {{end}}
@@ -177,7 +182,7 @@
       {{if .Data.Selected}}
         <h2 id="request-detail">Request evidence</h2>
         <div class="detail">
-          <p><a href="/dashboard/apps/{{.Data.AppSlug}}/debug?since={{.Data.Since}}&amp;route={{.Data.Route}}#requests">← Back to requests</a></p>
+          <p><a href="/dashboard/apps/{{.Data.AppSlug}}/debug?since={{.Data.Since}}&amp;route={{.Data.Route}}&amp;cursor={{.Data.Cursor}}#requests">← Back to requests</a></p>
           <p><code>{{.Data.Selected.Request.Method}} {{.Data.Selected.Request.Route}}</code> · HTTP {{.Data.Selected.Request.Status}} · <strong>{{.Data.Selected.Request.LatencyMS}} ms</strong> · {{.Data.Selected.Request.ReceivedAt}}</p>
           <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.InstanceID}} · instance <code>{{.Data.Selected.Request.InstanceID}}</code>{{end}}{{if .Data.Selected.Request.WakeID}} · wake <code>{{.Data.Selected.Request.WakeID}}</code>{{end}}{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
           {{if .Data.Selected.Request.GuestRuntime}}<p class="muted">guest execution <strong>{{.Data.Selected.Request.GuestRuntime}}</strong> · {{.Data.Selected.Request.GuestDurationMS}} ms · outcome <strong>{{.Data.Selected.Request.GuestOutcome}}</strong>{{if .Data.Selected.Request.GuestErrorClass}} · error <code>{{.Data.Selected.Request.GuestErrorClass}}</code>{{end}}</p>{{end}}
@@ -204,6 +209,7 @@
               <input type="hidden" name="csrf_token" value="{{$.Data.ReplayCSRF}}">
               <input type="hidden" name="since" value="{{.Data.Since}}">
               <input type="hidden" name="route" value="{{.Data.Route}}">
+              <input type="hidden" name="cursor" value="{{.Data.Cursor}}">
               <button type="submit">Replay against mirror</button>
               <span class="muted">Metadata only; no request body or credentials are replayed.</span>
             </form>

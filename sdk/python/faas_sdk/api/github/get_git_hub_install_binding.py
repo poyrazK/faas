@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[GitHubInstallStatus | Problem]:
-    """Read the GitHub installation and binding health for an app.
+    """Inspect the app's GitHub repository binding.
 
      Cookie-session-authenticated (NOT API-key). Returns the durable
     GitHub installation metadata and the app's repository binding without
@@ -104,7 +104,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> GitHubInstallStatus | Problem | None:
-    """Read the GitHub installation and binding health for an app.
+    """Inspect the app's GitHub repository binding.
 
      Cookie-session-authenticated (NOT API-key). Returns the durable
     GitHub installation metadata and the app's repository binding without
@@ -133,7 +133,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[GitHubInstallStatus | Problem]:
-    """Read the GitHub installation and binding health for an app.
+    """Inspect the app's GitHub repository binding.
 
      Cookie-session-authenticated (NOT API-key). Returns the durable
     GitHub installation metadata and the app's repository binding without
@@ -165,7 +165,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> GitHubInstallStatus | Problem | None:
-    """Read the GitHub installation and binding health for an app.
+    """Inspect the app's GitHub repository binding.
 
      Cookie-session-authenticated (NOT API-key). Returns the durable
     GitHub installation metadata and the app's repository binding without
