@@ -3851,8 +3851,10 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 			if receiptDone != nil {
 				select {
 				case <-receiptDone:
-					if terminal, outcomeErr := characterizationBootOutcome(receipt.report, receipt.err); terminal {
-						return outcomeErr
+					if receipt.err == nil {
+						if terminal, outcomeErr := characterizationBootOutcome(receipt.report); terminal {
+							return outcomeErr
+						}
 					}
 				default:
 				}
@@ -3860,8 +3862,10 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 			return err
 		case <-receiptDone:
 			receiptDone = nil
-			if terminal, outcomeErr := characterizationBootOutcome(receipt.report, receipt.err); terminal {
-				return outcomeErr
+			if receipt.err == nil {
+				if terminal, outcomeErr := characterizationBootOutcome(receipt.report); terminal {
+					return outcomeErr
+				}
 			}
 		case <-ctx.Done():
 			return ctx.Err()
@@ -3869,10 +3873,7 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 	}
 }
 
-func characterizationBootOutcome(report api.CharacterizationReport, receiveErr error) (bool, error) {
-	if receiveErr != nil {
-		return false, nil
-	}
+func characterizationBootOutcome(report api.CharacterizationReport) (bool, error) {
 	switch report.ObservedClass {
 	case "job", "worker":
 		return true, nil
