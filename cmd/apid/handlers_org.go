@@ -172,6 +172,13 @@ func (s *server) patchOrg(w http.ResponseWriter, r *http.Request, _ state.Accoun
 		return
 	}
 	if req.Plan != nil {
+		plan := api.Plan(strings.TrimSpace(*req.Plan))
+		if !plan.Valid() {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity,
+				api.CodeOrgSlugInvalid, "Invalid org plan",
+				"plan must be one of free, hobby, pro, scale"))
+			return
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired,
 			api.CodePayment, "Billing confirmation required",
 			"organization plans cannot be changed directly; use a provider-backed billing flow"))

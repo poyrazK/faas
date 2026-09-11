@@ -1,3 +1,4 @@
+// adr: 049 §B.1 billing usage reconciliation.
 // Package reconciler tests (ADR-049 §B.1). Pure unit tests —
 // uses stub Provider + state.MemStore so pkg/billing/reconciler
 // stays pgxpool-free. The full Store integration is exercised by

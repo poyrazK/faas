@@ -1,3 +1,4 @@
+// spec: §4.7 paid entitlements change only after provider confirmation.
 // HTTP integration tests for the /v1/orgs/{slug}/... customer surface
 // (issue #190 / IAM-6 / ADR-061, PR 5). The PR-4 e2e file
 // (load_org_e2e_test.go) covers the LoadOrg middleware; this file
@@ -770,21 +771,21 @@ func TestE2E_OrgLifecycle_PatchOrg(t *testing.T) {
 		t.Errorf("persisted name = %q, want %q", row.Name, "Renamed Inc.")
 	}
 
-	// (b) Plan update persists. The handler validates against the
-	// closed api.Plans set; "pro" is in the set so this must
-	// succeed.
+	// (b) A valid paid plan cannot be written directly. The provider-backed
+	// billing flow owns the entitlement transition, so the current plan stays
+	// unchanged until its webhook confirms payment.
 	raw, status = doReq(t, h, aliceKey, http.MethodPatch, "/v1/orgs/patchme",
 		api.PatchOrgRequest{Plan: strPtr("pro")},
 		map[string]string{"X-Active-Org": "patchme"})
-	if status != http.StatusOK {
-		t.Fatalf("patch plan: %d %s", status, raw)
+	if status != http.StatusPaymentRequired {
+		t.Fatalf("patch plan: status=%d, want 402 (%s)", status, raw)
 	}
 	row, err = store.OrgBySlug(ctx, "patchme")
 	if err != nil {
 		t.Fatalf("OrgBySlug post-plan: %v", err)
 	}
-	if string(row.Plan) != "pro" {
-		t.Errorf("persisted plan = %q, want pro", row.Plan)
+	if row.Plan != api.PlanHobby {
+		t.Errorf("persisted plan = %q, want hobby until provider confirmation", row.Plan)
 	}
 
 	// (c) Unknown plan rejected at the boundary with the

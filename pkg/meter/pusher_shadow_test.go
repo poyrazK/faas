@@ -1,3 +1,4 @@
+// spec: §14 M7 provider usage must match the local invoice shadow.
 package meter_test
 
 import (

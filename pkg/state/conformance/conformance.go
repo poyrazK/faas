@@ -52,6 +52,9 @@ func Run(t *testing.T, open Open) {
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
+		{"billing_identity_is_provider_qualified", testBillingIdentity},
+		{"invoice_refunds_are_cumulative_and_idempotent", testInvoiceRefunds},
+		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
@@ -63,6 +66,120 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testBillingIdentity(t *testing.T, fx *Fixture) {
+	identity := state.BillingIdentity{
+		AccountID:      fx.Account.ID,
+		Provider:       "paddle",
+		CustomerID:     "ctm_conformance_" + uuid.NewString(),
+		SubscriptionID: "sub_conformance_" + uuid.NewString(),
+	}
+	if err := fx.Store.UpsertBillingIdentity(fx.Ctx, identity); err != nil {
+		t.Fatalf("UpsertBillingIdentity: %v", err)
+	}
+	got, err := fx.Store.BillingIdentity(fx.Ctx, fx.Account.ID, "paddle")
+	if err != nil {
+		t.Fatalf("BillingIdentity: %v", err)
+	}
+	if got.CustomerID != identity.CustomerID || got.SubscriptionID != identity.SubscriptionID || got.CreatedAt.IsZero() {
+		t.Fatalf("BillingIdentity = %+v, want customer=%q subscription=%q with timestamps", got, identity.CustomerID, identity.SubscriptionID)
+	}
+	resolved, err := fx.Store.AccountByBillingCustomerID(fx.Ctx, "paddle", identity.CustomerID)
+	if err != nil || resolved.ID != fx.Account.ID {
+		t.Fatalf("AccountByBillingCustomerID = (%+v, %v), want account=%s", resolved, err, fx.Account.ID)
+	}
+	if _, err := fx.Store.AccountByBillingCustomerID(fx.Ctx, "stripe", identity.CustomerID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-provider lookup error = %v, want ErrNotFound", err)
+	}
+
+	identity.SubscriptionID = "sub_conformance_updated_" + uuid.NewString()
+	if err := fx.Store.UpsertBillingIdentity(fx.Ctx, identity); err != nil {
+		t.Fatalf("UpsertBillingIdentity(update): %v", err)
+	}
+	got, err = fx.Store.BillingIdentity(fx.Ctx, fx.Account.ID, "paddle")
+	if err != nil || got.SubscriptionID != identity.SubscriptionID {
+		t.Fatalf("updated BillingIdentity = (%+v, %v), want subscription=%q", got, err, identity.SubscriptionID)
+	}
+}
+
+func testInvoiceRefunds(t *testing.T, fx *Fixture) {
+	providerInvoiceID := "order-conformance-" + uuid.NewString()
+	providerChargeID := "charge-conformance-" + uuid.NewString()
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := fx.Store.UpsertInvoice(fx.Ctx, state.Invoice{
+		AccountID:         fx.Account.ID,
+		Provider:          "polar",
+		ProviderInvoiceID: providerInvoiceID,
+		ProviderChargeID:  providerChargeID,
+		Status:            "paid",
+		PeriodStart:       now.Add(-time.Hour),
+		PeriodEnd:         now,
+		TotalCents:        1000,
+		AmountPaidCents:   1000,
+		Plan:              api.PlanPro,
+		Currency:          "eur",
+	}); err != nil {
+		t.Fatalf("UpsertInvoice: %v", err)
+	}
+	inv, err := fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "polar", providerChargeID)
+	if err != nil {
+		t.Fatalf("GetInvoiceByProviderID: %v", err)
+	}
+	if inv.ProviderInvoiceID != providerInvoiceID || inv.Plan != api.PlanPro || inv.AmountPaidCents != 1000 {
+		t.Fatalf("invoice projection = %+v", inv)
+	}
+	refund := state.InvoiceRefund{
+		InvoiceID:        inv.ID,
+		ProviderRefundID: "refund-conformance-" + uuid.NewString(),
+		IdempotencyKey:   "refund-key-" + uuid.NewString(),
+		AmountCents:      250,
+		Source:           "credit",
+		Status:           "succeeded",
+	}
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, refund); err != nil {
+		t.Fatalf("RecordInvoiceRefund: %v", err)
+	}
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, refund); err != nil {
+		t.Fatalf("RecordInvoiceRefund(replay): %v", err)
+	}
+	inv, err = fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "polar", providerInvoiceID)
+	if err != nil {
+		t.Fatalf("GetInvoiceByProviderID(updated): %v", err)
+	}
+	if inv.AmountRefundedCents != 250 || inv.CreditsAppliedCents != 250 {
+		t.Fatalf("refund totals = refunded=%d credits=%d, want 250/250", inv.AmountRefundedCents, inv.CreditsAppliedCents)
+	}
+	refund.ProviderRefundID = "refund-excess-" + uuid.NewString()
+	refund.IdempotencyKey = "refund-excess-key-" + uuid.NewString()
+	refund.AmountCents = 751
+	refund.Source = "operator"
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, refund); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("excess refund error = %v, want ErrConflict", err)
+	}
+}
+
+func testBillingUsageDelivery(t *testing.T, fx *Fixture) {
+	hour := time.Now().UTC().Truncate(time.Hour).Add(-2 * time.Hour)
+	const mbSeconds = int64(321)
+	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, uuid.NewString(), hour.Add(5*time.Minute), mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	pending, err := fx.Store.PendingBillingUsageWindows(fx.Ctx, "paddle", hour.Add(time.Hour))
+	if err != nil || len(pending) != 1 || pending[0].AccountID != fx.Account.ID || !pending[0].Hour.Equal(hour) || pending[0].MBSeconds != mbSeconds {
+		t.Fatalf("PendingBillingUsageWindows = (%+v, %v), want one %d-MB-second window", pending, err, mbSeconds)
+	}
+	if err := fx.Store.RecordBillingUsageDelivery(fx.Ctx, "paddle", fx.Account.ID, hour, mbSeconds); err != nil {
+		t.Fatalf("RecordBillingUsageDelivery: %v", err)
+	}
+	pending, err = fx.Store.PendingBillingUsageWindows(fx.Ctx, "paddle", hour.Add(time.Hour))
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("paddle pending after delivery = (%+v, %v), want empty", pending, err)
+	}
+	pending, err = fx.Store.PendingBillingUsageWindows(fx.Ctx, "polar", hour.Add(time.Hour))
+	if err != nil || len(pending) != 1 || pending[0].AccountID != fx.Account.ID || !pending[0].Hour.Equal(hour) || pending[0].MBSeconds != mbSeconds {
+		t.Fatalf("polar pending after paddle delivery = (%+v, %v), want original window", pending, err)
 	}
 }
 
