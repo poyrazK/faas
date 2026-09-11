@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -38,6 +39,26 @@ func TestWriteBurstCapacityErrorMapsBudgetExpiryTo504(t *testing.T) {
 	}
 	if got := rr.Header().Get(api.RequestIDHeader); got != "budget-req-1" {
 		t.Fatalf("request id header = %q, want budget-req-1", got)
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("cache-control = %q, want no-store", got)
+	}
+}
+
+func TestWriteWakeErrorPreservesBudgetMarkerForCanonicalProblem(t *testing.T) {
+	rr := httptest.NewRecorder()
+	writeWakeError(rr, api.NewProblem(
+		http.StatusGatewayTimeout,
+		api.CodeRequestBudgetExceeded,
+		"Request budget exceeded",
+		"the request exceeded its wall-clock budget while capacity was becoming ready",
+	))
+
+	if rr.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504", rr.Code)
+	}
+	if got := rr.Header().Get(api.ErrorCodeHeader); got != api.CodeRequestBudgetExceeded {
+		t.Fatalf("error code header = %q, want %q", got, api.CodeRequestBudgetExceeded)
 	}
 	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("cache-control = %q, want no-store", got)

@@ -43,6 +43,21 @@ test("preserves an already structured timeout envelope", async () => {
   assert.deepEqual(await response.json(), { code: "request_budget_exceeded", status: 504 });
 });
 
+test("recovers a canonical timeout when a proxy strips the marker", async () => {
+  const response = await handleRequest(request(), { ORIGIN_HOSTNAME: "origin.gregale.dev" }, async () => new Response(
+    JSON.stringify({ code: "request_budget_exceeded", status: 504 }),
+    {
+      status: 504,
+      headers: { "Content-Type": "application/problem+json" },
+    },
+  ));
+
+  assert.equal(response.status, 504);
+  assert.equal(response.headers.get("X-Faas-Error-Code"), "request_budget_exceeded");
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual(await response.json(), { code: "request_budget_exceeded", status: 504 });
+});
+
 test("does not rewrite genuine origin or CDN failures", async () => {
   const origin = new Response("origin timeout", {
     status: 504,
