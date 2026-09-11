@@ -150,7 +150,7 @@ export class ConsumersService {
      */
     slug: string,
     /**
-     * Target API consumer identity UUID.
+     * Consumer identity whose durable minute usage is returned.
      */
     consumerId: string,
     /**
