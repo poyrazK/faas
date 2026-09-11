@@ -127,7 +127,7 @@ func TestParseRequestAnalyticsRouteFilter(t *testing.T) {
 }
 
 func TestParseRequestAnalyticsGroupBy(t *testing.T) {
-	for _, value := range []string{"route", "country", "referrer_host", "ua_family", "status"} {
+	for _, value := range []string{"route", "country", "referrer_host", "ua_family", "status", "consumer_id"} {
 		got, err := parseRequestAnalyticsGroupBy(value, "")
 		if err != nil || got != value {
 			t.Fatalf("group_by %q = %q, %v", value, got, err)

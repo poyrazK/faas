@@ -1,8 +1,11 @@
 from typing import Literal
 
-RequestAnalyticsTimeseriesResponseGroupBy = Literal["country", "referrer_host", "route", "status", "ua_family"]
+RequestAnalyticsTimeseriesResponseGroupBy = Literal[
+    "consumer_id", "country", "referrer_host", "route", "status", "ua_family"
+]
 
 REQUEST_ANALYTICS_TIMESERIES_RESPONSE_GROUP_BY_VALUES: set[RequestAnalyticsTimeseriesResponseGroupBy] = {
+    "consumer_id",
     "country",
     "referrer_host",
     "route",

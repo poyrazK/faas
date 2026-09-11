@@ -42,7 +42,7 @@ var requestAnalyticsMethods = map[string]struct{}{
 }
 
 var requestAnalyticsGroupBys = map[string]struct{}{
-	"route": {}, "country": {}, "referrer_host": {}, "ua_family": {}, "status": {},
+	"route": {}, "country": {}, "referrer_host": {}, "ua_family": {}, "status": {}, "consumer_id": {},
 }
 
 // getAppRequestAnalytics serves the bounded, aggregated request analytics
@@ -127,7 +127,7 @@ func parseRequestAnalyticsGroupBy(raw, defaultValue string) (string, error) {
 		return defaultValue, nil
 	}
 	if _, ok := requestAnalyticsGroupBys[raw]; !ok {
-		return "", fmt.Errorf("group_by must be one of route, country, referrer_host, ua_family, status")
+		return "", fmt.Errorf("group_by must be one of route, country, referrer_host, ua_family, status, consumer_id")
 	}
 	return raw, nil
 }

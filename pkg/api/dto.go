@@ -7436,7 +7436,9 @@ type RequestAnalyticsRoute struct {
 
 // RequestAnalyticsGroup is one top-N aggregate for the selected analytics
 // dimension. Value is a route for group_by=route, an ISO country, hostname,
-// normalized user-agent family, or status code for the other groupings.
+// normalized user-agent family, status code, or stable API consumer UUID for
+// the other groupings. Consumer-scoped results use __anonymous__ for requests
+// without a consumer identity and __other__ for groups outside the top-N.
 type RequestAnalyticsGroup struct {
 	Value         string  `json:"value"`
 	Method        string  `json:"method,omitempty"`

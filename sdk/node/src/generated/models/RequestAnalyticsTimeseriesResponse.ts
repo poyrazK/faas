@@ -41,7 +41,7 @@ export type RequestAnalyticsTimeseriesResponse = {
    */
   bucket: '1h';
   points: Array<RequestAnalyticsTimeseriesPoint>;
-  group_by?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status';
+  group_by?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status' | 'consumer_id';
   series?: Array<RequestAnalyticsTimeseriesSeries>;
   /**
    * UTC time when the series response was assembled.

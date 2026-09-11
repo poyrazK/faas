@@ -135,7 +135,7 @@ def sync_detailed(
     timestamp. `until` is an optional RFC3339 exclusive upper bound and
     defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
     by `DebugTelemetryEnabled`.
-    Set `group_by` to country, referrer_host, ua_family, or status to
+    Set `group_by` to country, referrer_host, ua_family, status, or consumer_id to
     receive zero-filled series for the top 50 groups plus `__other__`.
 
     Args:
@@ -191,7 +191,7 @@ def sync(
     timestamp. `until` is an optional RFC3339 exclusive upper bound and
     defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
     by `DebugTelemetryEnabled`.
-    Set `group_by` to country, referrer_host, ua_family, or status to
+    Set `group_by` to country, referrer_host, ua_family, status, or consumer_id to
     receive zero-filled series for the top 50 groups plus `__other__`.
 
     Args:
@@ -242,7 +242,7 @@ async def asyncio_detailed(
     timestamp. `until` is an optional RFC3339 exclusive upper bound and
     defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
     by `DebugTelemetryEnabled`.
-    Set `group_by` to country, referrer_host, ua_family, or status to
+    Set `group_by` to country, referrer_host, ua_family, status, or consumer_id to
     receive zero-filled series for the top 50 groups plus `__other__`.
 
     Args:
@@ -296,7 +296,7 @@ async def asyncio(
     timestamp. `until` is an optional RFC3339 exclusive upper bound and
     defaults to now. The endpoint is read-only, IDOR-safe, and plan-gated
     by `DebugTelemetryEnabled`.
-    Set `group_by` to country, referrer_host, ua_family, or status to
+    Set `group_by` to country, referrer_host, ua_family, status, or consumer_id to
     receive zero-filled series for the top 50 groups plus `__other__`.
 
     Args:
