@@ -4358,7 +4358,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		CanaryTotalSteps:    d.CanaryTotalSteps,
 		CanaryStepStartedAt: d.CanaryStepStartedAt,
 		// Issue #976 / ADR-122 / SAFE-RELEASES-F: rollout state machine echo.
-		RolloutState:         d.RolloutState,
+		RolloutState:         state.NormalizeRolloutState(d.RolloutState),
 		RolloutStartedAt:     d.RolloutStartedAt,
 		RolloutCompletedAt:   d.RolloutCompletedAt,
 		RolloutAbortedAt:     d.RolloutAbortedAt,

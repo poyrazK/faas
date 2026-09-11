@@ -56,6 +56,18 @@ func buildTestTarGzTo(t *testing.T, f *os.File, entries []tar.Header, bodies map
 	}
 }
 
+func TestDeploymentResponse_NormalizesEmptyRolloutState(t *testing.T) {
+	srv := newServer(state.NewMemStore(),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"gregale.dev", noopNotifier{})
+	resp := srv.deploymentResponse(state.Deployment{
+		ID: "d1", AppID: "a1", Status: state.DeployLive,
+	}, state.App{ID: "a1"})
+	if resp.RolloutState != "pending" {
+		t.Fatalf("rollout_state = %q, want pending for legacy zero value", resp.RolloutState)
+	}
+}
+
 // TestDeploymentResponse_BuildPlan_AppWithFramework: when SourcePath
 // points at a tarball with package.json, deploymentResponse surfaces
 // BuildPlan.Framework="node" + Class="app" + the resolved version.

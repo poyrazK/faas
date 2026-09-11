@@ -5363,7 +5363,7 @@ func (s *PgStore) ListCanaryInFlight(ctx context.Context) ([]Deployment, error) 
 		 where status = 'live'
 		   and canary_total_steps > 0
 		   and canary_step < canary_total_steps
-		   and rollout_state in ('pending','rolling_out')
+		   and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
 		 order by created_at asc`)
 	if err != nil {
 		return nil, fmt.Errorf("state: list canary in-flight: %w", err)
@@ -5391,9 +5391,9 @@ func (s *PgStore) SafedeployListPendingRollouts(ctx context.Context) ([]Deployme
 	rows, err := s.pool.Query(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
 		 from deployments
-		 where rollout_state in ('pending','rolling_out')
-		   and status = 'live'
-		   and not (canary_total_steps = 0 and rollout_state = 'rolling_out')
+			where coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
+			  and status = 'live'
+			  and not (canary_total_steps = 0 and coalesce(nullif(rollout_state, ''), 'pending') = 'rolling_out')
 		 order by rollout_started_at asc nulls first, created_at asc`)
 	if err != nil {
 		return nil, fmt.Errorf("state: safedeploy list pending rollouts: %w", err)
@@ -5422,6 +5422,7 @@ func (s *PgStore) SafedeployListPendingRollouts(ctx context.Context) ([]Deployme
 // whether to emit additional audit fields (e.g. the rollout's
 // terminal canary step when transitioning to 'complete').
 func (s *PgStore) SafedeployStampRollout(ctx context.Context, id string, rolloutState string, startedAt, completedAt, abortedAt *time.Time, abortedReason string) (Deployment, error) {
+	rolloutState = NormalizeRolloutState(rolloutState)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: safedeploy stamp begin: %w", err)
@@ -6388,7 +6389,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 		   from deployments
 		  where app_id = $1
 		    and status = 'live'
-		    and rollout_state in ('pending','rolling_out')
+			and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
 		  order by created_at desc
 		  limit 1
 		  for update`, appID)
@@ -6398,6 +6399,9 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 			return Deployment{}, 0, ErrNotFound
 		}
 		return Deployment{}, 0, fmt.Errorf("state: recover_rollout load: %w", scanErr)
+	}
+	if dep.CanaryTotalSteps <= 0 && !IsServiceRollout(dep) {
+		return dep, 0, ErrRolloutStateInvalid
 	}
 
 	now := time.Now().UTC()
@@ -6421,7 +6425,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 			return Deployment{}, 0, ErrRolloutNotStuck
 		}
 		if dep.CanaryTotalSteps <= 0 || dep.CanaryStep >= dep.CanaryTotalSteps {
-			return Deployment{}, 0, ErrRolloutStateInvalid
+			return dep, 0, ErrRolloutStateInvalid
 		}
 
 		newStep := dep.CanaryStep + 1
@@ -6495,7 +6499,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 
 	case "promote":
 		if dep.CanaryTotalSteps <= 0 || dep.CanaryStep >= dep.CanaryTotalSteps {
-			return Deployment{}, 0, ErrRolloutStateInvalid
+			return dep, 0, ErrRolloutStateInvalid
 		}
 
 		// Short-circuit: step = total, traffic_percent = 100,
@@ -6699,7 +6703,19 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	}
 	if dep.Status == DeployLive || (dep.CanaryTotalSteps <= 0 && IsServiceRollout(dep)) {
 		if _, err := tx.Exec(ctx,
-			`update deployments set status = $2, error = '' where id = $1`, id, string(DeployLive)); err != nil {
+			`update deployments set
+				status = $2,
+				error = '',
+				rollout_state = case
+					when canary_total_steps = 0 and coalesce(nullif(rollout_state, ''), 'pending') <> 'rolling_out' then 'complete'
+					else rollout_state
+				end,
+				rollout_completed_at = case
+					when canary_total_steps = 0 and coalesce(nullif(rollout_state, ''), 'pending') <> 'rolling_out'
+						then coalesce(rollout_completed_at, now())
+					else rollout_completed_at
+				end
+			 where id = $1`, id, string(DeployLive)); err != nil {
 			return fmt.Errorf("state: mark deployment live update: %w", err)
 		}
 		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
@@ -6791,7 +6807,13 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 			return fmt.Errorf("state: mark stable live supersede siblings: %w", err)
 		}
 		if _, err := tx.Exec(ctx,
-			`update deployments set status = 'live', error = '', traffic_percent = 100 where id = $1`, id); err != nil {
+			`update deployments set
+				status = 'live',
+				error = '',
+				traffic_percent = 100,
+				rollout_state = 'complete',
+				rollout_completed_at = coalesce(rollout_completed_at, now())
+			 where id = $1`, id); err != nil {
 			return fmt.Errorf("state: mark stable deployment live: %w", err)
 		}
 		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
@@ -19075,7 +19097,7 @@ const deploymentSelectColumnsWithRootfs = `
 	first_wake_at, first_5xx_window_ends_at, first_5xx_count,
 	last_auto_rollback_at, coalesce(last_auto_rollback_reason,''),
 	coalesce(canary_preset, 'none'), canary_step, canary_total_steps,
-	canary_step_started_at, canary_stages, coalesce(rollout_state, 'pending'),
+	canary_step_started_at, canary_stages, coalesce(nullif(rollout_state, ''), 'pending'),
 	rollout_started_at, rollout_completed_at, rollout_aborted_at,
 	coalesce(rollout_aborted_reason, ''),
 	-- ADR-124 deployment queue controls (migration 00391/00491). priority
@@ -19132,7 +19154,7 @@ const deploymentSelectColumnsQualified = `
 	d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count,
 	d.last_auto_rollback_at, coalesce(d.last_auto_rollback_reason,''),
 	coalesce(d.canary_preset, 'none'), d.canary_step, d.canary_total_steps,
-	d.canary_step_started_at, d.canary_stages, coalesce(d.rollout_state, 'pending'),
+	d.canary_step_started_at, d.canary_stages, coalesce(nullif(d.rollout_state, ''), 'pending'),
 	d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at,
 	coalesce(d.rollout_aborted_reason, ''),
 	-- ADR-124 deployment queue controls (migration 00391/00491). See the

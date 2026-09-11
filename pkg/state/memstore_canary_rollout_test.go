@@ -9,6 +9,17 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestNormalizeRolloutStateUsesPendingForLegacyZeroValue(t *testing.T) {
+	if got := NormalizeRolloutState(""); got != "pending" {
+		t.Fatalf("NormalizeRolloutState(\"\") = %q, want pending", got)
+	}
+	for _, state := range []string{"pending", "rolling_out", "complete", "aborted"} {
+		if got := NormalizeRolloutState(state); got != state {
+			t.Errorf("NormalizeRolloutState(%q) = %q, want unchanged", state, got)
+		}
+	}
+}
+
 func seedCanaryDeployment(m *MemStore, d Deployment) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -253,8 +264,17 @@ func TestMemStore_RecoverRolloutErrorGuards(t *testing.T) {
 	if _, _, err := invalidState.RecoverRollout(ctx, app.ID, "advance", "bad state"); !errors.Is(err, ErrRolloutStateInvalid) {
 		t.Fatalf("invalid advance state error = %v, want ErrRolloutStateInvalid", err)
 	}
-	if _, _, err := invalidState.RecoverRollout(ctx, app.ID, "promote", "bad state"); !errors.Is(err, ErrRolloutStateInvalid) {
+	if got, _, err := invalidState.RecoverRollout(ctx, app.ID, "promote", "bad state"); !errors.Is(err, ErrRolloutStateInvalid) || got.RolloutState != "rolling_out" {
 		t.Fatalf("invalid promote state error = %v, want ErrRolloutStateInvalid", err)
+	}
+
+	stable, ctx, _, app, dep := memDeploymentFixture(t)
+	dep.Status = DeployLive
+	dep.RolloutState = "pending"
+	dep.CanaryTotalSteps = 0
+	seedCanaryDeployment(stable, dep)
+	if got, _, err := stable.RecoverRollout(ctx, app.ID, "abort", "not a rollout"); !errors.Is(err, ErrRolloutStateInvalid) || got.RolloutState != "pending" {
+		t.Fatalf("stable recovery = state:%q err:%v, want pending/ErrRolloutStateInvalid", got.RolloutState, err)
 	}
 }
 

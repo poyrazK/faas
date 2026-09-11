@@ -28,6 +28,13 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
+	prior, err = store.DeploymentByID(ctx, prior.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prior.RolloutState != "complete" || prior.RolloutCompletedAt == nil {
+		t.Fatalf("stable deployment rollout = state:%q completed_at:%v; want complete with terminal timestamp", prior.RolloutState, prior.RolloutCompletedAt)
+	}
 	canary, err := store.CreateDeployment(ctx, Deployment{
 		AppID:            app.ID,
 		ImageDigest:      "sha256:canary",

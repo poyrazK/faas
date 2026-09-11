@@ -3181,10 +3181,12 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	if !ok {
 		return Deployment{}, 0, ErrNotFound
 	}
-	if d.Status != DeployLive || (d.RolloutState != "pending" && d.RolloutState != "rolling_out") ||
+	rolloutState := NormalizeRolloutState(d.RolloutState)
+	if d.Status != DeployLive || (rolloutState != "pending" && rolloutState != "rolling_out") ||
 		d.CanaryTotalSteps <= 0 || params.ExpectedStep >= d.CanaryTotalSteps {
 		return Deployment{}, 0, ErrCanaryStateInvalid
 	}
+	d.RolloutState = rolloutState
 	if d.CanaryStep != params.ExpectedStep {
 		return Deployment{}, 0, ErrCanaryStepConflict
 	}
@@ -5172,9 +5174,11 @@ func (m *MemStore) ListCanaryInFlight(_ context.Context) ([]Deployment, error) {
 		if d.CanaryTotalSteps <= 0 || d.CanaryStep >= d.CanaryTotalSteps {
 			continue
 		}
-		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
+		rolloutState := NormalizeRolloutState(d.RolloutState)
+		if rolloutState != "pending" && rolloutState != "rolling_out" {
 			continue
 		}
+		d.RolloutState = rolloutState
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -5199,9 +5203,11 @@ func (m *MemStore) SafedeployListPendingRollouts(_ context.Context) ([]Deploymen
 		if d.Status != DeployLive {
 			continue
 		}
-		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
+		rolloutState := NormalizeRolloutState(d.RolloutState)
+		if rolloutState != "pending" && rolloutState != "rolling_out" {
 			continue
 		}
+		d.RolloutState = rolloutState
 		if IsServiceRollout(d) {
 			continue
 		}
@@ -5239,7 +5245,7 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
-	d.RolloutState = rolloutState
+	d.RolloutState = NormalizeRolloutState(rolloutState)
 	if startedAt != nil {
 		t := *startedAt
 		d.RolloutStartedAt = &t
@@ -5325,6 +5331,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 		if d.AppID != appID || d.Status != DeployLive {
 			continue
 		}
+		d.RolloutState = NormalizeRolloutState(d.RolloutState)
 		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
 			continue
 		}
@@ -5335,6 +5342,9 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	}
 	if target == nil {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if target.CanaryTotalSteps <= 0 && !IsServiceRollout(*target) {
+		return *target, 0, ErrRolloutStateInvalid
 	}
 
 	now := time.Now()
@@ -5353,7 +5363,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 			return Deployment{}, 0, ErrRolloutNotStuck
 		}
 		if target.CanaryTotalSteps <= 0 || target.CanaryStep >= target.CanaryTotalSteps {
-			return Deployment{}, 0, ErrRolloutStateInvalid
+			return *target, 0, ErrRolloutStateInvalid
 		}
 
 		// Bump step, stamp started_at.
@@ -5419,7 +5429,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 
 	case "promote":
 		if target.CanaryTotalSteps <= 0 || target.CanaryStep >= target.CanaryTotalSteps {
-			return Deployment{}, 0, ErrRolloutStateInvalid
+			return *target, 0, ErrRolloutStateInvalid
 		}
 		target.CanaryStep = target.CanaryTotalSteps
 		target.RolloutState = "complete"
@@ -5891,6 +5901,13 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	if d.Status == DeployLive || (d.CanaryTotalSteps <= 0 && IsServiceRollout(d)) {
 		d.Status = DeployLive
 		d.Error = ""
+		if d.CanaryTotalSteps <= 0 && !IsServiceRollout(d) {
+			d.RolloutState = "complete"
+			if d.RolloutCompletedAt == nil {
+				now := time.Now().UTC()
+				d.RolloutCompletedAt = &now
+			}
+		}
 		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
 		if err != nil {
 			return err
@@ -5947,6 +5964,11 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		d.Status = DeployLive
 		d.Error = ""
 		d.TrafficPercent = 100
+		d.RolloutState = "complete"
+		if d.RolloutCompletedAt == nil {
+			now := time.Now().UTC()
+			d.RolloutCompletedAt = &now
+		}
 		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
 		if err != nil {
 			return err
@@ -7221,7 +7243,7 @@ func (m *MemStore) SetDeploymentCanaryState(_ context.Context, id, preset string
 		t := stepStartedAt
 		d.CanaryStepStartedAt = &t
 	}
-	d.RolloutState = rolloutState
+	d.RolloutState = NormalizeRolloutState(rolloutState)
 	m.deployments[id] = d
 	return nil
 }
