@@ -120,6 +120,27 @@ func TestCompute_FreshSourcePreviewIncludesAppAndDeploymentIdentity(t *testing.T
 	}
 }
 
+func TestCompute_FreshImagePreviewIncludesDeploymentIdentity(t *testing.T) {
+	got := Compute("new-image", api.PlanHobby, Baseline{}, Pending{
+		BuildPlan: &api.BuildPlan{Class: "app", Framework: "unknown"},
+		ImageRef:  "registry.example.com/hello:v1",
+	})
+
+	var deploymentChange *Change
+	for i := range got.Changes {
+		if got.Changes[i].Field == "deployment" {
+			deploymentChange = &got.Changes[i]
+		}
+	}
+	if deploymentChange == nil || deploymentChange.Kind != ChangeAdd {
+		t.Fatalf("fresh image deployment change = %+v, want add", deploymentChange)
+	}
+	dep, ok := deploymentChange.After.Value.(map[string]string)
+	if !ok || dep["image"] != "registry.example.com/hello:v1" {
+		t.Fatalf("deployment change payload = %#v, want image identity", deploymentChange.After.Value)
+	}
+}
+
 // TestCompute_EnvByScope — per-scope env diff: add, remove, modify.
 func TestCompute_EnvByScope(t *testing.T) {
 	baseline := Baseline{
