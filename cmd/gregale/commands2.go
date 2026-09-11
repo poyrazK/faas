@@ -1180,6 +1180,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// that genuinely need to pass a Stripe test key at boot — the server
 	// still receives whatever the CLI ships.
 	secretScan := fs.String("secret-scan", "on", "scan .env* files for known credential patterns before packing (on|off; default on)")
+	secretsFile := fs.String("secrets-file", "", "read KEY=VALUE pairs and seal them before the first deployment")
 	// PR-0 of the deploy-diff cluster (see docs/adr/ draft):
 	// gregale deploy --diff renders what the deploy would change
 	// against the live state and exits per the gate. --json emits
@@ -1283,6 +1284,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *doctorStrict && *noDoctor {
 		return printErr("Invalid flags", fmt.Errorf("--doctor-strict and --no-doctor are mutually exclusive"))
+	}
+	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "" || *deployOnly != "" || *projectSlug != "") {
+		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, --repo, --only, or --project-slug"))
 	}
 	if *profile != "" {
 		if _, ok := api.ResourceProfileSpecFor(*profile); !ok {
@@ -1567,6 +1571,23 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *image != "" {
 			PrintFail(os.Stderr, "--template and --image are mutually exclusive")
 			return 1
+		}
+	}
+
+	// Read and validate the optional secret bundle before any app mutation.
+	// The values stay in memory until the app exists; they are never included
+	// in the source archive or printed by the CLI.
+	var deploySecrets []secretsPair
+	if *secretsFile != "" {
+		var secretErr error
+		deploySecrets, secretErr = readSecretsFile(*secretsFile)
+		if secretErr != nil {
+			return printErr("Could not read --secrets-file", secretErr)
+		}
+		if *templateName != "" {
+			if err := validateTemplateSecrets(*templateName, deploySecrets); err != nil {
+				return printErr("Invalid --secrets-file", err)
+			}
 		}
 	}
 
@@ -2132,6 +2153,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// `gregale dev ... --profile` has the same effect as a normal deploy.
 		if _, err := client.UpdateApp(ctx, slug, api.UpdateAppRequest{ResourceProfile: profile}); err != nil {
 			return printErr("Could not update app resource profile", err)
+		}
+	}
+	if len(deploySecrets) > 0 {
+		if err := setDeploySecrets(ctx, client, slug, deploySecrets); err != nil {
+			return printErr("Could not configure --secrets-file", err)
+		}
+		if !jsonOutput {
+			PrintOK(osStdout, "Configured %d secret(s) before deployment", len(deploySecrets))
 		}
 	}
 

@@ -12,6 +12,27 @@ provider's reply plus token usage. Streaming, conversation history
 persistence, and tool-use are out of scope (the customer adds them
 on top).
 
+## First deploy with secrets
+
+Create the file outside this directory, restrict it to your user, and
+deploy. Set exactly one provider key. Gregale creates the app, seals the
+secrets, and only then starts the runtime:
+
+```sh
+cat > ../ai-chat.secrets <<'EOF'
+OPENAI_API_KEY=sk-...
+# Or use ANTHROPIC_API_KEY=sk-ant-..., but never both.
+# Optional: OPENAI_MODEL=gpt-4o and SYSTEM_PROMPT=...
+EOF
+chmod 600 ../ai-chat.secrets
+gregale deploy --secrets-file ../ai-chat.secrets
+```
+
+## Rotate or update secrets
+
+After the app exists, use `gregale secrets set --app <slug> KEY=VALUE`
+to change the provider or optional settings, then redeploy.
+
 ## Pick a provider
 
 ```sh

@@ -74,6 +74,11 @@ variable inside the guest. No SDK lock-in, no special API surface,
 no extra headers — `process.env.DATABASE_URL` is what your code
 reads.
 
+For a new app, use `gregale deploy --secrets-file <path>` (or
+`gregale init --deploy --secrets-file <path>` for a template). Gregale
+creates the app, seals the bundle, and starts the first deployment in
+that order; run `faas secrets set` only after the app exists.
+
 ```sh
 faas secrets set --app <slug> DATABASE_URL='postgres://user:pass@host/db?sslmode=require'
 ```

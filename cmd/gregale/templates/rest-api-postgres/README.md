@@ -19,7 +19,21 @@ Plug in any managed PostgreSQL:
 **Don't** run `postgres:16` as your base image — the platform's
 deny-list rejects it at accept time (Wave 0 PR-A).
 
-## Set the secrets
+## First deploy with secrets
+
+Create the file outside this directory, restrict it to your user, and
+deploy. Gregale creates the app, seals the database URL, and only then
+starts the runtime:
+
+```sh
+cat > ../rest-api-postgres.secrets <<'EOF'
+DATABASE_URL=postgres://user:pass@host:port/db?sslmode=require
+EOF
+chmod 600 ../rest-api-postgres.secrets
+gregale deploy --secrets-file ../rest-api-postgres.secrets
+```
+
+## Rotate or update secrets
 
 ```sh
 gregale secrets set --app <slug> DATABASE_URL='postgres://user:pass@host:port/db?sslmode=require'
