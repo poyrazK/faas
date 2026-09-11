@@ -81,7 +81,7 @@ func (m *appLogDrainManager) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			m.stopAll()
-			flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			m.flushHealth(flushCtx)
 			cancel()
 			return
