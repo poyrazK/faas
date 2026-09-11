@@ -479,12 +479,13 @@ jobs:
           IMAGE_RUN_URL=""
           IMAGE_RUN_SUCCEEDED=false
           for attempt in $(seq 1 "$IMAGE_WAIT_ATTEMPTS"); do
-            IMAGE_RUNS="$(gh run list \
-              --workflow images.yml \
-              --event push \
-              --branch main \
-              --limit 100 \
-              --json databaseId,headSha,status,conclusion,url)"
+            IMAGE_RUNS="$(gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/images.yml/runs" \
+              -f branch=main \
+              -f event=push \
+              -f head_sha="$BUILDER_SOURCE_SHA" \
+              -f per_page=100 \
+              --jq '[.workflow_runs[] | {databaseId: .id, headSha: .head_sha, status, conclusion, url: .html_url}]')"
             IMAGE_RUN_URL="$(jq -r --arg sha "$BUILDER_SOURCE_SHA" '
               [.[] | select(.headSha == $sha and .conclusion == "success")]
               | sort_by(.databaseId) | last | .url // empty' <<< "$IMAGE_RUNS")"
@@ -585,12 +586,13 @@ jobs:
           IMAGE_RUN_URL=""
           IMAGE_RUN_SUCCEEDED=false
           for attempt in $(seq 1 "$IMAGE_WAIT_ATTEMPTS"); do
-            IMAGE_RUNS="$(gh run list \
-              --workflow images.yml \
-              --event push \
-              --branch main \
-              --limit 100 \
-              --json databaseId,headSha,status,conclusion,url)"
+            IMAGE_RUNS="$(gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/images.yml/runs" \
+              -f branch=main \
+              -f event=push \
+              -f head_sha="$RUNTIME_SOURCE_SHA" \
+              -f per_page=100 \
+              --jq '[.workflow_runs[] | {databaseId: .id, headSha: .head_sha, status, conclusion, url: .html_url}]')"
             IMAGE_RUN_URL="$(jq -r --arg sha "$RUNTIME_SOURCE_SHA" '
               [.[] | select(.headSha == $sha and .conclusion == "success")]
               | sort_by(.databaseId) | last | .url // empty' <<< "$IMAGE_RUNS")"
