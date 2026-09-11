@@ -1,5 +1,7 @@
 package gateway
 
+// adr: 120
+
 import (
 	"context"
 	"encoding/json"
