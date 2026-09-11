@@ -329,8 +329,8 @@ func TestStampOverridePortEnv_AppendsAfterManifestPort(t *testing.T) {
 // is appended to the runner env. Empty traceparent is a no-op so
 // legacy single-box without OTel is unchanged.
 func TestStampTraceparentEnv_AppendsWhenNonEmpty(t *testing.T) {
-	out := StampTraceparentEnv([]string{"PATH=/usr/bin"}, "0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
-	want := "TRACEPARENT=0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	out := StampTraceparentEnv([]string{"PATH=/usr/bin"}, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+	want := "TRACEPARENT=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 	if out[len(out)-1] != want {
 		t.Errorf("last env = %q, want %q", out[len(out)-1], want)
 	}

@@ -20,8 +20,8 @@ func TestTraceparentFromContext_EmptyOnNoSpan(t *testing.T) {
 }
 
 // TestTraceparentFromContext_OnValidSpan renders the W3C wire shape
-// (32-hex trace_id + 16-hex span_id + 2-hex flags). The format is
-// what the runner's TRACEPARENT env expects.
+// (32-hex trace_id + 16-hex span_id + 2-hex flags). The format is the
+// four-field W3C traceparent value that the runner's TRACEPARENT env expects.
 func TestTraceparentFromContext_OnValidSpan(t *testing.T) {
 	var tid trace.TraceID
 	var sid trace.SpanID
@@ -41,7 +41,7 @@ func TestTraceparentFromContext_OnValidSpan(t *testing.T) {
 	})
 	ctx := trace.ContextWithSpanContext(context.Background(), sc)
 	got := traceparentFromContext(ctx)
-	want := "0102030405060708090a0b0c0d0e0f10-0102030405060708-01"
+	want := "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01"
 	if got != want {
 		t.Errorf("traceparentFromContext = %q, want %q", got, want)
 	}
