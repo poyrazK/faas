@@ -114,6 +114,40 @@ func TestDiffApp_MissingSlug_Returns200WithPreview(t *testing.T) {
 	}
 }
 
+func TestDiffApp_FreshSourcePreviewIncludesResolvedIdentity(t *testing.T) {
+	e := newDiffTestEnv(t, api.PlanHobby)
+	rec := postDiffReq(t, e, "fresh-function", []byte(`{
+		"build_plan": {
+			"framework": "python",
+			"runtime": "python312",
+			"handler": "handler.handler",
+			"class": "function",
+			"source_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		}
+	}`))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fresh source preview status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.DiffResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response is not a DiffResponse: %v\nbody=%s", err, rec.Body.String())
+	}
+	if resp.Blocking {
+		t.Fatalf("fresh source preview unexpectedly blocking: %+v", resp.Diff.Breaks)
+	}
+	fields := map[string]api.DiffChange{}
+	for _, change := range resp.Diff.Changes {
+		fields[change.Field] = change
+	}
+	if fields["app"].Kind != "add" || !bytes.Contains(fields["app"].After, []byte(`"class":"function"`)) {
+		t.Fatalf("app change = %+v, want function add", fields["app"])
+	}
+	if fields["deployment"].Kind != "add" || !bytes.Contains(fields["deployment"].After, []byte(`source_sha256`)) {
+		t.Fatalf("deployment change = %+v, want source identity add", fields["deployment"])
+	}
+}
+
 // TestDiffApp_CrossAccountSlug_Returns404 pins the IDOR boundary.
 // The diff endpoint must not leak the "missing app" preview path
 // to a slug that exists on a different account — that's the

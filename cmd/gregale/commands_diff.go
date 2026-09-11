@@ -30,6 +30,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/deploydiff"
@@ -53,6 +54,9 @@ type diffCLIOptions struct {
 	// Manifest is the would-write AppManifest for a fresh deploy
 	// body. nil = "no manifest change proposed".
 	Manifest *api.AppManifest
+	// BuildPlan is the resolved source/workload intent. It keeps a fresh
+	// preview meaningful when resource flags use server defaults.
+	BuildPlan *api.BuildPlan
 	// Crons is the post-deploy cron list (full-replacement).
 	// Populated from the gregale.yaml triggers fan-out so the diff
 	// shows "would create cron X" rows.
@@ -108,6 +112,46 @@ func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string
 		}
 	}
 	return opts
+}
+
+// buildPreviewBuildPlan projects the same source signals used by the deploy
+// path into the diff request. The source digest identifies the exact archive
+// already prepared for upload; no source contents cross the preview API.
+func buildPreviewBuildPlan(srcDir string, sh shape, runtime, handler, sourceSHA256 string, imageDeploy bool) *api.BuildPlan {
+	plan := &api.BuildPlan{
+		Framework:    string(fwUnknown),
+		Runtime:      runtime,
+		Handler:      handler,
+		SourceSHA256: sourceSHA256,
+	}
+	if sh == shapeFunction {
+		plan.Class = "function"
+		plan.Framework = string(frameworkForRuntime(runtime))
+	} else {
+		plan.Class = "app"
+		// Image deploys have no local source tree to inspect. Keep the
+		// framework explicit as unknown rather than accidentally sniffing
+		// the operator's current working directory.
+		if !imageDeploy && srcDir != "" {
+			fw := detectFramework(srcDir)
+			plan.Framework = string(fw)
+			plan.Version = detectFrameworkVersion(srcDir, fw)
+		}
+	}
+	return plan
+}
+
+func frameworkForRuntime(runtime string) framework {
+	switch strings.ToLower(strings.TrimSpace(runtime)) {
+	case runtimeNode22, runtimeNode24:
+		return fwNode
+	case runtimePython312, "python313":
+		return fwPython
+	case runtimeGo124, "go124-alpine":
+		return fwGo
+	default:
+		return fwUnknown
+	}
 }
 
 // runDiff is the --diff short-circuit entry point. Called from
@@ -285,7 +329,7 @@ func buildBaseline(ctx context.Context, client *api.Client, slug string) (deploy
 // a [deploydiff.Pending]. The cron fan-out mirrors
 // [deployManifestTriggers] but reads rather than writes.
 func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, baseline deploydiff.Baseline) deploydiff.Pending {
-	p := deploydiff.Pending{AppConfig: opts.AppConfig}
+	p := deploydiff.Pending{AppConfig: opts.AppConfig, BuildPlan: opts.BuildPlan}
 	// Manifest: PR-0 synthesises a placeholder from the CLI flags
 	// (image / handler). Real manifest extraction from the tarball
 	// is the imaged contract — PR-0 keeps the diff text-only so
@@ -426,7 +470,7 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 // the fields the CLI flags today (RequireAuthn, AppProtocol).
 // Future PRs can extend with --memory, --concurrency, etc.
 func diffRequestFromCLI(opts diffCLIOptions) api.DiffRequest {
-	req := api.DiffRequest{ImageRef: opts.Image}
+	req := api.DiffRequest{ImageRef: opts.Image, BuildPlan: opts.BuildPlan}
 	// Build the patch lazily so we don't allocate an empty
 	// AppConfig struct when no fields are set.
 	var patch *api.DiffAppConfigPatch

@@ -42,6 +42,10 @@ class BuildPlan:
     """Effective readiness path selected by the source profile or deployment override."""
     class_: BuildPlanClassType1 | BuildPlanClassType2Type1 | BuildPlanClassType3Type1 | None | Unset = UNSET
     """App class from `app.Type` — `app` for plain apps, `function` for function rewrites (spec §4.2)."""
+    handler: None | str | Unset = UNSET
+    """Function-layer export (for example `handler.handler`). Distinct from the process entrypoint."""
+    source_sha256: None | str | Unset = UNSET
+    """Content identity of the exact source archive being previewed. Source contents are never returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -89,6 +93,18 @@ class BuildPlan:
         else:
             class_ = self.class_
 
+        handler: None | str | Unset
+        if isinstance(self.handler, Unset):
+            handler = UNSET
+        else:
+            handler = self.handler
+
+        source_sha256: None | str | Unset
+        if isinstance(self.source_sha256, Unset):
+            source_sha256 = UNSET
+        else:
+            source_sha256 = self.source_sha256
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -108,6 +124,10 @@ class BuildPlan:
             field_dict["health_path"] = health_path
         if class_ is not UNSET:
             field_dict["class"] = class_
+        if handler is not UNSET:
+            field_dict["handler"] = handler
+        if source_sha256 is not UNSET:
+            field_dict["source_sha256"] = source_sha256
 
         return field_dict
 
@@ -196,6 +216,24 @@ class BuildPlan:
 
         class_ = _parse_class_(d.pop("class", UNSET))
 
+        def _parse_handler(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        handler = _parse_handler(d.pop("handler", UNSET))
+
+        def _parse_source_sha256(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        source_sha256 = _parse_source_sha256(d.pop("source_sha256", UNSET))
+
         build_plan = cls(
             framework=framework,
             runtime=runtime,
@@ -204,6 +242,8 @@ class BuildPlan:
             port=port,
             health_path=health_path,
             class_=class_,
+            handler=handler,
+            source_sha256=source_sha256,
         )
 
         build_plan.additional_properties = d

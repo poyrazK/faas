@@ -4430,7 +4430,12 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	// exact source archive and remains available after the spool is cleaned up;
 	// old rows without it retain the lazy marker-detection fallback.
 	if d.SourcePath != "" || len(d.InferredProfile) > 0 {
-		bp := &api.BuildPlan{Class: string(app.Type), Runtime: app.Runtime}
+		bp := &api.BuildPlan{
+			Class:        string(app.Type),
+			Runtime:      app.Runtime,
+			Handler:      d.Handler,
+			SourceSHA256: d.SourceSHA256,
+		}
 		var profile frameworkprofile.Profile
 		profileLoaded := len(d.InferredProfile) > 0 && json.Unmarshal(d.InferredProfile, &profile) == nil && profile.Version != ""
 		if profileLoaded {

@@ -81,6 +81,45 @@ func TestCompute_FreshApp(t *testing.T) {
 	}
 }
 
+func TestCompute_FreshSourcePreviewIncludesAppAndDeploymentIdentity(t *testing.T) {
+	got := Compute("new-function", api.PlanHobby, Baseline{}, Pending{
+		BuildPlan: &api.BuildPlan{
+			Framework:    "python",
+			Runtime:      "python312",
+			Handler:      "handler.handler",
+			Class:        "function",
+			SourceSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		},
+	})
+
+	if len(got.Changes) != 2 {
+		t.Fatalf("fresh source preview changes = %d, want app + deployment: %+v", len(got.Changes), got.Changes)
+	}
+	var appChange, deploymentChange *Change
+	for i := range got.Changes {
+		switch got.Changes[i].Field {
+		case "app":
+			appChange = &got.Changes[i]
+		case "deployment":
+			deploymentChange = &got.Changes[i]
+		}
+	}
+	if appChange == nil || appChange.Kind != ChangeAdd {
+		t.Fatalf("fresh app change = %+v, want add", appChange)
+	}
+	if deploymentChange == nil || deploymentChange.Kind != ChangeAdd {
+		t.Fatalf("fresh deployment change = %+v, want add", deploymentChange)
+	}
+	app, ok := appChange.After.Value.(map[string]string)
+	if !ok || app["class"] != "function" || app["runtime"] != "python312" || app["handler"] != "handler.handler" || app["framework"] != "python" {
+		t.Fatalf("app change payload = %#v, want resolved function plan", appChange.After.Value)
+	}
+	dep, ok := deploymentChange.After.Value.(map[string]string)
+	if !ok || dep["source_sha256"] == "" {
+		t.Fatalf("deployment change payload = %#v, want source identity", deploymentChange.After.Value)
+	}
+}
+
 // TestCompute_EnvByScope — per-scope env diff: add, remove, modify.
 func TestCompute_EnvByScope(t *testing.T) {
 	baseline := Baseline{

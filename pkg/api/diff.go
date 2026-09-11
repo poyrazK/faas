@@ -73,6 +73,11 @@ type DiffRequest struct {
 	// operator running `gregale diff` against a staging→prod
 	// promotion sees the cross-env drift before the deploy.
 	Scope string `json:"scope,omitempty"`
+	// BuildPlan carries the resolved source intent for a fresh preview.
+	// It is optional so an empty body remains a no-op state query, while
+	// deploy clients can make app creation, runtime, framework, and handler
+	// semantics visible before any remote row exists.
+	BuildPlan *BuildPlan `json:"build_plan,omitempty"`
 }
 
 // DiffAppConfigPatch mirrors [pkg/deploydiff.AppConfigPatch] field

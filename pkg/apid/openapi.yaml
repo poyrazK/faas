@@ -16755,6 +16755,13 @@ components:
           type: [string, "null"]
           enum: [null, app, function]
           description: "App class from `app.Type` — `app` for plain apps, `function` for function rewrites (spec §4.2)."
+        handler:
+          type: [string, "null"]
+          description: "Function-layer export (for example `handler.handler`). Distinct from the process entrypoint."
+        source_sha256:
+          type: [string, "null"]
+          pattern: '^[a-f0-9]{64}$'
+          description: "Content identity of the exact source archive being previewed. Source contents are never returned."
 
     SourceTarballDeployRequest:
       description: "Body for the informational `sidecar` form field on POST /v1/apps/{slug}/deployments/source-tarball (issue #961 / Mega-A PR-1, ADR-115). The CLI is the trust root for this deploy path; apid does NOT consult `github_installations` and does NOT attempt a server-side git fetch. The sidecar fields are recorded on the build row for provenance only — the build pipeline does NOT use them to fetch upstream."
@@ -19295,6 +19302,9 @@ components:
           pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
           description: "Pending per-deployment env scope (ADR-091 / SAFE-RELEASES production-leveling Stream E). Compared against Baseline.LatestScope; mismatch emits a scope_mismatch break. Empty = default."
           example: "prod"
+        build_plan:
+          $ref: '#/components/schemas/BuildPlan'
+          description: "Resolved source/workload intent for a deploy preview. Supplying this makes fresh app creation explicit even when resource values use server defaults."
 
     DiffAppConfigPatch:
       description: |

@@ -4,6 +4,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/deploydiff"
 )
 
 func TestNormalizeDeployPreviewFlags(t *testing.T) {
@@ -47,5 +50,33 @@ func TestValidateDeployDiffManifest_RejectsWorkflows(t *testing.T) {
 	err := validateDeployDiffManifest(dir)
 	if err == nil || !strings.Contains(err.Error(), "not supported by deploy --diff") {
 		t.Fatalf("error = %v, want explicit workflow diff error", err)
+	}
+}
+
+func TestBuildPreviewBuildPlan_PreservesResolvedSourceIntent(t *testing.T) {
+	got := buildPreviewBuildPlan("", shapeFunction, "python312", "handler.handler", "abc", false)
+	if got.Class != "function" || got.Framework != "python" || got.Runtime != "python312" || got.Handler != "handler.handler" || got.SourceSHA256 != "abc" {
+		t.Fatalf("function preview plan = %+v", got)
+	}
+
+	got = buildPreviewBuildPlan("", shapeApp, "", "", "", true)
+	if got.Class != "app" || got.Framework != "unknown" {
+		t.Fatalf("image preview plan = %+v, want app/unknown", got)
+	}
+}
+
+func TestDiffRequestFromCLI_CarriesBuildPlan(t *testing.T) {
+	want := &api.BuildPlan{Framework: "node", Runtime: "node22", Class: "app", SourceSHA256: "abc"}
+	req := diffRequestFromCLI(diffCLIOptions{BuildPlan: want})
+	if req.BuildPlan != want {
+		t.Fatalf("build_plan pointer was not carried through: got=%p want=%p", req.BuildPlan, want)
+	}
+}
+
+func TestBuildPending_CarriesBuildPlan(t *testing.T) {
+	want := &api.BuildPlan{Framework: "python", Runtime: "python312", Class: "function", Handler: "handler.handler"}
+	pending := buildPending(nil, nil, diffCLIOptions{Slug: "fresh", BuildPlan: want}, deploydiff.EmptyBaseline())
+	if pending.BuildPlan != want {
+		t.Fatalf("build_plan pointer was not carried into local pending projection: got=%p want=%p", pending.BuildPlan, want)
 	}
 }
