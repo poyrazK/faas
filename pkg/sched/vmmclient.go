@@ -345,6 +345,9 @@ type AppSpec struct {
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
+	// ExecutionMode constrains vmmd's characterization result. Empty preserves
+	// legacy inference for callers predating ADR-137.
+	ExecutionMode string
 	// Plan and AccountID are request-level admission context. Keeping them
 	// with the flat spec makes deploy prime and ordinary wakes carry the same
 	// cgroup and metrics identity to vmmd.
@@ -1107,6 +1110,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		// the default MASQUERADE.
 		StaticEgressIp:   a.StaticEgressIP,
 		StartupDeadlineS: a.StartupDeadlineS,
+		ExecutionMode:    a.ExecutionMode,
 	}
 }
 
