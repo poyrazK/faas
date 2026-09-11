@@ -2321,6 +2321,28 @@ type RollbackRequest struct {
 	AlertRuleID *string `json:"alert_rule_id,omitempty"`
 }
 
+// CapabilityStatus is a customer-visible catalog row with the account's
+// current plan entitlement resolved into Enabled.
+type CapabilityStatus struct {
+	Key         string             `json:"key"`
+	Name        string             `json:"name"`
+	Category    string             `json:"category"`
+	Description string             `json:"description"`
+	Maturity    CapabilityMaturity `json:"maturity"`
+	Plans       []string           `json:"plans"`
+	DocsURL     string             `json:"docs_url"`
+	Acceptance  string             `json:"acceptance"`
+	Enabled     bool               `json:"enabled"`
+}
+
+// CapabilitiesResponse is the account-scoped response from
+// GET /v1/capabilities. Enabled is fail-closed for unknown plans.
+type CapabilitiesResponse struct {
+	RegistryVersion int                `json:"registry_version"`
+	Plan            string             `json:"plan"`
+	Capabilities    []CapabilityStatus `json:"capabilities"`
+}
+
 // AccountResponse is the whoami payload. Limits is the plan's
 // quota/limit table (RAM MB, max concurrency, included GB-h,
 // deployed-app and developer-environment caps) so the dashboard /account

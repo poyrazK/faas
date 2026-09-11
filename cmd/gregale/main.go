@@ -131,6 +131,8 @@ func run(args []string) (status int) {
 		return cmdCompletion(args[1:])
 	case "config":
 		return cmdConfig(args[1:])
+	case "capabilities":
+		return cmdCapabilities(args[1:])
 	case "man":
 		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
 		// gregale-<command>(1). Dispatcher is in man.go.

@@ -112,7 +112,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Advanced"
 	}
 	switch command.Name {
-	case "account", "billing", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "usage", "version", "completion", "man", "whoami":
+	case "account", "billing", "capabilities", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "usage", "version", "completion", "man", "whoami":
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
@@ -218,6 +218,11 @@ var cliCommands = []cliCommand{
 			{Name: "dpa", Short: "Show DPA metadata"},
 			{Name: "slo", Short: "Account-wide SLO panel"},
 		},
+	},
+	{
+		Name:    "capabilities",
+		DocSlug: "capabilities",
+		Short:   "Show feature maturity and plan availability",
 	},
 	{
 		Name:     "admin",

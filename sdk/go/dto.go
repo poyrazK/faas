@@ -43,6 +43,8 @@ type (
 
 	// Account.
 	AccountResponse         = api.AccountResponse
+	CapabilitiesResponse    = api.CapabilitiesResponse
+	CapabilityStatus        = api.CapabilityStatus
 	AccountLimits           = api.AccountLimits
 	AccountDeletionResponse = api.AccountDeletionResponse
 	AccountExportResponse   = api.AccountExportResponse
