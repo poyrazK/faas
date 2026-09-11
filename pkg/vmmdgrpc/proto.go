@@ -10,10 +10,12 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // deploymentIDFromContext (issue #463 / ADR-069 / PR-B AC #1) lifts
@@ -108,6 +110,77 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+// executionRequestFromProto lifts the post-restore execution envelope and
+// applies the guest-boundary validation a second time. The source and input
+// fields are copied so the generated protobuf message can be released as
+// soon as the handler returns.
+func executionRequestFromProto(req *vmmdpb.ExecuteExecutionRequest) (executionproto.Request, error) {
+	if req == nil {
+		return executionproto.Request{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution request", "request is required")
+	}
+	if req.GetInstance() == "" {
+		return executionproto.Request{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution request", "instance is required")
+	}
+	if req.GetVersion() > uint32(^uint16(0)) {
+		return executionproto.Request{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution request", "version is outside the supported range")
+	}
+	wireReq := executionproto.Request{
+		Version:     uint16(req.GetVersion()),
+		ExecutionID: req.GetExecutionId(),
+		Runtime:     api.ExecutionRuntime(req.GetRuntime()),
+		Source:      req.GetSource(),
+		Input:       append([]byte(nil), req.GetInput()...),
+		TimeoutMS:   int(req.GetTimeoutMs()),
+		MaxOutput:   int(req.GetMaxOutputBytes()),
+		NetworkMode: api.ExecutionNetworkMode(req.GetNetworkMode()),
+	}
+	if err := wireReq.Validate(); err != nil {
+		return executionproto.Request{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution request", "request failed guest-boundary validation")
+	}
+	return wireReq, nil
+}
+
+func executionResponseFromResult(executionID string, result executionproto.Result) *vmmdpb.ExecuteExecutionResponse {
+	failureCode, failureMessage := executionFailureForWire(result)
+	resp := &vmmdpb.ExecuteExecutionResponse{
+		ExecutionId:     executionID,
+		Status:          string(result.Status),
+		Result:          append([]byte(nil), result.Result...),
+		OutputTruncated: result.OutputTruncated,
+		FailureCode:     failureCode,
+		FailureMessage:  failureMessage,
+		Stdout:          append([]byte(nil), result.Stdout...),
+		Stderr:          append([]byte(nil), result.Stderr...),
+		WallTimeMs:      result.Usage.WallTimeMS,
+		CpuTimeMs:       result.Usage.CPUTimeMS,
+		PeakMemoryMb:    int32(result.Usage.PeakMemoryMB),
+	}
+	if result.ExitCode != nil {
+		resp.ExitCode = wrapperspb.Int32(int32(*result.ExitCode))
+	}
+	return resp
+}
+
+func executionFailureForWire(result executionproto.Result) (string, string) {
+	if result.Status == api.ExecutionStatusSucceeded {
+		return "", ""
+	}
+	switch result.Status {
+	case api.ExecutionStatusTimedOut:
+		return "timeout", "execution timed out"
+	case api.ExecutionStatusOutOfMemory:
+		return "out_of_memory", "execution exceeded its memory limit"
+	case api.ExecutionStatusCancelled:
+		return "cancelled", "execution was cancelled"
+	default:
+		return "guest_error", "execution failed inside the isolated guest"
+	}
 }
 
 // withIncomingCorrelation makes the wire envelope available to wake timing

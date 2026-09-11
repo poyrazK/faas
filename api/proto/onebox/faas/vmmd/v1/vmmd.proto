@@ -31,6 +31,12 @@ service Vmmd {
   // shape instead of AppSpec and never enter the snapshot/readiness path.
   rpc JobColdBoot(JobColdBootRequest) returns (JobColdBootResponse);
 
+  // ExecuteExecution sends exactly one caller payload to an already restored
+  // disposable execution VM. Restore/cold-boot is intentionally a separate
+  // RPC so source and input never cross the restore boundary. vmmd enforces
+  // the networkless guest contract and destroys the instance before returning.
+  rpc ExecuteExecution(ExecuteExecutionRequest) returns (ExecuteExecutionResponse);
+
   // WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
   // The caller supplies the deadline on the gRPC context.
   rpc WaitJobExit(WaitJobExitRequest) returns (JobExitResponse);
@@ -1685,4 +1691,36 @@ message DeleteWarmSnapshotRequest {
 
 message DeleteWarmSnapshotResponse {
   bool deleted = 1;
+}
+
+// ExecuteExecution is the post-restore host/guest execution envelope. The
+// request is validated again at vmmd even though apid/schedd already admitted
+// it: vmmd is the last trust boundary before untrusted bytes enter a guest.
+message ExecuteExecutionRequest {
+  string instance = 1;
+  uint32 version = 2;
+  string execution_id = 3;
+  string runtime = 4;
+  string source = 5;
+  bytes input = 6;
+  int32 timeout_ms = 7;
+  int32 max_output_bytes = 8;
+  string network_mode = 9;
+}
+
+// ExecuteExecutionResponse contains only bounded guest output and terminal
+// accounting. Source and input are deliberately absent from the response.
+message ExecuteExecutionResponse {
+  string execution_id = 1;
+  string status = 2;
+  bytes result = 3;
+  bool output_truncated = 4;
+  google.protobuf.Int32Value exit_code = 5;
+  string failure_code = 6;
+  string failure_message = 7;
+  bytes stdout = 8;
+  bytes stderr = 9;
+  int64 wall_time_ms = 10;
+  int64 cpu_time_ms = 11;
+  int32 peak_memory_mb = 12;
 }

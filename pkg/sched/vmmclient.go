@@ -21,6 +21,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
@@ -160,6 +161,13 @@ type VMM interface {
 	// "abort — resume the paused VM". Idempotent on an
 	// already-resumed VM.
 	CancelLiveMigration(ctx context.Context, dyingNodeID, instanceID, leaseToken string) error
+}
+
+// ExecutionVMM is the optional post-restore execution capability. It is kept
+// outside VMM so existing lifecycle fakes and older vmmd nodes remain source
+// compatible while the capability is rolled out independently.
+type ExecutionVMM interface {
+	ExecuteExecution(context.Context, string, executionproto.Request) (executionproto.Result, error)
 }
 
 // LogReceiver is the per-instance callback the vmmd Logs RPC hands
@@ -599,6 +607,51 @@ func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmRes
 		return JobVmmResult{}, liftErr(err)
 	}
 	return JobVmmResult{InstanceID: resp.GetInstance(), NodeID: resp.GetNodeId()}, nil
+}
+
+// ExecuteExecution sends one request to an already restored disposable VM.
+// The vmmd side owns teardown; this wrapper only carries the bounded result
+// back into the scheduler's execution protocol type.
+func (c *VMMClient) ExecuteExecution(ctx context.Context, instance string, req executionproto.Request) (executionproto.Result, error) {
+	var zero executionproto.Result
+	if c == nil || c.cli == nil {
+		return zero, errors.New("sched: nil vmmd execution client")
+	}
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	resp, err := c.cli.ExecuteExecution(ctx, &vmmdpb.ExecuteExecutionRequest{
+		Instance:       instance,
+		Version:        uint32(req.Version),
+		ExecutionId:    req.ExecutionID,
+		Runtime:        string(req.Runtime),
+		Source:         req.Source,
+		Input:          append([]byte(nil), req.Input...),
+		TimeoutMs:      int32(req.TimeoutMS),
+		MaxOutputBytes: int32(req.MaxOutput),
+		NetworkMode:    string(req.NetworkMode),
+	})
+	if err != nil {
+		return zero, liftErr(err)
+	}
+	result := executionproto.Result{
+		Status:          api.ExecutionStatus(resp.GetStatus()),
+		Result:          append([]byte(nil), resp.GetResult()...),
+		OutputTruncated: resp.GetOutputTruncated(),
+		FailureCode:     resp.GetFailureCode(),
+		FailureMessage:  resp.GetFailureMessage(),
+		Stdout:          append([]byte(nil), resp.GetStdout()...),
+		Stderr:          append([]byte(nil), resp.GetStderr()...),
+		Usage: api.ExecutionUsage{
+			WallTimeMS:   resp.GetWallTimeMs(),
+			CPUTimeMS:    resp.GetCpuTimeMs(),
+			PeakMemoryMB: int(resp.GetPeakMemoryMb()),
+		},
+	}
+	if exitCode := resp.GetExitCode(); exitCode != nil {
+		value := int(exitCode.GetValue())
+		result.ExitCode = &value
+	}
+	return result, nil
 }
 
 // WaitJobExit waits for the guest supervisor's terminal receipt. The caller
