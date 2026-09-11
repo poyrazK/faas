@@ -1217,10 +1217,9 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		mbSec += u.MBSeconds
 		requests += u.Requests
 		cpuUsec += u.CPUUsec
-		// ADR-046 (step 10): sum both egress columns so
-		// the dashboard's "egress this month" panel
-		// surfaces a single GB number. Informational;
-		// not billed.
+		// ADR-046: NetTxBytes is the canonical interface counter.
+		// TXBytes is the gateway payload subset, so summing both would
+		// double-count customer responses.
 		//
 		// NOTE (PR-414 I5): the resulting GB number
 		// INCLUDES Ethernet framing because net_tx_bytes
@@ -1229,7 +1228,7 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		// show as ~1.2-1.5 GB on this counter. The
 		// dashboard template renders this with a footer
 		// note; the future billing PR will pick the unit.
-		egressBytes += u.TXBytes + u.NetTxBytes
+		egressBytes += u.NetTxBytes
 		ingressBytes += u.NetRxBytes
 		coldBoots += u.ColdBootCount
 	}
@@ -1316,9 +1315,9 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	var egressBytes int64
 	for _, u := range rows {
 		mbSec += u.MBSeconds
-		// Same framing caveat as renderUsage:counts both egress columns
-		// so the page can surface a single GB number. Informational only.
-		egressBytes += u.TXBytes + u.NetTxBytes
+		// Same framing caveat as renderUsage. NetTxBytes is canonical;
+		// TXBytes is already contained within it.
+		egressBytes += u.NetTxBytes
 	}
 	used := meter.GBHours(mbSec)
 	usedEgressGB := float64(egressBytes) / (1024 * 1024 * 1024)

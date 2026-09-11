@@ -154,7 +154,8 @@ func projectObsTenantUsage(r *http.Request, st state.Store, acct state.Account, 
 		mbSeconds += row.MBSeconds
 		cpuUsec += row.CPUUsec
 		usage.Requests += row.Requests
-		usage.UsedEgressGB += float64(row.TXBytes+row.NetTxBytes) / (1024 * 1024 * 1024)
+		// TXBytes is already contained in the canonical interface counter.
+		usage.UsedEgressGB += float64(row.NetTxBytes) / (1024 * 1024 * 1024)
 		usage.UsedIngressGB += float64(row.NetRxBytes) / (1024 * 1024 * 1024)
 		usage.ColdBootTotal += row.ColdBootCount
 		usage.Apps = append(usage.Apps, api.ObsTenantUsageApp{

@@ -81,6 +81,14 @@ type paddleOverageClaimState struct {
 	mbSecondsSum int64
 }
 
+type networkUsageCheckpoint struct {
+	accountID  string
+	netTx      int64
+	netRx      int64
+	netTxValid bool
+	netRxValid bool
+}
+
 // auditEventOutboxRow is the in-memory mirror of audit_event_outbox. The
 // public queue item intentionally omits mutable claim metadata; keeping that
 // metadata private prevents callers from treating a stale claim as authority.
@@ -463,6 +471,9 @@ type MemStore struct {
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage       map[string]APIConsumerUsageBucket
 	apiConsumerUsageEvents map[string]struct{}
+	// networkUsageCheckpoints mirrors meter_network_checkpoints. Values are
+	// the last cumulative interface counters atomically reflected in usage.
+	networkUsageCheckpoints map[string]networkUsageCheckpoint
 	// builderUsage is the per-build grain backing AppendBuilderUsage
 	// (ADR-048 §4). PK is build_id; the meterd rollup cron sums
 	// into usage_daily.builder_seconds per (account, app, day).
@@ -894,6 +905,7 @@ func NewMemStore() *MemStore {
 		usageByMonth:            []Usage{},
 		apiConsumerUsage:        map[string]APIConsumerUsageBucket{},
 		apiConsumerUsageEvents:  map[string]struct{}{},
+		networkUsageCheckpoints: map[string]networkUsageCheckpoint{},
 		idem:                    map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByProviderCustomerID
 		// walks; populated by UpdateAccountProviderCustomerID.
@@ -12606,6 +12618,57 @@ func (m *MemStore) AppendUsage(_ context.Context, accountID, appID, instanceID s
 	return nil
 }
 
+// AppendNetworkUsageObservation mirrors PgStore's transactional cumulative
+// counter checkpoint. MemStore's single mutex makes the checkpoint advance and
+// usage delta append one atomic operation.
+func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, accountID, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
+	if netTxCumulative < 0 || netRxCumulative < 0 {
+		return 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := minute.UTC().Truncate(time.Minute)
+	usageIndex := -1
+	for i := range m.usage {
+		if m.usage[i].AccountID == accountID && m.usage[i].AppID == appID &&
+			m.usage[i].InstanceID == instanceID && m.usage[i].Minute.Equal(key) {
+			usageIndex = i
+			break
+		}
+	}
+	if usageIndex < 0 {
+		return 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, key.Format(time.RFC3339))
+	}
+
+	checkpoint := m.networkUsageCheckpoints[instanceID]
+	var netTxDelta, netRxDelta int64
+	if netTxValid {
+		if !checkpoint.netTxValid {
+			netTxDelta = netTxCumulative
+		} else if netTxCumulative >= checkpoint.netTx {
+			netTxDelta = netTxCumulative - checkpoint.netTx
+		}
+		checkpoint.netTx = netTxCumulative
+		checkpoint.netTxValid = true
+	}
+	if netRxValid {
+		if !checkpoint.netRxValid {
+			netRxDelta = netRxCumulative
+		} else if netRxCumulative >= checkpoint.netRx {
+			netRxDelta = netRxCumulative - checkpoint.netRx
+		}
+		checkpoint.netRx = netRxCumulative
+		checkpoint.netRxValid = true
+	}
+	checkpoint.accountID = accountID
+	m.networkUsageCheckpoints[instanceID] = checkpoint
+	m.usage[usageIndex].NetTxBytes += netTxDelta
+	m.usage[usageIndex].NetRxBytes += netRxDelta
+	m.recomputeMonthLocked(accountID, appID, key)
+	return netTxDelta, netRxDelta, nil
+}
+
 // AppendBuilderUsage mirrors pgstore's AppendBuilderUsage
 // (ADR-048 §4). Idempotent on build_id — first write wins; a
 // redelivered webhook is a no-op. The meterd rollup cron sums
@@ -13469,11 +13532,30 @@ func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]Usag
 	return out, nil
 }
 
-func billingUsageDeliveryKey(provider, accountID string, hour time.Time) string {
-	return provider + "\x00" + accountID + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
+func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
+	return provider + "\x00" + accountID + "\x00" + string(meter) + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
 }
 
 func (m *MemStore) PendingBillingUsageWindows(_ context.Context, provider string, start, end time.Time) ([]UsageWindow, error) {
+	windows, err := m.pendingBillingMeterUsageWindows(provider, BillingMeterCompute, start, end)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]UsageWindow, 0, len(windows))
+	for _, window := range windows {
+		out = append(out, UsageWindow{AccountID: window.AccountID, Hour: window.Hour, MBSeconds: window.Quantity})
+	}
+	return out, nil
+}
+
+func (m *MemStore) PendingBillingMeterUsageWindows(_ context.Context, provider string, meter BillingMeter, start, end time.Time) ([]BillingMeterWindow, error) {
+	return m.pendingBillingMeterUsageWindows(provider, meter, start, end)
+}
+
+func (m *MemStore) pendingBillingMeterUsageWindows(provider string, meter BillingMeter, start, end time.Time) ([]BillingMeterWindow, error) {
+	if meter != BillingMeterCompute && meter != BillingMeterEgress {
+		return nil, fmt.Errorf("unsupported billing meter %q", meter)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	start = start.UTC()
@@ -13489,15 +13571,19 @@ func (m *MemStore) PendingBillingUsageWindows(_ context.Context, provider string
 			continue
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
-		if _, delivered := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, row.AccountID, hour)]; delivered {
+		if _, delivered := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, row.AccountID, meter, hour)]; delivered {
 			continue
 		}
-		agg[key{account: row.AccountID, hour: hour}] += row.MBSeconds
+		quantity := row.MBSeconds
+		if meter == BillingMeterEgress {
+			quantity = row.NetTxBytes
+		}
+		agg[key{account: row.AccountID, hour: hour}] += quantity
 	}
-	out := make([]UsageWindow, 0, len(agg))
-	for k, mbSeconds := range agg {
-		if mbSeconds > 0 {
-			out = append(out, UsageWindow{AccountID: k.account, Hour: k.hour, MBSeconds: mbSeconds})
+	out := make([]BillingMeterWindow, 0, len(agg))
+	for k, quantity := range agg {
+		if quantity > 0 {
+			out = append(out, BillingMeterWindow{AccountID: k.account, Hour: k.hour, Meter: meter, Quantity: quantity})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -13512,10 +13598,20 @@ func (m *MemStore) PendingBillingUsageWindows(_ context.Context, provider string
 	return out, nil
 }
 
-func (m *MemStore) RecordBillingUsageDelivery(_ context.Context, provider, accountID string, windowStart time.Time, _ int64) error {
+func (m *MemStore) RecordBillingUsageDelivery(ctx context.Context, provider, accountID string, windowStart time.Time, mbSeconds int64) error {
+	return m.RecordBillingMeterUsageDelivery(ctx, provider, accountID, BillingMeterCompute, windowStart, mbSeconds)
+}
+
+func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time, quantity int64) error {
+	if meter != BillingMeterCompute && meter != BillingMeterEgress {
+		return fmt.Errorf("unsupported billing meter %q", meter)
+	}
+	if quantity < 0 {
+		return fmt.Errorf("billing usage quantity must be non-negative")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, windowStart)] = struct{}{}
+	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, meter, windowStart)] = struct{}{}
 	return nil
 }
 
@@ -15683,6 +15779,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key := range m.billingUsageDeliveries {
 		if strings.Contains(key, "\x00"+id+"\x00") {
 			delete(m.billingUsageDeliveries, key)
+		}
+	}
+	for instanceID, checkpoint := range m.networkUsageCheckpoints {
+		if checkpoint.accountID == id {
+			delete(m.networkUsageCheckpoints, instanceID)
 		}
 	}
 	// Audit events (spec §17 G6 right-to-erasure). Drop events whose

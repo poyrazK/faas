@@ -4933,6 +4933,18 @@ type Store interface {
 	// existed, so switching providers cannot rebill historical windows.
 	PendingBillingUsageWindows(ctx context.Context, provider string, start, end time.Time) ([]UsageWindow, error)
 	RecordBillingUsageDelivery(ctx context.Context, provider, accountID string, windowStart time.Time, mbSeconds int64) error
+	// PendingBillingMeterUsageWindows is the meter-qualified form of
+	// PendingBillingUsageWindows. Compute quantities are MB-seconds; egress
+	// quantities are canonical host-interface bytes from net_tx_bytes.
+	PendingBillingMeterUsageWindows(ctx context.Context, provider string, meter BillingMeter, start, end time.Time) ([]BillingMeterWindow, error)
+	// RecordBillingMeterUsageDelivery records a provider receipt without
+	// allowing one meter to suppress another meter in the same UTC hour.
+	RecordBillingMeterUsageDelivery(ctx context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time, quantity int64) error
+	// AppendNetworkUsageObservation atomically converts cumulative host-side
+	// interface counters into deltas and adds them to usage_minutes. The
+	// checkpoint and usage row commit together so restarts cannot lose or
+	// duplicate an acknowledged observation.
+	AppendNetworkUsageObservation(ctx context.Context, accountID, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (netTxDelta, netRxDelta int64, err error)
 
 	// StripePushDedup is the dedupe table for hourly usage pushes. The
 	// PushDedupe interface in pkg/billing/stripe is satisfied by both stores.

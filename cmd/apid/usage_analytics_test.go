@@ -7,6 +7,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 046
+func TestUsageAppDataUsesCanonicalInterfaceEgress(t *testing.T) {
+	const gib = int64(1024 * 1024 * 1024)
+	got := usageAppData(
+		[]state.Usage{{AppID: "app-a", TXBytes: gib, NetTxBytes: 2 * gib}},
+		[]state.App{{ID: "app-a", Slug: "api"}},
+		0,
+	)
+	if len(got) != 1 || got[0].EgressGB != 2 {
+		t.Fatalf("usage app egress = %+v, want canonical 2 GB", got)
+	}
+}
+
 func TestUsageDailyPointsAggregatesTopAppAndSorts(t *testing.T) {
 	dayOne := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	dayTwo := dayOne.AddDate(0, 0, 1)

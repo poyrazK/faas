@@ -4974,7 +4974,9 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	for _, u := range rows {
 		mbSec += u.MBSeconds
 		cpuUsec += u.CPUUsec
-		egressBytes += u.TXBytes + u.NetTxBytes
+		// Gateway TXBytes is an HTTP-payload subset of the canonical
+		// host-interface counter; adding it would double-count responses.
+		egressBytes += u.NetTxBytes
 		netRxBytes += u.NetRxBytes
 		coldBoots += u.ColdBootCount
 	}

@@ -39,6 +39,13 @@ func TestObsTenant360_RejectsBadMonth(t *testing.T) {
 
 func TestObsTenant360_HappyPath_ReturnsUsageAndBilling(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	// adr: 046 — the gateway payload is a subset of interface egress, so the
+	// operator total must expose 2 GiB rather than adding both into 3 GiB.
+	const gib = int64(1024 * 1024 * 1024)
+	if err := e.store.AppendUsage(t.Context(), e.acct.ID, "app-egress", "instance-egress",
+		time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC), 0, 0, 0, gib, 2*gib, 0, 0, 0); err != nil {
+		t.Fatalf("seed egress usage: %v", err)
+	}
 	rec := e.do(t, "GET", "/v1/admin/obs/tenants/"+e.acct.ID+"/360?month=2026-08", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("tenant 360: got status %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -55,6 +62,9 @@ func TestObsTenant360_HappyPath_ReturnsUsageAndBilling(t *testing.T) {
 	}
 	if resp.Usage.Apps == nil || resp.Billing.Invoices == nil {
 		t.Fatal("tenant 360: usage apps and billing invoices must be non-nil arrays")
+	}
+	if resp.Usage.UsedEgressGB != 2 {
+		t.Fatalf("tenant 360 used egress: got %v GB, want canonical 2 GB", resp.Usage.UsedEgressGB)
 	}
 }
 

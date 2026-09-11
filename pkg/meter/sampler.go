@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -74,16 +75,22 @@ type CPUSource interface {
 // InstanceStatsRow, which vmmd populated from
 // pkg/fcvm/netstats.Cache) and gatewayEgressAdapter (reads the
 // gateway's per-instance ring buffer). ok=false means the
-// reader has no row for this instance this tick (gone, never
-// polled, regression). The TX and NetTX returned values are
-// already per-tick deltas; the sampler appends them additively
-// to the (instance, minute) row.
+// reader has no row for this instance this tick. Gateway fields are drained
+// deltas. Production network fields are cumulative and carry
+// NetworkCumulative=true so the Store can derive and checkpoint their deltas
+// atomically; test/legacy sources may still provide network deltas directly.
 type UsageDeltas struct {
 	TXBytes       uint64
 	NetTXBytes    uint64
 	NetRXBytes    uint64
 	Requests      int64
 	ColdBootCount int32
+	// NetworkCumulative marks NetTXBytes/NetRXBytes as vmmd cumulative
+	// counters rather than already-derived deltas. Production uses this
+	// shape so the Store can checkpoint and append them atomically.
+	NetworkCumulative bool
+	NetTXValid        bool
+	NetRXValid        bool
 }
 
 type EgressSource interface {
@@ -467,7 +474,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 					NetRxBytes:    int64(usage.NetRXBytes),
 					ColdBootCount: usage.ColdBootCount,
 				}
-				if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, ins.ID, minute, 0, usage.Requests, 0, row.TXBytes, row.NetTxBytes, row.NetRxBytes, row.ColdBootCount, 0); err != nil {
+				if err := s.appendRolledRow(ctx, &row, usage.Requests, usage); err != nil {
 					return out, err
 				}
 				out = append(out, row)
@@ -530,7 +537,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			if tailSec, ok := s.tailSecondsFor(ins.ID); ok {
 				row.TailSeconds = tailSec
 			}
-			if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, ins.ID, minute, row.MBSeconds, int64(requests), row.CPUUsec, row.TXBytes, row.NetTxBytes, row.NetRxBytes, int32(row.ColdBootCount), row.TailSeconds); err != nil {
+			if err := s.appendRolledRow(ctx, &row, requests, usage); err != nil {
 				return out, err
 			}
 			out = append(out, row)
@@ -745,10 +752,9 @@ func (s *Sampler) cpuDeltaForMinute(instanceID string, minute time.Time) int64 {
 }
 
 // egressBytes returns (txBytes, netTxBytes, ok) for the given
-// instance, mirroring the cpuDeltaForMinute shape but without
-// the baseline state: the source readers (vmmd netstats.Cache
-// via schedd, the gateway ring buffer) own their own regression
-// handling, so the sampler is just a fan-out. Returns 0, 0, false
+// instance, mirroring the cpuDeltaForMinute shape. The gateway owns its drain
+// state; vmmd network counters remain cumulative until the Store checkpoints
+// them transactionally. Returns 0, 0, false
 // when s.egress is nil (legacy PR-1 wiring; tests). Returns 0, 0,
 // false when the source has no row for the instance (gone /
 // never-polled). The sampler does NOT cache per-instance state;
@@ -761,6 +767,38 @@ func (s *Sampler) usageDeltas(instanceID string) (UsageDeltas, bool) {
 		return UsageDeltas{}, false
 	}
 	return s.egress.ReadUsageDeltas(instanceID)
+}
+
+// appendRolledRow persists ordinary per-minute fields first, then hands vmmd's
+// cumulative network counters to the Store's transactional checkpoint path.
+// Gateway payload bytes stay additive diagnostics; only host-interface bytes
+// use the durable cumulative-counter contract.
+func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests int64, usage UsageDeltas) error {
+	netTx, netRx := row.NetTxBytes, row.NetRxBytes
+	if usage.NetworkCumulative {
+		netTx, netRx = 0, 0
+	}
+	if err := s.store.AppendUsage(ctx, row.AccountID, row.AppID, row.InstanceID, row.Minute,
+		row.MBSeconds, requests, row.CPUUsec, row.TXBytes, netTx, netRx,
+		row.ColdBootCount, row.TailSeconds); err != nil {
+		return err
+	}
+	if !usage.NetworkCumulative {
+		return nil
+	}
+	if usage.NetTXBytes > math.MaxInt64 || usage.NetRXBytes > math.MaxInt64 {
+		return fmt.Errorf("meter: cumulative network counter exceeds int64 for instance %s", row.InstanceID)
+	}
+	deltaTx, deltaRx, err := s.store.AppendNetworkUsageObservation(ctx,
+		row.AccountID, row.AppID, row.InstanceID, row.Minute,
+		int64(usage.NetTXBytes), usage.NetTXValid,
+		int64(usage.NetRXBytes), usage.NetRXValid)
+	if err != nil {
+		return fmt.Errorf("meter: checkpoint network usage for instance %s: %w", row.InstanceID, err)
+	}
+	row.NetTxBytes = deltaTx
+	row.NetRxBytes = deltaRx
+	return nil
 }
 
 // tailSecondsFor returns the per-instance accumulated waitUntil

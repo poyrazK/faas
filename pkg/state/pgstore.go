@@ -15533,6 +15533,98 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 	return err
 }
 
+// AppendNetworkUsageObservation converts vmmd's cumulative host-interface
+// counters to additive usage deltas. The checkpoint row is locked and advanced
+// in the same transaction as usage_minutes, which makes retry after a meterd
+// crash exactly-once for every observed cumulative value.
+func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, accountID, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
+	if netTxCumulative < 0 || netRxCumulative < 0 {
+		return 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = tx.Exec(ctx,
+		`insert into meter_network_checkpoints (instance_id, net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid, observed_at)
+		 values ($1, 0, 0, false, false, $2)
+		 on conflict (instance_id) do nothing`, instanceID, minute.UTC())
+	if err != nil {
+		return 0, 0, err
+	}
+	var previousTx, previousRx int64
+	var previousTxValid, previousRxValid bool
+	err = tx.QueryRow(ctx,
+		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid
+		   from meter_network_checkpoints
+		  where instance_id = $1
+		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// vmmd's cumulative cache already excludes the raw kernel baseline. A
+	// missing durable checkpoint therefore means the whole reported value is
+	// new usage. Counter regression means vmmd or the interface restarted: move
+	// the baseline back without turning unsigned wraparound into a huge charge.
+	netTxDelta, netRxDelta := int64(0), int64(0)
+	nextTx, nextRx := previousTx, previousRx
+	nextTxValid, nextRxValid := previousTxValid, previousRxValid
+	if netTxValid {
+		if !previousTxValid {
+			netTxDelta = netTxCumulative
+		} else if netTxCumulative >= previousTx {
+			netTxDelta = netTxCumulative - previousTx
+		}
+		nextTx = netTxCumulative
+		nextTxValid = true
+	}
+	if netRxValid {
+		if !previousRxValid {
+			netRxDelta = netRxCumulative
+		} else if netRxCumulative >= previousRx {
+			netRxDelta = netRxCumulative - previousRx
+		}
+		nextRx = netRxCumulative
+		nextRxValid = true
+	}
+
+	command, err := tx.Exec(ctx,
+		`update usage_minutes
+		    set net_tx_bytes = net_tx_bytes + $1,
+		        net_rx_bytes = net_rx_bytes + $2
+		  where instance_id = $3 and minute = $4
+		    and account_id = $5 and app_id = $6`,
+		netTxDelta, netRxDelta, instanceID, minute.UTC().Truncate(time.Minute), accountID, appID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if command.RowsAffected() != 1 {
+		return 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, minute.UTC().Truncate(time.Minute).Format(time.RFC3339))
+	}
+
+	_, err = tx.Exec(ctx,
+		`insert into meter_network_checkpoints (instance_id, net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid, observed_at, updated_at)
+		 values ($1, $2, $3, $4, $5, $6, now())
+		 on conflict (instance_id) do update
+		   set net_tx_bytes = excluded.net_tx_bytes,
+		       net_rx_bytes = excluded.net_rx_bytes,
+		       net_tx_valid = excluded.net_tx_valid,
+		       net_rx_valid = excluded.net_rx_valid,
+		       observed_at = excluded.observed_at,
+		       updated_at = now()`,
+		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC())
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, err
+	}
+	return netTxDelta, netRxDelta, nil
+}
+
 // InstanceBillingSeconds returns each instance's actual resident seconds in
 // [start,end), derived from the lifecycle interval ledger maintained by the
 // instances trigger. Partial seconds round up so any occupied wall-clock
@@ -16752,6 +16844,81 @@ func (s *PgStore) RecordBillingUsageDelivery(ctx context.Context, provider, acco
 		 values ($1, $2, $3, $4)
 		 on conflict (provider, account_id, window_start) do nothing`,
 		provider, accountID, windowStart.UTC().Truncate(time.Hour), mbSeconds)
+	return err
+}
+
+func (s *PgStore) PendingBillingMeterUsageWindows(ctx context.Context, provider string, meter BillingMeter, start, end time.Time) ([]BillingMeterWindow, error) {
+	if meter == BillingMeterCompute {
+		windows, err := s.PendingBillingUsageWindows(ctx, provider, start, end)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]BillingMeterWindow, 0, len(windows))
+		for _, window := range windows {
+			out = append(out, BillingMeterWindow{AccountID: window.AccountID, Meter: meter, Hour: window.Hour, Quantity: window.MBSeconds})
+		}
+		return out, nil
+	}
+	if meter != BillingMeterEgress {
+		return nil, fmt.Errorf("unsupported billing meter %q", meter)
+	}
+	rows, err := s.pool.Query(ctx,
+		`with hourly as (
+		   select u.account_id,
+		          date_trunc('hour', u.minute at time zone 'UTC') at time zone 'UTC' as window_start,
+		          sum(u.net_tx_bytes)::bigint as quantity
+		     from usage_minutes u
+		     join billing_identities bi
+		       on bi.account_id = u.account_id and bi.provider = $1
+		    where u.minute >= $2 and u.minute < $3
+		      and u.minute >= bi.billing_from
+		    group by u.account_id, window_start
+		   having sum(u.net_tx_bytes) > 0
+			 ), pending as (
+			   select h.*,
+			          row_number() over (partition by h.account_id order by h.window_start) as account_rank
+			     from hourly h
+			     left join billing_meter_usage_deliveries d
+			       on d.provider = $1 and d.account_id = h.account_id
+			      and d.meter = $4
+			      and d.window_start = h.window_start
+			    where d.account_id is null
+			 )
+			 select account_id, window_start, quantity
+			   from pending
+			  order by account_rank, window_start, account_id
+		  limit 10000`, provider, start.UTC(), end.UTC(), string(meter))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]BillingMeterWindow, 0)
+	for rows.Next() {
+		window := BillingMeterWindow{Meter: meter}
+		if err := rows.Scan(&window.AccountID, &window.Hour, &window.Quantity); err != nil {
+			return nil, err
+		}
+		window.Hour = window.Hour.UTC()
+		out = append(out, window)
+	}
+	return out, rows.Err()
+}
+
+func (s *PgStore) RecordBillingMeterUsageDelivery(ctx context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time, quantity int64) error {
+	if meter != BillingMeterCompute && meter != BillingMeterEgress {
+		return fmt.Errorf("unsupported billing meter %q", meter)
+	}
+	if quantity < 0 {
+		return fmt.Errorf("billing usage quantity must be non-negative")
+	}
+	if meter == BillingMeterCompute {
+		return s.RecordBillingUsageDelivery(ctx, provider, accountID, windowStart, quantity)
+	}
+	_, err := s.pool.Exec(ctx,
+		`insert into billing_meter_usage_deliveries (provider, account_id, meter, window_start, quantity)
+		 values ($1, $2, $3, $4, $5)
+		 on conflict (provider, account_id, meter, window_start) do nothing`,
+		provider, accountID, string(meter), windowStart.UTC().Truncate(time.Hour), quantity)
 	return err
 }
 

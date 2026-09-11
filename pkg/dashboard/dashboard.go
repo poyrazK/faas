@@ -1934,8 +1934,8 @@ type UsageData struct {
 	UsedPct         float64 // 0..100+
 	Requests        int64
 	// UsedEgressGB (ADR-046, step 10) is the per-month
-	// informational egress roll-up (Σ tx_bytes +
-	// net_tx_bytes across all apps). Not billed; the
+	// informational egress roll-up (Σ net_tx_bytes across all apps).
+	// tx_bytes is a diagnostic subset and is not added. Not billed; the
 	// template renders it next to the GB-h panel as a
 	// "this much egress" line. The gateway-side tx_bytes
 	// producer lands in PR-2; until then the value is

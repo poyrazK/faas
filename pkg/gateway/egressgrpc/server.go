@@ -127,19 +127,30 @@ func (s *Server) StreamBytes(req *egresspb.StreamBytesRequest, stream grpc.Serve
 			s.log.Debug("egressgrpc: stream closed by client", "frames", s.framesSent.Load())
 			return nil
 		case <-t.C:
-			for _, rec := range s.sink.DrainRecords() {
-				if err := stream.Send(&egresspb.BytesFrame{
-					InstanceId: rec.InstanceID,
-					Minute:     timestamppb.New(rec.Minute.UTC()),
-					Bytes:      rec.Bytes,
-					Requests:   rec.Requests,
-					ColdBoots:  rec.ColdBoots,
-				}); err != nil {
-					s.log.Warn("egressgrpc: send failed; closing stream", "err", err)
-					return nil
-				}
-				s.framesSent.Add(1)
+			if err := s.sendRecords(s.sink.DrainRecords(), stream.Send); err != nil {
+				s.log.Warn("egressgrpc: send failed; closing stream", "err", err)
+				return nil
 			}
 		}
 	}
+}
+
+func (s *Server) sendRecords(records []egresssink.Record, send func(*egresspb.BytesFrame) error) error {
+	for i, rec := range records {
+		if err := send(&egresspb.BytesFrame{
+			InstanceId: rec.InstanceID,
+			Minute:     timestamppb.New(rec.Minute.UTC()),
+			Bytes:      rec.Bytes,
+			Requests:   rec.Requests,
+			ColdBoots:  rec.ColdBoots,
+		}); err != nil {
+			// DrainRecords transfers ownership to this send loop. Put the
+			// failed record and every not-yet-attempted record back; records
+			// whose Send succeeded stay acknowledged locally.
+			s.sink.RestoreRecords(records[i:])
+			return err
+		}
+		s.framesSent.Add(1)
+	}
+	return nil
 }

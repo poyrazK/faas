@@ -226,8 +226,8 @@ func TestRenderUsageSummary_PinsColumnLayout(t *testing.T) {
 		// realistic order of magnitude for a Hobby app doing
 		// bursty work, picked for a clean 4-decimal render.
 		UsedCPUHours: 0.002778,
-		// ADR-046: informational egress (tx_bytes + net_tx_bytes,
-		// rolled up at the server). 1.234 GB is a non-zero
+		// ADR-046: informational canonical interface egress
+		// (net_tx_bytes, rolled up at the server). 1.234 GB is a non-zero
 		// value so the line is exercised by this test.
 		UsedEgressGB: 1.234,
 	})
@@ -407,11 +407,12 @@ func TestCmdUsageList_HumanEgressColumn(t *testing.T) {
 			wantNot: []string{"egress 0.000 GB"},
 		},
 		{
-			// 1.5 GiB tx + 2.0 GiB net → 3.5 GiB egress, 1.50 / 2.00 split.
+			// 2.0 GiB net is canonical egress; 1.5 GiB tx is its diagnostic
+			// payload subset and remains visible only in the split.
 			// Conversion: float64(bytes) / (1024*1024*1024).
 			name: "non-zero egress prints column",
 			tx:   1610612736, net: 2147483648,
-			wantSub: []string{"a1 —", "1 · 0.000", "included 5", "egress 3.500 GB", "tx 1.50", "net 2.00"},
+			wantSub: []string{"a1 —", "1 · 0.000", "included 5", "egress 2.000 GB", "tx 1.50", "net 2.00"},
 		},
 	}
 	for _, tc := range cases {

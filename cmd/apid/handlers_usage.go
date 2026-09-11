@@ -112,6 +112,7 @@ func (s *server) getAppUsage(w http.ResponseWriter, r *http.Request, acct state.
 		GBHours:             summary.GBHours,
 		Requests:            summary.Requests,
 		TxBytes:             summary.TxBytes,
+		NetTxBytes:          summary.NetTxBytes,
 		BuilderSeconds:      summary.BuilderSeconds,
 		ColdBootCount:       summary.ColdBootCount,
 		PlanIncludedGBHours: planIncluded,

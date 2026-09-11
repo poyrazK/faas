@@ -244,6 +244,7 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 func testBillingUsageDelivery(t *testing.T, fx *Fixture) {
 	hour := time.Now().UTC().Truncate(time.Hour).Add(-2 * time.Hour)
 	const mbSeconds = int64(321)
+	const egressBytes = int64(654)
 	for _, provider := range []string{"paddle", "polar"} {
 		if err := fx.Store.UpsertBillingIdentity(fx.Ctx, state.BillingIdentity{
 			AccountID: fx.Account.ID, Provider: provider,
@@ -253,8 +254,22 @@ func testBillingUsageDelivery(t *testing.T, fx *Fixture) {
 			t.Fatalf("UpsertBillingIdentity(%s): %v", provider, err)
 		}
 	}
-	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, uuid.NewString(), hour.Add(5*time.Minute), mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 128, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	usageMinute := hour.Add(5 * time.Minute)
+	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, usageMinute, mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("AppendUsage: %v", err)
+	}
+	txDelta, rxDelta, err := fx.Store.AppendNetworkUsageObservation(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, usageMinute, egressBytes, true, 17, true)
+	if err != nil || txDelta != egressBytes || rxDelta != 17 {
+		t.Fatalf("AppendNetworkUsageObservation = (%d, %d, %v), want (%d, 17, nil)", txDelta, rxDelta, err, egressBytes)
+	}
+	txDelta, rxDelta, err = fx.Store.AppendNetworkUsageObservation(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, usageMinute, egressBytes, true, 17, true)
+	if err != nil || txDelta != 0 || rxDelta != 0 {
+		t.Fatalf("AppendNetworkUsageObservation(replay) = (%d, %d, %v), want zero delta", txDelta, rxDelta, err)
 	}
 	pending, err := fx.Store.PendingBillingUsageWindows(fx.Ctx, "paddle", hour, hour.Add(time.Hour))
 	if err != nil || len(pending) != 1 || pending[0].AccountID != fx.Account.ID || !pending[0].Hour.Equal(hour) || pending[0].MBSeconds != mbSeconds {
@@ -266,6 +281,19 @@ func testBillingUsageDelivery(t *testing.T, fx *Fixture) {
 	pending, err = fx.Store.PendingBillingUsageWindows(fx.Ctx, "paddle", hour, hour.Add(time.Hour))
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("paddle pending after delivery = (%+v, %v), want empty", pending, err)
+	}
+	// A compute receipt for the hour must not suppress its independently
+	// delivered egress meter.
+	meterPending, err := fx.Store.PendingBillingMeterUsageWindows(fx.Ctx, "paddle", state.BillingMeterEgress, hour, hour.Add(time.Hour))
+	if err != nil || len(meterPending) != 1 || meterPending[0].Quantity != egressBytes || meterPending[0].Meter != state.BillingMeterEgress {
+		t.Fatalf("paddle pending egress = (%+v, %v), want one %d-byte window", meterPending, err, egressBytes)
+	}
+	if err := fx.Store.RecordBillingMeterUsageDelivery(fx.Ctx, "paddle", fx.Account.ID, state.BillingMeterEgress, hour, egressBytes); err != nil {
+		t.Fatalf("RecordBillingMeterUsageDelivery(egress): %v", err)
+	}
+	meterPending, err = fx.Store.PendingBillingMeterUsageWindows(fx.Ctx, "paddle", state.BillingMeterEgress, hour, hour.Add(time.Hour))
+	if err != nil || len(meterPending) != 0 {
+		t.Fatalf("paddle pending egress after delivery = (%+v, %v), want empty", meterPending, err)
 	}
 	pending, err = fx.Store.PendingBillingUsageWindows(fx.Ctx, "polar", hour, hour.Add(time.Hour))
 	if err != nil || len(pending) != 1 || pending[0].AccountID != fx.Account.ID || !pending[0].Hour.Equal(hour) || pending[0].MBSeconds != mbSeconds {
