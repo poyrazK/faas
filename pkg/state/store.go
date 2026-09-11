@@ -4216,8 +4216,9 @@ type Store interface {
 	// schedd/gatewayd dial); vmmd's self-registration preserves it.
 	// ON CONFLICT (name) DO UPDATE SET target_url = excluded.target_url,
 	// vpcpus, mem_mb, max_concurrency, admission_ceiling_mb,
-	// vcpu_budget, active=true — full set, the operator's POST
-	// wins on every field.
+	// vcpu_budget, lifecycle = excluded.lifecycle — full set, the operator's
+	// POST wins on every field. An explicit unavailable lifecycle makes
+	// deferred enrollment atomic; an empty lifecycle defaults to active.
 	UpsertComputeNodeFromOperator(ctx context.Context, node ComputeNode) (ComputeNode, error)
 	// UpsertComputeNodeFromVmmd is the vmmd self-registration
 	// write path (cmd/vmmd/register.go). Writes only the

@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // dispatchComputeNodes is wired into cmd/gregalectl/main.go:switch
@@ -79,9 +81,9 @@ func cmdComputeNodesDispatch(args []string) int {
 	}
 }
 
-// computeNodesStoreOpener is the break-glass/add seam tests use to swap in a
-// MemStore without going through FAAS_PG_DSN. Routine read paths do not call
-// it; production wires it to openComputeNodesStore.
+// computeNodesStoreOpener is the break-glass seam tests use to swap in a
+// MemStore without going through FAAS_PG_DSN. Routine paths do not call it;
+// production wires it to openComputeNodesStore.
 //
 // The opener returns a `close func()` instead of leaking the
 // *pgxpool.Pool back out — production wires close to pool.Close;
@@ -111,6 +113,13 @@ func openComputeNodesStore() (state.Store, func(), error) {
 // only one that ever imported it — protects against future edits
 // deleting the import in a refactor.
 var _ = (*pgxpool.Pool)(nil)
+
+const computeNodeEnrollmentDefaultReason = "operator_node_enroll"
+
+var (
+	computeNodeEnrollmentReasonShape  = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+	computeNodeEnrollmentTraceIDShape = regexp.MustCompile(`^[0-9a-f]{32}$`)
+)
 
 // Lifecycle mutations use apid's authenticated, audited durable-intent path.
 // The database implementation remains only behind the loud
@@ -747,16 +756,14 @@ func emitComputeNodeShowJSON(w io.Writer, n state.ComputeNode, live int) int {
 }
 
 // cmdComputeNodesAdd is the operator-side pre-registration entry
-// point for adding a compute node to the fleet. Mirrors the admin
-// POST handler at cmd/apid/compute_nodes.go:createOrUpdateComputeNode
-// (the apid handler is unchanged; this is a CLI wrapper that goes
-// straight to the state.Store via openComputeNodesStore).
+// point for adding a compute node to the fleet. Routine enrollment uses the
+// authenticated apid POST; direct state.Store access requires the explicit
+// --break-glass-db outage path.
 //
 // The `--from-file` flag is the bridge that PR-B's
 // `gregalectl deploy add-node` uses to invoke this subcommand with
 // a payload it builds in-memory. When `--from-file` is set, the
-// remaining flags are ignored; the JSON body must match
-// computeNodePayload's shape exactly.
+// per-node capacity flags are ignored; operator-control flags still apply.
 //
 // Field semantics mirror the apid handler's 400 surface so the
 // operator and the daemon agree on what "valid" means: zero-valued
@@ -768,11 +775,9 @@ func cmdComputeNodesAdd(args []string) int {
 	return cmdComputeNodesAddTo(args, os.Stdout)
 }
 
-// cmdComputeNodesAddTo is the seam that takes an explicit
-// stdout writer. PR-A's CLI calls through cmdComputeNodesAdd
-// (which writes to os.Stdout); PR-B's deploy add-node calls
-// cmdComputeNodesAddTo with io.Discard so the inner OK line /
-// JSON blob doesn't pollute the outer report's stdout.
+// cmdComputeNodesAddTo is the seam that takes an explicit stdout writer.
+// The standalone command writes to os.Stdout; deploy add-node captures the
+// JSON response so it can report the enrolled row ID without a database read.
 //
 // Same flag set, same validation, same exit codes — only the
 // stdout destination differs.
@@ -787,7 +792,11 @@ func cmdComputeNodesAddTo(args []string, stdout io.Writer) int {
 	maxConc := fs.Int("max-concurrency", 0, "max concurrent live instances")
 	admCeil := fs.Int("admission-ceiling-mb", 0, "tenant RAM admission ceiling (85% of mem-mb for production nodes)")
 	fromFile := fs.String("from-file", "", "read a computeNodePayload-shaped JSON file instead of the per-field flags (PR-B bridge)")
-	deferActivation := fs.Bool("defer-activation", false, "insert/update the row drained so a deployment can activate it after readiness checks")
+	deferActivation := fs.Bool("defer-activation", false, "insert/update the row inactive so a deployment can activate it after readiness checks")
+	reason := fs.String("reason", "", "audit reason ([a-z0-9_]{1,64}; default: operator_node_enroll)")
+	traceIDFlag := fs.String("trace-id", "", "OTel 32-char-hex trace id (auto-generated when empty)")
+	breakGlass := fs.Bool("break-glass-db", false, "write directly to PostgreSQL during an apid outage")
+	ack := fs.Bool("yes", false, "acknowledge direct database mutation with --break-glass-db")
 	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -815,6 +824,7 @@ func cmdComputeNodesAddTo(args []string, stdout io.Writer) int {
 			AdmissionCeilingMB: *admCeil,
 		}
 	}
+	payload.DeferActivation = payload.DeferActivation || *deferActivation
 
 	// Validation mirrors the apid 400 surface
 	// (cmd/apid/compute_nodes.go:createOrUpdateComputeNode). When
@@ -848,7 +858,53 @@ func cmdComputeNodesAddTo(args []string, stdout io.Writer) int {
 		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes add: vpcpus, mem-mb, max-concurrency, admission-ceiling-mb must all be > 0")
 		return 2
 	}
+	cleanReason := strings.TrimSpace(*reason)
+	if cleanReason == "" {
+		cleanReason = computeNodeEnrollmentDefaultReason
+	}
+	if !computeNodeEnrollmentReasonShape.MatchString(cleanReason) {
+		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes add: --reason must match [a-z0-9_]{1,64}")
+		return 2
+	}
+	traceID := strings.TrimSpace(*traceIDFlag)
+	if traceID == "" {
+		traceID = wire.NewTraceID()
+	}
+	if !computeNodeEnrollmentTraceIDShape.MatchString(traceID) {
+		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes add: --trace-id must be 32 lowercase hex characters")
+		return 2
+	}
+	if *breakGlass {
+		if !*ack || strings.TrimSpace(*reason) == "" {
+			fmt.Fprintln(os.Stderr, "gregalectl compute-nodes add: --break-glass-db requires --yes and an explicit --reason")
+			return 2
+		}
+		return computeNodeAddBreakGlass(payload, cleanReason, traceID, *jsonOut, stdout)
+	}
+	return computeNodeAddViaAPI(payload, cleanReason, traceID, *jsonOut, stdout)
+}
 
+func computeNodeAddViaAPI(payload computeNodePayload, reason, traceID string, jsonOut bool, stdout io.Writer) int {
+	sess, err := loadOperatorSession()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes add:", err)
+		return 1
+	}
+	path := "/v1/compute-nodes?reason=" + url.QueryEscape(reason)
+	headers := make(http.Header)
+	headers.Set(operatorTraceIDHeader, traceID)
+	var response api.ComputeNodeOperatorResponse
+	if err := newOperatorHTTPClient(&sess).doJSONWithHeaders(context.Background(), http.MethodPost, path, payload, &response, true, nil, headers); err != nil {
+		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes add:", err)
+		return 1
+	}
+	if response.TraceID != "" {
+		traceID = response.TraceID
+	}
+	return reportComputeNodeEnrollment(stdout, computeNodeFromOperatorResponse(response), traceID, jsonOut)
+}
+
+func computeNodeAddBreakGlass(payload computeNodePayload, reason, traceID string, jsonOut bool, stdout io.Writer) int {
 	st, closeFn, err := computeNodesStoreOpener()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -856,18 +912,9 @@ func cmdComputeNodesAddTo(args []string, stdout io.Writer) int {
 	}
 	defer closeFn()
 
-	// Build the row. The CLI only knows 6 fields; the SQL
-	// ON CONFLICT clause (pgstore.go:8873-8889) writes
-	// release_id / manifest_hash / host_certificate /
-	// cert_fingerprint / role from `excluded.*` — so passing
-	// nil for those fields would NULL them out on a re-add and
-	// break the installed node's PKI + release metadata.
-	//
-	// Read the existing row first; copy the operator-side
-	// pointer fields (Role, ReleaseID, ManifestHash,
-	// HostCertificate, CertFingerprint) so the UPSERT
-	// preserves them. The cold-insert branch (no existing row)
-	// leaves them nil — same as the pre-PR-A apid behavior.
+	// Preserve every field absent from the enrollment payload. The state
+	// upsert is full-set, so omitting PKI, release, topology, or routing
+	// metadata here would erase it during an emergency re-enrollment.
 	node := state.ComputeNode{
 		Name:      payload.Name,
 		TargetURL: payload.TargetURL,
@@ -880,16 +927,27 @@ func cmdComputeNodesAddTo(args []string, stdout io.Writer) int {
 		MemMB:              payload.MemMB,
 		MaxConcurrency:     payload.MaxConcurrency,
 		AdmissionCeilingMB: payload.AdmissionCeilingMB,
+		Lifecycle:          state.NodeLifecycleActive,
+	}
+	if payload.DeferActivation {
+		node.Lifecycle = state.NodeLifecycleUnavailable
 	}
 	if value := strings.TrimSpace(payload.GatewayTargetURL); value != "" {
 		node.GatewayTargetURL = &value
 	}
 	if existing, lookupErr := st.ComputeNodeByName(context.Background(), payload.Name); lookupErr == nil {
+		node.VCPUBudget = existing.VCPUBudget
+		node.Region = existing.Region
+		node.Zone = existing.Zone
+		node.ScheddTargetURL = existing.ScheddTargetURL
 		node.Role = existing.Role
 		node.ReleaseID = existing.ReleaseID
 		node.ManifestHash = existing.ManifestHash
 		node.HostCertificate = existing.HostCertificate
 		node.CertFingerprint = existing.CertFingerprint
+		node.PublicIp = existing.PublicIp
+		node.PublicIpSetAt = existing.PublicIpSetAt
+		node.Generation = existing.Generation
 		if node.GatewayTargetURL == nil {
 			node.GatewayTargetURL = existing.GatewayTargetURL
 		}
@@ -902,14 +960,11 @@ func cmdComputeNodesAddTo(args []string, stdout io.Writer) int {
 		fmt.Fprintf(os.Stderr, "gregalectl compute-nodes add: upsert: %v\n", err)
 		return 1
 	}
-	if *deferActivation {
-		if err := st.SetComputeNodeActive(context.Background(), row.ID, false); err != nil {
-			fmt.Fprintf(os.Stderr, "gregalectl compute-nodes add: defer activation: %v\n", err)
-			return 1
-		}
-		row.Active = false
-	}
+	fmt.Fprintf(os.Stderr, "BREAK GLASS: direct database compute-node enrollment; node=%s reason=%s trace_id=%s\n", row.Name, reason, traceID)
+	return reportComputeNodeEnrollment(stdout, row, traceID, jsonOut)
+}
 
+func reportComputeNodeEnrollment(stdout io.Writer, row state.ComputeNode, traceID string, jsonOut bool) int {
 	// `compute_node_changed` pg_notify trigger (migration 00026) fires
 	// on the UPSERT; the operator's manual curl + jq workflow and
 	// this CLI share the same fan-out, so the runbook's "wait for
@@ -919,48 +974,40 @@ func cmdComputeNodesAddTo(args []string, stdout io.Writer) int {
 	if _, err := fmt.Fprintln(os.Stderr, "compute_node_changed pg_notify fired (channel: compute_node_changed; subscribers: schedd, gatewayd-internal)"); err != nil {
 		return 1
 	}
-	if *jsonOut {
-		return emitComputeNodeAddedJSON(stdout, row)
+	if jsonOut {
+		return emitComputeNodeAddedJSON(stdout, row, traceID)
 	}
-	_, _ = fmt.Fprintf(stdout, "OK name=%s id=%s target_url=%s gateway_target_url=%s vpcpus=%d mem_mb=%d max_concurrency=%d admission_ceiling_mb=%d\n",
-		row.Name, row.ID, row.TargetURL, computeNodeGatewayTargetValue(row.GatewayTargetURL), row.VPCPUs, row.MemMB, row.MaxConcurrency, row.AdmissionCeilingMB)
+	_, _ = fmt.Fprintf(stdout, "OK name=%s id=%s target_url=%s gateway_target_url=%s vpcpus=%d mem_mb=%d max_concurrency=%d admission_ceiling_mb=%d trace_id=%s\n",
+		row.Name, row.ID, row.TargetURL, computeNodeGatewayTargetValue(row.GatewayTargetURL), row.VPCPUs, row.MemMB, row.MaxConcurrency, row.AdmissionCeilingMB, traceID)
 	return 0
 }
 
-// computeNodePayload is the JSON shape consumed by --from-file.
-// Mirrors cmd/apid/compute_nodes.go:computeNodePayload exactly so
-// PR-B's deploy add-node can write the same payload to a scratch
-// file and pass it through.
-type computeNodePayload struct {
+// computeNodePayload is the shared authenticated enrollment wire shape.
+type computeNodePayload = api.ComputeNodeEnrollmentRequest
+
+type computeNodeAddedJSON struct {
 	Name               string `json:"name"`
+	ID                 string `json:"id"`
 	TargetURL          string `json:"target_url"`
 	GatewayTargetURL   string `json:"gateway_target_url,omitempty"`
 	VPCPUs             int    `json:"vpcpus"`
 	MemMB              int    `json:"mem_mb"`
 	MaxConcurrency     int    `json:"max_concurrency"`
 	AdmissionCeilingMB int    `json:"admission_ceiling_mb"`
+	Active             bool   `json:"active"`
+	TraceID            string `json:"trace_id"`
 }
 
 // emitComputeNodeAddedJSON writes the upserted row as structured
 // JSON to w. Kept as a free function so tests can call it with a
 // bytes.Buffer without touching os.Stdout directly.
-func emitComputeNodeAddedJSON(w io.Writer, row state.ComputeNode) int {
-	body, err := json.Marshal(struct {
-		Name               string `json:"name"`
-		ID                 string `json:"id"`
-		TargetURL          string `json:"target_url"`
-		GatewayTargetURL   string `json:"gateway_target_url,omitempty"`
-		VPCPUs             int    `json:"vpcpus"`
-		MemMB              int    `json:"mem_mb"`
-		MaxConcurrency     int    `json:"max_concurrency"`
-		AdmissionCeilingMB int    `json:"admission_ceiling_mb"`
-		Active             bool   `json:"active"`
-	}{
+func emitComputeNodeAddedJSON(w io.Writer, row state.ComputeNode, traceID string) int {
+	body, err := json.Marshal(computeNodeAddedJSON{
 		Name: row.Name, ID: row.ID, TargetURL: row.TargetURL,
 		GatewayTargetURL: computeNodeGatewayTargetValue(row.GatewayTargetURL),
 		VPCPUs:           row.VPCPUs, MemMB: row.MemMB,
 		MaxConcurrency: row.MaxConcurrency, AdmissionCeilingMB: row.AdmissionCeilingMB,
-		Active: row.Active,
+		Active: row.Active, TraceID: traceID,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gregalectl compute-nodes add: marshal json: %v\n", err)

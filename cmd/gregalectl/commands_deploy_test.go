@@ -19,12 +19,15 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -407,10 +410,37 @@ func TestCmdDeployAddNode_RollsBackOnBootstrapFailure(t *testing.T) {
 	}
 }
 
-// TestCmdDeployAddNode_PostsComputeNodeRow asserts the happy
-// bootstrap → POST path lands a row in compute_nodes.
+// TestCmdDeployAddNode_PostsComputeNodeRow asserts the happy bootstrap →
+// authenticated POST path uses the response row ID without a database read.
 func TestCmdDeployAddNode_PostsComputeNodeRow(t *testing.T) {
-	resetComputeNodesStore(t)
+	const rowID = "11111111-1111-1111-1111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/compute-nodes" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("reason"); got != "deploy_add_node" {
+			t.Errorf("reason = %q", got)
+		}
+		var request api.ComputeNodeEnrollmentRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode enrollment: %v", err)
+			return
+		}
+		writeTestJSON(w, http.StatusOK, api.ComputeNodeOperatorResponse{
+			ID: rowID, Name: request.Name, TargetURL: request.TargetURL,
+			VPCPUs: request.VPCPUs, MemMB: request.MemMB,
+			MaxConcurrency: request.MaxConcurrency, AdmissionCeilingMB: request.AdmissionCeilingMB,
+			Active: true,
+		})
+	}))
+	defer server.Close()
+	installTestOperatorSession(t, server.URL, "opaque-session")
+	previousOpener := computeNodesStoreOpener
+	computeNodesStoreOpener = func() (state.Store, func(), error) {
+		t.Fatal("deploy add-node opened PostgreSQL after enrollment")
+		return nil, func() {}, nil
+	}
+	t.Cleanup(func() { computeNodesStoreOpener = previousOpener })
 	repo := makeFakeRepo(t)
 	defer installFakeGit(t, nil)()
 	defer installFakeSSH(t, fakeSSHResult{Stdout: []byte("ok"), Stderr: []byte(""), Err: nil})()
@@ -439,6 +469,9 @@ func TestCmdDeployAddNode_PostsComputeNodeRow(t *testing.T) {
 
 	if !strings.Contains(stdoutBuf.String(), "OK fqdn=faas-fsn-3") {
 		t.Errorf("stdout missing OK line: %q", stdoutBuf.String())
+	}
+	if !strings.Contains(stdoutBuf.String(), "compute_node_row="+rowID) {
+		t.Errorf("stdout missing response row id: %q", stdoutBuf.String())
 	}
 }
 

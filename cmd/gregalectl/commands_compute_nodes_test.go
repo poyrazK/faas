@@ -244,6 +244,7 @@ func TestCmdComputeNodesAdd_HappyPath(t *testing.T) {
 				"--target-url=tcp://vmmd-3.faas:50051",
 				"--vpcpus=160", "--mem-mb=56000",
 				"--max-concurrency=200", "--admission-ceiling-mb=47600",
+				"--break-glass-db", "--yes", "--reason=test_node_enroll",
 			}); code != 0 {
 				t.Errorf("cmdComputeNodesAdd(happy) = %d, want 0", code)
 			}
@@ -272,6 +273,7 @@ func TestCmdComputeNodesAdd_DeferActivationLeavesRowDrained(t *testing.T) {
 		"--vpcpus=4", "--mem-mb=16384",
 		"--max-concurrency=200", "--admission-ceiling-mb=13926",
 		"--defer-activation",
+		"--break-glass-db", "--yes", "--reason=test_node_enroll",
 	}); code != 0 {
 		t.Fatalf("cmdComputeNodesAdd(--defer-activation) = %d, want 0", code)
 	}
@@ -301,6 +303,7 @@ func TestCmdComputeNodesAdd_HappyPath_JSON(t *testing.T) {
 				"--vpcpus=160", "--mem-mb=56000",
 				"--max-concurrency=200", "--admission-ceiling-mb=47600",
 				"--json",
+				"--break-glass-db", "--yes", "--reason=test_node_enroll",
 			}); code != 0 {
 				t.Errorf("cmdComputeNodesAdd(--json) = %d, want 0", code)
 			}
@@ -319,6 +322,72 @@ func TestCmdComputeNodesAdd_HappyPath_JSON(t *testing.T) {
 	}
 	if got["active"] != true {
 		t.Errorf("active = %v, want true", got["active"])
+	}
+	if got["trace_id"] == "" {
+		t.Error("trace_id is empty")
+	}
+}
+
+func TestComputeNodeAddUsesAuthenticatedAPI(t *testing.T) {
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/compute-nodes" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if cookie, err := r.Cookie("faas_sid"); err != nil || cookie.Value != "opaque-session" {
+			t.Errorf("session cookie = %v, %v", cookie, err)
+		}
+		if r.Header.Get("Idempotency-Key") == "" || r.Header.Get(operatorTraceIDHeader) != traceID {
+			t.Errorf("mutation headers = %#v", r.Header)
+		}
+		if got := r.URL.Query().Get("reason"); got != "fleet_expansion" {
+			t.Errorf("reason = %q", got)
+		}
+		var request api.ComputeNodeEnrollmentRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if request.Name != "fsn-3" || !request.DeferActivation {
+			t.Errorf("request = %+v", request)
+		}
+		writeTestJSON(w, http.StatusOK, api.ComputeNodeOperatorResponse{
+			ID: "11111111-1111-1111-1111-111111111111", Name: request.Name,
+			TargetURL: request.TargetURL, VPCPUs: request.VPCPUs, MemMB: request.MemMB,
+			MaxConcurrency: request.MaxConcurrency, AdmissionCeilingMB: request.AdmissionCeilingMB,
+			Active: false, TraceID: traceID,
+		})
+	}))
+	defer server.Close()
+	installTestOperatorSession(t, server.URL, "opaque-session")
+
+	previousOpener := computeNodesStoreOpener
+	computeNodesStoreOpener = func() (state.Store, func(), error) {
+		t.Fatal("default enrollment path opened the database")
+		return nil, func() {}, nil
+	}
+	t.Cleanup(func() { computeNodesStoreOpener = previousOpener })
+
+	var stdout bytes.Buffer
+	stderr := captureStderrComputeNodes(t, func() {
+		if code := cmdComputeNodesAddTo([]string{
+			"--name=fsn-3", "--target-url=tcp://vmmd-3.faas:50051",
+			"--vpcpus=4", "--mem-mb=16384", "--max-concurrency=20",
+			"--admission-ceiling-mb=13926", "--defer-activation",
+			"--reason=fleet_expansion", "--trace-id=" + traceID, "--json",
+		}, &stdout); code != 0 {
+			t.Fatalf("add exit = %d", code)
+		}
+	})
+	var output computeNodeAddedJSON
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output.ID == "" || output.Active || output.TraceID != traceID {
+		t.Fatalf("output = %+v", output)
+	}
+	if !strings.Contains(stderr, "compute_node_changed pg_notify fired") {
+		t.Errorf("stderr = %q", stderr)
 	}
 }
 
@@ -342,7 +411,7 @@ func TestCmdComputeNodesAdd_FromFile(t *testing.T) {
 
 	stdoutBuf, _ := captureStdoutComputeNodes(t, func() {
 		captureStderrComputeNodes(t, func() {
-			if code := cmdComputeNodesAdd([]string{"--from-file=" + payloadPath}); code != 0 {
+			if code := cmdComputeNodesAdd([]string{"--from-file=" + payloadPath, "--break-glass-db", "--yes", "--reason=test_node_enroll"}); code != 0 {
 				t.Errorf("cmdComputeNodesAdd(--from-file) = %d, want 0", code)
 			}
 		})
@@ -396,6 +465,7 @@ func TestCmdComputeNodesAdd_Idempotent(t *testing.T) {
 		"--target-url=tcp://vmmd-3.faas:50051",
 		"--vpcpus=160", "--mem-mb=56000",
 		"--max-concurrency=200", "--admission-ceiling-mb=47600",
+		"--break-glass-db", "--yes", "--reason=test_node_enroll",
 	}
 	buf1, _ := captureStdoutComputeNodes(t, func() {
 		captureStderrComputeNodes(t, func() {
@@ -794,6 +864,9 @@ func seedNode(t *testing.T, name, targetURL string) {
 		"--mem-mb=4096",
 		"--max-concurrency=20",
 		"--admission-ceiling-mb=3500",
+		"--break-glass-db",
+		"--yes",
+		"--reason=test_node_enroll",
 	}); code != 0 {
 		t.Fatalf("seedNode(%s): add returned %d", name, code)
 	}

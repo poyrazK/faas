@@ -37,17 +37,13 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // dispatchDeploy is wired into cmd/gregalectl/main.go:switch
@@ -467,25 +463,28 @@ func addNodeExecute(p addNodeParams) (addNodeReport, int) {
 		fmt.Fprintf(os.Stderr, "gregalectl deploy add-node: close scratch: %v\n", err)
 		return report, 1
 	}
-	// Invoke cmdComputeNodesAdd via --from-file. The seam already
-	// wires the state store; passing the JSON scratch file
-	// exercises the same validation path as if the operator ran
-	// the CLI directly. We redirect stdout to io.Discard so the
-	// inner OK line / JSON blob doesn't pollute the outer
-	// report's stdout (the deploy flow only consumes the exit
-	// code + the row id from the post-call lookup).
-	if code := cmdComputeNodesAddTo([]string{"--from-file=" + scratch.Name()}, io.Discard); code != 0 {
+	// Invoke the same authenticated enrollment path as the standalone command.
+	// Capture its JSON response so the coordinator can report the row ID without
+	// opening PostgreSQL for a follow-up read.
+	var enrollment bytes.Buffer
+	if code := cmdComputeNodesAddTo([]string{
+		"--from-file=" + scratch.Name(),
+		"--reason=deploy_add_node",
+		"--json",
+	}, &enrollment); code != 0 {
 		fmt.Fprintf(os.Stderr, "gregalectl deploy add-node: compute-nodes add exited %d (repo+bootstrap ok; row not inserted)\n", code)
 		return report, 1
 	}
-	// Re-read the row to capture the id (idempotent re-POST
-	// preserves it across bootstrap → POST → vmmd-boot).
-	if st, _, err := computeNodesStoreOpener(); err == nil {
-		row, getErr := st.ComputeNodeByName(context.Background(), p.FQDN)
-		if getErr == nil {
-			report.ComputeNodeRowID = row.ID
-		}
+	var enrolled computeNodeAddedJSON
+	if err := json.Unmarshal(enrollment.Bytes(), &enrolled); err != nil {
+		fmt.Fprintf(os.Stderr, "gregalectl deploy add-node: decode compute-node response: %v\n", err)
+		return report, 1
 	}
+	if enrolled.ID == "" {
+		fmt.Fprintln(os.Stderr, "gregalectl deploy add-node: compute-node response omitted row id")
+		return report, 1
+	}
+	report.ComputeNodeRowID = enrolled.ID
 	return report, 0
 }
 
@@ -576,10 +575,3 @@ func gitDirty(repoRoot, fqdn string) (bool, error) {
 	}
 	return len(strings.TrimSpace(string(out))) > 0, nil
 }
-
-// _ pins the state import for the row read seam; harmless if
-// unused.
-var _ = state.ComputeNode{}
-
-// _ pins the io import for future stdout/stderr helpers.
-var _ = io.Discard
