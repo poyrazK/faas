@@ -117,7 +117,7 @@ func boot() error {
 	}
 	// Job VMs (issue #1184 Workstream A / ADR-099) are
 	// single-shot: load /etc/faas/job.json, exec the customer's
-	// command, ship the vsock DGRAM, poweroff. No readiness
+	// command, ship the vsock stream, poweroff. No readiness
 	// probe, no listener port, no cgroup2 (the host-side
 	// per-instance scope from vmmd is still enforced — same
 	// contract as every other VM). runJob is total: it powers

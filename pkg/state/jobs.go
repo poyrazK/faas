@@ -366,7 +366,7 @@ type JobStore interface {
 	// JobTaskMarkTerminal transitions a single task to a terminal
 	// status ('succeeded' | 'failed' | 'timeout' | 'cancelled' |
 	// 'oom') AND stamps exit_code + error_class + error_message +
-	// finished_at. Called by schedd when the guest's job_exit DGRAM
+	// finished_at. Called by schedd when the guest's job-exit stream
 	// arrives, or by the reaper when a lease expires.
 	//
 	// Returns ErrNotFound when (run_id, task_index) does not resolve

@@ -239,9 +239,9 @@ Adding `'job'` is a branch in the supervisor:
   enforce `snapshot_and_park` watchdog.
 - `kind = 'job'` (new): spawn `command[0]` with `command[1..]`
   and the merged env, capture exit code, write a one-shot
-  `job_task.exit` DGRAM to the host (`port=1026, msg_type=3`,
+  `job_task.exit` stream to the host (`port=1026, msg_type=4`,
   distinct from `VsockResumePort=1024` and the characterize
-  probe's `1025/2`), then `os.Exit(code)`.
+  probe's `1025/2`), then powers the VM off.
 
 The watchdog for `kind = 'job'` is `task_timeout_s` (per-job),
 not the wake's 5 s `snapshot_and_park`. On timeout, guest-init

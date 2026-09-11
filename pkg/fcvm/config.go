@@ -112,20 +112,13 @@ const (
 // Job-task vsock surface (issue #1184 Workstream A / ADR-099).
 //
 // VsockJobExitPort is the AF_VSOCK port the guest-init job
-// supervisor (guest/init/job_supervisor_linux.go, M8) writes the
-// terminal exit envelope to via DGRAM. The port NUMBER matches
-// VsockCharacterizationHostPort = 1026 (the wake-time characterize
-// channel); the discriminator is the socket TYPE:
-//   - characterize: STREAM, host-initiated (gatewayd-internal opens
-//     the connection, guest-init accepts).
-//   - job_exit:     DGRAM,   guest-initiated (guest-init writes the
-//     envelope, vmmd reads it via the per-VM vsock
-//     device).
+// supervisor (guest/init/job_supervisor_linux.go, M8) uses for the
+// terminal exit STREAM. The port number matches the characterization
+// channel, but job and app VMs run mutually exclusive guest-init modes;
+// the framed message type is an additional cross-protocol guard.
 //
 // VsockJobExitMsgType is the vsock message type byte the host
-// expects in the first byte of every job-exit DGRAM. Any other
-// value triggers a parse error and the DGRAM is dropped (vmmd logs
-// at WARN).
+// expects in every job-exit frame. Any other value is rejected.
 const (
 	VsockJobExitPort    = 1026
 	VsockJobExitMsgType = 4
@@ -211,21 +204,21 @@ type ColdBootSpec struct {
 //     backend on first cold-boot; subsequent runs reuse the
 //     staged layer (same as app cold-boot path).
 //   - Command is the argv (exec form, no shell). guest/init/
-//     job_supervisor_linux.go (M8) does the syscall.Exec.
+//     job_supervisor_linux.go (M8) supervises it as a child of PID 1.
 //   - Env is merged into the guest's process env: systemEnv ⊕
 //     job.env_overrides ⊕ run.env_overrides (run overrides win).
 //   - TaskTimeoutSec is the per-task wall-clock cap that the
 //     guest supervisor enforces (via SIGTERM → 30s grace →
 //     SIGKILL) and that schedd uses to compute lease_expires_at.
-//   - LeaseToken is the idempotency key for the post-exit DGRAM
+//   - LeaseToken is the idempotency key for the post-exit envelope
 //     (HandleJobExit rejects tokens that don't match the row).
 //   - VsockJobExitPort / VsockJobExitMsgType are hard-coded; the
 //     guest-init supervisor reads them via /etc/faas/app.json
 //     (mirrors the characterize-port load path).
 //   - No HealthcheckPath / SkipReady: jobs run a single command
 //     to completion, not a long-lived listener. The supervisor
-//     exits as soon as the command exits; HandleJobExit fires
-//     off the DGRAM.
+//     exits as soon as the command exits; HandleJobExit consumes
+//     the acknowledged terminal frame.
 //
 // EffectiveDestroyWait is min(task_timeout_s + 90s,
 // JobDestroyWaitDefault) so a long-running job's cleanup phase
@@ -245,7 +238,7 @@ type JobColdBootSpec struct {
 	TaskTimeoutSec int
 	// LeaseToken is the (run_id|"\x00"|task_index) lease from
 	// Engine.WakeJob. The guest supervisor embeds it in the
-	// job_exit DGRAM payload so HandleJobExit can verify ownership.
+	// job_exit payload so HandleJobExit can verify ownership.
 	LeaseToken string
 	// AccountID + RunID + TaskIndex are stamped into
 	// /etc/faas/app.json for guest-init introspection (mirrors

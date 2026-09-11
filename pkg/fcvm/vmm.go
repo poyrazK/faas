@@ -69,6 +69,11 @@ type JailerVMM struct {
 	mu      sync.Mutex
 	proc    map[string]*exec.Cmd // instance -> running jailer process
 	clients map[string]*http.Client
+	// jobExitListeners are bound before a job VM is allowed to boot. Firecracker
+	// forwards guest-initiated AF_VSOCK streams to <uds_path>_<port>; keeping the
+	// listener here closes the race where a short job exits before schedd starts
+	// its WaitJobExit RPC.
+	jobExitListeners map[string]*net.UnixListener
 	// hcClient (issue #460 / ADR-053, ADR-057 / PR-D) is the
 	// per-VMM *http.Client the waitReady HTTP probe reuses across
 	// its 200ms-cadence loop. Lazily created by healthcheckClient
@@ -343,18 +348,19 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		readyTimeout = 30 * time.Second
 	}
 	return &JailerVMM{
-		chrootBase:      chrootBase,
-		fcName:          resolveFCChrootName(),
-		readyTimeout:    readyTimeout,
-		destroyWait:     10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
-		exportMaxBytes:  0,                // resolved to api.MaxExportedLayerBytes at first export
-		proc:            make(map[string]*exec.Cmd),
-		clients:         make(map[string]*http.Client),
-		recs:            make(map[string]*instanceRecord),
-		rings:           make(map[string]*logbuf.Ring),
-		materialisedTmp: make(map[string][]string),
-		bindMounts:      make(map[string][]ephemeralBind),
-		bindSourceModes: make(map[string]bindSourceMode),
+		chrootBase:       chrootBase,
+		fcName:           resolveFCChrootName(),
+		readyTimeout:     readyTimeout,
+		destroyWait:      10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
+		exportMaxBytes:   0,                // resolved to api.MaxExportedLayerBytes at first export
+		proc:             make(map[string]*exec.Cmd),
+		clients:          make(map[string]*http.Client),
+		jobExitListeners: make(map[string]*net.UnixListener),
+		recs:             make(map[string]*instanceRecord),
+		rings:            make(map[string]*logbuf.Ring),
+		materialisedTmp:  make(map[string][]string),
+		bindMounts:       make(map[string][]ephemeralBind),
+		bindSourceModes:  make(map[string]bindSourceMode),
 	}
 }
 
@@ -572,9 +578,9 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// (pre-PR-D default). Non-empty → waitReady does HTTP GET
 	// <HealthcheckPath> against <HostIP>:8080 and accepts 2xx as ready.
 	if spec.SkipReady {
-		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP)
+		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, nil)
 	}
-	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, &breakdown); err != nil {
+	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, nil, &breakdown); err != nil {
 		return err
 	}
 	breakdown.TotalMs = time.Since(t0).Milliseconds()
@@ -583,8 +589,8 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	return nil
 }
 
-func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string) error {
-	return v.boot(ctx, l, cfg, true, "", 0, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, nil)
+func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, jobManifest *JobManifest) error {
+	return v.boot(ctx, l, cfg, true, "", 0, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, jobManifest, nil)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -606,10 +612,10 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
-	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, nil, nil, nil, "", nil)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, nil, nil, nil, "", nil, nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, breakdown *coldBootTimingBreakdown) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
 	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
@@ -631,6 +637,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
+	if jobManifest != nil {
+		if err := v.stageJobManifest(l.Instance, *jobManifest); err != nil {
+			return fmt.Errorf("vmm: stage job manifest: %w", err)
+		}
+	}
 	stagedRuntimeAt := time.Now()
 	cfgBytes, err := json.Marshal(jailed)
 	if err != nil {
@@ -643,6 +654,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	preparedConfigAt := time.Now()
 	if err = v.ownChrootRoot(root, l); err != nil {
 		return err
+	}
+	if jobManifest != nil {
+		if err = v.prepareJobExitListener(l); err != nil {
+			return fmt.Errorf("vmm: prepare job-exit listener: %w", err)
+		}
 	}
 	if err = v.stageMountHelper(root); err != nil {
 		return err
@@ -1844,6 +1860,7 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // SIGKILL'd instances don't get an artifact export — that's Builderd's path
 // (use DestroyWithExport).
 func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
+	v.closeJobExitListener(l.Instance)
 	v.mu.Lock()
 	cmd, hasCmd := v.proc[l.Instance]
 	rec, hasRec := v.recs[l.Instance]
@@ -2074,6 +2091,7 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 	v.mu.Unlock()
 	if !ok {
 		// Unknown / already-torn-down instance: idempotent, no exit code to report.
+		v.closeJobExitListener(l.Instance)
 		v.closeClient(l.Instance)
 		_ = os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance))
 		return 0, nil
@@ -2168,6 +2186,7 @@ exited:
 	// see EOF and the byte budget is released. Done before the chroot
 	// wipe for the same reason as in Kill.
 	v.unregisterRing(l.Instance)
+	v.closeJobExitListener(l.Instance)
 	v.closeClient(l.Instance)
 	v.unmountBindMounts(l.Instance)
 	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
