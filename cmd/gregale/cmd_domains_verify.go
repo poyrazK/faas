@@ -69,6 +69,9 @@ func cmdDomainsShow(args []string) int {
 	if err != nil {
 		return printErr("Request failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(d))
+	}
 	printDomainRow(d, true)
 	return 0
 }
