@@ -5506,6 +5506,9 @@ type Store interface {
 	DeleteAppLogDrain(ctx context.Context, id string) error
 	ListAppLogDrainsForApp(ctx context.Context, appID string) ([]AppLogDrain, error)
 	ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, error)
+	UpsertAppLogDrainHealth(ctx context.Context, health AppLogDrainHealth) error
+	AppLogDrainHealthByDrainID(ctx context.Context, drainID string) (AppLogDrainHealth, error)
+	ListAppLogDrainHealthForApp(ctx context.Context, appID string) ([]AppLogDrainHealth, error)
 
 	// RecordAppWebhookDelivery is the apid-side enqueue. Called by
 	// the event emitters (cron dispatcher, app lifecycle handlers)

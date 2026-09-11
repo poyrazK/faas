@@ -30,7 +30,12 @@ rate(gateway_log_drain_delivery_latency_seconds_sum{app="<app>", kind="<kind>"}[
 
 Then inspect gatewayd-internal logs for the drain ID and endpoint response
 status. Authentication headers are never logged. Use the app log-drain API to
-confirm the destination URL and rotate the credential if necessary.
+confirm the destination URL and rotate the credential if necessary. For the
+current per-drain snapshot, use
+`GET /v1/apps/{slug}/log-drains/{id}/health` or the app dashboard's Log-drain
+health page; the snapshot includes queue, delivery, retry, drop, gap, and
+last-success/failure state without exposing credentials or raw endpoint
+errors.
 
 ## Interpret the alert
 
@@ -48,10 +53,10 @@ confirm the destination URL and rotate the credential if necessary.
 
 ## Recover
 
-The current delivery path is best effort and does not provide a durable
-per-drain cursor or replay ledger. Treat drops and gaps as real data loss and
-record the affected time window in the incident notes. Resolve endpoint,
-credential, certificate, or egress issues, then confirm the queue drains and
-the success timestamp advances. If records were dropped or gaps were
-reported, notify the customer and record the affected time window; those
-records cannot be replayed from the drain path.
+The delivery path is best effort. The per-drain health snapshot is durable,
+but it does not provide a cursor or replay ledger. Treat drops and gaps as
+real data loss and record the affected time window in the incident notes.
+Resolve endpoint, credential, certificate, or egress issues, then confirm the
+queue drains and the success timestamp advances. If records were dropped or
+gaps were reported, notify the customer and record the affected time window;
+those records cannot be replayed from the drain path.

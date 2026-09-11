@@ -114,6 +114,11 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderPreviewsList(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			// Customer runtime log destinations with durable delivery health.
+			if lslug, ok := parseAppLogDrainsPath(slug); ok {
+				s.renderAppLogDrains(w, r, log, acct, lslug)
+				return
+			}
 			// G10 / issue #1397 — object storage buckets, objects,
 			// signed URLs, and daily storage usage.
 			if sslug, ok := parseAppStoragePath(slug); ok {

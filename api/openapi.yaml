@@ -10266,6 +10266,29 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/log-drains/{id}/health:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [observability]
+      operationId: getAppLogDrainHealth
+      summary: Fetch durable delivery health for a runtime log destination.
+      description: |
+        Returns a customer-safe delivery snapshot. Authentication headers and
+        raw transport errors are never returned. Empty timestamps mean that
+        the corresponding event has not happened yet.
+      responses:
+        '200':
+          description: Durable log-drain delivery health.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppLogDrainHealthResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Event-driven surface (Move 2) ─────────────────────────────────────────
   # Customer-facing surface for the Move 1 invocations backend. The five
   # shapes — async_invoke, queue_send, queue_receive, queue_ack, delayed_task
@@ -24803,6 +24826,27 @@ components:
         auth_header_masked: { type: string, enum: ["", "***"] }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AppLogDrainHealthResponse:
+      type: object
+      description: Durable, customer-safe delivery health for one runtime log destination.
+      required: [log_drain_id, status, active, queue_depth, queue_capacity, delivered_total, failed_total, dropped_total, retries_total, stream_reconnects_total, gaps_total, updated_at]
+      properties:
+        log_drain_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        status: { type: string, enum: [unknown, healthy, degraded, inactive] }
+        active: { type: boolean }
+        queue_depth: { type: integer, minimum: 0 }
+        queue_capacity: { type: integer, minimum: 0 }
+        delivered_total: { type: integer, format: int64, minimum: 0 }
+        failed_total: { type: integer, format: int64, minimum: 0 }
+        dropped_total: { type: integer, format: int64, minimum: 0 }
+        retries_total: { type: integer, format: int64, minimum: 0 }
+        stream_reconnects_total: { type: integer, format: int64, minimum: 0 }
+        gaps_total: { type: integer, format: int64, minimum: 0 }
+        last_success_at: { type: string, format: date-time }
+        last_failure_at: { type: string, format: date-time }
+        last_error: { type: string, description: Sanitized delivery summary; never raw transport output. }
         updated_at: { type: string, format: date-time }
 
     CreateAppLogDrainRequest:

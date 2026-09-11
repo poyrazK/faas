@@ -58,6 +58,23 @@ or increase(gateway_log_drain_dropped_total[5m]) > 0
    its credential if needed. Do not expose the sealed credential in support
    output.
 
-Counters and timestamps are process-local at the gateway, so a restart resets
-the in-memory view. Prometheus retains the historical samples, but delivery
-does not yet have a durable per-drain cursor or replay ledger.
+## Customer health surface
+
+`gatewayd-internal` batches the current snapshot every 15 seconds into the
+`app_log_drain_health` table. The snapshot survives a gateway restart and is
+available through:
+
+```text
+GET /v1/apps/{slug}/log-drains/{id}/health
+```
+
+The response includes queue depth/capacity, delivery/failure/drop/retry
+counters, stream reconnects, source gaps, last success/failure timestamps,
+and a short sanitized error summary. It never includes the configured auth
+header or a raw transport error. The same state is shown at
+`/dashboard/apps/{slug}/log-drains`.
+
+The durable view is a health snapshot, not a replay ledger: a restart or a
+source-ring gap cannot recover records that were already lost. Prometheus
+remains the source for historical time series and alert evaluation, while the
+API/dashboard provide the current per-drain state.

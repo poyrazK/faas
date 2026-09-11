@@ -8,6 +8,38 @@ const AppLogDrainAuthHeaderMaxBytes = 4096
 
 const AppLogDrainAuthHeaderMasked = "***"
 
+const (
+	AppLogDrainHealthStatusUnknown  = "unknown"
+	AppLogDrainHealthStatusHealthy  = "healthy"
+	AppLogDrainHealthStatusDegraded = "degraded"
+	AppLogDrainHealthStatusInactive = "inactive"
+)
+
+// NormalizeAppLogDrainHealthStatus keeps persistence corruption or a future
+// status extension from becoming an arbitrary dashboard class or wire value.
+func NormalizeAppLogDrainHealthStatus(status string) string {
+	switch status {
+	case AppLogDrainHealthStatusHealthy, AppLogDrainHealthStatusDegraded, AppLogDrainHealthStatusInactive:
+		return status
+	default:
+		return AppLogDrainHealthStatusUnknown
+	}
+}
+
+// SanitizeAppLogDrainHealthError returns only the short summaries the runtime
+// is allowed to expose to customers. Raw endpoint errors can contain response
+// bodies, URLs, or credential-adjacent data and must never cross this boundary.
+func SanitizeAppLogDrainHealthError(summary string) string {
+	switch summary {
+	case "", "delivery queue dropped records", "source log gap observed",
+		"endpoint returned an unsuccessful HTTP status", "endpoint request failed",
+		"endpoint request could not be built", "delivery failed":
+		return summary
+	default:
+		return "delivery failed"
+	}
+}
+
 var AllowedAppLogDrainKinds = []string{"http_json", "otlp"}
 
 type CreateAppLogDrainRequest struct {
@@ -46,6 +78,27 @@ type AppLogDrainRow struct {
 	Enabled       bool
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+// AppLogDrainHealthResponse is the customer-safe delivery snapshot for one
+// configured drain. It contains no endpoint credentials or raw transport
+// errors; empty timestamps mean that the event has not happened yet.
+type AppLogDrainHealthResponse struct {
+	LogDrainID            string `json:"log_drain_id"`
+	Status                string `json:"status"`
+	Active                bool   `json:"active"`
+	QueueDepth            int    `json:"queue_depth"`
+	QueueCapacity         int    `json:"queue_capacity"`
+	DeliveredTotal        int64  `json:"delivered_total"`
+	FailedTotal           int64  `json:"failed_total"`
+	DroppedTotal          int64  `json:"dropped_total"`
+	RetriesTotal          int64  `json:"retries_total"`
+	StreamReconnectsTotal int64  `json:"stream_reconnects_total"`
+	GapsTotal             int64  `json:"gaps_total"`
+	LastSuccessAt         string `json:"last_success_at,omitempty"`
+	LastFailureAt         string `json:"last_failure_at,omitempty"`
+	LastError             string `json:"last_error,omitempty"`
+	UpdatedAt             string `json:"updated_at"`
 }
 
 func AppLogDrainResponseFromRow(r AppLogDrainRow) AppLogDrainResponse {

@@ -1267,6 +1267,40 @@ CREATE TABLE public.app_log_drains (
 
 
 --
+-- Name: app_log_drain_health; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_log_drain_health (
+    drain_id uuid NOT NULL,
+    status text DEFAULT 'unknown'::text NOT NULL,
+    active boolean DEFAULT false NOT NULL,
+    queue_depth integer DEFAULT 0 NOT NULL,
+    queue_capacity integer DEFAULT 0 NOT NULL,
+    delivered_total bigint DEFAULT 0 NOT NULL,
+    failed_total bigint DEFAULT 0 NOT NULL,
+    dropped_total bigint DEFAULT 0 NOT NULL,
+    retries_total bigint DEFAULT 0 NOT NULL,
+    stream_reconnects_total bigint DEFAULT 0 NOT NULL,
+    gaps_total bigint DEFAULT 0 NOT NULL,
+    last_success_at timestamp with time zone,
+    last_failure_at timestamp with time zone,
+    last_error text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_log_drain_health_pkey PRIMARY KEY (drain_id),
+    CONSTRAINT app_log_drain_health_drain_id_fkey FOREIGN KEY (drain_id) REFERENCES public.app_log_drains(id) ON DELETE CASCADE,
+    CONSTRAINT app_log_drain_health_status_chk CHECK ((status = ANY (ARRAY['unknown'::text, 'healthy'::text, 'degraded'::text, 'inactive'::text]))),
+    CONSTRAINT app_log_drain_health_queue_depth_chk CHECK ((queue_depth >= 0)),
+    CONSTRAINT app_log_drain_health_queue_capacity_chk CHECK ((queue_capacity >= 0)),
+    CONSTRAINT app_log_drain_health_delivered_chk CHECK ((delivered_total >= 0)),
+    CONSTRAINT app_log_drain_health_failed_chk CHECK ((failed_total >= 0)),
+    CONSTRAINT app_log_drain_health_dropped_chk CHECK ((dropped_total >= 0)),
+    CONSTRAINT app_log_drain_health_retries_chk CHECK ((retries_total >= 0)),
+    CONSTRAINT app_log_drain_health_reconnects_chk CHECK ((stream_reconnects_total >= 0)),
+    CONSTRAINT app_log_drain_health_gaps_chk CHECK ((gaps_total >= 0))
+);
+
+
+--
 -- Name: apps; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5116,6 +5150,13 @@ CREATE INDEX app_webhooks_account_idx ON public.app_webhooks USING btree (accoun
 --
 
 CREATE INDEX app_log_drains_enabled_idx ON public.app_log_drains USING btree (enabled, app_id);
+
+
+--
+-- Name: app_log_drain_health_updated_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_log_drain_health_updated_idx ON public.app_log_drain_health USING btree (updated_at DESC, drain_id);
 
 
 --

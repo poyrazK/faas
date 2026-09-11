@@ -4069,6 +4069,11 @@ func (c *Client) GetAppLogDrain(ctx context.Context, slug, id string) (AppLogDra
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains/"+id, nil, &out)
 }
 
+func (c *Client) GetAppLogDrainHealth(ctx context.Context, slug, id string) (AppLogDrainHealthResponse, error) {
+	var out AppLogDrainHealthResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains/"+id+"/health", nil, &out)
+}
+
 func (c *Client) UpdateAppLogDrain(ctx context.Context, slug, id string, req UpdateAppLogDrainRequest) (AppLogDrainResponse, error) {
 	var out AppLogDrainResponse
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/log-drains/"+id, req, &out)
