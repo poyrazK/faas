@@ -33,10 +33,12 @@ COPY --from=busybox /bin/busybox /bin/sh
 # intentionally use this minimal base, so the app layer may contain a complete
 # Node/Python runtime while still relying on drive0 for env.
 COPY --from=busybox /bin/busybox /usr/bin/env
-# mise's npm launcher resolves its install directory with `dirname` before it
-# execs Node.  Plain web apps keep their runtime in drive1 and rely on this
-# shared drive0 tool, so provide the BusyBox applet at the standard path.
+# mise's npm launcher resolves its install directory and plugin name with
+# `dirname` and `basename` before it execs Node. Plain web apps keep their
+# runtime in drive1 and rely on these shared drive0 tools, so provide the
+# BusyBox applets at the standard paths.
 COPY --from=busybox /bin/busybox /usr/bin/dirname
+COPY --from=busybox /bin/busybox /usr/bin/basename
 COPY --from=build /bin/bash /bin/bash
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # The app user every guest execs as (uid 1000, spec §4.8).
