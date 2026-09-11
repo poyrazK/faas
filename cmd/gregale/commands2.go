@@ -1677,6 +1677,23 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 	}
+	// Authenticate before any zero-config source scan or archive work. The
+	// zero-config path can inspect the working tree, run doctor checks, and
+	// materialise a potentially large archive; doing that for an unauthenticated
+	// invocation wastes customer CPU/IO and can expose source-side diagnostics
+	// before the CLI reports the actionable login error. Explicit image/tarball
+	// deploys retain their historical auth point below because they do not scan
+	// or package the working tree here.
+	localZeroConfig := *image == "" && *tarball == ""
+	var client *Client
+	var err error
+	if localZeroConfig {
+		var authErr error
+		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
+		if authErr != nil {
+			return printErr("Not logged in", authErr)
+		}
+	}
 	// Cluster A: local doctor preflight. Zero-config deploys run the
 	// deterministic source checks automatically in warn-only mode; the
 	// explicit --doctor-strict variant keeps the fail-fast policy gate.
@@ -1691,7 +1708,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// cwd itself is unreachable (cwdErr != nil) does the gate
 	// skip — in that case the server-side validators on upload are
 	// the catch.
-	localZeroConfig := *image == "" && *tarball == ""
 	doctorEnabled := *doctorStrict || (!*noDoctor && localZeroConfig)
 	if doctorEnabled && sourceDir != "" {
 		doctorShape := resolvedShape
@@ -1848,20 +1864,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// affected — Whoami is a small JSON GET and never needs the
 		// deploy budget.
 		planCapMB := defaultZeroConfigSourceCapMB
-		if wcli, werr := authedClient(); werr == nil {
+		if client != nil {
 			// 5-second budget: Whoami is a tiny JSON GET, but a flaky
 			// apid used to hang the CLI for the full HTTP timeout (30s)
 			// before falling back to the floor. Bound it explicitly so
 			// the zero-config deploy stays snappy on the unhappy path.
 			whoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			if acct, werr := wcli.Whoami(whoCtx); werr == nil {
+			if acct, werr := client.Whoami(whoCtx); werr == nil {
 				planCapMB = api.MustLimitsFor(api.Plan(acct.Plan)).SourceTarballMaxMB
 			} else {
 				PrintWarn(osStderr, "Whoami round-trip for per-plan cap failed (%v); using %d MB Free/Hobby floor", werr, planCapMB)
 			}
 			cancel()
-		} else {
-			PrintWarn(osStderr, "authed client for Whoami round-trip failed (%v); using %d MB Free/Hobby floor", werr, planCapMB)
 		}
 		if gitArchivePath != "" {
 			if !*function && !*app {
@@ -1981,9 +1995,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 
-	client, err := authedClientWithDeployTimeout(5 * time.Minute)
-	if err != nil {
-		return printErr("Not logged in", err)
+	if client == nil {
+		var authErr error
+		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
+		if authErr != nil {
+			return printErr("Not logged in", authErr)
+		}
 	}
 	// Fingerprint local source bytes before the first deployment mutation so
 	// the default logical retry key follows the exact archive being shipped.

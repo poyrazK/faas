@@ -372,6 +372,11 @@ func TestCmdDeploy_NoImage(t *testing.T) {
 	if err := os.Chdir(nonGit); err != nil {
 		t.Fatalf("Chdir %s: %v", nonGit, err)
 	}
+	// Authenticate so this test remains focused on the missing-source
+	// validation. Zero-config now checks auth before inspecting or packing
+	// the working tree, so an unauthenticated invocation intentionally exits
+	// through the login contract first.
+	t.Setenv("FAAS_TOKEN", "fp_test_no_image")
 	if code := cmdDeployTarball(nil); code != 1 {
 		t.Errorf("cmdDeploy no image = %d, want 1", code)
 	}
