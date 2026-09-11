@@ -142,6 +142,22 @@ func TestApplyFailOptions(t *testing.T) {
 // TestTypes_VocabularyAndErrors exercises the closed-set vocab + error
 // helpers in types.go that show 0% coverage — pure functions, no PG.
 func TestTypes_VocabularyAndErrors(t *testing.T) {
+	// CanAcceptDeployments keeps active and parked apps deployable while
+	// rejecting terminal/unknown lifecycle states.
+	for _, tc := range []struct {
+		status AppStatus
+		want   bool
+	}{
+		{AppActive, true},
+		{AppEvictedCold, true},
+		{AppDeleted, false},
+		{AppStatus("unknown"), false},
+	} {
+		if got := tc.status.CanAcceptDeployments(); got != tc.want {
+			t.Errorf("AppStatus(%q).CanAcceptDeployments() = %v, want %v", tc.status, got, tc.want)
+		}
+	}
+
 	// DeploymentStatus.IsTerminal: live non-terminal, failed/superseded/cancelled terminal.
 	if DeployLive.IsTerminal() {
 		t.Error("DeployLive.IsTerminal()=true, want false (ADR-118 autopark still valid)")
