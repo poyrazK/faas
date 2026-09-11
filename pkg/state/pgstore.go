@@ -3371,8 +3371,9 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 				   -- {http1, http2, grpc}; apid validates the value
 				   -- (Plan.AppProtocolAllowed gates 'grpc' to
 				   -- Hobby+) before reaching this UPDATE.
-					   app_protocol = case when $61 then $62 else app_protocol end,
-					   cpu_millicores = coalesce($63, cpu_millicores)
+				   app_protocol = case when $61 then $62 else app_protocol end,
+				   cpu_millicores = coalesce($63, cpu_millicores),
+				   consumer_auth_mode = case when $64 then $65 else consumer_auth_mode end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -3493,7 +3494,8 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		// that don't touch the field. The Set bit distinguishes
 		// "don't touch" from "explicit http1".
 		p.SetAppProtocol, derefString(p.AppProtocol),
-		p.CPUMillicores)
+		p.CPUMillicores,
+		p.SetConsumerAuthMode, derefString(p.ConsumerAuthMode))
 	return scanApp(row)
 }
 
@@ -17816,6 +17818,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 	var allowlistText string
 	var publicAuthIPAllowlistText string
 	var workloadClassStr string
+	var consumerAuthModeStr string
 	var scalingPolicyBytes []byte
 	// Tier A10 / ADR-088: scratch sink for the overflow_node
 	// projection. coalesce(overflow_node::text, '') returns
@@ -17842,6 +17845,8 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&a.EvictionPriority,
 		// Issue #560: per-app require_authn column.
 		&a.RequireAuthn,
+		// ADR-120: per-app end-customer credential policy.
+		&consumerAuthModeStr,
 		// Issue #477 / ADR-079: per-app public_auth. Both
 		// columns land positionally after require_authn. The
 		// mode column is NOT NULL DEFAULT 'open' so a plain
@@ -17952,6 +17957,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 	a.Type = AppType(typeStr)
 	a.Status = AppStatus(statusStr)
 	a.WorkloadClass = WorkloadClass(workloadClassStr)
+	a.ConsumerAuthMode = ConsumerAuthMode(consumerAuthModeStr)
 	if len(manifestBytes) > 0 {
 		_ = json.Unmarshal(manifestBytes, &a.Manifest)
 	}
@@ -18018,6 +18024,8 @@ const appsSelectColumns = `
 	warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms,
 	eviction_priority,
 	require_authn,
+	-- ADR-120: per-app end-customer credential policy.
+	consumer_auth_mode,
 	-- Issue #477 / ADR-079: per-app public_auth
 	public_auth_mode, public_auth_basic,
 -- Issue #695 / ADR-080: grand-father marker. Set by

@@ -8,6 +8,18 @@ from attrs import field as _attrs_field
 
 from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..models.update_app_request_app_protocol import UpdateAppRequestAppProtocol, check_update_app_request_app_protocol
+from ..models.update_app_request_consumer_auth_mode_type_1 import (
+    UpdateAppRequestConsumerAuthModeType1,
+    check_update_app_request_consumer_auth_mode_type_1,
+)
+from ..models.update_app_request_consumer_auth_mode_type_2_type_1 import (
+    UpdateAppRequestConsumerAuthModeType2Type1,
+    check_update_app_request_consumer_auth_mode_type_2_type_1,
+)
+from ..models.update_app_request_consumer_auth_mode_type_3_type_1 import (
+    UpdateAppRequestConsumerAuthModeType3Type1,
+    check_update_app_request_consumer_auth_mode_type_3_type_1,
+)
 from ..models.update_app_request_cpu_millicores_type_1 import (
     UpdateAppRequestCpuMillicoresType1,
     check_update_app_request_cpu_millicores_type_1,
@@ -196,6 +208,15 @@ class UpdateAppRequest:
     require_authn: bool | None | Unset = UNSET
     """Per-deployment token-gate flag (issue #560). Omitted → no change. PATCH-true on Free/Hobby is rejected with
     403 plan_require_authn_not_allowed."""
+    consumer_auth_mode: (
+        None
+        | Unset
+        | UpdateAppRequestConsumerAuthModeType1
+        | UpdateAppRequestConsumerAuthModeType2Type1
+        | UpdateAppRequestConsumerAuthModeType3Type1
+    ) = UNSET
+    """End-customer credential policy for this app. Omit for no change; optional accepts anonymous requests,
+    required mandates a valid consumer key."""
     public_auth: None | PublicAuthBlock | Unset = UNSET
     """Per-app public-URL auth configuration (issue #477 / ADR-077). Omitted → no change. When present, mode is the
     closed enum {open, bearer, basic}; basic_user + basic_pass are required when mode='basic' and the apid seal step
@@ -433,6 +454,18 @@ class UpdateAppRequest:
         else:
             require_authn = self.require_authn
 
+        consumer_auth_mode: None | str | Unset
+        if isinstance(self.consumer_auth_mode, Unset):
+            consumer_auth_mode = UNSET
+        elif isinstance(self.consumer_auth_mode, str):
+            consumer_auth_mode = self.consumer_auth_mode
+        elif isinstance(self.consumer_auth_mode, str):
+            consumer_auth_mode = self.consumer_auth_mode
+        elif isinstance(self.consumer_auth_mode, str):
+            consumer_auth_mode = self.consumer_auth_mode
+        else:
+            consumer_auth_mode = self.consumer_auth_mode
+
         public_auth: dict[str, Any] | None | Unset
         if isinstance(self.public_auth, Unset):
             public_auth = UNSET
@@ -524,6 +557,8 @@ class UpdateAppRequest:
             field_dict["eviction_priority"] = eviction_priority
         if require_authn is not UNSET:
             field_dict["require_authn"] = require_authn
+        if consumer_auth_mode is not UNSET:
+            field_dict["consumer_auth_mode"] = consumer_auth_mode
         if public_auth is not UNSET:
             field_dict["public_auth"] = public_auth
         if overflow_node is not UNSET:
@@ -1031,6 +1066,54 @@ class UpdateAppRequest:
 
         require_authn = _parse_require_authn(d.pop("require_authn", UNSET))
 
+        def _parse_consumer_auth_mode(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestConsumerAuthModeType1
+            | UpdateAppRequestConsumerAuthModeType2Type1
+            | UpdateAppRequestConsumerAuthModeType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                consumer_auth_mode_type_1 = check_update_app_request_consumer_auth_mode_type_1(data)
+
+                return consumer_auth_mode_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                consumer_auth_mode_type_2_type_1 = check_update_app_request_consumer_auth_mode_type_2_type_1(data)
+
+                return consumer_auth_mode_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                consumer_auth_mode_type_3_type_1 = check_update_app_request_consumer_auth_mode_type_3_type_1(data)
+
+                return consumer_auth_mode_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestConsumerAuthModeType1
+                | UpdateAppRequestConsumerAuthModeType2Type1
+                | UpdateAppRequestConsumerAuthModeType3Type1,
+                data,
+            )
+
+        consumer_auth_mode = _parse_consumer_auth_mode(d.pop("consumer_auth_mode", UNSET))
+
         def _parse_public_auth(data: object) -> None | PublicAuthBlock | Unset:
             if data is None:
                 return data
@@ -1101,6 +1184,7 @@ class UpdateAppRequest:
             warm_snapshot_min_ms=warm_snapshot_min_ms,
             eviction_priority=eviction_priority,
             require_authn=require_authn,
+            consumer_auth_mode=consumer_auth_mode,
             public_auth=public_auth,
             overflow_node=overflow_node,
             cors_default_enabled=cors_default_enabled,

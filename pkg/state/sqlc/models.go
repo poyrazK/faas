@@ -243,6 +243,7 @@ type App struct {
 	WarmSnapshotMinMs         int32
 	EvictionPriority          string
 	RequireAuthn              bool
+	ConsumerAuthMode          string
 	PublicAuthMode            string
 	PublicAuthBasic           []byte
 	WebsocketEnabled          bool

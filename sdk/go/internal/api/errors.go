@@ -7,6 +7,12 @@ import (
 	"net/http"
 )
 
+const (
+	CodeConsumerAuthModeInvalid     = "consumer_auth_mode_invalid"
+	CodeConsumerKeysNotAllowed      = "consumer_keys_not_allowed"
+	CodePlanConsumerKeyQuotaReached = "plan_consumer_key_quota_reached"
+)
+
 // docsBase is the canonical documentation URL prefix for SDK-side
 // problem constructors. Duplicated from pkg/wire.DocsHost in the
 // root module because the SDK is a separate Go module with its own

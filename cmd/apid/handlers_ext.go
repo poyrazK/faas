@@ -333,6 +333,14 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.")
 		}
 	}
+	if req.ConsumerAuthMode != nil {
+		if *req.ConsumerAuthMode != api.ConsumerAuthModeOptional && *req.ConsumerAuthMode != api.ConsumerAuthModeRequired {
+			return api.ErrInvalidConsumerAuthMode(*req.ConsumerAuthMode)
+		}
+		if *req.ConsumerAuthMode == api.ConsumerAuthModeRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
+			return api.ErrConsumerKeysNotAllowed(acct.Plan)
+		}
+	}
 	// ADR-124: per-app wire-protocol selector. Same plan-gate
 	// shape as the streaming / require_authn gates above — Free +
 	// "grpc" = 403 plan_app_protocol_grpc_not_allowed. The
@@ -992,8 +1000,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// customers may PATCH true → false to opt out on a
 		// Pro-upgraded app; Hobby customers may opt back out
 		// the same way.
-		RequireAuthn:    req.RequireAuthn,
-		SetRequireAuthn: req.RequireAuthn != nil,
+		RequireAuthn:        req.RequireAuthn,
+		SetRequireAuthn:     req.RequireAuthn != nil,
+		ConsumerAuthMode:    req.ConsumerAuthMode,
+		SetConsumerAuthMode: req.ConsumerAuthMode != nil,
 		// Issue #477 / ADR-079: per-app public_auth
 		// (open|bearer|basic). Set bit distinguishes "unset"
 		// (don't touch) from explicit mode flip. The sealed
@@ -1181,6 +1191,13 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.RequireAuthn != nil {
 		oldApp["require_authn"] = app.RequireAuthn
 		newApp["require_authn"] = updated.RequireAuthn
+	}
+	// ADR-120: record the end-customer credential policy change. The
+	// app.updated row carries only the mode values; no credential
+	// material is involved in this setting.
+	if req.ConsumerAuthMode != nil {
+		oldApp["consumer_auth_mode"] = string(app.ConsumerAuthMode)
+		newApp["consumer_auth_mode"] = string(updated.ConsumerAuthMode)
 	}
 	// Issue #477 / ADR-079: record the public_auth mode
 	// flip. Only the mode (not the credentials) is mirrored

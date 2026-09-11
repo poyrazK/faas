@@ -44,6 +44,8 @@ tags:
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
     description: App lifecycle (create, update, delete, wake, park).
+  - name: consumers
+    description: Stable end-customer identities and credentials for monetized APIs (ADR-120).
   - name: debugger
     description: Customer production debugger request evidence and safe replay.
   - name: uploads
@@ -2683,6 +2685,137 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/consumers:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumers
+      summary: List stable API consumer identities for an app.
+      responses:
+        '200':
+          description: Consumer identities (never includes credentials).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: createAPIConsumer
+      summary: Register a stable API consumer identity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerRequest' }
+      responses:
+        '201':
+          description: The created consumer identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Target API consumer identity UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumer
+      summary: Fetch one API consumer identity.
+      responses:
+        '200':
+          description: The consumer identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [consumers]
+      operationId: revokeAPIConsumer
+      summary: Revoke an API consumer identity.
+      responses:
+        '200':
+          description: The revoked consumer identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/keys:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: API consumer identity UUID owning these credentials.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: listConsumerKeys
+      summary: List credentials for an API consumer (secret omitted).
+      responses:
+        '200':
+          description: Consumer keys without plaintext secrets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerKeyListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: createConsumerKey
+      summary: Issue a new consumer credential. Plaintext is returned once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConsumerKeyRequest' }
+      responses:
+        '201':
+          description: The created credential; key is returned exactly once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerKeyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanLimit' }
+        '402': { $ref: '#/components/responses/PlanLimit' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/keys/{key_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: API consumer identity UUID for the key being revoked.
+        schema: { type: string, format: uuid }
+      - name: key_id
+        in: path
+        required: true
+        description: Consumer credential UUID.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [consumers]
+      operationId: revokeConsumerKey
+      summary: Revoke a consumer credential.
+      responses:
+        '200':
+          description: The revoked credential (secret omitted).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerKeyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/restore:
     parameters:
@@ -14957,6 +15090,12 @@ components:
           description: "Per-deployment token-gate flag (issue #560). When true, gatewayd-internal demands `Authorization: Bearer <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected with 403 plan_require_authn_not_allowed."
           type: boolean
           example: false
+        consumer_auth_mode:
+          description: "End-customer credential policy (ADR-120). optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key."
+          type: string
+          enum: [optional, required]
+          default: optional
+          example: optional
         # Issue #554 / ADR-079 follow-up (AC #3 wire): the
         # most-recently parked deployment for this app, or absent
         # when the app has never been parked. Operators see the
@@ -15035,6 +15174,76 @@ components:
           type: string
           enum: [http1, http2, grpc]
           example: http1
+
+    CreateAPIConsumerRequest:
+      description: "Stable customer identity to which consumer credentials can be attached."
+      type: object
+      required: [external_ref, name]
+      properties:
+        external_ref: { type: string, minLength: 1, maxLength: 256, example: customer-42 }
+        name: { type: string, minLength: 1, maxLength: 128, example: Acme }
+
+    APIConsumerResponse:
+      description: "Stable API consumer identity. No credential secret is returned."
+      type: object
+      required: [id, app_id, external_ref, name, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, revoked] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+
+    APIConsumerListResponse:
+      description: "Stable API consumer identities for an app."
+      type: object
+      required: [consumers]
+      properties:
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerResponse' }
+
+    CreateConsumerKeyRequest:
+      description: "Consumer credential request. The generated plaintext is returned only once."
+      type: object
+      required: [name, scopes]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64, example: primary }
+        scopes:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [read, write, admin] }
+        expires_at: { type: [string, "null"], format: date-time }
+
+    ConsumerKeyResponse:
+      description: "Consumer credential projection. key is present only on the create response."
+      type: object
+      required: [id, name, prefix, scopes, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string, description: "Public lookup prefix; not secret." }
+        scopes:
+          type: array
+          items: { type: string, enum: [read, write, admin] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+        key: { type: string, description: "Plaintext credential, returned exactly once from POST." }
+
+    ConsumerKeyListResponse:
+      description: "Credential metadata for an API consumer."
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerKeyResponse' }
 
     AppRestartResponse:
       description: "Correlation handle for an accepted app restart."
@@ -15449,6 +15658,15 @@ components:
           description: "Per-deployment token-gate flag (issue #560). Omitted → no change. PATCH-true on Free/Hobby is rejected with 403 plan_require_authn_not_allowed."
           type: [boolean, "null"]
           example: false
+
+        # ADR-120: end-customer API-key policy. Optional preserves anonymous
+        # compatibility while attributing valid keys; required rejects
+        # requests without a valid consumer credential.
+        consumer_auth_mode:
+          description: "End-customer credential policy for this app. Omit for no change; optional accepts anonymous requests, required mandates a valid consumer key."
+          type: [string, "null"]
+          enum: [optional, required, null]
+          example: required
 
         # Issue #477 / ADR-077: per-app public-URL auth
         # configuration. Omitted → no change. When present,

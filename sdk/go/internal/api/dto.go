@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+const (
+	ConsumerAuthModeOptional = "optional"
+	ConsumerAuthModeRequired = "required"
+)
+
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.
@@ -110,6 +115,9 @@ type UpdateAppRequest struct {
 	// one-liner; this field is exposed for callers that bundle
 	// eviction_priority into a wider PATCH.
 	EvictionPriority *string `json:"eviction_priority,omitempty"`
+	// ConsumerAuthMode controls whether app requests may omit an
+	// end-customer consumer key. Values are "optional" and "required".
+	ConsumerAuthMode *string `json:"consumer_auth_mode,omitempty"`
 	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name; apid resolves to a UUID server-side.
@@ -152,6 +160,56 @@ type UpdateAppRequest struct {
 	// this field is exposed for callers that bundle
 	// public_auth into a wider PATCH.
 	PublicAuth *PublicAuthBlock `json:"public_auth,omitempty"`
+}
+
+// CreateAPIConsumerRequest creates a stable API consumer identity within an app.
+type CreateAPIConsumerRequest struct {
+	ExternalRef string `json:"external_ref"`
+	Name        string `json:"name"`
+}
+
+// APIConsumerResponse is the public representation of an API consumer.
+type APIConsumerResponse struct {
+	ID          string     `json:"id"`
+	AppID       string     `json:"app_id"`
+	ExternalRef string     `json:"external_ref"`
+	Name        string     `json:"name"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+}
+
+// CreateConsumerKeyRequest creates a credential for an API consumer.
+type CreateConsumerKeyRequest struct {
+	Name      string     `json:"name"`
+	Scopes    []string   `json:"scopes"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// ConsumerKeyResponse is the public representation of a consumer key. Key is
+// populated only in the response that creates it.
+type ConsumerKeyResponse struct {
+	ID         string     `json:"id"`
+	ConsumerID string     `json:"consumer_id,omitempty"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	Scopes     []string   `json:"scopes"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	Key        string     `json:"key,omitempty"`
+}
+
+// APIConsumerListResponse wraps the consumers for an app.
+type APIConsumerListResponse struct {
+	Consumers []APIConsumerResponse `json:"consumers"`
+}
+
+// ConsumerKeyListResponse wraps the keys for a consumer.
+type ConsumerKeyListResponse struct {
+	Keys []ConsumerKeyResponse `json:"keys"`
 }
 
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
@@ -227,6 +285,10 @@ type AppResponse struct {
 	// so a customer calling CreateApp with RequireAuthn=true
 	// on the CLI just needs the token set on the client.
 	RequireAuthn bool `json:"require_authn"`
+	// ConsumerAuthMode is the app's end-customer credential policy:
+	// "optional" accepts anonymous requests and "required" mandates
+	// a valid consumer key.
+	ConsumerAuthMode string `json:"consumer_auth_mode"`
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth configuration. Mode is the closed
 	// enum {open, bearer, basic}; HasBasicCreds is true

@@ -106,6 +106,10 @@ export type AppResponse = {
    */
   require_authn?: boolean;
   /**
+   * End-customer credential policy (ADR-120). optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key.
+   */
+  consumer_auth_mode?: 'optional' | 'required';
+  /**
    * Most-recently parked deployment for this app, or null if never parked (issue #554 / ADR-079 follow-up). The reference surfaces the closed-set parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why is my app evicted_cold?' without grepping the audit log.
    */
   parked_deployment?: (ParkedDeploymentRef | null);

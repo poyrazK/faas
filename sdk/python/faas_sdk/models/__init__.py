@@ -36,6 +36,9 @@ from .alert_rule_response_failure_source import AlertRuleResponseFailureSource
 from .alert_rule_response_metric import AlertRuleResponseMetric
 from .alert_rule_response_state import AlertRuleResponseState
 from .alert_rule_response_window_spec import AlertRuleResponseWindowSpec
+from .api_consumer_list_response import APIConsumerListResponse
+from .api_consumer_response import APIConsumerResponse
+from .api_consumer_response_status import APIConsumerResponseStatus
 from .api_key_export_response import APIKeyExportResponse
 from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
@@ -84,6 +87,7 @@ from .app_registry_credential_list_response import AppRegistryCredentialListResp
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
+from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_runtime import AppResponseRuntime
@@ -171,6 +175,9 @@ from .clear_obsolete_report import ClearObsoleteReport
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
+from .consumer_key_list_response import ConsumerKeyListResponse
+from .consumer_key_response import ConsumerKeyResponse
+from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
 from .cors_preset_list_response import CorsPresetListResponse
 from .cors_preset_response import CorsPresetResponse
 from .create_alert_rule_request import CreateAlertRuleRequest
@@ -179,6 +186,7 @@ from .create_alert_rule_request_comparison import CreateAlertRuleRequestComparis
 from .create_alert_rule_request_failure_source import CreateAlertRuleRequestFailureSource
 from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
+from .create_api_consumer_request import CreateAPIConsumerRequest
 from .create_app_log_drain_request import CreateAppLogDrainRequest
 from .create_app_log_drain_request_kind import CreateAppLogDrainRequestKind
 from .create_app_request import CreateAppRequest
@@ -193,6 +201,8 @@ from .create_app_request_type import CreateAppRequestType
 from .create_app_webhook_request import CreateAppWebhookRequest
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
 from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetryPolicy
+from .create_consumer_key_request import CreateConsumerKeyRequest
+from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
@@ -809,6 +819,9 @@ from .update_app_log_drain_request import UpdateAppLogDrainRequest
 from .update_app_log_drain_request_kind import UpdateAppLogDrainRequestKind
 from .update_app_request import UpdateAppRequest
 from .update_app_request_app_protocol import UpdateAppRequestAppProtocol
+from .update_app_request_consumer_auth_mode_type_1 import UpdateAppRequestConsumerAuthModeType1
+from .update_app_request_consumer_auth_mode_type_2_type_1 import UpdateAppRequestConsumerAuthModeType2Type1
+from .update_app_request_consumer_auth_mode_type_3_type_1 import UpdateAppRequestConsumerAuthModeType3Type1
 from .update_app_request_cpu_millicores_type_1 import UpdateAppRequestCpuMillicoresType1
 from .update_app_request_cpu_millicores_type_2_type_1 import UpdateAppRequestCpuMillicoresType2Type1
 from .update_app_request_cpu_millicores_type_3_type_1 import UpdateAppRequestCpuMillicoresType3Type1
@@ -927,6 +940,9 @@ __all__ = (
     "AlertRuleResponseMetric",
     "AlertRuleResponseState",
     "AlertRuleResponseWindowSpec",
+    "APIConsumerListResponse",
+    "APIConsumerResponse",
+    "APIConsumerResponseStatus",
     "APIKeyExportResponse",
     "APIKeyExportResponseScopesItem",
     "APIKeyResponse",
@@ -978,6 +994,7 @@ __all__ = (
     "AppRegistryCredentialResponse",
     "AppResponse",
     "AppResponseAppProtocol",
+    "AppResponseConsumerAuthMode",
     "AppResponseCpuMillicores",
     "AppResponseEvictionPriority",
     "AppResponseRuntime",
@@ -1062,6 +1079,9 @@ __all__ = (
     "CompleteObjectMultipartUploadRequest",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
+    "ConsumerKeyListResponse",
+    "ConsumerKeyResponse",
+    "ConsumerKeyResponseScopesItem",
     "CorsPresetListResponse",
     "CorsPresetResponse",
     "CreateAlertRuleRequest",
@@ -1070,6 +1090,7 @@ __all__ = (
     "CreateAlertRuleRequestFailureSource",
     "CreateAlertRuleRequestMetric",
     "CreateAlertRuleRequestWindowSpec",
+    "CreateAPIConsumerRequest",
     "CreateAppLogDrainRequest",
     "CreateAppLogDrainRequestKind",
     "CreateAppRequest",
@@ -1084,6 +1105,8 @@ __all__ = (
     "CreateAppWebhookRequest",
     "CreateAppWebhookRequestEventFilterItem",
     "CreateAppWebhookRequestRetryPolicy",
+    "CreateConsumerKeyRequest",
+    "CreateConsumerKeyRequestScopesItem",
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
@@ -1688,6 +1711,9 @@ __all__ = (
     "UpdateAppLogDrainRequestKind",
     "UpdateAppRequest",
     "UpdateAppRequestAppProtocol",
+    "UpdateAppRequestConsumerAuthModeType1",
+    "UpdateAppRequestConsumerAuthModeType2Type1",
+    "UpdateAppRequestConsumerAuthModeType3Type1",
     "UpdateAppRequestCpuMillicoresType1",
     "UpdateAppRequestCpuMillicoresType2Type1",
     "UpdateAppRequestCpuMillicoresType3Type1",
