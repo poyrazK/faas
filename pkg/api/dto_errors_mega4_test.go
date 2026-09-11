@@ -419,6 +419,21 @@ func TestEdgeRuleGeoActionValidate_Mega4(t *testing.T) {
 	}
 }
 
+func TestEdgeRuleGeoActionValidate_LargeInputDoesNotPreallocateFromLength(t *testing.T) {
+	t.Parallel()
+
+	// A malformed request can carry a very large slice while still failing on
+	// its second entry. Validation must not preallocate a map for every slice
+	// element before it discovers that duplicate.
+	codes := make([]string, 1<<16)
+	for i := range codes {
+		codes[i] = "DE"
+	}
+	if p := (&EdgeRuleGeoAction{Allow: codes}).Validate(); p == nil {
+		t.Fatal("duplicate large input: p=nil")
+	}
+}
+
 func TestEdgeRuleMaintenanceActionValidate_Mega4(t *testing.T) {
 	t.Parallel()
 	if p := (*EdgeRuleMaintenanceAction)(nil).Validate(); p == nil {

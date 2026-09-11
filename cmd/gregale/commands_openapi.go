@@ -82,7 +82,7 @@ func cmdOpenapi(args []string) int {
 	parent, _ := lookupCliCommand("openapi")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr,
-			"usage: gregale openapi <diff|get|import|dry-run|preview|rm> ...",
+			"usage: gregale openapi <diff|get|import|dry-run|preview|apply|rm> ...",
 			"openapi")
 		return 1
 	}
@@ -97,13 +97,15 @@ func cmdOpenapi(args []string) int {
 		return cmdOpenapiDryRun(args[1:])
 	case "preview":
 		return cmdOpenapiPreview(args[1:])
+	case "apply":
+		return cmdOpenapiApply(args[1:])
 	case "rm":
 		return cmdOpenapiRemove(args[1:])
 	}
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	PrintUsage(os.Stderr,
-		"usage: gregale openapi <subcommand>   (subcommands: diff|get|import|dry-run|preview|rm)",
+		"usage: gregale openapi <subcommand>   (subcommands: diff|get|import|dry-run|preview|apply|rm)",
 		"openapi")
 	return 1
 }

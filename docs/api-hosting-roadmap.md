@@ -420,7 +420,8 @@ adds or closes.
 10. Build the customer-facing object-storage CLI and lifecycle dashboard behind
     a `preview` capability state.
 11. Finish the OpenAPI declared-versus-observed diff and route-policy preview as
-    one read-only workflow before enabling policy writes.
+    one workflow, then add an explicit hash-confirmed policy apply with a
+    repeatable no-op path and rollback-on-error behavior.
 12. Create the API-hosting GA scorecard and a release gate that reads its
     evidence rather than a manual checklist.
 

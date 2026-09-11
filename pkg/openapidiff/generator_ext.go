@@ -25,11 +25,12 @@ package openapidiff
 //     `?dry-run`. Walks the imported doc's paths and emits a
 //     EdgeRuleSuggestion per (path, method) pair NOT already
 //     covered by an existing edge rule of matching kind. The
-//     customer pastes each suggestion into the existing
-//     create-edge-rule endpoint to apply.
+//     API can expose these rows for review and apply them only
+//     after an explicit plan-hash confirmation.
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -424,11 +425,30 @@ type EdgeRuleSuggestion struct {
 	Action  map[string]any `json:"action"`
 }
 
+// PolicySuggestionsSHA256 returns the stable approval token for an OpenAPI
+// policy plan. The host is part of the token because changing the target
+// hostname changes the scope of every rule that would be written. The
+// suggestions are already sorted by ComputeDryRun; encoding/json also sorts
+// map keys, so the result is deterministic across processes.
+func PolicySuggestionsSHA256(matchHost string, suggestions []EdgeRuleSuggestion) (string, error) {
+	payload := struct {
+		MatchHost   string               `json:"match_host"`
+		Suggestions []EdgeRuleSuggestion `json:"suggestions"`
+	}{MatchHost: matchHost, Suggestions: suggestions}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("openapidiff: marshal policy plan: %w", err)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // ComputeDryRun walks the imported doc and emits one
 // EdgeRuleSuggestion per (path, method) pair NOT already
 // covered by an existing edge rule of matching kind. The
 // suggestions carry a default `kind="validate"` action (the
-// safest default — the customer can edit before applying).
+// safest default — the customer reviews and explicitly confirms
+// before applying).
 func ComputeDryRun(importedDoc []byte, existingRules []state.EdgeRule) (DryRunSuggestions, error) {
 	var out DryRunSuggestions
 	if len(importedDoc) == 0 {

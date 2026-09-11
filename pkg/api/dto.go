@@ -6110,7 +6110,10 @@ func (a *EdgeRuleGeoAction) Validate() *Problem {
 	if len(a.Allow) == 0 && len(a.Deny) == 0 {
 		return ErrValidation("geo action requires at least one allow or deny entry")
 	}
-	seen := make(map[string]struct{}, len(a.Allow)+len(a.Deny))
+	// Do not size this map from the caller-provided slice lengths. Apart from
+	// allocating far more than the 50-entry rule cap for malformed input, the
+	// sum can overflow an int before make is called.
+	seen := make(map[string]struct{})
 	for _, code := range a.Allow {
 		if p := validateGeoCountryCode(code); p != nil {
 			return ErrValidation("geo action allow entry " + p.Error())
@@ -7183,6 +7186,31 @@ type AppOpenAPIPolicyPreviewResponse struct {
 	OpenAPIVersion    string                         `json:"openapi_version,omitempty"`
 	Routes            []AppOpenAPIPolicyPreviewRoute `json:"routes"`
 	Suggestions       []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
+}
+
+// ApplyAppOpenAPIPolicyRequest controls the explicit OpenAPI policy apply
+// workflow. With Confirm=false (the default), the endpoint is a read-only
+// plan. Confirm=true requires PreviewSHA256 to match the plan currently
+// derived by the server; this prevents approving a stale or altered policy.
+// MatchHost optionally overrides the app's platform hostname for the rules.
+type ApplyAppOpenAPIPolicyRequest struct {
+	Confirm       bool   `json:"confirm,omitempty"`
+	PreviewSHA256 string `json:"preview_sha256,omitempty"`
+	MatchHost     string `json:"match_host,omitempty"`
+}
+
+// AppOpenAPIPolicyApplyResponse is returned by POST
+// /v1/apps/{slug}/openapi/apply. A response with Planned=true is a
+// read-only plan. A confirmed response reports the rules created during this
+// call; AppliedCount is zero for an idempotent no-op.
+type AppOpenAPIPolicyApplyResponse struct {
+	AppID         string               `json:"app_id"`
+	MatchHost     string               `json:"match_host"`
+	PreviewSHA256 string               `json:"preview_sha256"`
+	Suggestions   []EdgeRuleSuggestion `json:"suggestions"`
+	Planned       bool                 `json:"planned"`
+	Applied       []EdgeRuleResponse   `json:"applied"`
+	AppliedCount  int                  `json:"applied_count"`
 }
 
 // AppOpenAPIPolicyPreviewRoute is one path/method row in the policy preview.
