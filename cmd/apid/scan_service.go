@@ -1165,6 +1165,17 @@ func (s *server) scanService(
 	}
 	observedCrons := countAccountCrons(r.Context(), s, acct.ID)
 
+	// Resolve the project before admission so an existing slug is treated as
+	// an update only when it belongs to this exact project member. Matching
+	// root/name metadata on an app in another project is still a collision.
+	var projectID string
+	if proj, projErr := s.store.ProjectBySlug(r.Context(), acct.ID, req.ProjectSlug); projErr == nil {
+		projectID = proj.ID
+	} else if !errors.Is(projErr, state.ErrNotFound) {
+		return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
+			fmt.Sprintf("load project for workload admission: %v", projErr))
+	}
+
 	var (
 		canApply   bool
 		notAllowed bool
@@ -1181,6 +1192,16 @@ func (s *server) scanService(
 	// calls are self-contained (no shared scan state).
 	preCanApply, preNotAllowed, preReasons, _ := evaluateQuotaGate(result.Workloads, limits, observedApps, observedCrons)
 	canApply, notAllowed, reasons, _ = evaluateQuotaGate(filteredW, limits, observedApps, observedCrons)
+	preAdmissionReasons := reconcile.WorkloadAdmissionReasons(result.Workloads, acctApps, projectID)
+	admissionReasons := reconcile.WorkloadAdmissionReasons(filteredW, acctApps, projectID)
+	if len(preAdmissionReasons) > 0 {
+		preCanApply = false
+		preReasons = append(preReasons, preAdmissionReasons...)
+	}
+	if len(admissionReasons) > 0 {
+		canApply = false
+		reasons = append(reasons, admissionReasons...)
+	}
 
 	// gateRescuedByExclude fires the slog seam when --exclude
 	// flipped a blocked gate to allowed. ADR-124 follow-up #2
@@ -1219,20 +1240,6 @@ func (s *server) scanService(
 	// serves both purposes. ListApps is account-scoped; per-account
 	// apps include rows in other projects (intentional — Unaffected
 	// is the blast-radius view, project-agnostic).
-
-	// Load the project so the partition's Removed loop is project-
-	// scoped (matches what reconcile will SoftDeleteAppCascade).
-	// ErrNotFound is fine — brand-new project means no apps to
-	// remove and Removed is the empty slice. Other errors fail
-	// the scan (an unreadable project means the rest of the
-	// scan path's project-aware decisions would also be wrong).
-	var projectID string
-	if proj, projErr := s.store.ProjectBySlug(r.Context(), acct.ID, req.ProjectSlug); projErr == nil {
-		projectID = proj.ID
-	} else if !errors.Is(projErr, state.ErrNotFound) {
-		return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
-			fmt.Sprintf("load project for partition: %v", projErr))
-	}
 
 	partition := computeAffectedPartition(filteredW, result.Workloads, acctApps, req.Exclude, projectID)
 
@@ -1388,6 +1395,9 @@ func (s *server) scanService(
 		// can branch on canApply=false without parsing.
 		var prob *api.Problem
 		switch {
+		case len(admissionReasons) > 0:
+			prob = api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+				"Project plan is not applicable", strings.Join(admissionReasons, "; "))
 		case notAllowed:
 			prob = api.ErrPlanCronsNotAllowed(acct.Plan)
 		case observedApps+len(filteredW) > limits.DeployedApps:

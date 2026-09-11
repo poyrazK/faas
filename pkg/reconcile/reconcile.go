@@ -200,6 +200,13 @@ func (s *Service) Plan(
 	if outcome.ignored {
 		return Result{WasIgnored: true, Alerts: outcome.alerts}, nil
 	}
+	accountApps, err := s.Store.ListApps(ctx, project.AccountID)
+	if err != nil {
+		return Result{}, fmt.Errorf("reconcile: plan: validate workload admission: %w", err)
+	}
+	if err := validateWorkloadAdmission(scan.Workloads, accountApps, project.ID); err != nil {
+		return Result{}, err
+	}
 
 	// 2. Read existing membership (read-only on the Plan path).
 	existing, err := s.Store.AppsForProject(ctx, project.AccountID, project.ID)
