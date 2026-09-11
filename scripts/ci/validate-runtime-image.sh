@@ -19,7 +19,7 @@ case "${runtime_image}" in
     required=(etc/passwd usr/bin/sh)
     ;;
   base-minimal)
-    required=(etc/passwd bin/busybox bin/sh usr/bin/env usr/bin/dirname)
+    required=(etc/passwd bin/busybox bin/sh usr/bin/env usr/bin/dirname usr/bin/basename)
     ;;
   runner-node22|runner-node24)
     required=(etc/passwd usr/local/bin/node)
@@ -107,6 +107,13 @@ if [[ "${runtime_image}" == base-minimal ]]; then
     /mise/installs/node/22.23.2/bin/npm)
   if [[ "${dirname_output}" != /mise/installs/node/22.23.2/bin ]]; then
     echo "::error::${image_ref} has unusable /usr/bin/dirname: ${dirname_output}" >&2
+    exit 1
+  fi
+  basename_output=$(docker run --rm --platform "${expected_platform}" \
+    --entrypoint /usr/bin/basename "${image_ref}" \
+    /mise/installs/node/22.23.2)
+  if [[ "${basename_output}" != 22.23.2 ]]; then
+    echo "::error::${image_ref} has unusable /usr/bin/basename: ${basename_output}" >&2
     exit 1
   fi
 fi
