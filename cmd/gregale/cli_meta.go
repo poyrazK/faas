@@ -735,6 +735,7 @@ var cliCommands = []cliCommand{
 			{Name: "dry-run", Short: "Preview uncovered routes without importing the document"},
 			{Name: "preview", Short: "Preview routes, edge policies, and the read-only OpenAPI contract diff", Flags: []cliFlag{
 				{Name: "scope", Short: "deployment scope to compare", Value: "scope"},
+				{Name: "fail-on-unavailable", Short: "fail when the contract-diff backend is unavailable"},
 			}},
 			{Name: "apply", Short: "Plan or apply generated validation edge rules", Flags: []cliFlag{
 				{Name: "confirm", Short: "apply the reviewed plan"},

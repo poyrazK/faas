@@ -1,0 +1,6 @@
+[Service]
+# API-hosting contract safety (issue #1966 / ADR-121): the compute-side
+# promotion gate must be enabled alongside apid. Without both halves, the
+# preview endpoint and the actual production promotion can disagree about
+# whether a breaking OpenAPI change is allowed.
+Environment=FAAS_API_CONTRACT_DIFF_ENABLED=1
