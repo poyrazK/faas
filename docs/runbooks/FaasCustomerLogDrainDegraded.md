@@ -10,7 +10,12 @@ These are customer-runtime log export warnings. The application request path
 is independent from the drain and should remain available while the external
 destination is unhealthy.
 
-## First checks
+## Symptom
+
+The alert means a customer log drain is building backlog, failing delivery, or
+losing records while the application request path remains available.
+
+## Check
 
 Inspect the affected app and destination in Prometheus:
 
@@ -41,6 +46,12 @@ confirm the destination URL and rotate the credential if necessary.
 - `gateway_log_drain_stream_reconnects_total` rising without endpoint
   failures indicates instability in the source stream or its schedd route.
 
+## Recover
+
 The current delivery path is best effort and does not provide a durable
 per-drain cursor or replay ledger. Treat drops and gaps as real data loss and
-record the affected time window in the incident notes.
+record the affected time window in the incident notes. Resolve endpoint,
+credential, certificate, or egress issues, then confirm the queue drains and
+the success timestamp advances. If records were dropped or gaps were
+reported, notify the customer and record the affected time window; those
+records cannot be replayed from the drain path.
