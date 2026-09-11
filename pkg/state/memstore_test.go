@@ -5860,8 +5860,12 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
+	parked := AppEvictedCold
+	if _, err := s.UpdateApp(ctx, app.ID, UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatalf("UpdateApp(evicted_cold): %v", err)
+	}
 
-	// Happy path: retry from snapshot_prepare.
+	// Happy path: a parked app remains deployable, including retries.
 	got, err := s.RetryDeploymentFromStage(ctx, failed.ID, StageSnapshotPrepare)
 	if err != nil {
 		t.Fatalf("RetryDeploymentFromStage: %v", err)

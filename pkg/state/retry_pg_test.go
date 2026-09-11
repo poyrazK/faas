@@ -59,6 +59,10 @@ func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
 	if !jsonEqual(original.CanaryStages, customStages) {
 		t.Fatalf("deployment projection lost custom canary stages: %s", original.CanaryStages)
 	}
+	parked := state.AppEvictedCold
+	if _, err := s.UpdateApp(ctx, app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatalf("UpdateApp(evicted_cold): %v", err)
+	}
 	retry, err := s.RetryDeploymentFromStage(ctx, original.ID, state.StageSecurityScan)
 	if err != nil {
 		t.Fatal(err)

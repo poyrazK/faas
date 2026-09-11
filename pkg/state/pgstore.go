@@ -4704,8 +4704,8 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 
 // --- deployments -------------------------------------------------------------
 
-// CreateDeployment writes a pending deployment row only if the parent app is
-// currently active. The active-app gate is the PR-A fix for the TOCTOU race
+// CreateDeployment writes a pending deployment row only if the parent app can
+// accept deployments. The app gate is the PR-A fix for the TOCTOU race
 // where apid's AppBySlug could return a row whose status was flipped to
 // `deleted` between the read and the INSERT — the previous shape silently
 // stranded an orphan deployments row pointing at a soft-deleted app.
@@ -4713,7 +4713,8 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // Shape mirrors CreateAppIfUnderQuota (lines 287-343 above): a tx-scoped
 // SELECT 1 FROM apps … FOR UPDATE serialises with concurrent updates to
 // apps.status, and ErrNotFound on a 0-row result so apid's existing
-// s.notFound path returns 404 without any change at the call site.
+// s.notFound path returns 404. Active and intentionally parked apps accept
+// replacement deployments; deleted apps do not.
 //
 // AppDeleted apps must NOT accept new deployments; subsequent UpdateApp
 // calls (PATCH /v1/apps/{slug}) reject status flips back to active for
@@ -4750,7 +4751,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	//    primary key on id, so the lock search is an index hit.
 	var locked int
 	if err := tx.QueryRow(ctx,
-		`select 1 from apps where id = $1 and status = 'active' for update`,
+		`select 1 from apps where id = $1 and status in ('active', 'evicted_cold') for update`,
 		d.AppID).Scan(&locked); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, ErrNotFound
@@ -4846,6 +4847,13 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	if d.TrafficPercent == 0 && !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !serviceRollout {
 		d.TrafficPercent = 100
 	}
+	// Preserve an explicit timestamp supplied by internal callers and
+	// fixtures. The database default remains authoritative for normal
+	// production writes that leave CreatedAt unset.
+	var createdAt any
+	if !d.CreatedAt.IsZero() {
+		createdAt = d.CreatedAt
+	}
 	row := tx.QueryRow(ctx,
 		`insert into deployments (id, app_id, image_digest, kind, source_path, source_root, source_bytes, source_sha256, handler, log_path, source_url, commit_sha,
 		                          override_entrypoint, override_cmd, override_env, override_env_secrets, override_port, override_healthcheck,
@@ -4860,10 +4868,12 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          deployed_by_user_id, deployed_via, deployed_from_ip, pusher_login,
 		                          reason, tag, deployed_by, pr_number, workflows,
 		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
-		                          traffic_percent_explicit)
+		                          traffic_percent_explicit, created_at,
+		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
-		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38)
+		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -4903,7 +4913,8 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		// deployments_pr_number_positive_chk CHECK (which rejects 0).
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
-		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit)
+		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt,
+		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages))
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -7307,8 +7318,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var active int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status='active' for update`, src.AppID).Scan(&active); err != nil {
+	var deployable int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status in ('active', 'evicted_cold') for update`, src.AppID).Scan(&deployable); err != nil {
 		return Deployment{}, mapErr(err)
 	}
 	// Step 3 — rebuild the immutable intent while resetting mutable execution
