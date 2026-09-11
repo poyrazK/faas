@@ -71,10 +71,32 @@ func pgStoreOperatorIntent(t *testing.T) (*state.PgStore, *pgxpool.Pool, context
 			WHERE status = 'pending';
 		CREATE INDEX operator_intents_target_idx
 			ON operator_intents (target_id, requested_at DESC);
+		CREATE INDEX operator_intents_trace_idx
+			ON operator_intents (trace_id)
+			WHERE trace_id IS NOT NULL;
 	`); err != nil {
 		t.Fatalf("create operator_intents fixture: %v", err)
 	}
 	return state.NewPgStore(pool), pool, ctx
+}
+
+func TestPgStore_OperatorIntent_ListByTraceID(t *testing.T) {
+	store, _, ctx := pgStoreOperatorIntent(t)
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	otherTraceID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	actor := "22222222-2222-2222-2222-222222222222"
+	if _, err := store.InsertOperatorIntent(ctx, state.OperatorIntentKindForcePark,
+		"target-a", nil, actor, "matching", nil, &traceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertOperatorIntent(ctx, state.OperatorIntentKindForcePark,
+		"target-b", nil, actor, "unrelated", nil, &otherTraceID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.ListOperatorIntentsByTraceID(ctx, traceID, 10)
+	if err != nil || len(rows) != 1 || rows[0].Reason != "matching" {
+		t.Fatalf("ListOperatorIntentsByTraceID = (%v, %v), want one exact match", rows, err)
+	}
 }
 
 func TestPgStore_OperatorIntent_FullLifecycle(t *testing.T) {

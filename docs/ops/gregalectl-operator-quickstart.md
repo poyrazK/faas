@@ -207,6 +207,15 @@ an apid outage, `--break-glass-local --yes --reason <incident_slug>` preserves
 the former direct schedd/database path and prints a loud unaudited-action
 warning.
 
+Look up the complete operator-side trail without SSH or SQL:
+
+```
+gregalectl audit trace --trace-id <32-char-lowercase-hex>
+```
+
+The command uses exact indexed reads to correlate the durable intent with its
+live audit events. Add `--json` for incident tooling.
+
 ### Account support
 
 Routine tenant investigation and lifecycle changes go through the authenticated

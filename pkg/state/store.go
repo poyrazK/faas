@@ -3185,6 +3185,10 @@ type Store interface {
 	// unknown-kind, deployment-not-found, etc.).
 	MarkOperatorIntentFailed(ctx context.Context, id, errMsg string, snapIDs []string) error
 	GetOperatorIntent(ctx context.Context, id string) (OperatorIntent, error)
+	// ListOperatorIntentsByTraceID is the operator diagnostic read path for
+	// exact trace correlation. The trace_id equality predicate is backed by
+	// operator_intents_trace_idx; callers bound limit before invoking it.
+	ListOperatorIntentsByTraceID(ctx context.Context, traceID string, limit int) ([]OperatorIntent, error)
 	// ReclaimStuckRunningOperatorIntents resets every operator_intents
 	// row whose status='running' AND whose started_at is older than
 	// threshold back to status='pending' (clearing started_at to NULL)
@@ -4662,6 +4666,11 @@ type Store interface {
 	// over-read stable across (kind, at DESC) index hits and
 	// avoids an unstable sort.
 	ListAllEventsPaged(ctx context.Context, actor, kindPrefix, subject string, since time.Time, limit int) ([]Event, error)
+
+	// ListEventsByTraceID returns the live audit events attached to one exact
+	// OTel trace id. The equality predicate is backed by events_trace_idx and
+	// deliberately avoids JSON/free-text scans.
+	ListEventsByTraceID(ctx context.Context, traceID string, limit int) ([]Event, error)
 
 	// ListRecentEventsForAccount (ADR-091 §3.7 / PR #3) is the
 	// per-account events drill-down. Backed by the events_actor_account_idx

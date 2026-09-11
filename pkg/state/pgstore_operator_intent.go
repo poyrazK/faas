@@ -264,6 +264,53 @@ func (s *PgStore) GetOperatorIntent(ctx context.Context, id string) (OperatorInt
 		snapIDsMarkedStale, traceID), nil
 }
 
+// ListOperatorIntentsByTraceID performs an exact, bounded lookup through the
+// operator_intents_trace_idx partial index. A trace normally owns one intent,
+// but the slice shape preserves every correlated attempt.
+func (s *PgStore) ListOperatorIntentsByTraceID(ctx context.Context, traceID string, limit int) ([]OperatorIntent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, kind, target_id, account_id, actor_id, reason,
+		       metadata::text, status, requested_at, started_at,
+		       finished_at, COALESCE(error, ''), snap_ids_marked_stale,
+		       trace_id
+		FROM operator_intents
+		WHERE trace_id = $1
+		ORDER BY requested_at DESC, id DESC
+		LIMIT $2
+	`, traceID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list operator intents by trace id: %w", err)
+	}
+	defer rows.Close()
+	out := make([]OperatorIntent, 0)
+	for rows.Next() {
+		var (
+			id, kindStr, targetID, actorID, reason, metadataStr string
+			accountID, errMsg                                   *string
+			startedAt, finishedAt                               *time.Time
+			snapIDsMarkedStale                                  []string
+			requestedAt                                         time.Time
+			statusStr                                           string
+			rowTraceID                                          *string
+		)
+		if err := rows.Scan(&id, &kindStr, &targetID, &accountID, &actorID, &reason,
+			&metadataStr, &statusStr, &requestedAt, &startedAt, &finishedAt,
+			&errMsg, &snapIDsMarkedStale, &rowTraceID); err != nil {
+			return nil, fmt.Errorf("state: scan operator intent by trace id: %w", err)
+		}
+		out = append(out, decodeOperatorIntentRow(id, kindStr, targetID, actorID, reason,
+			accountID, errMsg, startedAt, finishedAt, metadataStr,
+			OperatorIntentStatus(statusStr), requestedAt, snapIDsMarkedStale, rowTraceID))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate operator intents by trace id: %w", err)
+	}
+	return out, nil
+}
+
 // ReclaimStuckRunningOperatorIntents resets `running` rows
 // older than the threshold back to `pending` so the next
 // ClaimPendingOperatorIntent picks them up. The UPDATE clears

@@ -127,6 +127,46 @@ func TestMemStore_InsertOperatorIntent_StoresTraceID(t *testing.T) {
 	}
 }
 
+// TestMemStore_TraceLookupExactAndBounded pins the operator diagnostic read
+// contract: unrelated traces never leak and the newest matching rows survive
+// the caller-provided bound.
+func TestMemStore_TraceLookupExactAndBounded(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	otherTraceID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	if _, err := m.InsertOperatorIntent(ctx, OperatorIntentKindForcePark, "target-a", nil,
+		"actor", "first", nil, &traceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.InsertOperatorIntent(ctx, OperatorIntentKindForcePark, "target-b", nil,
+		"actor", "unrelated", nil, &otherTraceID); err != nil {
+		t.Fatal(err)
+	}
+	intents, err := m.ListOperatorIntentsByTraceID(ctx, traceID, 10)
+	if err != nil || len(intents) != 1 || intents[0].Reason != "first" {
+		t.Fatalf("ListOperatorIntentsByTraceID = (%v, %v), want one exact match", intents, err)
+	}
+
+	if err := m.AppendEventWithTrace(ctx, "apid", "operator.action.started", nil, []byte(`{"n":1}`), &traceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AppendEventWithTrace(ctx, "apid", "operator.action.unrelated", nil, []byte(`{}`), &otherTraceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AppendEventWithTrace(ctx, "schedd", "operator.action.completed", nil, []byte(`{"n":2}`), &traceID); err != nil {
+		t.Fatal(err)
+	}
+	events, err := m.ListEventsByTraceID(ctx, traceID, 1)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("ListEventsByTraceID = (%v, %v), want one bounded match", events, err)
+	}
+	if events[0].Kind != "operator.action.completed" || events[0].TraceID == nil || *events[0].TraceID != traceID {
+		t.Fatalf("latest event = %+v, want completed event with trace id", events[0])
+	}
+}
+
 // TestMemStore_InsertOperatorIntent_NilTraceIDAllowsNil confirms
 // the pre-PR contract (no trace_id) still works.
 func TestMemStore_InsertOperatorIntent_NilTraceIDAllowsNil(t *testing.T) {

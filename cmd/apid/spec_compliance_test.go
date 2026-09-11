@@ -106,6 +106,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/anomalies":               true, // ADR-091 — operator-only (PR #2)
 	"GET /v1/admin/obs/audit-log/search":        true, // ADR-091 — operator-only (PR #3)
 	"GET /v1/admin/obs/events":                  true, // ADR-091 — operator-only (PR #3)
+	"GET /v1/admin/obs/traces/{trace_id}":       true, // operator-only exact trace correlation
 	"GET /v1/admin/obs/rate-limits":             true, // ADR-091 — operator-only (PR #2)
 	"GET /v1/admin/obs/builder-heartbeats":      true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
 	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
@@ -362,6 +363,7 @@ var dtoExclude = map[string]bool{
 	"ObsAuditLogRow":                  true,
 	"ObsEventListResponse":            true,
 	"ObsEventRow":                     true,
+	"ObsTraceLookupResponse":          true,
 	"ObsBuilderHeartbeatListResponse": true,
 	"ObsBuilderHeartbeatRow":          true,
 	// P2d / C5/C7 mega-PR follow-on DTOs (Obs-Meta + Trace-IDs

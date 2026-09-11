@@ -54,7 +54,11 @@ func (s *server) getOperatorIntent(w http.ResponseWriter, r *http.Request, acct 
 			api.CodeInternal, "read operator intent failed", err.Error()))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.OperatorIntentResponse{
+	writeJSON(w, http.StatusOK, toOperatorIntentResponse(intent))
+}
+
+func toOperatorIntentResponse(intent state.OperatorIntent) api.OperatorIntentResponse {
+	return api.OperatorIntentResponse{
 		IntentID:           intent.ID,
 		Kind:               string(intent.Kind),
 		Status:             string(intent.Status),
@@ -69,7 +73,7 @@ func (s *server) getOperatorIntent(w http.ResponseWriter, r *http.Request, acct 
 		FinishedAt:         intent.FinishedAt,
 		Error:              intent.Error,
 		SnapIDsMarkedStale: intent.SnapIDsMarkedStale,
-	})
+	}
 }
 
 func stringOrEmpty(p *string) string {

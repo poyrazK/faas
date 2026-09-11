@@ -8217,6 +8217,30 @@ func (m *MemStore) GetOperatorIntent(_ context.Context, id string) (OperatorInte
 	return r, nil
 }
 
+func (m *MemStore) ListOperatorIntentsByTraceID(_ context.Context, traceID string, limit int) ([]OperatorIntent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	out := make([]OperatorIntent, 0)
+	for _, intent := range m.operatorIntents {
+		if intent.TraceID != nil && *intent.TraceID == traceID {
+			out = append(out, intent)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].RequestedAt.Equal(out[j].RequestedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].RequestedAt.After(out[j].RequestedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // ReclaimStuckRunningOperatorIntents mirrors
 // PgStore.ReclaimStuckRunningOperatorIntents: walk the map,
 // flip any `running` row whose StartedAt is older than the
@@ -12186,6 +12210,30 @@ func (m *MemStore) ListAllEventsPaged(_ context.Context, actor, kindPrefix, subj
 			continue
 		}
 		out = append(out, e)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].At.Equal(out[j].At) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].At.After(out[j].At)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *MemStore) ListEventsByTraceID(_ context.Context, traceID string, limit int) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	out := make([]Event, 0)
+	for _, event := range m.events {
+		if event.TraceID != nil && *event.TraceID == traceID {
+			out = append(out, event)
+		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].At.Equal(out[j].At) {
