@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	builderdpkg "github.com/onebox-faas/faas/pkg/builderd"
 )
 
 func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
@@ -44,6 +45,9 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.SourceMaxAge != 24*time.Hour || cfg.SourceGCSweepInterval != 24*time.Hour {
 		t.Errorf("source retention defaults = (%v, %v), want (24h, 24h)", cfg.SourceMaxAge, cfg.SourceGCSweepInterval)
 	}
+	if cfg.WarmIdle != builderdpkg.DefaultWarmIdle {
+		t.Errorf("WarmIdle = %v, want %v", cfg.WarmIdle, builderdpkg.DefaultWarmIdle)
+	}
 	if cfg.MetricsAddr != "127.0.0.1:9105" {
 		t.Errorf("MetricsAddr = %q, want canonical loopback metrics default", cfg.MetricsAddr)
 	}
@@ -51,6 +55,46 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.VMMTarget != "" ||
 		cfg.TLSCertPath != "" || cfg.TLSKeyPath != "" || cfg.TLSCAPath != "" {
 		t.Errorf("issue #95 fields not all empty: %+v", cfg)
+	}
+}
+
+func TestWarmIdleWithEnv(t *testing.T) {
+	getenv := func(key string) string {
+		if key == "FAAS_BUILDER_WARM_IDLE_MS" {
+			return "1250"
+		}
+		return ""
+	}
+	if got := warmIdleWithEnv(2*time.Minute, getenv); got != 1250*time.Millisecond {
+		t.Fatalf("warmIdleWithEnv() = %v, want 1.25s", got)
+	}
+}
+
+func TestWarmIdleWithEnvInvalidKeepsConfiguredOrDefault(t *testing.T) {
+	for _, value := range []string{"", "0", "-1", "not-a-number", "9223372036854775807"} {
+		getenv := func(string) string { return value }
+		if got := warmIdleWithEnv(2*time.Minute, getenv); got != 2*time.Minute {
+			t.Errorf("value %q: warmIdleWithEnv(configured) = %v, want 2m", value, got)
+		}
+		if got := warmIdleWithEnv(0, getenv); got != builderdpkg.DefaultWarmIdle {
+			t.Errorf("value %q: warmIdleWithEnv(default) = %v, want %v", value, got, builderdpkg.DefaultWarmIdle)
+		}
+	}
+}
+
+func TestLoadConfigWarmIdleEnvironmentWins(t *testing.T) {
+	t.Setenv("FAAS_SPOOL_ROOT", "")
+	t.Setenv("FAAS_BUILDER_WARM_IDLE_MS", "2750")
+	path := filepath.Join(t.TempDir(), "builderd.toml")
+	if err := os.WriteFile(path, []byte("warm_idle = \"2m\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.WarmIdle != 2750*time.Millisecond {
+		t.Fatalf("WarmIdle = %v, want 2.75s environment override", cfg.WarmIdle)
 	}
 }
 

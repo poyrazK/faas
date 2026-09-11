@@ -244,6 +244,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		MetricsAddr:         cfg.MetricsAddr,
 		BuildTimeoutSeconds: cfg.BuildTimeoutSeconds,
 		FairnessWindow:      cfg.FairnessWindow,
+		WarmIdle:            cfg.WarmIdle,
 		// ADR-038: BuilderNodeID is stamped onto every
 		// build_provenance row builderd writes. Defaulted to
 		// "default-local" in LoadConfig; multi-node deployments
