@@ -1050,7 +1050,11 @@ explicitly open issues that the doc otherwise implies are closed.
 - **Resource and cost isolation** — named RAM/CPU profiles, per-node vCPU
   admission, ephemeral disk ceilings, and the account-level compute + S3 +
   managed-PostgreSQL usage projection are present; runtime per-container
-  CPU/disk enforcement remains follow-up work.
+  CPU/memory fences are enforced in host and guest cgroups. Sidecar roots are
+  read-only and their only platform-owned writable path (`/tmp`) now has an
+  explicit tmpfs ceiling derived from the sidecar RAM profile, with a safe
+  64 MiB default for inherited profiles. Per-container disk-I/O policy and a
+  customer-selectable sidecar scratch quota remain follow-up work.
 
 ### Open security & infrastructure issues
 

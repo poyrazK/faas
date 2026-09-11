@@ -41,6 +41,15 @@ const (
 	builderPATH        = "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	railpackMiseSource = "/usr/local/lib/faas/mise/mise-2026.7.6"
 	railpackMiseTarget = "/tmp/railpack/mise/mise-2026.7.6"
+
+	// Sidecar roots are mounted read-only; /tmp is their only platform-owned
+	// writable filesystem. Keep inherited sidecars bounded even when their
+	// deployment omits an explicit RAM profile. Explicit sidecar RAM profiles
+	// are reused as the scratch ceiling so tmpfs cannot grow beyond the
+	// workload's declared memory budget.
+	defaultSidecarTmpfsSizeMB = 64
+	minSidecarProfileMB       = 32
+	maxSidecarProfileMB       = 512
 )
 
 // bootMode is which branch of the build (BuildManifest present) vs app
@@ -1814,6 +1823,22 @@ type sidecarDevice struct {
 	name         string // "sidecar-0", "sidecar-1", ...
 	device       string // "/dev/vdc", "/dev/vdd", ...
 	workloadName string // validated deployment name, e.g. "metrics"
+	tmpfsSizeMB  int    // bounded writable /tmp capacity for this sidecar
+}
+
+// sidecarTmpfsSizeMB resolves the writable scratch ceiling for one sidecar.
+// A malformed or inherited profile gets the conservative platform default;
+// API validation normally guarantees the explicit 32..512 MiB range, but the
+// guest must remain safe when handed a stale or hand-written roster.
+func sidecarTmpfsSizeMB(ramMB int) int {
+	if ramMB >= minSidecarProfileMB && ramMB <= maxSidecarProfileMB {
+		return ramMB
+	}
+	return defaultSidecarTmpfsSizeMB
+}
+
+func sidecarTmpfsMountData(sizeMB int) string {
+	return fmt.Sprintf("mode=1777,size=%dM", sidecarTmpfsSizeMB(sizeMB))
 }
 
 // discoverSidecarDevices reads the roster file from drive1 (the
@@ -1884,6 +1909,7 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 			name:         fmt.Sprintf("sidecar-%d", i),
 			device:       fmt.Sprintf("/dev/vd%c", 'c'+i),
 			workloadName: workloadName,
+			tmpfsSizeMB:  sidecarTmpfsSizeMB(roster.Sidecars[i].RamMB),
 		})
 	}
 	return out, nil
@@ -1934,7 +1960,7 @@ func mountSidecarRoots(mainRoot string) error {
 		if !info.IsDir() {
 			return fmt.Errorf("sidecar %q root %s is not a directory", dev.workloadName, sidecarRoot)
 		}
-		if err := mountSidecarRuntimeFilesystems(sidecarRoot); err != nil {
+		if err := mountSidecarRuntimeFilesystems(sidecarRoot, dev.tmpfsSizeMB); err != nil {
 			return fmt.Errorf("sidecar %q runtime mounts: %w", dev.workloadName, err)
 		}
 	}
@@ -1969,7 +1995,7 @@ func ensureMountDirectory(path string) error {
 // per-sidecar tmpfs, while /proc, /sys, and /dev are the guest's already-
 // mounted views. /run remains image-provided so common /run -> /var/run
 // symlinks keep their OCI semantics.
-func mountSidecarRuntimeFilesystems(root string) error {
+func mountSidecarRuntimeFilesystems(root string, tmpfsSizeMB int) error {
 	for _, name := range []string{"proc", "sys", "dev"} {
 		target := filepath.Join(root, name)
 		if err := ensureMountDirectory(target); err != nil {
@@ -1983,7 +2009,7 @@ func mountSidecarRuntimeFilesystems(root string) error {
 		name string
 		mode string
 	}{
-		{name: "tmp", mode: "mode=1777"},
+		{name: "tmp", mode: sidecarTmpfsMountData(tmpfsSizeMB)},
 	} {
 		target := filepath.Join(root, mount.name)
 		if err := ensureMountDirectory(target); err != nil {
