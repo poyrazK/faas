@@ -95,8 +95,9 @@ func testActiveJobRuns(t *testing.T, fx *Fixture) {
 	}
 	createRun := func(job state.Job) state.JobRun {
 		t.Helper()
+		parallelism := job.MaxParallelism
 		run, tasks, err := fx.Store.JobRunCreate(
-			fx.Ctx, job.ID, job.AccountID, "manual", nil, nil, nil, nil, 1,
+			fx.Ctx, job.ID, job.AccountID, "manual", &parallelism, nil, nil, nil, 1,
 		)
 		if err != nil {
 			t.Fatalf("JobRunCreate(%s): %v", job.ID, err)
@@ -107,7 +108,7 @@ func testActiveJobRuns(t *testing.T, fx *Fixture) {
 		return run
 	}
 
-	job := createJob(fx.Account.ID, "active-"+uuid.NewString())
+	job := createJob(fx.Account.ID, "active-"+uuid.NewString()[:8])
 	activeRun := createRun(job)
 	terminalRun := createRun(job)
 	cancelled, err := fx.Store.JobRunCancel(fx.Ctx, terminalRun.ID)
@@ -124,7 +125,7 @@ func testActiveJobRuns(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("CreateAccount(foreign): %v", err)
 	}
-	foreignRun := createRun(createJob(foreignAccount.ID, "active-foreign-"+uuid.NewString()))
+	foreignRun := createRun(createJob(foreignAccount.ID, "active-foreign-"+uuid.NewString()[:8]))
 
 	accountRuns, err := fx.Store.JobRunListActive(fx.Ctx, fx.Account.ID, 10, 0)
 	if err != nil {
