@@ -8,6 +8,7 @@ package reconcile
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -56,6 +57,13 @@ func (s *Service) reconcile(
 			out.WasIgnored = true
 		}
 		return out, nil
+	}
+	accountApps, err := s.Store.ListApps(ctx, project.AccountID)
+	if err != nil {
+		return out, fmt.Errorf("reconcile: validate workload admission: %w", err)
+	}
+	if err := validateWorkloadAdmission(scan.Workloads, accountApps, project.ID); err != nil {
+		return out, err
 	}
 
 	// 2. Audit "started".

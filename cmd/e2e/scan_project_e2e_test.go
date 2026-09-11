@@ -20,12 +20,12 @@
 //     (Procfile class=job, no Schedule), api + worker from
 //     convention services/); the (RootDir, Name) merge key keeps
 //     the two `api` and two `worker` entries separate but they
-//     collapse under the unique-name view. One managed entry
-//     (postgres db), tier=compose, can_apply=true on the Pro
-//     plan (6 unique apps under the 25 cap, 1 cron under the
-//     20 cap). Only render.yaml's nightly carries a Schedule, so
+//     collapse under the unique-name view. Since app slugs are
+//     account-wide, those duplicate api/worker names make the plan
+//     non-applicable even though it is below the Pro quota. Only
+//     render.yaml's nightly carries a Schedule, so
 //     only nightly promotes to planCron — see the cron assertion
-//     in TestScanProject_MultiTierFixture_UnderQuota.
+//     in TestScanProject_MultiTierFixture_DuplicateSlugsBlocked.
 //
 //   - The over-quota gate: Free plan returns `can_apply=false`
 //     and `crons_not_allowed=true` for the same fixture (Free
@@ -63,6 +63,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -297,7 +298,7 @@ func workloadNames(plan api.PlanResponse) []string {
 //
 // The (RootDir, Name) merge key keeps the two `api` and two
 // `worker` entries separate — see pkg/reposcan/scan.go Workload.Key.
-func TestScanProject_MultiTierFixture_UnderQuota(t *testing.T) {
+func TestScanProject_MultiTierFixture_DuplicateSlugsBlocked(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
@@ -324,9 +325,12 @@ func TestScanProject_MultiTierFixture_UnderQuota(t *testing.T) {
 		// is a typed int whose String() returns "compose".
 		t.Errorf("Tier = %q, want compose", plan.Tier)
 	}
-	if !plan.CanApply {
-		t.Errorf("CanApply = false on Pro plan (apps under cap, crons under cap); observed=%d limit=%d",
-			plan.ObservedApps, plan.LimitApps)
+	if plan.CanApply {
+		t.Errorf("CanApply = true with duplicate api/worker app slugs; reasons=%v", plan.CanApplyReasons)
+	}
+	if reasons := strings.Join(plan.CanApplyReasons, "\n"); !strings.Contains(reasons, `workload "api" produces a duplicate app slug`) ||
+		!strings.Contains(reasons, `workload "worker" produces a duplicate app slug`) {
+		t.Errorf("CanApplyReasons = %v, want duplicate api and worker blockers", plan.CanApplyReasons)
 	}
 	if plan.CronsNotAllowed {
 		t.Errorf("CronsNotAllowed = true on Pro plan; cron cap is %d", plan.LimitCrons)

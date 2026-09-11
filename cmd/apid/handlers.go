@@ -958,9 +958,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 	return resp
 }
 
-var slugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
-
-func validSlug(s string) bool { return slugRe.MatchString(s) }
+func validSlug(s string) bool { return api.ValidAppSlug(s) }
 
 // digestPinnedRE matches a digest-pinned OCI reference end-to-end:
 //
