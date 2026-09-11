@@ -1765,6 +1765,1091 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 	return i, err
 }
 
+const executionClaimNext = `-- name: ExecutionClaimNext :one
+WITH candidate AS (
+  SELECT id, deadline_at
+  FROM executions
+  WHERE status = 'queued'
+    AND cancel_requested_at IS NULL
+    AND created_at <= $4::timestamptz
+    AND deadline_at > $4::timestamptz
+  ORDER BY created_at, id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+)
+UPDATE executions AS execution
+SET status = 'restoring',
+    lease_token = $1,
+    lease_owner = $2,
+    lease_expires_at = LEAST($3::timestamptz, candidate.deadline_at),
+    updated_at = $4
+FROM candidate
+WHERE execution.id = candidate.id
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at
+`
+
+type ExecutionClaimNextParams struct {
+	LeaseToken     pgtype.UUID
+	LeaseOwner     pgtype.Text
+	LeaseExpiresAt pgtype.Timestamptz
+	ClaimedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ExecutionClaimNext(ctx context.Context, db DBTX, arg ExecutionClaimNextParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionClaimNext,
+		arg.LeaseToken,
+		arg.LeaseOwner,
+		arg.LeaseExpiresAt,
+		arg.ClaimedAt,
+	)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const executionCountActive = `-- name: ExecutionCountActive :one
+SELECT count(*) FROM executions
+WHERE account_id = $1
+  AND status IN ('queued', 'restoring', 'running')
+`
+
+func (q *Queries) ExecutionCountActive(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, executionCountActive, accountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const executionExpireQueued = `-- name: ExecutionExpireQueued :many
+WITH candidates AS (
+  SELECT id
+  FROM executions
+  WHERE status = 'queued' AND deadline_at <= $1::timestamptz
+  ORDER BY deadline_at, id
+  FOR UPDATE SKIP LOCKED
+  LIMIT $2::int
+)
+UPDATE executions AS execution
+SET status = 'timed_out', finished_at = $1, updated_at = $1,
+    failure_code = 'deadline_exceeded', failure_message = 'execution deadline elapsed before dispatch'
+FROM candidates
+WHERE execution.id = candidates.id
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at
+`
+
+type ExecutionExpireQueuedParams struct {
+	SweepAt    pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) ExecutionExpireQueued(ctx context.Context, db DBTX, arg ExecutionExpireQueuedParams) ([]Execution, error) {
+	rows, err := db.Query(ctx, executionExpireQueued, arg.SweepAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Execution{}
+	for rows.Next() {
+		var i Execution
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Runtime,
+			&i.Status,
+			&i.NetworkMode,
+			&i.TimeoutMs,
+			&i.MemoryMb,
+			&i.CpuMillicores,
+			&i.EphemeralDiskMb,
+			&i.MaxOutputBytes,
+			&i.PidsMax,
+			&i.SourceBytes,
+			&i.InputBytes,
+			&i.DeadlineAt,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.Result,
+			&i.ResultBytes,
+			&i.Stdout,
+			&i.Stderr,
+			&i.OutputTruncated,
+			&i.ExitCode,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.WallTimeMs,
+			&i.CpuTimeMs,
+			&i.PeakMemoryMb,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const executionFinishExpiredRestores = `-- name: ExecutionFinishExpiredRestores :many
+WITH candidates AS (
+  SELECT id
+  FROM executions
+  WHERE status = 'restoring'
+    AND lease_expires_at <= $1::timestamptz
+    AND (deadline_at <= $1::timestamptz OR cancel_requested_at IS NOT NULL)
+  ORDER BY lease_expires_at, id
+  FOR UPDATE SKIP LOCKED
+  LIMIT $2::int
+)
+UPDATE executions AS execution
+SET status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE 'timed_out' END,
+    lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+    failure_code = CASE WHEN cancel_requested_at IS NULL THEN 'deadline_exceeded' ELSE NULL END,
+    failure_message = CASE WHEN cancel_requested_at IS NULL THEN 'execution deadline elapsed during restore' ELSE NULL END,
+    finished_at = $1, updated_at = $1
+FROM candidates
+WHERE execution.id = candidates.id
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at
+`
+
+type ExecutionFinishExpiredRestoresParams struct {
+	SweepAt    pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) ExecutionFinishExpiredRestores(ctx context.Context, db DBTX, arg ExecutionFinishExpiredRestoresParams) ([]Execution, error) {
+	rows, err := db.Query(ctx, executionFinishExpiredRestores, arg.SweepAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Execution{}
+	for rows.Next() {
+		var i Execution
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Runtime,
+			&i.Status,
+			&i.NetworkMode,
+			&i.TimeoutMs,
+			&i.MemoryMb,
+			&i.CpuMillicores,
+			&i.EphemeralDiskMb,
+			&i.MaxOutputBytes,
+			&i.PidsMax,
+			&i.SourceBytes,
+			&i.InputBytes,
+			&i.DeadlineAt,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.Result,
+			&i.ResultBytes,
+			&i.Stdout,
+			&i.Stderr,
+			&i.OutputTruncated,
+			&i.ExitCode,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.WallTimeMs,
+			&i.CpuTimeMs,
+			&i.PeakMemoryMb,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const executionFinishExpiredRuns = `-- name: ExecutionFinishExpiredRuns :many
+WITH candidates AS (
+  SELECT id
+  FROM executions
+  WHERE status = 'running' AND lease_expires_at <= $1::timestamptz
+  ORDER BY lease_expires_at, id
+  FOR UPDATE SKIP LOCKED
+  LIMIT $2::int
+)
+UPDATE executions AS execution
+SET status = CASE
+      WHEN cancel_requested_at IS NOT NULL THEN 'cancelled'
+      WHEN deadline_at <= $1::timestamptz THEN 'timed_out'
+      ELSE 'failed'
+    END,
+    lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+    failure_code = CASE
+      WHEN cancel_requested_at IS NOT NULL THEN NULL
+      WHEN deadline_at <= $1::timestamptz THEN 'deadline_exceeded'
+      ELSE 'lease_expired'
+    END,
+    failure_message = CASE
+      WHEN cancel_requested_at IS NOT NULL THEN NULL
+      WHEN deadline_at <= $1::timestamptz THEN 'execution deadline elapsed while running'
+      ELSE 'scheduler lease expired after execution dispatch'
+    END,
+    finished_at = $1, updated_at = $1
+FROM candidates
+WHERE execution.id = candidates.id
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at
+`
+
+type ExecutionFinishExpiredRunsParams struct {
+	SweepAt    pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) ExecutionFinishExpiredRuns(ctx context.Context, db DBTX, arg ExecutionFinishExpiredRunsParams) ([]Execution, error) {
+	rows, err := db.Query(ctx, executionFinishExpiredRuns, arg.SweepAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Execution{}
+	for rows.Next() {
+		var i Execution
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Runtime,
+			&i.Status,
+			&i.NetworkMode,
+			&i.TimeoutMs,
+			&i.MemoryMb,
+			&i.CpuMillicores,
+			&i.EphemeralDiskMb,
+			&i.MaxOutputBytes,
+			&i.PidsMax,
+			&i.SourceBytes,
+			&i.InputBytes,
+			&i.DeadlineAt,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.Result,
+			&i.ResultBytes,
+			&i.Stdout,
+			&i.Stderr,
+			&i.OutputTruncated,
+			&i.ExitCode,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.WallTimeMs,
+			&i.CpuTimeMs,
+			&i.PeakMemoryMb,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const executionGetForAccount = `-- name: ExecutionGetForAccount :one
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at FROM executions
+WHERE account_id = $1 AND id = $2
+`
+
+type ExecutionGetForAccountParams struct {
+	AccountID   pgtype.UUID
+	ExecutionID pgtype.UUID
+}
+
+func (q *Queries) ExecutionGetForAccount(ctx context.Context, db DBTX, arg ExecutionGetForAccountParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionGetForAccount, arg.AccountID, arg.ExecutionID)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const executionInsert = `-- name: ExecutionInsert :one
+INSERT INTO executions (
+  account_id, runtime, status, network_mode, timeout_ms, memory_mb,
+  cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max,
+  source_bytes, input_bytes, deadline_at, created_at, updated_at
+) VALUES (
+  $1, $2, 'queued', $3,
+  $4, $5, $6,
+  $7, $8, $9,
+  $10, $11, $12,
+  $13, $13
+)
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at
+`
+
+type ExecutionInsertParams struct {
+	AccountID       pgtype.UUID
+	Runtime         string
+	NetworkMode     string
+	TimeoutMs       int32
+	MemoryMb        int32
+	CpuMillicores   int32
+	EphemeralDiskMb int32
+	MaxOutputBytes  int32
+	PidsMax         int32
+	SourceBytes     int32
+	InputBytes      int32
+	DeadlineAt      pgtype.Timestamptz
+	AdmittedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionInsertParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionInsert,
+		arg.AccountID,
+		arg.Runtime,
+		arg.NetworkMode,
+		arg.TimeoutMs,
+		arg.MemoryMb,
+		arg.CpuMillicores,
+		arg.EphemeralDiskMb,
+		arg.MaxOutputBytes,
+		arg.PidsMax,
+		arg.SourceBytes,
+		arg.InputBytes,
+		arg.DeadlineAt,
+		arg.AdmittedAt,
+	)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const executionListForAccount = `-- name: ExecutionListForAccount :many
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at FROM executions
+WHERE account_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT $3::int OFFSET $2::int
+`
+
+type ExecutionListForAccountParams struct {
+	AccountID  pgtype.UUID
+	PageOffset int32
+	PageLimit  int32
+}
+
+func (q *Queries) ExecutionListForAccount(ctx context.Context, db DBTX, arg ExecutionListForAccountParams) ([]Execution, error) {
+	rows, err := db.Query(ctx, executionListForAccount, arg.AccountID, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Execution{}
+	for rows.Next() {
+		var i Execution
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Runtime,
+			&i.Status,
+			&i.NetworkMode,
+			&i.TimeoutMs,
+			&i.MemoryMb,
+			&i.CpuMillicores,
+			&i.EphemeralDiskMb,
+			&i.MaxOutputBytes,
+			&i.PidsMax,
+			&i.SourceBytes,
+			&i.InputBytes,
+			&i.DeadlineAt,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.Result,
+			&i.ResultBytes,
+			&i.Stdout,
+			&i.Stderr,
+			&i.OutputTruncated,
+			&i.ExitCode,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.WallTimeMs,
+			&i.CpuTimeMs,
+			&i.PeakMemoryMb,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const executionLockAccount = `-- name: ExecutionLockAccount :one
+SELECT id, plan FROM accounts WHERE id = $1 FOR UPDATE
+`
+
+type ExecutionLockAccountRow struct {
+	ID   pgtype.UUID
+	Plan string
+}
+
+func (q *Queries) ExecutionLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (ExecutionLockAccountRow, error) {
+	row := db.QueryRow(ctx, executionLockAccount, accountID)
+	var i ExecutionLockAccountRow
+	err := row.Scan(&i.ID, &i.Plan)
+	return i, err
+}
+
+const executionLockForAccount = `-- name: ExecutionLockForAccount :one
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at FROM executions
+WHERE account_id = $1 AND id = $2
+FOR UPDATE
+`
+
+type ExecutionLockForAccountParams struct {
+	AccountID   pgtype.UUID
+	ExecutionID pgtype.UUID
+}
+
+func (q *Queries) ExecutionLockForAccount(ctx context.Context, db DBTX, arg ExecutionLockForAccountParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionLockForAccount, arg.AccountID, arg.ExecutionID)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const executionLockForLease = `-- name: ExecutionLockForLease :one
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at FROM executions
+WHERE id = $1
+  AND status IN ('restoring', 'running')
+  AND lease_token = $2
+FOR UPDATE
+`
+
+type ExecutionLockForLeaseParams struct {
+	ExecutionID pgtype.UUID
+	LeaseToken  pgtype.UUID
+}
+
+func (q *Queries) ExecutionLockForLease(ctx context.Context, db DBTX, arg ExecutionLockForLeaseParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionLockForLease, arg.ExecutionID, arg.LeaseToken)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const executionMarkRunning = `-- name: ExecutionMarkRunning :one
+UPDATE executions
+SET status = 'running', started_at = $1, updated_at = $1
+WHERE id = $2
+  AND status = 'restoring'
+  AND lease_token = $3
+  AND lease_expires_at > $1
+  AND cancel_requested_at IS NULL
+  AND deadline_at > $1
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at
+`
+
+type ExecutionMarkRunningParams struct {
+	StartedAt   pgtype.Timestamptz
+	ExecutionID pgtype.UUID
+	LeaseToken  pgtype.UUID
+}
+
+func (q *Queries) ExecutionMarkRunning(ctx context.Context, db DBTX, arg ExecutionMarkRunningParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionMarkRunning, arg.StartedAt, arg.ExecutionID, arg.LeaseToken)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const executionMarkTerminal = `-- name: ExecutionMarkTerminal :one
+UPDATE executions
+SET status = $1,
+    lease_token = NULL,
+    lease_owner = NULL,
+    lease_expires_at = NULL,
+    result = NULLIF($2::text, '')::jsonb,
+    result_bytes = $3,
+    stdout = $4,
+    stderr = $5,
+    output_truncated = $6,
+    exit_code = $7,
+    failure_code = NULLIF($8, ''),
+    failure_message = NULLIF($9, ''),
+    wall_time_ms = $10,
+    cpu_time_ms = $11,
+    peak_memory_mb = $12,
+    finished_at = $13,
+    updated_at = $13
+WHERE id = $14
+  AND status IN ('restoring', 'running')
+  AND lease_token = $15
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at
+`
+
+type ExecutionMarkTerminalParams struct {
+	TerminalStatus  string
+	ResultJson      string
+	ResultBytes     int32
+	Stdout          string
+	Stderr          string
+	OutputTruncated bool
+	ExitCode        pgtype.Int4
+	FailureCode     interface{}
+	FailureMessage  interface{}
+	WallTimeMs      int64
+	CpuTimeMs       int64
+	PeakMemoryMb    int32
+	FinishedAt      pgtype.Timestamptz
+	ExecutionID     pgtype.UUID
+	LeaseToken      pgtype.UUID
+}
+
+func (q *Queries) ExecutionMarkTerminal(ctx context.Context, db DBTX, arg ExecutionMarkTerminalParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionMarkTerminal,
+		arg.TerminalStatus,
+		arg.ResultJson,
+		arg.ResultBytes,
+		arg.Stdout,
+		arg.Stderr,
+		arg.OutputTruncated,
+		arg.ExitCode,
+		arg.FailureCode,
+		arg.FailureMessage,
+		arg.WallTimeMs,
+		arg.CpuTimeMs,
+		arg.PeakMemoryMb,
+		arg.FinishedAt,
+		arg.ExecutionID,
+		arg.LeaseToken,
+	)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const executionPayloadDelete = `-- name: ExecutionPayloadDelete :execrows
+DELETE FROM execution_payloads WHERE execution_id = $1
+`
+
+func (q *Queries) ExecutionPayloadDelete(ctx context.Context, db DBTX, executionID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, executionPayloadDelete, executionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const executionPayloadDeleteMany = `-- name: ExecutionPayloadDeleteMany :execrows
+DELETE FROM execution_payloads WHERE execution_id = ANY($1::uuid[])
+`
+
+func (q *Queries) ExecutionPayloadDeleteMany(ctx context.Context, db DBTX, executionIds []pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, executionPayloadDeleteMany, executionIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const executionPayloadDeleteTerminal = `-- name: ExecutionPayloadDeleteTerminal :execrows
+WITH candidates AS (
+  SELECT payload.execution_id
+  FROM execution_payloads AS payload
+  JOIN executions AS execution ON execution.id = payload.execution_id
+  WHERE execution.status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+  ORDER BY payload.created_at, payload.execution_id
+  FOR UPDATE OF payload SKIP LOCKED
+  LIMIT $1::int
+)
+DELETE FROM execution_payloads AS payload
+USING candidates
+WHERE payload.execution_id = candidates.execution_id
+`
+
+func (q *Queries) ExecutionPayloadDeleteTerminal(ctx context.Context, db DBTX, batchLimit int32) (int64, error) {
+	result, err := db.Exec(ctx, executionPayloadDeleteTerminal, batchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const executionPayloadForLease = `-- name: ExecutionPayloadForLease :one
+SELECT payload.execution_id, payload.sealed_payload, payload.kid, payload.created_at
+FROM execution_payloads AS payload
+JOIN executions AS execution ON execution.id = payload.execution_id
+WHERE payload.execution_id = $1
+  AND execution.status = 'restoring'
+  AND execution.lease_token = $2
+`
+
+type ExecutionPayloadForLeaseParams struct {
+	ExecutionID pgtype.UUID
+	LeaseToken  pgtype.UUID
+}
+
+func (q *Queries) ExecutionPayloadForLease(ctx context.Context, db DBTX, arg ExecutionPayloadForLeaseParams) (ExecutionPayload, error) {
+	row := db.QueryRow(ctx, executionPayloadForLease, arg.ExecutionID, arg.LeaseToken)
+	var i ExecutionPayload
+	err := row.Scan(
+		&i.ExecutionID,
+		&i.SealedPayload,
+		&i.Kid,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const executionPayloadInsert = `-- name: ExecutionPayloadInsert :exec
+INSERT INTO execution_payloads (execution_id, sealed_payload, kid, created_at)
+VALUES ($1, $2, $3, $4)
+`
+
+type ExecutionPayloadInsertParams struct {
+	ExecutionID   pgtype.UUID
+	SealedPayload []byte
+	Kid           string
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ExecutionPayloadInsert(ctx context.Context, db DBTX, arg ExecutionPayloadInsertParams) error {
+	_, err := db.Exec(ctx, executionPayloadInsert,
+		arg.ExecutionID,
+		arg.SealedPayload,
+		arg.Kid,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const executionRenewLease = `-- name: ExecutionRenewLease :execrows
+UPDATE executions
+SET lease_expires_at = LEAST($1::timestamptz, deadline_at),
+    updated_at = $2
+WHERE id = $3
+  AND status IN ('restoring', 'running')
+  AND lease_token = $4
+  AND lease_expires_at > $2
+  AND cancel_requested_at IS NULL
+  AND deadline_at > $2
+`
+
+type ExecutionRenewLeaseParams struct {
+	LeaseExpiresAt pgtype.Timestamptz
+	RenewedAt      pgtype.Timestamptz
+	ExecutionID    pgtype.UUID
+	LeaseToken     pgtype.UUID
+}
+
+func (q *Queries) ExecutionRenewLease(ctx context.Context, db DBTX, arg ExecutionRenewLeaseParams) (int64, error) {
+	result, err := db.Exec(ctx, executionRenewLease,
+		arg.LeaseExpiresAt,
+		arg.RenewedAt,
+		arg.ExecutionID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const executionRequestCancel = `-- name: ExecutionRequestCancel :one
+UPDATE executions
+SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+    cancel_requested_at = COALESCE(cancel_requested_at, $1),
+    finished_at = CASE WHEN status = 'queued' THEN $1 ELSE finished_at END,
+    updated_at = $1
+WHERE id = $2
+  AND status IN ('queued', 'restoring', 'running')
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at
+`
+
+type ExecutionRequestCancelParams struct {
+	RequestedAt pgtype.Timestamptz
+	ExecutionID pgtype.UUID
+}
+
+func (q *Queries) ExecutionRequestCancel(ctx context.Context, db DBTX, arg ExecutionRequestCancelParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionRequestCancel, arg.RequestedAt, arg.ExecutionID)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const executionRequeueExpiredRestores = `-- name: ExecutionRequeueExpiredRestores :many
+WITH candidates AS (
+  SELECT id
+  FROM executions
+  WHERE status = 'restoring'
+    AND lease_expires_at <= $1::timestamptz
+    AND deadline_at > $1::timestamptz
+    AND cancel_requested_at IS NULL
+  ORDER BY lease_expires_at, id
+  FOR UPDATE SKIP LOCKED
+  LIMIT $2::int
+)
+UPDATE executions AS execution
+SET status = 'queued', lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+    updated_at = $1
+FROM candidates
+WHERE execution.id = candidates.id
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at
+`
+
+type ExecutionRequeueExpiredRestoresParams struct {
+	SweepAt    pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) ExecutionRequeueExpiredRestores(ctx context.Context, db DBTX, arg ExecutionRequeueExpiredRestoresParams) ([]Execution, error) {
+	rows, err := db.Query(ctx, executionRequeueExpiredRestores, arg.SweepAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Execution{}
+	for rows.Next() {
+		var i Execution
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Runtime,
+			&i.Status,
+			&i.NetworkMode,
+			&i.TimeoutMs,
+			&i.MemoryMb,
+			&i.CpuMillicores,
+			&i.EphemeralDiskMb,
+			&i.MaxOutputBytes,
+			&i.PidsMax,
+			&i.SourceBytes,
+			&i.InputBytes,
+			&i.DeadlineAt,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.Result,
+			&i.ResultBytes,
+			&i.Stdout,
+			&i.Stderr,
+			&i.OutputTruncated,
+			&i.ExitCode,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.WallTimeMs,
+			&i.CpuTimeMs,
+			&i.PeakMemoryMb,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const expireOrgInvitations = `-- name: ExpireOrgInvitations :execrows
 update org_invitations
 set revoked_at = now()
@@ -5821,7 +6906,7 @@ func (q *Queries) ObjectBucketAccessGrantUpsert(ctx context.Context, db DBTX, ar
 }
 
 const objectBucketByName = `-- name: ObjectBucketByName :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
 `
 
 type ObjectBucketByNameParams struct {
@@ -5857,6 +6942,8 @@ func (q *Queries) ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.AttemptCount,
 		&i.RetryAt,
 		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
 	)
 	return i, err
 }
@@ -5873,7 +6960,7 @@ AND ($1 <> 'deleting' OR NOT EXISTS (
   AND m.state IN ('initiating','active','completing','aborting')
 ))
 AND (NOT $7::boolean OR object_buckets.state = $1)
-AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code
+AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at
 `
 
 type ObjectBucketClaimParams struct {
@@ -5915,6 +7002,8 @@ func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBuck
 		&i.AttemptCount,
 		&i.RetryAt,
 		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
 	)
 	return i, err
 }
@@ -5961,7 +7050,7 @@ func (q *Queries) ObjectBucketFinish(ctx context.Context, db DBTX, arg ObjectBuc
 }
 
 const objectBucketGet = `-- name: ObjectBucketGet :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
 `
 
 type ObjectBucketGetParams struct {
@@ -5991,13 +7080,15 @@ func (q *Queries) ObjectBucketGet(ctx context.Context, db DBTX, arg ObjectBucket
 		&i.AttemptCount,
 		&i.RetryAt,
 		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
 	)
 	return i, err
 }
 
 const objectBucketInsert = `-- name: ObjectBucketInsert :one
-INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at
 `
 
 type ObjectBucketInsertParams struct {
@@ -6010,6 +7101,8 @@ type ObjectBucketInsertParams struct {
 	BackendID          string
 	BackendFingerprint string
 	PhysicalName       string
+	PublicRead         bool
+	ServeAt            pgtype.Text
 }
 
 func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBucketInsertParams) (ObjectBucket, error) {
@@ -6023,6 +7116,8 @@ func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBuc
 		arg.BackendID,
 		arg.BackendFingerprint,
 		arg.PhysicalName,
+		arg.PublicRead,
+		arg.ServeAt,
 	)
 	var i ObjectBucket
 	err := row.Scan(
@@ -6043,12 +7138,14 @@ func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.AttemptCount,
 		&i.RetryAt,
 		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
 	)
 	return i, err
 }
 
 const objectBucketList = `-- name: ObjectBucketList :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
 `
 
 type ObjectBucketListParams struct {
@@ -6083,6 +7180,8 @@ func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucke
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -6095,7 +7194,7 @@ func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucke
 }
 
 const objectBucketListForKey = `-- name: ObjectBucketListForKey :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at
 FROM object_buckets b
 JOIN object_storage_access_grants g
   ON g.bucket_id = b.id AND g.account_id = b.account_id
@@ -6138,6 +7237,8 @@ func (q *Queries) ObjectBucketListForKey(ctx context.Context, db DBTX, arg Objec
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -6201,7 +7302,7 @@ func (q *Queries) ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBuck
 }
 
 const objectBucketsDue = `-- name: ObjectBucketsDue :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets
 WHERE (state = 'deleting' OR ($1::boolean AND state = 'provisioning'))
 AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
 ORDER BY retry_at, id LIMIT $2::int
@@ -6239,6 +7340,8 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -6251,7 +7354,7 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 }
 
 const objectInventoriesDue = `-- name: ObjectInventoriesDue :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
 WHERE b.state='ready' AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
 AND (u.lease_until IS NULL OR u.lease_until < now())
 ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1
@@ -6284,6 +7387,8 @@ func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -7182,7 +8287,7 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectStorageProviderBuckets = `-- name: ObjectStorageProviderBuckets :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code FROM object_buckets
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets
 WHERE backend_id = $1 AND backend_fingerprint = $2
 ORDER BY physical_name, id
 `
@@ -7219,6 +8324,8 @@ func (q *Queries) ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -7228,6 +8335,24 @@ func (q *Queries) ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg
 		return nil, err
 	}
 	return items, nil
+}
+
+const objectStorageProviderEgressIncrement = `-- name: ObjectStorageProviderEgressIncrement :exec
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, egress_bytes)
+VALUES ($1, $2, $3)
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET egress_bytes = object_storage_request_metrics.egress_bytes + EXCLUDED.egress_bytes
+`
+
+type ObjectStorageProviderEgressIncrementParams struct {
+	BucketID    pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	EgressBytes int64
+}
+
+func (q *Queries) ObjectStorageProviderEgressIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderEgressIncrementParams) error {
+	_, err := db.Exec(ctx, objectStorageProviderEgressIncrement, arg.BucketID, arg.PeriodStart, arg.EgressBytes)
+	return err
 }
 
 const objectStorageProviderRequestIncrement = `-- name: ObjectStorageProviderRequestIncrement :exec
@@ -7249,7 +8374,8 @@ func (q *Queries) ObjectStorageProviderRequestIncrement(ctx context.Context, db 
 
 const objectStorageProviderRequestMetrics = `-- name: ObjectStorageProviderRequestMetrics :many
 SELECT b.id, b.account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
-       $3::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count
+       $3::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count,
+       COALESCE(m.egress_bytes, 0)::bigint AS egress_bytes
 FROM object_buckets b
 LEFT JOIN object_storage_request_metrics m
   ON m.bucket_id = b.id AND m.period_start = $3
@@ -7271,6 +8397,7 @@ type ObjectStorageProviderRequestMetricsRow struct {
 	PhysicalName       string
 	PeriodStart        pgtype.Timestamptz
 	RequestCount       int64
+	EgressBytes        int64
 }
 
 func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestMetricsParams) ([]ObjectStorageProviderRequestMetricsRow, error) {
@@ -7290,6 +8417,7 @@ func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DB
 			&i.PhysicalName,
 			&i.PeriodStart,
 			&i.RequestCount,
+			&i.EgressBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -7344,7 +8472,7 @@ func (q *Queries) ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgty
 }
 
 const objectUsageBuckets = `-- name: ObjectUsageBuckets :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 WHERE b.account_id = $1
@@ -7368,6 +8496,8 @@ type ObjectUsageBucketsRow struct {
 	AttemptCount        int32
 	RetryAt             pgtype.Timestamptz
 	LastErrorCode       string
+	PublicRead          bool
+	ServeAt             pgtype.Text
 	BaselineBytes       pgtype.Int8
 	BaselineKeys        pgtype.Int8
 	GrantedBytes        pgtype.Int8
@@ -7407,6 +8537,8 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgt
 			&i.AttemptCount,
 			&i.RetryAt,
 			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
 			&i.BaselineBytes,
 			&i.BaselineKeys,
 			&i.GrantedBytes,

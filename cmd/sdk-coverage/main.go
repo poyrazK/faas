@@ -273,13 +273,15 @@ var methodRouteMap = map[string]string{
 	// Swagger-style verb+resource concat), but the SDK convention
 	// uses ResourceVerb — pin to DestroyPreview so the wire +
 	// SDK verb surface stays uniform with Rollback/Park/Wake.
-	"POST /v1/preview/{slug}/destroy": "DestroyPreview",
-	"GET /v1/account/export":          "ExportAccount",
-	"DELETE /v1/account":              "DeleteAccount",
-	"PATCH /v1/account/plan":          "ChangePlan",
-	"GET /v1/account":                 "Whoami",
-	"POST /v1/account/restore":        "RestoreAccount",
-	"POST /v1/account/overage-cap":    "RaiseOverageCap", // issue #561 spend cap
+	"POST /v1/preview/{slug}/destroy":            "DestroyPreview",
+	"GET /v1/account/export":                     "ExportAccount",
+	"DELETE /v1/account":                         "DeleteAccount",
+	"PATCH /v1/account/plan":                     "ChangePlan",
+	"GET /v1/account":                            "Whoami",
+	"POST /v1/account/restore":                   "RestoreAccount",
+	"POST /v1/account/overage-cap":               "RaiseOverageCap", // issue #561 spend cap
+	"POST /v1/account/mfa/disable-email":         "PostAccountMfaDisableEmail",
+	"POST /v1/account/mfa/disable-email/confirm": "PostAccountMfaDisableEmailConfirm",
 	// Issue #679 / PR-B / ADR-082 — per-account additive budget on
 	// top of the plan's apps.egress_allowlist cap. The auto-derivation
 	// would concat "Account" + "Egress_allowlist_extra" (the literal
@@ -795,11 +797,15 @@ var methodRouteMap = map[string]string{
 	// org slug; pin them so the gate stays the SDK's source of
 	// truth on verb choice, matching the trusted_signers /
 	// registry-credentials pattern above.
-	"GET /v1/orgs/{slug}/keys":              "ListOrgAPIKeys",
-	"POST /v1/orgs/{slug}/keys":             "CreateOrgAPIKey",
-	"GET /v1/orgs/{slug}/keys/{id}":         "GetOrgAPIKey",
-	"DELETE /v1/orgs/{slug}/keys/{id}":      "RevokeOrgAPIKey",
-	"POST /v1/orgs/{slug}/keys/{id}/rotate": "RotateOrgAPIKey",
+	"GET /v1/orgs/{slug}/keys":                       "ListOrgAPIKeys",
+	"POST /v1/orgs/{slug}/keys":                      "CreateOrgAPIKey",
+	"GET /v1/orgs/{slug}/keys/{id}":                  "GetOrgAPIKey",
+	"DELETE /v1/orgs/{slug}/keys/{id}":               "RevokeOrgAPIKey",
+	"POST /v1/orgs/{slug}/keys/{id}/rotate":          "RotateOrgAPIKey",
+	"GET /v1/apps/{slug}/deploy-tokens":              "ListDeployTokens",
+	"POST /v1/apps/{slug}/deploy-tokens":             "CreateDeployToken",
+	"DELETE /v1/apps/{slug}/deploy-tokens/{id}":      "RevokeDeployToken",
+	"POST /v1/apps/{slug}/deploy-tokens/{id}/rotate": "RotateDeployToken",
 
 	// Issue #757 / ADR-100 — unified Trigger primitive. Pin every
 	// trigger route; auto-derivation reads either "Triggers" or

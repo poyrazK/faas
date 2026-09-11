@@ -74,3 +74,15 @@
     group: root
     mode: "0644"
   notify: restart faas-gatewayd-public
+
+# Public-read buckets use the same wildcard suffix as gatewayd-internal. Keep
+# this in a drop-in because the public daemon's generated unit is shared by
+# single-box and split-box deployments, while the manifest supplies the zone.
+- name: gatewayd_public_service — install apps domain drop-in
+  ansible.builtin.template:
+    src: 99-faas-apps-domain.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-apps-domain.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-public

@@ -15,6 +15,7 @@ import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
 import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
+import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { DebugCompareRequest } from '../models/DebugCompareRequest.js';
 import type { DebugCompareResponse } from '../models/DebugCompareResponse.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
@@ -22,11 +23,15 @@ import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
 import type { DebugRequestEvidenceResponse } from '../models/DebugRequestEvidenceResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
+import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
+import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
+import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
+import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -211,6 +216,144 @@ export class AppsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List deploy tokens for an app.
+   * @returns ListDeployTokensResponse Deploy-token metadata. Plaintexts are never returned by list.
+   * @throws ApiError
+   */
+  public static listDeployTokens({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListDeployTokensResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deploy-tokens',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Create a deploy token scoped to this app.
+   * @returns DeployTokenResponse Token metadata and plaintext. Capture plaintext immediately; it is never returned again.
+   * @throws ApiError
+   */
+  public static createDeployToken({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody?: CreateDeployTokenRequest,
+  }): CancelablePromise<DeployTokenResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deploy-tokens',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke an app deploy token.
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeDeployToken({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deploy-token identifier returned by the list or create endpoint.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/deploy-tokens/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Rotate an app deploy token.
+   * @returns RotateDeployTokenResponse New token metadata and plaintext. The predecessor is revoked atomically.
+   * @throws ApiError
+   */
+  public static rotateDeployToken({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deploy-token identifier to rotate, returned by the list or create endpoint.
+     */
+    id: string,
+    requestBody?: RotateDeployTokenRequest,
+  }): CancelablePromise<RotateDeployTokenResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deploy-tokens/{id}/rotate',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

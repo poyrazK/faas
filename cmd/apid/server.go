@@ -1881,6 +1881,15 @@ func (s *server) handler() http.Handler {
 	// via the rotation path.
 	mux.HandleFunc("POST /v1/keys/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.rotateKey)))))
 
+	// Per-app deploy tokens. These credentials are minted by an
+	// administrator, carry only deploy:write, and are accepted by
+	// the bearer middleware solely on /v1/apps/{slug}/... paths.
+	// loadApp enforces that the slug matches the token's bound app.
+	mux.HandleFunc("GET /v1/apps/{slug}/deploy-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeployTokens))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deploy-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.createDeployToken))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/deploy-tokens/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.revokeDeployToken))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deploy-tokens/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.rotateDeployToken)))))
+
 	// PR 6 (issue #190 / IAM-6 / ADR-061) — org-scoped API key surface.
 	// Compose s.loadOrg (resolves X-Active-Org / ?org= to a membership)
 	// followed by s.authLimited. No requireMFA / no requireScope: the
@@ -2072,10 +2081,10 @@ func (s *server) handler() http.Handler {
 	// entries.
 	mux.HandleFunc("GET /v1/admin/config",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigList))))
-	mux.HandleFunc("PATCH /v1/admin/config/{key}",
-		s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigPatch)))
-	mux.HandleFunc("POST /v1/admin/config/{key}/rollback",
-		s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigRollback)))
+	mux.Handle("PATCH /v1/admin/config/{key}",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigPatch))))
+	mux.Handle("POST /v1/admin/config/{key}/rollback",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigRollback))))
 	mux.HandleFunc("GET /v1/admin/config-operations/{id}",
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigOperationGet)))
 	mux.HandleFunc("GET /v1/admin/config/{key}/revisions",
@@ -2242,19 +2251,21 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeployments))))
 	mux.HandleFunc("GET /v1/deployments/latest-by-app", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listLatestDeploymentsByApp))))
 
-	// MFA (IAM-2, issue #186). Five POST endpoints; all on the
+	// MFA (IAM-2, issue #186). Seven POST endpoints; all on the
 	// admin-only scope set because the dashboard never exposes
 	// them to non-admin keys. /enroll is NOT wrapped in
 	// s.idempotent because the secret + QR + recovery codes
 	// must be returned exactly once; replaying a cached response
 	// would re-reveal plaintexts the customer already consumed.
-	// The /confirm, /verify, /recover, /disable routes ARE
+	// The /confirm, /verify, /recover, and /disable routes ARE
 	// idempotent (no body-shape side effect).
 	mux.HandleFunc("POST /v1/account/mfa/enroll", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaEnroll))))
 	mux.HandleFunc("POST /v1/account/mfa/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaConfirm)))))
 	mux.HandleFunc("POST /v1/account/mfa/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaVerify)))))
 	mux.HandleFunc("POST /v1/account/mfa/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaRecover)))))
 	mux.HandleFunc("POST /v1/account/mfa/disable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaDisable)))))
+	mux.HandleFunc("POST /v1/account/mfa/disable-email", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmail))))
+	mux.HandleFunc("POST /v1/account/mfa/disable-email/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmailConfirm))))
 
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept
 	// unsigned and trust the network boundary; ADR-007 hardening later).

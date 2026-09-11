@@ -86,6 +86,10 @@ type Pattern struct {
 // slice is unexported because callers have no business mutating it — a future
 // ADR may add a `~/.gregale/scan.toml` allowlist override but that's not v1.
 var defaultPatterns = []Pattern{
+	// Gregale per-app deploy tokens. Keep this prefix registered in the
+	// scanner so a token copied into a repository is reported as a
+	// credential even when its entropy happens to be low in a fixture.
+	{Provider: "gregale_deploy_token", Severity: SeverityHigh, KeyHint: "deploy", Regex: regexp.MustCompile("fp" + "_deploy_" + `[0-9a-f]{48}`)},
 	// Stripe live: sk_live_ followed by 24+ base62 chars. Real money at risk
 	// if leaked; SeverityHigh always.
 	{Provider: "stripe_live", Severity: SeverityHigh, KeyHint: "stripe", Regex: regexp.MustCompile(`sk_live_[A-Za-z0-9]{24,}`)},

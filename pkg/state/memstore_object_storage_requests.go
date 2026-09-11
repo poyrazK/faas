@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var _ ObjectStorageProviderUsageStore = (*MemStore)(nil)
@@ -34,6 +36,27 @@ func (m *MemStore) RecordObjectStorageProviderRequest(_ context.Context, bucketI
 	return nil
 }
 
+func (m *MemStore) RecordObjectStorageProviderEgress(_ context.Context, bucketID string, bytes int64, at time.Time) error {
+	if bucketID == "" || bytes < 0 || bytes > api.MaxObjectStoragePolicyValue || at.IsZero() || at.After(time.Now().UTC().Add(time.Minute)) {
+		return ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	bucket, ok := m.objectBuckets[bucketID]
+	if !ok || bucket.State == "deleted" {
+		return ErrNotFound
+	}
+	key := objectProviderRequestKey(bucketID, ObjectStoragePeriod(at)) + "\x00egress"
+	if m.objectProviderRequests[key] > api.MaxObjectStoragePolicyValue-bytes {
+		return ErrConflict
+	}
+	if m.objectProviderRequests == nil {
+		m.objectProviderRequests = map[string]int64{}
+	}
+	m.objectProviderRequests[key] += bytes
+	return nil
+}
+
 func (m *MemStore) ListObjectStorageProviderRequestMetrics(_ context.Context, backendID, fingerprint string, periodStart time.Time) ([]ObjectStorageProviderRequestMetric, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -47,6 +70,7 @@ func (m *MemStore) ListObjectStorageProviderRequestMetrics(_ context.Context, ba
 			BucketID: id, AccountID: bucket.AccountID, BackendID: bucket.BackendID,
 			BackendFingerprint: bucket.BackendFingerprint, PhysicalName: bucket.PhysicalName,
 			PeriodStart: periodStart, RequestCount: m.objectProviderRequests[objectProviderRequestKey(id, periodStart)],
+			EgressBytes: m.objectProviderRequests[objectProviderRequestKey(id, periodStart)+"\x00egress"],
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

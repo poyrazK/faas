@@ -79,6 +79,15 @@ cached-edit target, a `within_slo` boolean, and the phase timings. Receipts are
 NDJSON so a long-running watcher can be consumed incrementally; no source,
 secret, or runtime-log content is included.
 
+Failed syncs include a developer diagnostic in the same terminal. Deployment
+stage failures reuse the platform error code and explain the failing phase,
+the next action, and the deployment log command. The runtime stream also
+recognizes high-confidence startup failures such as missing modules, bind
+errors, upstream connection refusals, panics, and runtime OOMs; each code is
+reported once per watch session. With `--json`, diagnostics are emitted as
+`{"event":"developer_diagnostic",...}` objects so editor integrations can
+surface the same guidance without parsing terminal prose.
+
 The URL is stable for an account, local developer installation, and source
 directory. Teammates and separate clones or worktrees therefore get independent
 environments, while repeated runs from the same source directory resume the

@@ -16,6 +16,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// Snapshot sources identify which customer-facing contract is being compared.
+// Imported documents are authoritative; edge-rule projection remains the
+// compatibility fallback for apps that have not imported a document yet.
+const (
+	SnapshotSourceManualImport = "manual_import"
+	SnapshotSourceEdgeRules    = "edge_rules"
+)
+
 var (
 	// ErrSnapshotStoreUnavailable means the configured state store cannot
 	// read contract snapshots. Once the flag is enabled, callers should fail
@@ -43,6 +51,10 @@ type PromotionCheck struct {
 	Baseline    state.OpenAPISnapshot
 	Proposed    state.OpenAPISnapshot
 	HasBaseline bool
+	// ProposedSource is the source used to build Proposed. It is exposed by
+	// the read-only HTTP preview so operators can tell whether the comparison
+	// used the authoritative imported contract or the edge-rule fallback.
+	ProposedSource string
 }
 
 // GateError is returned when the proposed contract contains one or more
@@ -100,6 +112,32 @@ func CompareSnapshots(baseline, proposed json.RawMessage) (SnapshotDiff, error) 
 // public lets the pre-live gate use exactly the producer's projection rather
 // than maintaining a second route-to-schema implementation.
 func SnapshotFromEdgeRules(deploymentID, appID, scope string, rules []state.EdgeRule) (state.OpenAPISnapshot, error) {
+	pending, err := edgeRuleRequests(rules)
+	if err != nil {
+		return state.OpenAPISnapshot{}, err
+	}
+	snap, _, err := snapshotFromDocument(deploymentID, appID, scope, nil, pending)
+	if err != nil {
+		return state.OpenAPISnapshot{}, err
+	}
+	return snap, nil
+}
+
+// SnapshotFromDocument builds the canonical contract snapshot from an
+// imported app document when present, falling back to enabled edge rules. The
+// returned source is stable API metadata, not an implementation detail.
+func SnapshotFromDocument(deploymentID, appID, scope string, importedDoc []byte, rules []state.EdgeRule) (state.OpenAPISnapshot, string, error) {
+	if len(importedDoc) > 0 {
+		return snapshotFromDocument(deploymentID, appID, scope, importedDoc, nil)
+	}
+	pending, err := edgeRuleRequests(rules)
+	if err != nil {
+		return state.OpenAPISnapshot{}, "", err
+	}
+	return snapshotFromDocument(deploymentID, appID, scope, importedDoc, pending)
+}
+
+func edgeRuleRequests(rules []state.EdgeRule) ([]api.CreateEdgeRuleRequest, error) {
 	pending := make([]api.CreateEdgeRuleRequest, 0, len(rules))
 	for _, rule := range rules {
 		if !rule.Enabled {
@@ -107,7 +145,7 @@ func SnapshotFromEdgeRules(deploymentID, appID, scope string, rules []state.Edge
 		}
 		action, err := json.Marshal(rule.Action)
 		if err != nil {
-			return state.OpenAPISnapshot{}, fmt.Errorf("openapidiff: encode edge rule %s: %w", rule.ID, err)
+			return nil, fmt.Errorf("openapidiff: encode edge rule %s: %w", rule.ID, err)
 		}
 		priority := rule.Priority
 		enabled := rule.Enabled
@@ -118,18 +156,7 @@ func SnapshotFromEdgeRules(deploymentID, appID, scope string, rules []state.Edge
 			ValidateMode: rule.ValidateMode, Action: action,
 		})
 	}
-	spec, err := GenerateFromEdgeRules(nil, nil, pending)
-	if err != nil {
-		return state.OpenAPISnapshot{}, fmt.Errorf("openapidiff: project snapshot: %w", err)
-	}
-	raw, sha, err := MarshalSnapshot(spec)
-	if err != nil {
-		return state.OpenAPISnapshot{}, fmt.Errorf("openapidiff: marshal snapshot: %w", err)
-	}
-	return state.OpenAPISnapshot{
-		DeploymentID: deploymentID, AppID: appID, Scope: scope,
-		Snapshot: raw, SHA256: sha, SchemaVersion: SnapshotSchemaVersion,
-	}, nil
+	return pending, nil
 }
 
 // CheckPromotion builds the proposed contract for an app and compares it to
@@ -145,11 +172,38 @@ func CheckPromotion(ctx context.Context, store state.Store, appID, deploymentID,
 	if err != nil {
 		return PromotionCheck{}, fmt.Errorf("openapidiff: read edge rules: %w", err)
 	}
-	proposed, err := SnapshotFromEdgeRules(deploymentID, appID, scope, rules)
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		return PromotionCheck{}, fmt.Errorf("openapidiff: read app: %w", err)
+	}
+	var importedDoc []byte
+	var importedMeta state.AppOpenAPIDocMeta
+	if doc, meta, docErr := store.GetAppOpenAPIDoc(ctx, appID, app.AccountID); docErr == nil {
+		importedDoc = doc
+		importedMeta = meta
+	} else if !errors.Is(docErr, state.ErrNotFound) {
+		return PromotionCheck{}, fmt.Errorf("openapidiff: read imported OpenAPI document: %w", docErr)
+	}
+	proposed, source, err := SnapshotFromDocument(deploymentID, appID, scope, importedDoc, rules)
 	if err != nil {
 		return PromotionCheck{}, err
 	}
-	return checkSnapshotPromotion(ctx, snapshots, appID, scope, proposed)
+	check, err := checkSnapshotPromotion(ctx, snapshots, appID, scope, proposed)
+	check.ProposedSource = source
+	// A pre-import edge-rule snapshot is not a meaningful baseline for the
+	// newly authoritative document. Let the first live deployment capture the
+	// imported contract before comparing it, avoiding a false breaking-change
+	// block during migration from the fallback projection.
+	if source == SnapshotSourceManualImport && check.HasBaseline &&
+		!importedMeta.UpdatedAt.IsZero() && check.Baseline.CapturedAt.Before(importedMeta.UpdatedAt) {
+		check = PromotionCheck{
+			Diff:           SnapshotDiff{ProposedSHA256: proposed.SHA256},
+			Proposed:       proposed,
+			ProposedSource: source,
+		}
+		err = ErrSnapshotBaselineMissing
+	}
+	return check, err
 }
 
 // CheckDeploymentPromotion compares an already-captured deployment snapshot

@@ -591,15 +591,31 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 			Approximate: event.Approximate,
 		})
 	}
+	correlation := buildDebugRequestCorrelation(item, timeline, spans)
+	correlationViews := make([]dashboard.DebugCorrelationStageView, 0, len(correlation.Stages))
+	for _, stage := range correlation.Stages {
+		correlationViews = append(correlationViews, dashboard.DebugCorrelationStageView{
+			Phase:         stage.Phase,
+			Status:        stage.Status,
+			StartedAt:     stage.StartedAt,
+			CompletedAt:   stage.CompletedAt,
+			DurationMS:    stage.DurationMS,
+			EvidenceCount: stage.EvidenceCount,
+			Reason:        stage.Reason,
+			Approximate:   stage.Approximate,
+		})
+	}
 	data.Selected = &dashboard.DebugRequestDetailView{
-		Request:        request,
-		Regression:     matching,
-		Timeline:       timelineViews,
-		Spans:          spanViews,
-		SpansTruncated: truncated,
-		Explanation:    explanation.Headline,
-		EvidenceStatus: explanation.Status,
-		GeneratedAt:    now.Format(time.RFC3339),
+		Request:             request,
+		Regression:          matching,
+		Timeline:            timelineViews,
+		Correlation:         correlationViews,
+		CorrelationComplete: correlation.Complete,
+		Spans:               spanViews,
+		SpansTruncated:      truncated,
+		Explanation:         explanation.Headline,
+		EvidenceStatus:      explanation.Status,
+		GeneratedAt:         now.Format(time.RFC3339),
 	}
 	return nil
 }

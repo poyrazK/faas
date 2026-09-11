@@ -1,0 +1,5 @@
+[Service]
+# Public-read bucket mounts resolve the same <slug>.<apps_domain> hostname
+# that gatewayd-internal routes. The value is supplied by the manifest's
+# gatewayd_apps_domain variable and never comes from a customer request.
+Environment=FAAS_APPS_DOMAIN={{ gatewayd_apps_domain | default('gregale.dev') }}

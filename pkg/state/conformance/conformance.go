@@ -57,6 +57,7 @@ func Run(t *testing.T, open Open) {
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
+		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -195,6 +196,83 @@ func testLatestDeploymentPerApp(t *testing.T, fx *Fixture) {
 	}
 	if _, ok := got[foreignApp.ID]; ok {
 		t.Error("foreign account deployment leaked into latest map")
+	}
+}
+
+func testExecutionIntentLifecycle(t *testing.T, fx *Fixture) {
+	request := api.CreateExecutionRequest{
+		Runtime: api.ExecutionRuntimeNode22,
+		Source:  "export default async function main(input) { return input }",
+		Input:   []byte(`{"conformance":true}`),
+	}
+	resolved, problem := request.Resolve(api.PlanPro)
+	if problem != nil {
+		t.Fatalf("Resolve: %v", problem)
+	}
+	base := time.Now().UTC().Add(2 * time.Second)
+	params := state.CreateExecutionParams{
+		AccountID: fx.Account.ID, Request: resolved,
+		SourceBytes: len(request.Source), InputBytes: len(request.Input),
+		AdmittedAt: base, DeadlineAt: base.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
+		SealedPayload: []byte("sealed-conformance-payload"), PayloadKID: "conformance-key",
+	}
+	created, err := fx.Store.CreateExecution(fx.Ctx, params)
+	if err != nil {
+		t.Fatalf("CreateExecution: %v", err)
+	}
+	read, err := fx.Store.ExecutionByID(fx.Ctx, fx.Account.ID, created.ID)
+	if err != nil || read.Status != api.ExecutionStatusQueued || read.Result != nil {
+		t.Fatalf("ExecutionByID = %#v, %v", read, err)
+	}
+	listed, err := fx.Store.ListExecutions(fx.Ctx, fx.Account.ID, 10, 0)
+	if err != nil || len(listed) != 1 || listed[0].ID != created.ID {
+		t.Fatalf("ListExecutions = %#v, %v", listed, err)
+	}
+	claim, err := fx.Store.ClaimExecution(fx.Ctx, "conformance-schedd", base.Add(10*time.Millisecond), time.Second)
+	if err != nil {
+		t.Fatalf("ClaimExecution: %v", err)
+	}
+	if claim.ID != created.ID || string(claim.SealedPayload) != "sealed-conformance-payload" || claim.LeaseToken == nil {
+		t.Fatalf("ClaimExecution = %#v", claim)
+	}
+	if err := fx.Store.RenewExecutionLease(fx.Ctx, created.ID, *claim.LeaseToken, base.Add(20*time.Millisecond), time.Second); err != nil {
+		t.Fatalf("RenewExecutionLease: %v", err)
+	}
+	if _, err := fx.Store.MarkExecutionRunning(fx.Ctx, created.ID, *claim.LeaseToken, base.Add(30*time.Millisecond)); err != nil {
+		t.Fatalf("MarkExecutionRunning: %v", err)
+	}
+	cancelRequested, err := fx.Store.RequestExecutionCancellation(fx.Ctx, fx.Account.ID, created.ID, base.Add(40*time.Millisecond))
+	if err != nil || cancelRequested.Status != api.ExecutionStatusRunning || cancelRequested.CancelRequested == nil {
+		t.Fatalf("RequestExecutionCancellation = %#v, %v", cancelRequested, err)
+	}
+	completed, err := fx.Store.CompleteExecution(fx.Ctx, state.CompleteExecutionParams{
+		ID: created.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusCancelled,
+		FinishedAt: base.Add(50 * time.Millisecond),
+	})
+	if err != nil || completed.Status != api.ExecutionStatusCancelled || completed.FinishedAt == nil {
+		t.Fatalf("CompleteExecution = %#v, %v", completed, err)
+	}
+
+	expiringRequest := request
+	expiringRequest.Limits = &api.ExecutionLimitRequest{TimeoutMS: api.ExecutionTimeoutMinMS}
+	expiringResolved, problem := expiringRequest.Resolve(api.PlanPro)
+	if problem != nil {
+		t.Fatalf("Resolve expiring: %v", problem)
+	}
+	expiringAt := base.Add(100 * time.Millisecond)
+	params.Request = expiringResolved
+	params.AdmittedAt = expiringAt
+	params.DeadlineAt = expiringAt.Add(time.Duration(expiringResolved.Limits.TimeoutMS) * time.Millisecond)
+	params.SealedPayload = []byte("sealed-expiring-payload")
+	if _, err := fx.Store.CreateExecution(fx.Ctx, params); err != nil {
+		t.Fatalf("CreateExecution(expiring): %v", err)
+	}
+	sweep, err := fx.Store.SweepExecutions(fx.Ctx, params.DeadlineAt, 10)
+	if err != nil {
+		t.Fatalf("SweepExecutions: %v", err)
+	}
+	if sweep.ExpiredQueued != 1 || sweep.PayloadsDeleted != 1 {
+		t.Fatalf("SweepExecutions = %#v", sweep)
 	}
 }
 

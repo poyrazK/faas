@@ -723,7 +723,9 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "import", Short: "Import an app OpenAPI document from a JSON file or stdin"},
 			{Name: "dry-run", Short: "Preview uncovered routes without importing the document"},
-			{Name: "preview", Short: "Preview declared routes, observed routes, and matching edge policies"},
+			{Name: "preview", Short: "Preview routes, edge policies, and the read-only OpenAPI contract diff", Flags: []cliFlag{
+				{Name: "scope", Short: "deployment scope to compare", Value: "scope"},
+			}},
 			{Name: "rm", Short: "Remove the imported app OpenAPI document"},
 		},
 	},

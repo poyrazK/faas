@@ -1353,6 +1353,14 @@ type Store interface {
 	ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error)
 	DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error)
 
+	// MFA disable email requests are authenticated, one-time bearer tokens.
+	// IssueMFADisableRequest invalidates any prior pending request for the
+	// account; GetMFADisableRequest reads the requested_at timestamp without
+	// consuming; ConsumeMFADisableRequest is the atomic one-shot consume.
+	IssueMFADisableRequest(ctx context.Context, tokenHash []byte, accountID string, requestedAt time.Time) error
+	GetMFADisableRequest(ctx context.Context, tokenHash []byte) (MFADisableRequest, error)
+	ConsumeMFADisableRequest(ctx context.Context, tokenHash []byte) (string, error)
+
 	// Email verification tokens prove control of accounts.email without
 	// authenticating the browser. ConsumeEmailVerificationToken atomically
 	// consumes the one-shot token and stamps accounts.email_verified_at.
@@ -3047,6 +3055,12 @@ type Store interface {
 	// method signatures) and lets narrow test doubles satisfy the
 	// JobStore surface without dragging in the whole Store.
 	JobStore
+
+	// Disposable one-shot execution intent (ADR-171). The public HTTP
+	// surface remains disabled until the scheduler and VM protocol land, but
+	// both apid admission and schedd lifecycle ownership meet at this narrow
+	// durable boundary.
+	ExecutionStore
 
 	// Workflows (ADR-081 / issue #669).
 	// Multi-step durable execution workflows land in the timestamped workflow

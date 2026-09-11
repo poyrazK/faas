@@ -113,6 +113,8 @@ type MemStore struct {
 	accounts               map[string]Account
 	keys                   map[string]APIKey
 	keyByHash              map[string]APIKey
+	deployTokens           map[string]DeployToken
+	deployTokenByHash      map[string]DeployToken
 	apps                   map[string]App
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
@@ -361,6 +363,11 @@ type MemStore struct {
 	// through m.mu (MemStore is inherently single-process); per-row
 	// lease_expires_at is in-memory instead of SQL NOW().
 	invocations map[string]Invocation
+	// executions and executionPayloads mirror the ADR-171 durable intent
+	// split. Customer reads only touch executions; a payload is exposed solely
+	// by ClaimExecution after the in-memory lease CAS succeeds.
+	executions        map[string]Execution
+	executionPayloads map[string]executionPayload
 	// accountAsyncQuota is the in-memory mirror of the
 	// account_async_quota table (ADR-134 PR-B). Keyed by account
 	// ID; populated lazily by EnsureAccountAsyncQuota; mutated by
@@ -374,6 +381,9 @@ type MemStore struct {
 	// emailVerificationTokens is separate from loginTokens because consume
 	// verifies the account but never authenticates the caller.
 	emailVerificationTokens map[string]EmailVerificationToken
+	// mfaDisableRequests is keyed by the raw token hash. Only one live request
+	// is retained per account; issuing a new request consumes the old one.
+	mfaDisableRequests map[string]MFADisableRequest
 	// cliAuthCodes is keyed by the SHA-256 hash of the raw code
 	// (same key format as loginTokens). AccountID is empty until the
 	// dashboard claims the code; the claim statement fills it in
@@ -750,6 +760,8 @@ func NewMemStore() *MemStore {
 		accounts:               map[string]Account{},
 		keys:                   map[string]APIKey{},
 		keyByHash:              map[string]APIKey{},
+		deployTokens:           map[string]DeployToken{},
+		deployTokenByHash:      map[string]DeployToken{},
 		apps:                   map[string]App{},
 		githubDeployBranches:   map[string]map[string]string{},
 		githubBindings:         map[string]GitHubBinding{},
@@ -836,10 +848,13 @@ func NewMemStore() *MemStore {
 		tenantSurfaces:          map[string]TenantSurface{},
 		tenantHostnames:         map[string]TenantHostname{},
 		invocations:             map[string]Invocation{},
+		executions:              map[string]Execution{},
+		executionPayloads:       map[string]executionPayload{},
 		accountAsyncQuota:       map[string]accountAsyncQuotaRow{},
 		instances:               map[string]Instance{},
 		loginTokens:             map[string]LoginToken{},
 		emailVerificationTokens: map[string]EmailVerificationToken{},
+		mfaDisableRequests:      map[string]MFADisableRequest{},
 		cliAuthCodes:            map[string]CliAuthCode{},
 		accountPasswords:        map[string]AccountPassword{},
 		oauthLinks:              map[string]OAuthLink{},
@@ -13614,6 +13629,59 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 	return removed, nil
 }
 
+// IssueMFADisableRequest stores a new email-recovery request and invalidates
+// any older pending request for the same account.
+func (m *MemStore) IssueMFADisableRequest(_ context.Context, tokenHash []byte, accountID string, requestedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[accountID]; !ok {
+		return ErrNotFound
+	}
+	if m.mfaDisableRequests == nil {
+		m.mfaDisableRequests = map[string]MFADisableRequest{}
+	}
+	now := time.Now()
+	for key, req := range m.mfaDisableRequests {
+		if req.AccountID == accountID && req.ConsumedAt == nil {
+			req.ConsumedAt = &now
+			m.mfaDisableRequests[key] = req
+		}
+	}
+	m.mfaDisableRequests[string(tokenHash)] = MFADisableRequest{
+		TokenHash: append([]byte(nil), tokenHash...), AccountID: accountID, RequestedAt: requestedAt,
+	}
+	return nil
+}
+
+// GetMFADisableRequest reads a live request without consuming it. Consumed or
+// unknown tokens intentionally share ErrNotFound so replays do not reveal
+// token history.
+func (m *MemStore) GetMFADisableRequest(_ context.Context, tokenHash []byte) (MFADisableRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	req, ok := m.mfaDisableRequests[string(tokenHash)]
+	if !ok || req.ConsumedAt != nil {
+		return MFADisableRequest{}, ErrNotFound
+	}
+	req.TokenHash = append([]byte(nil), req.TokenHash...)
+	return req, nil
+}
+
+// ConsumeMFADisableRequest atomically consumes a live request and returns its
+// bound account. A replay or unknown token returns ErrNotFound.
+func (m *MemStore) ConsumeMFADisableRequest(_ context.Context, tokenHash []byte) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	req, ok := m.mfaDisableRequests[string(tokenHash)]
+	if !ok || req.ConsumedAt != nil {
+		return "", ErrNotFound
+	}
+	now := time.Now()
+	req.ConsumedAt = &now
+	m.mfaDisableRequests[string(tokenHash)] = req
+	return req.AccountID, nil
+}
+
 // IssueEmailVerificationToken stores a one-shot verification token hash.
 func (m *MemStore) IssueEmailVerificationToken(_ context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
 	m.mu.Lock()
@@ -15020,6 +15088,12 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for kid, k := range m.consumerKeys {
 		if k.AccountID == id {
 			delete(m.consumerKeys, kid)
+		}
+	}
+	for tid, token := range m.deployTokens {
+		if token.AccountID == id {
+			delete(m.deployTokens, tid)
+			delete(m.deployTokenByHash, string(token.Hash))
 		}
 	}
 	for cid, c := range m.apiConsumers {

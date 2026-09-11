@@ -437,7 +437,8 @@ func (c *Client) RestoreAccount(ctx context.Context) (AccountResponse, error) {
 // stamps mfa_enrolled_at. VerifyMFA is the step-up route for an
 // already-enrolled customer whose session cookie is mfa_pending.
 // RecoverMFA burns a recovery code; DisableMFA clears MFA state
-// (re-auth via password or recovery_code). All five require the
+// (re-auth via password or recovery_code). The email fallback is a
+// two-step, 24-hour cooldown path. All seven require the
 // session cookie — API keys bypass MFA per the IAM-2 decision.
 
 // EnrollMFA starts enrollment. The plaintext TOTP secret + QR +
@@ -487,6 +488,21 @@ func (c *Client) PostAccountMfaRecover(ctx context.Context, req MFARecoverReques
 func (c *Client) PostAccountMfaDisable(ctx context.Context, req MFADisableRequest) (MFADisableResponse, error) {
 	var out MFADisableResponse
 	return out, c.do(ctx, "POST", "/v1/account/mfa/disable", req, &out)
+}
+
+// PostAccountMfaDisableEmail requests a one-time email link to disable MFA.
+// Confirmation is intentionally delayed by a server-enforced 24-hour
+// cooldown so possession of the authenticated session alone is insufficient.
+func (c *Client) PostAccountMfaDisableEmail(ctx context.Context, req MFADisableEmailRequest) (MFADisableEmailResponse, error) {
+	var out MFADisableEmailResponse
+	return out, c.do(ctx, "POST", "/v1/account/mfa/disable-email", req, &out)
+}
+
+// PostAccountMfaDisableEmailConfirm consumes the emailed token after the
+// mandatory cooldown and clears the account's MFA state.
+func (c *Client) PostAccountMfaDisableEmailConfirm(ctx context.Context, req MFADisableEmailConfirmRequest) (MFADisableEmailConfirmResponse, error) {
+	var out MFADisableEmailConfirmResponse
+	return out, c.do(ctx, "POST", "/v1/account/mfa/disable-email/confirm", req, &out)
 }
 
 // IAM-3 server-side session revocation (ADR-039, issue #187 + #244
@@ -2391,6 +2407,38 @@ func (c *Client) RotateOrgAPIKey(ctx context.Context, slug, id, label string) (R
 	var out RotateOrgAPIKeyResponse
 	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys/"+id+"/rotate",
 		RotateOrgAPIKeyRequest{Label: label}, &out)
+}
+
+// Per-app deploy tokens. These credentials are scoped to one app and are
+// intended for CI/CD callers that should not hold an account-wide fp_live_
+// key. The plaintext is returned only by CreateDeployToken and
+// RotateDeployToken; ListDeployTokens is always metadata-only.
+
+// ListDeployTokens returns every deploy-token row for an app, including
+// grace and revoked predecessors. The server never returns plaintext here.
+func (c *Client) ListDeployTokens(ctx context.Context, slug string) (ListDeployTokensResponse, error) {
+	var out ListDeployTokensResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deploy-tokens", nil, &out)
+}
+
+// CreateDeployToken mints a deploy:write credential bound to slug. The
+// response contains the plaintext exactly once; store it in CI immediately.
+func (c *Client) CreateDeployToken(ctx context.Context, slug string, req CreateDeployTokenRequest) (DeployTokenResponse, error) {
+	var out DeployTokenResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/deploy-tokens", req, &out)
+}
+
+// RevokeDeployToken permanently disables an app deploy token. The operation
+// is idempotent for an already-revoked row.
+func (c *Client) RevokeDeployToken(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/deploy-tokens/"+id, nil, nil)
+}
+
+// RotateDeployToken atomically mints a replacement and revokes the
+// predecessor. The replacement plaintext is returned exactly once.
+func (c *Client) RotateDeployToken(ctx context.Context, slug, id string, req RotateDeployTokenRequest) (RotateDeployTokenResponse, error) {
+	var out RotateDeployTokenResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/deploy-tokens/"+id+"/rotate", req, &out)
 }
 
 // Audit events (IAM-4, ADR-035). The events table is append-only

@@ -112,24 +112,22 @@ jobs:
           cp /tmp/gregale-build/stage/darwin_arm64/gregale /tmp/gregale-build/gregale-darwin-arm64
           ls -la /tmp/gregale-build /tmp/gregale-build/archives
 
-      # SHA256SUMS is generated in /tmp/gregale-build because that's
+      # CLI-SHA256SUMS is generated in /tmp/gregale-build because that's
       # the working directory where both binaries live. The vendoring
-      # step below copies both the binary and the SHA256SUMS into the
-      # repo so the `sha256sum -c` snippet in the release notes can
-      # resolve the file from the release branch (not just from the
-      # /tmp artifact on the runner).
-      #
-      # The archives are flattened into the same directory first so
-      # their SHA256SUMS entries carry bare filenames. scripts/install.sh
-      # matches on "<digest>  <archive>" exactly, and a leading
-      # "archives/" would make every verification fail.
-      - name: Generate SHA256SUMS
+      # step below retains a SHA256SUMS copy on the release branch for
+      # action compatibility, while the GitHub release uses the distinct
+      # CLI-SHA256SUMS public asset name so the daemon checksum publication
+      # cannot replace it.
+      # The archives are flattened into the same directory first so their
+      # checksum entries carry bare filenames. scripts/install.sh matches on
+      # "<digest>  <archive>" exactly, and an "archives/" prefix would fail.
+      - name: Generate CLI-SHA256SUMS
         working-directory: /tmp/gregale-build
         run: |
           set -euo pipefail
           cp archives/*.tar.gz .
-          sha256sum gregale gregale-darwin-arm64 gregale_*.tar.gz > SHA256SUMS
-          cat SHA256SUMS
+          sha256sum gregale gregale-darwin-arm64 gregale_*.tar.gz > CLI-SHA256SUMS
+          cat CLI-SHA256SUMS
 
       # Handed to publish-npm, which stages the five npm packages from
       # these exact archives rather than rebuilding the CLI. One build per
@@ -149,7 +147,7 @@ jobs:
           set -euo pipefail
           cp /tmp/gregale-build/gregale .github/actions/deploy/bin/gregale
           chmod +x .github/actions/deploy/bin/gregale
-          cp /tmp/gregale-build/SHA256SUMS SHA256SUMS
+          cp /tmp/gregale-build/CLI-SHA256SUMS SHA256SUMS
           echo "$VERSION" > .github/actions/deploy/src/version.txt
           # Sanity-check: the vendored binary should report the right
           # version when invoked. Smoke asserts the LDFLAGS stamping
@@ -204,7 +202,7 @@ jobs:
             /tmp/gregale-build/gregale-darwin-arm64
             /tmp/gregale-build/gregale_*.tar.gz
             scripts/install.sh
-            SHA256SUMS
+            /tmp/gregale-build/CLI-SHA256SUMS
           # Release candidates (for example v0.1.18-rc.1) must not be
           # presented as stable releases. Keep the tag convention and the
           # GitHub release classification in lockstep.
@@ -237,13 +235,13 @@ jobs:
             ### Checksums
 
             ```
-            $(cat SHA256SUMS)
+            $(cat /tmp/gregale-build/CLI-SHA256SUMS)
             ```
 
             ### Verify
 
             ```sh
-            sha256sum -c SHA256SUMS
+            sha256sum -c CLI-SHA256SUMS
             ```
 
             ### Pin

@@ -212,6 +212,27 @@ type Querier interface {
 	// The partial index `deployments_snapshot_backoff_idx` covers this lookup.
 	DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentSnapshotBackoffActiveRow, error)
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
+	ExecutionClaimNext(ctx context.Context, db DBTX, arg ExecutionClaimNextParams) (Execution, error)
+	ExecutionCountActive(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	ExecutionExpireQueued(ctx context.Context, db DBTX, arg ExecutionExpireQueuedParams) ([]Execution, error)
+	ExecutionFinishExpiredRestores(ctx context.Context, db DBTX, arg ExecutionFinishExpiredRestoresParams) ([]Execution, error)
+	ExecutionFinishExpiredRuns(ctx context.Context, db DBTX, arg ExecutionFinishExpiredRunsParams) ([]Execution, error)
+	ExecutionGetForAccount(ctx context.Context, db DBTX, arg ExecutionGetForAccountParams) (Execution, error)
+	ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionInsertParams) (Execution, error)
+	ExecutionListForAccount(ctx context.Context, db DBTX, arg ExecutionListForAccountParams) ([]Execution, error)
+	ExecutionLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (ExecutionLockAccountRow, error)
+	ExecutionLockForAccount(ctx context.Context, db DBTX, arg ExecutionLockForAccountParams) (Execution, error)
+	ExecutionLockForLease(ctx context.Context, db DBTX, arg ExecutionLockForLeaseParams) (Execution, error)
+	ExecutionMarkRunning(ctx context.Context, db DBTX, arg ExecutionMarkRunningParams) (Execution, error)
+	ExecutionMarkTerminal(ctx context.Context, db DBTX, arg ExecutionMarkTerminalParams) (Execution, error)
+	ExecutionPayloadDelete(ctx context.Context, db DBTX, executionID pgtype.UUID) (int64, error)
+	ExecutionPayloadDeleteMany(ctx context.Context, db DBTX, executionIds []pgtype.UUID) (int64, error)
+	ExecutionPayloadDeleteTerminal(ctx context.Context, db DBTX, batchLimit int32) (int64, error)
+	ExecutionPayloadForLease(ctx context.Context, db DBTX, arg ExecutionPayloadForLeaseParams) (ExecutionPayload, error)
+	ExecutionPayloadInsert(ctx context.Context, db DBTX, arg ExecutionPayloadInsertParams) error
+	ExecutionRenewLease(ctx context.Context, db DBTX, arg ExecutionRenewLeaseParams) (int64, error)
+	ExecutionRequestCancel(ctx context.Context, db DBTX, arg ExecutionRequestCancelParams) (Execution, error)
+	ExecutionRequeueExpiredRestores(ctx context.Context, db DBTX, arg ExecutionRequeueExpiredRestoresParams) ([]Execution, error)
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
 	// Marks a single session as expired after the reaper removes its
 	// .part file. Split into a separate query from ReapExpiredUploadSessions
@@ -784,6 +805,7 @@ type Querier interface {
 	ObjectS3CredentialRotate(ctx context.Context, db DBTX, arg ObjectS3CredentialRotateParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
 	ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg ObjectStorageProviderBucketsParams) ([]ObjectBucket, error)
+	ObjectStorageProviderEgressIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderEgressIncrementParams) error
 	ObjectStorageProviderRequestIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestIncrementParams) error
 	ObjectStorageProviderRequestMetrics(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestMetricsParams) ([]ObjectStorageProviderRequestMetricsRow, error)
 	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)

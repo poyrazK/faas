@@ -545,7 +545,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
     post:
       operationId: createObjectBucket
-      summary: Create a private bucket on the region's current default backend
+      summary: Create a bucket on the region's current default backend
       description: |
         Requires storage:manage or admin. Idempotent by app, scope and name, not
         by Idempotency-Key. Retry provisioning by submitting the same name and
@@ -563,6 +563,8 @@ paths:
                 name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
                 scope: { type: string, default: default }
                 region: { type: string, description: 'Gregale region, not upstream signing region. Omit to use the configured default.' }
+                public: { type: boolean, default: false, description: 'Serve objects anonymously on the app hostname.' }
+                serve_at: { type: string, pattern: '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$', description: 'Immutable app path mounted when public is true.' }
       responses:
         '201':
           description: Bucket created
@@ -1480,7 +1482,7 @@ paths:
 
   # ─── MFA (IAM-2, issue #186) ──────────────────────────────────────────────
   #
-  # Five POST endpoints plus the browser CSRF-token issuer; all on the admin-only scope set. The
+  # Seven POST endpoints plus the browser CSRF-token issuer; all on the admin-only scope set. The
   # /enroll route returns the TOTP secret + QR + recovery codes
   # exactly once; the customer must complete /confirm before the
   # server stamps mfa_enrolled_at. /verify is the step-up route
@@ -1637,6 +1639,63 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '401':
           description: Invalid credentials or recovery code.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/mfa/disable-email:
+    post:
+      tags: [mfa]
+      operationId: mfaDisableEmail
+      summary: Request email-assisted MFA disable.
+      description: |
+        Sends a one-time confirmation link to the account email and
+        starts a mandatory 24-hour server-side cooldown. A newer
+        request invalidates any earlier link.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFADisableEmailRequest'
+      responses:
+        '200':
+          description: Confirmation email queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MFADisableEmailResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/account/mfa/disable-email/confirm:
+    post:
+      tags: [mfa]
+      operationId: mfaDisableEmailConfirm
+      summary: Confirm email-assisted MFA disable.
+      description: |
+        Consumes the emailed one-time token after the mandatory
+        24-hour cooldown and clears the account's MFA state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFADisableEmailConfirmRequest'
+      responses:
+        '200':
+          description: MFA disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MFADisableEmailConfirmResponse' }
+        '401':
+          description: Invalid or already-consumed email token.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '425':
+          description: The 24-hour cooldown has not elapsed.
+          headers:
+            Retry-After:
+              schema: { type: integer, format: int32 }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -2255,7 +2314,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [auth.logout, auth.session.revoke, auth.sessions.revoke_all, mfa_confirm, mfa_recover, mfa_disable, set_password]
+            enum: [auth.logout, auth.session.revoke, auth.sessions.revoke_all, mfa_confirm, mfa_recover, mfa_disable, mfa_disable_email, mfa_disable_email_confirm, set_password]
           description: Exact mutation action the token will authorize.
       responses:
         '200':
@@ -2641,6 +2700,87 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deploy-tokens:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listDeployTokens
+      summary: List deploy tokens for an app.
+      responses:
+        '200':
+          description: Deploy-token metadata. Plaintexts are never returned by list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDeployTokensResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [apps]
+      operationId: createDeployToken
+      summary: Create a deploy token scoped to this app.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDeployTokenRequest' }
+      responses:
+        '201':
+          description: Token metadata and plaintext. Capture plaintext immediately; it is never returned again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeployTokenResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deploy-tokens/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Deploy-token identifier returned by the list or create endpoint.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [apps]
+      operationId: revokeDeployToken
+      summary: Revoke an app deploy token.
+      responses:
+        '204': { description: Token revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deploy-tokens/{id}/rotate:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Deploy-token identifier to rotate, returned by the list or create endpoint.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: rotateDeployToken
+      summary: Rotate an app deploy token.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateDeployTokenRequest' }
+      responses:
+        '201':
+          description: New token metadata and plaintext. The predecessor is revoked atomically.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RotateDeployTokenResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/preview/{slug}/destroy:
@@ -13414,15 +13554,17 @@ components:
         access: { type: string, enum: [read_write, read_only] }
 
     ObjectBucket:
-      description: Private logical bucket metadata without upstream credentials or placement details.
+      description: Logical bucket metadata without upstream credentials or placement details.
       type: object
-      required: [id, name, scope, region, state, created_at]
+      required: [id, name, scope, region, state, public, created_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         scope: { type: string }
         region: { type: string }
         state: { type: string, enum: [provisioning, ready, deleting] }
+        public: { type: boolean }
+        serve_at: { type: string }
         created_at: { type: string, format: date-time }
     ObjectBucketList:
       description: App bucket catalog and operator-configured preview capabilities.
@@ -20527,6 +20669,61 @@ components:
           description: PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again.
       example: {id: "0123456789abcdef0123456789abcdef", org_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c", prefix: "fp_live_ab12cd34", label: "ci-deploy", scopes: [apps:read, deploy:write], created_at: "2026-08-02T11:25:00Z", expires_at: "2027-08-02T11:25:00Z", status: "active", last_used_at: "2026-07-25T13:25:00Z"}
 
+    DeployTokenResponse:
+      description: "Metadata for a per-app deploy token. The fp_deploy_ plaintext is returned only on create and rotate responses."
+      type: object
+      required: [id, app_id, prefix, scopes, status, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        prefix: { type: string, example: "fp_deploy_" }
+        label: { type: string, maxLength: 100 }
+        scopes:
+          type: array
+          items: { type: string, enum: [deploy:write] }
+        status: { type: string, enum: [active, grace, revoked] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        rotated_from_id: { type: string, format: uuid }
+        plaintext:
+          type: string
+          description: "Present only on create/rotate. Store it in CI immediately; it cannot be retrieved later."
+
+    ListDeployTokensResponse:
+      description: "GET /v1/apps/{slug}/deploy-tokens response. Plaintexts are never returned by list."
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          items: { $ref: '#/components/schemas/DeployTokenResponse' }
+
+    CreateDeployTokenRequest:
+      description: "Create a deploy token scoped to one app. The server always assigns deploy:write."
+      type: object
+      properties:
+        label: { type: string, maxLength: 100 }
+        expires_at: { type: string, format: date-time, description: "Optional future expiry; defaults to 90 days and is capped at 365 days." }
+
+    RotateDeployTokenRequest:
+      description: "Rotate a deploy token. Empty label inherits the predecessor; empty expiry defaults to 90 days."
+      type: object
+      properties:
+        label: { type: string, maxLength: 100 }
+        expires_at: { type: string, format: date-time }
+
+    RotateDeployTokenResponse:
+      description: "Replacement deploy-token metadata and one-time plaintext, plus the revoked predecessor id."
+      type: object
+      required: [token, token_plaintext, old_token_id]
+      properties:
+        token: { $ref: '#/components/schemas/DeployTokenResponse' }
+        token_plaintext: { type: string }
+        old_token_id: { type: string, format: uuid }
+        old_token_expires_at: { type: string, format: date-time }
+
     CreateKeyRequest:
       description: "API key creation payload — label and optional scopes. Plaintext is returned exactly once in the 201 response. Scopes defaults to `[\"admin\"]` when omitted so existing callers preserve the legacy full-access behavior. See IAM-1, ADR-034 rev2."
       type: object
@@ -21654,18 +21851,23 @@ components:
 
     OpenAPIContractDiffResponse:
       description: |
-        Read-only OpenAPI contract comparison for the current projected
-        edge-rule surface and the latest captured deployment snapshot.
+        Read-only OpenAPI contract comparison for the authoritative imported
+        app document (or the projected edge-rule fallback) and the latest
+        captured deployment snapshot.
         `blocking` is true when a production promotion would be rejected
         while the contract-diff feature flag is enabled.
       type: object
-      required: [app_id, scope, proposed_sha256, blocking, breaks, additions]
+      required: [app_id, scope, source, proposed_sha256, blocking, breaks, additions]
       properties:
         app_id:
           type: string
           format: uuid
         scope:
           type: string
+        source:
+          type: string
+          enum: [manual_import, edge_rules]
+          description: "Contract source used for the proposed snapshot."
         baseline_deployment_id:
           type: string
           format: uuid
@@ -23686,6 +23888,36 @@ components:
       type: object
       additionalProperties: false
 
+    MFADisableEmailRequest:
+      description: Body for requesting email-assisted MFA disable.
+      type: object
+      additionalProperties: false
+      properties:
+        csrf_token:
+          type: string
+
+    MFADisableEmailResponse:
+      description: Empty success body; the confirmation link is sent by email.
+      type: object
+      additionalProperties: false
+
+    MFADisableEmailConfirmRequest:
+      description: Body for consuming the emailed token after the cooldown.
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          description: Opaque base64url token from the confirmation email.
+        csrf_token:
+          type: string
+
+    MFADisableEmailConfirmResponse:
+      description: Empty success body; MFA state is cleared.
+      type: object
+      additionalProperties: false
+
     # Issue #472 / ADR-054: per-app cosign trusted-publisher surface.
     # Mirrors AWS Lambda's TrustedSigners / SigningProfileVersionArns.
 
@@ -24519,10 +24751,36 @@ components:
         status: { type: integer, minimum: 100, maximum: 599 }
         approximate: { type: boolean, description: "True when the marker is derived from a collapsed minute bucket rather than an exact request timestamp." }
 
+    DebugRequestCorrelationStage:
+      type: object
+      description: "One bounded edge-to-billing request stage. Missing and partial signals are explicit and are never rendered as zero latency."
+      required: [phase, status]
+      properties:
+        phase: { type: string, enum: [edge, queue, wake, guest, downstream, billing] }
+        status: { type: string, enum: [observed, partial, missing, not_applicable] }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        evidence_count: { type: integer, minimum: 0 }
+        reason: { type: string, maxLength: 256 }
+        approximate: { type: boolean, description: "True when the stage is derived from a collapsed request bucket rather than an exact request timestamp." }
+
+    DebugRequestCorrelation:
+      type: object
+      description: "Fixed-shape edge-to-billing correlation for a retained request. Every stage is present so unavailable telemetry is visible."
+      required: [stages, complete]
+      properties:
+        stages:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items: { $ref: '#/components/schemas/DebugRequestCorrelationStage' }
+        complete: { type: boolean, description: "True only when every applicable stage has complete retained evidence." }
+
     DebugRequestEvidenceResponse:
       type: object
       description: "Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."
-      required: [request, timeline, spans, spans_truncated, explanation, generated_at]
+      required: [request, timeline, correlation, spans, spans_truncated, explanation, generated_at]
       properties:
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
         regression:
@@ -24533,6 +24791,7 @@ components:
           type: array
           maxItems: 200
           items: { $ref: '#/components/schemas/DebugTimelineEvent' }
+        correlation: { $ref: '#/components/schemas/DebugRequestCorrelation' }
         spans:
           type: array
           maxItems: 100

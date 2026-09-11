@@ -10,8 +10,9 @@ import (
 )
 
 // getAppOpenAPIContractDiff is the read-only half of ADR-121. It uses the
-// same projection and differ as the imaged promotion gate, so CI can inspect
-// the exact result that would block a production deployment.
+// same authoritative-document projection and differ as the imaged promotion
+// gate, so CI can inspect the exact result that would block a production
+// deployment.
 func (s *server) getAppOpenAPIContractDiff(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !api.ApiContractDiffEnabled() {
 		api.WriteProblem(w, api.ErrAPIContractDiffDisabled())
@@ -37,7 +38,7 @@ func (s *server) getAppOpenAPIContractDiff(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	resp := api.OpenAPIContractDiffResponse{
-		AppID: app.ID, Scope: scope, ProposedSHA256: check.Diff.ProposedSHA256,
+		AppID: app.ID, Scope: scope, Source: check.ProposedSource, ProposedSHA256: check.Diff.ProposedSHA256,
 		Blocking: len(check.Diff.Breaks) > 0,
 		Breaks:   contractBreaks(check.Diff), Additions: contractAdditions(check.Diff),
 	}

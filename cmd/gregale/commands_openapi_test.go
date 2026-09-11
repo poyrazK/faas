@@ -277,6 +277,74 @@ func TestCmdOpenapiGet_RawDocumentAndSource(t *testing.T) {
 	}
 }
 
+func TestCmdOpenapiPreviewIncludesContractDiff(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/apps/demo/openapi/preview":
+			_, _ = w.Write([]byte(`{"app_id":"app-1","source":"preview","observed_available":true,"routes":[{"path":"/users","method":"get","status":"matched","declared":true,"observed":true,"covered":true}],"suggestions":[]}`))
+		case "/v1/apps/demo/openapi/diff":
+			if got := r.URL.Query().Get("scope"); got != "staging" {
+				t.Errorf("scope = %q, want staging", got)
+			}
+			_, _ = w.Write([]byte(`{"app_id":"app-1","scope":"staging","source":"manual_import","proposed_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","blocking":true,"breaks":[{"path":"/users","method":"get","status":"200","kind":"type_change"}],"additions":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
+	stdout, restore := swapStdout(t)
+	defer restore()
+	jsonOutput = true
+	defer resetJSONOutput()
+
+	if code := cmdOpenapiPreview([]string{"demo", "--scope", "staging"}); code != 0 {
+		t.Fatalf("cmdOpenapiPreview = %d, want 0", code)
+	}
+	var got openapiPreviewOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("preview output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got.Policy.AppID != "app-1" || got.Contract == nil || !got.ContractDiffEnabled {
+		t.Fatalf("preview output = %+v, want policy + enabled contract", got)
+	}
+	if got.Contract.Scope != "staging" || got.Contract.Source != openapidiff.SnapshotSourceManualImport || len(got.Contract.Breaks) != 1 {
+		t.Fatalf("contract = %+v", got.Contract)
+	}
+}
+
+func TestCmdOpenapiPreviewKeepsPolicyWhenContractDiffDisabled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/apps/demo/openapi/preview" {
+			_, _ = w.Write([]byte(`{"app_id":"app-1","source":"no_import","observed_available":false,"routes":[],"suggestions":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"type":"about:blank","title":"disabled","status":503,"code":"api_contract_diff_disabled"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
+	stdout, restore := swapStdout(t)
+	defer restore()
+	jsonOutput = true
+	defer resetJSONOutput()
+
+	if code := cmdOpenapiPreview([]string{"demo"}); code != 0 {
+		t.Fatalf("cmdOpenapiPreview = %d, want 0", code)
+	}
+	var got openapiPreviewOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("preview output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got.Policy.AppID != "app-1" || got.Contract != nil || got.ContractDiffEnabled {
+		t.Fatalf("preview output = %+v, want policy with disabled contract diff", got)
+	}
+}
+
 func TestCmdOpenapiImportAndDryRun(t *testing.T) {
 	docPath := filepath.Join(t.TempDir(), "openapi.json")
 	doc := `{"openapi":"3.1.0","info":{"title":"demo","version":"1"},"paths":{}}`

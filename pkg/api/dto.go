@@ -2329,6 +2329,52 @@ type APIKeyResponse struct {
 	Plaintext string `json:"plaintext,omitempty"`
 }
 
+// DeployTokenResponse is the redacted representation of a per-app CI
+// credential. Plaintext is populated only on create/rotate responses.
+type DeployTokenResponse struct {
+	ID            string   `json:"id"`
+	AppID         string   `json:"app_id"`
+	Prefix        string   `json:"prefix"`
+	Label         string   `json:"label,omitempty"`
+	Scopes        []string `json:"scopes"`
+	Status        string   `json:"status"`
+	CreatedAt     string   `json:"created_at"`
+	ExpiresAt     string   `json:"expires_at"`
+	LastUsedAt    string   `json:"last_used_at,omitempty"`
+	RevokedAt     string   `json:"revoked_at,omitempty"`
+	RotatedFromID string   `json:"rotated_from_id,omitempty"`
+	Plaintext     string   `json:"plaintext,omitempty"`
+}
+
+// ListDeployTokensResponse is the body of GET
+// /v1/apps/{slug}/deploy-tokens. Plaintexts are never included in this
+// response; callers receive them only from create and rotate operations.
+type ListDeployTokensResponse struct {
+	Tokens []DeployTokenResponse `json:"tokens"`
+}
+
+// CreateDeployTokenRequest controls a per-app deploy token mint. Scopes are
+// intentionally not caller-controlled in v1: the token is always limited to
+// deploy:write. ExpiresAt is optional and defaults to 90 days.
+type CreateDeployTokenRequest struct {
+	Label     string `json:"label,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// RotateDeployTokenRequest mirrors CreateDeployTokenRequest. An empty label
+// inherits the predecessor's label; an empty expiry uses the default lifetime.
+type RotateDeployTokenRequest struct {
+	Label     string `json:"label,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+type RotateDeployTokenResponse struct {
+	Token           DeployTokenResponse `json:"token"`
+	TokenPlaintext  string              `json:"token_plaintext"`
+	OldTokenID      string              `json:"old_token_id"`
+	OldTokenExpires string              `json:"old_token_expires_at,omitempty"`
+}
+
 // RotateKeyResponse is the body of POST /v1/keys/{id}/rotate
 // (issue #189 / IAM-5). Key is the new key (status='active'); Key is
 // the loader-facing shape (id, prefix, label, scopes, status). The
@@ -7076,6 +7122,31 @@ type DebugTimelineEvent struct {
 	Approximate bool   `json:"approximate,omitempty"`
 }
 
+// DebugRequestCorrelation is the stable stage view for one request. It keeps
+// the customer-facing investigation narrative separate from the raw event
+// timeline: every stage is present, even when its signal is unavailable, so a
+// missing phase is explicit rather than silently inferred.
+type DebugRequestCorrelation struct {
+	Stages   []DebugRequestCorrelationStage `json:"stages"`
+	Complete bool                           `json:"complete"`
+}
+
+// DebugRequestCorrelationStage is one bounded edge-to-billing stage. Status
+// is one of observed, partial, missing, or not_applicable. StartedAt,
+// CompletedAt, and DurationMS are populated only when the retained signals
+// support that measurement; no payload, credentials, or raw span attributes
+// are included.
+type DebugRequestCorrelationStage struct {
+	Phase         string `json:"phase"`
+	Status        string `json:"status"`
+	StartedAt     string `json:"started_at,omitempty"`
+	CompletedAt   string `json:"completed_at,omitempty"`
+	DurationMS    int64  `json:"duration_ms,omitempty"`
+	EvidenceCount int    `json:"evidence_count,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Approximate   bool   `json:"approximate,omitempty"`
+}
+
 // DebugRequestEvidenceResponse combines request metadata, bounded span
 // evidence, a matching active regression observation, and a deterministic
 // explanation for GET /v1/apps/{slug}/debug/requests/{req_id}/evidence.
@@ -7083,6 +7154,7 @@ type DebugRequestEvidenceResponse struct {
 	Request        DebugTelemetryRequestItem `json:"request"`
 	Regression     *DebugRegressionItem      `json:"regression,omitempty"`
 	Timeline       []DebugTimelineEvent      `json:"timeline"`
+	Correlation    DebugRequestCorrelation   `json:"correlation"`
 	Spans          []DebugTelemetrySpan      `json:"spans"`
 	SpansTruncated bool                      `json:"spans_truncated"`
 	Explanation    DebugEvidenceExplanation  `json:"explanation"`

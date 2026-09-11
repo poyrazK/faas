@@ -31,7 +31,7 @@ func (s *server) objectStorageEnabled() bool {
 type bucketView = api.ObjectBucket
 
 func viewBucket(b state.ObjectBucket) bucketView {
-	return bucketView{ID: b.ID, Name: b.Name, Scope: b.Scope, Region: b.Region, State: b.State, CreatedAt: b.CreatedAt}
+	return bucketView{ID: b.ID, Name: b.Name, Scope: b.Scope, Region: b.Region, State: b.State, Public: b.PublicRead, ServeAt: b.ServeAt, CreatedAt: b.CreatedAt}
 }
 
 func bucketProblem(w http.ResponseWriter, err error) {
@@ -147,9 +147,11 @@ func (s *server) loadBucketRecord(w http.ResponseWriter, r *http.Request, acct s
 }
 
 type createBucketRequest struct {
-	Name   string `json:"name"`
-	Scope  string `json:"scope"`
-	Region string `json:"region"`
+	Name    string `json:"name"`
+	Scope   string `json:"scope"`
+	Region  string `json:"region"`
+	Public  bool   `json:"public"`
+	ServeAt string `json:"serve_at"`
 }
 
 func (s *server) createBucket(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -164,12 +166,20 @@ func (s *server) createBucket(w http.ResponseWriter, r *http.Request, acct state
 	if req.Scope == "" {
 		req.Scope = api.DefaultEnvScope
 	}
-	if !regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`).MatchString(req.Name) || api.ValidateScope(req.Scope) != nil {
+	req.ServeAt = strings.TrimSpace(req.ServeAt)
+	if !regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`).MatchString(req.Name) || api.ValidateScope(req.Scope) != nil || !objectstorage.ValidPublicReadPath(req.Public, req.ServeAt) {
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}
 	if !s.objectStorageEnabled() {
 		bucketProblem(w, objectstorage.ErrUnavailable)
+		return
+	}
+	if req.Public && !s.objectStorage.Accounting.Valid() {
+		// Public mounts are an anonymous data plane. Do not create one when
+		// the operator has not supplied the same fresh usage policy that gates
+		// signed object URLs; otherwise the mount would be unmetered.
+		bucketProblem(w, state.ErrObjectUsageStale)
 		return
 	}
 	b, err := s.reserveBucket(r.Context(), st, acct.ID, app.ID, req)
@@ -205,6 +215,9 @@ func (s *server) reserveBucket(ctx context.Context, st state.ObjectBucketStore, 
 			if req.Region != "" && old.Region != req.Region {
 				return old, state.ErrConflict
 			}
+			if old.PublicRead != req.Public || old.ServeAt != req.ServeAt {
+				return old, state.ErrConflict
+			}
 			return old, nil
 		}
 	}
@@ -216,7 +229,7 @@ func (s *server) reserveBucket(ctx context.Context, st state.ObjectBucketStore, 
 		return state.ObjectBucket{}, err
 	}
 	id := uuid.NewString()
-	b, err := st.ReserveObjectBucket(ctx, state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "gregale-" + strings.ReplaceAll(id, "-", "")}, s.objectStorage.MaxBucketsPerApp)
+	b, err := st.ReserveObjectBucket(ctx, state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "gregale-" + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}, s.objectStorage.MaxBucketsPerApp)
 	if err == nil && b.Region != req.Region {
 		return b, state.ErrConflict
 	}
