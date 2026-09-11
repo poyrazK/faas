@@ -35,6 +35,7 @@ macOS and Linux, amd64 and arm64. Both channels install the same binary
 from the same GitHub Release and verify it against the release's
 `SHA256SUMS`. Windows is not supported yet. Full matrix, version pinning,
 CI usage, and uninstall: [`docs/cli-install.md`](docs/cli-install.md).
+Persistent non-secret CLI preferences: [`docs/cli-config.md`](docs/cli-config.md).
 
 ## Layout
 

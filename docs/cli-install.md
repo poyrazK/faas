@@ -123,6 +123,11 @@ gregale completion zsh > ~/.zsh/completions/_gregale
 gregale man | man -l -
 ```
 
+Persistent non-secret settings are managed with [`gregale config`](cli-config.md):
+`gregale config list`, `gregale config get api-base`, and
+`gregale config set json true`. `FAAS_API` and `FAAS_JSON` remain higher
+precedence for CI and one-off local overrides.
+
 ## Windows
 
 Not supported. `cmd/gregale` transitively imports `pkg/fcvm`, which needs

@@ -68,6 +68,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`trusted-publishers`](#trusted-publishers) | Per-app cosign trusted-publisher list (admin; trusted-publishers add\|remove\|list) |
 | [`usage`](#usage) | Show this month&#39;s usage (gregale usage [--month YYYY-MM]\|daily [--day YYYY-MM-DD]\|storage [--day YYYY-MM-DD]\|summary) |
 | [`version`](#version) | Print the CLI version |
+| [`config`](#config) | Manage non-secret local CLI settings (config get\|set\|list) |
 | [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline &lt;slug&gt; &lt;wake-id&gt; [--since RFC3339] [--limit N] [--all]) |
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`mail`](#mail) | Mail operator dry-run (issue #246 acceptance item 6): `gregale mail dry-run [--unsubscribe-url URL]` renders every production template against a fixture account + day and writes the wire payload as JSON. The eyeball gate before flipping a box to FAAS_MAIL_TRANSPORT=resend. |
@@ -1533,6 +1534,25 @@ Account roll-up
 Print the CLI version
 
 `gregale version`
+
+
+## config
+
+Manage non-secret local CLI settings (config get|set|list)
+
+`gregale config [<subcommand>]`
+
+### config get
+
+Show one effective setting
+
+### config set
+
+Persist one non-secret setting
+
+### config list
+
+Show all effective settings
 
 
 ## wake-timeline
