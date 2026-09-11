@@ -1,6 +1,8 @@
 name: builder-native
 
 on:
+  pull_request:
+    branches: [main]
   workflow_run:
     workflows: [images]
     types: [completed]
@@ -239,19 +241,24 @@ jobs:
           retention-days: 14
 
   metal-smoke:
-    name: metal smoke (Firecracker amd64, nightly)
+    name: metal smoke (Firecracker amd64)
     needs: acceptance
     if: >-
-      needs.acceptance.result == 'success' &&
-      (github.event_name == 'schedule' ||
-       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+      always() &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+       (needs.acceptance.result == 'success' &&
+        (github.event_name == 'schedule' ||
+         (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))))
     runs-on: ubuntu-latest
     # 60 min: the whole pkg/fcvm metal package now runs here, not one boot.
     timeout-minutes: 60
+    outputs:
+      node-started: ${{ steps.compute-node.outputs.started }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
 
       - uses: actions/setup-go@v7
@@ -261,7 +268,7 @@ jobs:
 
       - name: Build exact-source transfer bundle
         env:
-          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
@@ -283,9 +290,48 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v3
 
+      - name: Ensure compute node 2 is ready
+        id: compute-node
+        run: |
+          set -euo pipefail
+          status="$(
+            gcloud compute instances describe "$GCP_INSTANCE" \
+              --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+              --format='value(status)'
+          )"
+          case "$status" in
+            RUNNING)
+              echo "Compute node 2 was already running; this job will leave it running."
+              echo "started=false" >> "$GITHUB_OUTPUT"
+              ;;
+            TERMINATED)
+              # Emit ownership before starting so the finalizer still stops the
+              # node if gcloud succeeds but the step is interrupted afterward.
+              echo "started=true" >> "$GITHUB_OUTPUT"
+              gcloud compute instances start "$GCP_INSTANCE" --quiet \
+                --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+              ;;
+            *)
+              echo "::error::compute node 2 is in unexpected state: ${status:-missing}" >&2
+              exit 1
+              ;;
+          esac
+
+          for attempt in {1..24}; do
+            if gcloud compute ssh "$GCP_INSTANCE" --quiet \
+              --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+              --command true >/dev/null 2>&1; then
+              exit 0
+            fi
+            echo "Waiting for compute node 2 SSH readiness (${attempt}/24)."
+            sleep 5
+          done
+          echo "::error::compute node 2 did not become SSH-ready within 120 seconds" >&2
+          exit 1
+
       - name: Run native fcvm package on compute node 2
         env:
-          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           remote_root="/var/tmp/faas-metal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -326,7 +372,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: native-metal-smoke-${{ github.sha }}
+          name: native-metal-smoke-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/native-metal-smoke.log
           if-no-files-found: warn
           retention-days: 14
@@ -336,7 +382,8 @@ jobs:
     needs: [acceptance, metal-smoke]
     if: >-
       always() &&
-      needs.acceptance.outputs.node-started == 'true'
+      (needs.acceptance.outputs.node-started == 'true' ||
+       needs.metal-smoke.outputs.node-started == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
