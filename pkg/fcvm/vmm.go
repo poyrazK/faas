@@ -659,12 +659,12 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	boundTunAt := time.Now()
-	var coldBootCPU coldBootCPUProfile
+	var coldBootCPU startupCPUProfile
 	trackColdBootCPU := !skipReady && !l.IsBuilder && l.Plan.Valid()
 	if l.IsBuilder || l.Plan.Valid() {
 		fenceLease := l
 		if trackColdBootCPU {
-			coldBootCPU, err = resolveColdBootCPUProfile(l.Plan, l.CPUMillicores)
+			coldBootCPU, err = resolveStartupCPUProfile(l.Plan, l.CPUMillicores)
 			if err != nil {
 				return fmt.Errorf("vmm: resolve cold-boot CPU profile: %w", err)
 			}
@@ -692,7 +692,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		readyAt = time.Now()
 		if trackColdBootCPU {
 			quotaRestoreStartedAt := time.Now()
-			if err = v.restoreColdBootCPUFence(l, workloads, coldBootCPU.ConfiguredMillicores); err != nil {
+			if err = v.restoreConfiguredCPUFence(l, workloads, coldBootCPU.ConfiguredMillicores); err != nil {
 				return fmt.Errorf("vmm: restore configured CPU fence: %w", err)
 			}
 			quotaRestoredAt = time.Now()
@@ -840,12 +840,12 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 	return nil
 }
 
-// restoreColdBootCPUFence lowers the temporary startup allowance after the
-// readiness probe succeeds. The parent scope contains Firecracker and is the
-// enforcement boundary. The optional main-workload child is kept in sync for
-// accurate cgroup inspection even though guest processes do not join that
-// host-side leaf.
-func (v *JailerVMM) restoreColdBootCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
+// restoreConfiguredCPUFence lowers the temporary startup allowance after a
+// cold boot or snapshot restore reaches readiness. The parent scope contains
+// Firecracker and is the enforcement boundary. The optional main-workload
+// child is kept in sync for accurate cgroup inspection even though guest
+// processes do not join that host-side leaf.
+func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
 	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
 	if err := writeAppCPUMaxTo(parentScope, l.Plan, configuredMillicores); err != nil {
 		return err
@@ -1065,8 +1065,18 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
 		return err
 	}
+	var restoreCPU startupCPUProfile
+	trackRestoreCPU := !l.IsBuilder && l.Plan.Valid()
 	if l.IsBuilder || l.Plan.Valid() {
-		if err = v.applyPreBootCgroupFence(l, spec.Workloads); err != nil {
+		fenceLease := l
+		if trackRestoreCPU {
+			restoreCPU, err = resolveStartupCPUProfile(l.Plan, l.CPUMillicores)
+			if err != nil {
+				return fmt.Errorf("vmm: resolve restore CPU profile: %w", err)
+			}
+			fenceLease.CPUMillicores = restoreCPU.StartupMillicores
+		}
+		if err = v.applyPreBootCgroupFence(fenceLease, spec.Workloads); err != nil {
 			return fmt.Errorf("vmm: apply pre-boot cgroup fence: %w", err)
 		}
 	}
@@ -1092,6 +1102,18 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return fmt.Errorf("vmm: readiness after restore: %w", err)
 	}
 	tReady := time.Now()
+	// Snapshot load, lazy memory faults, and the mandatory guest resume hook
+	// are startup work. Applying a customer's sustained CPU shape before those
+	// phases can exhaust a 250 mCPU cgroup period and hold the resume ACK until
+	// the next period, adding up to 750 ms to an otherwise sub-200 ms SSD wake.
+	// Keep the same bounded one-core allowance used for cold boot until the
+	// guest is ready, then restore the configured quota before publishing it.
+	if trackRestoreCPU {
+		if err = v.restoreConfiguredCPUFence(l, spec.Workloads, restoreCPU.ConfiguredMillicores); err != nil {
+			return fmt.Errorf("vmm: restore configured CPU fence after snapshot restore: %w", err)
+		}
+	}
+	tDone := time.Now()
 	breakdown := restoreTimingBreakdown{
 		RestoreGateWaitMs:    restoreAdmitted.Sub(t0).Milliseconds(),
 		ChrootMs:             chrootReady.Sub(restoreAdmitted).Milliseconds(),
@@ -1106,10 +1128,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		LoadSnapshotMs:       tLoad.Sub(tBindTun).Milliseconds(),
 		ResumeHookMs:         tResume.Sub(tLoad).Milliseconds(),
 		WaitReadyMs:          tReady.Sub(tResume).Milliseconds(),
-		TotalMs:              tReady.Sub(t0).Milliseconds(),
+		TotalMs:              tDone.Sub(t0).Milliseconds(),
 		ResolveArtifacts:     restoreArtifactTimings(resolvedArtifacts),
 	}
-	v.emitRestoreBreakdown(ctx, l, tReady, breakdown)
+	v.emitRestoreBreakdown(ctx, l, tDone, breakdown)
 	// The durable wake event above is the operator-facing record. Keep the
 	// duplicate structured log at Debug so a slow journald sink cannot delay
 	// the vmmd RPC after readiness and therefore postpone schedd's RUNNING
