@@ -8931,4 +8931,51 @@ $$;
 CREATE TRIGGER executions_status_transition BEFORE UPDATE ON public.executions FOR EACH ROW EXECUTE FUNCTION public.enforce_execution_status_transition();
 
 
+CREATE TABLE public.runtime_snapshots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    catalog_key text NOT NULL,
+    runtime text NOT NULL,
+    architecture text NOT NULL,
+    kernel_digest text NOT NULL,
+    guest_executor_digest text NOT NULL,
+    base_image_digest text NOT NULL,
+    memory_mb integer NOT NULL,
+    ephemeral_disk_mb integer NOT NULL,
+    format_version integer NOT NULL,
+    storage_key text NOT NULL,
+    snapshot_digest text NOT NULL,
+    mem_bytes bigint NOT NULL,
+    vm_state_bytes bigint NOT NULL,
+    sanitized boolean NOT NULL,
+    payload_free boolean NOT NULL,
+    state text DEFAULT 'ready'::text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    published_at timestamp with time zone DEFAULT now() NOT NULL,
+    retired_at timestamp with time zone,
+    CONSTRAINT runtime_snapshots_architecture_check CHECK ((architecture = ANY (ARRAY['amd64'::text, 'arm64'::text]))),
+    CONSTRAINT runtime_snapshots_base_digest_check CHECK ((base_image_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_snapshots_digest_check CHECK ((snapshot_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_snapshots_disk_check CHECK ((ephemeral_disk_mb = ANY (ARRAY[64, 128, 256, 512, 1024, 2048]))),
+    CONSTRAINT runtime_snapshots_executor_digest_check CHECK ((guest_executor_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_snapshots_format_check CHECK ((format_version > 0)),
+    CONSTRAINT runtime_snapshots_kernel_digest_check CHECK ((kernel_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_snapshots_memory_check CHECK ((memory_mb = ANY (ARRAY[128, 256, 512, 1024]))),
+    CONSTRAINT runtime_snapshots_publication_order_check CHECK ((published_at >= created_at)),
+    CONSTRAINT runtime_snapshots_retirement_check CHECK ((((state = 'ready'::text) AND (retired_at IS NULL)) OR ((state = 'retired'::text) AND (retired_at IS NOT NULL)))),
+    CONSTRAINT runtime_snapshots_runtime_check CHECK ((runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text]))),
+    CONSTRAINT runtime_snapshots_sanitized_check CHECK ((sanitized AND payload_free)),
+    CONSTRAINT runtime_snapshots_sizes_check CHECK (((mem_bytes > 0) AND (vm_state_bytes > 0))),
+    CONSTRAINT runtime_snapshots_state_check CHECK ((state = ANY (ARRAY['ready'::text, 'retired'::text])))
+);
+
+
+ALTER TABLE ONLY public.runtime_snapshots
+    ADD CONSTRAINT runtime_snapshots_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.runtime_snapshots
+    ADD CONSTRAINT runtime_snapshots_catalog_key_key UNIQUE (catalog_key);
+
+CREATE INDEX runtime_snapshots_state_created_idx ON public.runtime_snapshots USING btree (state, created_at DESC, id DESC);
+
+
 --

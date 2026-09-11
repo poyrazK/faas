@@ -476,6 +476,7 @@ LoadAllOverageCapCents
 LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes
 LookupDeploymentScopeExclusions
+LookupRuntimeSnapshot
 MTDSpendEurCents
 MarkAPIKeyRevoked
 MarkAccountDeletionPending
@@ -548,6 +549,7 @@ ProjectByRepo
 ProjectBySlug
 ProvisionedStaticEgressIPExists
 PruneDataUpstreamProbesOlderThan
+PublishRuntimeSnapshot
 PutIdempotent
 PutManagedObjectStorageSecret
 PutManagedPostgresSecret
@@ -597,6 +599,7 @@ ResetAppWebhookDeliveryFromDead
 ResolveStatusIncident
 RestoreAccount
 RestoreApp
+RetireRuntimeSnapshot
 RetryDeploymentFromStage
 RetryQueueDeadLetter
 RetryTriggerRecordByOperator

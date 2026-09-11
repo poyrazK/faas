@@ -10197,6 +10197,149 @@ func (q *Queries) RevokeSession(ctx context.Context, db DBTX, arg RevokeSessionP
 	return id, err
 }
 
+const runtimeSnapshotByCatalogKey = `-- name: RuntimeSnapshotByCatalogKey :one
+SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at FROM runtime_snapshots
+WHERE catalog_key = $1
+`
+
+func (q *Queries) RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, catalogKey string) (RuntimeSnapshot, error) {
+	row := db.QueryRow(ctx, runtimeSnapshotByCatalogKey, catalogKey)
+	var i RuntimeSnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.CatalogKey,
+		&i.Runtime,
+		&i.Architecture,
+		&i.KernelDigest,
+		&i.GuestExecutorDigest,
+		&i.BaseImageDigest,
+		&i.MemoryMb,
+		&i.EphemeralDiskMb,
+		&i.FormatVersion,
+		&i.StorageKey,
+		&i.SnapshotDigest,
+		&i.MemBytes,
+		&i.VmStateBytes,
+		&i.Sanitized,
+		&i.PayloadFree,
+		&i.State,
+		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const runtimeSnapshotInsert = `-- name: RuntimeSnapshotInsert :one
+INSERT INTO runtime_snapshots (
+    catalog_key, runtime, architecture, kernel_digest, guest_executor_digest,
+    base_image_digest, memory_mb, ephemeral_disk_mb, format_version,
+    storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized,
+    payload_free, state, created_at, published_at, retired_at
+)
+VALUES (
+    $1, $2, $3,
+    $4, $5,
+    $6, $7, $8,
+    $9, $10, $11,
+    $12, $13, $14,
+    $15, $16, $17,
+    $18, $19
+)
+RETURNING id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at
+`
+
+type RuntimeSnapshotInsertParams struct {
+	CatalogKey          string
+	Runtime             string
+	Architecture        string
+	KernelDigest        string
+	GuestExecutorDigest string
+	BaseImageDigest     string
+	MemoryMb            int32
+	EphemeralDiskMb     int32
+	FormatVersion       int32
+	StorageKey          string
+	SnapshotDigest      string
+	MemBytes            int64
+	VmStateBytes        int64
+	Sanitized           bool
+	PayloadFree         bool
+	State               string
+	CreatedAt           pgtype.Timestamptz
+	PublishedAt         pgtype.Timestamptz
+	RetiredAt           pgtype.Timestamptz
+}
+
+// Runtime snapshot catalog (ADR-171 follow-up / durable publication boundary).
+// Publication is insert-only; retirement is the sole mutable transition.
+func (q *Queries) RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg RuntimeSnapshotInsertParams) (RuntimeSnapshot, error) {
+	row := db.QueryRow(ctx, runtimeSnapshotInsert,
+		arg.CatalogKey,
+		arg.Runtime,
+		arg.Architecture,
+		arg.KernelDigest,
+		arg.GuestExecutorDigest,
+		arg.BaseImageDigest,
+		arg.MemoryMb,
+		arg.EphemeralDiskMb,
+		arg.FormatVersion,
+		arg.StorageKey,
+		arg.SnapshotDigest,
+		arg.MemBytes,
+		arg.VmStateBytes,
+		arg.Sanitized,
+		arg.PayloadFree,
+		arg.State,
+		arg.CreatedAt,
+		arg.PublishedAt,
+		arg.RetiredAt,
+	)
+	var i RuntimeSnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.CatalogKey,
+		&i.Runtime,
+		&i.Architecture,
+		&i.KernelDigest,
+		&i.GuestExecutorDigest,
+		&i.BaseImageDigest,
+		&i.MemoryMb,
+		&i.EphemeralDiskMb,
+		&i.FormatVersion,
+		&i.StorageKey,
+		&i.SnapshotDigest,
+		&i.MemBytes,
+		&i.VmStateBytes,
+		&i.Sanitized,
+		&i.PayloadFree,
+		&i.State,
+		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const runtimeSnapshotRetire = `-- name: RuntimeSnapshotRetire :execrows
+UPDATE runtime_snapshots
+SET state = 'retired', retired_at = $1
+WHERE catalog_key = $2 AND state = 'ready'
+`
+
+type RuntimeSnapshotRetireParams struct {
+	RetiredAt  pgtype.Timestamptz
+	CatalogKey string
+}
+
+func (q *Queries) RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg RuntimeSnapshotRetireParams) (int64, error) {
+	result, err := db.Exec(ctx, runtimeSnapshotRetire, arg.RetiredAt, arg.CatalogKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setAppManifest = `-- name: SetAppManifest :exec
 update apps set manifest = $2 where id = $1
 `

@@ -1706,6 +1706,29 @@ type RuntimeConfigRevision struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type RuntimeSnapshot struct {
+	ID                  pgtype.UUID
+	CatalogKey          string
+	Runtime             string
+	Architecture        string
+	KernelDigest        string
+	GuestExecutorDigest string
+	BaseImageDigest     string
+	MemoryMb            int32
+	EphemeralDiskMb     int32
+	FormatVersion       int32
+	StorageKey          string
+	SnapshotDigest      string
+	MemBytes            int64
+	VmStateBytes        int64
+	Sanitized           bool
+	PayloadFree         bool
+	State               string
+	CreatedAt           pgtype.Timestamptz
+	PublishedAt         pgtype.Timestamptz
+	RetiredAt           pgtype.Timestamptz
+}
+
 type Session struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID

@@ -369,6 +369,9 @@ type MemStore struct {
 	// by ClaimExecution after the in-memory lease CAS succeeds.
 	executions        map[string]Execution
 	executionPayloads map[string]executionPayload
+	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
+	// immutable compatibility catalog keys; retirement only changes state.
+	runtimeSnapshots map[string]RuntimeSnapshotRecord
 	// accountAsyncQuota is the in-memory mirror of the
 	// account_async_quota table (ADR-134 PR-B). Keyed by account
 	// ID; populated lazily by EnsureAccountAsyncQuota; mutated by
@@ -852,6 +855,7 @@ func NewMemStore() *MemStore {
 		invocations:             map[string]Invocation{},
 		executions:              map[string]Execution{},
 		executionPayloads:       map[string]executionPayload{},
+		runtimeSnapshots:        map[string]RuntimeSnapshotRecord{},
 		accountAsyncQuota:       map[string]accountAsyncQuotaRow{},
 		instances:               map[string]Instance{},
 		loginTokens:             map[string]LoginToken{},
