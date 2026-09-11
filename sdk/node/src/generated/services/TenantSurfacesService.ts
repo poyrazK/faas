@@ -14,7 +14,7 @@ export class TenantSurfacesService {
   /**
    * List tenant surfaces on an app.
    * Returns every active tenant surface on the app. Soft-deleted
-   * surfaces are filtered out server-side. Returns 402 when the
+   * surfaces are filtered out server-side. Returns 503 when the
    * `FAAS_TENANT_SURFACES_ENABLED` flag is off (the cluster ships
    * dark until the cert-engine real-mint ADR lands).
    *
@@ -37,8 +37,9 @@ export class TenantSurfacesService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
+        402: `code: tenant_surfaces_not_allowed — this account's plan does not include tenant surfaces.`,
         404: `code: not_found`,
+        503: `code: tenant_surfaces_not_enabled — the cluster operator has not enabled the tenant-surface API.`,
       },
     });
   }
@@ -83,10 +84,11 @@ export class TenantSurfacesService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
+        402: `code: tenant_surfaces_not_allowed — this account's plan does not include tenant surfaces.`,
         403: `code: tenant_surface_quota | tenant_hostname_quota | forbidden — the account or seed-hostname cap is exhausted, or the caller lacks scope.`,
         404: `code: not_found`,
         409: `code: tenant_hostname_already_claimed | conflict — a seed hostname or surface name is already claimed.`,
+        503: `code: tenant_surfaces_not_enabled — the cluster operator has not enabled the tenant-surface API.`,
       },
     });
   }
@@ -117,8 +119,9 @@ export class TenantSurfacesService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
+        402: `code: tenant_surfaces_not_allowed — this account's plan does not include tenant surfaces.`,
         404: `code: not_found`,
+        503: `code: tenant_surfaces_not_enabled — the cluster operator has not enabled the tenant-surface API.`,
       },
     });
   }
@@ -149,8 +152,9 @@ export class TenantSurfacesService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
+        402: `code: tenant_surfaces_not_allowed — this account's plan does not include tenant surfaces.`,
         404: `code: not_found`,
+        503: `code: tenant_surfaces_not_enabled — the cluster operator has not enabled the tenant-surface API.`,
       },
     });
   }
@@ -196,10 +200,11 @@ export class TenantSurfacesService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
+        402: `code: tenant_surfaces_not_allowed — this account's plan does not include tenant surfaces.`,
         403: `code: tenant_hostname_quota | forbidden — the surface hostname cap is exhausted or the caller lacks scope.`,
         404: `code: not_found`,
         409: `code: tenant_hostname_already_claimed | conflict — the hostname belongs to another tenant surface.`,
+        503: `code: tenant_surfaces_not_enabled — the cluster operator has not enabled the tenant-surface API.`,
       },
     });
   }
@@ -236,8 +241,9 @@ export class TenantSurfacesService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces.`,
+        402: `code: tenant_surfaces_not_allowed — this account's plan does not include tenant surfaces.`,
         404: `code: not_found`,
+        503: `code: tenant_surfaces_not_enabled — the cluster operator has not enabled the tenant-surface API.`,
       },
     });
   }
