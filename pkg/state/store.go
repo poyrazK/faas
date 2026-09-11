@@ -1353,6 +1353,14 @@ type Store interface {
 	ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error)
 	DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error)
 
+	// MFA disable email requests are authenticated, one-time bearer tokens.
+	// IssueMFADisableRequest invalidates any prior pending request for the
+	// account; GetMFADisableRequest reads the requested_at timestamp without
+	// consuming; ConsumeMFADisableRequest is the atomic one-shot consume.
+	IssueMFADisableRequest(ctx context.Context, tokenHash []byte, accountID string, requestedAt time.Time) error
+	GetMFADisableRequest(ctx context.Context, tokenHash []byte) (MFADisableRequest, error)
+	ConsumeMFADisableRequest(ctx context.Context, tokenHash []byte) (string, error)
+
 	// Email verification tokens prove control of accounts.email without
 	// authenticating the browser. ConsumeEmailVerificationToken atomically
 	// consumes the one-shot token and stamps accounts.email_verified_at.

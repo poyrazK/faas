@@ -258,6 +258,10 @@ export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsage
 export type { MemberListResponse } from './models/MemberListResponse.js';
 export type { MFAConfirmRequest } from './models/MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './models/MFAConfirmResponse.js';
+export type { MFADisableEmailConfirmRequest } from './models/MFADisableEmailConfirmRequest.js';
+export type { MFADisableEmailConfirmResponse } from './models/MFADisableEmailConfirmResponse.js';
+export type { MFADisableEmailRequest } from './models/MFADisableEmailRequest.js';
+export type { MFADisableEmailResponse } from './models/MFADisableEmailResponse.js';
 export type { MFADisableRequest } from './models/MFADisableRequest.js';
 export type { MFADisableResponse } from './models/MFADisableResponse.js';
 export type { MFAEnrollRequest } from './models/MFAEnrollRequest.js';

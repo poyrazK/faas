@@ -23,6 +23,8 @@ var csrfActions = map[string]struct{}{
 	"mfa_confirm":               {},
 	"mfa_recover":               {},
 	"mfa_disable":               {},
+	"mfa_disable_email":         {},
+	"mfa_disable_email_confirm": {},
 	csrfActionSetPassword:       {},
 }
 

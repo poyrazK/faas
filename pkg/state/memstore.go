@@ -375,6 +375,9 @@ type MemStore struct {
 	// emailVerificationTokens is separate from loginTokens because consume
 	// verifies the account but never authenticates the caller.
 	emailVerificationTokens map[string]EmailVerificationToken
+	// mfaDisableRequests is keyed by the raw token hash. Only one live request
+	// is retained per account; issuing a new request consumes the old one.
+	mfaDisableRequests map[string]MFADisableRequest
 	// cliAuthCodes is keyed by the SHA-256 hash of the raw code
 	// (same key format as loginTokens). AccountID is empty until the
 	// dashboard claims the code; the claim statement fills it in
@@ -842,6 +845,7 @@ func NewMemStore() *MemStore {
 		instances:               map[string]Instance{},
 		loginTokens:             map[string]LoginToken{},
 		emailVerificationTokens: map[string]EmailVerificationToken{},
+		mfaDisableRequests:      map[string]MFADisableRequest{},
 		cliAuthCodes:            map[string]CliAuthCode{},
 		accountPasswords:        map[string]AccountPassword{},
 		oauthLinks:              map[string]OAuthLink{},
@@ -13614,6 +13618,59 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 		}
 	}
 	return removed, nil
+}
+
+// IssueMFADisableRequest stores a new email-recovery request and invalidates
+// any older pending request for the same account.
+func (m *MemStore) IssueMFADisableRequest(_ context.Context, tokenHash []byte, accountID string, requestedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[accountID]; !ok {
+		return ErrNotFound
+	}
+	if m.mfaDisableRequests == nil {
+		m.mfaDisableRequests = map[string]MFADisableRequest{}
+	}
+	now := time.Now()
+	for key, req := range m.mfaDisableRequests {
+		if req.AccountID == accountID && req.ConsumedAt == nil {
+			req.ConsumedAt = &now
+			m.mfaDisableRequests[key] = req
+		}
+	}
+	m.mfaDisableRequests[string(tokenHash)] = MFADisableRequest{
+		TokenHash: append([]byte(nil), tokenHash...), AccountID: accountID, RequestedAt: requestedAt,
+	}
+	return nil
+}
+
+// GetMFADisableRequest reads a live request without consuming it. Consumed or
+// unknown tokens intentionally share ErrNotFound so replays do not reveal
+// token history.
+func (m *MemStore) GetMFADisableRequest(_ context.Context, tokenHash []byte) (MFADisableRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	req, ok := m.mfaDisableRequests[string(tokenHash)]
+	if !ok || req.ConsumedAt != nil {
+		return MFADisableRequest{}, ErrNotFound
+	}
+	req.TokenHash = append([]byte(nil), req.TokenHash...)
+	return req, nil
+}
+
+// ConsumeMFADisableRequest atomically consumes a live request and returns its
+// bound account. A replay or unknown token returns ErrNotFound.
+func (m *MemStore) ConsumeMFADisableRequest(_ context.Context, tokenHash []byte) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	req, ok := m.mfaDisableRequests[string(tokenHash)]
+	if !ok || req.ConsumedAt != nil {
+		return "", ErrNotFound
+	}
+	now := time.Now()
+	req.ConsumedAt = &now
+	m.mfaDisableRequests[string(tokenHash)] = req
+	return req.AccountID, nil
 }
 
 // IssueEmailVerificationToken stores a one-shot verification token hash.

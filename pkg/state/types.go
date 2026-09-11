@@ -4613,6 +4613,16 @@ type LoginToken struct {
 	ConsumedAt *time.Time
 }
 
+// MFADisableRequest is a one-time email recovery request. The raw token is
+// never stored; only its hash is persisted. A request remains unusable until
+// the server-side cooldown has elapsed and is consumed atomically on success.
+type MFADisableRequest struct {
+	TokenHash   []byte
+	AccountID   string
+	RequestedAt time.Time
+	ConsumedAt  *time.Time
+}
+
 // EmailVerificationToken is a one-shot proof-of-email token. It is separate
 // from LoginToken because consuming it verifies the account without creating
 // a session.
