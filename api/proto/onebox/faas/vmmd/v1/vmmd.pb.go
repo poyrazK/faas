@@ -225,7 +225,12 @@ type AppSpec struct {
 	// this during wake to start the correctly framed bridge before the first
 	// customer request reaches the restored instance. Empty preserves the
 	// legacy HTTP/1 default.
-	AppProtocol   string `protobuf:"bytes,17,opt,name=app_protocol,json=appProtocol,proto3" json:"app_protocol,omitempty"`
+	AppProtocol string `protobuf:"bytes,17,opt,name=app_protocol,json=appProtocol,proto3" json:"app_protocol,omitempty"`
+	// Customer-declared lifecycle mode (ADR-137). Production schedd sends one
+	// of request, service, worker, or job so vmmd can constrain the inferred
+	// characterization class. Empty preserves legacy inference for rolling
+	// upgrades and older callers.
+	ExecutionMode string `protobuf:"bytes,18,opt,name=execution_mode,json=executionMode,proto3" json:"execution_mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -375,6 +380,13 @@ func (x *AppSpec) GetCpuMillicores() int32 {
 func (x *AppSpec) GetAppProtocol() string {
 	if x != nil {
 		return x.AppProtocol
+	}
+	return ""
+}
+
+func (x *AppSpec) GetExecutionMode() string {
+	if x != nil {
+		return x.ExecutionMode
 	}
 	return ""
 }
@@ -5096,7 +5108,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x9b\x05\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xc2\x05\n" +
 	"\aAppSpec\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
 	"\tlayer_key\x18\x02 \x01(\tR\blayerKey\x12\x1d\n" +
@@ -5119,7 +5131,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x10static_egress_ip\x18\x0e \x01(\tR\x0estaticEgressIp\x12,\n" +
 	"\x12startup_deadline_s\x18\x0f \x01(\x05R\x10startupDeadlineS\x12%\n" +
 	"\x0ecpu_millicores\x18\x10 \x01(\x05R\rcpuMillicores\x12!\n" +
-	"\fapp_protocol\x18\x11 \x01(\tR\vappProtocol\"\x85\x03\n" +
+	"\fapp_protocol\x18\x11 \x01(\tR\vappProtocol\x12%\n" +
+	"\x0eexecution_mode\x18\x12 \x01(\tR\rexecutionMode\"\x85\x03\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

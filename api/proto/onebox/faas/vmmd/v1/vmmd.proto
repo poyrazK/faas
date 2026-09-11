@@ -520,6 +520,11 @@ message AppSpec {
   // customer request reaches the restored instance. Empty preserves the
   // legacy HTTP/1 default.
   string app_protocol = 17;
+  // Customer-declared lifecycle mode (ADR-137). Production schedd sends one
+  // of request, service, worker, or job so vmmd can constrain the inferred
+  // characterization class. Empty preserves legacy inference for rolling
+  // upgrades and older callers.
+  string execution_mode = 18;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's

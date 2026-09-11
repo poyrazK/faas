@@ -197,6 +197,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
 		StartupDeadlineS: int(app.GetStartupDeadlineS()),
+		ExecutionMode:    app.GetExecutionMode(),
 		// Issue #470 / PR #470-FU-B: the runner id (e.g.
 		// "node22") is forwarded verbatim so the vmmd can
 		// stamp it on the live Instance and the framework_ready
@@ -340,6 +341,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		HealthcheckPath: app.GetHealthcheckPath(),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
 		StartupDeadlineS: int(app.GetStartupDeadlineS()),
+		ExecutionMode:    app.GetExecutionMode(),
 		// Issue #470 / PR #470-FU-B: see toWakeRequest.
 		// Cold-boot mirrors the runtime so deploy's first
 		// boot primes the same per-runner histogram labelling.

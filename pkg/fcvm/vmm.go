@@ -585,7 +585,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	if spec.SkipReady {
 		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, nil)
 	}
-	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, nil, &breakdown); err != nil {
+	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.ExecutionMode, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, nil, &breakdown); err != nil {
 		return err
 	}
 	breakdown.TotalMs = time.Since(t0).Milliseconds()
@@ -595,7 +595,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 }
 
 func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, jobManifest *JobManifest) error {
-	return v.boot(ctx, l, cfg, true, "", 0, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, jobManifest, nil)
+	return v.boot(ctx, l, cfg, true, "", 0, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, jobManifest, nil)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -617,10 +617,10 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
-	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, nil, nil, nil, "", nil, nil)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, "", nil, nil, nil, "", nil, nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
 	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
@@ -714,10 +714,16 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		v.mu.Lock()
 		preparedCharacterization := v.characterizationReceipts[l.Instance] != nil
 		v.mu.Unlock()
+		if !preparedCharacterization && executionModeRequiresCharacterization(executionMode) {
+			return fmt.Errorf("execution mode %q requires characterization, but no listener was prepared", executionMode)
+		}
 		if preparedCharacterization {
 			var startErr error
-			characterization, startErr = v.startCharacterizationReceiver(l, api.CharacterizationHostDeadline)
+			characterization, startErr = v.startCharacterizationReceiver(l, api.CharacterizationHostDeadline, executionMode)
 			if startErr != nil {
+				if executionModeRequiresCharacterization(executionMode) {
+					return fmt.Errorf("execution mode %q requires characterization: %w", executionMode, startErr)
+				}
 				slog.Default().Warn("vmm: start characterization receiver; falling back to readiness probe",
 					"instance", l.Instance, "err", startErr)
 				characterization = nil
@@ -725,7 +731,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		}
 		readinessStartedAt := time.Now()
 		if characterization != nil {
-			err = v.waitReadyOrCharacterized(ctx, l, healthcheckPath, startupDeadlineS, characterization)
+			err = v.waitReadyOrCharacterized(ctx, l, healthcheckPath, startupDeadlineS, executionMode, characterization)
 		} else {
 			err = v.waitReady(ctx, l, healthcheckPath, startupDeadlineS)
 		}
@@ -3829,10 +3835,11 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 
 // waitReadyOrCharacterized races the legacy :8080 readiness probe with the
 // guest's observed workload outcome. Bound server classes still have to pass
-// the host probe. A job or worker has no listening port by definition, so its
-// valid report is the readiness signal. A terminal startup exit fails fast
-// with the captured log tail instead of waiting for a misleading TCP timeout.
-func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healthcheckPath string, startupDeadlineS int, receipt *characterizationReceipt) error {
+// the host probe. Declared jobs and workers may use a matching no-bind report
+// as readiness; request and service modes may not. A terminal startup exit
+// fails fast with the captured log tail instead of waiting for a misleading
+// TCP timeout.
+func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healthcheckPath string, startupDeadlineS int, executionMode string, receipt *characterizationReceipt) error {
 	readyCtx, cancelReady := context.WithCancel(ctx)
 	defer cancelReady()
 	readyCh := make(chan error, 1)
@@ -3841,9 +3848,24 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 	}()
 
 	receiptDone := receipt.done
+	receiptReceived := false
+	requiresCharacterization := executionModeRequiresCharacterization(executionMode)
+	var characterizationDeadline <-chan time.Time
+	if requiresCharacterization {
+		timer := time.NewTimer(readyTimeoutFor(v.readyTimeout, startupDeadlineS))
+		defer timer.Stop()
+		characterizationDeadline = timer.C
+	}
 	for {
 		select {
 		case err := <-readyCh:
+			if requiresCharacterization && err == nil {
+				// A listening socket is neither success nor failure for an
+				// explicitly declared no-bind workload. Its characterization
+				// report is the authoritative readiness result.
+				readyCh = nil
+				continue
+			}
 			if err == nil {
 				return nil
 			}
@@ -3853,45 +3875,88 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 			if receiptDone != nil {
 				select {
 				case <-receiptDone:
-					if receipt.err == nil {
-						if terminal, outcomeErr := characterizationBootOutcome(receipt.report); terminal {
-							return outcomeErr
-						}
-					}
+					receiptReceived = true
 				default:
+				}
+			}
+			if receiptReceived && receipt.err == nil {
+				if terminal, outcomeErr := characterizationBootOutcome(receipt.report, executionMode); terminal {
+					return outcomeErr
+				}
+				if mismatchErr := characterizationReadinessMismatch(receipt.report, executionMode, err); mismatchErr != nil {
+					return mismatchErr
 				}
 			}
 			return err
 		case <-receiptDone:
 			receiptDone = nil
-			if receipt.err == nil {
-				if terminal, outcomeErr := characterizationBootOutcome(receipt.report); terminal {
-					return outcomeErr
+			receiptReceived = true
+			if receipt.err != nil {
+				if requiresCharacterization {
+					return fmt.Errorf("execution mode %q requires a valid characterization report: %w", executionMode, receipt.err)
 				}
+				continue
+			}
+			if terminal, outcomeErr := characterizationBootOutcome(receipt.report, executionMode); terminal {
+				return outcomeErr
 			}
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-characterizationDeadline:
+			return fmt.Errorf("execution mode %q did not produce a valid characterization report before the startup deadline", executionMode)
 		}
 	}
 }
 
-func characterizationBootOutcome(report api.CharacterizationReport) (bool, error) {
-	switch report.ObservedClass {
-	case "job", "worker":
-		return true, nil
-	case "":
-		if report.ObservedPort == 0 && report.ExitCode > 0 {
-			tail := []rune(strings.TrimSpace(report.LogTail))
-			if len(tail) > 4096 {
-				tail = tail[len(tail)-4096:]
-			}
-			if len(tail) > 0 {
-				return true, fmt.Errorf("workload exited with code %d during startup: %s", report.ExitCode, string(tail))
-			}
-			return true, fmt.Errorf("workload exited with code %d during startup", report.ExitCode)
+func characterizationBootOutcome(report api.CharacterizationReport, executionMode string) (bool, error) {
+	if report.ObservedPort == 0 && report.ExitCode > 0 {
+		tail := []rune(strings.TrimSpace(report.LogTail))
+		if len(tail) > 4096 {
+			tail = tail[len(tail)-4096:]
 		}
+		if len(tail) > 0 {
+			return true, fmt.Errorf("workload exited with code %d during startup: %s", report.ExitCode, string(tail))
+		}
+		return true, fmt.Errorf("workload exited with code %d during startup", report.ExitCode)
+	}
+
+	switch executionMode {
+	case "":
+		// Rolling-upgrade compatibility: older callers did not declare a mode,
+		// so retain the authoritative host inference introduced by ADR-051.
+		return report.ObservedClass == "job" || report.ObservedClass == "worker", nil
+	case api.ExecutionModeRequest, api.ExecutionModeService:
+		// Only the server probe can make these modes ready. A no-bind report
+		// enriches a later readiness failure but does not shorten the caller's
+		// configured startup window.
+	case api.ExecutionModeWorker:
+		switch report.ObservedClass {
+		case "worker":
+			return true, nil
+		case "job", "http", "graphql", "grpc":
+			return true, fmt.Errorf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode)
+		}
+	case api.ExecutionModeJob:
+		switch report.ObservedClass {
+		case "job":
+			return true, nil
+		case "worker", "http", "graphql", "grpc":
+			return true, fmt.Errorf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode)
+		}
+	default:
+		return true, fmt.Errorf("unsupported execution mode %q", executionMode)
 	}
 	return false, nil
+}
+
+func characterizationReadinessMismatch(report api.CharacterizationReport, executionMode string, readinessErr error) error {
+	switch executionMode {
+	case api.ExecutionModeRequest, api.ExecutionModeService:
+		if report.ObservedClass == "job" || report.ObservedClass == "worker" {
+			return fmt.Errorf("execution mode %q requires a listening server; characterization observed %q (port=%d, exit_code=%d): %w", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode, readinessErr)
+		}
+	}
+	return nil
 }
 
 // notReadyProblem shapes the deadline-expired error from the TCP
@@ -4250,7 +4315,7 @@ func (v *JailerVMM) WaitCharacterizationReport(ctx context.Context, l Lease, dea
 	if deadline <= 0 {
 		return zero, fmt.Errorf("vmm: WaitCharacterizationReport: deadline must be positive")
 	}
-	receipt, err := v.startCharacterizationReceiver(l, deadline)
+	receipt, err := v.startCharacterizationReceiver(l, deadline, "")
 	if err != nil {
 		return zero, err
 	}
@@ -4269,7 +4334,7 @@ func (v *JailerVMM) WaitCharacterizationReport(ctx context.Context, l Lease, dea
 // startCharacterizationReceiver gives boot and Manager.Wake one shared receipt.
 // The first caller owns the accept loop; later callers wait for its cached
 // result instead of racing a second Accept against the same Unix listener.
-func (v *JailerVMM) startCharacterizationReceiver(l Lease, deadline time.Duration) (*characterizationReceipt, error) {
+func (v *JailerVMM) startCharacterizationReceiver(l Lease, deadline time.Duration, executionMode string) (*characterizationReceipt, error) {
 	v.mu.Lock()
 	receipt := v.characterizationReceipts[l.Instance]
 	v.mu.Unlock()
@@ -4278,7 +4343,7 @@ func (v *JailerVMM) startCharacterizationReceiver(l Lease, deadline time.Duratio
 	}
 	receipt.once.Do(func() {
 		go func() {
-			receipt.report, receipt.err = v.receiveCharacterizationReport(l, deadline)
+			receipt.report, receipt.err = v.receiveCharacterizationReport(l, deadline, executionMode)
 			close(receipt.done)
 		}()
 	})
@@ -4289,7 +4354,7 @@ func (v *JailerVMM) startCharacterizationReceiver(l Lease, deadline time.Duratio
 // the listener prepared before cold boot. Firecracker forwards that stream to
 // <uds_path>_1026. Invalid frames receive a non-zero ack and consume a bounded
 // retry slot so the guest can reconnect without creating an unbounded loop.
-func (v *JailerVMM) receiveCharacterizationReport(l Lease, deadline time.Duration) (api.CharacterizationReport, error) {
+func (v *JailerVMM) receiveCharacterizationReport(l Lease, deadline time.Duration, executionMode string) (api.CharacterizationReport, error) {
 	var zero api.CharacterizationReport
 	ln := v.guestVsockListener(l.Instance, VsockCharacterizationHostPort)
 	if ln == nil {
@@ -4326,7 +4391,7 @@ func (v *JailerVMM) receiveCharacterizationReport(l Lease, deadline time.Duratio
 		_ = conn.SetDeadline(end)
 		report, readErr := readCharacterizationEnvelope(conn)
 		if readErr == nil {
-			readErr = normalizeCharacterizationReport(&report)
+			readErr = normalizeCharacterizationReport(&report, executionMode)
 		}
 		if readErr != nil {
 			lastErr = readErr
@@ -4393,9 +4458,12 @@ func readCharacterizationEnvelope(r io.Reader) (api.CharacterizationReport, erro
 // value required by ADR-051. The L7 hint can refine a bound server to GraphQL
 // or gRPC; it can never turn a bound workload into a job/worker or a no-bind
 // workload into a server.
-func normalizeCharacterizationReport(report *api.CharacterizationReport) error {
+func normalizeCharacterizationReport(report *api.CharacterizationReport, executionMode string) error {
 	if report == nil {
 		return fmt.Errorf("nil characterization report")
+	}
+	if !validCharacterizationExecutionMode(executionMode) {
+		return fmt.Errorf("unsupported execution mode %q", executionMode)
 	}
 	if report.ObservedPort < 0 || report.ObservedPort > 65535 {
 		return fmt.Errorf("observed_port=%d out of range", report.ObservedPort)
@@ -4436,7 +4504,13 @@ func normalizeCharacterizationReport(report *api.CharacterizationReport) error {
 	case 0:
 		report.ObservedClass = "job"
 	case -1:
-		report.ObservedClass = "worker"
+		if executionMode == api.ExecutionModeJob {
+			// A job may still be running when the bounded observation window
+			// closes. The declared mode resolves the no-bind ambiguity.
+			report.ObservedClass = "job"
+		} else {
+			report.ObservedClass = "worker"
+		}
 	default:
 		// A non-zero startup exit is a boot failure, not a workload class.
 		report.ObservedClass = ""
