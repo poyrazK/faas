@@ -69,6 +69,20 @@ func TestBuildDebugEvidenceExplanation(t *testing.T) {
 	}
 }
 
+func TestBuildDebugEvidenceDegradedExplanation(t *testing.T) {
+	spans := []api.DebugTelemetrySpan{{Name: "db.query", DurationNanos: 25_000_000}}
+	got := buildDebugEvidenceDegradedExplanation(spans)
+	if got.Status != "regression_unavailable" {
+		t.Fatalf("status = %q, want regression_unavailable", got.Status)
+	}
+	if !strings.Contains(got.Headline, "request evidence is otherwise complete") {
+		t.Fatalf("headline = %q", got.Headline)
+	}
+	if got.PrimarySpan == nil || got.PrimarySpan.Name != "db.query" {
+		t.Fatalf("primary span = %+v, want db.query", got.PrimarySpan)
+	}
+}
+
 func TestBuildDebugRequestTimelineJoinsWakeAndMarksError(t *testing.T) {
 	store := state.NewMemStore()
 	appID := "app-timeline"

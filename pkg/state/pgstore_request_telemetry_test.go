@@ -276,6 +276,79 @@ func TestPgStoreRequestTelemetry_BaselineP95WeightsCollapsedRows(t *testing.T) {
 	}
 }
 
+// TestPgStoreDebugRegressions_ReadsEmptyAndNonEmpty pins the customer
+// debugger's regression read path against a real migrated Postgres schema.
+// Empty is a successful result (not a capacity error), and a persisted row is
+// returned with the same route and factor that the API maps to its wire DTO.
+func TestPgStoreDebugRegressions_ReadsEmptyAndNonEmpty(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	app := uuid.NewString()
+	dep := uuid.NewString()
+	appID := pgtype.UUID{Bytes: parseUUID(t, app), Valid: true}
+	depID := pgtype.UUID{Bytes: parseUUID(t, dep), Valid: true}
+	window := pgtype.Interval{Microseconds: int64(24 * time.Hour / time.Microsecond), Valid: true}
+
+	rows, err := store.ListActiveRegressionsByApp(ctx, sqlc.ListActiveRegressionsByAppParams{
+		AppID: appID, Column2: window,
+	})
+	if err != nil {
+		t.Fatalf("empty ListActiveRegressionsByApp: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("empty ListActiveRegressionsByApp: got %d rows, want 0", len(rows))
+	}
+	if err := store.CheckDebugRegressionReadiness(ctx); err != nil {
+		t.Fatalf("CheckDebugRegressionReadiness on empty table: %v", err)
+	}
+
+	factor := pgtype.Numeric{}
+	if err := factor.Scan("1.50"); err != nil {
+		t.Fatalf("scan regression factor: %v", err)
+	}
+	if err := store.UpsertRegressionObservation(ctx, sqlc.UpsertRegressionObservationParams{
+		AppID: appID, DeploymentID: depID, Route: "GET /debug",
+		P95Ms: 300, P95BaseMs: 200, AffectedCount: 4,
+		RegressionFactor: factor,
+	}); err != nil {
+		t.Fatalf("UpsertRegressionObservation: %v", err)
+	}
+
+	rows, err = store.ListActiveRegressionsByApp(ctx, sqlc.ListActiveRegressionsByAppParams{
+		AppID: appID, Column2: window,
+	})
+	if err != nil {
+		t.Fatalf("non-empty ListActiveRegressionsByApp: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("non-empty ListActiveRegressionsByApp: got %d rows, want 1", len(rows))
+	}
+	if rows[0].DeploymentID != depID || rows[0].Route != "GET /debug" || rows[0].P95Ms != 300 || rows[0].P95BaseMs != 200 || rows[0].AffectedCount != 4 {
+		t.Fatalf("regression row = %+v, want deployment=%s route=GET /debug p95=300/200 affected=4", rows[0], dep)
+	}
+	if got, err := rows[0].RegressionFactor.Float64Value(); err != nil || got.Float64 != 1.5 {
+		t.Fatalf("regression factor = %+v (err=%v), want 1.5", got, err)
+	}
+}
+
+// TestPgStoreDebugRegressions_ReadinessFailsWhenTableMissing keeps a missing
+// relation diagnosable. The repair migration is responsible for restoring it;
+// the probe must not turn that schema failure into a misleading capacity
+// signal at request time.
+func TestPgStoreDebugRegressions_ReadinessFailsWhenTableMissing(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	if _, err := pool.Exec(ctx, `drop table debug_regression_observations`); err != nil {
+		t.Fatalf("drop debug regression table: %v", err)
+	}
+	err := store.CheckDebugRegressionReadiness(ctx)
+	if err == nil {
+		t.Fatal("CheckDebugRegressionReadiness after dropping table: got nil, want error")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42P01" {
+		t.Fatalf("readiness error = %T %v, want undefined-table SQLSTATE 42P01", err, err)
+	}
+}
+
 // TestPgStoreRequestTelemetry_CHECKRejection pins the
 // route-CHECK + method-CHECK enforcement. The Store layer is a
 // thin delegate; the database is the enforcement boundary, so

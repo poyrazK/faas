@@ -32,6 +32,7 @@ var errorDocsURL = map[string]string{
 	api.CodeQuotaExhausted:             cliDocsURL,
 	api.CodeBillingPastDue:             cliDocsURL,
 	api.CodeCapacity:                   cliDocsURL,
+	api.CodeDebugRegressionUnavailable: cliDocsURL,
 	api.CodeUnauthorized:               cliDocsURL,
 	api.CodePasswordTooWeak:            cliDocsURL,
 	api.CodeInvalidCredentials:         cliDocsURL,

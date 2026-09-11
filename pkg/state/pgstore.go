@@ -23077,6 +23077,36 @@ func (s *PgStore) ListActiveRegressionsByApp(ctx context.Context, arg sqlc.ListA
 	return s.appErrorsQueries().ListActiveRegressionsByApp(ctx, s.pool, arg)
 }
 
+// CheckDebugRegressionReadiness verifies the exact relation and parameterized
+// predicate used by the customer-facing regression read.  A successful
+// migration ledger is not sufficient after a restored dump or an out-of-band
+// schema change, so apid runs this probe before it advertises the debugger.
+// pgx.ErrNoRows is the healthy empty-table result; every other error is a
+// schema/query dependency failure and is intentionally returned to the boot
+// or /readyz caller instead of being mislabeled as fleet capacity.
+func (s *PgStore) CheckDebugRegressionReadiness(ctx context.Context) error {
+	if s == nil || s.pool == nil {
+		return errors.New("state: debug regression readiness: nil pool")
+	}
+	var marker int
+	err := s.pool.QueryRow(ctx, `
+		SELECT 1
+		  FROM debug_regression_observations
+		 WHERE app_id = $1
+		   AND last_detected_at > now() - $2::interval
+		 LIMIT 1`,
+		pgtype.UUID{Valid: true},
+		pgtype.Interval{Microseconds: int64(time.Second / time.Microsecond), Valid: true},
+	).Scan(&marker)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("state: debug regression read probe: %w", err)
+	}
+	return nil
+}
+
 // ListDeploymentsForCompare backs the dashboard compare panel. Returns
 // distinct deployment_ids that have shipped traffic in the window
 // with first_seen / last_seen / row_count metadata.

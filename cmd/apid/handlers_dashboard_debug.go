@@ -586,6 +586,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 	}
 
 	var matching *dashboard.DebugRegressionView
+	var regressionErr error
 	regRows, err := s.store.ListActiveRegressionsByApp(ctx, sqlc.ListActiveRegressionsByAppParams{
 		AppID:   stringToPgUUID(app.ID),
 		Column2: pgtype.Interval{Microseconds: int64(since / time.Microsecond), Valid: true},
@@ -599,12 +600,18 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 				break
 			}
 		}
+	} else {
+		regressionErr = err
+		log.Warn("dashboard renderAppDebug: get request regression enrichment", "account_id", acct.ID, "app_id", app.ID, "request_id", rawID, "err", err)
 	}
 	var apiRegression *api.DebugRegressionItem
 	if matching != nil {
 		apiRegression = &api.DebugRegressionItem{DeploymentID: matching.DeploymentID, Route: matching.Route, P95MS: matching.P95MS, P95BaseMS: matching.P95BaseMS, AffectedCount: matching.AffectedCount, Factor: matching.Factor, FirstDetectedAt: matching.FirstDetectedAt, LastDetectedAt: matching.LastDetectedAt}
 	}
 	explanation := buildDebugEvidenceExplanation(item, apiRegression, spans)
+	if regressionErr != nil {
+		explanation = buildDebugEvidenceDegradedExplanation(spans)
+	}
 	timeline, timelineErr := s.buildDebugRequestTimeline(ctx, app.ID, item, apiRegression)
 	if timelineErr != nil {
 		log.Warn("dashboard renderAppDebug: get timeline", "account_id", acct.ID, "app_id", app.ID, "request_id", rawID, "err", timelineErr)
