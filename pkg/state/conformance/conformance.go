@@ -58,11 +58,63 @@ func Run(t *testing.T, open Open) {
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
+		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
+	run := &state.WorkflowRun{
+		AppID: fx.App.ID, WorkflowName: "conformance", Status: state.WorkflowRunStatusRunning,
+		Input: []byte(`{"input":true}`), DefinitionSnapshot: []byte(`{"steps":["first","second"]}`),
+	}
+	active, err := fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, run, 1)
+	if err != nil || active != 1 {
+		t.Fatalf("CreateWorkflowRunAdmitted = (%d, %v), want (1, nil)", active, err)
+	}
+	overQuota := &state.WorkflowRun{
+		AppID: fx.App.ID, WorkflowName: "over-quota",
+		Input: []byte(`{}`), DefinitionSnapshot: []byte(`{"steps":[]}`),
+	}
+	active, err = fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, overQuota, 1)
+	if !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) || active != 1 {
+		t.Fatalf("CreateWorkflowRunAdmitted(over quota) = (%d, %v), want (1, ErrWorkflowRunQuotaExceeded)", active, err)
+	}
+
+	if err := fx.Store.CreateWorkflowSteps(fx.Ctx, run.ID, []*state.WorkflowStep{
+		{StepName: "first", Status: state.WorkflowStepStatusRunning, Attempt: 2},
+		{StepName: "second", Status: state.WorkflowStepStatusPending},
+	}); err != nil {
+		t.Fatalf("CreateWorkflowSteps: %v", err)
+	}
+	if err := fx.Store.RecoverWorkflowRun(fx.Ctx, run.ID); err != nil {
+		t.Fatalf("RecoverWorkflowRun: %v", err)
+	}
+	recovered, err := fx.Store.GetWorkflowRun(fx.Ctx, run.ID)
+	if err != nil || recovered.Status != state.WorkflowRunStatusPending {
+		t.Fatalf("GetWorkflowRun(recovered) = (%#v, %v), want pending", recovered, err)
+	}
+	steps, err := fx.Store.GetWorkflowSteps(fx.Ctx, run.ID)
+	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusPending || steps[0].Attempt != 1 {
+		t.Fatalf("GetWorkflowSteps(recovered) = (%#v, %v), want first pending at attempt 1", steps, err)
+	}
+
+	const reason = "cancelled by conformance"
+	cancelled, err := fx.Store.CancelWorkflowRun(fx.Ctx, run.ID, reason)
+	if err != nil || cancelled.Status != state.WorkflowRunStatusFailed || cancelled.LastError == nil || *cancelled.LastError != reason || cancelled.FinishedAt == nil {
+		t.Fatalf("CancelWorkflowRun = (%#v, %v), want terminal failure with reason", cancelled, err)
+	}
+	steps, err = fx.Store.GetWorkflowSteps(fx.Ctx, run.ID)
+	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusSkipped || steps[1].Status != state.WorkflowStepStatusSkipped {
+		t.Fatalf("GetWorkflowSteps(cancelled) = (%#v, %v), want both skipped", steps, err)
+	}
+	unchanged, err := fx.Store.CancelWorkflowRun(fx.Ctx, run.ID, "replacement reason")
+	if err != nil || unchanged.LastError == nil || *unchanged.LastError != reason {
+		t.Fatalf("CancelWorkflowRun(terminal) = (%#v, %v), want original terminal result", unchanged, err)
 	}
 }
 

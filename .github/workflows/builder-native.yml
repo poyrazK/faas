@@ -1,7 +1,10 @@
 name: builder-native
 
 on:
-  pull_request:
+  # Run the trusted workflow definition from main so the OIDC token keeps the
+  # provider's refs/heads/main trust boundary. The job below separately refuses
+  # fork heads before checking out or executing pull-request code.
+  pull_request_target:
     branches: [main]
   workflow_run:
     workflows: [images]
@@ -245,7 +248,7 @@ jobs:
     needs: acceptance
     if: >-
       always() &&
-      ((github.event_name == 'pull_request' &&
+      ((github.event_name == 'pull_request_target' &&
         github.event.pull_request.head.repo.full_name == github.repository) ||
        (needs.acceptance.result == 'success' &&
         (github.event_name == 'schedule' ||
@@ -258,7 +261,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
 
       - uses: actions/setup-go@v7
@@ -268,7 +271,7 @@ jobs:
 
       - name: Build exact-source transfer bundle
         env:
-          SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          SOURCE_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
@@ -331,7 +334,7 @@ jobs:
 
       - name: Run native fcvm package on compute node 2
         env:
-          SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          SOURCE_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           remote_root="/var/tmp/faas-metal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -372,7 +375,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: native-metal-smoke-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          name: native-metal-smoke-${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/native-metal-smoke.log
           if-no-files-found: warn
           retention-days: 14

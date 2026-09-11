@@ -69,10 +69,13 @@ runtime change detector so the post-merge native gate publishes and tests the
 commit containing the updated acceptance fixture.
 
 `metal smoke (Firecracker amd64)` runs in the same trusted workflow after the
-nightly builder gate, by manual dispatch from `main`, and for pull requests
-whose head branch belongs to this repository. Fork pull requests never receive
-the GCP identity. It packages the exact source SHA and a pinned Go toolchain,
-builds fresh guest-init/base/layer fixtures on the host, and runs the complete
+nightly builder gate, by manual dispatch from `main`, and on
+`pull_request_target` for pull requests whose head branch belongs to this
+repository. Loading the workflow definition from `main` keeps the OIDC token
+inside the provider's `refs/heads/main` trust condition; a job-level repository
+guard refuses fork heads before checkout or authentication. It packages the
+exact source SHA and a pinned Go toolchain, builds fresh guest-init/base/layer
+fixtures on the host, and runs the complete
 `pkg/fcvm` metal package plus the isolated network-namespace batch and pre/post
 leak checks. It shares the builder gate's host lock, service quiescing,
 restoration, marker, and workflow-bound OIDC identity. The job records whether

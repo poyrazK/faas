@@ -2815,10 +2815,11 @@ func TestStripeWebhook_RejectsReplay(t *testing.T) {
 		t.Errorf("after replay: %d emails, want 1 (replay is a no-op)", n)
 	}
 
-	// Round-trip via the webhookdedupe helper to prove the row was
-	// recorded by the first delivery.
-	if err := webhookdedupe.CheckReplay(context.Background(), webhookdedupe.ProviderStripe, id); !webhookdedupe.IsReplay(err) {
-		t.Errorf("recorded Stripe event should be a replay; err=%v", err)
+	// Round-trip via the same durable store used by the handler to prove the
+	// first delivery owns the replay claim.
+	replay, err := e.store.CheckWebhookReplay(context.Background(), webhookdedupe.ProviderStripe, id, time.Now().Add(-webhookdedupe.TTL))
+	if err != nil || !replay {
+		t.Errorf("recorded Stripe event should be a replay; replay=%v err=%v", replay, err)
 	}
 }
 
