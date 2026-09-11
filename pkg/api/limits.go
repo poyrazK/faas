@@ -40,6 +40,9 @@ const (
 	MaxObjectBucketsPerApp                    = 100
 	DefaultObjectUploadBytes            int64 = 100 << 20
 	MaxObjectSinglePutBytes             int64 = 5 << 30
+	MaxObjectUploadSpoolBytes           int64 = 5 << 30
+	ObjectUploadSpoolMinFreeBytes       int64 = 1 << 30
+	ObjectTransferTimeout                     = 30 * time.Minute
 	MaxObjectUploadBytes                int64 = 5 << 40
 	DefaultMultipartPartBytes           int64 = 64 << 20
 	MinMultipartPartBytes               int64 = 5 << 20
