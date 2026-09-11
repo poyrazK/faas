@@ -51,6 +51,7 @@ func (s *server) createPrewarm(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("could not schedule prewarm"))
 		return
 	}
+	s.prewarmMetrics.ObserveScheduled()
 	if s.audit != nil {
 		s.audit.Emit(r.Context(), "prewarm.scheduled", &acct.ID, map[string]any{
 			"intent_id":  intent.ID,
@@ -115,6 +116,7 @@ func (s *server) cancelPrewarm(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("could not cancel prewarm intent"))
 		return
 	}
+	s.prewarmMetrics.ObserveCancelled()
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -40,6 +40,13 @@ The API emits `prewarm.scheduled`; schedd emits `prewarm.fired` with the
 admitted count and outcome. Cancellation is allowed only while an intent is
 still pending.
 
+The API and schedd expose the same bounded `prewarm_intents_total{event}`
+lifecycle vocabulary (`scheduled`, `succeeded`, `partial`, `failed`,
+`expired`, and `cancelled`). Schedd also exports admitted-instance totals and
+fire-offset/intent-age histograms. Each scheduler tick terminalizes any
+pending row whose expiry has passed as `failed` with `outcome=expired` and
+emits `prewarm.expired`, so a missed window cannot remain pending forever.
+
 ## Consequences
 
 This slice supports explicit calendar/API scheduling. Cron-derived intents and
