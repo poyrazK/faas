@@ -52,7 +52,7 @@ func (m *Manager) ExecuteExecution(ctx context.Context, instance string, req exe
 	if err != nil {
 		// A failed dial cannot be retried safely: the guest may have accepted
 		// the CONNECT and then disappeared. Release the live VM and lease.
-		destroyCtx, cancel := context.WithTimeout(context.Background(), executionDestroyTimeout)
+		destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionDestroyTimeout)
 		destroyErr := m.Destroy(destroyCtx, instance)
 		cancel()
 		if destroyErr != nil {
@@ -62,7 +62,7 @@ func (m *Manager) ExecuteExecution(ctx context.Context, instance string, req exe
 	}
 	if session == nil {
 		nilSessionErr := errors.New("fcvm: execution dialer returned nil session")
-		destroyCtx, cancel := context.WithTimeout(context.Background(), executionDestroyTimeout)
+		destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionDestroyTimeout)
 		destroyErr := m.Destroy(destroyCtx, instance)
 		cancel()
 		if destroyErr != nil {
@@ -72,7 +72,7 @@ func (m *Manager) ExecuteExecution(ctx context.Context, instance string, req exe
 	}
 
 	result, executeErr := session.Execute(ctx, req)
-	destroyCtx, cancel := context.WithTimeout(context.Background(), executionDestroyTimeout)
+	destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionDestroyTimeout)
 	sessionDestroyErr := session.Destroy(destroyCtx)
 	// ExecutionSession's destroy hook tears down Firecracker, while Manager
 	// owns the netns/lease/live-map cleanup. Both are required by the parked =
