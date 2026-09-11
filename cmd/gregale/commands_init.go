@@ -20,6 +20,8 @@
 // app, seals the supplied secrets, and only then starts the first deployment.
 // The customer's `--path` stays as their working copy. We never chdir — the
 // chain runs in the caller's cwd, the deployment is independent.
+// Service-template next steps include `deploy --create-only` so an app can be
+// reserved before `secrets set` targets its slug.
 //
 // What this command does NOT do (UX spec §8 doesn't promise it):
 //   - list templates (`--list` is implicit; customers run with a bad
@@ -342,6 +344,10 @@ func nextStepsFor(tpl string) []string {
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
 			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
+			"Or reserve the app before setting secrets separately:",
+			"  gregale deploy --create-only --template s3-uploader --name <slug>",
+			"  gregale secrets set --app <slug> S3_BUCKET=... S3_REGION=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...",
+			"  cd <dest> && gregale deploy",
 		}
 	case "slack-bot":
 		return []string{
@@ -351,6 +357,10 @@ func nextStepsFor(tpl string) []string {
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
 			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
+			"Or reserve the app before setting secrets separately:",
+			"  gregale deploy --create-only --template slack-bot --name <slug>",
+			"  gregale secrets set --app <slug> SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=xoxb-...",
+			"  cd <dest> && gregale deploy",
 		}
 	case "rest-api-postgres":
 		return []string{
@@ -359,6 +369,10 @@ func nextStepsFor(tpl string) []string {
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
 			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
+			"Or reserve the app before setting secrets separately:",
+			"  gregale deploy --create-only --template rest-api-postgres --name <slug>",
+			"  gregale secrets set --app <slug> DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
+			"  cd <dest> && gregale deploy",
 		}
 	case "cron-worker":
 		return []string{
@@ -370,6 +384,10 @@ func nextStepsFor(tpl string) []string {
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
 			"Then wire QStash to invoke the function (curl or the QStash dashboard).",
 			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
+			"Or reserve the app before setting secrets separately:",
+			"  gregale deploy --create-only --template cron-worker --name <slug>",
+			"  gregale secrets set --app <slug> QSTASH_TOKEN=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
+			"  cd <dest> && gregale deploy",
 		}
 	case "webhook-receiver":
 		return []string{
@@ -389,6 +407,10 @@ func nextStepsFor(tpl string) []string {
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
 			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
+			"Or reserve the app before setting secrets separately:",
+			"  gregale deploy --create-only --template ai-chat --name <slug>",
+			"  gregale secrets set --app <slug> OPENAI_API_KEY=sk-... (or ANTHROPIC_API_KEY=sk-ant-...)",
+			"  cd <dest> && gregale deploy",
 		}
 	default:
 		// The seven pre-existing templates don't need secrets; print

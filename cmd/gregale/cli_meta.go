@@ -624,6 +624,7 @@ var cliCommands = []cliCommand{
 			{Name: "no-triggers", Short: "skip gregale.yaml trigger fan-out"},
 			{Name: "wait", Short: "wait for deployment to become live (default)"},
 			{Name: "no-wait", Short: "return after deployment is queued"},
+			{Name: "create-only", Short: "create or reserve the app without uploading a deployment"},
 			{Name: "timeout", Short: "maximum wait seconds for deploy (default 300)", Value: "SECONDS"},
 			{Name: "idempotency-key", Short: "stable logical retry key for this deployment", Value: "KEY"},
 			{Name: "secrets-file", Short: "seal KEY=VALUE pairs before the first deployment", Value: "PATH"},

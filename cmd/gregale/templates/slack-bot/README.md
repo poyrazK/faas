@@ -33,6 +33,16 @@ chmod 600 ../slack-bot.secrets
 gregale deploy --secrets-file ../slack-bot.secrets
 ```
 
+## Reserve then configure separately
+
+If you prefer to set secrets through the app API, reserve the app first:
+
+```sh
+gregale deploy --create-only --template slack-bot --name <slug>
+gregale secrets set --app <slug> SLACK_SIGNING_SECRET=<your-signing-secret> SLACK_BOT_TOKEN=xoxb-...
+cd <this-directory> && gregale deploy
+```
+
 ## Rotate or update secrets
 
 ```sh

@@ -33,6 +33,16 @@ chmod 600 ../s3-uploader.secrets
 gregale deploy --name <slug> --secrets-file ../s3-uploader.secrets
 ```
 
+## Reserve then configure separately
+
+If you prefer to set secrets through the app API, reserve the app first:
+
+```sh
+gregale deploy --create-only --template s3-uploader --name <slug>
+gregale secrets set --app <slug> S3_BUCKET=my-bucket S3_REGION=us-east-1 S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
+cd <this-directory> && gregale deploy
+```
+
 ## Rotate or update secrets
 
 ```sh
