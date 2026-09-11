@@ -858,6 +858,8 @@ jobs:
         with:
           version: v1.7.12
           args: -shellcheck ''
+      - name: release asset-name uniqueness
+        run: bash scripts/ci/check-release-assets_test.sh
       - name: native builder Go toolchain bundle contract
         run: bash scripts/ci/package-go-toolchain_test.sh
       - name: native metal invocation contract
