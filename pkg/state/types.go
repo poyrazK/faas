@@ -6650,6 +6650,11 @@ type AppLogDrainHealth struct {
 	Active                bool
 	QueueDepth            int
 	QueueCapacity         int
+	PendingRecords        int
+	PendingBytes          int64
+	PendingBytesCapacity  int64
+	DeadLetterTotal       int64
+	OldestPendingAt       time.Time
 	DeliveredTotal        int64
 	FailedTotal           int64
 	DroppedTotal          int64

@@ -1,13 +1,12 @@
 # gatewayd_internal_service — install systemd unit + socket
 # permissions for gatewayd-internal (Tier A7 split, ADR-070).
 #
-# The internal daemon listens ONLY on a unix socket inside the box.
-# Public network exposure is impossible by design — no
-# AmbientCapabilities, no RestrictAddressFamilies other than
-# AF_UNIX. The unix socket lives at /run/faas/gatewayd-internal.sock,
-# which is owned by faas-vmmd.service (the SOLE RuntimeDirectory=faas
-# across the faas service set — see faas-vmmd.service for the long
-# explanation of why declaring it here would lose the bind-mount).
+# The internal daemon's inbound API listener is local-only. The unix socket
+# lives at /run/faas/gatewayd-internal.sock, which is owned by faas-vmmd.service
+# (the SOLE RuntimeDirectory=faas across the faas service set — see
+# faas-vmmd.service for the long explanation of why declaring it here would
+# lose the bind-mount). The unit also permits IPv4/IPv6 for outbound customer
+# log-drain delivery while keeping inbound traffic loopback-only.
 
 - name: gatewayd_internal_service — install systemd unit
   notify: restart faas-gatewayd-internal
@@ -33,6 +32,17 @@
     system: true
     create_home: false
     password: "*"
+
+# Customer log drains use a gateway-local durable outbox. Keep it separate
+# from the runtime archive and grant only gatewayd-internal write access via
+# the unit's ReadWritePaths= allowlist.
+- name: gatewayd_internal_service — create log-drain spool root
+  ansible.builtin.file:
+    path: /var/lib/faas/log-drains
+    state: directory
+    owner: faas
+    group: faas
+    mode: "0750"
 
 # ADR-093 — drop the per-cluster operator kill-switch. Mirrors the
 # alertmanager role's `alertmanager.yml.j2` template drop (tasks/

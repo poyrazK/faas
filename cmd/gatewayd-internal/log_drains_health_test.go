@@ -25,6 +25,15 @@ func (s *logDrainHealthTestStore) AppLogDrainByID(_ context.Context, id string) 
 	return drain, nil
 }
 
+func (s *logDrainHealthTestStore) AppLogDrainHealthByDrainID(_ context.Context, id string) (state.AppLogDrainHealth, error) {
+	for i := len(s.persisted) - 1; i >= 0; i-- {
+		if s.persisted[i].DrainID == id {
+			return s.persisted[i], nil
+		}
+	}
+	return state.AppLogDrainHealth{}, state.ErrNotFound
+}
+
 func (s *logDrainHealthTestStore) UpsertAppLogDrainHealth(_ context.Context, health state.AppLogDrainHealth) error {
 	if _, ok := s.drains[health.DrainID]; !ok {
 		return errors.New("foreign key violation")
@@ -54,6 +63,25 @@ func TestAppLogDrainManagerFlushHealthForgetsDeletedDrain(t *testing.T) {
 	manager.healthMu.Unlock()
 	if stillTracked {
 		t.Fatal("deleted drain health remained in the manager after ErrNotFound")
+	}
+}
+
+func TestAppLogDrainManagerRestoresPersistedHealth(t *testing.T) {
+	store := &logDrainHealthTestStore{
+		drains: map[string]state.AppLogDrain{"drain-1": {ID: "drain-1"}},
+		persisted: []state.AppLogDrainHealth{{
+			DrainID: "drain-1", Status: appLogDrainHealthDegraded, DeliveredTotal: 7,
+			DroppedTotal: 2, LastError: "delivery queue dropped records",
+		}},
+	}
+	manager := newAppLogDrainManager(store, nil, nil, nil, nil)
+	manager.ensureHealth(context.Background(), state.AppLogDrain{ID: "drain-1"})
+
+	manager.healthMu.Lock()
+	got := manager.health["drain-1"]
+	manager.healthMu.Unlock()
+	if got.Status != appLogDrainHealthDegraded || !got.Active || got.DeliveredTotal != 7 || got.DroppedTotal != 2 || got.LastError == "" {
+		t.Fatalf("restored health = %+v, want persisted counters and degraded status", got)
 	}
 }
 

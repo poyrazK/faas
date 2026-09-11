@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -204,6 +205,61 @@ func TestSenderShutdownDropsQueuedRecords(t *testing.T) {
 	if got := len(dropped); got != 3 {
 		t.Fatalf("dropped records = %d, want 3", got)
 	}
+}
+
+func TestSenderDurableQueueAcknowledgesAfterSuccessfulDelivery(t *testing.T) {
+	var attempts atomic.Int64
+	delivered := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	queue, err := NewQueue(QueueConfig{Root: t.TempDir(), DrainID: "drain-1"})
+	if err != nil {
+		t.Fatalf("NewQueue: %v", err)
+	}
+	sender, err := New(Config{
+		Kind: KindHTTPJSON, TargetURL: server.URL, DurableQueue: queue, MaxAttempts: 2,
+		OnDelivered: func(Record) { delivered <- struct{}{} },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sender.Run(ctx)
+	record := Record{AppID: "app-1", InstanceID: "instance-1", Sequence: 4, Line: "durable"}
+	if !sender.Enqueue(record) {
+		t.Fatal("durable Enqueue returned false")
+	}
+	select {
+	case <-delivered:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for durable delivery")
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts.Load())
+	}
+	if stats := queue.Stats(); stats.PendingRecords != 0 || stats.DeadLetterTotal != 0 {
+		t.Fatalf("queue stats after delivery = %+v, want empty active and dead-letter queues", stats)
+	}
+
+	resumed, err := NewQueue(QueueConfig{Root: queueRoot(queue), DrainID: "drain-1"})
+	if err != nil {
+		t.Fatalf("NewQueue after delivery: %v", err)
+	}
+	if got := resumed.LastSequences()[record.InstanceID]; got != int64(record.Sequence) {
+		t.Fatalf("resumed LastSequences = %v, want %d", got, record.Sequence)
+	}
+}
+
+func queueRoot(queue *Queue) string {
+	return filepath.Dir(filepath.Dir(queue.recordsPath))
 }
 
 func TestSenderRejectsInvalidConfig(t *testing.T) {

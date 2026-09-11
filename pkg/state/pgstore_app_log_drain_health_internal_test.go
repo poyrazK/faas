@@ -19,16 +19,21 @@ func (r appLogDrainHealthScanRowStub) Scan(dest ...any) error {
 	*dest[2].(*bool) = true
 	*dest[3].(*int) = 4
 	*dest[4].(*int) = 32
-	*dest[5].(*int64) = 10
-	*dest[6].(*int64) = 2
-	*dest[7].(*int64) = 1
-	*dest[8].(*int64) = 3
-	*dest[9].(*int64) = 2
-	*dest[10].(*int64) = 1
-	*dest[11].(**time.Time) = nil
-	*dest[12].(**time.Time) = nil
-	*dest[13].(*string) = "source log gap observed"
-	*dest[14].(*time.Time) = time.Date(2026, 9, 11, 16, 0, 0, 0, time.UTC)
+	*dest[5].(*int) = 3
+	*dest[6].(*int64) = 2048
+	*dest[7].(*int64) = 65536
+	*dest[8].(*int64) = 1
+	*dest[9].(**time.Time) = nil
+	*dest[10].(*int64) = 10
+	*dest[11].(*int64) = 2
+	*dest[12].(*int64) = 1
+	*dest[13].(*int64) = 3
+	*dest[14].(*int64) = 2
+	*dest[15].(*int64) = 1
+	*dest[16].(**time.Time) = nil
+	*dest[17].(**time.Time) = nil
+	*dest[18].(*string) = "source log gap observed"
+	*dest[19].(*time.Time) = time.Date(2026, 9, 11, 16, 0, 0, 0, time.UTC)
 	return nil
 }
 

@@ -35,16 +35,21 @@ type appLogDrainHealthStore interface {
 	UpsertAppLogDrainHealth(context.Context, state.AppLogDrainHealth) error
 }
 
+type appLogDrainHealthLookupStore interface {
+	AppLogDrainHealthByDrainID(context.Context, string) (state.AppLogDrainHealth, error)
+}
+
 type appLogDrainLookupStore interface {
 	AppLogDrainByID(context.Context, string) (state.AppLogDrain, error)
 }
 
 type appLogDrainManager struct {
-	store    appLogDrainStore
-	resolver logStreamerResolver
-	unseal   func([]byte) (string, error)
-	metrics  *gateway.Metrics
-	log      *slog.Logger
+	store     appLogDrainStore
+	resolver  logStreamerResolver
+	unseal    func([]byte) (string, error)
+	metrics   *gateway.Metrics
+	log       *slog.Logger
+	spoolRoot string
 
 	mu       sync.Mutex
 	workers  map[string]*appLogDrainWorker
@@ -64,9 +69,10 @@ func newAppLogDrainManager(store appLogDrainStore, resolver logStreamerResolver,
 	}
 	return &appLogDrainManager{
 		store: store, resolver: resolver, unseal: unseal, metrics: metrics, log: log,
-		workers: make(map[string]*appLogDrainWorker),
-		active:  make(map[string]int),
-		health:  make(map[string]state.AppLogDrainHealth),
+		spoolRoot: envOrGateway("FAAS_LOG_DRAIN_SPOOL_ROOT", logdrain.DefaultSpoolRoot),
+		workers:   make(map[string]*appLogDrainWorker),
+		active:    make(map[string]int),
+		health:    make(map[string]state.AppLogDrainHealth),
 	}
 }
 
@@ -119,7 +125,6 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 		if _, exists := m.workers[spec.ID]; exists {
 			continue
 		}
-		m.ensureHealth(spec)
 		worker, err := m.startWorkerLocked(ctx, spec)
 		if err != nil {
 			m.markHealthStartFailure(spec, err)
@@ -142,11 +147,18 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 			return nil, err
 		}
 	}
-	m.ensureHealth(spec)
+	m.ensureHealth(parent, spec)
+	durableQueue, err := logdrain.NewQueue(logdrain.QueueConfig{
+		Root: m.spoolRoot, DrainID: spec.ID,
+	})
+	if err != nil {
+		return nil, err
+	}
 	sender, err := logdrain.New(logdrain.Config{
-		Kind:       logdrain.Kind(spec.Kind),
-		TargetURL:  spec.TargetURL,
-		AuthHeader: authHeader,
+		Kind:         logdrain.Kind(spec.Kind),
+		TargetURL:    spec.TargetURL,
+		AuthHeader:   authHeader,
+		DurableQueue: durableQueue,
 		OnDropped: func(logdrain.Record) {
 			m.metrics.IncLogDrainDropped(spec.AppID, string(spec.Kind))
 			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
@@ -165,9 +177,10 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 				health.DeliveredTotal++
 				health.LastSuccessAt = at
 				// A later 2xx clears a transient endpoint failure, but it
-				// cannot repair records already lost to a full queue or a
-				// source-ring gap. Keep those durable loss signals degraded.
-				if health.Active && health.DroppedTotal == 0 && health.GapsTotal == 0 {
+				// cannot repair records already lost to a full queue, source-ring
+				// gap, or retry exhaustion. Keep those durable loss signals
+				// degraded.
+				if health.Active && health.DroppedTotal == 0 && health.GapsTotal == 0 && health.DeadLetterTotal == 0 {
 					health.Status = appLogDrainHealthHealthy
 					health.LastError = ""
 				}
@@ -206,6 +219,37 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		OnDeliveredLatency: func(_ logdrain.Record, latency time.Duration) {
 			m.metrics.ObserveLogDrainDeliveryLatency(spec.AppID, string(spec.Kind), latency)
 		},
+		OnDurableQueue: func(stats logdrain.QueueStats) {
+			m.metrics.SetLogDrainDurableQueue(spec.AppID, string(spec.Kind), stats.PendingRecords, stats.PendingBytes, stats.CapacityBytes, stats.DeadLetterTotal, stats.OldestPendingAt)
+			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
+				health.PendingRecords = stats.PendingRecords
+				health.PendingBytes = stats.PendingBytes
+				health.PendingBytesCapacity = stats.CapacityBytes
+				health.DeadLetterTotal = stats.DeadLetterTotal
+				health.OldestPendingAt = stats.OldestPendingAt
+				if health.Active && stats.DeadLetterTotal > 0 {
+					health.Status = appLogDrainHealthDegraded
+				}
+			})
+		},
+		OnDeadLetter: func(_ logdrain.Record, _ error) {
+			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
+				if health.Active {
+					health.Status = appLogDrainHealthDegraded
+				}
+			})
+		},
+		OnQueueStorageError: func(err error) {
+			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
+				if health.Active {
+					health.Status = appLogDrainHealthDegraded
+				}
+				health.LastError = appLogDrainErrorSummary(err)
+			})
+			m.log.Warn("customer log drain durable queue failure",
+				slog.String("drain_id", spec.ID), slog.String("app_id", spec.AppID),
+				slog.String("err", appLogDrainErrorSummary(err)))
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -220,7 +264,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 }
 
 func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLogDrain, sender *logdrain.Sender) {
-	lastSeq := make(map[string]int64)
+	lastSeq := sender.LastSequences()
 	backoff := time.Second
 	streamEstablished := false
 	for {
@@ -262,11 +306,16 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 					if frame.InstanceID == "" || frame.Seq <= lastSeq[frame.InstanceID] {
 						continue
 					}
-					lastSeq[frame.InstanceID] = frame.Seq
-					sender.Enqueue(logdrain.Record{
+					if !sender.Enqueue(logdrain.Record{
 						AppID: spec.AppID, AccountID: spec.AccountID, InstanceID: frame.InstanceID,
 						Sequence: uint64(frame.Seq), Stream: frame.Stream, Line: frame.Line, WrittenAt: frame.WrittenAt,
-					})
+					}) {
+						// Keep the source cursor unchanged and reconnect rather than
+						// consuming later frames. A later stream can retry this record
+						// once capacity or the filesystem has recovered.
+						break
+					}
+					lastSeq[frame.InstanceID] = frame.Seq
 				}
 			} else {
 				err = streamErr
@@ -314,10 +363,24 @@ func (m *appLogDrainManager) setActiveLocked(spec state.AppLogDrain, delta int) 
 	})
 }
 
-func (m *appLogDrainManager) ensureHealth(spec state.AppLogDrain) {
+func (m *appLogDrainManager) ensureHealth(ctx context.Context, spec state.AppLogDrain) {
+	var loaded state.AppLogDrainHealth
+	loadedOK := false
+	if lookup, ok := m.store.(appLogDrainHealthLookupStore); ok {
+		var err error
+		loaded, err = lookup.AppLogDrainHealthByDrainID(ctx, spec.ID)
+		loadedOK = err == nil
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			m.log.WarnContext(ctx, "load app log drain health", slog.String("drain_id", spec.ID), slog.String("err", err.Error()))
+		}
+	}
 	m.healthMu.Lock()
 	defer m.healthMu.Unlock()
 	health, ok := m.health[spec.ID]
+	if !ok && loadedOK {
+		health = loaded
+		ok = true
+	}
 	if !ok {
 		health = state.AppLogDrainHealth{DrainID: spec.ID, Status: appLogDrainHealthUnknown}
 	}

@@ -259,6 +259,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_LOG_ARCHIVE_RETENTION_DAYS", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_SECRET", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_SPOOL_ROOT", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_LOG_DRAIN_SPOOL_ROOT", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "optional gateway log-drain spool override; defaults to /var/lib/faas/log-drains"},
 	{Name: "FAAS_LOG_LEVEL", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "info; re-read on SIGHUP"},
 	{Name: "FAAS_MAIL_FROM", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_MAIL_POSTMARK_TOKEN", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},

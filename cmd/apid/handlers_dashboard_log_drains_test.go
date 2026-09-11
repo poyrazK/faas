@@ -30,7 +30,8 @@ func TestDashboardHandler_AppLogDrains(t *testing.T) {
 	}
 	if err := store.UpsertAppLogDrainHealth(t.Context(), state.AppLogDrainHealth{
 		DrainID: drain.ID, Status: api.AppLogDrainHealthStatusDegraded, Active: true,
-		QueueDepth: 5, QueueCapacity: 20, DeliveredTotal: 12, FailedTotal: 2,
+		QueueDepth: 5, QueueCapacity: 20, PendingRecords: 5, PendingBytes: 2048,
+		PendingBytesCapacity: 65536, DeadLetterTotal: 1, DeliveredTotal: 12, FailedTotal: 2,
 		DroppedTotal: 1, RetriesTotal: 4, StreamReconnectsTotal: 1, GapsTotal: 1,
 		LastError: "source log gap observed", UpdatedAt: time.Now().UTC(),
 	}); err != nil {
@@ -45,7 +46,7 @@ func TestDashboardHandler_AppLogDrains(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Log-drain health for", "otlp", "degraded", "5 / 20", "delivered 12", "retries 4", "reconnects 1", "source log gap observed"} {
+	for _, want := range []string{"Log-drain health for", "otlp", "degraded", "5 records", "2048 / 65536 bytes", "dead letters 1", "delivered 12", "retries 4", "reconnects 1", "source log gap observed"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dashboard body missing %q\n%s", want, body)
 		}

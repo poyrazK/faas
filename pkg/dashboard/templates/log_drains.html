@@ -52,13 +52,13 @@
       </section>
     {{else if .Data.Drains}}
       <table aria-label="Customer log-drain health">
-        <thead><tr><th>Destination</th><th>Status</th><th>Queue</th><th>Delivery totals</th><th>Last success</th><th>Last failure</th><th>Last summary</th><th>Updated</th></tr></thead>
+        <thead><tr><th>Destination</th><th>Status</th><th>Persistent outbox</th><th>Delivery totals</th><th>Last success</th><th>Last failure</th><th>Last summary</th><th>Updated</th></tr></thead>
         <tbody>
           {{range .Data.Drains}}
             <tr>
               <td><strong>{{.Kind}}</strong><br><code>{{.TargetURL}}</code><br><small class="muted">{{if .Enabled}}enabled{{else}}disabled{{end}} · <code>{{.ID}}</code></small></td>
               <td><span class="badge {{.Status}}">{{.Status}}</span><br><small class="muted">{{if .Active}}worker active{{else}}worker inactive{{end}}</small></td>
-              <td class="nowrap">{{.QueueDepth}} / {{.QueueCapacity}}</td>
+              <td class="nowrap">{{.PendingRecords}} records<br>{{.PendingBytes}} / {{.PendingBytesCapacity}} bytes<br>dead letters {{.DeadLetterTotal}}{{if .OldestPendingAt}}<br><small class="muted">oldest {{.OldestPendingAt}}</small>{{end}}</td>
               <td>delivered {{.DeliveredTotal}}<br>failed {{.FailedTotal}}<br>dropped {{.DroppedTotal}}<br>retries {{.RetriesTotal}}<br>reconnects {{.StreamReconnectsTotal}}<br>gaps {{.GapsTotal}}</td>
               <td>{{if .LastSuccessAt}}{{.LastSuccessAt}}{{else}}—{{end}}</td>
               <td>{{if .LastFailureAt}}{{.LastFailureAt}}{{else}}—{{end}}</td>

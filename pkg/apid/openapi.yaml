@@ -25111,13 +25111,18 @@ components:
     AppLogDrainHealthResponse:
       type: object
       description: Durable, customer-safe delivery health for one runtime log destination.
-      required: [log_drain_id, status, active, queue_depth, queue_capacity, delivered_total, failed_total, dropped_total, retries_total, stream_reconnects_total, gaps_total, updated_at]
+      required: [log_drain_id, status, active, queue_depth, queue_capacity, pending_records, pending_bytes, pending_bytes_capacity, dead_letter_total, delivered_total, failed_total, dropped_total, retries_total, stream_reconnects_total, gaps_total, updated_at]
       properties:
         log_drain_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         status: { type: string, enum: [unknown, healthy, degraded, inactive] }
         active: { type: boolean }
         queue_depth: { type: integer, minimum: 0 }
         queue_capacity: { type: integer, minimum: 0 }
+        pending_records: { type: integer, minimum: 0, description: Number of records waiting in the durable local outbox. }
+        pending_bytes: { type: integer, format: int64, minimum: 0, description: Bytes waiting in the durable local outbox. }
+        pending_bytes_capacity: { type: integer, format: int64, minimum: 0, description: Durable local outbox byte capacity. }
+        dead_letter_total: { type: integer, format: int64, minimum: 0, description: Number of records retained in the bounded dead-letter file. }
+        oldest_pending_at: { type: string, format: date-time, description: Timestamp of the oldest record still awaiting delivery. }
         delivered_total: { type: integer, format: int64, minimum: 0 }
         failed_total: { type: integer, format: int64, minimum: 0 }
         dropped_total: { type: integer, format: int64, minimum: 0 }

@@ -3,6 +3,7 @@
 Alerts:
 
 - `FaasCustomerLogDrainBacklog`
+- `FaasCustomerLogDrainDeadLetters`
 - `FaasCustomerLogDrainDeliveryFailed`
 - `FaasCustomerLogDrainDataLoss`
 
@@ -21,8 +22,11 @@ Inspect the affected app and destination in Prometheus:
 
 ```promql
 gateway_log_drain_active{app="<app>", kind="<kind>"}
-gateway_log_drain_queue_depth{app="<app>", kind="<kind>"}
-gateway_log_drain_queue_capacity{app="<app>", kind="<kind>"}
+gateway_log_drain_pending_records{app="<app>", kind="<kind>"}
+gateway_log_drain_pending_bytes{app="<app>", kind="<kind>"}
+gateway_log_drain_pending_bytes_capacity{app="<app>", kind="<kind>"}
+gateway_log_drain_oldest_pending_timestamp_seconds{app="<app>", kind="<kind>"}
+gateway_log_drain_dead_letter_total{app="<app>", kind="<kind>"}
 rate(gateway_log_drain_retries_total{app="<app>", kind="<kind>"}[10m])
 rate(gateway_log_drain_delivery_latency_seconds_sum{app="<app>", kind="<kind>"}[10m])
   / rate(gateway_log_drain_delivery_latency_seconds_count{app="<app>", kind="<kind>"}[10m])
@@ -40,8 +44,12 @@ errors.
 ## Interpret the alert
 
 - Backlog plus retries or rising latency means the endpoint is slow or
-  unreachable. Once the bounded queue fills, new records are dropped so the
-  application path is not blocked.
+  unreachable. Records remain in the durable outbox across a gateway restart;
+  once its byte budget fills, new records are dropped so the application path
+  is not blocked.
+- A non-zero dead-letter count means retry exhaustion. The record payload is
+  retained on the node in `dead-letters.jsonl` until the bounded file rotates;
+  preserve that file before remediation if customer replay is required.
 - Delivery failures with no recent success usually indicate an endpoint,
   credential, certificate, or egress problem. A 2xx response clears the
   failure condition after the alert window expires.
@@ -53,10 +61,12 @@ errors.
 
 ## Recover
 
-The delivery path is best effort. The per-drain health snapshot is durable,
-but it does not provide a cursor or replay ledger. Treat drops and gaps as
-real data loss and record the affected time window in the incident notes.
-Resolve endpoint, credential, certificate, or egress issues, then confirm the
-queue drains and the success timestamp advances. If records were dropped or
-gaps were reported, notify the customer and record the affected time window;
-those records cannot be replayed from the drain path.
+The per-drain outbox is durable and at-least-once until a record is moved to
+the dead-letter file. Resolve endpoint, credential, certificate, or egress
+issues, then confirm the pending byte count falls and the success timestamp
+advances. Preserve and inspect dead-letter files before they rotate; this PR
+does not expose a customer replay API yet.
+
+If records were dropped or source gaps were reported, notify the customer and
+record the affected time window; those records cannot be replayed from the
+drain path.
