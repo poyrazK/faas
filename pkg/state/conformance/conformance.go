@@ -79,7 +79,7 @@ func testActiveJobRuns(t *testing.T, fx *Fixture) {
 			fx.Ctx,
 			accountID,
 			name,
-			"app",
+			"batch",
 			"ghcr.io/onebox-faas/conformance:latest",
 			[]string{"/bin/true"},
 			128,
