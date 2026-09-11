@@ -18,5 +18,9 @@ export type ListAuditLogResponse = {
    * Effective page size applied (always 1..100; mirrors the customer and operator /v1/audit-log routes).
    */
   limit: number;
+  /**
+   * Opaque cursor for the next older page; omitted when this page reaches the end.
+   */
+  next_before?: string;
 };
 
