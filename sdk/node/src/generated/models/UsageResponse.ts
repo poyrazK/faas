@@ -15,11 +15,11 @@ export type UsageResponse = {
    */
   cpu_usec?: number;
   /**
-   * Per-app monthly HTTP response bytes the gateway forwarded (informational; not billed). ADR-046. The gateway-side producer lands in PR-2; until then this field stays 0. The future egress-billing PR picks the unit; this field reports interface bytes (includes Ethernet framing).
+   * Per-app monthly HTTP response bytes the gateway forwarded (informational; not billed). Diagnostic subset of canonical net_tx_bytes and never added to it. ADR-046.
    */
   tx_bytes?: number;
   /**
-   * Per-app monthly byte delta on root-side vethHost.rx_bytes (informational; not billed). ADR-046. Sourced from vmmd netstats.Cache via schedd ListInstanceStats. Includes Ethernet framing — same kernel counter the per-plan tc tbf qdisc reads, so the cap and the meter are consistent.
+   * Per-app monthly byte delta on root-side vethHost.rx_bytes. Canonical optional egress-billing source; informational while the provider policy is off. ADR-046. Includes Ethernet framing — the same kernel counter used by shaping.
    */
   net_tx_bytes?: number;
   /**
