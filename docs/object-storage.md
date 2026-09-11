@@ -96,11 +96,12 @@ private bucket behavior.
 
 The repository includes an opt-in qualification test that exercises the
 provider-neutral contract against the registry's configured default backend:
-bucket creation/deletion, signed single-object PUT/GET, object listing,
-multipart initiation and recovery, paginated part listing, completion, and
-idempotent abort. It performs real upstream writes and deletes, so use a
-dedicated provider project/account and a temporary configuration whose
-`defaults` points at the backend being qualified.
+bucket creation/deletion, signed single-object PUT/GET with standard metadata
+and tags, tag replacement/deletion, delimiter listing, COPY and REPLACE copy
+semantics, multipart initiation and recovery, paginated part listing,
+completion, and idempotent abort. It performs real upstream writes and
+deletes, so use a dedicated provider project/account and a temporary
+configuration whose `defaults` points at the backend being qualified.
 
 ```sh
 FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage-qualification.json \
