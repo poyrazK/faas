@@ -70,10 +70,10 @@ func spoolRoot() string {
 //
 // DeployedApps is enforced at app-create time via
 // store.CreateAppIfUnderQuota — the deploy path cannot bypass it because
-// the parent apps row must already exist. The active-app gate that
+// the parent apps row must already exist. The deployable-app gate that
 // prevents an orphan deployment row pointing at a soft-deleted app
 // lives inside store.CreateDeployment (PR-A: SELECT 1 FROM apps
-// WHERE id=$1 AND status='active' FOR UPDATE).
+// WHERE id=$1 AND status IN ('active','evicted_cold') FOR UPDATE).
 func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, developerSource bool) {
 	limits := api.MustLimitsFor(acct.Plan)
 	hostingFlow := "first_deploy"
@@ -376,7 +376,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && trafficPercent == nil && canarySpec == nil,
 		})
 		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+			writeCreateDeploymentProblem(w, err)
 			return
 		}
 		if developerSource {

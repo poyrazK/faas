@@ -445,9 +445,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 }
 
 func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	// DeployedApps is enforced at app-create time; the active-app
-	// gate lives in store.CreateDeployment (returns ErrNotFound on a
-	// soft-deleted app, which we surface as 404 here). Multipart
+	// DeployedApps is enforced at app-create time; the deployable-app
+	// gate lives in store.CreateDeployment (active and evicted_cold
+	// are accepted; soft-deleted apps return ErrNotFound, which we
+	// surface as 404 here). Multipart
 	// uploads go down the createDeploymentMultipart branch; the
 	// JSON branch is the rest of this handler. Extracted to
 	// loadAppAndPreflight so createDeployment stays under the
@@ -552,25 +553,32 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	stampDeploymentActor(&dep, acct, r)
 	d, err := s.store.CreateDeployment(r.Context(), dep)
 	if err != nil {
-		// ADR-091 / PR-D: per-deployment scope collision. mapErr
-		// wraps state.ErrConflict with the constraint name —
-		// detect deployments_app_scope_live_uniq here and surface a
-		// dedicated 409 deployment_scope_collision code instead of
-		// the generic 503/500 path. The substring match is
-		// defensive: mapErr's format is "ErrConflict: constraint"
-		// and ErrConflict may wrap a chain of similar errors on
-		// multi-statement tx failure paths.
-		if errors.Is(err, state.ErrConflict) && strings.Contains(err.Error(), "deployments_app_scope_live_uniq") {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeDeploymentScopeCollision,
-				"Scope already live",
-				"a live deployment already targets this scope on this app; supersede it before creating another"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+		writeCreateDeploymentProblem(w, err)
 		return
 	}
 	notifyAndAuditDeployment(r.Context(), s, acct, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+}
+
+// writeCreateDeploymentProblem keeps deployment admission failures typed at
+// the HTTP boundary. In particular, the parent-app lock can legitimately
+// report ErrNotFound when an app is deleted between preflight and insert; it
+// must not be misreported as transient platform capacity. Scope collisions
+// retain their dedicated 409 contract, while all other failures keep the
+// historical capacity response.
+func writeCreateDeploymentProblem(w http.ResponseWriter, err error) {
+	if errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+			"Not found", "the app no longer accepts deployments"))
+		return
+	}
+	if errors.Is(err, state.ErrConflict) && strings.Contains(err.Error(), "deployments_app_scope_live_uniq") {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeDeploymentScopeCollision,
+			"Scope already live",
+			"a live deployment already targets this scope on this app; supersede it before creating another"))
+		return
+	}
+	api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 }
 
 // handleDevSourceDeploy is the developer-only delta transport. Keeping it on

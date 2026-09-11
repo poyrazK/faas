@@ -4941,7 +4941,7 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // --- deployments -------------------------------------------------------------
 
 // CreateDeployment writes a pending deployment row only if the parent app is
-// currently active. The active-app gate is the PR-A fix for the TOCTOU race
+// deployable (active or evicted_cold). The lifecycle gate is the PR-A fix for the TOCTOU race
 // where apid's AppBySlug could return a row whose status was flipped to
 // `deleted` between the read and the INSERT — the previous shape silently
 // stranded an orphan deployments row pointing at a soft-deleted app.
@@ -4951,10 +4951,10 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // apps.status, and ErrNotFound on a 0-row result so apid's existing
 // s.notFound path returns 404 without any change at the call site.
 //
-// AppDeleted apps must NOT accept new deployments; subsequent UpdateApp
-// calls (PATCH /v1/apps/{slug}) reject status flips back to active for
-// already-deleted rows anyway, so the invariant "an app either accepts
-// deploys OR is deleted" is one-directional here.
+// AppDeleted apps must NOT accept new deployments; evicted_cold apps do.
+// Subsequent UpdateApp calls (PATCH /v1/apps/{slug}) reject status flips back
+// to active for already-deleted rows anyway, so the invariant "an app either
+// accepts deploys OR is deleted" is one-directional here.
 //
 // A stable create supersedes only an older pending candidate in this
 // transaction. The serving row stays live throughout the build; the eventual
@@ -4986,7 +4986,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	//    primary key on id, so the lock search is an index hit.
 	var locked int
 	if err := tx.QueryRow(ctx,
-		`select 1 from apps where id = $1 and status = 'active' for update`,
+		`select 1 from apps where id = $1 and status in ('active', 'evicted_cold') for update`,
 		d.AppID).Scan(&locked); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, ErrNotFound
@@ -7559,8 +7559,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var active int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status='active' for update`, src.AppID).Scan(&active); err != nil {
+	var deployable int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status in ('active', 'evicted_cold') for update`, src.AppID).Scan(&deployable); err != nil {
 		return Deployment{}, mapErr(err)
 	}
 	// Step 3 — rebuild the immutable intent while resetting mutable execution

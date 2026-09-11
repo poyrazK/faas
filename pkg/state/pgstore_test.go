@@ -2393,8 +2393,37 @@ func contains(xs []string, want string) bool {
 	return false
 }
 
+// TestPg_CreateDeployment_AllowsEvictedColdApp pins the lifecycle contract
+// for CreateDeployment: parking is a serving-state transition, so a parked
+// app remains eligible for a new revision. This catches regressions where the
+// parent-app lock accidentally narrows back to status='active'.
+//
+// Skips without Postgres (pgtest.Open handles the skip).
+func TestPg_CreateDeployment_AllowsEvictedColdApp(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx)
+
+	parked := state.AppEvictedCold
+	if _, err := s.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatalf("UpdateApp(evicted_cold): %v", err)
+	}
+
+	dep, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID:       appID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "registry.example.com/parked@sha256:" + strings.Repeat("p", 64),
+		Status:      state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment against evicted_cold app: %v", err)
+	}
+	if dep.AppID != appID || dep.Status != state.DeployPending {
+		t.Fatalf("CreateDeployment against evicted_cold app = %+v, want pending deployment for %s", dep, appID)
+	}
+}
+
 // TestPg_CreateDeployment_RejectsDeletedApp is the PR-A SQL pin for
-// the active-app gate inside CreateDeployment. Mirrors the wire-level
+// the deployable-app gate inside CreateDeployment. Mirrors the wire-level
 // test in cmd/apid/deploy_to_active_app_test.go. The handler-level
 // test catches the wire contract; this test catches the SQL:
 // SELECT 1 FROM apps … FOR UPDATE returns 0 rows for a soft-deleted
@@ -2420,7 +2449,7 @@ func TestPg_CreateDeployment_RejectsDeletedApp(t *testing.T) {
 		t.Fatalf("DeleteApp: %v", err)
 	}
 
-	// Now CreateDeployment must return ErrNotFound (the active-app
+	// Now CreateDeployment must return ErrNotFound (the deployable-app
 	// gate's contract). The handler maps ErrNotFound to 404.
 	_, err = s.CreateDeployment(ctx, state.Deployment{
 		AppID:       appID,

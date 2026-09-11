@@ -2182,10 +2182,10 @@ type Store interface {
 	// Callers that need to surface a NotifyDeploymentChanged for the
 	// just-superseded pending row may read it after CreateDeployment.
 	//
-	// AppDeleted apps must accept neither deployments nor supersedes;
-	// the parent-app gate is the same FOR UPDATE as PR-A's
-	// CreateAppIfUnderQuota pattern. The 404 s.notFound path at the
-	// apid call site is unchanged.
+	// Active and evicted_cold apps accept new deployments; AppDeleted apps
+	// must accept neither deployments nor supersedes. The parent-app gate is
+	// the same FOR UPDATE as PR-A's CreateAppIfUnderQuota pattern. The 404
+	// s.notFound path at the apid call site is unchanged.
 	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)
 	DeploymentByID(ctx context.Context, id string) (Deployment, error)
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)

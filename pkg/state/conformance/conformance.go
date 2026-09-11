@@ -47,6 +47,7 @@ func Run(t *testing.T, open Open) {
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
+		{"evicted_cold_apps_accept_deployments", testEvictedColdAppAcceptsDeployment},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
@@ -64,6 +65,30 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testEvictedColdAppAcceptsDeployment(t *testing.T, fx *Fixture) {
+	parked := state.AppEvictedCold
+	app, err := fx.Store.UpdateApp(fx.Ctx, fx.App.ID, state.UpdateAppParams{Status: &parked})
+	if err != nil {
+		t.Fatalf("UpdateApp(evicted_cold): %v", err)
+	}
+	if app.Status != state.AppEvictedCold {
+		t.Fatalf("UpdateApp(evicted_cold) status = %q, want %q", app.Status, state.AppEvictedCold)
+	}
+
+	dep, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID:       fx.App.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:parked-redeploy",
+		Status:      state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(evicted_cold): %v", err)
+	}
+	if dep.AppID != fx.App.ID || dep.Status != state.DeployPending {
+		t.Fatalf("CreateDeployment(evicted_cold) = %+v, want pending deployment for %s", dep, fx.App.ID)
 	}
 }
 

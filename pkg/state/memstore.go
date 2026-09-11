@@ -4744,11 +4744,11 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 
 // --- Deployments ------------------------------------------------------------
 
-// CreateDeployment mirrors PgStore.CreateDeployment's active-app gate
-// (PR-A). Both stores must reject deployments against AppDeleted or
-// missing apps with ErrNotFound — apid's s.notFound relies on this
-// to return 404. The mutex already serialises the check + insert
-// together, so the gate is race-free here without a tx.
+// CreateDeployment mirrors PgStore.CreateDeployment's deployable-app gate
+// (PR-A). Active and evicted_cold apps accept new revisions; both stores
+// reject AppDeleted or unknown statuses with ErrNotFound — apid's s.notFound
+// relies on this to return 404. The mutex already serialises the check +
+// insert together, so the gate is race-free here without a tx.
 //
 // PR-B: the prior-deployment supersede is folded into the same
 // critical section as the INSERT, mirroring PgStore's tx-wrapped
@@ -4762,7 +4762,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[d.AppID]
-	if !ok || app.Status == AppDeleted {
+	if !ok || !app.Status.CanAcceptDeployments() {
 		return Deployment{}, ErrNotFound
 	}
 	if d.ID != "" {
@@ -6265,7 +6265,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
-	if app, ok := m.apps[src.AppID]; !ok || app.Status != AppActive {
+	if app, ok := m.apps[src.AppID]; !ok || !app.Status.CanAcceptDeployments() {
 		return Deployment{}, ErrNotFound
 	}
 	now := time.Now()

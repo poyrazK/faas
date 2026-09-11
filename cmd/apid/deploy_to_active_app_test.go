@@ -1,4 +1,4 @@
-// PR-A: CreateDeployment's active-app gate, exercised at the wire.
+// PR-A: CreateDeployment's deployable-app gate, exercised at the wire.
 // The store-side gate lives in pkg/state/{pgstore,memstore}.go —
 // these tests pin the wire contract (a deploy to a deleted app must
 // 404, and the store must hold zero deployment rows for the
@@ -15,7 +15,57 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// TestCreateDeployment_AllowsEvictedColdApp_Tarball pins the zero-config
+// redeploy contract: parking stops instances, not source admission. A valid
+// source upload to an evicted_cold app must still create a queued deployment.
+func TestCreateDeployment_AllowsEvictedColdApp_Tarball(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_SPOOL_ROOT", dir)
+
+	e := setup(t, api.PlanPro)
+	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "parked-tar"}, nil)
+
+	app, err := e.store.AppBySlug(context.Background(), "parked-tar")
+	if err != nil {
+		t.Fatalf("AppBySlug: %v", err)
+	}
+	parked := state.AppEvictedCold
+	if _, err := e.store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatalf("UpdateApp(evicted_cold): %v", err)
+	}
+
+	raw := buildTestTarGz(t,
+		[]tar.Header{{Name: "index.js"}, {Name: "package.json"}},
+		map[string][]byte{
+			"index.js":     []byte("exports.handler = () => 'parked';\n"),
+			"package.json": []byte(`{"name":"parked-tar","version":"0.0.0"}`),
+		})
+	body, contentType := multipartUpload(t, map[string]multipartPart{
+		"source": {filename: "source.tar.gz", body: raw},
+	})
+	req := httptest.NewRequest("POST", "/v1/apps/parked-tar/deployments", body)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Content-Type", contentType)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (%s)", rec.Code, rec.Body)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), app.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForApp: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("deployments = %d, want 1", len(deps))
+	}
+	if deps[0].Status != state.DeployBuilding {
+		t.Errorf("deployment status = %q, want building", deps[0].Status)
+	}
+}
 
 // TestCreateDeployment_RejectsSoftDeletedApp_Image covers the
 // image: branch (cmd/apid/handlers.go::createDeployment). Setup:

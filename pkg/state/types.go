@@ -85,6 +85,14 @@ const (
 	AppDeleted     AppStatus = "deleted"
 )
 
+// CanAcceptDeployments reports whether the app can receive a new revision.
+// Eviction is a serving-state transition, not a terminal lifecycle state:
+// parked apps retain their configuration and must remain deployable. Deleted
+// apps (and any unknown future status) are rejected by the deployment gate.
+func (s AppStatus) CanAcceptDeployments() bool {
+	return s == AppActive || s == AppEvictedCold
+}
+
 // DeploymentKind distinguishes image / tarball / dockerfile deploys (spec §9).
 type DeploymentKind string
 
