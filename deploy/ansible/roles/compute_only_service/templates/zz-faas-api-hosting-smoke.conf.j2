@@ -1,0 +1,8 @@
+[Service]
+# API-hosting release safety (issue #1973): every compute-only production
+# node must verify the public route after readiness before imaged promotes a
+# deployment. The public gateway uses the apps domain for tenant Host routing;
+# keep the origin configurable through gatewayd_apps_domain while preserving
+# the same URL shape in the smoke verifier.
+Environment=FAAS_API_HOSTING_SMOKE_URL=https://{{ gatewayd_apps_domain | default('gregale.dev') }}
+Environment=FAAS_API_HOSTING_SMOKE_REQUIRED=1

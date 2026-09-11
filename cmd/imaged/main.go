@@ -470,15 +470,27 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// override with FAAS_VMM_SOCK for dev (e.g. a bufconn
 		// test on a Mac).
 		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log))
-	// Optional public readiness verification. Split-box installations set the
-	// origin explicitly; leaving it empty preserves the existing offline/local
-	// deployment path and records a skipped smoke in the receipt.
-	if smokeURL := strings.TrimSpace(getenv("FAAS_API_HOSTING_SMOKE_URL")); smokeURL != "" {
-		verifier := apihostingreceipt.Verifier{BaseURL: smokeURL, AppsDomain: getenv("FAAS_APPS_DOMAIN"), Timeout: 10 * time.Second}
+	// Public-beta compute nodes require a configured public-origin smoke. The
+	// verifier remains optional for single-box/offline development, but the
+	// required flag installs it even when the URL is missing so deployments
+	// fail closed with a durable, actionable receipt instead of going live
+	// with smoke_not_configured.
+	smokeRequired, err := parseBoolEnv("FAAS_API_HOSTING_SMOKE_REQUIRED", getenv("FAAS_API_HOSTING_SMOKE_REQUIRED"))
+	if err != nil {
+		return err
+	}
+	smokeURL := strings.TrimSpace(getenv("FAAS_API_HOSTING_SMOKE_URL"))
+	h.WithHostingSmokeRequired(smokeRequired)
+	if smokeURL != "" || smokeRequired {
+		verifier := apihostingreceipt.Verifier{BaseURL: smokeURL, AppsDomain: getenv("FAAS_APPS_DOMAIN"), Timeout: 10 * time.Second, Required: smokeRequired}
 		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
 			return verifier.Verify(ctx, app.Slug, imaged.HostingHealthPath(app, dep))
 		})
-		log.Info("imaged: API hosting readiness smoke enabled", "base_url", smokeURL)
+		if smokeURL == "" {
+			log.Warn("imaged: API hosting readiness smoke required but public origin is unset; deployments will fail closed")
+		} else {
+			log.Info("imaged: API hosting readiness smoke enabled", "base_url", smokeURL, "required", smokeRequired)
+		}
 	}
 
 	// Issue #461 / ADR-062: load the host age identity so imaged
@@ -711,6 +723,18 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func parseBoolEnv(name, raw string) (bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("imaged: %s must be a boolean", name)
+	}
+	return value, nil
 }
 
 // builderBaseRefFromEnv resolves the builder image reference. Single-box

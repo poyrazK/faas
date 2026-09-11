@@ -99,6 +99,43 @@ func TestCmdInspectSummary_OptionalSignalsDegrade(t *testing.T) {
 	}
 }
 
+func TestInspectRecommendations_DistinguishSmokeVerifierFromHealthEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		health   *inspectHealthSummary
+		code     string
+		want     string
+		wantNext string
+	}{
+		{
+			name:     "verifier disabled",
+			health:   &inspectHealthSummary{Status: apihostingreceipt.SmokeSkipped, ErrorCode: apihostingreceipt.SmokeErrorNotConfigured},
+			want:     "health_verifier_unconfigured",
+			wantNext: "FAAS_API_HOSTING_SMOKE_URL",
+		},
+		{
+			name:     "health endpoint missing",
+			health:   &inspectHealthSummary{Status: apihostingreceipt.SmokeFailed, ErrorCode: "smoke_health_path_missing"},
+			want:     "health_endpoint_missing",
+			wantNext: "health endpoint",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recs := inspectRecommendations(inspectSummary{
+				App:     inspectAppSummary{Slug: "demo"},
+				Release: inspectReleaseSummary{Available: true, Status: "live"},
+				Runtime: inspectRuntimeSummary{Health: tc.health},
+			})
+			if len(recs) != 1 || recs[0].Code != tc.want {
+				t.Fatalf("recommendations = %+v, want code %q", recs, tc.want)
+			}
+			if !strings.Contains(recs[0].Next, tc.wantNext) {
+				t.Errorf("next = %q, want substring %q", recs[0].Next, tc.wantNext)
+			}
+		})
+	}
+}
+
 func configureInspectSummaryTest(t *testing.T, apiURL string) {
 	t.Helper()
 	t.Setenv("FAAS_API", apiURL)

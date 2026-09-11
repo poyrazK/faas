@@ -387,7 +387,13 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	} else if summary.Release.Status == "failed" {
 		add("deployment_failed", "error", "The latest deployment failed.", "Run `gregale inspect "+summary.App.Slug+" --errors` for the persisted explanation.")
 	} else if summary.Release.Status == "live" && (summary.Runtime.Health == nil || summary.Runtime.Health.Status != apihostingreceipt.SmokeVerified) {
-		add("health_unverified", "warning", "The live deployment has no verified health receipt.", "Configure a health endpoint and redeploy.")
+		if summary.Runtime.Health != nil && (summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorNotConfigured || summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorVerifierNotConfigured) {
+			add("health_verifier_unconfigured", "error", "The public smoke verifier is not configured, so this deployment is not externally verified.", "An operator must configure FAAS_API_HOSTING_SMOKE_URL on the compute node and redeploy.")
+		} else if summary.Runtime.Health != nil && summary.Runtime.Health.ErrorCode == "smoke_health_path_missing" {
+			add("health_endpoint_missing", "warning", "The application has no configured health endpoint.", "Expose a health endpoint or set an explicit health path, then redeploy.")
+		} else {
+			add("health_unverified", "warning", "The live deployment has no verified health receipt.", "Configure a health endpoint and redeploy.")
+		}
 	}
 	if summary.App.Type == "app" && (summary.Runtime.Framework == "" || summary.Runtime.Framework == "unknown") {
 		add("framework_unknown", "warning", "Gregale could not identify the application framework.", "Set an explicit start command or Dockerfile.")

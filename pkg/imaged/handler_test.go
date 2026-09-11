@@ -463,6 +463,102 @@ func TestHandleSnapshotWritten_FailedSmokeRestoresPreviousLive(t *testing.T) {
 	}
 }
 
+func TestHandleSnapshotWritten_RequiredSmokeWithoutVerifierFailsClosed(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "hosting-smoke-required", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	previous, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:previous", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope, Status: state.DeployLive,
+	})
+	candidate, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:candidate", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope,
+	})
+	_ = store.UpdateDeploymentStatus(context.Background(), candidate.ID, state.DeploySnapshotting, "")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmokeRequired(true)
+
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID +
+			`/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	})
+
+	failed, err := store.DeploymentByID(context.Background(), candidate.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(candidate): %v", err)
+	}
+	if failed.Status != state.DeployFailed {
+		t.Fatalf("candidate status = %s, want failed", failed.Status)
+	}
+	receipt, err := apihostingreceipt.Decode(failed.APIHostingReceipt)
+	if err != nil {
+		t.Fatalf("Decode hosting receipt: %v", err)
+	}
+	if receipt.Smoke.Status != apihostingreceipt.SmokeFailed || receipt.Smoke.ErrorCode != apihostingreceipt.SmokeErrorVerifierNotConfigured {
+		t.Fatalf("hosting smoke = %+v, want failed verifier-not-configured", receipt.Smoke)
+	}
+	live, err := store.LiveDeploymentForScope(context.Background(), app.ID, state.DefaultEnvScope)
+	if err != nil {
+		t.Fatalf("LiveDeploymentForScope: %v", err)
+	}
+	if live.ID != previous.ID {
+		t.Fatalf("live deployment = %s, want previous %s", live.ID, previous.ID)
+	}
+}
+
+func TestHandleSnapshotWritten_RequiredSmokeRejectsSkippedVerifier(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "hosting-smoke-skipped", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	previous, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:previous", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope, Status: state.DeployLive,
+	})
+	candidate, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:candidate", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope,
+	})
+	_ = store.UpdateDeploymentStatus(context.Background(), candidate.ID, state.DeploySnapshotting, "")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).
+		WithHostingSmokeRequired(true).
+		WithHostingSmoke(func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, ErrorCode: apihostingreceipt.SmokeErrorNotConfigured}, nil
+		})
+
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID +
+			`/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	})
+
+	failed, err := store.DeploymentByID(context.Background(), candidate.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(candidate): %v", err)
+	}
+	if failed.Status != state.DeployFailed {
+		t.Fatalf("candidate status = %s, want failed", failed.Status)
+	}
+	receipt, err := apihostingreceipt.Decode(failed.APIHostingReceipt)
+	if err != nil {
+		t.Fatalf("Decode hosting receipt: %v", err)
+	}
+	if receipt.Smoke.Status != apihostingreceipt.SmokeFailed {
+		t.Fatalf("hosting smoke = %+v, want failed", receipt.Smoke)
+	}
+	live, err := store.LiveDeploymentForScope(context.Background(), app.ID, state.DefaultEnvScope)
+	if err != nil {
+		t.Fatalf("LiveDeploymentForScope: %v", err)
+	}
+	if live.ID != previous.ID {
+		t.Fatalf("live deployment = %s, want previous %s", live.ID, previous.ID)
+	}
+}
+
 // TestHandleSnapshotWritten_Tier (issue #470 / PR #470-FU-B)
 // exercises the warm-tier payload path: when schedd's
 // captureWarmSnapshot emits a snapshot_written with tier="warm",

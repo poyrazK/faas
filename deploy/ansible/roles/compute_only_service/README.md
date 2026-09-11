@@ -22,6 +22,11 @@ populated with both `DATABASE_URL` and `FAAS_VMMD_DBURL` (gap G2).
   server leaf retains `vmmd.faas` as its role identity and carries the
   endpoint as an additional SAN, so adding another compute box cannot route
   imaged to the wrong node.
+- `zz-faas-api-hosting-smoke.conf.j2` — enables the public post-readiness
+  smoke verifier and makes it fail closed on compute-only production nodes.
+  The origin is derived from `gatewayd_apps_domain`; the verifier sends the
+  tenant slug in the Host header so the shared public gateway exercises the
+  same route customers use.
 
 ## Side effects
 

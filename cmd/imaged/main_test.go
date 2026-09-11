@@ -88,6 +88,34 @@ func TestOciPullTimeout(t *testing.T) {
 	}
 }
 
+func TestParseBoolEnv(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want bool
+	}{
+		{raw: "", want: false},
+		{raw: "1", want: true},
+		{raw: "true", want: true},
+		{raw: "0", want: false},
+		{raw: "false", want: false},
+	} {
+		got, err := parseBoolEnv("FAAS_API_HOSTING_SMOKE_REQUIRED", tc.raw)
+		if err != nil {
+			t.Errorf("parseBoolEnv(%q) error: %v", tc.raw, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("parseBoolEnv(%q) = %t, want %t", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestParseBoolEnvRejectsInvalidValue(t *testing.T) {
+	if _, err := parseBoolEnv("FAAS_API_HOSTING_SMOKE_REQUIRED", "sometimes"); err == nil {
+		t.Fatal("parseBoolEnv accepted invalid boolean")
+	}
+}
+
 // TestOverrideGate_DigestPinned covers the success path: a digest-pinned
 // reference passes the gate. Mirrors the parsing logic in run() so a
 // future refactor of the gate is caught here.
