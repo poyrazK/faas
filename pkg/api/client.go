@@ -396,6 +396,13 @@ func (c *Client) Whoami(ctx context.Context) (AccountResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/account", nil, &out)
 }
 
+// GetCapabilities returns the canonical feature maturity and plan
+// entitlement registry for the authenticated account.
+func (c *Client) GetCapabilities(ctx context.Context) (CapabilitiesResponse, error) {
+	var out CapabilitiesResponse
+	return out, c.do(ctx, "GET", "/v1/capabilities", nil, &out)
+}
+
 // ExportAccount downloads the GDPR export bundle (spec §17 G6) into
 // the provided writer. includeSecrets=false drops the ciphertext
 // slice. The streamed body is decoded as a single JSON document for
@@ -4156,6 +4163,15 @@ func (c *Client) GetAppLogDrainHealth(ctx context.Context, slug, id string) (App
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/log-drains/"+id+"/health", nil, &out)
 }
 
+func (c *Client) GetAppLogDrainAnalytics(ctx context.Context, slug, id, window string) (AppLogDrainAnalyticsResponse, error) {
+	var out AppLogDrainAnalyticsResponse
+	path := "/v1/apps/" + slug + "/log-drains/" + id + "/analytics"
+	if window != "" {
+		path += "?window=" + url.QueryEscape(window)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 func (c *Client) UpdateAppLogDrain(ctx context.Context, slug, id string, req UpdateAppLogDrainRequest) (AppLogDrainResponse, error) {
 	var out AppLogDrainResponse
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/log-drains/"+id, req, &out)
@@ -4573,7 +4589,9 @@ func (c *Client) DeleteAppOpenAPI(ctx context.Context, slug string) error {
 // (Free=off / 402; Hobby=3d; Pro=7d; Scale=14d). Empty falls
 // back to the server's default (24h). The response envelope's
 // `since` echoes the effective window applied, so a customer who
-// asks for 30d on Hobby gets 3d back with the same payload.
+// asks for 30d on Hobby gets 3d back with the same payload. Cursor
+// pagination is available through ListAppDebugRequestsWithOptions;
+// NextCursor is opaque and Complete marks the end of the retained window.
 //
 // 402 when the plan gates the feature (DebugTelemetryEnabled=false);
 // 404 when the app is owned by a different account (IDOR-safe
@@ -4582,9 +4600,9 @@ func (c *Client) ListAppDebugRequests(ctx context.Context, slug, since string) (
 	return c.ListAppDebugRequestsWithOptions(ctx, slug, DebugTelemetryListOptions{Since: since})
 }
 
-// ListAppDebugRequestsWithOptions is the filtered form of
-// ListAppDebugRequests. Route and limit are sent to the API so filtering and
-// pagination happen before rows are read from the database.
+// ListAppDebugRequestsWithOptions is the filtered and cursor-paginated form
+// of ListAppDebugRequests. Route, cursor, and limit are sent to the API so
+// filtering and pagination happen before rows are read from the database.
 func (c *Client) ListAppDebugRequestsWithOptions(ctx context.Context, slug string, opts DebugTelemetryListOptions) (DebugTelemetryListResponse, error) {
 	var out DebugTelemetryListResponse
 	path := "/v1/apps/" + slug + "/debug/requests"
@@ -4595,11 +4613,55 @@ func (c *Client) ListAppDebugRequestsWithOptions(ctx context.Context, slug strin
 	if opts.Route != "" {
 		q.Set("route", opts.Route)
 	}
+	if opts.Cursor != "" {
+		q.Set("cursor", opts.Cursor)
+	}
 	if opts.Limit > 0 {
 		q.Set("limit", strconv.Itoa(opts.Limit))
 	}
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListAppDebugRequestsAll walks the request telemetry cursor until the
+// server reports Complete. The initial filters are preserved; subsequent
+// calls feed the opaque NextCursor back unchanged. A caller can cancel ctx
+// between pages and receives the rows accumulated so far.
+func (c *Client) ListAppDebugRequestsAll(ctx context.Context, slug string, opts DebugTelemetryListOptions) ([]DebugTelemetryRequestItem, error) {
+	if opts.Limit == 0 {
+		opts.Limit = 200
+	}
+	var out []DebugTelemetryRequestItem
+	for {
+		page, err := c.ListAppDebugRequestsWithOptions(ctx, slug, opts)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, page.Requests...)
+		if page.Complete || page.NextCursor == "" {
+			return out, nil
+		}
+		if page.NextCursor == opts.Cursor {
+			return out, fmt.Errorf("debug requests cursor did not advance")
+		}
+		opts.Cursor = page.NextCursor
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+	}
+}
+
+// GetAppDebugCoverage returns observed debugger signal coverage for one app.
+// The response distinguishes collapsed telemetry rows from represented
+// requests and reports percentages only for signals attached to persisted
+// rows; it never invents a denominator for requests dropped before storage.
+func (c *Client) GetAppDebugCoverage(ctx context.Context, slug, since string) (DebugCoverageResponse, error) {
+	var out DebugCoverageResponse
+	path := "/v1/apps/" + slug + "/debug/coverage"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }

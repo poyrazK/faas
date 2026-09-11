@@ -788,7 +788,7 @@ func TestGatewayEgressAdapter_ReadUsageDeltasAccumulatesAndDrains(t *testing.T) 
 	}
 }
 
-func TestScheddEgressAdapterComputesCumulativeCounterDeltas(t *testing.T) {
+func TestScheddEgressAdapterForwardsCumulativeCountersForDurableCheckpointing(t *testing.T) {
 	now := time.Date(2026, 7, 29, 12, 0, 30, 0, time.UTC)
 	cpu := &scheddCPUAdapter{
 		now:     func() time.Time { return now },
@@ -798,18 +798,18 @@ func TestScheddEgressAdapterComputesCumulativeCounterDeltas(t *testing.T) {
 		},
 	}
 	a := &scheddEgressAdapter{cpu: cpu}
-	if first, ok := a.ReadUsageDeltas("inst-1"); !ok || first.NetTXBytes != 0 || first.NetRXBytes != 0 {
-		t.Fatalf("first baseline = %+v, %v", first, ok)
+	if first, ok := a.ReadUsageDeltas("inst-1"); !ok || first.NetTXBytes != 1000 || first.NetRXBytes != 400 || !first.NetworkCumulative || !first.NetTXValid || !first.NetRXValid {
+		t.Fatalf("first cumulative observation = %+v, %v", first, ok)
 	}
 	cpu.rows["inst-1"] = scheddgrpc.InstanceStatsRow{InstanceID: "inst-1", NetTxBytes: 1600, NetRxBytes: 700}
 	got, ok := a.ReadUsageDeltas("inst-1")
-	if !ok || got.NetTXBytes != 600 || got.NetRXBytes != 300 {
-		t.Fatalf("network delta = %+v, %v", got, ok)
+	if !ok || got.NetTXBytes != 1600 || got.NetRXBytes != 700 || !got.NetworkCumulative || !got.NetTXValid || !got.NetRXValid {
+		t.Fatalf("network cumulative observation = %+v, %v", got, ok)
 	}
 	cpu.rows["inst-1"] = scheddgrpc.InstanceStatsRow{InstanceID: "inst-1", NetTxBytes: 10, NetRxBytes: 5}
 	got, ok = a.ReadUsageDeltas("inst-1")
-	if !ok || got.NetTXBytes != 0 || got.NetRXBytes != 0 {
-		t.Fatalf("regression delta = %+v, %v", got, ok)
+	if !ok || got.NetTXBytes != 10 || got.NetRXBytes != 5 || !got.NetworkCumulative || !got.NetTXValid || !got.NetRXValid {
+		t.Fatalf("regressed cumulative observation = %+v, %v", got, ok)
 	}
 }
 

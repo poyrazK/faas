@@ -340,8 +340,42 @@ func TestCmdOpenapiPreviewKeepsPolicyWhenContractDiffDisabled(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("preview output is not JSON: %v\n%s", err, stdout.String())
 	}
-	if got.Policy.AppID != "app-1" || got.Contract != nil || got.ContractDiffEnabled {
-		t.Fatalf("preview output = %+v, want policy with disabled contract diff", got)
+	if got.Policy.AppID != "app-1" || got.Contract != nil || got.ContractDiffEnabled || got.ContractError == nil {
+		t.Fatalf("preview output = %+v, want policy with explicit unavailable contract", got)
+	}
+	if got.ContractError.Code != api.CodeAPIContractDiffDisabled || got.ContractError.Status != http.StatusServiceUnavailable {
+		t.Fatalf("contract error = %+v, want stable disabled problem", got.ContractError)
+	}
+
+	stdout.Reset()
+	if code := cmdOpenapiPreview([]string{"demo", "--fail-on-unavailable"}); code != 3 {
+		t.Fatalf("cmdOpenapiPreview --fail-on-unavailable = %d, want 3", code)
+	}
+	var failClosed openapiPreviewOutput
+	if err := json.Unmarshal(stdout.Bytes(), &failClosed); err != nil {
+		t.Fatalf("fail-closed output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if failClosed.ContractError == nil || failClosed.ContractError.Code != api.CodeAPIContractDiffDisabled {
+		t.Fatalf("fail-closed output = %+v, want explicit unavailable contract", failClosed)
+	}
+}
+
+func TestCmdOpenapiPreviewInvalidScopeBeforeRequest(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		t.Fatalf("invalid scope must be rejected locally; received %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
+	_, restore := swapStdout(t)
+	defer restore()
+	if code := cmdOpenapiPreview([]string{"demo", "--scope", "bad scope"}); code != 1 {
+		t.Fatalf("cmdOpenapiPreview invalid scope = %d, want 1", code)
+	}
+	if requests != 0 {
+		t.Fatalf("invalid scope made %d request(s), want 0", requests)
 	}
 }
 

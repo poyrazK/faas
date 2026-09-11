@@ -111,6 +111,38 @@ func TestRenderTOML_ScheddSplitBoxOutbound(t *testing.T) {
 	}
 }
 
+func TestRenderTOML_ComputeScheddUsesLocalPeers(t *testing.T) {
+	dc := &manifest.DaemonConfig{
+		Bind: "tcp://0.0.0.0:9091",
+		Outbound: &manifest.OutboundConfig{
+			Target: "tcp://vmmd.faas:50051",
+			TLS: &manifest.TLSMaterial{
+				CertPath: "/etc/faas/tls/schedd/vmmd-client.crt",
+				KeyPath:  "/etc/faas/tls/schedd/vmmd-client.key",
+				CAPath:   "/etc/faas/tls/ca/ca.crt",
+			},
+		},
+		GatewaySynthTarget: "tcp://127.0.0.1:8080",
+	}
+	body, _, err := renderTOML(tomlRenderCtx{
+		Daemon:   "schedd",
+		DC:       dc,
+		HostRole: "compute-only",
+	})
+	if err != nil {
+		t.Fatalf("renderTOML: %v", err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		`vmmd_target = "tcp://127.0.0.1:50051"`,
+		`gateway_synth_target = "unix:///run/faas/gatewayd-internal.sock"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("compute schedd body missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRenderTOML_Apid(t *testing.T) {
 	body, _, err := renderTOML(tomlRenderCtx{
 		Daemon: "apid",

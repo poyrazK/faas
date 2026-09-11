@@ -36,7 +36,8 @@ import (
 // plan's DebugTelemetryRetentionDays (Hobby 3d, Pro 7d, Scale 14d).
 // `limit` defaults to 20, capped at 200 (matches
 // handlers_invocations.go:451-455). The endpoint is IDOR-safe via
-// loadApp (cross-account slug → 404).
+// loadApp (cross-account slug → 404). Cursor pages carry the original
+// window and route so the ordering remains stable while new rows arrive.
 func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -55,8 +56,10 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 	sinceRaw := r.URL.Query().Get("since")
 	sinceDur := parseDebugSinceFromString(sinceRaw, 24*time.Hour)
 	cap := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	retentionClamped := false
 	if cap > 0 && sinceDur > cap {
 		sinceDur = cap
+		retentionClamped = true
 	}
 	limit := 20
 	if q := r.URL.Query().Get("limit"); q != "" {
@@ -72,13 +75,50 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation("route must be at most 256 characters"))
 		return
 	}
+
+	cursorRaw := strings.TrimSpace(r.URL.Query().Get("cursor"))
+	if len(cursorRaw) > 8192 {
+		api.WriteProblem(w, api.ErrValidation("cursor must be at most 8192 characters"))
+		return
+	}
+	decodedCursor, err := decodeDebugTelemetryCursor(cursorRaw)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("cursor is invalid; restart the request list"))
+		return
+	}
+	if decodedCursor.Version != 0 && (decodedCursor.AppID != app.ID || decodedCursor.Route != route) {
+		api.WriteProblem(w, api.ErrValidation("cursor does not match this app or route"))
+		return
+	}
+
 	now := time.Now().UTC()
+	windowStart := now.Add(-sinceDur)
+	windowEnd := now
+	if decodedCursor.Version != 0 {
+		// A cursor pins both bounds. Reject an old cursor after the plan's
+		// retention horizon rather than allowing it to read aged-out rows.
+		if decodedCursor.WindowEnd.After(now.Add(time.Minute)) || decodedCursor.WindowStart.Before(now.Add(-cap)) {
+			api.WriteProblem(w, api.ErrValidation("cursor has expired; restart the request list"))
+			return
+		}
+		if sinceRaw != "" && sinceDur != decodedCursor.WindowEnd.Sub(decodedCursor.WindowStart) {
+			api.WriteProblem(w, api.ErrValidation("cursor does not match since; restart the request list"))
+			return
+		}
+		windowStart = decodedCursor.WindowStart.UTC()
+		windowEnd = decodedCursor.WindowEnd.UTC()
+		sinceDur = windowEnd.Sub(windowStart)
+		retentionClamped = decodedCursor.RetentionClamped || retentionClamped
+	}
+	cursorReceivedAt, cursorID := debugTelemetryCursorParams(decodedCursor)
 	rows, err := s.store.ListRequestTelemetryByApp(r.Context(), sqlc.ListRequestTelemetryByAppParams{
-		AppID:        stringToPgUUID(app.ID),
-		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-sinceDur), Valid: true},
-		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
-		Limit:        int32(limit),
-		Route:        route,
+		AppID:            stringToPgUUID(app.ID),
+		ReceivedAt:       pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReceivedAt_2:     pgtype.Timestamptz{Time: windowEnd, Valid: true},
+		CursorReceivedAt: cursorReceivedAt,
+		CursorID:         cursorID,
+		Route:            route,
+		Limit:            int32(limit + 1),
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list request telemetry"))
@@ -87,14 +127,102 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 	if rows == nil {
 		rows = []sqlc.ListRequestTelemetryByAppRow{}
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	items := make([]api.DebugTelemetryRequestItem, len(rows))
 	for i, row := range rows {
 		items[i] = debugTelemetryRowToItem(row)
 	}
+	nextCursor := ""
+	if hasMore && len(rows) > 0 {
+		nextCursor = encodeDebugTelemetryCursor(app.ID, route, windowStart, windowEnd, retentionClamped, rows[len(rows)-1])
+	}
 	writeJSON(w, http.StatusOK, api.DebugTelemetryListResponse{
-		Requests: items,
-		Since:    echoDebugSince(sinceRaw, sinceDur),
+		Requests:         items,
+		Since:            echoDebugSince(sinceRaw, sinceDur),
+		WindowStart:      windowStart.Format(time.RFC3339Nano),
+		WindowEnd:        windowEnd.Format(time.RFC3339Nano),
+		RetentionClamped: retentionClamped,
+		Complete:         !hasMore || nextCursor == "",
+		NextCursor:       nextCursor,
 	})
+}
+
+// debugTelemetryCoverageHandler — GET /v1/apps/{slug}/debug/coverage
+//
+// Returns a bounded, weighted view of which debugger signals are present in
+// the requested retention window. This is deliberately an observed-coverage
+// endpoint: the durable table cannot tell us how many requests were dropped
+// before persistence, so the response never presents represented_requests as
+// a platform-wide capture denominator.
+func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	if !limits.DebugTelemetryEnabled {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
+		return
+	}
+
+	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
+	since := parseDebugSinceFromString(sinceRaw, 24*time.Hour)
+	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	if retention > 0 && since > retention {
+		since = retention
+	}
+	now := time.Now().UTC()
+	from := now.Add(-since)
+	row, err := s.store.RequestTelemetryCoverage(r.Context(), sqlc.RequestTelemetryCoverageParams{
+		AppID:        stringToPgUUID(app.ID),
+		AccountID:    stringToPgUUID(acct.ID),
+		ReceivedAt:   pgtype.Timestamptz{Time: from, Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+	})
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get debug coverage"))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, api.DebugCoverageResponse{
+		AppID:               app.ID,
+		Since:               echoDebugSince(sinceRaw, since),
+		WindowStart:         from.Format(time.RFC3339Nano),
+		WindowEnd:           now.Format(time.RFC3339Nano),
+		PlanRetentionDays:   limits.DebugTelemetryRetentionDays,
+		TelemetryRows:       row.TelemetryRows,
+		RepresentedRequests: row.RepresentedRequests,
+		ErrorRequests:       row.ErrorRequests,
+		TraceLinked:         debugCoverageSignal(row.TraceLinkedRows, row.TraceLinkedRequests, row.RepresentedRequests),
+		SpanEvidence:        debugCoverageSignal(row.SpanEvidenceRows, row.SpanEvidenceRequests, row.RepresentedRequests),
+		WakeEvidence:        debugCoverageSignal(row.WakeEvidenceRows, row.WakeEvidenceRequests, row.RepresentedRequests),
+		GuestEvidence:       debugCoverageSignal(row.GuestEvidenceRows, row.GuestEvidenceRequests, row.RepresentedRequests),
+		OldestTelemetryAt:   debugCoverageTimestamp(row.OldestTelemetryAt),
+		LatestTelemetryAt:   debugCoverageTimestamp(row.LatestTelemetryAt),
+	})
+}
+
+func debugCoverageSignal(rows, requests, total int64) api.DebugCoverageSignal {
+	rate := float64(0)
+	if total > 0 {
+		rate = float64(requests) * 100 / float64(total)
+	}
+	return api.DebugCoverageSignal{Rows: rows, Requests: requests, RatePct: rate}
+}
+
+// sqlc represents MIN/MAX timestamptz expressions as interface{} because
+// they are nullable for an empty window. PostgreSQL returns time.Time for a
+// non-empty result; keep the projection defensive so an empty window remains
+// a valid 200 response rather than a type assertion failure.
+func debugCoverageTimestamp(value interface{}) string {
+	t, ok := value.(time.Time)
+	if !ok {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 // debugTelemetryGetHandler — GET /v1/apps/{slug}/debug/requests/{req_id}

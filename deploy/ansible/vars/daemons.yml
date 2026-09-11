@@ -13,6 +13,7 @@ faas_control_plane_units:
 
 faas_compute_only_units:
   - faas-vmmd.service
+  - faas-schedd.service
   - faas-gatewayd-internal.service
   - faas-builderd.service
   - faas-imaged.service

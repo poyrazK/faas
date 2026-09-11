@@ -79,6 +79,15 @@ func postDiffReq(t *testing.T, e testEnv, slug string, body []byte) *httptest.Re
 	return rec
 }
 
+func TestDiffPendingFromRequest_PreservesAppProtocol(t *testing.T) {
+	protocol := "grpc"
+	req := api.DiffRequest{AppConfig: &api.DiffAppConfigPatch{AppProtocol: &protocol}}
+	pending := diffPendingFromRequest(&req)
+	if pending.AppConfig.AppProtocol == nil || *pending.AppConfig.AppProtocol != protocol {
+		t.Fatalf("app_protocol = %v, want %q", pending.AppConfig.AppProtocol, protocol)
+	}
+}
+
 // TestDiffApp_MissingSlug_Returns200WithPreview is the regression
 // test for code-review finding #1. Pre-fix: loadApp wrote a 404
 // and the CI consumer lost the diff entirely. Post-fix: the
@@ -145,6 +154,31 @@ func TestDiffApp_FreshSourcePreviewIncludesResolvedIdentity(t *testing.T) {
 	}
 	if fields["deployment"].Kind != "add" || !bytes.Contains(fields["deployment"].After, []byte(`source_sha256`)) {
 		t.Fatalf("deployment change = %+v, want source identity add", fields["deployment"])
+	}
+}
+
+func TestDiffApp_FreshImagePreviewIncludesDeploymentIdentity(t *testing.T) {
+	e := newDiffTestEnv(t, api.PlanHobby)
+	rec := postDiffReq(t, e, "fresh-image", []byte(`{
+		"build_plan": {"framework":"unknown", "class":"app"},
+		"image": "registry.example.com/hello:v1"
+	}`))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fresh image preview status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.DiffResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response is not a DiffResponse: %v\nbody=%s", err, rec.Body.String())
+	}
+	var deployment api.DiffChange
+	for _, change := range resp.Diff.Changes {
+		if change.Field == "deployment" {
+			deployment = change
+		}
+	}
+	if deployment.Kind != "add" || !bytes.Contains(deployment.After, []byte(`"image":"registry.example.com/hello:v1"`)) {
+		t.Fatalf("deployment change = %+v, want image identity add", deployment)
 	}
 }
 

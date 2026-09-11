@@ -12,3 +12,9 @@ The role assumes:
 - `storage.env.example` is installed for the shared OCI contract. A populated
   `/etc/faas/storage.env` is staged by `deploy join-node` and loaded by
   schedd; credentials stay outside inventory and git.
+
+On public-beta `control-plane` hosts, the role also installs
+`zz-faas-api-contract-diff.conf` for `faas-apid`. This enables the OpenAPI
+contract preview; the matching compute-only drop-in enables the promotion gate
+so both paths evaluate the same stored production baseline. The default remains
+off on single-box and local installs.

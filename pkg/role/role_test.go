@@ -121,8 +121,8 @@ func TestFromConfig_PostDecodeInvocationOrder(t *testing.T) {
 // the four representative daemons. The remaining daemons share an
 // allow-list with one of these and would only duplicate coverage.
 func TestRequire(t *testing.T) {
-	// Control-plane daemons: apid, schedd, gatewayd-public,
-	// githubd, meterd. Allow = single-box, control-plane.
+	// Control-plane daemons: apid, gatewayd-public, githubd, meterd.
+	// schedd is node-local in M9 and also allows compute-only.
 	controlPlaneAL := []Role{RoleSingleBox, RoleControlPlane}
 	// Compute-only daemons: vmmd, gatewayd-internal, builderd,
 	// imaged. Allow = single-box, compute-only.
@@ -139,10 +139,10 @@ func TestRequire(t *testing.T) {
 		{"apid", controlPlaneAL, RoleSingleBox, false},
 		{"apid", controlPlaneAL, RoleControlPlane, false},
 		{"apid", controlPlaneAL, RoleComputeOnly, true},
-		// schedd under control-plane allow
+		// schedd under the M9 multi-role allow list
 		{"schedd", controlPlaneAL, RoleSingleBox, false},
 		{"schedd", controlPlaneAL, RoleControlPlane, false},
-		{"schedd", controlPlaneAL, RoleComputeOnly, true},
+		{"schedd", []Role{RoleSingleBox, RoleControlPlane, RoleComputeOnly}, RoleComputeOnly, false},
 		// vmmd under compute-only allow
 		{"vmmd", computeOnlyAL, RoleSingleBox, false},
 		{"vmmd", computeOnlyAL, RoleComputeOnly, false},

@@ -263,6 +263,38 @@ func (s *EgressSink) DrainRecords() []Record {
 	return out
 }
 
+// RestoreRecords requeues records that were drained but not accepted by the
+// gRPC stream. Values are added to any traffic recorded concurrently after the
+// drain, so a failed send cannot overwrite newer bytes or request counters.
+// The next stream cadence retries the original minute attribution unchanged.
+func (s *EgressSink) RestoreRecords(records []Record) {
+	if len(records) == 0 {
+		return
+	}
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, record := range records {
+		if record.InstanceID == "" || (record.Bytes == 0 && record.Requests == 0 && record.ColdBoots == 0) {
+			continue
+		}
+		inst, ok := s.instances[record.InstanceID]
+		if !ok {
+			inst = &instanceBuckets{usage: make(map[int64]usageBucket, BucketsToKeep)}
+			s.instances[record.InstanceID] = inst
+		}
+		inst.mu.Lock()
+		minute := record.Minute.UTC().Truncate(time.Minute).Unix()
+		bucket := inst.usage[minute]
+		bucket.bytes += record.Bytes
+		bucket.requests += record.Requests
+		bucket.coldBoots += record.ColdBoots
+		inst.usage[minute] = bucket
+		inst.lastTouch = now
+		inst.mu.Unlock()
+	}
+}
+
 // Snapshot counts every tracked (instanceID, minute) bucket without
 // draining. Used by tests + the integration smoke harness; never on
 // the hot path (the meterd consumer drains, it doesn't snapshot).

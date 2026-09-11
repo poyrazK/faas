@@ -2892,6 +2892,9 @@ type WakeRequest struct {
 	// StartupDeadlineS is the per-app readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int
+	// ExecutionMode is the declared lifecycle mode used to constrain the
+	// cold-boot characterization result. Empty preserves legacy inference.
+	ExecutionMode string
 	// LivenessProbe (issue #554 / ADR-078) is the per-deployment
 	// override JSON (api.DeploymentLivenessProbe). The engine resolves
 	// this from deployments.override_liveness_probe at Wake time and
@@ -3084,6 +3087,9 @@ type ColdBootRequest struct {
 	// StartupDeadlineS is the per-app readiness budget forwarded to
 	// WakeRequest. 0 preserves the vmmd default for legacy callers.
 	StartupDeadlineS int
+	// ExecutionMode is forwarded to WakeRequest. Empty preserves legacy
+	// characterization inference for direct callers predating ADR-137.
+	ExecutionMode string
 	// Runtime (issue #470 / PR #470-FU-B) — the runtime id forwarded
 	// verbatim to WakeRequest.Runtime. Mirrors the WakeRequest
 	// field's contract: empty = legacy wake (the framework-ready
@@ -3124,6 +3130,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		// Instance. Empty = legacy TCP-accept on :8080.
 		HealthcheckPath:  req.HealthcheckPath,
 		StartupDeadlineS: req.StartupDeadlineS,
+		ExecutionMode:    req.ExecutionMode,
 		// PR #470-FU-B: forward the runtime id so the framework-ready
 		// receipt handler can label the warmup histogram. See
 		// WakeRequest.Runtime for the contract.
@@ -3400,6 +3407,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// review finding #1 (correctness / ship-blocker).
 	if !req.Plan.Valid() {
 		err = fmt.Errorf("wake %s: invalid plan %q (issue #301 / ADR-043)", req.Instance, req.Plan)
+		return nil, err
+	}
+	if !validCharacterizationExecutionMode(req.ExecutionMode) {
+		err = fmt.Errorf("wake %s: invalid execution_mode %q (ADR-137)", req.Instance, req.ExecutionMode)
 		return nil, err
 	}
 	// Prepare runtime files before any VMM boot path. The concrete JailerVMM
@@ -3965,9 +3976,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// TCP-accept on :8080 (pre-PR-D default). Non-empty →
 			// waitReady does HTTP GET <HealthcheckPath> against
 			// <HostIP>:8080 and accepts 2xx as ready.
-			HealthcheckPath:  req.HealthcheckPath,
-			StartupDeadlineS: req.StartupDeadlineS,
-			SkipReady:        req.ExportDir != "",
+			HealthcheckPath:   req.HealthcheckPath,
+			StartupDeadlineS:  req.StartupDeadlineS,
+			SkipReady:         req.ExportDir != "",
+			EphemeralWritable: req.ExportDir != "",
 			// Issue #463 / ADR-069 / PR-B: per-workload drives
 			// (main + sidecars). Empty = legacy single-workload
 			// path. Non-empty → Restore stages one extra drive
@@ -4054,6 +4066,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// <HostIP>:8080 and accepts 2xx as ready.
 		HealthcheckPath:  req.HealthcheckPath,
 		StartupDeadlineS: req.StartupDeadlineS,
+		ExecutionMode:    req.ExecutionMode,
 		SkipReady:        req.ExportDir != "",
 		// Issue #463 / ADR-069 / PR-B: per-workload drives
 		// (main + sidecars). buildWorkloadsForColdBoot emits an
@@ -4364,6 +4377,38 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	}
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
+}
+
+// WaitBuilderReady waits for the vmmd-owned builder handoff marker. It is an
+// optional VMM capability so test VMMs and older embedders keep the existing
+// interface while the builderd warm transport rolls out.
+func (m *Manager) WaitBuilderReady(ctx context.Context, instance string, deadline time.Duration) (bool, int32, error) {
+	if m == nil || m.vmm == nil {
+		return false, 0, fmt.Errorf("wait builder ready %s: nil vmm", instance)
+	}
+	waiter, ok := m.vmm.(interface {
+		WaitBuilderReady(context.Context, string, time.Duration) (bool, int32, error)
+	})
+	if !ok {
+		return false, 0, fmt.Errorf("wait builder ready %s: unsupported", instance)
+	}
+	return waiter.WaitBuilderReady(ctx, instance, deadline)
+}
+
+// DeleteWarmSnapshot removes builder warm-tier storage objects. The VMM owns
+// the configured StorageBackend, so builderd never reaches into vmmd's local
+// cache or remote registry directly.
+func (m *Manager) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateStorageKey string) error {
+	if m == nil || m.vmm == nil {
+		return fmt.Errorf("delete warm snapshot: nil vmm")
+	}
+	deleter, ok := m.vmm.(interface {
+		DeleteWarmSnapshot(context.Context, string, string) error
+	})
+	if !ok {
+		return fmt.Errorf("delete warm snapshot: unsupported")
+	}
+	return deleter.DeleteWarmSnapshot(ctx, storageKey, vmstateStorageKey)
 }
 
 // SnapshotKeepAlive pauses and snapshots a live instance without destroying

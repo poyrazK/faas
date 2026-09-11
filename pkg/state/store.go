@@ -4189,9 +4189,9 @@ type Store interface {
 	// flipping an already-inactive row is a no-op UPDATE. A
 	// future staleness gate (last_heartbeat_at > 2 × interval)
 	// will reuse this method; today only the heartbeat path
-	// calls it. The row is preserved (no DELETE) so an operator
-	// can flip it back via a future admin endpoint without
-	// re-provisioning the cert/target_url.
+	// calls it. Terminal retired rows return ErrConflict. The row is
+	// preserved (no DELETE) so an operator can flip it back via a future admin
+	// endpoint without re-provisioning the cert/target_url.
 	MarkComputeNodeInactive(ctx context.Context, nodeID string) error
 	// UpsertComputeNode inserts or updates a row by name. The
 	// vmmd self-registration path calls this on startup
@@ -4218,8 +4218,9 @@ type Store interface {
 	// ON CONFLICT (name) DO UPDATE SET target_url = excluded.target_url,
 	// vpcpus, mem_mb, max_concurrency, admission_ceiling_mb,
 	// vcpu_budget, lifecycle = excluded.lifecycle — full set, the operator's
-	// POST wins on every field. An explicit unavailable lifecycle makes
-	// deferred enrollment atomic; an empty lifecycle defaults to active.
+	// POST wins on every field except a terminal retired row, which returns
+	// ErrConflict. An explicit unavailable lifecycle makes deferred enrollment
+	// atomic; an empty lifecycle defaults to active.
 	UpsertComputeNodeFromOperator(ctx context.Context, node ComputeNode) (ComputeNode, error)
 	// UpsertComputeNodeFromVmmd is the vmmd self-registration
 	// write path (cmd/vmmd/register.go). Writes only the
@@ -4258,7 +4259,8 @@ type Store interface {
 	// previously-drained node. Emits compute_node_changed via the
 	// pg_notify listener (pkg/db/notify.NotifyComputeNodeChanged) so
 	// gatewayd-internal can add or drop its per-node client without a
-	// restart. ErrNotFound when the id has no row.
+	// restart. ErrNotFound when the id has no row; ErrConflict when a caller
+	// attempts to reactivate a terminal retired row.
 	SetComputeNodeActive(ctx context.Context, id string, active bool) error
 	// NodeGet returns a single ComputeNode by id with all lifecycle
 	// fields populated. Workstream B (issue #1184) replaces the
@@ -4343,11 +4345,10 @@ type Store interface {
 	// passes true so operators can drain visibility. Backed by the
 	// existing compute_nodes_active_idx partial index.
 	ListComputeNodes(ctx context.Context, includeInactive bool) ([]ComputeNode, error)
-	// DeleteComputeNode hard-deletes a row by id. apid's
-	// DELETE /v1/compute-nodes/{name}?hard=1 is the only caller;
-	// soft-delete via SetComputeNodeActive(false) is the default
-	// for the routine operator workflow. Returns ErrNotFound if
-	// the id is unknown.
+	// DeleteComputeNode hard-deletes an unused row by id. apid permits this
+	// only after retirement; the state layer additionally refuses rows with
+	// app or instance references. Returns ErrNotFound if the id is unknown and
+	// ErrConflict when workload history still references it.
 	DeleteComputeNode(ctx context.Context, id string) error
 
 	// AppendComputeNodeHeartbeat stamps one row in the append-only
@@ -4932,6 +4933,18 @@ type Store interface {
 	// existed, so switching providers cannot rebill historical windows.
 	PendingBillingUsageWindows(ctx context.Context, provider string, start, end time.Time) ([]UsageWindow, error)
 	RecordBillingUsageDelivery(ctx context.Context, provider, accountID string, windowStart time.Time, mbSeconds int64) error
+	// PendingBillingMeterUsageWindows is the meter-qualified form of
+	// PendingBillingUsageWindows. Compute quantities are MB-seconds; egress
+	// quantities are canonical host-interface bytes from net_tx_bytes.
+	PendingBillingMeterUsageWindows(ctx context.Context, provider string, meter BillingMeter, start, end time.Time) ([]BillingMeterWindow, error)
+	// RecordBillingMeterUsageDelivery records a provider receipt without
+	// allowing one meter to suppress another meter in the same UTC hour.
+	RecordBillingMeterUsageDelivery(ctx context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time, quantity int64) error
+	// AppendNetworkUsageObservation atomically converts cumulative host-side
+	// interface counters into deltas and adds them to usage_minutes. The
+	// checkpoint and usage row commit together so restarts cannot lose or
+	// duplicate an acknowledged observation.
+	AppendNetworkUsageObservation(ctx context.Context, accountID, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (netTxDelta, netRxDelta int64, err error)
 
 	// StripePushDedup is the dedupe table for hourly usage pushes. The
 	// PushDedupe interface in pkg/billing/stripe is satisfied by both stores.
@@ -5535,6 +5548,8 @@ type Store interface {
 	UpsertAppLogDrainHealth(ctx context.Context, health AppLogDrainHealth) error
 	AppLogDrainHealthByDrainID(ctx context.Context, drainID string) (AppLogDrainHealth, error)
 	ListAppLogDrainHealthForApp(ctx context.Context, appID string) ([]AppLogDrainHealth, error)
+	ListAppLogDrainDeliveryAnalytics(ctx context.Context, drainID string, from, to time.Time) ([]AppLogDrainDeliveryAnalytics, error)
+	PruneAppLogDrainDeliveryAnalytics(ctx context.Context, before time.Time) error
 
 	// RecordAppWebhookDelivery is the apid-side enqueue. Called by
 	// the event emitters (cron dispatcher, app lifecycle handlers)
@@ -5702,9 +5717,16 @@ type Store interface {
 	// ListRequestTelemetryByApp backs GET /v1/apps/{slug}/debug/requests.
 	// Time-windowed (since, until) with hard limit; cursor pagination
 	// is by (received_at DESC, id) tuple, matching the
-	// request_telemetry_app_received_idx index direction. limit MUST
-	// be pre-clamped to api.DebugTelemetryMaxLimit by the handler.
+	// request_telemetry_app_received_idx index direction. The handler
+	// pre-clamps the customer limit and adds one lookahead row to determine
+	// whether Complete can be reported.
 	ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error)
+
+	// RequestTelemetryCoverage backs GET /v1/apps/{slug}/debug/coverage.
+	// It reports weighted observed rows and the optional debugger signals
+	// attached to them. The query intentionally has no inferred denominator
+	// for requests lost before persistence.
+	RequestTelemetryCoverage(ctx context.Context, arg sqlc.RequestTelemetryCoverageParams) (sqlc.RequestTelemetryCoverageRow, error)
 
 	// GetRequestTelemetryByAppAndID backs GET
 	// /v1/apps/{slug}/debug/requests/{req_id}. The app_id and bounded

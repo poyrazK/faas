@@ -4358,7 +4358,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		CanaryTotalSteps:    d.CanaryTotalSteps,
 		CanaryStepStartedAt: d.CanaryStepStartedAt,
 		// Issue #976 / ADR-122 / SAFE-RELEASES-F: rollout state machine echo.
-		RolloutState:         d.RolloutState,
+		RolloutState:         state.NormalizeRolloutState(d.RolloutState),
 		RolloutStartedAt:     d.RolloutStartedAt,
 		RolloutCompletedAt:   d.RolloutCompletedAt,
 		RolloutAbortedAt:     d.RolloutAbortedAt,
@@ -4974,7 +4974,9 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	for _, u := range rows {
 		mbSec += u.MBSeconds
 		cpuUsec += u.CPUUsec
-		egressBytes += u.TXBytes + u.NetTxBytes
+		// Gateway TXBytes is an HTTP-payload subset of the canonical
+		// host-interface counter; adding it would double-count responses.
+		egressBytes += u.NetTxBytes
 		netRxBytes += u.NetRxBytes
 		coldBoots += u.ColdBootCount
 	}

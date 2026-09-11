@@ -49,11 +49,12 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "_gregale_cache_slugs() {")
 	_, _ = fmt.Fprintln(w, "  local kind=\"$1\"")
-	_, _ = fmt.Fprintln(w, "  local path=\"$(gregale completion-cache-path 2>/dev/null)\"")
+	_, _ = fmt.Fprintln(w, "  local path=\"$(gregale completion completion-cache-path 2>/dev/null)\"")
 	_, _ = fmt.Fprintln(w, "  [[ -z \"$path\" || ! -r \"$path\" ]] && return 1")
 	// sed slice rather than grep -E with literal braces — grep
 	// treats '{' as a quantifier metacharacter and rejects it.
 	_, _ = fmt.Fprintln(w, "  sed -n \"/\\\"$kind\\\":\\[/,/]/p\" \"$path\" 2>/dev/null \\")
+	_, _ = fmt.Fprintln(w, "    | sed -E \"s/.*\\\"$kind\\\":\\[//; s/\\].*//\" \\")
 	_, _ = fmt.Fprintln(w, "    | grep -oE '\"slug\":\"[^\"]+\"' \\")
 	_, _ = fmt.Fprintln(w, "    | sed -E 's/.*\"slug\":\"([^\"]+)\".*/\\1/'")
 	_, _ = fmt.Fprintln(w, "}")
@@ -68,6 +69,18 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "  if (( CURRENT == 2 )); then")
 	_, _ = fmt.Fprintln(w, "    _describe 'command' commands")
+	_, _ = fmt.Fprintln(w, "    return 0")
+	_, _ = fmt.Fprintln(w, "  fi")
+	_, _ = fmt.Fprintln(w)
+	// Leaf parsers accept --app/--org on nested command families even
+	// when the parent manifest only carries the verb. Complete those
+	// values from the same cache used by positional slug completion.
+	_, _ = fmt.Fprintln(w, "  if [[ \"${words[CURRENT-1]}\" == \"--app\" ]]; then")
+	_, _ = fmt.Fprintln(w, "    _values 'app slug' $(_gregale_cache_slugs apps)")
+	_, _ = fmt.Fprintln(w, "    return 0")
+	_, _ = fmt.Fprintln(w, "  fi")
+	_, _ = fmt.Fprintln(w, "  if [[ \"${words[CURRENT-1]}\" == \"--org\" ]]; then")
+	_, _ = fmt.Fprintln(w, "    _values 'org slug' $(_gregale_cache_slugs orgs)")
 	_, _ = fmt.Fprintln(w, "    return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
 	_, _ = fmt.Fprintln(w)

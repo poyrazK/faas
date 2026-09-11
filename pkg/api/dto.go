@@ -2403,6 +2403,28 @@ type RollbackRequest struct {
 	AlertRuleID *string `json:"alert_rule_id,omitempty"`
 }
 
+// CapabilityStatus is a customer-visible catalog row with the account's
+// current plan entitlement resolved into Enabled.
+type CapabilityStatus struct {
+	Key         string             `json:"key"`
+	Name        string             `json:"name"`
+	Category    string             `json:"category"`
+	Description string             `json:"description"`
+	Maturity    CapabilityMaturity `json:"maturity"`
+	Plans       []string           `json:"plans"`
+	DocsURL     string             `json:"docs_url"`
+	Acceptance  string             `json:"acceptance"`
+	Enabled     bool               `json:"enabled"`
+}
+
+// CapabilitiesResponse is the account-scoped response from
+// GET /v1/capabilities. Enabled is fail-closed for unknown plans.
+type CapabilitiesResponse struct {
+	RegistryVersion int                `json:"registry_version"`
+	Plan            string             `json:"plan"`
+	Capabilities    []CapabilityStatus `json:"capabilities"`
+}
+
 // AccountResponse is the whoami payload. Limits is the plan's
 // quota/limit table (RAM MB, max concurrency, included GB-h,
 // deployed-app and developer-environment caps) so the dashboard /account
@@ -2916,8 +2938,10 @@ func (u UsageResponse) CPUHours() float64 {
 	return float64(u.CPUUsageUsec) / 3.6e9
 }
 
-// TotalEgressGB returns (TXBytes + NetTxBytes) converted to GB
-// (1 GB = 1024^3 bytes).
+// TotalEgressGB returns the canonical NetTxBytes interface counter converted
+// to GB (1 GB = 1024^3 bytes). TXBytes is a diagnostic HTTP-payload subset of
+// NetTxBytes and MUST NOT be added or the same response traffic is counted
+// twice.
 //
 // IMPORTANT (ADR-046, PR-414 I5): the value INCLUDES Ethernet
 // framing (~14 + 20 bytes per packet) because net_tx_bytes
@@ -2931,15 +2955,14 @@ func (u UsageResponse) CPUHours() float64 {
 // For HTTP-payload-only bytes, callers should use TXBytes
 // directly (do not divide by 1 GiB and call it "egress GB").
 // The future billing PR will pick the unit; this convenience
-// getter exists so the SDK and the CLI have a single
-// "all-bytes" surface for informational dashboards.
+// getter exists so the SDK and the CLI have a single canonical egress surface.
 //
 // Convention:
 //   - TotalEgressGB = interface bytes, includes framing.
 //   - TXBytes = HTTP response bytes, exact.
 //   - NetTxBytes = interface bytes on root-side vethHost.rx_bytes.
 func (u UsageResponse) TotalEgressGB() float64 {
-	return float64(u.TXBytes+u.NetTxBytes) / (1024 * 1024 * 1024)
+	return float64(u.NetTxBytes) / (1024 * 1024 * 1024)
 }
 
 // DeploymentListResponse is the page shape for GET /v1/deployments and
@@ -3244,10 +3267,8 @@ type DailyUsagePoint struct {
 // surface in a separate panel without affecting the billing total.
 //
 // ADR-046 (step 10): UsedEgressGB is informational and NOT
-// billed. The two egress columns (tx_bytes + net_tx_bytes) are
-// exposed separately at the per-app UsageResponse level; the
-// summary rolls them up for the dashboard's single-number
-// panel.
+// billed. NetTxBytes is the canonical interface counter; TXBytes is its
+// gateway-payload diagnostic subset and is never added to the total.
 type UsageSummaryResponse struct {
 	Month           string  `json:"month"`             // YYYY-MM
 	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 1024 / 3600
@@ -3259,8 +3280,8 @@ type UsageSummaryResponse struct {
 	// Issue #279 / PR-B. The customer dashboard renders this
 	// alongside the other account summary dimensions.
 	UsedCPUHours float64 `json:"used_cpu_hours"`
-	// UsedEgressGB is the per-month egress Σ (TXBytes +
-	// NetTxBytes) / 1024^3. Informational only — not
+	// UsedEgressGB is the per-month egress Σ NetTxBytes / 1024^3.
+	// Informational only — not
 	// billed (ADR-046 §6). The two columns are exposed
 	// separately at the per-app level; this is the
 	// single-number roll-up for the dashboard's
@@ -4601,19 +4622,22 @@ type WakeTimelineApp struct {
 //   - AsOf: RFC3339Nano UTC stamping the envelope's authoritative
 //     "as of" instant.
 type AppUsageSummaryResponse struct {
-	Slug                string    `json:"slug"`
-	PeriodStart         time.Time `json:"period_start"`
-	PeriodEnd           time.Time `json:"period_end"`
-	MBSeconds           int64     `json:"mb_seconds"`
-	GBHours             float64   `json:"gb_hours"`
-	Requests            int64     `json:"requests"`
-	TxBytes             int64     `json:"tx_bytes"`
-	BuilderSeconds      float64   `json:"builder_seconds"`
-	ColdBootCount       int64     `json:"cold_boot_count"`
-	PlanIncludedGBHours float64   `json:"plan_included_gb_hours"`
-	OverageGBHours      float64   `json:"overage_gb_hours"`
-	Source              string    `json:"source"`
-	AsOf                string    `json:"as_of"`
+	Slug        string    `json:"slug"`
+	PeriodStart time.Time `json:"period_start"`
+	PeriodEnd   time.Time `json:"period_end"`
+	MBSeconds   int64     `json:"mb_seconds"`
+	GBHours     float64   `json:"gb_hours"`
+	Requests    int64     `json:"requests"`
+	TxBytes     int64     `json:"tx_bytes"`
+	// NetTxBytes is canonical host-interface egress. TxBytes is retained as
+	// an HTTP-payload diagnostic and is already contained in this value.
+	NetTxBytes          int64   `json:"net_tx_bytes"`
+	BuilderSeconds      float64 `json:"builder_seconds"`
+	ColdBootCount       int64   `json:"cold_boot_count"`
+	PlanIncludedGBHours float64 `json:"plan_included_gb_hours"`
+	OverageGBHours      float64 `json:"overage_gb_hours"`
+	Source              string  `json:"source"`
+	AsOf                string  `json:"as_of"`
 }
 
 // WakeTimelineJSONRow is one row of AppWakeTimelineResponse.Rows.
@@ -6931,6 +6955,7 @@ type ComputeNodeOperatorResponse struct {
 	MaxConcurrency     int     `json:"max_concurrency"`
 	AdmissionCeilingMB int     `json:"admission_ceiling_mb"`
 	Active             bool    `json:"active"`
+	Lifecycle          string  `json:"lifecycle"`
 	Role               *string `json:"role,omitempty"`
 	Region             *string `json:"region,omitempty"`
 	Zone               *string `json:"zone,omitempty"`
@@ -7407,23 +7432,64 @@ type DebugGuestExecutionEvidence struct {
 	ErrorClass string `json:"error_class,omitempty"`
 }
 
-// DebugTelemetryListOptions controls the server-side filters for a request
-// telemetry list. Zero values preserve the endpoint defaults. Limit is
-// bounded by the API to 1..200 when supplied.
+// DebugTelemetryListOptions controls the server-side filters and cursor for a
+// request telemetry list. Cursor is opaque and should be copied verbatim from
+// the previous response's NextCursor. Zero values preserve the endpoint
+// defaults. Limit is bounded by the API to 1..200 when supplied.
 type DebugTelemetryListOptions struct {
-	Since string
-	Route string
-	Limit int
+	Since  string
+	Route  string
+	Cursor string
+	Limit  int
 }
 
 // DebugTelemetryListResponse is the wire envelope for the debug
 // requests list endpoint. `Since` echoes the effective window
 // applied (after the plan's DebugTelemetryRetentionDays clamp) so
 // the dashboard can surface a "you widened past the cap" tile when
-// a customer asks for a longer window than their plan permits.
+// a customer asks for a longer window than their plan permits. WindowStart
+// and WindowEnd are pinned across cursor pages. Complete is true only when
+// the current page contains every retained row in that bounded window.
 type DebugTelemetryListResponse struct {
-	Since    string                      `json:"since"`
-	Requests []DebugTelemetryRequestItem `json:"requests"`
+	Since            string                      `json:"since"`
+	WindowStart      string                      `json:"window_start"`
+	WindowEnd        string                      `json:"window_end"`
+	RetentionClamped bool                        `json:"retention_clamped"`
+	Complete         bool                        `json:"complete"`
+	NextCursor       string                      `json:"next_cursor,omitempty"`
+	Requests         []DebugTelemetryRequestItem `json:"requests"`
+}
+
+// DebugCoverageSignal is the observed coverage of one optional debugger
+// signal. Requests is weighted by the publisher's collapsed-row count;
+// rows exposes how much of that traffic was stored as aggregate rows. RatePct
+// is relative to represented_requests in the same response and is zero when
+// the window contains no telemetry.
+type DebugCoverageSignal struct {
+	Rows     int64   `json:"rows"`
+	Requests int64   `json:"requests"`
+	RatePct  float64 `json:"rate_pct"`
+}
+
+// DebugCoverageResponse is the customer-safe debugger signal coverage
+// summary. It intentionally reports observed coverage only: the persistence
+// layer cannot know how many requests were dropped before a telemetry row was
+// written, so no inferred capture percentage is exposed.
+type DebugCoverageResponse struct {
+	AppID               string              `json:"app_id"`
+	Since               string              `json:"since"`
+	WindowStart         string              `json:"window_start"`
+	WindowEnd           string              `json:"window_end"`
+	PlanRetentionDays   int                 `json:"plan_retention_days"`
+	TelemetryRows       int64               `json:"telemetry_rows"`
+	RepresentedRequests int64               `json:"represented_requests"`
+	ErrorRequests       int64               `json:"error_requests"`
+	TraceLinked         DebugCoverageSignal `json:"trace_linked"`
+	SpanEvidence        DebugCoverageSignal `json:"span_evidence"`
+	WakeEvidence        DebugCoverageSignal `json:"wake_evidence"`
+	GuestEvidence       DebugCoverageSignal `json:"guest_evidence"`
+	OldestTelemetryAt   string              `json:"oldest_telemetry_at,omitempty"`
+	LatestTelemetryAt   string              `json:"latest_telemetry_at,omitempty"`
 }
 
 // DebugTelemetrySpan is the safe, bounded span drill-down returned by the

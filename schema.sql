@@ -39,7 +39,8 @@ CREATE TYPE public.compute_node_lifecycle AS ENUM (
     'force_draining',
     'maintenance',
     'unavailable',
-    'recovering'
+    'recovering',
+    'retired'
 );
 
 
@@ -1300,6 +1301,37 @@ CREATE TABLE public.app_log_drains (
 
 
 --
+-- Name: app_log_drain_delivery_analytics; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_log_drain_delivery_analytics (
+    drain_id uuid NOT NULL,
+    bucket_start timestamp with time zone NOT NULL,
+    delivered_total bigint DEFAULT 0 NOT NULL,
+    failed_total bigint DEFAULT 0 NOT NULL,
+    dropped_total bigint DEFAULT 0 NOT NULL,
+    retries_total bigint DEFAULT 0 NOT NULL,
+    dead_letter_total bigint DEFAULT 0 NOT NULL,
+    delivery_latency_nanos_total bigint DEFAULT 0 NOT NULL,
+    delivery_latency_samples bigint DEFAULT 0 NOT NULL,
+    pending_records integer DEFAULT 0 NOT NULL,
+    pending_bytes bigint DEFAULT 0 NOT NULL,
+    sampled_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_log_drain_delivery_analytics_delivered_chk CHECK ((delivered_total >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_drain_id_fkey FOREIGN KEY (drain_id) REFERENCES public.app_log_drains(id) ON DELETE CASCADE,
+    CONSTRAINT app_log_drain_delivery_analytics_dropped_chk CHECK ((dropped_total >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_failed_chk CHECK ((failed_total >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_latency_nanos_chk CHECK ((delivery_latency_nanos_total >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_latency_samples_chk CHECK ((delivery_latency_samples >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_pkey PRIMARY KEY (drain_id, bucket_start),
+    CONSTRAINT app_log_drain_delivery_analytics_pending_bytes_chk CHECK ((pending_bytes >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_pending_records_chk CHECK ((pending_records >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_retries_chk CHECK ((retries_total >= 0)),
+    CONSTRAINT app_log_drain_delivery_analytics_dead_letter_chk CHECK ((dead_letter_total >= 0))
+);
+
+
+--
 -- Name: app_log_drain_health; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1318,6 +1350,8 @@ CREATE TABLE public.app_log_drain_health (
     failed_total bigint DEFAULT 0 NOT NULL,
     dropped_total bigint DEFAULT 0 NOT NULL,
     retries_total bigint DEFAULT 0 NOT NULL,
+    delivery_latency_nanos_total bigint DEFAULT 0 NOT NULL,
+    delivery_latency_samples bigint DEFAULT 0 NOT NULL,
     stream_reconnects_total bigint DEFAULT 0 NOT NULL,
     gaps_total bigint DEFAULT 0 NOT NULL,
     last_success_at timestamp with time zone,
@@ -1337,6 +1371,8 @@ CREATE TABLE public.app_log_drain_health (
     CONSTRAINT app_log_drain_health_failed_chk CHECK ((failed_total >= 0)),
     CONSTRAINT app_log_drain_health_dropped_chk CHECK ((dropped_total >= 0)),
     CONSTRAINT app_log_drain_health_retries_chk CHECK ((retries_total >= 0)),
+    CONSTRAINT app_log_drain_health_latency_nanos_chk CHECK ((delivery_latency_nanos_total >= 0)),
+    CONSTRAINT app_log_drain_health_latency_samples_chk CHECK ((delivery_latency_samples >= 0)),
     CONSTRAINT app_log_drain_health_reconnects_chk CHECK ((stream_reconnects_total >= 0)),
     CONSTRAINT app_log_drain_health_gaps_chk CHECK ((gaps_total >= 0))
 );
@@ -1549,6 +1585,23 @@ CREATE TABLE public.billing_identities (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT billing_identities_customer_id_check CHECK ((customer_id <> ''::text)),
     CONSTRAINT billing_identities_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+);
+
+
+--
+-- Name: billing_meter_usage_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_meter_usage_deliveries (
+    provider text NOT NULL,
+    account_id uuid NOT NULL,
+    meter text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    quantity bigint NOT NULL,
+    delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT billing_meter_usage_deliveries_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'egress'::text]))),
+    CONSTRAINT billing_meter_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
+    CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0))
 );
 
 
@@ -2802,6 +2855,23 @@ CREATE TABLE public.meterd_tenant_surface_cert_expiry_state (
 
 
 --
+-- Name: meter_network_checkpoints; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.meter_network_checkpoints (
+    instance_id uuid NOT NULL,
+    net_tx_bytes bigint NOT NULL,
+    net_rx_bytes bigint NOT NULL,
+    net_tx_valid boolean DEFAULT false NOT NULL,
+    net_rx_valid boolean DEFAULT false NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT meter_network_checkpoints_net_rx_bytes_check CHECK ((net_rx_bytes >= 0)),
+    CONSTRAINT meter_network_checkpoints_net_tx_bytes_check CHECK ((net_tx_bytes >= 0))
+);
+
+
+--
 -- Name: mirror_invocation_results; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2964,7 +3034,7 @@ CREATE TABLE public.operator_intents (
     error text,
     snap_ids_marked_stale text[],
     trace_id text,
-    CONSTRAINT operator_intents_kind_check CHECK ((kind = ANY (ARRAY['force_park'::text, 'force_cold_boot'::text, 'force_restart'::text]))),
+    CONSTRAINT operator_intents_kind_check CHECK ((kind = ANY (ARRAY['force_park'::text, 'force_cold_boot'::text, 'force_restart'::text, 'node_drain'::text, 'node_force_drain'::text, 'node_activate'::text, 'node_retire'::text]))),
     CONSTRAINT operator_intents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text]))),
     CONSTRAINT operator_intents_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
 );
@@ -4018,6 +4088,14 @@ ALTER TABLE ONLY public.billing_identities
 
 
 --
+-- Name: billing_meter_usage_deliveries billing_meter_usage_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_meter_usage_deliveries
+    ADD CONSTRAINT billing_meter_usage_deliveries_pkey PRIMARY KEY (provider, account_id, meter, window_start);
+
+
+--
 -- Name: billing_usage_deliveries billing_usage_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4551,6 +4629,14 @@ ALTER TABLE ONLY public.instance_billing_intervals
 
 ALTER TABLE ONLY public.instances
     ADD CONSTRAINT instances_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_pkey PRIMARY KEY (instance_id);
 
 
 --
@@ -5355,6 +5441,13 @@ CREATE INDEX app_log_drains_enabled_idx ON public.app_log_drains USING btree (en
 
 
 --
+-- Name: app_log_drain_delivery_analytics_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_log_drain_delivery_analytics_retention_idx ON public.app_log_drain_delivery_analytics USING btree (bucket_start);
+
+
+--
 -- Name: app_log_drain_health_updated_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6013,6 +6106,13 @@ CREATE INDEX events_wake_id_idx ON public.events USING btree (((data ->> 'wake_i
 --
 
 CREATE UNIQUE INDEX billing_identities_provider_subscription_idx ON public.billing_identities USING btree (provider, subscription_id) WHERE (subscription_id <> ''::text);
+
+
+--
+-- Name: billing_meter_usage_deliveries_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_meter_usage_deliveries_window_idx ON public.billing_meter_usage_deliveries USING btree (window_start);
 
 
 --
@@ -7384,6 +7484,14 @@ ALTER TABLE ONLY public.billing_identities
 
 
 --
+-- Name: billing_meter_usage_deliveries billing_meter_usage_deliveries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_meter_usage_deliveries
+    ADD CONSTRAINT billing_meter_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: billing_usage_deliveries billing_usage_deliveries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8285,6 +8393,14 @@ ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
 
 ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
     ADD CONSTRAINT meterd_tenant_surface_cert_expiry_state_tenant_surface_id_fkey FOREIGN KEY (tenant_surface_id) REFERENCES public.tenant_surfaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
 
 
 --

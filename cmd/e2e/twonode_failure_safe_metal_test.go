@@ -64,9 +64,9 @@ func TestTwoNode_HeartbeatGapFlipsLifecycleUnavailable(t *testing.T) {
 	h := e2etest.StartTwoNode(t, pool)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 
-	// In native mode the compute-only box owns vmmd while the control-plane
-	// schedd sweeps the fleet. Stop vmmd so the real heartbeat probe observes a
-	// durable failure; RestoreAll starts it again even if an assertion fails.
+	// In native mode each compute-only box owns both vmmd and schedd. Stop
+	// vmmd so the owning heartbeat probe observes a durable failure;
+	// RestoreAll starts it again even if an assertion fails.
 	if h.Remote {
 		if err := fi.KillVmmd(h.NodeB); err != nil {
 			t.Fatalf("KillVmmd: %v", err)

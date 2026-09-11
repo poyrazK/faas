@@ -5,12 +5,13 @@
 //
 // Subcommand surface:
 //
-//	gregale debug requests list <slug> [--since <dur>] [--route <pattern>] [--limit N]
+//	gregale debug requests list <slug> [--since <dur>] [--route <pattern>] [--cursor C] [--limit N]
 //	gregale debug requests watch <slug> [--since <dur>] [--route <pattern>] [--limit N] [--interval D] [--once]
 //	gregale debug requests get <slug> <req_id>
 //	gregale debug requests show <slug> <req_id>
 //	gregale debug requests evidence <slug> <req_id>
 //	gregale debug requests replay <slug> <req_id>
+//	gregale debug coverage <slug> [--since <dur>]
 //	gregale debug bundle <slug> <req_id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
 //	gregale debug regressions watch <slug> [--since <dur>] [--interval D] [--once]
 //	gregale debug regressions <slug> [--since <dur>]
@@ -37,7 +38,7 @@ import (
 
 // debugCmdUsage is the canonical usage text. Mirrors the shape of
 // commands_invocations.go's PrintUsage strings.
-const debugCmdUsage = "usage: gregale debug <requests|regressions|compare|bundle> ..."
+const debugCmdUsage = "usage: gregale debug <requests|coverage|regressions|compare|bundle> ..."
 
 const debugRequestsCmdUsage = "usage: gregale debug requests <list|watch|get|show|evidence|replay> ..."
 
@@ -52,12 +53,14 @@ func cmdDebug(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  regressions       list detected regressions\n  regressions watch watch regression observations for changes\n  compare           compare two deployments\n  bundle            export a redacted incident bundle", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  regressions       list detected regressions\n  regressions watch watch regression observations for changes\n  compare           compare two deployments\n  bundle            export a redacted incident bundle", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
 	case "requests":
 		return cmdDebugRequests(args[1:])
+	case "coverage":
+		return cmdDebugCoverage(args[1:])
 	case "regressions":
 		return cmdDebugRegressions(args[1:])
 	case "compare":
@@ -67,6 +70,35 @@ func cmdDebug(args []string) int {
 	}
 	fmt.Fprintf(os.Stderr, "unknown debug subcommand %q\n", args[0])
 	return 1
+}
+
+// cmdDebugCoverage renders the observed debugger signal coverage for a slug.
+// The human form makes the distinction between aggregate rows and represented
+// requests explicit; --json is the stable automation format.
+func cmdDebugCoverage(args []string) int {
+	fs := flag.NewFlagSet("debug coverage", flag.ContinueOnError)
+	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
+	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true})
+	if err := fs.Parse(flagArgs); err != nil {
+		return 1
+	}
+	if len(positional) != 1 {
+		PrintUsage(os.Stderr, "usage: gregale debug coverage [--since D] <slug>", debugCmdDocsTopic)
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.GetAppDebugCoverage(context.Background(), positional[0], *since)
+	if err != nil {
+		return printErr("Could not get debug coverage", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	renderDebugCoverage(osStdout, resp)
+	return 0
 }
 
 func cmdDebugRequests(args []string) int {
@@ -126,13 +158,14 @@ func cmdDebugRequestsList(args []string) int {
 	fs := flag.NewFlagSet("debug requests list", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	route := fs.String("route", "", "route filter (exact match)")
+	cursor := fs.String("cursor", "", "opaque cursor from the previous page")
 	limit := fs.Int("limit", 20, "max rows (1..200)")
-	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true, "route": true, "limit": true})
+	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true, "route": true, "cursor": true, "limit": true})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests list [--since D] [--route P] [--limit N] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests list [--since D] [--route P] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {
@@ -145,9 +178,10 @@ func cmdDebugRequestsList(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	resp, err := client.ListAppDebugRequestsWithOptions(context.Background(), slug, api.DebugTelemetryListOptions{
-		Since: *since,
-		Route: *route,
-		Limit: *limit,
+		Since:  *since,
+		Route:  *route,
+		Cursor: *cursor,
+		Limit:  *limit,
 	})
 	if err != nil {
 		return printErr("Could not list debug requests", err)
@@ -281,6 +315,39 @@ func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) 
 			r.ID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, r.ReceivedAt)
 	}
 	_ = tw.Flush()
+	if resp.RetentionClamped {
+		_, _ = fmt.Fprintln(w, "window clamped to the plan's telemetry retention")
+	}
+	if resp.Complete {
+		_, _ = fmt.Fprintln(w, "page complete for the retained window")
+	} else if resp.NextCursor != "" {
+		_, _ = fmt.Fprintf(w, "more rows available; next_cursor=%s\n", resp.NextCursor)
+	}
+}
+
+func renderDebugCoverage(w io.Writer, resp api.DebugCoverageResponse) {
+	_, _ = fmt.Fprintf(w, "Debugger coverage · window %s → %s\n", resp.WindowStart, resp.WindowEnd)
+	_, _ = fmt.Fprintf(w, "app %s · since %s · plan retention %d days\n", resp.AppID, resp.Since, resp.PlanRetentionDays)
+	_, _ = fmt.Fprintf(w, "telemetry rows: %d · represented requests: %d · errors: %d\n", resp.TelemetryRows, resp.RepresentedRequests, resp.ErrorRequests)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "SIGNAL\tROWS\tREQUESTS\tRATE")
+	for _, item := range []struct {
+		name   string
+		signal api.DebugCoverageSignal
+	}{
+		{name: "trace linked", signal: resp.TraceLinked},
+		{name: "span evidence", signal: resp.SpanEvidence},
+		{name: "wake evidence", signal: resp.WakeEvidence},
+		{name: "guest evidence", signal: resp.GuestEvidence},
+	} {
+		_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\t%.1f%%\n", item.name, item.signal.Rows, item.signal.Requests, item.signal.RatePct)
+	}
+	_ = tw.Flush()
+	if resp.OldestTelemetryAt == "" {
+		_, _ = fmt.Fprintln(w, "observed range: no telemetry in this window")
+	} else {
+		_, _ = fmt.Fprintf(w, "observed range: %s → %s\n", resp.OldestTelemetryAt, resp.LatestTelemetryAt)
+	}
 }
 
 // renderDebugRequestEvidence keeps the request investigation loop useful

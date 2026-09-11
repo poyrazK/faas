@@ -42,7 +42,7 @@
           test -s /etc/faas/manifest.yaml
           test -s /etc/faas/storage.env
           test -s /etc/faas/runtime-bases.env
-          for service in faas-vmmd faas-gatewayd-internal faas-builderd faas-imaged; do
+          for service in faas-vmmd faas-schedd faas-gatewayd-internal faas-builderd faas-imaged; do
             systemctl is-enabled --quiet "$service.service"
             systemctl is-active --quiet "$service.service"
           done
@@ -214,6 +214,10 @@
         - { path: /etc/faas/tls/gatewayd/vmmd-client.crt, mode: "0440" }
         - { path: /etc/faas/tls/gatewayd/apid-client.key, mode: "0440" }
         - { path: /etc/faas/tls/gatewayd/apid-client.crt, mode: "0444" }
+        - { path: /etc/faas/tls/schedd/server.key, mode: "0440" }
+        - { path: /etc/faas/tls/schedd/server.crt, mode: "0440" }
+        - { path: /etc/faas/tls/schedd/vmmd-client.key, mode: "0440" }
+        - { path: /etc/faas/tls/schedd/vmmd-client.crt, mode: "0440" }
         - { path: /etc/faas/tls/builderd/vmmd-client.key, mode: "0440" }
         - { path: /etc/faas/tls/imaged/vmmd-client.key, mode: "0440" }
         - { path: /etc/faas/tls/egress/egress.key, mode: "0440" }
@@ -534,6 +538,7 @@
         state: stopped
       loop:
         - faas-vmmd.service
+        - faas-schedd.service
         - faas-gatewayd-internal.service
         - faas-builderd.service
         - faas-imaged.service
@@ -750,6 +755,7 @@
         state: restarted
       loop:
         - faas-vmmd.service
+        - faas-schedd.service
         - faas-gatewayd-internal.service
         - faas-builderd.service
         - faas-imaged.service
@@ -778,6 +784,7 @@
       changed_when: false
       loop:
         - faas-vmmd.service
+        - faas-schedd.service
         - faas-gatewayd-internal.service
         - faas-builderd.service
         - faas-imaged.service
@@ -804,6 +811,7 @@
       changed_when: false
       loop:
         - vmmd
+        - schedd
         - gatewayd-internal
         - builderd
         - imaged

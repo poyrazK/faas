@@ -44,7 +44,9 @@ class AppUsageSummaryResponse:
     requests: int
     """Cumulative HTTP request count (informational; not billed)."""
     tx_bytes: int
-    """Cumulative HTTP response body bytes (ADR-046; informational; not billed)."""
+    """Cumulative HTTP response body bytes (ADR-046; diagnostic subset of net_tx_bytes; never add both)."""
+    net_tx_bytes: int
+    """Canonical cumulative host-interface egress bytes for the window (ADR-046; includes framing)."""
     builder_seconds: float
     """Cumulative builder-microVM CPU-seconds (informational; surfaced as a sidebar line on the dashboard)."""
     cold_boot_count: int
@@ -77,6 +79,8 @@ class AppUsageSummaryResponse:
 
         tx_bytes = self.tx_bytes
 
+        net_tx_bytes = self.net_tx_bytes
+
         builder_seconds = self.builder_seconds
 
         cold_boot_count = self.cold_boot_count
@@ -100,6 +104,7 @@ class AppUsageSummaryResponse:
                 "gb_hours": gb_hours,
                 "requests": requests,
                 "tx_bytes": tx_bytes,
+                "net_tx_bytes": net_tx_bytes,
                 "builder_seconds": builder_seconds,
                 "cold_boot_count": cold_boot_count,
                 "plan_included_gb_hours": plan_included_gb_hours,
@@ -128,6 +133,8 @@ class AppUsageSummaryResponse:
 
         tx_bytes = d.pop("tx_bytes")
 
+        net_tx_bytes = d.pop("net_tx_bytes")
+
         builder_seconds = d.pop("builder_seconds")
 
         cold_boot_count = d.pop("cold_boot_count")
@@ -148,6 +155,7 @@ class AppUsageSummaryResponse:
             gb_hours=gb_hours,
             requests=requests,
             tx_bytes=tx_bytes,
+            net_tx_bytes=net_tx_bytes,
             builder_seconds=builder_seconds,
             cold_boot_count=cold_boot_count,
             plan_included_gb_hours=plan_included_gb_hours,

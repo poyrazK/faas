@@ -111,6 +111,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/nodes/{name}/drain":              true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":        true, // operator-only destructive node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/activate":           true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/retire":             true, // operator-only terminal node lifecycle control
 	"GET /v1/admin/operator-intents/{id}":                true, // PR #1099 P2.3 — operator-only intent polling endpoint
 	"GET /v1/admin/config":                               true, // operator-only runtime configuration catalog
 	"PATCH /v1/admin/config/{key}":                       true, // operator-only runtime configuration write
@@ -153,12 +154,14 @@ var routeExclude = map[string]bool{
 	// is GitHub-side state — programmatic consumers shouldn't bind
 	// apps via API. Mirrors the "browser-only dashboard routes"
 	// exclusion above.
-	"POST /v1/install/repos/list":         true, // bind picker hydrates from this; browser-only
-	"POST /v1/apps/{slug}/install/bind":   true, // bind picker writes through this; browser-only
-	"GET /v1/apps/{slug}/install/bind":    true, // dashboard connection status; session-cookie-only
-	"GET /v1/apps/{slug}/install":         true, // canonical dashboard connection status; session-cookie-only
-	"DELETE /v1/apps/{slug}/install/bind": true, // dashboard disconnect; session-cookie + CSRF-only
-	"POST /v1/apps/{slug}/install/sync":   true, // dashboard repair action; session-cookie + CSRF-only
+	"POST /v1/install/repos/list":                   true, // bind picker hydrates from this; browser-only
+	"POST /v1/apps/{slug}/install/bind":             true, // bind picker writes through this; browser-only
+	"GET /v1/apps/{slug}/install/bind":              true, // dashboard connection status; session-cookie-only
+	"GET /v1/apps/{slug}/install":                   true, // canonical dashboard connection status; session-cookie-only
+	"DELETE /v1/apps/{slug}/install/bind":           true, // dashboard disconnect; session-cookie + CSRF-only
+	"POST /v1/apps/{slug}/install/sync":             true, // dashboard repair action; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/sync":       true, // dashboard repair form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/disconnect": true, // dashboard disconnect form; session-cookie + CSRF-only
 
 	// Issue #961 / Mega-B PR-3 / ADR-116. The dashboard's
 	// /dashboard/apps/new wizard renders GET /v1/templates as the
@@ -286,6 +289,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/account":                         "DeleteAccount",
 	"PATCH /v1/account/plan":                     "ChangePlan",
 	"GET /v1/account":                            "Whoami",
+	"GET /v1/capabilities":                       "GetCapabilities",
 	"POST /v1/account/restore":                   "RestoreAccount",
 	"POST /v1/account/overage-cap":               "RaiseOverageCap", // issue #561 spend cap
 	"POST /v1/account/mfa/disable-email":         "PostAccountMfaDisableEmail",
@@ -479,12 +483,13 @@ var methodRouteMap = map[string]string{
 
 	// Issue #1398 O4 — customer runtime log destinations. Hyphenated path
 	// segments need explicit noun-oriented SDK names.
-	"GET /v1/apps/{slug}/log-drains":             "ListAppLogDrains",
-	"POST /v1/apps/{slug}/log-drains":            "CreateAppLogDrain",
-	"GET /v1/apps/{slug}/log-drains/{id}":        "GetAppLogDrain",
-	"GET /v1/apps/{slug}/log-drains/{id}/health": "GetAppLogDrainHealth",
-	"PATCH /v1/apps/{slug}/log-drains/{id}":      "UpdateAppLogDrain",
-	"DELETE /v1/apps/{slug}/log-drains/{id}":     "DeleteAppLogDrain",
+	"GET /v1/apps/{slug}/log-drains":                "ListAppLogDrains",
+	"POST /v1/apps/{slug}/log-drains":               "CreateAppLogDrain",
+	"GET /v1/apps/{slug}/log-drains/{id}":           "GetAppLogDrain",
+	"GET /v1/apps/{slug}/log-drains/{id}/health":    "GetAppLogDrainHealth",
+	"GET /v1/apps/{slug}/log-drains/{id}/analytics": "GetAppLogDrainAnalytics",
+	"PATCH /v1/apps/{slug}/log-drains/{id}":         "UpdateAppLogDrain",
+	"DELETE /v1/apps/{slug}/log-drains/{id}":        "DeleteAppLogDrain",
 
 	// ADR-098 §9.A — connection-aware data upstreams (PR-B hand-off).
 	// The auto-derivation would produce Swagger-style names
@@ -677,6 +682,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/debug/requests":                   "ListAppDebugRequests",
 	"GET /v1/apps/{slug}/debug/requests/{req_id}":          "GetAppDebugRequest",
 	"GET /v1/apps/{slug}/debug/requests/{req_id}/evidence": "GetAppDebugRequestEvidence",
+	"GET /v1/apps/{slug}/debug/coverage":                   "GetAppDebugCoverage",
 
 	// ADR-127 / PR-B — production debugger consumer surface.
 	// Same rationale as the PR-A request list: drop the slug from

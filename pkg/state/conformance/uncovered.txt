@@ -355,6 +355,7 @@ ListAppEnvInScope
 ListAppErrorFingerprintsForPurge
 ListAppErrorGroups
 ListAppErrorRequests
+ListAppLogDrainDeliveryAnalytics
 ListAppLogDrainHealthForApp
 ListAppLogDrainsForApp
 ListAppRegistryCredentials
@@ -545,6 +546,7 @@ ProjectByID
 ProjectByRepo
 ProjectBySlug
 ProvisionedStaticEgressIPExists
+PruneAppLogDrainDeliveryAnalytics
 PruneDataUpstreamProbesOlderThan
 PublishRuntimeSnapshot
 PutIdempotent
@@ -590,6 +592,7 @@ RequestTelemetryAnalyticsTimeseries
 RequestTelemetryAnalyticsTimeseriesGrouped
 RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
+RequestTelemetryCoverage
 RequeueBuild
 ResealAppSecretWithKidAndValueHashInScope
 ResetAppWebhookDeliveryFromDead

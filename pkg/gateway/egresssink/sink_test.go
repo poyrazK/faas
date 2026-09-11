@@ -1,5 +1,7 @@
 package egresssink
 
+// adr: 046
+
 import (
 	"runtime"
 	"sync"
@@ -139,6 +141,28 @@ func TestDrainRecords_ZeroesBucketAfterDrain(t *testing.T) {
 	second := sink.DrainRecords()
 	if len(second) != 0 {
 		t.Fatalf("second drain = %+v, want empty (drain must zero buckets)", second)
+	}
+}
+
+func TestRestoreRecords_RequeuesFailedSendWithoutOverwritingConcurrentTraffic(t *testing.T) {
+	now := time.Date(2026, 9, 11, 2, 10, 0, 0, time.UTC)
+	sink := NewEgressSinkWithClock(func() time.Time { return now })
+	sink.RecordResponseBytes("inst-1", 100)
+	sink.RecordRequest("inst-1", true)
+
+	drained := sink.DrainRecords()
+	if len(drained) != 1 {
+		t.Fatalf("drained = %+v, want one record", drained)
+	}
+	// Traffic can arrive after DrainRecords while the stream Send is in
+	// progress. Restoring a failed frame must add to, not replace, that data.
+	sink.RecordResponseBytes("inst-1", 25)
+	sink.RecordRequest("inst-1", false)
+	sink.RestoreRecords(drained)
+
+	retried := sink.DrainRecords()
+	if len(retried) != 1 || retried[0].Bytes != 125 || retried[0].Requests != 2 || retried[0].ColdBoots != 1 {
+		t.Fatalf("retried = %+v, want bytes=125 requests=2 cold_boots=1", retried)
 	}
 }
 

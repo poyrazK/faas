@@ -45,7 +45,7 @@ func Compute(slug string, plan Plan, baseline Baseline, pending Pending) Diff {
 	// 1b. Source/workload intent. Resource defaults are intentionally
 	// omitted from deploy requests, so a fresh preview must carry an
 	// explicit app/deployment shape or it can look like a no-op.
-	diffBuildPlan(&out, baseline, pending.BuildPlan)
+	diffBuildPlan(&out, baseline, pending)
 
 	// 2. Per-scope env vars.
 	diffEnvByScope(&out, baseline.EnvByScope, pending.EnvByScope)
@@ -106,34 +106,47 @@ func Compute(slug string, plan Plan, baseline Baseline, pending Pending) Diff {
 // persist. The BuildPlan is deliberately separate from AppManifest: the
 // latter is a runtime handoff, while this block describes the app/function
 // classification and the source identity known before a build runs.
-func diffBuildPlan(out *Diff, baseline Baseline, pending *api.BuildPlan) {
-	if pending == nil {
+func diffBuildPlan(out *Diff, baseline Baseline, pending Pending) {
+	plan := pending.BuildPlan
+	if plan == nil {
 		return
 	}
 
 	if baseline.App == nil {
 		appAfter := map[string]string{}
-		if pending.Class != "" {
-			appAfter["class"] = pending.Class
+		if plan.Class != "" {
+			appAfter["class"] = plan.Class
 		}
-		if pending.Framework != "" {
-			appAfter["framework"] = pending.Framework
+		if plan.Framework != "" {
+			appAfter["framework"] = plan.Framework
 		}
-		if pending.Runtime != "" {
-			appAfter["runtime"] = pending.Runtime
+		if plan.Runtime != "" {
+			appAfter["runtime"] = plan.Runtime
 		}
-		if pending.Handler != "" {
-			appAfter["handler"] = pending.Handler
+		if plan.Handler != "" {
+			appAfter["handler"] = plan.Handler
 		}
 		if len(appAfter) > 0 {
 			out.Changes = append(out.Changes, Change{
 				Field: "app", Kind: ChangeAdd, After: AsAny(appAfter),
 			})
 		}
-		if pending.SourceSHA256 != "" {
+		// A fresh deploy has no deployment row to compare against, so
+		// represent the deployment identity as an add. Source deploys
+		// carry the archive digest; image deploys carry the immutable
+		// image reference. Keeping both in the same deployment change
+		// makes local and server previews agree for either source mode.
+		deploymentAfter := map[string]string{}
+		if plan.SourceSHA256 != "" {
+			deploymentAfter["source_sha256"] = plan.SourceSHA256
+		}
+		if pending.ImageRef != "" {
+			deploymentAfter["image"] = pending.ImageRef
+		}
+		if len(deploymentAfter) > 0 {
 			out.Changes = append(out.Changes, Change{
 				Field: "deployment", Kind: ChangeAdd,
-				After: AsAny(map[string]string{"source_sha256": pending.SourceSHA256}),
+				After: AsAny(deploymentAfter),
 			})
 		}
 		return
@@ -142,16 +155,16 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending *api.BuildPlan) {
 	// Existing-app previews stay field-oriented. App fields come from the
 	// durable app row; framework/handler/source identity come from the latest
 	// deployment's BuildPlan when that provenance is available.
-	if pending.Class != "" && pending.Class != baseline.App.Type {
+	if plan.Class != "" && plan.Class != baseline.App.Type {
 		out.Changes = append(out.Changes, Change{
 			Field: "app.class", Kind: ChangeModify,
-			Before: AsAny(baseline.App.Type), After: AsAny(pending.Class),
+			Before: AsAny(baseline.App.Type), After: AsAny(plan.Class),
 		})
 	}
-	if pending.Runtime != "" && pending.Runtime != baseline.App.Runtime {
+	if plan.Runtime != "" && plan.Runtime != baseline.App.Runtime {
 		out.Changes = append(out.Changes, Change{
 			Field: "app.runtime", Kind: ChangeModify,
-			Before: AsAny(baseline.App.Runtime), After: AsAny(pending.Runtime),
+			Before: AsAny(baseline.App.Runtime), After: AsAny(plan.Runtime),
 		})
 	}
 
@@ -160,28 +173,28 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending *api.BuildPlan) {
 		basePlan = baseline.LatestDeployment.BuildPlan
 	}
 	if basePlan != nil {
-		if pending.Framework != "" && pending.Framework != basePlan.Framework {
+		if plan.Framework != "" && plan.Framework != basePlan.Framework {
 			out.Changes = append(out.Changes, Change{
 				Field: "deployment.framework", Kind: ChangeModify,
-				Before: AsAny(basePlan.Framework), After: AsAny(pending.Framework),
+				Before: AsAny(basePlan.Framework), After: AsAny(plan.Framework),
 			})
 		}
-		if pending.Handler != "" && pending.Handler != basePlan.Handler {
+		if plan.Handler != "" && plan.Handler != basePlan.Handler {
 			out.Changes = append(out.Changes, Change{
 				Field: "deployment.handler", Kind: ChangeModify,
-				Before: AsAny(basePlan.Handler), After: AsAny(pending.Handler),
+				Before: AsAny(basePlan.Handler), After: AsAny(plan.Handler),
 			})
 		}
 	}
-	if pending.SourceSHA256 != "" {
+	if plan.SourceSHA256 != "" {
 		baseSource := ""
 		if basePlan != nil {
 			baseSource = basePlan.SourceSHA256
 		}
-		if pending.SourceSHA256 != baseSource {
+		if plan.SourceSHA256 != baseSource {
 			out.Changes = append(out.Changes, Change{
 				Field: "deployment.source_sha256", Kind: ChangeModify,
-				Before: AsAny(baseSource), After: AsAny(pending.SourceSHA256),
+				Before: AsAny(baseSource), After: AsAny(plan.SourceSHA256),
 			})
 		}
 	}

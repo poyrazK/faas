@@ -268,6 +268,19 @@ func startupDeadlineForApp(app state.App, plan api.Plan) int32 {
 	return int32(limits.DefaultStartupDeadlineS)
 }
 
+// executionModeForApp resolves the manifest default before crossing the
+// scheduler/vmmd boundary. Unknown persisted values fail safe to request mode,
+// which still requires a listening server instead of bypassing readiness as a
+// worker or job.
+func executionModeForApp(app state.App) string {
+	switch app.Manifest.ExecutionMode {
+	case api.ExecutionModeService, api.ExecutionModeWorker, api.ExecutionModeJob:
+		return app.Manifest.ExecutionMode
+	default:
+		return api.ExecutionModeRequest
+	}
+}
+
 // Notifier is the pg_notify surface the engine needs. db.Notify (pool-backed)
 // satisfies it via poolNotifier; tests inject a fake.
 type Notifier interface {
@@ -2647,6 +2660,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
+		ExecutionMode:    executionModeForApp(app),
 		Plan:             acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv,
@@ -4225,6 +4239,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
+		ExecutionMode:    executionModeForApp(app),
 		Plan:             acct.Plan,
 		AccountID:        acct.ID,
 		AppID:            app.ID,
@@ -4871,6 +4886,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// M-3: deploy prime uses the same plan-resolved readiness budget
 		// as ordinary wakes, so first boot and later wakes agree.
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
+		ExecutionMode:    executionModeForApp(app),
 		Plan:             acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv,

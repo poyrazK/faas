@@ -2058,8 +2058,11 @@ func (d Deployment) DeploymentPreviewActive() bool {
 //	  ]
 //	}
 //
-// `Current` lives outside `History` until it closes. The atomic
-// JSONB merge is implemented by `appendDeploymentStage` in
+// `Current` lives outside `History` until it closes. Store-owned
+// deployment creation stamps the initial source_download start at enqueue
+// time; readers may still encounter a null value on legacy rows until the
+// first stage mutation repairs it. The atomic JSONB merge is implemented by
+// `appendDeploymentStage` in
 // pkg/state/queries.sql — read-modify-write at the Go layer is
 // NOT safe (two transitions from concurrent goroutines would race).
 // The pgstore implementation is the only writer; memstore mirrors
@@ -2079,12 +2082,11 @@ type StageState struct {
 // consumer doesn't have to trust a 2s-tick-derived `time.Now()`
 // reconstruction.
 //
-// `StartedAt` is a *time.Time (NOT time.Time) so the JSON wire shape
-// is `null` when the migration seed left it unset — time.Time zero
-// value marshals to the literal string "0001-01-01T00:00:00Z" which
-// is indistinguishable from a real epoch and contradicts the
-// "uninitialized = null" contract the SSE consumer expects. The
-// pointer nil-vs-set distinction preserves that contract.
+// `StartedAt` is a *time.Time (NOT time.Time) so a genuinely uninitialized
+// legacy stage can remain `null` — time.Time zero value marshals to the
+// literal string "0001-01-01T00:00:00Z" which is indistinguishable from a
+// real epoch and contradicts the SSE consumer's contract. The pointer
+// nil-vs-set distinction preserves that contract.
 type StageStateItem struct {
 	Name       StageName  `json:"name"`
 	StartedAt  *time.Time `json:"started_at"`
@@ -2357,6 +2359,7 @@ const (
 	OperatorIntentKindNodeDrain      OperatorIntentKind = "node_drain"
 	OperatorIntentKindNodeForceDrain OperatorIntentKind = "node_force_drain"
 	OperatorIntentKindNodeActivate   OperatorIntentKind = "node_activate"
+	OperatorIntentKindNodeRetire     OperatorIntentKind = "node_retire"
 )
 
 // OperatorIntent is one row of operator_intents (migrations/00431).
@@ -3751,6 +3754,7 @@ const (
 	NodeLifecycleMaintenance   NodeLifecycle = "maintenance"
 	NodeLifecycleUnavailable   NodeLifecycle = "unavailable"
 	NodeLifecycleRecovering    NodeLifecycle = "recovering"
+	NodeLifecycleRetired       NodeLifecycle = "retired"
 )
 
 // IsAdmitting returns true for lifecycle states that the placement
@@ -4189,6 +4193,26 @@ type UsageWindow struct {
 	AccountID string
 	Hour      time.Time
 	MBSeconds int64
+}
+
+// BillingMeter is the durable meter identity used by provider delivery
+// receipts. Keep it separate from the provider name: one provider can receive
+// compute and egress usage for the same account and UTC hour.
+type BillingMeter string
+
+const (
+	BillingMeterCompute BillingMeter = "compute"
+	BillingMeterEgress  BillingMeter = "egress"
+)
+
+// BillingMeterWindow is one positive account-level quantity for a completed
+// UTC hour. Quantity's unit is fixed by Meter: compute is MB-seconds and egress
+// is host-interface bytes (usage_minutes.net_tx_bytes).
+type BillingMeterWindow struct {
+	AccountID string
+	Hour      time.Time
+	Meter     BillingMeter
+	Quantity  int64
 }
 
 // DailyUsage is the per-(account, app, day) row read by
@@ -6695,26 +6719,47 @@ type AppLogDrain struct {
 // than written once per log record, so the health surface cannot add a
 // database round-trip to the application request path.
 type AppLogDrainHealth struct {
-	DrainID               string
-	Status                string
-	Active                bool
-	QueueDepth            int
-	QueueCapacity         int
-	PendingRecords        int
-	PendingBytes          int64
-	PendingBytesCapacity  int64
-	DeadLetterTotal       int64
-	OldestPendingAt       time.Time
-	DeliveredTotal        int64
-	FailedTotal           int64
-	DroppedTotal          int64
-	RetriesTotal          int64
-	StreamReconnectsTotal int64
-	GapsTotal             int64
-	LastSuccessAt         time.Time
-	LastFailureAt         time.Time
-	LastError             string
-	UpdatedAt             time.Time
+	DrainID                   string
+	Status                    string
+	Active                    bool
+	QueueDepth                int
+	QueueCapacity             int
+	PendingRecords            int
+	PendingBytes              int64
+	PendingBytesCapacity      int64
+	DeadLetterTotal           int64
+	OldestPendingAt           time.Time
+	DeliveredTotal            int64
+	FailedTotal               int64
+	DroppedTotal              int64
+	RetriesTotal              int64
+	DeliveryLatencyNanosTotal int64
+	DeliveryLatencySamples    int64
+	StreamReconnectsTotal     int64
+	GapsTotal                 int64
+	LastSuccessAt             time.Time
+	LastFailureAt             time.Time
+	LastError                 string
+	UpdatedAt                 time.Time
+}
+
+// AppLogDrainDeliveryAnalytics is an hourly cumulative delivery snapshot.
+// The counters mirror AppLogDrainHealth so a gateway restart can continue
+// the same series from the durable health row. Readers derive hourly deltas
+// and rates without exposing endpoint credentials or raw errors.
+type AppLogDrainDeliveryAnalytics struct {
+	DrainID                   string
+	BucketStart               time.Time
+	DeliveredTotal            int64
+	FailedTotal               int64
+	DroppedTotal              int64
+	RetriesTotal              int64
+	DeadLetterTotal           int64
+	DeliveryLatencyNanosTotal int64
+	DeliveryLatencySamples    int64
+	PendingRecords            int
+	PendingBytes              int64
+	SampledAt                 time.Time
 }
 
 // UpdateAppLogDrainParams carries the optional fields of UpdateAppLogDrain.

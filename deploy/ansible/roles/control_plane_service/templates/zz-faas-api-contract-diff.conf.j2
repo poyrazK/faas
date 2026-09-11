@@ -1,0 +1,6 @@
+[Service]
+# API-hosting contract safety (issue #1966 / ADR-121): public-beta apid must
+# expose the same OpenAPI promotion check that the compute-side imaged gate
+# enforces. Keep this in a zz-* drop-in so it wins over release-managed unit
+# defaults and can be rolled back by removing the production role drop-in.
+Environment=FAAS_API_CONTRACT_DIFF_ENABLED=1

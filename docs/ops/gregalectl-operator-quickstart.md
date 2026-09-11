@@ -172,8 +172,12 @@ gregalectl compute-nodes show --node fsn-2 [--json]
 
 # Drain, verify the maintenance hold, then explicitly reactivate
 gregalectl compute-nodes drain --node fsn-2 --reason planned_kernel_upgrade
-gregalectl compute-nodes drain-status --node fsn-2   # exit 0 only in maintenance
+gregalectl compute-nodes drain-status --node fsn-2   # exit 0 in maintenance/retired
 gregalectl compute-nodes activate --node fsn-2 --reason planned_kernel_upgrade
+
+# Permanent decommissioning: drain first, then retire with explicit approval
+gregalectl auth step-up
+gregalectl compute-nodes retire --node fsn-2 --reason hardware_eol --yes
 ```
 
 `add`, `list`, and `show` use the authenticated operator API by default. Add
@@ -188,6 +192,10 @@ session and create a durable `operator_intents` receipt retaining actor,
 reason, trace, preflight impact, and terminal outcome. Refresh the five-minute
 proof with `gregalectl auth step-up`; inspect or revoke it with `auth status` /
 `auth logout`.
+
+`retired` is terminal and excluded from placement and automatic recovery. The
+row stays available for audit; do not re-enroll replacement hardware under the
+same name.
 
 A successful drain finishes in the non-admitting `maintenance` lifecycle; it
 never automatically reactivates the node. Direct database mutation exists only

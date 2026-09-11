@@ -540,12 +540,12 @@ func TestRenderer_ResolvesComputeOnlyDaemons(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	// Schema-drift guard: a compute-only box MUST NOT emit
-	// apid / schedd / meterd / githubd / gatewayd-public
-	// TOMLs or service units.
+	// apid / meterd / githubd / gatewayd-public TOMLs or service
+	// units. M9 deliberately emits a node-local schedd alongside vmmd.
 	for _, mustNotContain := range []string{
-		"apid.toml", "schedd.toml", "meterd.toml",
+		"apid.toml", "meterd.toml",
 		"githubd.toml", "gatewayd-public.toml",
-		"faas-apid.service", "faas-schedd.service",
+		"faas-apid.service",
 	} {
 		for _, o := range report.Outputs {
 			if strings.Contains(o.Path, mustNotContain) {
@@ -559,7 +559,7 @@ func TestRenderer_ResolvesComputeOnlyDaemons(t *testing.T) {
 		gotPaths[filepath.Base(o.Path)] = true
 	}
 	for _, want := range []string{
-		"vmmd.toml", "imaged.toml", "builderd.toml", "gatewayd-internal.toml",
+		"vmmd.toml", "schedd.toml", "imaged.toml", "builderd.toml", "gatewayd-internal.toml",
 		"faas-cp.slice",
 	} {
 		if !gotPaths[want] {

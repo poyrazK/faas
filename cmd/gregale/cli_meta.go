@@ -56,6 +56,11 @@ type cliCommand struct {
 	// Subcommands enumerates the verb set the dispatcher recognises.
 	// Empty for commands with no verb set (e.g. `whoami`, `version`).
 	Subcommands []cliSub
+	// SubcommandsAfterPositionals marks command families whose syntax puts
+	// the leading positional before the verb (for example, `app <slug>
+	// scale`). Most commands use the conventional verb-first shape, such
+	// as `cache purge <slug>`, so the zero value remains false.
+	SubcommandsAfterPositionals bool
 	// Flags enumerates the top-level flags accepted on this command's
 	// own flag set (i.e. before any subcommand dispatch). Empty if
 	// the command dispatches immediately on args[0] (most multi-verb
@@ -112,7 +117,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Advanced"
 	}
 	switch command.Name {
-	case "account", "billing", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "usage", "version", "completion", "man", "whoami":
+	case "account", "billing", "capabilities", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "usage", "version", "completion", "man", "whoami":
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
@@ -134,6 +139,27 @@ func cliHelpGroup(command cliCommand) string {
 // rather than a hardcoded name list.
 func (c cliCommand) hasSlugFirst() bool {
 	return len(c.Positionals) > 0 && c.Positionals[0] == "<slug>"
+}
+
+// completionSubcommandWord and completionSlugWord describe the argument
+// positions used by the generated shell completion backends. A few command
+// families put a slug after a verb (`cache purge <slug>`), while `app` keeps
+// its historical slug-first shape (`app <slug> scale`).
+func (c cliCommand) completionSubcommandWord() int {
+	if c.SubcommandsAfterPositionals && c.hasSlugFirst() {
+		return 3
+	}
+	return 2
+}
+
+func (c cliCommand) completionSlugWord() int {
+	if !c.hasSlugFirst() {
+		return 0
+	}
+	if len(c.Subcommands) > 0 && !c.SubcommandsAfterPositionals {
+		return 3
+	}
+	return 2
 }
 
 // cliSub is one verb under a cliCommand (e.g. alerts.list, alerts.add).
@@ -220,6 +246,11 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "capabilities",
+		DocSlug: "capabilities",
+		Short:   "Show feature maturity and plan availability",
+	},
+	{
 		Name:     "admin",
 		DocSlug:  "admin",
 		Short:    "Operator-only billing ops (admin credit|refund|consume-credits)",
@@ -282,9 +313,10 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{{Name: "q", Short: "delete one app"}, {Name: "quiet", Short: "delete one app"}},
 	},
 	{
-		Name:    appSlugFallback,
-		DocSlug: "apps",
-		Short:   "Get/update one app (gregale app <slug> [scale|rename <new>|restart|--profile NAME|--ram N|…])",
+		Name:                        appSlugFallback,
+		DocSlug:                     "apps",
+		Short:                       "Get/update one app (gregale app <slug> [scale|rename <new>|restart|--profile NAME|--ram N|…])",
+		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
 			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU"},
 			{Name: "rename", Short: "Rename an app"},
@@ -730,6 +762,7 @@ var cliCommands = []cliCommand{
 			{Name: "dry-run", Short: "Preview uncovered routes without importing the document"},
 			{Name: "preview", Short: "Preview routes, edge policies, and the read-only OpenAPI contract diff", Flags: []cliFlag{
 				{Name: "scope", Short: "deployment scope to compare", Value: "scope"},
+				{Name: "fail-on-unavailable", Short: "fail when the contract-diff backend is unavailable"},
 			}},
 			{Name: "apply", Short: "Plan or apply generated validation edge rules", Flags: []cliFlag{
 				{Name: "confirm", Short: "apply the reviewed plan"},
@@ -808,7 +841,8 @@ var cliCommands = []cliCommand{
 		DocSlug: "debug",
 		Short:   "Production debugger (ADR-127)",
 		Subcommands: []cliSub{
-			{Name: "requests", Short: "Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])"},
+			{Name: "requests", Short: "Per-request telemetry (list --cursor C for pagination | get | show | evidence | replay | watch)"},
+			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
 			{Name: "regressions", Short: "Active regression observations (list|watch [--interval D] [--once])"},
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
 			{Name: "bundle", Short: "Export a redacted incident investigation bundle (bundle <slug> <req_id> [--output PATH])"},

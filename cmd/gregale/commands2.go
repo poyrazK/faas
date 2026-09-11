@@ -4466,7 +4466,7 @@ func cmdUsageDaily(args []string) int {
 			txGB := float64(u.TXBytes) / (1024 * 1024 * 1024)
 			netGB := float64(u.NetTxBytes) / (1024 * 1024 * 1024)
 			fmt.Printf("%-36s %s %8d  %7.3f GB-h  egress %.3f GB (tx %.2f / net %.2f)\n",
-				u.AppID, u.Day, u.Requests, gbh, txGB+netGB, txGB, netGB)
+				u.AppID, u.Day, u.Requests, gbh, netGB, txGB, netGB)
 			continue
 		}
 		fmt.Printf("%-36s %s %8d  %7.3f GB-h\n", u.AppID, u.Day, u.Requests, gbh)

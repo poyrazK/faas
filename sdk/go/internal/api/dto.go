@@ -503,6 +503,28 @@ type AccountResponse struct {
 	EffectiveAt       *time.Time    `json:"effective_at,omitempty"`
 }
 
+// CapabilityStatus is a customer-visible capability with the account plan
+// gate resolved by the API.
+type CapabilityStatus struct {
+	Key         string   `json:"key"`
+	Name        string   `json:"name"`
+	Category    string   `json:"category"`
+	Description string   `json:"description"`
+	Maturity    string   `json:"maturity"`
+	Plans       []string `json:"plans"`
+	DocsURL     string   `json:"docs_url"`
+	Acceptance  string   `json:"acceptance"`
+	Enabled     bool     `json:"enabled"`
+}
+
+// CapabilitiesResponse is the account-scoped capability registry returned by
+// GET /v1/capabilities.
+type CapabilitiesResponse struct {
+	RegistryVersion int                `json:"registry_version"`
+	Plan            string             `json:"plan"`
+	Capabilities    []CapabilityStatus `json:"capabilities"`
+}
+
 // AccountLimits is the read-only copy of api.Limits that survives
 // serialization. Stripped of fields the dashboard doesn't need
 // (eg. internal ops); mirror pkg/api/limits.go for the wiring.

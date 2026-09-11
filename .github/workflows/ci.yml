@@ -879,6 +879,8 @@ jobs:
       # ---- former job `capabilities-check`: product capability registry ----
       - name: product capability registry and generated matrix
         run: make capabilities-check
+      - name: customer docs and pricing
+        run: make pricing-check docs-links-check
       # ---- former job `api-hosting-contract-check`: framework fixture matrix ----
       - name: framework fixture matrix
         run: make api-hosting-contract-check

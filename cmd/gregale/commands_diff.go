@@ -337,30 +337,43 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 	if opts.Image != "" {
 		p.ImageRef = opts.Image
 	}
-	// gregale.yaml triggers → crons.
-	m, ok, err := gregalemanifest.Load(opts.Cwd)
-	if err == nil && ok && m != nil {
-		if verr := m.Validate(); verr == nil {
-			for _, t := range m.Triggers {
-				if t.Kind != gregalemanifest.TriggerKindCron {
-					continue
-				}
-				if t.App != "" && t.App != opts.Slug {
-					continue // one-app-at-a-time deploy
-				}
-				enabled := true
-				if t.Enabled != nil {
-					enabled = *t.Enabled
-				}
-				p.Crons = append(p.Crons, api.CreateCronRequest{
-					Schedule: t.Schedule,
-					Path:     t.Path,
-					Enabled:  &enabled,
-				})
-			}
-		}
-	}
+	// gregale.yaml triggers → crons. Keep this projection shared with
+	// --server-diff so both preview modes send the same pending list.
+	p.Crons = previewCronsFromManifest(opts.Cwd, opts.Slug)
 	return p
+}
+
+// previewCronsFromManifest projects the deploy manifest's cron triggers into
+// the diff request. Invalid manifests are rejected by runDiff before this
+// helper is reached, so a best-effort empty result keeps the adapter safe for
+// unit callers and preserves the existing read-only behaviour.
+func previewCronsFromManifest(cwd, slug string) []api.CreateCronRequest {
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil || !ok || m == nil {
+		return nil
+	}
+	if err := m.Validate(); err != nil {
+		return nil
+	}
+	var crons []api.CreateCronRequest
+	for _, trigger := range m.Triggers {
+		if trigger.Kind != gregalemanifest.TriggerKindCron {
+			continue
+		}
+		if trigger.App != "" && trigger.App != slug {
+			continue // one-app-at-a-time deploy
+		}
+		enabled := true
+		if trigger.Enabled != nil {
+			enabled = *trigger.Enabled
+		}
+		crons = append(crons, api.CreateCronRequest{
+			Schedule: trigger.Schedule,
+			Path:     trigger.Path,
+			Enabled:  &enabled,
+		})
+	}
+	return crons
 }
 
 // inferPlanAndLimits resolves the account's plan tier + limits
@@ -437,6 +450,9 @@ func isNotFound(err error) bool {
 //     GetApp 404 → isNotFound branch. The wire is the source of
 //     truth here too.
 func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
+	if opts.Crons == nil {
+		opts.Crons = previewCronsFromManifest(opts.Cwd, opts.Slug)
+	}
 	req := diffRequestFromCLI(opts)
 	resp, err := client.Diff(ctx, opts.Slug, req)
 	if err != nil {
@@ -462,39 +478,55 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 // diffRequestFromCLI projects the CLI flag set onto the wire
 // DiffRequest. Mirrors the apid handler's diffPendingFromRequest
 // (cmd/apid/handlers_diff.go) but with CLI-side signal sources
-// (gregale.yaml triggers fan-out populates Crons; --require-authn
-// populates AppConfig.RequireAuthn; --app-protocol populates
-// AppConfig.AppProtocol per ADR-124).
+// (gregale.yaml triggers fan-out populates Crons and all populated
+// AppConfig pointers, including resource profiles, cross the wire).
 //
-// PR-1 keeps the CLI's existing AppConfig surface narrow — only
-// the fields the CLI flags today (RequireAuthn, AppProtocol).
-// Future PRs can extend with --memory, --concurrency, etc.
+// The helper preserves the complete engine patch, including resource
+// profiles, so the local and server preview adapters cannot silently drift
+// as new deploy flags are added.
 func diffRequestFromCLI(opts diffCLIOptions) api.DiffRequest {
 	req := api.DiffRequest{ImageRef: opts.Image, BuildPlan: opts.BuildPlan}
-	// Build the patch lazily so we don't allocate an empty
-	// AppConfig struct when no fields are set.
-	var patch *api.DiffAppConfigPatch
-	if opts.AppConfig.RequireAuthn != nil {
-		v := *opts.AppConfig.RequireAuthn
-		patch = &api.DiffAppConfigPatch{RequireAuthn: &v}
-	}
-	if opts.AppConfig.AppProtocol != nil {
-		v := *opts.AppConfig.AppProtocol
-		if patch == nil {
-			patch = &api.DiffAppConfigPatch{AppProtocol: &v}
-		} else {
-			patch.AppProtocol = &v
-		}
-	}
-	if patch != nil {
-		req.AppConfig = patch
-	}
+	// Preserve every pointer in the local patch. In particular, resource
+	// profiles populate RAMMB/CPUMillicores; dropping those fields here made
+	// --server-diff disagree with the local preview for the same command.
+	req.AppConfig = diffAppConfigPatchFromCLI(opts.AppConfig)
 	if opts.Manifest != nil {
 		req.Manifest = opts.Manifest
 	}
 	// Cron fan-out — same source as the local buildPending.
 	req.Crons = append(req.Crons, opts.Crons...)
 	return req
+}
+
+func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPatch {
+	patch := &api.DiffAppConfigPatch{
+		RAMMB:               p.RAMMB,
+		CPUMillicores:       p.CPUMillicores,
+		IdleTimeoutS:        p.IdleTimeoutS,
+		MaxConcurrency:      p.MaxConcurrency,
+		MinInstances:        p.MinInstances,
+		EgressAllowlist:     p.EgressAllowlist,
+		AutoscaleTargetRPS:  p.AutoscaleTargetRPS,
+		AutoscaleTargetCP:   p.AutoscaleTargetCP,
+		StreamingEnabled:    p.StreamingEnabled,
+		WebSocketEnabled:    p.WebSocketEnabled,
+		RequireSigned:       p.RequireSigned,
+		WarmSnapshotEnabled: p.WarmSnapshotEnabled,
+		RequireAuthn:        p.RequireAuthn,
+		EvictionPriority:    p.EvictionPriority,
+		AppProtocol:         p.AppProtocol,
+	}
+	if patch.RAMMB == nil && patch.CPUMillicores == nil &&
+		patch.IdleTimeoutS == nil && patch.MaxConcurrency == nil &&
+		patch.MinInstances == nil && patch.EgressAllowlist == nil &&
+		patch.AutoscaleTargetRPS == nil && patch.AutoscaleTargetCP == nil &&
+		patch.StreamingEnabled == nil && patch.WebSocketEnabled == nil &&
+		patch.RequireSigned == nil && patch.WarmSnapshotEnabled == nil &&
+		patch.RequireAuthn == nil && patch.EvictionPriority == nil &&
+		patch.AppProtocol == nil {
+		return nil
+	}
+	return patch
 }
 
 // syntheticDiffFromResponse re-projects a wire DiffResponse back

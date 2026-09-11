@@ -5756,17 +5756,22 @@ FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
   AND received_at <  $3
-  AND ($5::text = '' OR route = $5::text)
-ORDER BY received_at DESC
-LIMIT $4
+  AND ($4::timestamptz IS NULL
+       OR (received_at, id) < ($4::timestamptz,
+                               $5::uuid))
+  AND ($6::text = '' OR route = $6::text)
+ORDER BY received_at DESC, id DESC
+LIMIT $7::int
 `
 
 type ListRequestTelemetryByAppParams struct {
-	AppID        pgtype.UUID
-	ReceivedAt   pgtype.Timestamptz
-	ReceivedAt_2 pgtype.Timestamptz
-	Limit        int32
-	Route        string
+	AppID            pgtype.UUID
+	ReceivedAt       pgtype.Timestamptz
+	ReceivedAt_2     pgtype.Timestamptz
+	CursorReceivedAt pgtype.Timestamptz
+	CursorID         pgtype.UUID
+	Route            string
+	Limit            int32
 }
 
 type ListRequestTelemetryByAppRow struct {
@@ -5793,14 +5798,17 @@ type ListRequestTelemetryByAppRow struct {
 // Backs GET /v1/apps/{slug}/debug/requests. Uses
 // request_telemetry_app_received_idx. The (since, until) pair is
 // timestamptz; handler-side date parsing is at cmd/apid/
-// handlers_debug_telemetry.go (parseDebugTelemetryWindow).
+// handlers_debug_telemetry.go (parseDebugSinceFromString). Cursor pages use
+// the strict (received_at, id) tuple so equal timestamps cannot reorder rows.
 func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg ListRequestTelemetryByAppParams) ([]ListRequestTelemetryByAppRow, error) {
 	rows, err := db.Query(ctx, listRequestTelemetryByApp,
 		arg.AppID,
 		arg.ReceivedAt,
 		arg.ReceivedAt_2,
-		arg.Limit,
+		arg.CursorReceivedAt,
+		arg.CursorID,
 		arg.Route,
+		arg.Limit,
 	)
 	if err != nil {
 		return nil, err
@@ -10150,6 +10158,83 @@ func (q *Queries) RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg
 		return nil, err
 	}
 	return items, nil
+}
+
+const requestTelemetryCoverage = `-- name: RequestTelemetryCoverage :one
+SELECT
+    COUNT(*)::bigint AS telemetry_rows,
+    COALESCE(SUM(count::bigint), 0)::bigint AS represented_requests,
+    COUNT(*) FILTER (WHERE trace_id IS NOT NULL)::bigint AS trace_linked_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE trace_id IS NOT NULL), 0)::bigint AS trace_linked_requests,
+    COUNT(*) FILTER (WHERE spans_summary IS NOT NULL)::bigint AS span_evidence_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE spans_summary IS NOT NULL), 0)::bigint AS span_evidence_requests,
+    COUNT(*) FILTER (WHERE wake_id IS NOT NULL AND wake_id <> '')::bigint AS wake_evidence_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE wake_id IS NOT NULL AND wake_id <> ''), 0)::bigint AS wake_evidence_requests,
+    COUNT(*) FILTER (WHERE guest_runtime <> '__unknown__' AND guest_outcome <> 'missing')::bigint AS guest_evidence_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE guest_runtime <> '__unknown__' AND guest_outcome <> 'missing'), 0)::bigint AS guest_evidence_requests,
+    COALESCE(SUM(count::bigint) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+    MIN(received_at) AS oldest_telemetry_at,
+    MAX(received_at) AS latest_telemetry_at
+FROM request_telemetry
+WHERE app_id = $1
+  AND account_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+`
+
+type RequestTelemetryCoverageParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+}
+
+type RequestTelemetryCoverageRow struct {
+	TelemetryRows         int64
+	RepresentedRequests   int64
+	TraceLinkedRows       int64
+	TraceLinkedRequests   int64
+	SpanEvidenceRows      int64
+	SpanEvidenceRequests  int64
+	WakeEvidenceRows      int64
+	WakeEvidenceRequests  int64
+	GuestEvidenceRows     int64
+	GuestEvidenceRequests int64
+	ErrorRequests         int64
+	OldestTelemetryAt     interface{}
+	LatestTelemetryAt     interface{}
+}
+
+// Signal coverage for the customer debugger. Counts are weighted by the
+// publisher's collapsed-row `count`, while the row totals make the amount
+// of aggregation visible to callers. This query deliberately reports
+// observed coverage only: request_telemetry has no trustworthy denominator
+// for requests dropped before persistence, so the API must not invent a
+// capture percentage.
+func (q *Queries) RequestTelemetryCoverage(ctx context.Context, db DBTX, arg RequestTelemetryCoverageParams) (RequestTelemetryCoverageRow, error) {
+	row := db.QueryRow(ctx, requestTelemetryCoverage,
+		arg.AppID,
+		arg.AccountID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+	)
+	var i RequestTelemetryCoverageRow
+	err := row.Scan(
+		&i.TelemetryRows,
+		&i.RepresentedRequests,
+		&i.TraceLinkedRows,
+		&i.TraceLinkedRequests,
+		&i.SpanEvidenceRows,
+		&i.SpanEvidenceRequests,
+		&i.WakeEvidenceRows,
+		&i.WakeEvidenceRequests,
+		&i.GuestEvidenceRows,
+		&i.GuestEvidenceRequests,
+		&i.ErrorRequests,
+		&i.OldestTelemetryAt,
+		&i.LatestTelemetryAt,
+	)
+	return i, err
 }
 
 const revokeAllSessions = `-- name: RevokeAllSessions :many

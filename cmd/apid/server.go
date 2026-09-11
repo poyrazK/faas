@@ -1038,6 +1038,7 @@ func (s *server) handler() http.Handler {
 	// Account. The /v1/account/plan change is destructive across the
 	// whole account, so it requires the admin scope; the read-only
 	// /v1/account carries the method default (read or admin).
+	mux.HandleFunc("GET /v1/capabilities", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCapabilities)))
 	mux.HandleFunc("GET /v1/account", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.whoami))))
 	mux.HandleFunc("GET /v1/account/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.accountUsage))))
 	mux.HandleFunc("GET /v1/account/object-storage-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getObjectStorageUsage))))
@@ -1834,6 +1835,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/log-drains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppLogDrain)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrain))))
 	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}/health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrainHealth))))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-drains/{id}/analytics", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppLogDrainAnalytics))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppLogDrain))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/log-drains/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppLogDrain))))
 
@@ -1888,6 +1890,7 @@ func (s *server) handler() http.Handler {
 	// API writes remain Bearer-key + MFA + deploy-scope gated below.
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
+	mux.HandleFunc("GET /v1/apps/{slug}/debug/coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryCoverageHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/{req_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryGetHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/{req_id}/evidence", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRequestEvidenceHandler))))
@@ -2116,6 +2119,8 @@ func (s *server) handler() http.Handler {
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeForceDrain))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/activate",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeActivate))))
+	mux.Handle("POST /v1/admin/ops/nodes/{name}/retire",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeRetire))))
 
 	// ADR-132 — typed runtime configuration. GET is MFA-gated; PATCH and
 	// rollback use the strict operator-session policy
@@ -2346,7 +2351,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/compute-nodes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.listComputeNodes))))
 	mux.HandleFunc("GET /v1/compute-nodes/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getComputeNode))))
 	mux.Handle("POST /v1/compute-nodes", middleware.TraceID(s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.createOrUpdateComputeNode))))))
-	mux.HandleFunc("DELETE /v1/compute-nodes/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.deleteComputeNode))))
+	mux.Handle("DELETE /v1/compute-nodes/{name}", middleware.TraceID(s.authLimited(s.requireAdminMutation(s.deleteComputeNode))))
 	// Workstream B (issue #1184 / ADR-137): drain handler.
 	// POST /drain CAS-transitions the node's lifecycle to
 	// 'draining' (the recovery arbiter owns the actual
@@ -2521,6 +2526,11 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.getGitHubInstallStatus))))
 	mux.Handle("DELETE /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.unbindGitHubApp))))
 	mux.Handle("POST /v1/apps/{slug}/install/sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.syncGitHubApp))))
+	// Server-rendered dashboard forms for the same customer-scoped
+	// connection actions. These redirect back with a flash instead of
+	// leaving a browser on a JSON response.
+	mux.Handle("POST /dashboard/apps/{slug}/github/sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubSync))))
+	mux.Handle("POST /dashboard/apps/{slug}/github/disconnect", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubDisconnect))))
 	// Issue #961 / Mega-B PR-3 — GET /v1/templates is the dashboard's
 	// source of truth for the template catalog (handlers_templates.go).
 	// Mirrors cmd/gregale/templates.Names without importing the CLI's

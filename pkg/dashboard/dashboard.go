@@ -522,29 +522,36 @@ type AppLogDrainsData struct {
 }
 
 type LogDrainPageItem struct {
-	ID                    string
-	Kind                  string
-	TargetURL             string
-	Enabled               bool
-	Status                string
-	Active                bool
-	QueueDepth            int
-	QueueCapacity         int
-	PendingRecords        int
-	PendingBytes          int64
-	PendingBytesCapacity  int64
-	DeadLetterTotal       int64
-	OldestPendingAt       string
-	DeliveredTotal        int64
-	FailedTotal           int64
-	DroppedTotal          int64
-	RetriesTotal          int64
-	StreamReconnectsTotal int64
-	GapsTotal             int64
-	LastSuccessAt         string
-	LastFailureAt         string
-	LastError             string
-	UpdatedAt             string
+	ID                      string
+	Kind                    string
+	TargetURL               string
+	Enabled                 bool
+	Status                  string
+	Active                  bool
+	QueueDepth              int
+	QueueCapacity           int
+	PendingRecords          int
+	PendingBytes            int64
+	PendingBytesCapacity    int64
+	DeadLetterTotal         int64
+	OldestPendingAt         string
+	DeliveredTotal          int64
+	FailedTotal             int64
+	DroppedTotal            int64
+	RetriesTotal            int64
+	StreamReconnectsTotal   int64
+	GapsTotal               int64
+	LastSuccessAt           string
+	LastFailureAt           string
+	LastError               string
+	UpdatedAt               string
+	AnalyticsAvailable      bool
+	AnalyticsDelivered      int64
+	AnalyticsFailed         int64
+	AnalyticsDropped        int64
+	AnalyticsRetries        int64
+	AnalyticsSuccessRate    string
+	AnalyticsAverageLatency string
 }
 
 // TenantSurfacesData is the customer-facing projection for the per-app
@@ -918,6 +925,10 @@ type CronRunRow struct {
 type AppDetailData struct {
 	App      AppListItem
 	Manifest ManifestView
+	// GitHubConnection is the account-scoped GitHub App binding for this
+	// app. A nil value means the status read failed; the dashboard keeps
+	// the rest of the app page usable and renders a degraded notice.
+	GitHubConnection *GitHubConnectionView
 	// EffectiveLimits is the customer-visible resource and request
 	// envelope derived from the app plus its current plan.
 	EffectiveLimits     api.AppEffectiveLimits
@@ -1007,6 +1018,26 @@ type AppDetailData struct {
 	// render with an "upgrade to <plan>" hint so a Hobby customer
 	// sees what api_down would do without a clickable Enable.
 	Presets []AlertPresetItem
+}
+
+// GitHubConnectionView is the safe customer-facing projection of a GitHub
+// installation and app binding. It intentionally contains no installation
+// credentials; the CSRF token is only the short-lived form envelope used by
+// the dashboard's sync and disconnect actions.
+type GitHubConnectionView struct {
+	Available                    bool
+	State                        string
+	Health                       string
+	Connected                    bool
+	GitHubLogin                  string
+	RepoFullName                 string
+	ProductionBranch             string
+	LastReconciledAt             string
+	LastReconcileError           string
+	LastReconcileRepositoryCount int
+	LastReconcileDetachedCount   int
+	CSRFToken                    string
+	Flash                        string
 }
 
 // WorkflowRunItem is the dashboard projection of one durable workflow run.
@@ -1641,6 +1672,10 @@ type DebugPageData struct {
 	WindowEnd           string
 	WindowClamped       bool
 	Route               string
+	Cursor              string
+	NextCursor          string
+	Complete            bool
+	NextPageURL         string
 	ErrorMessage        string
 	ActionMessage       string
 	ActionError         bool
@@ -1654,6 +1689,32 @@ type DebugPageData struct {
 	ReplayPoll          int
 	ReplayPollActive    bool
 	ReplayPollExhausted bool
+	Coverage            *DebugCoverageView
+}
+
+// DebugCoverageView is the template-safe projection of observed debugger
+// signal coverage. It reports retained evidence availability, not an
+// inferred percentage of all gateway requests.
+type DebugCoverageView struct {
+	Since               string
+	WindowStart         string
+	WindowEnd           string
+	PlanRetentionDays   int
+	TelemetryRows       int64
+	RepresentedRequests int64
+	ErrorRequests       int64
+	TraceLinked         DebugCoverageSignalView
+	SpanEvidence        DebugCoverageSignalView
+	WakeEvidence        DebugCoverageSignalView
+	GuestEvidence       DebugCoverageSignalView
+	OldestTelemetryAt   string
+	LatestTelemetryAt   string
+}
+
+type DebugCoverageSignalView struct {
+	Rows     int64
+	Requests int64
+	RatePct  float64
 }
 
 // DebugDeploymentView is a bounded deployment option for the dashboard
@@ -1908,8 +1969,8 @@ type UsageData struct {
 	UsedPct         float64 // 0..100+
 	Requests        int64
 	// UsedEgressGB (ADR-046, step 10) is the per-month
-	// informational egress roll-up (Σ tx_bytes +
-	// net_tx_bytes across all apps). Not billed; the
+	// informational egress roll-up (Σ net_tx_bytes across all apps).
+	// tx_bytes is a diagnostic subset and is not added. Not billed; the
 	// template renders it next to the GB-h panel as a
 	// "this much egress" line. The gateway-side tx_bytes
 	// producer lands in PR-2; until then the value is

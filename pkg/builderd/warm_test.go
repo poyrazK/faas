@@ -1,10 +1,38 @@
 package builderd
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 )
+
+type warmBuilderTestVM struct {
+	deleted []WarmSnapshot
+}
+
+func (v *warmBuilderTestVM) Spawn(context.Context, VMRequest) (BuildHandle, error) {
+	return BuildHandle{}, errors.New("unused")
+}
+
+func (v *warmBuilderTestVM) WaitForCompletion(context.Context, BuildHandle) (BuildOutcome, error) {
+	return BuildOutcome{}, errors.New("unused")
+}
+
+func (v *warmBuilderTestVM) Cancel(context.Context, string) error { return nil }
+func (v *warmBuilderTestVM) FirecrackerVersion(context.Context) (string, error) {
+	return "firecracker-1.8.0", nil
+}
+func (v *warmBuilderTestVM) RestoreWarmBuilder(context.Context, VMRequest, WarmSnapshot) (BuildHandle, error) {
+	return BuildHandle{}, errors.New("unused")
+}
+func (v *warmBuilderTestVM) WaitForWarmCompletion(context.Context, BuildHandle) (BuildOutcome, WarmSnapshot, error) {
+	return BuildOutcome{}, WarmSnapshot{}, errors.New("unused")
+}
+func (v *warmBuilderTestVM) DeleteWarmSnapshot(_ context.Context, snapshot WarmSnapshot) error {
+	v.deleted = append(v.deleted, snapshot)
+	return nil
+}
 
 func testWarmSnapshot() WarmSnapshot {
 	return WarmSnapshot{
@@ -19,6 +47,45 @@ func testStorageWarmSnapshot() WarmSnapshot {
 	snapshot := testWarmSnapshot()
 	snapshot.VMStatePath = ""
 	return snapshot
+}
+
+func TestBuilderWarmScopeKeyIsAppAndRuntimeScoped(t *testing.T) {
+	base := builderWarmScopeKey("acct", "app", FrameworkNode, "node-base")
+	if base == "" {
+		t.Fatal("builderWarmScopeKey returned empty key")
+	}
+	for name, other := range map[string]string{
+		"account": builderWarmScopeKey("other", "app", FrameworkNode, "node-base"),
+		"app":     builderWarmScopeKey("acct", "other", FrameworkNode, "node-base"),
+		"runtime": builderWarmScopeKey("acct", "app", FrameworkPython, "node-base"),
+		"base":    builderWarmScopeKey("acct", "app", FrameworkNode, "other-base"),
+	} {
+		if other == base {
+			t.Fatalf("scope key for %s matched the base scope", name)
+		}
+	}
+}
+
+func TestPrepareWarmBuilderDiscardsForeignScope(t *testing.T) {
+	vm := &warmBuilderTestVM{}
+	b := New(nil, nil, vm, nil, nil, nil, Config{}, nil)
+	now := time.Unix(100, 0)
+	if _, err := b.warm.Start(now, "firecracker-1.8.0"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := testStorageWarmSnapshot()
+	snapshot.ScopeKey = "foreign-scope"
+	if err := b.warm.Complete(now, snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	gotVM, result, gotSnapshot, started := b.prepareWarmBuilder(context.Background(), SlotDecision{Label: "guaranteed"}, VMRequest{WarmScopeKey: "current-scope"})
+	if gotVM != vm || result != WarmRestoreMiss || gotSnapshot != (WarmSnapshot{}) || !started {
+		t.Fatalf("prepareWarmBuilder = (%v, %q, %+v, %v), want warm miss with empty snapshot", gotVM, result, gotSnapshot, started)
+	}
+	if len(vm.deleted) != 1 || vm.deleted[0].ScopeKey != "foreign-scope" {
+		t.Fatalf("deleted snapshots = %+v, want the foreign scope", vm.deleted)
+	}
 }
 
 func TestWarmLifecycleColdStartIsMiss(t *testing.T) {

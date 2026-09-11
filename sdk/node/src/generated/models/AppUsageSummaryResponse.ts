@@ -40,9 +40,13 @@ export type AppUsageSummaryResponse = {
    */
   requests: number;
   /**
-   * Cumulative HTTP response body bytes (ADR-046; informational; not billed).
+   * Cumulative HTTP response body bytes (ADR-046; diagnostic subset of net_tx_bytes; never add both).
    */
   tx_bytes: number;
+  /**
+   * Canonical cumulative host-interface egress bytes for the window (ADR-046; includes framing).
+   */
+  net_tx_bytes: number;
   /**
    * Cumulative builder-microVM CPU-seconds (informational; surfaced as a sidebar line on the dashboard).
    */

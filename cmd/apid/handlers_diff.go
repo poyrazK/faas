@@ -290,6 +290,7 @@ func diffPendingFromRequest(req *api.DiffRequest) deploydiff.Pending {
 			WarmSnapshotEnabled: req.AppConfig.WarmSnapshotEnabled,
 			RequireAuthn:        req.AppConfig.RequireAuthn,
 			EvictionPriority:    req.AppConfig.EvictionPriority,
+			AppProtocol:         req.AppConfig.AppProtocol,
 		}
 	}
 	p.Manifest = req.Manifest

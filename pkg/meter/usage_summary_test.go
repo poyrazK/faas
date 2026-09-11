@@ -1,5 +1,7 @@
 package meter
 
+// adr: 046
+
 // usage_summary_test.go — pkg/meter/BuildAppWindowSummary unit tests.
 //
 // The handler-level tests live in cmd/apid/handlers_usage_test.go
@@ -64,9 +66,9 @@ func TestBuildAppWindowSummary_StoreError(t *testing.T) {
 func TestBuildAppWindowSummary_FiltersToOneApp(t *testing.T) {
 	now := time.Now().UTC()
 	rows := []state.Usage{
-		{AppID: "app-1", MBSeconds: 1024, Requests: 100, TXBytes: 2048, CPUUsec: 1_000_000, ColdBootCount: 1},
-		{AppID: "app-2", MBSeconds: 999999, Requests: 99999, TXBytes: 99999, CPUUsec: 9_999_999, ColdBootCount: 9},
-		{AppID: "app-1", MBSeconds: 2048, Requests: 200, TXBytes: 4096, CPUUsec: 2_000_000, ColdBootCount: 2},
+		{AppID: "app-1", MBSeconds: 1024, Requests: 100, TXBytes: 2048, NetTxBytes: 8192, CPUUsec: 1_000_000, ColdBootCount: 1},
+		{AppID: "app-2", MBSeconds: 999999, Requests: 99999, TXBytes: 99999, NetTxBytes: 99999, CPUUsec: 9_999_999, ColdBootCount: 9},
+		{AppID: "app-1", MBSeconds: 2048, Requests: 200, TXBytes: 4096, NetTxBytes: 16384, CPUUsec: 2_000_000, ColdBootCount: 2},
 	}
 	store := stubStore{rows: rows}
 
@@ -84,6 +86,9 @@ func TestBuildAppWindowSummary_FiltersToOneApp(t *testing.T) {
 	}
 	if sum.TxBytes != 6144 {
 		t.Errorf("TxBytes = %d, want 6144", sum.TxBytes)
+	}
+	if sum.NetTxBytes != 24576 {
+		t.Errorf("NetTxBytes = %d, want 24576", sum.NetTxBytes)
 	}
 	if sum.ColdBootCount != 3 {
 		t.Errorf("ColdBootCount = %d, want 3", sum.ColdBootCount)

@@ -51,8 +51,8 @@ daemons:
         cert_path: /etc/faas/tls/schedd/vmmd-client.crt
         key_path: /etc/faas/tls/schedd/vmmd-client.key
         ca_path: /etc/faas/tls/ca/ca.crt
-    # schedd reaches the local control-plane edge; the edge selects an
-    # active compute gateway from compute_nodes.
+    # The control-plane schedd reaches the local edge; compute schedds use
+    # their node-local gatewayd-internal socket after host rendering.
     gateway_synth_target: tcp://127.0.0.1:8080
   vmmd:
     bind: tcp://0.0.0.0:50051

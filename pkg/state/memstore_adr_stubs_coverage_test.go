@@ -142,8 +142,8 @@ func TestMemStore_DataUpstreamsStubsCovered(t *testing.T) {
 }
 
 // TestMemStore_RequestTelemetryStubsCovered (ADR-127) — exercises
-// every MemStore stub on memstore_request_telemetry.go. All four
-// methods must return errMemStoreRequestTelemetry.
+// every MemStore stub on memstore_request_telemetry.go. Each method
+// must return errMemStoreRequestTelemetry.
 func TestMemStore_RequestTelemetryStubsCovered(t *testing.T) {
 	m := &MemStore{}
 	ctx := context.Background()
@@ -156,6 +156,11 @@ func TestMemStore_RequestTelemetryStubsCovered(t *testing.T) {
 	// ListRequestTelemetryByApp.
 	if _, err := m.ListRequestTelemetryByApp(ctx, sqlc.ListRequestTelemetryByAppParams{}); !errors.Is(err, errMemStoreRequestTelemetry) {
 		t.Errorf("ListRequestTelemetryByApp: errors.Is(err, errMemStoreRequestTelemetry) = false; err = %v", err)
+	}
+
+	// RequestTelemetryCoverage.
+	if _, err := m.RequestTelemetryCoverage(ctx, sqlc.RequestTelemetryCoverageParams{}); !errors.Is(err, errMemStoreRequestTelemetry) {
+		t.Errorf("RequestTelemetryCoverage: errors.Is(err, errMemStoreRequestTelemetry) = false; err = %v", err)
 	}
 
 	// RequestTelemetryByDeployment.

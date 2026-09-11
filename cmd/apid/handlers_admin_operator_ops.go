@@ -342,6 +342,10 @@ func (s *server) postObsNodeActivate(w http.ResponseWriter, r *http.Request, acc
 	s.postObsNodeMutation(w, r, acct, "activate", false)
 }
 
+func (s *server) postObsNodeRetire(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.postObsNodeMutation(w, r, acct, "retire", false)
+}
+
 func (s *server) postObsNodeMutation(w http.ResponseWriter, r *http.Request, acct state.Account, action string, forced bool) {
 	s.enqueueObsNodeMutation(w, r, acct, action, forced)
 }

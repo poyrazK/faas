@@ -5169,6 +5169,14 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	if !d.CreatedAt.IsZero() {
 		createdAt = d.CreatedAt
 	}
+	stageStartedAt := d.CreatedAt
+	if stageStartedAt.IsZero() {
+		stageStartedAt = time.Now().UTC()
+	}
+	stageState, err := deploymentStageStateForCreate(d.StageState, stageStartedAt)
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
+	}
 	row := tx.QueryRow(ctx,
 		`insert into deployments (id, app_id, image_digest, kind, source_path, source_root, source_bytes, source_sha256, handler, log_path, source_url, commit_sha,
 		                          override_entrypoint, override_cmd, override_env, override_env_secrets, override_port, override_healthcheck,
@@ -5184,11 +5192,12 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          reason, tag, deployed_by, pr_number, workflows,
 		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
 		                          traffic_percent_explicit, created_at,
-		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages)
+		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
+		                          stage_state)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44)
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -5229,7 +5238,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
 		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt,
-		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages))
+		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -5363,7 +5372,7 @@ func (s *PgStore) ListCanaryInFlight(ctx context.Context) ([]Deployment, error) 
 		 where status = 'live'
 		   and canary_total_steps > 0
 		   and canary_step < canary_total_steps
-		   and rollout_state in ('pending','rolling_out')
+		   and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
 		 order by created_at asc`)
 	if err != nil {
 		return nil, fmt.Errorf("state: list canary in-flight: %w", err)
@@ -5391,9 +5400,9 @@ func (s *PgStore) SafedeployListPendingRollouts(ctx context.Context) ([]Deployme
 	rows, err := s.pool.Query(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
 		 from deployments
-		 where rollout_state in ('pending','rolling_out')
-		   and status = 'live'
-		   and not (canary_total_steps = 0 and rollout_state = 'rolling_out')
+			where coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
+			  and status = 'live'
+			  and not (canary_total_steps = 0 and coalesce(nullif(rollout_state, ''), 'pending') = 'rolling_out')
 		 order by rollout_started_at asc nulls first, created_at asc`)
 	if err != nil {
 		return nil, fmt.Errorf("state: safedeploy list pending rollouts: %w", err)
@@ -5422,6 +5431,7 @@ func (s *PgStore) SafedeployListPendingRollouts(ctx context.Context) ([]Deployme
 // whether to emit additional audit fields (e.g. the rollout's
 // terminal canary step when transitioning to 'complete').
 func (s *PgStore) SafedeployStampRollout(ctx context.Context, id string, rolloutState string, startedAt, completedAt, abortedAt *time.Time, abortedReason string) (Deployment, error) {
+	rolloutState = NormalizeRolloutState(rolloutState)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: safedeploy stamp begin: %w", err)
@@ -6388,7 +6398,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 		   from deployments
 		  where app_id = $1
 		    and status = 'live'
-		    and rollout_state in ('pending','rolling_out')
+			and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
 		  order by created_at desc
 		  limit 1
 		  for update`, appID)
@@ -6398,6 +6408,9 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 			return Deployment{}, 0, ErrNotFound
 		}
 		return Deployment{}, 0, fmt.Errorf("state: recover_rollout load: %w", scanErr)
+	}
+	if dep.CanaryTotalSteps <= 0 && !IsServiceRollout(dep) {
+		return dep, 0, ErrRolloutStateInvalid
 	}
 
 	now := time.Now().UTC()
@@ -6421,7 +6434,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 			return Deployment{}, 0, ErrRolloutNotStuck
 		}
 		if dep.CanaryTotalSteps <= 0 || dep.CanaryStep >= dep.CanaryTotalSteps {
-			return Deployment{}, 0, ErrRolloutStateInvalid
+			return dep, 0, ErrRolloutStateInvalid
 		}
 
 		newStep := dep.CanaryStep + 1
@@ -6495,7 +6508,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 
 	case "promote":
 		if dep.CanaryTotalSteps <= 0 || dep.CanaryStep >= dep.CanaryTotalSteps {
-			return Deployment{}, 0, ErrRolloutStateInvalid
+			return dep, 0, ErrRolloutStateInvalid
 		}
 
 		// Short-circuit: step = total, traffic_percent = 100,
@@ -6699,7 +6712,19 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	}
 	if dep.Status == DeployLive || (dep.CanaryTotalSteps <= 0 && IsServiceRollout(dep)) {
 		if _, err := tx.Exec(ctx,
-			`update deployments set status = $2, error = '' where id = $1`, id, string(DeployLive)); err != nil {
+			`update deployments set
+				status = $2,
+				error = '',
+				rollout_state = case
+					when canary_total_steps = 0 and coalesce(nullif(rollout_state, ''), 'pending') <> 'rolling_out' then 'complete'
+					else rollout_state
+				end,
+				rollout_completed_at = case
+					when canary_total_steps = 0 and coalesce(nullif(rollout_state, ''), 'pending') <> 'rolling_out'
+						then coalesce(rollout_completed_at, now())
+					else rollout_completed_at
+				end
+			 where id = $1`, id, string(DeployLive)); err != nil {
 			return fmt.Errorf("state: mark deployment live update: %w", err)
 		}
 		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
@@ -6791,7 +6816,13 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 			return fmt.Errorf("state: mark stable live supersede siblings: %w", err)
 		}
 		if _, err := tx.Exec(ctx,
-			`update deployments set status = 'live', error = '', traffic_percent = 100 where id = $1`, id); err != nil {
+			`update deployments set
+				status = 'live',
+				error = '',
+				traffic_percent = 100,
+				rollout_state = 'complete',
+				rollout_completed_at = coalesce(rollout_completed_at, now())
+			 where id = $1`, id); err != nil {
 			return fmt.Errorf("state: mark stable deployment live: %w", err)
 		}
 		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
@@ -7426,6 +7457,7 @@ func (s *PgStore) AppendDeploymentStage(ctx context.Context, id string, from, to
 	if from == to {
 		return Deployment{}, fmt.Errorf("AppendDeploymentStage: from==to is reserved for MarkDeploymentStageFailed (deployment=%s, stage=%s)", id, from)
 	}
+	ensureDeploymentStageStarted(&state, existing.CreatedAt, at)
 	// Normal transition: close the active row, advance.
 	var durMs int64
 	if state.CurrentStartedAt != nil {
@@ -7434,8 +7466,8 @@ func (s *PgStore) AppendDeploymentStage(ctx context.Context, id string, from, to
 			durMs = 0
 		}
 	}
-	startedAt := at
-	endedAt := at
+	startedAt := stageTimestamp(at)
+	endedAt := startedAt
 	state.History = append(state.History, StageStateItem{
 		Name:       from,
 		StartedAt:  ptrTime(derefTime(state.CurrentStartedAt)),
@@ -7509,7 +7541,8 @@ func ptrTime(t time.Time) *time.Time {
 // when state.Current is the zero value (no stage ever started).
 func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at time.Time, reason string) (Deployment, error) {
 	var raw []byte
-	err := s.pool.QueryRow(ctx, `select stage_state from deployments where id = $1`, id).Scan(&raw)
+	var createdAt time.Time
+	err := s.pool.QueryRow(ctx, `select stage_state, created_at from deployments where id = $1`, id).Scan(&raw, &createdAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, ErrNotFound
@@ -7523,6 +7556,7 @@ func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at t
 	if state.Current == "" {
 		return Deployment{}, ErrNotFound
 	}
+	ensureDeploymentStageStarted(&state, createdAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -7530,7 +7564,7 @@ func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at t
 			durMs = 0
 		}
 	}
-	endedAt := at
+	endedAt := stageTimestamp(at)
 	// The active stage is moved into history as a "failed" entry so
 	// the wire shape is consistent: every stage that ever ran is in
 	// history; the customer's ticker walks history in order. The
@@ -7569,7 +7603,8 @@ func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at t
 // `duration_ms` for the readiness stage on a successful deploy.
 func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name StageName, at time.Time) (Deployment, error) {
 	var raw []byte
-	err := s.pool.QueryRow(ctx, `select stage_state from deployments where id = $1`, id).Scan(&raw)
+	var createdAt time.Time
+	err := s.pool.QueryRow(ctx, `select stage_state, created_at from deployments where id = $1`, id).Scan(&raw, &createdAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, ErrNotFound
@@ -7591,6 +7626,7 @@ func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name Stag
 		// stamp.
 		return Deployment{}, ErrNotFound
 	}
+	ensureDeploymentStageStarted(&state, createdAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -7598,7 +7634,7 @@ func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name Stag
 			durMs = 0
 		}
 	}
-	endedAt := at
+	endedAt := stageTimestamp(at)
 	state.History = append(state.History, StageStateItem{
 		Name:       state.Current,
 		StartedAt:  ptrTime(derefTime(state.CurrentStartedAt)),
@@ -7649,7 +7685,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	// Step 3 — rebuild the immutable intent while resetting mutable execution
 	// state. The helper is shared with MemStore so canary/service-rollout and
 	// annotation semantics cannot drift between production and tests.
-	newDep, err := retryDeploymentInput(src, time.Now())
+	retryStartedAt := time.Now().UTC()
+	newDep, err := retryDeploymentInput(src, retryStartedAt)
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -7659,7 +7696,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	// supersedes the prior live row (a retry is independent of
 	// the prior row's status — it doesn't replace it). The seed
 	// jsonb is marshalled here so the SQL is a single INSERT.
-	stageSeed, err := json.Marshal(RetryStageState(fromStage))
+	stageSeed, err := json.Marshal(RetryStageStateAt(fromStage, retryStartedAt))
 	if err != nil {
 		return Deployment{}, fmt.Errorf("RetryDeploymentFromStage: encode stage_state seed: %w", err)
 	}
@@ -14015,18 +14052,23 @@ func (s *PgStore) OperatorCapacity(ctx context.Context) (OperatorCapacitySnapsho
 // the (now STORED GENERATED) `active` column directly; PG rejects
 // `UPDATE compute_nodes SET active = $X` with SQLSTATE 428C9 because
 // generated columns are derived from `lifecycle`. Idempotent at the
-// PG level: the UPDATE matches regardless of current lifecycle, so
-// re-flipping an unavailable row is a no-op. We preserve the row
-// rather than DELETE so an operator can re-enable it without
-// re-provisioning the target_url / cert.
+// PG level for every non-retired lifecycle; retired rows return ErrConflict.
+// We preserve the row rather than DELETE so recoverable nodes can be enabled
+// without re-provisioning the target_url / cert.
 func (s *PgStore) MarkComputeNodeInactive(ctx context.Context, nodeID string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update compute_nodes set lifecycle = 'unavailable'::compute_node_lifecycle where id = $1`, nodeID)
+	tag, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set lifecycle = 'unavailable'::compute_node_lifecycle
+		 where id = $1 and lifecycle <> 'retired'
+	`, nodeID)
 	if err != nil {
 		return fmt.Errorf("state: mark compute_node %s unavailable: %w", nodeID, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		if _, getErr := s.NodeGet(ctx, nodeID); getErr != nil {
+			return getErr
+		}
+		return ErrConflict
 	}
 	return nil
 }
@@ -14126,7 +14168,10 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		      max_concurrency     = excluded.max_concurrency,
 		      admission_ceiling_mb = excluded.admission_ceiling_mb,
 		      vcpu_budget         = excluded.vcpu_budget,
-		      lifecycle           = 'active'::compute_node_lifecycle,
+		      lifecycle           = case
+		                                when compute_nodes.lifecycle = 'retired' then compute_nodes.lifecycle
+		                                else 'active'::compute_node_lifecycle
+		                            end,
 		      region              = excluded.region,
 		      zone                = excluded.zone,
 		      schedd_target_url   = excluded.schedd_target_url,
@@ -14214,6 +14259,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		      cert_fingerprint    = excluded.cert_fingerprint,
 		      role                = excluded.role,
 		      generation          = coalesce(compute_nodes.generation, excluded.generation)
+		where compute_nodes.lifecycle <> 'retired'
 		returning id, name, target_url, vpcpus, mem_mb, max_concurrency,
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
@@ -14227,6 +14273,9 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
 		node.Role, node.Generation)
 	n, err := scanComputeNode(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ComputeNode{}, ErrConflict
+	}
 	if err != nil {
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node (operator) %q: %w", node.Name, err)
 	}
@@ -14431,13 +14480,20 @@ func (s *PgStore) SetComputeNodeActive(ctx context.Context, id string, active bo
 	if active {
 		target = NodeLifecycleActive
 	}
-	tag, err := s.pool.Exec(ctx,
-		`update compute_nodes set lifecycle = $2::compute_node_lifecycle where id = $1`, id, string(target))
+	tag, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set lifecycle = $2::compute_node_lifecycle
+		 where id = $1
+		   and lifecycle <> 'retired'
+	`, id, string(target))
 	if err != nil {
 		return fmt.Errorf("state: set lifecycle compute_node %s = %v: %w", id, target, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		if _, getErr := s.NodeGet(ctx, id); getErr != nil {
+			return getErr
+		}
+		return ErrConflict
 	}
 	return nil
 }
@@ -14919,25 +14975,24 @@ func (s *PgStore) DeploymentSnapshotBackoffActive(ctx context.Context, deploymen
 	return d, row.SnapshotMissBackoffUntil.Time.After(time.Now().UTC()), nil
 }
 
-// DeleteComputeNode hard-deletes a compute_nodes row by id (issue #98 /
-// ADR-028). apid's DELETE /v1/compute-nodes/{name}?hard=1 is the only
-// caller; soft-delete via SetComputeNodeActive(false) is the routine
-// operator path. Returns ErrNotFound when the id is unknown so the
-// caller can surface a 404.
-//
-// Note: callers should NOT delete the synthetic default-local row
-// (state.DefaultLocalNodeName) — every legacy instance row from
-// migration 00024's backfill references it via FK. The handler in
-// cmd/apid/compute_nodes.go rejects the request before reaching this
-// method; we leave the safety check at the seam so the state layer
-// stays a thin SQL wrapper.
+// DeleteComputeNode hard-deletes an unused compute_nodes row by id. The
+// negative app/instance predicates make the safety invariant atomic with the
+// delete rather than trusting only the handler's earlier preflight.
 func (s *PgStore) DeleteComputeNode(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `delete from compute_nodes where id = $1`, id)
+	tag, err := s.pool.Exec(ctx, `
+		delete from compute_nodes n
+		 where n.id = $1
+		   and not exists (select 1 from apps a where a.node_id = n.id)
+		   and not exists (select 1 from instances i where i.node_id = n.id)
+	`, id)
 	if err != nil {
 		return fmt.Errorf("state: delete compute_node %s: %w", id, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		if _, getErr := s.NodeGet(ctx, id); getErr != nil {
+			return getErr
+		}
+		return ErrConflict
 	}
 	return nil
 }
@@ -15513,6 +15568,98 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 		       tail_seconds    = usage_minutes.tail_seconds    + EXCLUDED.tail_seconds`,
 		accountID, appID, instanceID, minute, mbSeconds, requests, cpuUsec, txBytes, netTxBytes, netRxBytes, coldBootCount, tailSeconds)
 	return err
+}
+
+// AppendNetworkUsageObservation converts vmmd's cumulative host-interface
+// counters to additive usage deltas. The checkpoint row is locked and advanced
+// in the same transaction as usage_minutes, which makes retry after a meterd
+// crash exactly-once for every observed cumulative value.
+func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, accountID, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
+	if netTxCumulative < 0 || netRxCumulative < 0 {
+		return 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = tx.Exec(ctx,
+		`insert into meter_network_checkpoints (instance_id, net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid, observed_at)
+		 values ($1, 0, 0, false, false, $2)
+		 on conflict (instance_id) do nothing`, instanceID, minute.UTC())
+	if err != nil {
+		return 0, 0, err
+	}
+	var previousTx, previousRx int64
+	var previousTxValid, previousRxValid bool
+	err = tx.QueryRow(ctx,
+		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid
+		   from meter_network_checkpoints
+		  where instance_id = $1
+		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// vmmd's cumulative cache already excludes the raw kernel baseline. A
+	// missing durable checkpoint therefore means the whole reported value is
+	// new usage. Counter regression means vmmd or the interface restarted: move
+	// the baseline back without turning unsigned wraparound into a huge charge.
+	netTxDelta, netRxDelta := int64(0), int64(0)
+	nextTx, nextRx := previousTx, previousRx
+	nextTxValid, nextRxValid := previousTxValid, previousRxValid
+	if netTxValid {
+		if !previousTxValid {
+			netTxDelta = netTxCumulative
+		} else if netTxCumulative >= previousTx {
+			netTxDelta = netTxCumulative - previousTx
+		}
+		nextTx = netTxCumulative
+		nextTxValid = true
+	}
+	if netRxValid {
+		if !previousRxValid {
+			netRxDelta = netRxCumulative
+		} else if netRxCumulative >= previousRx {
+			netRxDelta = netRxCumulative - previousRx
+		}
+		nextRx = netRxCumulative
+		nextRxValid = true
+	}
+
+	command, err := tx.Exec(ctx,
+		`update usage_minutes
+		    set net_tx_bytes = net_tx_bytes + $1,
+		        net_rx_bytes = net_rx_bytes + $2
+		  where instance_id = $3 and minute = $4
+		    and account_id = $5 and app_id = $6`,
+		netTxDelta, netRxDelta, instanceID, minute.UTC().Truncate(time.Minute), accountID, appID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if command.RowsAffected() != 1 {
+		return 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, minute.UTC().Truncate(time.Minute).Format(time.RFC3339))
+	}
+
+	_, err = tx.Exec(ctx,
+		`insert into meter_network_checkpoints (instance_id, net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid, observed_at, updated_at)
+		 values ($1, $2, $3, $4, $5, $6, now())
+		 on conflict (instance_id) do update
+		   set net_tx_bytes = excluded.net_tx_bytes,
+		       net_rx_bytes = excluded.net_rx_bytes,
+		       net_tx_valid = excluded.net_tx_valid,
+		       net_rx_valid = excluded.net_rx_valid,
+		       observed_at = excluded.observed_at,
+		       updated_at = now()`,
+		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC())
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, err
+	}
+	return netTxDelta, netRxDelta, nil
 }
 
 // InstanceBillingSeconds returns each instance's actual resident seconds in
@@ -16734,6 +16881,81 @@ func (s *PgStore) RecordBillingUsageDelivery(ctx context.Context, provider, acco
 		 values ($1, $2, $3, $4)
 		 on conflict (provider, account_id, window_start) do nothing`,
 		provider, accountID, windowStart.UTC().Truncate(time.Hour), mbSeconds)
+	return err
+}
+
+func (s *PgStore) PendingBillingMeterUsageWindows(ctx context.Context, provider string, meter BillingMeter, start, end time.Time) ([]BillingMeterWindow, error) {
+	if meter == BillingMeterCompute {
+		windows, err := s.PendingBillingUsageWindows(ctx, provider, start, end)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]BillingMeterWindow, 0, len(windows))
+		for _, window := range windows {
+			out = append(out, BillingMeterWindow{AccountID: window.AccountID, Meter: meter, Hour: window.Hour, Quantity: window.MBSeconds})
+		}
+		return out, nil
+	}
+	if meter != BillingMeterEgress {
+		return nil, fmt.Errorf("unsupported billing meter %q", meter)
+	}
+	rows, err := s.pool.Query(ctx,
+		`with hourly as (
+		   select u.account_id,
+		          date_trunc('hour', u.minute at time zone 'UTC') at time zone 'UTC' as window_start,
+		          sum(u.net_tx_bytes)::bigint as quantity
+		     from usage_minutes u
+		     join billing_identities bi
+		       on bi.account_id = u.account_id and bi.provider = $1
+		    where u.minute >= $2 and u.minute < $3
+		      and u.minute >= bi.billing_from
+		    group by u.account_id, window_start
+		   having sum(u.net_tx_bytes) > 0
+			 ), pending as (
+			   select h.*,
+			          row_number() over (partition by h.account_id order by h.window_start) as account_rank
+			     from hourly h
+			     left join billing_meter_usage_deliveries d
+			       on d.provider = $1 and d.account_id = h.account_id
+			      and d.meter = $4
+			      and d.window_start = h.window_start
+			    where d.account_id is null
+			 )
+			 select account_id, window_start, quantity
+			   from pending
+			  order by account_rank, window_start, account_id
+		  limit 10000`, provider, start.UTC(), end.UTC(), string(meter))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]BillingMeterWindow, 0)
+	for rows.Next() {
+		window := BillingMeterWindow{Meter: meter}
+		if err := rows.Scan(&window.AccountID, &window.Hour, &window.Quantity); err != nil {
+			return nil, err
+		}
+		window.Hour = window.Hour.UTC()
+		out = append(out, window)
+	}
+	return out, rows.Err()
+}
+
+func (s *PgStore) RecordBillingMeterUsageDelivery(ctx context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time, quantity int64) error {
+	if meter != BillingMeterCompute && meter != BillingMeterEgress {
+		return fmt.Errorf("unsupported billing meter %q", meter)
+	}
+	if quantity < 0 {
+		return fmt.Errorf("billing usage quantity must be non-negative")
+	}
+	if meter == BillingMeterCompute {
+		return s.RecordBillingUsageDelivery(ctx, provider, accountID, windowStart, quantity)
+	}
+	_, err := s.pool.Exec(ctx,
+		`insert into billing_meter_usage_deliveries (provider, account_id, meter, window_start, quantity)
+		 values ($1, $2, $3, $4, $5)
+		 on conflict (provider, account_id, meter, window_start) do nothing`,
+		provider, accountID, string(meter), windowStart.UTC().Truncate(time.Hour), quantity)
 	return err
 }
 
@@ -18890,7 +19112,7 @@ const deploymentSelectColumnsWithRootfs = `
 	first_wake_at, first_5xx_window_ends_at, first_5xx_count,
 	last_auto_rollback_at, coalesce(last_auto_rollback_reason,''),
 	coalesce(canary_preset, 'none'), canary_step, canary_total_steps,
-	canary_step_started_at, canary_stages, coalesce(rollout_state, 'pending'),
+	canary_step_started_at, canary_stages, coalesce(nullif(rollout_state, ''), 'pending'),
 	rollout_started_at, rollout_completed_at, rollout_aborted_at,
 	coalesce(rollout_aborted_reason, ''),
 	-- ADR-124 deployment queue controls (migration 00391/00491). priority
@@ -18947,7 +19169,7 @@ const deploymentSelectColumnsQualified = `
 	d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count,
 	d.last_auto_rollback_at, coalesce(d.last_auto_rollback_reason,''),
 	coalesce(d.canary_preset, 'none'), d.canary_step, d.canary_total_steps,
-	d.canary_step_started_at, d.canary_stages, coalesce(d.rollout_state, 'pending'),
+	d.canary_step_started_at, d.canary_stages, coalesce(nullif(d.rollout_state, ''), 'pending'),
 	d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at,
 	coalesce(d.rollout_aborted_reason, ''),
 	-- ADR-124 deployment queue controls (migration 00391/00491). See the
@@ -23176,6 +23398,13 @@ func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accoun
 // domain DebugTelemetryRow at the boundary.
 func (s *PgStore) ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error) {
 	return s.appErrorsQueries().ListRequestTelemetryByApp(ctx, s.pool, arg)
+}
+
+// RequestTelemetryCoverage backs the debugger coverage endpoint. The
+// aggregate is weighted by collapsed-row count and remains bounded by the
+// caller's plan retention window.
+func (s *PgStore) RequestTelemetryCoverage(ctx context.Context, arg sqlc.RequestTelemetryCoverageParams) (sqlc.RequestTelemetryCoverageRow, error) {
+	return s.appErrorsQueries().RequestTelemetryCoverage(ctx, s.pool, arg)
 }
 
 // GetRequestTelemetryByAppAndID backs the direct customer debugger

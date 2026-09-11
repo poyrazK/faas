@@ -497,6 +497,54 @@ func TestInternalReverseProxy_UpstreamError_StatusPropagated(t *testing.T) {
 	}
 }
 
+func TestInternalReverseProxy_Encodes504ForCloudflareWorkerSubrequest(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(api.ErrorCodeHeader, api.CodeRequestBudgetExceeded)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusGatewayTimeout)
+		_, _ = w.Write([]byte(`{"code":"request_budget_exceeded","status":504}`))
+	}))
+	defer upstream.Close()
+	p := NewInternalReverseProxy(&stubDialer{server: upstream}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(cloudflareWorkerHeader, cloudflareWorkerZone)
+	rr := httptest.NewRecorder()
+
+	p.ServeHTTP(rr, req)
+
+	if rr.Code != edgeOrigin504TransportStatus {
+		t.Fatalf("status = %d, want transport status %d", rr.Code, edgeOrigin504TransportStatus)
+	}
+	if got := rr.Header().Get(edgeOriginalStatusHeader); got != "504" {
+		t.Fatalf("%s = %q, want 504", edgeOriginalStatusHeader, got)
+	}
+	if got := rr.Header().Get(api.ErrorCodeHeader); got != api.CodeRequestBudgetExceeded {
+		t.Fatalf("%s = %q, want %q", api.ErrorCodeHeader, got, api.CodeRequestBudgetExceeded)
+	}
+	if !strings.Contains(rr.Body.String(), api.CodeRequestBudgetExceeded) {
+		t.Fatalf("body = %q, want canonical budget error", rr.Body.String())
+	}
+}
+
+func TestInternalReverseProxy_DoesNotTrustApplicationEdgeStatusMarker(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(edgeOriginalStatusHeader, "504")
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer upstream.Close()
+	p := NewInternalReverseProxy(&stubDialer{server: upstream}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+	rr := httptest.NewRecorder()
+
+	p.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rr.Code)
+	}
+	if got := rr.Header().Get(edgeOriginalStatusHeader); got != "" {
+		t.Fatalf("untrusted %s leaked as %q", edgeOriginalStatusHeader, got)
+	}
+}
+
 // TestInternalReverseProxy_NilDialer_502 covers the wiring-bug
 // path: a proxy constructed without a dialer returns 502 and logs.
 func TestInternalReverseProxy_NilDialer_502(t *testing.T) {

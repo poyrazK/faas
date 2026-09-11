@@ -453,8 +453,7 @@ func (v *recordingVerifier) calls() []recordingVerifierCall {
 // is the default-local back-compat path that keeps `make bootstrap`
 // against 127.0.0.1 working unchanged.
 //
-// The table also covers one shared-box row (apid + gatewayd-public
-// both keep RoleSingleBox in their allow-list), and the case where
+// The table also covers the M9 shared schedd row, and the case where
 // RoleSingleBox is NOT in the allow-list (a degenerate future shape,
 // not used today; pinned here so a future refactor cannot silently
 // strip single-box back-compat without surfacing it).
@@ -469,7 +468,9 @@ func TestMTLSE2E_RoleGateRefusesWrongBox(t *testing.T) {
 	}{
 		// Control-plane-only daemons (live on fsn-1).
 		{"apid", []role.Role{role.RoleSingleBox, role.RoleControlPlane}, role.RoleComputeOnly, role.RoleControlPlane},
-		{"schedd", []role.Role{role.RoleSingleBox, role.RoleControlPlane}, role.RoleComputeOnly, role.RoleControlPlane},
+		// M9 runs one schedd on each compute node as well as the
+		// control-plane schedd; an unknown role remains rejected.
+		{"schedd", []role.Role{role.RoleSingleBox, role.RoleControlPlane, role.RoleComputeOnly}, role.Role("invalid"), role.RoleComputeOnly},
 
 		// Compute-only daemons (live on fsn-2).
 		{"vmmd", []role.Role{role.RoleSingleBox, role.RoleComputeOnly}, role.RoleControlPlane, role.RoleComputeOnly},

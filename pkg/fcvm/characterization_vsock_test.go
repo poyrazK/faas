@@ -163,25 +163,35 @@ func TestReadCharacterizationEnvelopeRejectsTrailingJSON(t *testing.T) {
 
 func TestNormalizeCharacterizationReportDerivesAuthoritativeClass(t *testing.T) {
 	tests := []struct {
-		name       string
-		report     api.CharacterizationReport
-		wantClass  string
-		wantErr    bool
-		bootReady  bool
-		bootFailed bool
+		name          string
+		executionMode string
+		report        api.CharacterizationReport
+		wantClass     string
+		wantErr       bool
+		bootReady     bool
+		bootFailed    bool
 	}{
 		{name: "bound defaults http", report: api.CharacterizationReport{ObservedClass: "job", ObservedPort: 8080, ExitCode: -1}, wantClass: "http"},
 		{name: "bound graphql refinement", report: api.CharacterizationReport{ObservedClass: "graphql", ObservedPort: 8080, ExitCode: -1}, wantClass: "graphql"},
 		{name: "clean no-bind is job", report: api.CharacterizationReport{ObservedClass: "http", ExitCode: 0}, wantClass: "job", bootReady: true},
 		{name: "running no-bind is worker", report: api.CharacterizationReport{ObservedClass: "grpc", ExitCode: -1}, wantClass: "worker", bootReady: true},
+		{name: "request keeps waiting for server", executionMode: api.ExecutionModeRequest, report: api.CharacterizationReport{ExitCode: -1}, wantClass: "worker"},
+		{name: "service keeps waiting for server", executionMode: api.ExecutionModeService, report: api.CharacterizationReport{ExitCode: 0}, wantClass: "job"},
+		{name: "request server still waits for probe", executionMode: api.ExecutionModeRequest, report: api.CharacterizationReport{ObservedPort: 8080, ExitCode: -1}, wantClass: "http"},
+		{name: "worker accepts running no-bind", executionMode: api.ExecutionModeWorker, report: api.CharacterizationReport{ExitCode: -1}, wantClass: "worker", bootReady: true},
+		{name: "worker rejects clean exit", executionMode: api.ExecutionModeWorker, report: api.CharacterizationReport{ExitCode: 0}, wantClass: "job", bootReady: true, bootFailed: true},
+		{name: "worker rejects bound server", executionMode: api.ExecutionModeWorker, report: api.CharacterizationReport{ObservedPort: 8080, ExitCode: -1}, wantClass: "http", bootReady: true, bootFailed: true},
+		{name: "job accepts running no-bind", executionMode: api.ExecutionModeJob, report: api.CharacterizationReport{ExitCode: -1}, wantClass: "job", bootReady: true},
+		{name: "job rejects bound server", executionMode: api.ExecutionModeJob, report: api.CharacterizationReport{ObservedPort: 8080, ExitCode: -1}, wantClass: "http", bootReady: true, bootFailed: true},
 		{name: "failed no-bind has no class", report: api.CharacterizationReport{ObservedClass: "worker", ExitCode: 17, LogTail: "boom"}, bootReady: true, bootFailed: true},
 		{name: "invalid port", report: api.CharacterizationReport{ObservedPort: 70000, ExitCode: -1}, wantErr: true},
-		{name: "invalid mode", report: api.CharacterizationReport{ObservedPort: 8080, ExitCode: -1, PortNormalizationMode: "magic"}, wantErr: true},
+		{name: "invalid port normalization mode", report: api.CharacterizationReport{ObservedPort: 8080, ExitCode: -1, PortNormalizationMode: "magic"}, wantErr: true},
+		{name: "invalid execution mode", executionMode: "magic", report: api.CharacterizationReport{ExitCode: -1}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			report := tt.report
-			err := normalizeCharacterizationReport(&report)
+			err := normalizeCharacterizationReport(&report, tt.executionMode)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("normalize error = %v, wantErr=%v", err, tt.wantErr)
 			}
@@ -191,11 +201,22 @@ func TestNormalizeCharacterizationReportDerivesAuthoritativeClass(t *testing.T) 
 			if report.ObservedClass != tt.wantClass {
 				t.Fatalf("class = %q, want %q", report.ObservedClass, tt.wantClass)
 			}
-			terminal, bootErr := characterizationBootOutcome(report)
+			terminal, bootErr := characterizationBootOutcome(report, tt.executionMode)
 			if terminal != tt.bootReady || (bootErr != nil) != tt.bootFailed {
 				t.Fatalf("boot outcome = (terminal=%v, err=%v), want (terminal=%v, failed=%v)", terminal, bootErr, tt.bootReady, tt.bootFailed)
 			}
 		})
+	}
+}
+
+func TestCharacterizationReadinessMismatchExplainsNoBindServerMode(t *testing.T) {
+	readinessErr := context.DeadlineExceeded
+	report := api.CharacterizationReport{ObservedClass: "worker", ExitCode: -1}
+	if err := characterizationReadinessMismatch(report, api.ExecutionModeRequest, readinessErr); err == nil {
+		t.Fatal("request-mode no-bind report did not explain readiness failure")
+	}
+	if err := characterizationReadinessMismatch(report, api.ExecutionModeWorker, readinessErr); err != nil {
+		t.Fatalf("worker-mode report returned readiness mismatch: %v", err)
 	}
 }
 

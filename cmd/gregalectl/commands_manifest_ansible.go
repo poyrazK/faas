@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/manifest"
@@ -191,7 +192,11 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if sharedPrivateHosts {
 			privateHosts = nil
 		}
-		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, scheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
+		hostScheddTarget, targetErr := manifestScheddTarget(m, host, scheddTarget)
+		if targetErr != nil {
+			return nil, fmt.Errorf("host %s schedd target: %w", host.Name, targetErr)
+		}
+		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
 		hostVars = append(hostVars, manifestAnsibleFile{
 			Path: filepath.Join(outputDir, "inventory", "host_vars", host.Name+".yml"),
 			Body: []byte(body),
@@ -214,6 +219,37 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 	}
 	files = append(files, hostVars...)
 	return files, nil
+}
+
+// manifestScheddTarget returns the endpoint a host-local daemon should use.
+// The control-plane scheduler keeps its stable role identity; a compute host
+// owns a schedd beside vmmd, so its vmmd and gatewayd clients must dial that
+// host directly. Fleet host addresses describe vmmd (50051), while the schedd
+// bind port comes from the manifest's schedd daemon block.
+func manifestScheddTarget(m *manifest.Manifest, host manifest.Host, controlPlaneTarget string) (string, error) {
+	if host.Role != roleComputeOnly {
+		return controlPlaneTarget, nil
+	}
+	if m.Daemons.Schedd == nil {
+		return "", fmt.Errorf("manifest.daemons.schedd is required for compute-only hosts")
+	}
+	bind := strings.TrimPrefix(m.Daemons.Schedd.Bind, "tcp://")
+	if bind == m.Daemons.Schedd.Bind {
+		return "", fmt.Errorf("schedd bind %q must use tcp:// for compute-only hosts", m.Daemons.Schedd.Bind)
+	}
+	_, portText, err := net.SplitHostPort(bind)
+	if err != nil {
+		return "", fmt.Errorf("schedd bind %q: %w", m.Daemons.Schedd.Bind, err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return "", fmt.Errorf("schedd bind %q has invalid port", m.Daemons.Schedd.Bind)
+	}
+	address, _, err := manifest.ParseHostPort(host.Address)
+	if err != nil {
+		return "", err
+	}
+	return "tcp://" + net.JoinHostPort(address, strconv.Itoa(port)), nil
 }
 
 // appendHostCIDR turns a fleet endpoint into the narrowest firewall source

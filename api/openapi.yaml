@@ -1299,6 +1299,30 @@ paths:
 
   # ─── Account ──────────────────────────────────────────────────────────────
 
+  /v1/capabilities:
+    get:
+      tags: [account]
+      operationId: getCapabilities
+      summary: Return feature maturity and plan availability.
+      description: |
+        Returns the canonical, account-scoped capability registry. `maturity`
+        describes the product lifecycle state; `plans` lists entitled plans
+        and `enabled` resolves that list for the caller. The registry is read-only and
+        is suitable for CLIs, dashboards, and deployment preflight checks.
+      responses:
+        '200':
+          description: Customer-visible capability registry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilitiesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Capability registry unavailable; retry with backoff.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account:
     get:
       tags: [account]
@@ -3872,7 +3896,11 @@ paths:
         The window is clamped to `DebugTelemetryRetentionDays`
         (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
         effective `since` is returned in the response so the
-        dashboard can render a "you widened past the cap" tile.
+        dashboard can render a "you widened past the cap" tile. Results are
+        cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
+        cursor pins the effective window and route, so callers can safely
+        walk pages while new telemetry arrives. `complete` is true only when
+        every retained row in that bounded window is present in the page.
         Returns 200 with `requests: []` when no rows exist in the
         window — never 404. Cross-account slug is 404 (IDOR-safe;
         byte-identical to "no such app").
@@ -3892,6 +3920,11 @@ paths:
           required: false
           schema: { type: [string, 'null'], maxLength: 256 }
           description: "Exact route-template filter."
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 8192 }
+          description: "Opaque next_cursor from a previous response. The cursor must be reused with the same app and route."
       responses:
         '200':
           description: Page of recent request telemetry rows.
@@ -3899,6 +3932,40 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DebugTelemetryListResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/debug/coverage:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppDebugCoverage
+      summary: Observed debugger signal coverage (ADR-127 follow-up).
+      description: |
+        Returns bounded, weighted coverage for the debugger signals
+        attached to retained request telemetry in the requested window.
+        Counts are split between stored aggregate rows and the original
+        requests those rows represent. Rates are relative to represented
+        requests only; the platform does not infer a capture denominator for
+        requests dropped before persistence. Plan-gated by
+        `DebugTelemetryEnabled` and clamped to `DebugTelemetryRetentionDays`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: [string, 'null'] }
+          description: "Lookback duration (e.g. 30m, 24h, 3d). Defaults to 24h and is clamped by plan retention."
+      responses:
+        '200':
+          description: Observed debugger signal coverage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugCoverageResponse'
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
@@ -10593,6 +10660,37 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/log-drains/{id}/analytics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [observability]
+      operationId: getAppLogDrainAnalytics
+      summary: Fetch hourly delivery analytics for a runtime log destination.
+      description: |
+        Returns bounded, customer-safe hourly delivery history. The default
+        window is 24 hours; supported windows are 1h, 24h, 7d, and 30d.
+        Success rate is delivered records divided by delivered, failed, and
+        dropped terminal outcomes. Average latency includes queue wait and
+        endpoint time. The platform retains at least 30 days of samples.
+      parameters:
+        - in: query
+          name: window
+          description: History window. Defaults to 24h.
+          schema: { type: string, enum: [1h, 24h, 7d, 30d], default: 24h }
+      responses:
+        '200':
+          description: Hourly customer-safe log-drain delivery analytics.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppLogDrainAnalyticsResponse' }
+        '400': { $ref: '#/components/responses/AppLogDrainInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLogDrainsNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Event-driven surface (Move 2) ─────────────────────────────────────────
   # Customer-facing surface for the Move 1 invocations backend. The five
   # shapes — async_invoke, queue_send, queue_receive, queue_ack, delayed_task
@@ -14768,6 +14866,34 @@ components:
         private: { type: boolean }
 
     # ─── Account ──────────────────────────────────────────────────────────
+
+    CapabilityStatus:
+      description: Customer-visible capability with the account plan gate resolved.
+      type: object
+      required: [key, name, category, description, maturity, plans, docs_url, acceptance, enabled]
+      properties:
+        key: { type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
+        name: { type: string }
+        category: { type: string }
+        description: { type: string }
+        maturity: { type: string, enum: [internal, preview, beta, ga] }
+        plans:
+          type: array
+          items: { type: string, enum: [free, hobby, pro, scale] }
+        docs_url: { type: string, format: uri-reference }
+        acceptance: { type: string, description: Stable acceptance-test handle for this capability. }
+        enabled: { type: boolean, description: Whether the calling account may use the capability under its current plan. }
+
+    CapabilitiesResponse:
+      description: Account-scoped capability registry and resolved plan entitlements.
+      type: object
+      required: [registry_version, plan, capabilities]
+      properties:
+        registry_version: { type: integer, minimum: 1, description: Version of the embedded product capability catalog. }
+        plan: { type: string, enum: [free, hobby, pro, scale] }
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/CapabilityStatus' }
 
     AccountResponse:
       description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."
@@ -23709,7 +23835,7 @@ components:
         otherwise. The Stripe pusher bills overage at €0.01/GB-h
         (CLAUDE.md integer-cents-only rule).
       type: object
-      required: [slug, period_start, period_end, mb_seconds, gb_hours, requests, tx_bytes, builder_seconds, cold_boot_count, plan_included_gb_hours, overage_gb_hours, source, as_of]
+      required: [slug, period_start, period_end, mb_seconds, gb_hours, requests, tx_bytes, net_tx_bytes, builder_seconds, cold_boot_count, plan_included_gb_hours, overage_gb_hours, source, as_of]
       properties:
         slug:
           type: string
@@ -23736,7 +23862,11 @@ components:
         tx_bytes:
           type: integer
           format: int64
-          description: "Cumulative HTTP response body bytes (ADR-046; informational; not billed)."
+          description: "Cumulative HTTP response body bytes (ADR-046; diagnostic subset of net_tx_bytes; never add both)."
+        net_tx_bytes:
+          type: integer
+          format: int64
+          description: "Canonical cumulative host-interface egress bytes for the window (ADR-046; includes framing)."
         builder_seconds:
           type: number
           description: "Cumulative builder-microVM CPU-seconds (informational; surfaced as a sidebar line on the dashboard)."
@@ -24100,7 +24230,7 @@ components:
           x-issue: "279"
         used_egress_gb:
           type: number
-          description: 'Per-month egress GB (informational; not billed). Σ tx_bytes + net_tx_bytes across all apps, converted to GB. ADR-046.'
+          description: 'Per-month canonical interface egress GB (informational; not billed). Σ net_tx_bytes across all apps; tx_bytes is a diagnostic subset and is not added. ADR-046.'
           x-since: "2026-08"
           x-issue: "415"
         used_ingress_gb:
@@ -25530,6 +25660,51 @@ components:
         last_error: { type: string, description: Sanitized delivery summary; never raw transport output. }
         updated_at: { type: string, format: date-time }
 
+    AppLogDrainAnalyticsResponse:
+      type: object
+      description: Bounded hourly, customer-safe delivery analytics for one runtime log destination.
+      required: [log_drain_id, window, bucket_interval, from, to, buckets, summary]
+      properties:
+        log_drain_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        window: { type: string, enum: [1h, 24h, 7d, 30d] }
+        bucket_interval: { type: string, enum: [1h] }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        buckets:
+          type: array
+          maxItems: 720
+          items: { $ref: '#/components/schemas/AppLogDrainAnalyticsBucket' }
+        summary: { $ref: '#/components/schemas/AppLogDrainAnalyticsSummary' }
+
+    AppLogDrainAnalyticsBucket:
+      type: object
+      description: One hourly customer-safe delivery analytics bucket.
+      required: [start, delivered, failed, dropped, retries, dead_letters, pending_records, pending_bytes, success_rate, average_latency_ms]
+      properties:
+        start: { type: string, format: date-time }
+        delivered: { type: integer, format: int64, minimum: 0 }
+        failed: { type: integer, format: int64, minimum: 0 }
+        dropped: { type: integer, format: int64, minimum: 0 }
+        retries: { type: integer, format: int64, minimum: 0 }
+        dead_letters: { type: integer, format: int64, minimum: 0 }
+        pending_records: { type: integer, minimum: 0 }
+        pending_bytes: { type: integer, format: int64, minimum: 0 }
+        success_rate: { type: number, format: double, minimum: 0, maximum: 1 }
+        average_latency_ms: { type: number, format: double, minimum: 0 }
+
+    AppLogDrainAnalyticsSummary:
+      type: object
+      description: Aggregate customer-safe delivery analytics over the requested window.
+      required: [delivered, failed, dropped, retries, dead_letters, success_rate, average_latency_ms]
+      properties:
+        delivered: { type: integer, format: int64, minimum: 0 }
+        failed: { type: integer, format: int64, minimum: 0 }
+        dropped: { type: integer, format: int64, minimum: 0 }
+        retries: { type: integer, format: int64, minimum: 0 }
+        dead_letters: { type: integer, format: int64, minimum: 0 }
+        success_rate: { type: number, format: double, minimum: 0, maximum: 1 }
+        average_latency_ms: { type: number, format: double, minimum: 0 }
+
     CreateAppLogDrainRequest:
       type: object
       description: Create a provider-neutral runtime log destination.
@@ -25686,6 +25861,38 @@ components:
       properties:
         delivery: { $ref: '#/components/schemas/AppWebhookDeliveryResponse' }
 
+    DebugCoverageSignal:
+      type: object
+      description: "Observed coverage for one debugger signal. Requests are weighted by collapsed-row count."
+      required: [rows, requests, rate_pct]
+      properties:
+        rows: { type: integer, format: int64, minimum: 0 }
+        requests: { type: integer, format: int64, minimum: 0 }
+        rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+
+    DebugCoverageResponse:
+      type: object
+      description: |
+        Customer-safe debugger coverage summary. This is observed coverage
+        of retained telemetry, not a claim that every gateway request was
+        persisted.
+      required: [app_id, since, window_start, window_end, plan_retention_days, telemetry_rows, represented_requests, error_requests, trace_linked, span_evidence, wake_evidence, guest_evidence]
+      properties:
+        app_id: { type: string, format: uuid }
+        since: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        plan_retention_days: { type: integer, minimum: 0 }
+        telemetry_rows: { type: integer, format: int64, minimum: 0 }
+        represented_requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        trace_linked: { $ref: '#/components/schemas/DebugCoverageSignal' }
+        span_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
+        wake_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
+        guest_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
+        oldest_telemetry_at: { type: string, format: date-time }
+        latest_telemetry_at: { type: string, format: date-time }
+
     DebugTelemetryListResponse:
       type: object
       description: |
@@ -25693,9 +25900,14 @@ components:
         `since` echoes the effective window used (after the plan's
         `DebugTelemetryRetentionDays` clamp) so the dashboard can
         surface a "you widened past the cap" tile.
-      required: [requests, since]
+      required: [requests, since, window_start, window_end, retention_clamped, complete]
       properties:
         since: { type: string, description: "Effective window applied (e.g. '24h', '72h')." }
+        window_start: { type: string, format: date-time, description: "Inclusive start of the pinned retention window." }
+        window_end: { type: string, format: date-time, description: "Exclusive end of the pinned retention window." }
+        retention_clamped: { type: boolean, description: "True when the requested lookback exceeded the plan retention cap." }
+        complete: { type: boolean, description: "True when this page contains every retained row in the pinned window." }
+        next_cursor: { type: string, description: "Opaque cursor for the next page; omitted when complete is true." }
         requests:
           type: array
           items: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }

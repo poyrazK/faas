@@ -75,6 +75,35 @@ func TestCmdInspectSummary_JSON(t *testing.T) {
 	if got.Release.HealthGateRules != 1 || len(got.Recommendations) != 0 {
 		t.Errorf("release intelligence drift: release=%+v recommendations=%+v", got.Release, got.Recommendations)
 	}
+	if got.Resources.Target == nil || got.Resources.Target.Metric != "concurrent_requests" {
+		t.Errorf("scaling target drift: %+v", got.Resources)
+	}
+}
+
+func TestInspectResources_ReportsLegacyAutoscaleTargets(t *testing.T) {
+	rpsAndCPU := inspectResources(api.AppResponse{
+		RAMMB: 256, CPUMillicores: 500, MaxConcurrency: 8,
+		AutoscaleTargetRPS: 5, AutoscaleTargetCPUPct: 50,
+	})
+	if rpsAndCPU.AutoscaleTargetRPS != 5 || rpsAndCPU.AutoscaleTargetCPUPct != 50 {
+		t.Fatalf("legacy targets = %+v, want rps=5/cpu=50", rpsAndCPU)
+	}
+	var rendered strings.Builder
+	renderInspectResources(&rendered, rpsAndCPU)
+	if got := rendered.String(); !strings.Contains(got, "rps=5 OR cpu_pct=50% (RPS sizing)") {
+		t.Fatalf("rendered scaling target = %q, want explicit OR/RPS sizing precedence", got)
+	}
+
+	policyAndLegacy := inspectResources(api.AppResponse{
+		RAMMB: 256, CPUMillicores: 500, MaxConcurrency: 8,
+		AutoscaleTargetRPS: 5, AutoscaleTargetCPUPct: 50,
+		ScalingPolicy: &api.ScalingPolicy{Target: &api.ScalingTarget{Metric: "concurrent_requests", Value: 10}},
+	})
+	rendered.Reset()
+	renderInspectResources(&rendered, policyAndLegacy)
+	if got := rendered.String(); !strings.Contains(got, "concurrent_requests=10 OR rps=5 OR cpu_pct=50% (RPS sizing)") {
+		t.Fatalf("policy + legacy scaling target = %q, want all effective targets", got)
+	}
 }
 
 func TestCmdInspectSummary_OptionalSignalsDegrade(t *testing.T) {

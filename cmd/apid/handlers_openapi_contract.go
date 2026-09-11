@@ -14,20 +14,20 @@ import (
 // gate, so CI can inspect the exact result that would block a production
 // deployment.
 func (s *server) getAppOpenAPIContractDiff(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !api.ApiContractDiffEnabled() {
-		api.WriteProblem(w, api.ErrAPIContractDiffDisabled())
-		return
-	}
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
-	if !ok {
-		return
-	}
 	scope := r.URL.Query().Get("scope")
 	if scope == "" {
 		scope = "prod"
 	}
 	if problem := api.ValidateScope(scope); problem != nil {
 		api.WriteProblem(w, problem)
+		return
+	}
+	if !api.ApiContractDiffEnabled() {
+		api.WriteProblem(w, api.ErrAPIContractDiffDisabled())
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
 		return
 	}
 

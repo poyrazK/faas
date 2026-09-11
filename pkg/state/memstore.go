@@ -81,6 +81,14 @@ type paddleOverageClaimState struct {
 	mbSecondsSum int64
 }
 
+type networkUsageCheckpoint struct {
+	accountID  string
+	netTx      int64
+	netRx      int64
+	netTxValid bool
+	netRxValid bool
+}
+
 // auditEventOutboxRow is the in-memory mirror of audit_event_outbox. The
 // public queue item intentionally omits mutable claim metadata; keeping that
 // metadata private prevents callers from treating a stale claim as authority.
@@ -250,6 +258,7 @@ type MemStore struct {
 	appWebhookDeliveries map[string]AppWebhookDelivery
 	appLogDrains         map[string]AppLogDrain
 	appLogDrainHealth    map[string]AppLogDrainHealth
+	appLogDrainAnalytics map[string]AppLogDrainDeliveryAnalytics
 	// deploymentScopeExclusions backs the ADR-124 follow-up #3
 	// persistent --exclude history (migration 00418). Keyed by row
 	// id (uuid string) for symmetry with appWebhooks; the (account,
@@ -467,6 +476,9 @@ type MemStore struct {
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
 	// both invariants for handler tests.
 	apiConsumerRateCards map[string]APIConsumerRateCard
+	// networkUsageCheckpoints mirrors meter_network_checkpoints. Values are
+	// the last cumulative interface counters atomically reflected in usage.
+	networkUsageCheckpoints map[string]networkUsageCheckpoint
 	// builderUsage is the per-build grain backing AppendBuilderUsage
 	// (ADR-048 §4). PK is build_id; the meterd rollup cron sums
 	// into usage_daily.builder_seconds per (account, app, day).
@@ -837,6 +849,7 @@ func NewMemStore() *MemStore {
 		appWebhookDeliveries:      map[string]AppWebhookDelivery{},
 		appLogDrains:              map[string]AppLogDrain{},
 		appLogDrainHealth:         map[string]AppLogDrainHealth{},
+		appLogDrainAnalytics:      map[string]AppLogDrainDeliveryAnalytics{},
 		deploymentScopeExclusions: map[string]DeploymentScopeExclusion{}, // ADR-124 follow-up #3
 		uploadSessions:            map[string]sqlc.UploadSession{},
 		uploadCommitOutcomes:      map[string]sqlc.UploadCommitOutcome{},
@@ -899,6 +912,7 @@ func NewMemStore() *MemStore {
 		apiConsumerUsage:        map[string]APIConsumerUsageBucket{},
 		apiConsumerUsageEvents:  map[string]struct{}{},
 		apiConsumerRateCards:    map[string]APIConsumerRateCard{},
+		networkUsageCheckpoints: map[string]networkUsageCheckpoint{},
 		idem:                    map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByProviderCustomerID
 		// walks; populated by UpdateAccountProviderCustomerID.
@@ -3172,10 +3186,12 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	if !ok {
 		return Deployment{}, 0, ErrNotFound
 	}
-	if d.Status != DeployLive || (d.RolloutState != "pending" && d.RolloutState != "rolling_out") ||
+	rolloutState := NormalizeRolloutState(d.RolloutState)
+	if d.Status != DeployLive || (rolloutState != "pending" && rolloutState != "rolling_out") ||
 		d.CanaryTotalSteps <= 0 || params.ExpectedStep >= d.CanaryTotalSteps {
 		return Deployment{}, 0, ErrCanaryStateInvalid
 	}
+	d.RolloutState = rolloutState
 	if d.CanaryStep != params.ExpectedStep {
 		return Deployment{}, 0, ErrCanaryStepConflict
 	}
@@ -4987,7 +5003,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.ID = newID()
 	}
 	if d.CreatedAt.IsZero() {
-		d.CreatedAt = time.Now()
+		d.CreatedAt = time.Now().UTC()
 	}
 	if d.Status == "" {
 		d.Status = DeployPending
@@ -5003,6 +5019,11 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	if d.TrafficPercent == 0 && !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !serviceRollout {
 		d.TrafficPercent = 100
 	}
+	stageState, err := deploymentStageStateForCreate(d.StageState, d.CreatedAt)
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
+	}
+	d.StageState = stageState
 	m.deployments[d.ID] = d
 	return d, nil
 }
@@ -5163,9 +5184,11 @@ func (m *MemStore) ListCanaryInFlight(_ context.Context) ([]Deployment, error) {
 		if d.CanaryTotalSteps <= 0 || d.CanaryStep >= d.CanaryTotalSteps {
 			continue
 		}
-		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
+		rolloutState := NormalizeRolloutState(d.RolloutState)
+		if rolloutState != "pending" && rolloutState != "rolling_out" {
 			continue
 		}
+		d.RolloutState = rolloutState
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -5190,9 +5213,11 @@ func (m *MemStore) SafedeployListPendingRollouts(_ context.Context) ([]Deploymen
 		if d.Status != DeployLive {
 			continue
 		}
-		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
+		rolloutState := NormalizeRolloutState(d.RolloutState)
+		if rolloutState != "pending" && rolloutState != "rolling_out" {
 			continue
 		}
+		d.RolloutState = rolloutState
 		if IsServiceRollout(d) {
 			continue
 		}
@@ -5230,7 +5255,7 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
-	d.RolloutState = rolloutState
+	d.RolloutState = NormalizeRolloutState(rolloutState)
 	if startedAt != nil {
 		t := *startedAt
 		d.RolloutStartedAt = &t
@@ -5316,6 +5341,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 		if d.AppID != appID || d.Status != DeployLive {
 			continue
 		}
+		d.RolloutState = NormalizeRolloutState(d.RolloutState)
 		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
 			continue
 		}
@@ -5326,6 +5352,9 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	}
 	if target == nil {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if target.CanaryTotalSteps <= 0 && !IsServiceRollout(*target) {
+		return *target, 0, ErrRolloutStateInvalid
 	}
 
 	now := time.Now()
@@ -5344,7 +5373,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 			return Deployment{}, 0, ErrRolloutNotStuck
 		}
 		if target.CanaryTotalSteps <= 0 || target.CanaryStep >= target.CanaryTotalSteps {
-			return Deployment{}, 0, ErrRolloutStateInvalid
+			return *target, 0, ErrRolloutStateInvalid
 		}
 
 		// Bump step, stamp started_at.
@@ -5410,7 +5439,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 
 	case "promote":
 		if target.CanaryTotalSteps <= 0 || target.CanaryStep >= target.CanaryTotalSteps {
-			return Deployment{}, 0, ErrRolloutStateInvalid
+			return *target, 0, ErrRolloutStateInvalid
 		}
 		target.CanaryStep = target.CanaryTotalSteps
 		target.RolloutState = "complete"
@@ -5882,6 +5911,13 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	if d.Status == DeployLive || (d.CanaryTotalSteps <= 0 && IsServiceRollout(d)) {
 		d.Status = DeployLive
 		d.Error = ""
+		if d.CanaryTotalSteps <= 0 && !IsServiceRollout(d) {
+			d.RolloutState = "complete"
+			if d.RolloutCompletedAt == nil {
+				now := time.Now().UTC()
+				d.RolloutCompletedAt = &now
+			}
+		}
 		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
 		if err != nil {
 			return err
@@ -5938,6 +5974,11 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		d.Status = DeployLive
 		d.Error = ""
 		d.TrafficPercent = 100
+		d.RolloutState = "complete"
+		if d.RolloutCompletedAt == nil {
+			now := time.Now().UTC()
+			d.RolloutCompletedAt = &now
+		}
 		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
 		if err != nil {
 			return err
@@ -6270,6 +6311,7 @@ func (m *MemStore) AppendDeploymentStage(_ context.Context, id string, from, to 
 	if from == to {
 		return Deployment{}, fmt.Errorf("AppendDeploymentStage: from==to is reserved for MarkDeploymentStageFailed (deployment=%s, stage=%s)", id, from)
 	}
+	ensureDeploymentStageStarted(&state, d.CreatedAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -6277,8 +6319,8 @@ func (m *MemStore) AppendDeploymentStage(_ context.Context, id string, from, to 
 			durMs = 0
 		}
 	}
-	startedAt := at
-	endedAt := at
+	startedAt := stageTimestamp(at)
+	endedAt := startedAt
 	state.History = append(state.History, StageStateItem{
 		Name:       from,
 		StartedAt:  ptrTime(derefTime(state.CurrentStartedAt)),
@@ -6325,6 +6367,7 @@ func (m *MemStore) MarkDeploymentStageFailed(_ context.Context, id string, at ti
 	if state.Current == "" {
 		return Deployment{}, ErrNotFound
 	}
+	ensureDeploymentStageStarted(&state, d.CreatedAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -6332,7 +6375,7 @@ func (m *MemStore) MarkDeploymentStageFailed(_ context.Context, id string, at ti
 			durMs = 0
 		}
 	}
-	endedAt := at
+	endedAt := stageTimestamp(at)
 	state.History = append(state.History, StageStateItem{
 		Name:       state.Current,
 		StartedAt:  ptrTime(derefTime(state.CurrentStartedAt)),
@@ -6370,6 +6413,7 @@ func (m *MemStore) CloseDeploymentStage(_ context.Context, id string, name Stage
 	if state.Current == "" || state.Current != name {
 		return Deployment{}, ErrNotFound
 	}
+	ensureDeploymentStageStarted(&state, d.CreatedAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -6377,7 +6421,7 @@ func (m *MemStore) CloseDeploymentStage(_ context.Context, id string, name Stage
 			durMs = 0
 		}
 	}
-	endedAt := at
+	endedAt := stageTimestamp(at)
 	state.History = append(state.History, StageStateItem{
 		Name:       state.Current,
 		StartedAt:  ptrTime(derefTime(state.CurrentStartedAt)),
@@ -6418,7 +6462,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	if app, ok := m.apps[src.AppID]; !ok || (app.Status != AppActive && app.Status != AppEvictedCold) {
 		return Deployment{}, ErrNotFound
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	newDep, err := retryDeploymentInput(src, now)
 	if err != nil {
 		return Deployment{}, err
@@ -6428,7 +6472,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	// empty history. imaged's transitionWithStage will append
 	// the first row (fromStage → next) the same way it does on
 	// a CLI-driven fresh deploy.
-	seed, err := json.Marshal(RetryStageState(fromStage))
+	seed, err := json.Marshal(RetryStageStateAt(fromStage, now))
 	if err != nil {
 		return Deployment{}, fmt.Errorf("RetryDeploymentFromStage: encode stage_state seed: %w", err)
 	}
@@ -7212,7 +7256,7 @@ func (m *MemStore) SetDeploymentCanaryState(_ context.Context, id, preset string
 		t := stepStartedAt
 		d.CanaryStepStartedAt = &t
 	}
-	d.RolloutState = rolloutState
+	d.RolloutState = NormalizeRolloutState(rolloutState)
 	m.deployments[id] = d
 	return nil
 }
@@ -11000,17 +11044,17 @@ func (m *MemStore) HeartbeatComputeNode(_ context.Context, nodeID string) error 
 	return nil
 }
 
-// MarkComputeNodeInactive flips active=false on the row (PR #114).
-// Idempotent — flipping an inactive row keeps active=false, no
-// observable change. The row is preserved so an operator can
-// re-enable it (a future admin endpoint will hit a re-activate
-// path; today nothing does).
+// MarkComputeNodeInactive flips active=false on a recoverable row. Retired is
+// terminal and returns ErrConflict rather than becoming unavailable again.
 func (m *MemStore) MarkComputeNodeInactive(_ context.Context, nodeID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	n, ok := m.computeNodes[nodeID]
 	if !ok {
 		return ErrNotFound
+	}
+	if n.Lifecycle == NodeLifecycleRetired {
+		return ErrConflict
 	}
 	n.Lifecycle = NodeLifecycleUnavailable
 	n.Active = false
@@ -11116,6 +11160,9 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 	if existing != nil {
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
+		if existing.Lifecycle == NodeLifecycleRetired {
+			n.Lifecycle = NodeLifecycleRetired
+		}
 	} else if n.ID == "" {
 		n.ID = newID()
 	}
@@ -11204,6 +11251,10 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 	}
 	n := node
 	if existing != nil {
+		if !preserveTargetURLOnConflict && existing.Lifecycle == NodeLifecycleRetired {
+			m.computeNodes[existing.ID] = *existing
+			return ComputeNode{}, ErrConflict
+		}
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
 		if preserveTargetURLOnConflict && existing.TargetURL != "" {
@@ -11293,6 +11344,9 @@ func (m *MemStore) SetComputeNodeActive(_ context.Context, id string, active boo
 	n, ok := m.computeNodes[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if n.Lifecycle == NodeLifecycleRetired {
+		return ErrConflict
 	}
 	if active {
 		n.Lifecycle = NodeLifecycleActive
@@ -11572,15 +11626,24 @@ func (m *MemStore) ListComputeNodes(_ context.Context, includeInactive bool) ([]
 	return out, nil
 }
 
-// DeleteComputeNode hard-deletes a row by id (issue #98 / ADR-028).
-// Mirrors pgstore's semantics: ErrNotFound when no row matches. The
-// caller (apid's DELETE ?hard=1) is responsible for refusing on the
-// synthetic default-local row — see cmd/apid/compute_nodes.go.
+// DeleteComputeNode hard-deletes an unused row by id. App ownership and
+// physical instance references make the row historical rather than mistaken,
+// so deletion refuses them with ErrConflict.
 func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.computeNodes[id]; !ok {
 		return ErrNotFound
+	}
+	for _, app := range m.apps {
+		if app.NodeID == id {
+			return ErrConflict
+		}
+	}
+	for _, instance := range m.instances {
+		if instance.NodeID == id {
+			return ErrConflict
+		}
 	}
 	delete(m.computeNodes, id)
 	// CP-1: cascade the heartbeat history. Mirrors the FK ON DELETE
@@ -12592,6 +12655,57 @@ func (m *MemStore) AppendUsage(_ context.Context, accountID, appID, instanceID s
 	return nil
 }
 
+// AppendNetworkUsageObservation mirrors PgStore's transactional cumulative
+// counter checkpoint. MemStore's single mutex makes the checkpoint advance and
+// usage delta append one atomic operation.
+func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, accountID, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
+	if netTxCumulative < 0 || netRxCumulative < 0 {
+		return 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := minute.UTC().Truncate(time.Minute)
+	usageIndex := -1
+	for i := range m.usage {
+		if m.usage[i].AccountID == accountID && m.usage[i].AppID == appID &&
+			m.usage[i].InstanceID == instanceID && m.usage[i].Minute.Equal(key) {
+			usageIndex = i
+			break
+		}
+	}
+	if usageIndex < 0 {
+		return 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, key.Format(time.RFC3339))
+	}
+
+	checkpoint := m.networkUsageCheckpoints[instanceID]
+	var netTxDelta, netRxDelta int64
+	if netTxValid {
+		if !checkpoint.netTxValid {
+			netTxDelta = netTxCumulative
+		} else if netTxCumulative >= checkpoint.netTx {
+			netTxDelta = netTxCumulative - checkpoint.netTx
+		}
+		checkpoint.netTx = netTxCumulative
+		checkpoint.netTxValid = true
+	}
+	if netRxValid {
+		if !checkpoint.netRxValid {
+			netRxDelta = netRxCumulative
+		} else if netRxCumulative >= checkpoint.netRx {
+			netRxDelta = netRxCumulative - checkpoint.netRx
+		}
+		checkpoint.netRx = netRxCumulative
+		checkpoint.netRxValid = true
+	}
+	checkpoint.accountID = accountID
+	m.networkUsageCheckpoints[instanceID] = checkpoint
+	m.usage[usageIndex].NetTxBytes += netTxDelta
+	m.usage[usageIndex].NetRxBytes += netRxDelta
+	m.recomputeMonthLocked(accountID, appID, key)
+	return netTxDelta, netRxDelta, nil
+}
+
 // AppendBuilderUsage mirrors pgstore's AppendBuilderUsage
 // (ADR-048 §4). Idempotent on build_id — first write wins; a
 // redelivered webhook is a no-op. The meterd rollup cron sums
@@ -13455,11 +13569,30 @@ func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]Usag
 	return out, nil
 }
 
-func billingUsageDeliveryKey(provider, accountID string, hour time.Time) string {
-	return provider + "\x00" + accountID + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
+func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
+	return provider + "\x00" + accountID + "\x00" + string(meter) + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
 }
 
 func (m *MemStore) PendingBillingUsageWindows(_ context.Context, provider string, start, end time.Time) ([]UsageWindow, error) {
+	windows, err := m.pendingBillingMeterUsageWindows(provider, BillingMeterCompute, start, end)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]UsageWindow, 0, len(windows))
+	for _, window := range windows {
+		out = append(out, UsageWindow{AccountID: window.AccountID, Hour: window.Hour, MBSeconds: window.Quantity})
+	}
+	return out, nil
+}
+
+func (m *MemStore) PendingBillingMeterUsageWindows(_ context.Context, provider string, meter BillingMeter, start, end time.Time) ([]BillingMeterWindow, error) {
+	return m.pendingBillingMeterUsageWindows(provider, meter, start, end)
+}
+
+func (m *MemStore) pendingBillingMeterUsageWindows(provider string, meter BillingMeter, start, end time.Time) ([]BillingMeterWindow, error) {
+	if meter != BillingMeterCompute && meter != BillingMeterEgress {
+		return nil, fmt.Errorf("unsupported billing meter %q", meter)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	start = start.UTC()
@@ -13475,15 +13608,19 @@ func (m *MemStore) PendingBillingUsageWindows(_ context.Context, provider string
 			continue
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
-		if _, delivered := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, row.AccountID, hour)]; delivered {
+		if _, delivered := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, row.AccountID, meter, hour)]; delivered {
 			continue
 		}
-		agg[key{account: row.AccountID, hour: hour}] += row.MBSeconds
+		quantity := row.MBSeconds
+		if meter == BillingMeterEgress {
+			quantity = row.NetTxBytes
+		}
+		agg[key{account: row.AccountID, hour: hour}] += quantity
 	}
-	out := make([]UsageWindow, 0, len(agg))
-	for k, mbSeconds := range agg {
-		if mbSeconds > 0 {
-			out = append(out, UsageWindow{AccountID: k.account, Hour: k.hour, MBSeconds: mbSeconds})
+	out := make([]BillingMeterWindow, 0, len(agg))
+	for k, quantity := range agg {
+		if quantity > 0 {
+			out = append(out, BillingMeterWindow{AccountID: k.account, Hour: k.hour, Meter: meter, Quantity: quantity})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -13498,10 +13635,20 @@ func (m *MemStore) PendingBillingUsageWindows(_ context.Context, provider string
 	return out, nil
 }
 
-func (m *MemStore) RecordBillingUsageDelivery(_ context.Context, provider, accountID string, windowStart time.Time, _ int64) error {
+func (m *MemStore) RecordBillingUsageDelivery(ctx context.Context, provider, accountID string, windowStart time.Time, mbSeconds int64) error {
+	return m.RecordBillingMeterUsageDelivery(ctx, provider, accountID, BillingMeterCompute, windowStart, mbSeconds)
+}
+
+func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time, quantity int64) error {
+	if meter != BillingMeterCompute && meter != BillingMeterEgress {
+		return fmt.Errorf("unsupported billing meter %q", meter)
+	}
+	if quantity < 0 {
+		return fmt.Errorf("billing usage quantity must be non-negative")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, windowStart)] = struct{}{}
+	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, meter, windowStart)] = struct{}{}
 	return nil
 }
 
@@ -15669,6 +15816,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key := range m.billingUsageDeliveries {
 		if strings.Contains(key, "\x00"+id+"\x00") {
 			delete(m.billingUsageDeliveries, key)
+		}
+	}
+	for instanceID, checkpoint := range m.networkUsageCheckpoints {
+		if checkpoint.accountID == id {
+			delete(m.networkUsageCheckpoints, instanceID)
 		}
 	}
 	// Audit events (spec §17 G6 right-to-erasure). Drop events whose

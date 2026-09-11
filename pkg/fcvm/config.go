@@ -171,6 +171,9 @@ type ColdBootSpec struct {
 	// StartupDeadlineS is the per-app readiness budget. 0 means use the
 	// vmmd default, preserving direct callers from before M-3.
 	StartupDeadlineS int
+	// ExecutionMode constrains the host-derived characterization class. Empty
+	// preserves the legacy inference contract for older vmmd callers.
+	ExecutionMode string
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
 	SkipReady bool
@@ -363,8 +366,23 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: empty tap device")
 	case s.StartupDeadlineS < 0:
 		return fmt.Errorf("fcvm: cold boot: startup_deadline_s %d < 0", s.StartupDeadlineS)
+	case !validCharacterizationExecutionMode(s.ExecutionMode):
+		return fmt.Errorf("fcvm: cold boot: invalid execution_mode %q", s.ExecutionMode)
 	}
 	return nil
+}
+
+func validCharacterizationExecutionMode(mode string) bool {
+	switch mode {
+	case "", api.ExecutionModeRequest, api.ExecutionModeService, api.ExecutionModeWorker, api.ExecutionModeJob:
+		return true
+	default:
+		return false
+	}
+}
+
+func executionModeRequiresCharacterization(mode string) bool {
+	return mode == api.ExecutionModeWorker || mode == api.ExecutionModeJob
 }
 
 // Jailer paths (spec §8, Appendix B).

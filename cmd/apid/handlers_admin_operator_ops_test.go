@@ -39,6 +39,13 @@ func TestObsTenant360_RejectsBadMonth(t *testing.T) {
 
 func TestObsTenant360_HappyPath_ReturnsUsageAndBilling(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	// adr: 046 — the gateway payload is a subset of interface egress, so the
+	// operator total must expose 2 GiB rather than adding both into 3 GiB.
+	const gib = int64(1024 * 1024 * 1024)
+	if err := e.store.AppendUsage(t.Context(), e.acct.ID, "app-egress", "instance-egress",
+		time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC), 0, 0, 0, gib, 2*gib, 0, 0, 0); err != nil {
+		t.Fatalf("seed egress usage: %v", err)
+	}
 	rec := e.do(t, "GET", "/v1/admin/obs/tenants/"+e.acct.ID+"/360?month=2026-08", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("tenant 360: got status %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -55,6 +62,9 @@ func TestObsTenant360_HappyPath_ReturnsUsageAndBilling(t *testing.T) {
 	}
 	if resp.Usage.Apps == nil || resp.Billing.Invoices == nil {
 		t.Fatal("tenant 360: usage apps and billing invoices must be non-nil arrays")
+	}
+	if resp.Usage.UsedEgressGB != 2 {
+		t.Fatalf("tenant 360 used egress: got %v GB, want canonical 2 GB", resp.Usage.UsedEgressGB)
 	}
 }
 
@@ -146,6 +156,57 @@ func TestObsNodeDrain_EnqueuesDurableIntentBeforeMutation(t *testing.T) {
 	}
 	if fresh.Lifecycle != state.NodeLifecycleActive {
 		t.Fatalf("handler mutated node before intent dispatch: lifecycle=%q", fresh.Lifecycle)
+	}
+}
+
+func TestObsNodeRetire_EnqueuesTerminalIntent(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	node, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name: "node-retire-a", TargetURL: "unix:///run/faas/vmmd-retire-a.sock",
+		Lifecycle: state.NodeLifecycleMaintenance,
+	})
+	if err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+
+	rec := e.doAdmin(t, http.MethodPost, "/v1/admin/ops/nodes/node-retire-a/retire?confirm=true&reason=hardware_eol", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("node retire: got status %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.ObsNodeMutationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Kind != string(state.OperatorIntentKindNodeRetire) || resp.RequestedLifecycle != string(state.NodeLifecycleRetired) {
+		t.Fatalf("unexpected retirement receipt: %+v", resp)
+	}
+	if resp.Preflight.Reversible {
+		t.Fatal("retirement preflight incorrectly marked reversible")
+	}
+	intent, err := e.store.GetOperatorIntent(context.Background(), resp.IntentID)
+	if err != nil || intent.TraceID == nil || intent.ActorID != e.acct.ID {
+		t.Fatalf("retirement intent missing actor/trace: intent=%+v err=%v", intent, err)
+	}
+	fresh, err := e.store.NodeGet(context.Background(), node.ID)
+	if err != nil || fresh.Lifecycle != state.NodeLifecycleMaintenance {
+		t.Fatalf("handler mutated node before dispatch: node=%+v err=%v", fresh, err)
+	}
+}
+
+func TestObsNodeRetire_RequiresMaintenanceAndReason(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	if _, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name: "node-retire-active", TargetURL: "unix:///run/faas/vmmd-retire-active.sock",
+		Lifecycle: state.NodeLifecycleActive,
+	}); err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+
+	withoutReason := e.doAdmin(t, http.MethodPost, "/v1/admin/ops/nodes/node-retire-active/retire?confirm=true", nil, nil)
+	assertProblem(t, withoutReason, http.StatusBadRequest, api.CodeValidation)
+	active := e.doAdmin(t, http.MethodPost, "/v1/admin/ops/nodes/node-retire-active/retire?confirm=true&reason=hardware_eol", nil, nil)
+	if active.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("active retirement: got %d, want 422; body=%s", active.Code, active.Body.String())
 	}
 }
 

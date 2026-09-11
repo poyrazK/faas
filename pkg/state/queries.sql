@@ -1599,7 +1599,8 @@ INSERT INTO request_telemetry (
 -- Backs GET /v1/apps/{slug}/debug/requests. Uses
 -- request_telemetry_app_received_idx. The (since, until) pair is
 -- timestamptz; handler-side date parsing is at cmd/apid/
--- handlers_debug_telemetry.go (parseDebugTelemetryWindow).
+-- handlers_debug_telemetry.go (parseDebugSinceFromString). Cursor pages use
+-- the strict (received_at, id) tuple so equal timestamps cannot reorder rows.
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
@@ -1608,9 +1609,39 @@ FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
   AND received_at <  $3
+  AND (sqlc.arg('cursor_received_at')::timestamptz IS NULL
+       OR (received_at, id) < (sqlc.arg('cursor_received_at')::timestamptz,
+                               sqlc.arg('cursor_id')::uuid))
   AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text)
-ORDER BY received_at DESC
-LIMIT $4;
+ORDER BY received_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
+
+-- name: RequestTelemetryCoverage :one
+-- Signal coverage for the customer debugger. Counts are weighted by the
+-- publisher's collapsed-row `count`, while the row totals make the amount
+-- of aggregation visible to callers. This query deliberately reports
+-- observed coverage only: request_telemetry has no trustworthy denominator
+-- for requests dropped before persistence, so the API must not invent a
+-- capture percentage.
+SELECT
+    COUNT(*)::bigint AS telemetry_rows,
+    COALESCE(SUM(count::bigint), 0)::bigint AS represented_requests,
+    COUNT(*) FILTER (WHERE trace_id IS NOT NULL)::bigint AS trace_linked_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE trace_id IS NOT NULL), 0)::bigint AS trace_linked_requests,
+    COUNT(*) FILTER (WHERE spans_summary IS NOT NULL)::bigint AS span_evidence_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE spans_summary IS NOT NULL), 0)::bigint AS span_evidence_requests,
+    COUNT(*) FILTER (WHERE wake_id IS NOT NULL AND wake_id <> '')::bigint AS wake_evidence_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE wake_id IS NOT NULL AND wake_id <> ''), 0)::bigint AS wake_evidence_requests,
+    COUNT(*) FILTER (WHERE guest_runtime <> '__unknown__' AND guest_outcome <> 'missing')::bigint AS guest_evidence_rows,
+    COALESCE(SUM(count::bigint) FILTER (WHERE guest_runtime <> '__unknown__' AND guest_outcome <> 'missing'), 0)::bigint AS guest_evidence_requests,
+    COALESCE(SUM(count::bigint) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+    MIN(received_at) AS oldest_telemetry_at,
+    MAX(received_at) AS latest_telemetry_at
+FROM request_telemetry
+WHERE app_id = $1
+  AND account_id = $2
+  AND received_at >= $3
+  AND received_at <  $4;
 
 -- name: GetRequestTelemetryByAppAndID :one
 -- Direct request drill-down for the customer debugger. The app_id

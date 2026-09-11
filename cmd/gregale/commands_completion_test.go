@@ -89,6 +89,50 @@ func TestCompletion_Powershell_HasRegisterArgumentCompleter(t *testing.T) {
 	}
 }
 
+// TestCompletion_CachePathUsesNestedCommand verifies the contract shared by
+// the hidden CLI helper and every generated completion backend. The helper is
+// dispatched below `completion`, so a generated script must invoke
+// `gregale completion completion-cache-path` rather than the nonexistent
+// top-level `gregale completion-cache-path` command.
+func TestCompletion_CachePathUsesNestedCommand(t *testing.T) {
+	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "completion-cache.json"))
+	wantPath := cachePathForScripts()
+
+	var cliBuf bytes.Buffer
+	if code := captureStdoutSwap(t, &cliBuf, func() int {
+		return cmdCompletion([]string{"completion-cache-path"})
+	}); code != 0 {
+		t.Fatalf("completion cache-path exit = %d, want 0", code)
+	}
+	if got := strings.TrimSpace(cliBuf.String()); got != wantPath {
+		t.Fatalf("completion cache-path = %q, want %q", got, wantPath)
+	}
+
+	renderers := []struct {
+		name string
+		fn   func() int
+	}{
+		{name: "bash", fn: cmdCompletionBash},
+		{name: "zsh", fn: cmdCompletionZsh},
+		{name: "fish", fn: cmdCompletionFish},
+		{name: "powershell", fn: cmdCompletionPowershell},
+	}
+	for _, renderer := range renderers {
+		renderer := renderer
+		t.Run(renderer.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			captureStdoutSwap(t, &buf, renderer.fn)
+			out := buf.String()
+			if strings.Contains(out, "gregale completion-cache-path") {
+				t.Fatalf("generated script still calls nonexistent top-level helper:\n%s", out)
+			}
+			if !strings.Contains(out, "gregale completion completion-cache-path") {
+				t.Fatalf("generated script does not call nested cache-path helper:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestCompletion_ManifestDrift(t *testing.T) {
 	// Walk main.go's switch and collect every `case "<name>":` arm.
 	// Also walk the dispatch constants (commands2.go) to recover
@@ -349,6 +393,53 @@ __gregale_cache_slugs apps
 	want := "alpha\nbeta"
 	if got != want {
 		t.Fatalf("slug extraction: got %q want %q", got, want)
+	}
+}
+
+func TestBash_DynamicSlugsRespectCommandPositions(t *testing.T) {
+	if _, err := os.Stat("/bin/bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	cacheJSON := `{"version":1,"apps":[{"slug":"alpha","id":"1","name":"Alpha"},{"slug":"beta","id":"2","name":"Beta"}],"orgs":[{"slug":"acme","id":"3","name":"Acme"}],"saved_at":"2026-09-12T00:00:00Z"}`
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "completion-cache.json")
+	if err := os.WriteFile(cachePath, []byte(cacheJSON), 0o600); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+	scriptPath := filepath.Join(dir, "gregale-completion.bash")
+	var script bytes.Buffer
+	captureStdoutSwap(t, &script, cmdCompletionBash)
+	if err := os.WriteFile(scriptPath, script.Bytes(), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	src := `. ` + scriptPath + `
+__gregale_cache_path() { printf '%s' "$FAAS_COMPLETION_CACHE_PATH"; }
+COMP_WORDS=(gregale app a)
+COMP_CWORD=2
+__gregale
+printf 'app=%s\n' "${COMPREPLY[*]}"
+COMP_WORDS=(gregale app alpha s)
+COMP_CWORD=3
+__gregale
+printf 'app-sub=%s\n' "${COMPREPLY[*]}"
+COMP_WORDS=(gregale canary simulate b)
+COMP_CWORD=3
+__gregale
+printf 'canary=%s\n' "${COMPREPLY[*]}"
+COMP_WORDS=(gregale orgs info --org a)
+COMP_CWORD=4
+__gregale
+printf 'org=%s\n' "${COMPREPLY[*]}"
+`
+	cmd := exec.Command("/bin/bash", "-c", src)
+	cmd.Env = append(os.Environ(), "FAAS_COMPLETION_CACHE_PATH="+cachePath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash completion failed: %v\noutput: %s", err, string(out))
+	}
+	want := "app=alpha\napp-sub=scale security\ncanary=beta\norg=acme\n"
+	if got := string(out); got != want {
+		t.Fatalf("completion output = %q, want %q", got, want)
 	}
 }
 

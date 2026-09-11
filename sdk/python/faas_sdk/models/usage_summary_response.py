@@ -32,8 +32,8 @@ class UsageSummaryResponse:
     used_cpu_hours: float | Unset = UNSET
     """Per-month CPU-hours (informational; not billed). issue #279 / PR-B."""
     used_egress_gb: float | Unset = UNSET
-    """Per-month egress GB (informational; not billed). Σ tx_bytes + net_tx_bytes across all apps, converted to GB.
-    ADR-046."""
+    """Per-month canonical interface egress GB (informational; not billed). Σ net_tx_bytes across all apps;
+    tx_bytes is a diagnostic subset and is not added. ADR-046."""
     used_ingress_gb: float | Unset = UNSET
     """Per-month ingress GB (informational; not billed). Σ net_rx_bytes across all apps, converted to GB. ADR-048.
     Mirror of `used_egress_gb` for the inbound direction."""

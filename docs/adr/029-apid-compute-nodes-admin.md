@@ -1,6 +1,6 @@
 # ADR-029 · apid Compute-Nodes Admin Surface
 
-- **Status:** accepted v1.2 (2026-09-11). v1.2 moves routine CLI enrollment behind the authenticated API, makes deferred activation atomic, preserves metadata outside the enrollment payload, and emits trace-linked audit events.
+- **Status:** accepted v1.3 (2026-09-11). v1.3 replaces unsafe soft deletion with terminal retirement and limits hard deletion to unused retired rows.
 - **Superseded (in part, PR-E):** prose referred to the monolithic
   `cmd/gatewayd/` daemon split by ADR-070 into `gatewayd-public` (TLS-only
   edge) and `gatewayd-internal` (routing + wake + proxy). Body is preserved
@@ -8,7 +8,7 @@
   routing/wake/proxy path and "gatewayd-public" for the certmagic/TLS path.
   `cmd/gatewayd/<file>.go` citations in this body are stale; see PR-E for
   the new file locations.
-- **Date:** 2026-07-22 (proposed); 2026-07-31 (accepted v1.1); 2026-09-11 (accepted v1.2)
+- **Date:** 2026-07-22 (proposed); 2026-07-31 (accepted v1.1); 2026-09-11 (accepted v1.2 and v1.3)
 - **Issue:** #98
 - **Decision:** Add operator-facing CRUD on `compute_nodes` to apid:
   `GET /v1/compute-nodes`, `GET /v1/compute-nodes/{name}`, `POST
@@ -37,7 +37,7 @@ Four routes, all admin-gated, all RFC 7807:
 | GET    | `/v1/compute-nodes`             | list; `?include_inactive=1` shows drained |
 | GET    | `/v1/compute-nodes/{name}`      | detail plus live-instance count           |
 | POST   | `/v1/compute-nodes`             | upsert by name (admin POST = idempotent) |
-| DELETE | `/v1/compute-nodes/{name}`      | soft-delete (default) or `?hard=1`        |
+| DELETE | `/v1/compute-nodes/{name}`      | retire (default) or clean up an unused retired row with `?hard=1` |
 
 **Auth:** Bearer-token auth (the same as `/v1/*` customer routes)
 AND email allowlist membership. The allowlist is
@@ -48,17 +48,15 @@ is admin" path. Customer-tier accounts never reach the handler;
 even an account with a valid API key but a non-allowlist email
 gets 403.
 
-**Soft-delete vs hard-delete:**
+**Retirement vs hard-delete:**
 
-- Soft-delete (default): flips `active=false` on the row. The
-  `compute_node_changed` trigger (migration 00026) fires, gatewayd
-  evicts its per-node client cache, schedd's watchdog treats the
-  row as drained, and placement skips it. Re-POSTing with the
-  same name reactivates (UPSERT).
-- Hard-delete (`?hard=1`): `DELETE FROM compute_nodes WHERE id =
-  $1`. Refused on the synthetic `default-local` row (HTTP 409
-  `default_local_protected`) — every legacy instance row from
-  migration 00024's backfill references it.
+- Default DELETE submits the same durable `node_retire` intent as
+  `gregalectl compute-nodes retire`. It requires maintenance, zero live
+  instances, recent MFA step-up, explicit confirmation, and a reason.
+- Hard-delete (`?hard=1`) is limited to a non-default retired row with no app
+  or instance references. This is cleanup for mistaken enrollment, not the
+  decommissioning workflow.
+- POST refuses a retired name; replacement hardware receives a new identity.
 
 **Rate limiting:** The routes share `s.apiAuthLimiter` via
 `s.authLimited`, so spec §11's 10/min/IP budget applies. A
@@ -93,10 +91,8 @@ config editing, billing overrides) — that's a v1.1 conversation.
 - **Break glass:** routine CLI enrollment never opens PostgreSQL. Direct
   mutation remains available only with explicit `--break-glass-db --yes` and
   an incident reason during an apid outage.
-- **Default-local protection:** Hard-delete on `default-local` is
-  refused at the handler; soft-delete is allowed (an operator
-  draining the box is a valid operation). This matches the
-  spec's "default-local is the backfill target" invariant.
+- **Default-local protection:** retirement and hard deletion of
+  `default-local` are refused because legacy ownership depends on it.
 
 ## Out of scope
 

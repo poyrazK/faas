@@ -2473,8 +2473,8 @@ func TestUsageSummary_DailyTopApp(t *testing.T) {
 	if out.UsedCPUHours != 1 {
 		t.Errorf("used CPU-hours = %v, want 1", out.UsedCPUHours)
 	}
-	if out.UsedEgressGB != 3 {
-		t.Errorf("used egress GB = %v, want 3", out.UsedEgressGB)
+	if out.UsedEgressGB != 2 {
+		t.Errorf("used egress GB = %v, want canonical interface total 2", out.UsedEgressGB)
 	}
 	if out.UsedIngressGB != 3 {
 		t.Errorf("used ingress GB = %v, want 3", out.UsedIngressGB)

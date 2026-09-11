@@ -37,6 +37,8 @@ func TestAdminMutationRoutesRejectBearerKeys(t *testing.T) {
 		{http.MethodPost, "/v1/admin/ops/nodes/security-test/drain"},
 		{http.MethodPost, "/v1/admin/ops/nodes/security-test/force-drain"},
 		{http.MethodPost, "/v1/admin/ops/nodes/security-test/activate"},
+		{http.MethodPost, "/v1/admin/ops/nodes/security-test/retire"},
+		{http.MethodDelete, "/v1/compute-nodes/security-test"},
 		{http.MethodPatch, "/v1/admin/config/data_placement_enabled"},
 		{http.MethodPost, "/v1/admin/config/data_placement_enabled/rollback"},
 	}

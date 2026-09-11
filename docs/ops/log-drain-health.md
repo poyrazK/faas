@@ -98,8 +98,19 @@ and a short sanitized error summary. It never includes the configured auth
 header or a raw transport error. The same state is shown at
 `/dashboard/apps/{slug}/log-drains`.
 
-The durable view is still a health snapshot, not a customer replay API. A
-source-ring gap cannot recover records that were already lost, and dead-letter
-records currently require node-level operator handling. Prometheus remains the
-source for historical time series and alert evaluation, while the API/dashboard
-provide current per-drain state.
+The health view is still a snapshot, not a customer replay API. For customer
+safe history, use:
+
+```text
+GET /v1/apps/{slug}/log-drains/{id}/analytics?window=24h
+```
+
+`window` accepts `1h`, `24h` (the default), `7d`, or `30d`. The response has
+hourly delivered, failed, dropped, retry, dead-letter, pending-backlog, success
+rate, and average end-to-end latency buckets. Rates count only terminal
+outcomes; average latency includes queue wait and endpoint time. Samples are
+written from the same 15-second durable health flush and retained for at least
+30 days. A source-ring gap cannot recover records that were already lost, and
+dead-letter records currently require node-level operator handling. Prometheus
+remains the source for fleet-wide alert evaluation, while the API/dashboard
+provide customer-scoped current state and history.

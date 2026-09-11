@@ -1,3 +1,4 @@
+// adr: 047
 // Tests for the gatewayd-internal Handler × ForwardingReverseProxy integration
 // (issue #98 / ADR-028 / ADR-047). The unit tests in forwardproxy_test.go
 // pin the forwarder in isolation; this file pins the seam — when the
@@ -112,6 +113,17 @@ func (s *stubVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest
 }
 func (s *stubVmmdClient) PauseAndSnapshot(context.Context, *vmmdpb.PauseAndSnapshotRequest, ...grpc.CallOption) (*vmmdpb.SnapshotResponse, error) {
 	panic("PauseAndSnapshot: not stubbed in handler integration test")
+}
+
+// WaitBuilderReady and DeleteWarmSnapshot belong to builderd's warm-builder
+// handoff path. The gateway handler never invokes them, but the generated
+// vmmd client requires both methods on every test client fake.
+func (s *stubVmmdClient) WaitBuilderReady(context.Context, *vmmdpb.WaitBuilderReadyRequest, ...grpc.CallOption) (*vmmdpb.WaitBuilderReadyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not manage builders")
+}
+
+func (s *stubVmmdClient) DeleteWarmSnapshot(context.Context, *vmmdpb.DeleteWarmSnapshotRequest, ...grpc.CallOption) (*vmmdpb.DeleteWarmSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not manage builder snapshots")
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) is the forwardproxy

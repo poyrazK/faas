@@ -82,8 +82,11 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(computeVars, `faas_gatewayd_app_errors_target: "tcp://apid.faas:9093"`) {
 		t.Errorf("compute host vars missing split AppErrors target:\n%s", computeVars)
 	}
-	if !strings.Contains(computeVars, `faas_vmmd_schedd_target: "tcp://schedd.faas:7100"`) {
+	if !strings.Contains(computeVars, `faas_vmmd_schedd_target: "tcp://10.42.0.2:7100"`) {
 		t.Errorf("compute host vars missing scheduler target:\n%s", computeVars)
+	}
+	if !strings.Contains(computeVars, `faas_gatewayd_schedd_target: "tcp://10.42.0.2:7100"`) {
+		t.Errorf("compute host vars missing local gateway scheduler target:\n%s", computeVars)
 	}
 	if !strings.Contains(computeVars, `faas_gatewayd_apid_loopback: "http://10.42.0.1:8081"`) {
 		t.Errorf("compute host vars missing control-plane apid target:\n%s", computeVars)
@@ -178,6 +181,14 @@ func TestRenderManifestAnsibleFiles_TwoComputeTargetsAreDistinct(t *testing.T) {
 	if !strings.Contains(fsn2Vars, `faas_gateway_target_url: "tcp://fsn-2.gregale.dev:8080"`) ||
 		!strings.Contains(fsn3Vars, `faas_gateway_target_url: "tcp://fsn-3.gregale.dev:8080"`) {
 		t.Errorf("compute gateway targets are not node-specific:\nfsn-2=%s\nfsn-3=%s", fsn2Vars, fsn3Vars)
+	}
+	if !strings.Contains(fsn2Vars, `faas_vmmd_schedd_target: "tcp://fsn-2.gregale.dev:7100"`) ||
+		!strings.Contains(fsn3Vars, `faas_vmmd_schedd_target: "tcp://fsn-3.gregale.dev:7100"`) {
+		t.Errorf("compute scheduler targets are not node-local:\nfsn-2=%s\nfsn-3=%s", fsn2Vars, fsn3Vars)
+	}
+	if !strings.Contains(fsn2Vars, `faas_gatewayd_schedd_target: "tcp://fsn-2.gregale.dev:7100"`) ||
+		!strings.Contains(fsn3Vars, `faas_gatewayd_schedd_target: "tcp://fsn-3.gregale.dev:7100"`) {
+		t.Errorf("compute gateway scheduler targets are not node-local:\nfsn-2=%s\nfsn-3=%s", fsn2Vars, fsn3Vars)
 	}
 	if strings.Count(fsn2Vars, `names: ["fsn-2.gregale.dev", "vmmd.faas", "egress.faas"]`) != 1 {
 		t.Errorf("first compute compatibility aliases missing or duplicated:\n%s", fsn2Vars)

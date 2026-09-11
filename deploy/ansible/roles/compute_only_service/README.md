@@ -1,6 +1,7 @@
 # compute_only_service ansible role
 
-Drops the imaged systemd unit + example TOML + role/routing drop-ins. Does
+Drops the node-local schedd and imaged systemd units + example TOMLs +
+role/routing drop-ins. Does
 NOT enable or start imaged — the operator runs
 `systemctl enable --now faas-imaged` once `/etc/faas/compute-db.env` is
 populated with both `DATABASE_URL` and `FAAS_VMMD_DBURL` (gap G2).
@@ -27,6 +28,12 @@ populated with both `DATABASE_URL` and `FAAS_VMMD_DBURL` (gap G2).
   The origin is derived from `gatewayd_apps_domain`; the verifier sends the
   tenant slug in the Host header so the shared public gateway exercises the
   same route customers use.
+- `zz-faas-api-contract-diff.conf.j2` — enables the OpenAPI promotion gate on
+  public-beta compute-only nodes. The control-plane role installs the matching
+  apid drop-in so preview and promotion share the stored production baseline.
+- `99-faas-schedd-role.conf` and `99-faas-schedd-node-name.conf` — install the
+  M9 node-local scheduler with the compute role and this host's ownership
+  identity. The scheduler uses the local vmmd target rendered for the host.
 
 ## Side effects
 

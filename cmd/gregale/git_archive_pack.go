@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 )
 
 const (
-	maxGitArchiveEntries = 10_000
-	maxGitignoreBytes    = 1 << 20
+	maxGitignoreBytes = 1 << 20
 )
 
 // packGitArchive filters the committed archive produced by git archive. Git
@@ -75,7 +75,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 
 	capBytes := int64(capMB) * 1024 * 1024
 	var totalUncompressed int64
-	entries := 0
+	archiveEntryCount := 0
 	existingEntries := make(map[string]bool)
 	tr := tar.NewReader(gzIn)
 	for {
@@ -85,10 +85,6 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		}
 		if nextErr != nil {
 			return "", 0, findings, fmt.Errorf("read git archive: %w", nextErr)
-		}
-		entries++
-		if entries > maxGitArchiveEntries {
-			return "", 0, findings, fmt.Errorf("git archive has more than %d entries", maxGitArchiveEntries)
 		}
 		if !gitArchiveEntrySafe(hdr.Name) {
 			return "", 0, findings, fmt.Errorf("unsafe git archive entry %q", hdr.Name)
@@ -107,6 +103,13 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		}
 		if gitArchiveShouldExclude(name, isDir, patterns) {
 			continue
+		}
+		if hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg {
+			return "", 0, findings, fmt.Errorf("git archive entry %q has unsupported type %d", name, hdr.Typeflag)
+		}
+		archiveEntryCount++
+		if archiveEntryCount > api.SourceArchiveMaxEntries {
+			return "", 0, findings, sourceArchiveEntryLimitError(archiveEntryCount)
 		}
 		existingEntries[name] = true
 
@@ -144,8 +147,6 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 					return "", 0, findings, fmt.Errorf("redacted git archive entry %q exceeds the %d MB zero-config cap", name, capMB)
 				}
 			}
-		default:
-			return "", 0, findings, fmt.Errorf("git archive entry %q has unsupported type %d", name, hdr.Typeflag)
 		}
 
 		hdr.ModTime = packEpoch
@@ -172,7 +173,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		regularFileCount++
 	}
 	if len(buildOnly) > 0 {
-		added, addErr := writeGitArchiveBuildOnlyFiles(tw, buildOnly, existingEntries, capBytes-totalUncompressed)
+		added, addErr := writeGitArchiveBuildOnlyFiles(tw, buildOnly, existingEntries, capBytes-totalUncompressed, archiveEntryCount)
 		if addErr != nil {
 			return "", 0, findings, addErr
 		}
@@ -204,7 +205,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 	return outPath, regularFileCount, findings, nil
 }
 
-func writeGitArchiveBuildOnlyFiles(tw *tar.Writer, files map[string][]byte, existing map[string]bool, remaining int64) (int, error) {
+func writeGitArchiveBuildOnlyFiles(tw *tar.Writer, files map[string][]byte, existing map[string]bool, remaining int64, existingEntryCount int) (int, error) {
 	type virtualFile struct {
 		name string
 		body []byte
@@ -221,6 +222,9 @@ func writeGitArchiveBuildOnlyFiles(tw *tar.Writer, files map[string][]byte, exis
 		virtual = append(virtual, virtualFile{name: name, body: body})
 	}
 	sort.Slice(virtual, func(i, j int) bool { return virtual[i].name < virtual[j].name })
+	if total := existingEntryCount + len(virtual); total > api.SourceArchiveMaxEntries {
+		return 0, sourceArchiveEntryLimitError(total)
+	}
 	var writtenBytes int64
 	for _, file := range virtual {
 		size := int64(len(file.body))

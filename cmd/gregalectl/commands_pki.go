@@ -133,7 +133,7 @@ func newPKIFlags(name string, defaultForce bool) (*flag.FlagSet, *pkiFlags) {
 	fs.StringVar(&f.daemon, "daemon", "",
 		"rotate only the leaves in this directory (rotate path; e.g. --daemon egress to reissue just the egress server + meterd client leaves)")
 	fs.StringVar(&f.boxRole, "box-role", "",
-		"per-box PKI subset (Gate-B PR-3): '', 'single-box' = full Roles(); 'control-plane' = fsn-1 leaves; 'compute-only' = fsn-2 leaves")
+		"per-box PKI subset (Gate-B PR-3): '', 'single-box' = full Roles(); 'control-plane' or 'compute-only' = role-specific leaves (schedd is shared in M9)")
 	fs.StringVar(&f.nodeCN, "cn", "",
 		"compute node identity for vmmd leaves (compute-only; .faas is appended when omitted)")
 	fs.StringVar(&f.transportSAN, "transport-san", "",
@@ -541,7 +541,7 @@ func cmdPKIList(args []string) int {
 	fs.StringVar(&f.daemon, "daemon", "",
 		"narrow to one directory (e.g. --daemon egress incl. the meterd/client cross-dir carve-out)")
 	fs.StringVar(&f.boxRole, "box-role", "",
-		"per-box PKI subset ('' = full Roles(); 'single-box'/'control-plane'/'compute-only' per Gate-B)")
+		"per-box PKI subset ('' = full Roles(); 'single-box'/'control-plane'/'compute-only' per Gate-B; schedd is shared in M9)")
 	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout")
 	if err := fs.Parse(args); err != nil {
 		return 1

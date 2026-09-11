@@ -5,6 +5,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | Command | What it does |
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
+| [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`admin`](#admin) | Operator-only billing ops (admin credit\|refund\|consume-credits) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -110,6 +111,13 @@ Show DPA metadata
 ### account slo
 
 Account-wide SLO panel
+
+
+## capabilities
+
+Show feature maturity and plan availability
+
+`gregale capabilities`
 
 
 ## admin
@@ -925,6 +933,7 @@ Preview routes, edge policies, and the read-only OpenAPI contract diff
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <scope>` | deployment scope to compare |  |
+| `--fail-on-unavailable` | fail when the contract-diff backend is unavailable |  |
 
 ### openapi apply
 
@@ -1032,7 +1041,11 @@ Production debugger (ADR-127)
 
 ### debug requests
 
-Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])
+Per-request telemetry (list --cursor C for pagination | get | show | evidence | replay | watch)
+
+### debug coverage
+
+Observed debugger signal coverage (coverage &lt;slug&gt; [--since D])
 
 ### debug regressions
 

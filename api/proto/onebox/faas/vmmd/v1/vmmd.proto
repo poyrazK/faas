@@ -76,6 +76,15 @@ service Vmmd {
   // capture" — see pkg/sched/engine.go::captureWarmSnapshotLocked.
   rpc WarmSnapshot(WarmSnapshotRequest) returns (SnapshotResponse);
 
+  // WaitBuilderReady blocks until a KeepWarm builder writes its durable
+  // build-done marker and emits the guest-stage build-ready line. A builder
+  // that exits before that handoff returns ready=false with its exit code.
+  rpc WaitBuilderReady(WaitBuilderReadyRequest) returns (WaitBuilderReadyResponse);
+
+  // DeleteWarmSnapshot removes the two storage objects created by a builder
+  // warm capture. Missing objects are treated as an idempotent success.
+  rpc DeleteWarmSnapshot(DeleteWarmSnapshotRequest) returns (DeleteWarmSnapshotResponse);
+
   // FrameworkReady is the vmmd-side receipt of the guest-init
   // "framework ready" vsock DGRAM (port 1027, msg=4) signal
   // (issue #470, PR #470-FU-B). vmmd's host-side DGRAM listener
@@ -520,6 +529,11 @@ message AppSpec {
   // customer request reaches the restored instance. Empty preserves the
   // legacy HTTP/1 default.
   string app_protocol = 17;
+  // Customer-declared lifecycle mode (ADR-137). Production schedd sends one
+  // of request, service, worker, or job so vmmd can constrain the inferred
+  // characterization class. Empty preserves legacy inference for rolling
+  // upgrades and older callers.
+  string execution_mode = 18;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1646,4 +1660,23 @@ message ForwardRawResponse {
     ForwardRawResponseInit init = 1;
     bytes body_chunk = 2;
   }
+}
+
+message WaitBuilderReadyRequest {
+  string instance = 1;
+}
+
+message WaitBuilderReadyResponse {
+  string instance = 1;
+  bool ready = 2;
+  int32 exit_code = 3;
+}
+
+message DeleteWarmSnapshotRequest {
+  string storage_key = 1;
+  string vmstate_storage_key = 2;
+}
+
+message DeleteWarmSnapshotResponse {
+  bool deleted = 1;
 }

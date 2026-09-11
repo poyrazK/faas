@@ -158,7 +158,8 @@ func assertScaleInventory(t *testing.T, inventory string, hostVars map[string]st
 			!strings.Contains(body, target) ||
 			!strings.Contains(body, gatewayTarget) ||
 			!strings.Contains(body, `faas_gatewayd_app_errors_target: "tcp://apid.faas:9093"`) ||
-			!strings.Contains(body, `faas_vmmd_schedd_target: "tcp://schedd.faas:7100"`) {
+			!strings.Contains(body, `faas_vmmd_schedd_target: "tcp://`+address+`:7100"`) ||
+			!strings.Contains(body, `faas_gatewayd_schedd_target: "tcp://`+address+`:7100"`) {
 			t.Fatalf("%s host_vars are missing stable node-specific routing", hostName)
 		}
 		if strings.Contains(body, `faas_vmmd_target_url: "tcp://10.`) ||

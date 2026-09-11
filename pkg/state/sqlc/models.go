@@ -21,6 +21,7 @@ const (
 	ComputeNodeLifecycleMaintenance   ComputeNodeLifecycle = "maintenance"
 	ComputeNodeLifecycleUnavailable   ComputeNodeLifecycle = "unavailable"
 	ComputeNodeLifecycleRecovering    ComputeNodeLifecycle = "recovering"
+	ComputeNodeLifecycleRetired       ComputeNodeLifecycle = "retired"
 )
 
 func (e *ComputeNodeLifecycle) Scan(src interface{}) error {
@@ -322,27 +323,44 @@ type AppLogDrain struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type AppLogDrainDeliveryAnalytic struct {
+	DrainID                   pgtype.UUID
+	BucketStart               pgtype.Timestamptz
+	DeliveredTotal            int64
+	FailedTotal               int64
+	DroppedTotal              int64
+	RetriesTotal              int64
+	DeadLetterTotal           int64
+	DeliveryLatencyNanosTotal int64
+	DeliveryLatencySamples    int64
+	PendingRecords            int32
+	PendingBytes              int64
+	SampledAt                 pgtype.Timestamptz
+}
+
 type AppLogDrainHealth struct {
-	DrainID               pgtype.UUID
-	Status                string
-	Active                bool
-	QueueDepth            int32
-	QueueCapacity         int32
-	PendingRecords        int32
-	PendingBytes          int64
-	PendingBytesCapacity  int64
-	DeadLetterTotal       int64
-	OldestPendingAt       pgtype.Timestamptz
-	DeliveredTotal        int64
-	FailedTotal           int64
-	DroppedTotal          int64
-	RetriesTotal          int64
-	StreamReconnectsTotal int64
-	GapsTotal             int64
-	LastSuccessAt         pgtype.Timestamptz
-	LastFailureAt         pgtype.Timestamptz
-	LastError             pgtype.Text
-	UpdatedAt             pgtype.Timestamptz
+	DrainID                   pgtype.UUID
+	Status                    string
+	Active                    bool
+	QueueDepth                int32
+	QueueCapacity             int32
+	PendingRecords            int32
+	PendingBytes              int64
+	PendingBytesCapacity      int64
+	DeadLetterTotal           int64
+	OldestPendingAt           pgtype.Timestamptz
+	DeliveredTotal            int64
+	FailedTotal               int64
+	DroppedTotal              int64
+	RetriesTotal              int64
+	DeliveryLatencyNanosTotal int64
+	DeliveryLatencySamples    int64
+	StreamReconnectsTotal     int64
+	GapsTotal                 int64
+	LastSuccessAt             pgtype.Timestamptz
+	LastFailureAt             pgtype.Timestamptz
+	LastError                 pgtype.Text
+	UpdatedAt                 pgtype.Timestamptz
 }
 
 type AppOpenapiDoc struct {
@@ -441,6 +459,15 @@ type BillingIdentity struct {
 	BillingFrom    pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type BillingMeterUsageDelivery struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	Meter       string
+	WindowStart pgtype.Timestamptz
+	Quantity    int64
+	DeliveredAt pgtype.Timestamptz
 }
 
 type BillingUsageDelivery struct {
@@ -1198,6 +1225,16 @@ type MailSuppression struct {
 	ProviderEventID string
 	ExpiresAt       pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
+}
+
+type MeterNetworkCheckpoint struct {
+	InstanceID pgtype.UUID
+	NetTxBytes int64
+	NetRxBytes int64
+	NetTxValid bool
+	NetRxValid bool
+	ObservedAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {

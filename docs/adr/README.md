@@ -23,6 +23,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 174 | [Terminal compute-node retirement](174-compute-node-retirement.md) | accepted | operator safety follow-up to ADR-137 |
 | 173 | [Plan CPU/RAM coupling](173-cpu-ram-coupling.md): canonical plan RAM/vCPU pairs with an additive create-time assertion | accepted | issue #563; Cloud Run gap analysis |
 | 172 | [Public CLI distribution channels: curl installer and npm](172-cli-distribution-channels.md) | accepted | the CLI had no install path; proprietary license rules out homebrew-core/nixpkgs |
 | 171 | [Disposable one-shot executions from sanitized runtime snapshots](171-disposable-one-shot-executions.md) | proposed | caller-supplied code execution gap; runtime-snapshot foundation |
