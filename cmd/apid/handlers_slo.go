@@ -314,12 +314,17 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 		return degradedAccountSLO(err, s.log, "wake_queue_p95", acct.ID, window)
 	}
 
-	// 8. throttled_total (fleet-wide).
-	thrQ := fmt.Sprintf(`sum(increase(gateway_rate_limited_total[%s]))`, window)
+	// 8. throttled_total (fleet-wide). An absent rate-limit counter is a
+	// healthy zero, not a missing SLO panel. Keep the fallback in PromQL so
+	// QueryScalar receives a finite sample when no throttling series exists.
+	thrQ := fmt.Sprintf(`sum(increase(gateway_rate_limited_total[%s])) or vector(0)`, window)
 	if v, err := s.promqlClient.QueryScalar(ctx, thrQ); err == nil {
 		resp.ThrottledTotal = int64(appmetrics.SafeRoundNonNeg(v))
 	} else {
-		return degradedAccountSLO(err, s.log, "throttled_total", acct.ID, window)
+		// This is an optional component. Preserve the request and latency
+		// fields collected above so a real Prometheus failure is visibly
+		// partial degradation instead of an all-zero account panel.
+		return degradedAccountSLOPartial(resp, err, s.log, "throttled_total", acct.ID, window)
 	}
 
 	// 9. usage_minutes rollup (instance_hours / gb_hours).
@@ -380,10 +385,14 @@ func degradedAppSLO(err error, log *slog.Logger, label, appID, window string) (a
 // account-scoped surface. Same CodeQL-safe sanitiser
 // pattern.
 func degradedAccountSLO(err error, log *slog.Logger, label, accountID, window string) (api.AccountSLOResponse, string) {
+	return degradedAccountSLOPartial(api.AccountSLOResponse{}, err, log, label, accountID, window)
+}
+
+func degradedAccountSLOPartial(resp api.AccountSLOResponse, err error, log *slog.Logger, label, accountID, window string) (api.AccountSLOResponse, string) {
 	msg := strings.ReplaceAll(err.Error(), "\r", "")
 	msg = strings.ReplaceAll(msg, "\n", "")
 	if log != nil {
 		log.Warn("handlers_slo: query failed", "label", label, "account_id", accountID, "window", window, "err", msg)
 	}
-	return api.AccountSLOResponse{}, appmetrics.SourceDegradedPrefix + msg
+	return resp, appmetrics.SourceDegradedPrefix + msg
 }
