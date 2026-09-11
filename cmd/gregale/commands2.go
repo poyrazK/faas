@@ -1230,15 +1230,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			"gregale deploy accepts flags only; unexpected positional arguments: %s",
 			strings.Join(fs.Args(), " ")))
 	}
-	if *waitTimeoutSeconds <= 0 {
-		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
-	}
-	if *waitTimeoutSeconds > int((24*time.Hour)/time.Second) {
-		return printErr("Invalid --timeout", fmt.Errorf("must be at most 86400 seconds"))
-	}
-	if err := validateDeployIdempotencyKey(*idempotencyKey); err != nil {
-		return printErr("Invalid --idempotency-key", err)
-	}
 	// run() consumes the global --json before dispatch. Keep the
 	// deploy-local --json spelling equivalent for the diff path,
 	// whose renderer uses a separate option field.
