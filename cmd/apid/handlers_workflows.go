@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -112,21 +114,17 @@ func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 
-	// Gating: check concurrent workflow runs quota
-	activeRuns, err := s.store.CountActiveRunsByApp(r.Context(), app.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("failed to check active runs quota"))
-		return
-	}
 	maxConcurrent := acct.Plan.WorkflowMaxConcurrentRuns()
-	if activeRuns >= maxConcurrent {
-		api.WriteProblem(w, api.ErrPlanWorkflowsQuota(acct.Plan, maxConcurrent, activeRuns))
-		return
-	}
 
 	// Read input payload
-	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB limit
+	r.Body = http.MaxBytesReader(w, r.Body, api.WorkflowRunInputMaxBytes)
+	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			api.WriteProblem(w, api.ErrRequestBodyTooLarge(api.WorkflowRunInputMaxBytes, api.WorkflowRunInputMaxBytes+1))
+			return
+		}
 		api.WriteProblem(w, api.ErrValidation("failed to read request body"))
 		return
 	}
@@ -149,8 +147,14 @@ func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 		ScheduledFor:       time.Now().UTC(),
 	}
 
-	if err := s.store.CreateWorkflowRun(r.Context(), run); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("failed to persist workflow run: "+err.Error()))
+	activeRuns, err := s.store.CreateWorkflowRunAdmitted(r.Context(), run, maxConcurrent)
+	if errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+		api.WriteProblem(w, api.ErrPlanWorkflowsQuota(acct.Plan, maxConcurrent, activeRuns))
+		return
+	}
+	if err != nil {
+		s.log.Error("create workflow run failed", "app_id", app.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("failed to persist workflow run"))
 		return
 	}
 
@@ -188,7 +192,8 @@ func (s *server) listWorkflowRuns(w http.ResponseWriter, r *http.Request, acct s
 
 	runs, total, err := s.store.ListWorkflowRuns(r.Context(), app.ID, opts)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("failed to list workflow runs: "+err.Error()))
+		s.log.Error("list workflow runs failed", "app_id", app.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("failed to list workflow runs"))
 		return
 	}
 
@@ -293,35 +298,13 @@ func (s *server) injectWorkflowEvent(w http.ResponseWriter, r *http.Request, acc
 		EventName: req.EventName,
 		Payload:   req.Payload,
 	}
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		evt.ID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(run.ID+"\x00"+key)).String()
+	}
 	if err := s.store.InsertWorkflowEvent(r.Context(), evt); err != nil {
+		s.log.Error("record workflow event failed", "run_id", run.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("failed to record workflow event"))
 		return
-	}
-
-	// Resume only steps that explicitly wait for this event. Events remain in
-	// the ledger for audit/replay, but an unrelated event must not complete a
-	// parked step.
-	if run.Status == state.WorkflowRunStatusAwaitingEvent {
-		var definition api.WorkflowSpec
-		if err := json.Unmarshal(run.DefinitionSnapshot, &definition); err != nil {
-			api.WriteProblem(w, api.ErrCapacity("deployed workflow definition is invalid"))
-			return
-		}
-		waitsFor := make(map[string]bool, len(definition.Steps))
-		for _, stepSpec := range definition.Steps {
-			waitsFor[stepSpec.Name] = stepSpec.WaitForEvent == req.EventName
-		}
-		matched := false
-		steps, _ := s.store.GetWorkflowSteps(r.Context(), run.ID)
-		for _, step := range steps {
-			if step.Status == state.WorkflowStepStatusAwaitingEvent && waitsFor[step.StepName] {
-				_ = s.store.MarkWorkflowStepStatus(r.Context(), run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt, req.Payload, nil)
-				matched = true
-			}
-		}
-		if matched {
-			_ = s.store.ScheduleWorkflowRun(r.Context(), run.ID, state.WorkflowRunStatusPending, time.Now().UTC())
-		}
 	}
 
 	writeJSON(w, http.StatusOK, api.InjectWorkflowEventResponse{
@@ -349,15 +332,12 @@ func (s *server) cancelWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 		run.Status != state.WorkflowRunStatusFailed &&
 		run.Status != state.WorkflowRunStatusDead {
 		cancelErr := "cancelled by operator"
-		_ = s.store.MarkWorkflowRunStatus(r.Context(), run.ID, state.WorkflowRunStatusFailed, nil, &cancelErr)
-		steps, _ := s.store.GetWorkflowSteps(r.Context(), run.ID)
-		for _, step := range steps {
-			if step.Status == state.WorkflowStepStatusPending || step.Status == state.WorkflowStepStatusRunning || step.Status == state.WorkflowStepStatusAwaitingEvent {
-				_ = s.store.MarkWorkflowStepStatus(r.Context(), run.ID, step.StepName, state.WorkflowStepStatusSkipped, step.Attempt, nil, &cancelErr)
-			}
+		run, err = s.store.CancelWorkflowRun(r.Context(), run.ID, cancelErr)
+		if err != nil {
+			s.log.Error("cancel workflow run failed", "run_id", run.ID, "err", err)
+			api.WriteProblem(w, api.ErrCapacity("failed to cancel workflow run"))
+			return
 		}
-		run.Status = state.WorkflowRunStatusFailed
-		run.LastError = &cancelErr
 	}
 
 	writeJSON(w, http.StatusOK, workflowRunResponse(run))

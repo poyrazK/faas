@@ -4290,6 +4290,8 @@ var (
 )
 
 const (
+	WorkflowRunInputMaxBytes int64 = 1 << 20
+
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
 	ExecutionTimeoutDefaultMS       = 5_000

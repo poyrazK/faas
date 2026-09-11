@@ -12,37 +12,18 @@ import (
 
 // CreateWorkflowRun inserts a new workflow_runs row into memory.
 func (m *MemStore) CreateWorkflowRun(_ context.Context, r *WorkflowRun) error {
-	if r == nil {
-		return fmt.Errorf("%w: nil run", ErrWorkflowInvalidRecord)
+	if err := prepareWorkflowRun(r); err != nil {
+		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.insertWorkflowRunLocked(r)
+}
 
-	if r.ID == "" {
-		r.ID = uuid.NewString()
-	}
+func (m *MemStore) insertWorkflowRunLocked(r *WorkflowRun) error {
 	now := time.Now().UTC()
 	r.CreatedAt = now
 	r.UpdatedAt = now
-	if r.Status == "" {
-		r.Status = WorkflowRunStatusPending
-	}
-	if err := validateWorkflowRunStatus(r.Status); err != nil {
-		return err
-	}
-	if r.ScheduledFor.IsZero() {
-		r.ScheduledFor = now
-	}
-	if len(r.Input) == 0 {
-		r.Input = json.RawMessage("{}")
-	}
-	if err := validateWorkflowJSON(r.Input, true); err != nil {
-		return err
-	}
-	if err := validateWorkflowJSON(r.DefinitionSnapshot, true); err != nil {
-		return err
-	}
-
 	if _, exists := m.workflowRuns[r.ID]; exists {
 		return fmt.Errorf("%w: workflow_runs.id", ErrConflict)
 	}
@@ -52,6 +33,32 @@ func (m *MemStore) CreateWorkflowRun(_ context.Context, r *WorkflowRun) error {
 	stored.DefinitionSnapshot = cloneWorkflowJSON(r.DefinitionSnapshot)
 	m.workflowRuns[r.ID] = stored
 	return nil
+}
+
+// CreateWorkflowRunAdmitted performs the quota check and insert under the same
+// store lock, mirroring PgStore's per-app advisory-lock transaction.
+func (m *MemStore) CreateWorkflowRunAdmitted(_ context.Context, r *WorkflowRun, maxActive int) (int, error) {
+	if maxActive < 1 {
+		return 0, ErrWorkflowRunQuotaExceeded
+	}
+	if err := prepareWorkflowRun(r); err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	active := 0
+	for _, existing := range m.workflowRuns {
+		if existing.AppID == r.AppID && (existing.Status == WorkflowRunStatusPending || existing.Status == WorkflowRunStatusRunning || existing.Status == WorkflowRunStatusAwaitingEvent) {
+			active++
+		}
+	}
+	if active >= maxActive {
+		return active, ErrWorkflowRunQuotaExceeded
+	}
+	if err := m.insertWorkflowRunLocked(r); err != nil {
+		return active, err
+	}
+	return active + 1, nil
 }
 
 // GetWorkflowRun retrieves a single workflow run by ID.
@@ -127,6 +134,9 @@ func (m *MemStore) MarkWorkflowRunStatus(_ context.Context, id, status string, o
 	if !ok {
 		return ErrWorkflowRunNotFound
 	}
+	if (r.Status == WorkflowRunStatusSucceeded || r.Status == WorkflowRunStatusFailed || r.Status == WorkflowRunStatusDead) && r.Status != status {
+		return fmt.Errorf("%w: workflow run is terminal", ErrConflict)
+	}
 
 	now := time.Now().UTC()
 	r.Status = status
@@ -192,7 +202,9 @@ func (m *MemStore) ClaimNextDueWorkflowRun(_ context.Context) (*WorkflowRun, err
 	now := time.Now().UTC()
 	var candidates []WorkflowRun
 	for _, r := range m.workflowRuns {
-		if (r.Status == WorkflowRunStatusPending || r.Status == WorkflowRunStatusAwaitingEvent) && !r.ScheduledFor.After(now) {
+		due := (r.Status == WorkflowRunStatusPending || r.Status == WorkflowRunStatusAwaitingEvent) && !r.ScheduledFor.After(now)
+		stale := r.Status == WorkflowRunStatusRunning && !r.UpdatedAt.Add(WorkflowRunStaleAfter).After(now)
+		if due || stale {
 			candidates = append(candidates, r)
 		}
 	}
@@ -206,10 +218,24 @@ func (m *MemStore) ClaimNextDueWorkflowRun(_ context.Context) (*WorkflowRun, err
 		return candidates[i].ScheduledFor.Before(candidates[j].ScheduledFor)
 	})
 	chosen := candidates[0]
+	priorStatus := chosen.Status
 	chosen.Status = WorkflowRunStatusRunning
 	chosen.StartedAt = firstWorkflowTime(chosen.StartedAt, now)
 	chosen.UpdatedAt = now
 	m.workflowRuns[chosen.ID] = chosen
+	if priorStatus == WorkflowRunStatusRunning {
+		for name, step := range m.workflowSteps[chosen.ID] {
+			if step.Status == WorkflowStepStatusRunning {
+				step.Status = WorkflowStepStatusPending
+				if step.Attempt > 0 {
+					step.Attempt--
+				}
+				step.FinishedAt = nil
+				step.Error = nil
+				m.workflowSteps[chosen.ID][name] = step
+			}
+		}
+	}
 	cp := chosen
 	cp.Input = cloneWorkflowJSON(chosen.Input)
 	cp.Output = cloneWorkflowJSON(chosen.Output)
@@ -228,11 +254,73 @@ func (m *MemStore) ScheduleWorkflowRun(_ context.Context, id, status string, sch
 	if !ok {
 		return ErrWorkflowRunNotFound
 	}
+	if (r.Status == WorkflowRunStatusSucceeded || r.Status == WorkflowRunStatusFailed || r.Status == WorkflowRunStatusDead) && r.Status != status {
+		return fmt.Errorf("%w: workflow run is terminal", ErrConflict)
+	}
 	r.Status = status
 	r.ScheduledFor = scheduledFor.UTC()
 	r.UpdatedAt = time.Now().UTC()
 	m.workflowRuns[id] = r
 	return nil
+}
+
+func (m *MemStore) RecoverWorkflowRun(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.workflowRuns[id]
+	if !ok {
+		return ErrWorkflowRunNotFound
+	}
+	if run.Status == WorkflowRunStatusSucceeded || run.Status == WorkflowRunStatusFailed || run.Status == WorkflowRunStatusDead {
+		return nil
+	}
+	for name, step := range m.workflowSteps[id] {
+		if step.Status == WorkflowStepStatusRunning {
+			step.Status = WorkflowStepStatusPending
+			if step.Attempt > 0 {
+				step.Attempt--
+			}
+			step.FinishedAt = nil
+			step.Error = nil
+			m.workflowSteps[id][name] = step
+		}
+	}
+	now := time.Now().UTC()
+	run.Status = WorkflowRunStatusPending
+	run.ScheduledFor = now
+	run.UpdatedAt = now
+	m.workflowRuns[id] = run
+	return nil
+}
+
+func (m *MemStore) CancelWorkflowRun(_ context.Context, id, reason string) (*WorkflowRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.workflowRuns[id]
+	if !ok {
+		return nil, ErrWorkflowRunNotFound
+	}
+	if run.Status != WorkflowRunStatusSucceeded && run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead {
+		now := time.Now().UTC()
+		for name, step := range m.workflowSteps[id] {
+			if step.Status == WorkflowStepStatusPending || step.Status == WorkflowStepStatusRunning || step.Status == WorkflowStepStatusAwaitingEvent {
+				step.Status = WorkflowStepStatusSkipped
+				step.Error = &reason
+				step.FinishedAt = &now
+				m.workflowSteps[id][name] = step
+			}
+		}
+		run.Status = WorkflowRunStatusFailed
+		run.LastError = &reason
+		run.FinishedAt = &now
+		run.UpdatedAt = now
+		m.workflowRuns[id] = run
+	}
+	cp := run
+	cp.Input = cloneWorkflowJSON(run.Input)
+	cp.Output = cloneWorkflowJSON(run.Output)
+	cp.DefinitionSnapshot = cloneWorkflowJSON(run.DefinitionSnapshot)
+	return &cp, nil
 }
 
 func firstWorkflowTime(current *time.Time, fallback time.Time) *time.Time {
@@ -361,6 +449,9 @@ func (m *MemStore) MarkWorkflowStepStatus(_ context.Context, runID, stepName, st
 	if !ok {
 		return ErrWorkflowStepNotFound
 	}
+	if (step.Status == WorkflowStepStatusSucceeded || step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead || step.Status == WorkflowStepStatusSkipped) && step.Status != status {
+		return fmt.Errorf("%w: workflow step is terminal", ErrConflict)
+	}
 
 	now := time.Now().UTC()
 	step.Status = status
@@ -420,7 +511,16 @@ func (m *MemStore) InsertWorkflowEvent(_ context.Context, e *WorkflowEvent) erro
 	for _, events := range m.workflowEvents {
 		for _, existing := range events {
 			if existing.ID == e.ID {
-				return fmt.Errorf("%w: workflow_events.id", ErrConflict)
+				if existing.RunID != e.RunID || existing.EventName != e.EventName {
+					return fmt.Errorf("%w: workflow_events.id", ErrConflict)
+				}
+				if run := m.workflowRuns[e.RunID]; run.Status == WorkflowRunStatusAwaitingEvent {
+					run.Status = WorkflowRunStatusPending
+					run.ScheduledFor = time.Now().UTC()
+					run.UpdatedAt = run.ScheduledFor
+					m.workflowRuns[e.RunID] = run
+				}
+				return nil
 			}
 		}
 	}
@@ -428,6 +528,12 @@ func (m *MemStore) InsertWorkflowEvent(_ context.Context, e *WorkflowEvent) erro
 	stored := *e
 	stored.Payload = cloneWorkflowJSON(e.Payload)
 	m.workflowEvents[e.RunID] = append(m.workflowEvents[e.RunID], stored)
+	if run := m.workflowRuns[e.RunID]; run.Status == WorkflowRunStatusAwaitingEvent {
+		run.Status = WorkflowRunStatusPending
+		run.ScheduledFor = time.Now().UTC()
+		run.UpdatedAt = run.ScheduledFor
+		m.workflowRuns[e.RunID] = run
+	}
 	return nil
 }
 
