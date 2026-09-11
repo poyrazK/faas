@@ -3685,6 +3685,7 @@ func TestCaptureWarmSnapshot_HappyPath(t *testing.T) {
 	}
 }
 
+// adr: 070
 func TestCaptureWarmSnapshot_FreshActivityCancelsTerminalPark(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)

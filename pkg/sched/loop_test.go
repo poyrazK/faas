@@ -122,6 +122,7 @@ func TestHandleSnapshotPrimeFailureMarksDeploymentAndStageFailed(t *testing.T) {
 	}
 }
 
+// adr: 005
 func TestHandleSnapshotPrimeRetriesTransientCaptureFailure(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 2)

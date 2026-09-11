@@ -514,8 +514,9 @@ func relocateRenderedDBURL(t *testing.T, configPath, dsn string) {
 
 func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath, hostAgePath, hostHMACPath, advisorySocket, root string) []string {
 	t.Helper()
-	if unit.EnvironmentFile != "/etc/faas/sealed.env" {
-		t.Fatalf("EnvironmentFile = %q, want /etc/faas/sealed.env", unit.EnvironmentFile)
+	const wantEnvironmentFiles = "/etc/faas/sealed.env -/etc/faas/storage.env"
+	if unit.EnvironmentFile != wantEnvironmentFiles {
+		t.Fatalf("EnvironmentFile = %q, want %q", unit.EnvironmentFile, wantEnvironmentFiles)
 	}
 	want := map[string]string{
 		"FAAS_SESSION_KEY":            sessionKeyPath,
