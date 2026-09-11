@@ -1,0 +1,3 @@
+function:
+  runtime: node22
+  handler: handler.handler

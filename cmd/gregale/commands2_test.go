@@ -24,6 +24,32 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+func TestTemplateFunctionConfig(t *testing.T) {
+	cases := []struct {
+		name    string
+		runtime string
+		handler string
+		wantOK  bool
+	}{
+		{"function-node", runtimeNode22, defaultTemplateHandler, true},
+		{"function-node24", runtimeNode24, defaultTemplateHandler, true},
+		{"function-python", runtimePython312, defaultTemplateHandler, true},
+		{"function-python313", runtimePython313, defaultTemplateHandler, true},
+		{"function-go", runtimeGo124, "handler.go", true},
+		{"cron-worker", runtimeNode22, defaultTemplateHandler, true},
+		{"hello-node", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime, handler, ok := templateFunctionConfig(tc.name)
+			if ok != tc.wantOK || runtime != tc.runtime || handler != tc.handler {
+				t.Fatalf("templateFunctionConfig(%q) = (%q, %q, %t), want (%q, %q, %t)",
+					tc.name, runtime, handler, ok, tc.runtime, tc.handler, tc.wantOK)
+			}
+		})
+	}
+}
+
 // constSlug lifts "hello" out of the test bodies so goconst stops flagging
 // the repeated literal across request bodies, AppResponse fixtures, and the
 // GET-path assertion.

@@ -379,6 +379,56 @@ func TestFunctionNode24TemplateRetainsInitMetadata(t *testing.T) {
 	}
 }
 
+func TestFunctionTemplatesRetainInitMetadataAndEdits(t *testing.T) {
+	cases := []struct {
+		name    string
+		runtime string
+		handler string
+		source  string
+	}{
+		{"function-node", runtimeNode22, defaultTemplateHandler, "handler.js"},
+		{"function-python", runtimePython312, defaultTemplateHandler, "handler.py"},
+		{"function-python313", runtimePython313, defaultTemplateHandler, "handler.py"},
+		{"function-node24", runtimeNode24, defaultTemplateHandler, "handler.js"},
+		{"cron-worker", runtimeNode22, defaultTemplateHandler, "handler.js"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := templates.Materialize(tc.name, dir); err != nil {
+				t.Fatalf("materialize %s: %v", tc.name, err)
+			}
+			if got := detectShape(dir); got != shapeFunction {
+				t.Fatalf("detectShape(%s) = %v, want function", tc.name, got)
+			}
+			runtime, handler, ok := inferFunctionRuntime(dir)
+			if !ok || runtime != tc.runtime || handler != tc.handler {
+				t.Fatalf("inferFunctionRuntime(%s) = (%q, %q, %t), want (%q, %q, true)",
+					tc.name, runtime, handler, ok, tc.runtime, tc.handler)
+			}
+
+			edited := "// edited by the customer\n"
+			if err := os.WriteFile(filepath.Join(dir, tc.source), []byte(edited), 0o644); err != nil {
+				t.Fatalf("edit %s: %v", tc.source, err)
+			}
+			archive, _, _, err := autoPackCwd(dir, defaultZeroConfigSourceCapMB, nil)
+			if err != nil {
+				t.Fatalf("pack %s: %v", tc.name, err)
+			}
+			defer func() { _ = os.Remove(archive) }()
+			root := filepath.Base(dir)
+			entries := tarEntries(t, archive)
+			manifestPath := root + "/gregale.yaml"
+			if !entries[manifestPath] {
+				t.Fatalf("archive missing %q; entries: %v", manifestPath, entries)
+			}
+			if got := string(tarEntryBody(t, archive, root+"/"+tc.source)); got != edited {
+				t.Fatalf("archive %s = %q, want edited source %q", tc.source, got, edited)
+			}
+		})
+	}
+}
+
 func TestFunctionGoTemplateWorkspaceArchivePlacesBuildModuleBesideHandler(t *testing.T) {
 	root := t.TempDir()
 	functionDir := filepath.Join(root, "services", "worker")
