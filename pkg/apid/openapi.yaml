@@ -13892,10 +13892,10 @@ components:
         expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
         size_bytes: { type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET. }
         content_type: { type: string, maxLength: 255, description: PUT only. }
-        cache_control: { type: string, maxLength: 255, description: PUT only. }
-        content_disposition: { type: string, maxLength: 255, description: PUT only. }
-        content_encoding: { type: string, maxLength: 255, description: PUT only. }
-        content_language: { type: string, maxLength: 255, description: PUT only. }
+        cache_control: { type: string, maxLength: 255, description: Cache-Control value for PUT. }
+        content_disposition: { type: string, maxLength: 255, description: Content-Disposition value for PUT. }
+        content_encoding: { type: string, maxLength: 255, description: Content-Encoding value for PUT. }
+        content_language: { type: string, maxLength: 255, description: Content-Language value for PUT. }
         metadata: { type: object, additionalProperties: { type: string, maxLength: 2048 }, maxProperties: 90, description: PUT-only x-amz-meta-* values. }
         tags: { type: object, additionalProperties: { type: string, maxLength: 256 }, maxProperties: 10, description: PUT-only S3 object tags. }
     ObjectSignedRequest:

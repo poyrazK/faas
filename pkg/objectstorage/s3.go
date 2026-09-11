@@ -188,10 +188,6 @@ func (p *S3) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest)
 	return CopyObjectResult{ETag: aws.ToString(out.CopyObjectResult.ETag), LastModified: aws.ToTime(out.CopyObjectResult.LastModified)}, nil
 }
 
-func validateObjectMetadata(metadata ObjectMetadata) error {
-	return ValidateObjectMetadata(metadata)
-}
-
 func stringPtrOrNil(value string) *string {
 	if value == "" {
 		return nil

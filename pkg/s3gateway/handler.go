@@ -881,7 +881,7 @@ func decodeObjectTags(w http.ResponseWriter, r *http.Request) (map[string]string
 		return nil, objectstorage.ErrInvalid
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return nil, objectstorage.ErrInvalid
 	}
 	tags := make(map[string]string, len(body.Tags))
