@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"errors"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -54,7 +55,13 @@ func NewPrewarmMetrics(reg prometheus.Registerer) *PrewarmMetrics {
 	}
 
 	if reg != nil {
-		reg.MustRegister(m.IntentEventsTotal, m.AdmittedInstancesTotal, m.FireOffsetSeconds, m.IntentAgeSeconds)
+		// API tests and some degraded boot paths rebuild a server while
+		// retaining the daemon registry. Reuse an already-registered family
+		// instead of panicking on the second server instance.
+		m.IntentEventsTotal = registerPrewarmCounterVec(reg, m.IntentEventsTotal)
+		m.AdmittedInstancesTotal = registerPrewarmCounter(reg, m.AdmittedInstancesTotal)
+		m.FireOffsetSeconds = registerPrewarmHistogram(reg, m.FireOffsetSeconds)
+		m.IntentAgeSeconds = registerPrewarmHistogram(reg, m.IntentAgeSeconds)
 		for _, event := range []string{
 			prewarmEventScheduled,
 			prewarmEventSucceeded,
@@ -69,6 +76,48 @@ func NewPrewarmMetrics(reg prometheus.Registerer) *PrewarmMetrics {
 		}
 	}
 	return m
+}
+
+func registerPrewarmCounterVec(reg prometheus.Registerer, candidate *prometheus.CounterVec) *prometheus.CounterVec {
+	if err := reg.Register(candidate); err == nil {
+		return candidate
+	} else {
+		var alreadyRegistered prometheus.AlreadyRegisteredError
+		if errors.As(err, &alreadyRegistered) {
+			if existing, ok := alreadyRegistered.ExistingCollector.(*prometheus.CounterVec); ok {
+				return existing
+			}
+		}
+		panic(err)
+	}
+}
+
+func registerPrewarmCounter(reg prometheus.Registerer, candidate prometheus.Counter) prometheus.Counter {
+	if err := reg.Register(candidate); err == nil {
+		return candidate
+	} else {
+		var alreadyRegistered prometheus.AlreadyRegisteredError
+		if errors.As(err, &alreadyRegistered) {
+			if existing, ok := alreadyRegistered.ExistingCollector.(prometheus.Counter); ok {
+				return existing
+			}
+		}
+		panic(err)
+	}
+}
+
+func registerPrewarmHistogram(reg prometheus.Registerer, candidate prometheus.Histogram) prometheus.Histogram {
+	if err := reg.Register(candidate); err == nil {
+		return candidate
+	} else {
+		var alreadyRegistered prometheus.AlreadyRegisteredError
+		if errors.As(err, &alreadyRegistered) {
+			if existing, ok := alreadyRegistered.ExistingCollector.(prometheus.Histogram); ok {
+				return existing
+			}
+		}
+		panic(err)
+	}
 }
 
 func (m *PrewarmMetrics) ObserveScheduled() {
