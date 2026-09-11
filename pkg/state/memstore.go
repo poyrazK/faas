@@ -6266,7 +6266,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
-	if app, ok := m.apps[src.AppID]; !ok || app.Status != AppActive {
+	if app, ok := m.apps[src.AppID]; !ok || (app.Status != AppActive && app.Status != AppEvictedCold) {
 		return Deployment{}, ErrNotFound
 	}
 	now := time.Now()

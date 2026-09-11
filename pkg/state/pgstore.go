@@ -7563,8 +7563,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var active int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status='active' for update`, src.AppID).Scan(&active); err != nil {
+	var deployable int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status in ('active', 'evicted_cold') for update`, src.AppID).Scan(&deployable); err != nil {
 		return Deployment{}, mapErr(err)
 	}
 	// Step 3 — rebuild the immutable intent while resetting mutable execution
