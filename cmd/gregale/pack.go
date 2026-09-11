@@ -1053,6 +1053,26 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 		existingEntries[e.rel] = true
 	}
 
+	// Validate generated transport-only files before writing any source
+	// entries, then preflight the same total header count enforced by apid.
+	// The server counts both directories and regular files, so regularFileCount
+	// is intentionally not used for this check.
+	virtualNames := make([]string, 0, len(buildOnlyFiles))
+	for rel := range buildOnlyFiles {
+		rel = filepath.ToSlash(rel)
+		if rel == "." || rel == "" || filepath.IsAbs(rel) || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") {
+			return 0, fmt.Errorf("invalid build-only archive path %q", rel)
+		}
+		if existingEntries[rel] {
+			return 0, fmt.Errorf("build-only archive path %q collides with source file", rel)
+		}
+		virtualNames = append(virtualNames, rel)
+	}
+	sort.Strings(virtualNames)
+	if total := len(entries) + len(virtualNames); total > api.SourceArchiveMaxEntries {
+		return 0, sourceArchiveEntryLimitError(total)
+	}
+
 	for _, e := range entries {
 		hdr, herr := tar.FileInfoHeader(e.info, "")
 		if herr != nil {
@@ -1122,18 +1142,6 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 	// customer's project. Go function templates use this path for go.mod: a
 	// local module marker would make the next zero-config deploy look like an
 	// app, while the remote framework detector requires it to select Go.
-	virtualNames := make([]string, 0, len(buildOnlyFiles))
-	for rel := range buildOnlyFiles {
-		rel = filepath.ToSlash(rel)
-		if rel == "." || rel == "" || filepath.IsAbs(rel) || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") {
-			return 0, fmt.Errorf("invalid build-only archive path %q", rel)
-		}
-		if existingEntries[rel] {
-			return 0, fmt.Errorf("build-only archive path %q collides with source file", rel)
-		}
-		virtualNames = append(virtualNames, rel)
-	}
-	sort.Strings(virtualNames)
 	for _, rel := range virtualNames {
 		data := buildOnlyFiles[rel]
 		if int64(len(data)) > capBytes-totalUncompressed {
@@ -1178,6 +1186,10 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 			st.Size()/(1024*1024), capMB)
 	}
 	return regularFileCount, nil
+}
+
+func sourceArchiveEntryLimitError(count int) error {
+	return fmt.Errorf("source archive has %d archive entries; limit is %d (directories and files count; add exclusions to .gregaleignore or remove files)", count, api.SourceArchiveMaxEntries)
 }
 
 // copyRegular streams one regular file into the tar writer. It routes through
