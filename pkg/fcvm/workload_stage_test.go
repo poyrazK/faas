@@ -1,4 +1,5 @@
 // Per-workload manifest staging tests (issue #463 / ADR-069 / PR-B).
+// adr: 175
 // These verify the vmmd-side write of /etc/faas/workload.json on
 // each sidecar drive (and the main drive1) before the VM is
 // exposed to the customer. The tests use the in-process fakeVMM
