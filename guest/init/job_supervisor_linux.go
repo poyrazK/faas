@@ -225,8 +225,14 @@ func handleJobCancellation(fd int, signals chan<- os.Signal) {
 		return
 	}
 	defer func() { _ = f.Close() }()
-	setSockTimeout(fd, unix.SO_RCVTIMEO, 1500*time.Millisecond)
-	setSockTimeout(fd, unix.SO_SNDTIMEO, 1500*time.Millisecond)
+	if err := setSockTimeout(fd, unix.SO_RCVTIMEO, 1500*time.Millisecond); err != nil {
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		return
+	}
+	if err := setSockTimeout(fd, unix.SO_SNDTIMEO, 1500*time.Millisecond); err != nil {
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		return
+	}
 	var frame [8]byte
 	if _, err := io.ReadFull(f, frame[:]); err != nil {
 		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
@@ -439,8 +445,24 @@ func shipExitEnvelope(payload JobExitPayload, log *slog.Logger) error {
 		}
 		// Bound connect, write, and ack wait. A missing host listener must not
 		// keep PID 1 alive beyond the scheduler's reaper window.
-		setSockTimeout(sock, unix.SO_SNDTIMEO, 1500*time.Millisecond)
-		setSockTimeout(sock, unix.SO_RCVTIMEO, 1500*time.Millisecond)
+		if timeoutErr := setSockTimeout(sock, unix.SO_SNDTIMEO, 1500*time.Millisecond); timeoutErr != nil {
+			lastErr = timeoutErr
+			log.Warn("job-exit vsock send timeout", "err", timeoutErr, "attempt", i)
+			_ = unix.Close(sock)
+			if i < attempts-1 {
+				time.Sleep(backoffs[i])
+			}
+			continue
+		}
+		if timeoutErr := setSockTimeout(sock, unix.SO_RCVTIMEO, 1500*time.Millisecond); timeoutErr != nil {
+			lastErr = timeoutErr
+			log.Warn("job-exit vsock receive timeout", "err", timeoutErr, "attempt", i)
+			_ = unix.Close(sock)
+			if i < attempts-1 {
+				time.Sleep(backoffs[i])
+			}
+			continue
+		}
 		if connectErr := unix.Connect(sock, addr); connectErr != nil {
 			lastErr = connectErr
 			log.Warn("job-exit vsock connect", "err", connectErr, "attempt", i)

@@ -69,11 +69,11 @@ type JailerVMM struct {
 	mu      sync.Mutex
 	proc    map[string]*exec.Cmd // instance -> running jailer process
 	clients map[string]*http.Client
-	// jobExitListeners are bound before a job VM is allowed to boot. Firecracker
+	// guestVsockListeners are bound before a VM is allowed to boot. Firecracker
 	// forwards guest-initiated AF_VSOCK streams to <uds_path>_<port>; keeping the
-	// listener here closes the race where a short job exits before schedd starts
-	// its WaitJobExit RPC.
-	jobExitListeners map[string]*net.UnixListener
+	// listeners here closes the race where a fast guest sends its characterization
+	// or job-exit frame before the corresponding wait RPC starts.
+	guestVsockListeners map[guestVsockListenerKey]*net.UnixListener
 	// hcClient (issue #460 / ADR-053, ADR-057 / PR-D) is the
 	// per-VMM *http.Client the waitReady HTTP probe reuses across
 	// its 200ms-cadence loop. Lazily created by healthcheckClient
@@ -348,19 +348,19 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		readyTimeout = 30 * time.Second
 	}
 	return &JailerVMM{
-		chrootBase:       chrootBase,
-		fcName:           resolveFCChrootName(),
-		readyTimeout:     readyTimeout,
-		destroyWait:      10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
-		exportMaxBytes:   0,                // resolved to api.MaxExportedLayerBytes at first export
-		proc:             make(map[string]*exec.Cmd),
-		clients:          make(map[string]*http.Client),
-		jobExitListeners: make(map[string]*net.UnixListener),
-		recs:             make(map[string]*instanceRecord),
-		rings:            make(map[string]*logbuf.Ring),
-		materialisedTmp:  make(map[string][]string),
-		bindMounts:       make(map[string][]ephemeralBind),
-		bindSourceModes:  make(map[string]bindSourceMode),
+		chrootBase:          chrootBase,
+		fcName:              resolveFCChrootName(),
+		readyTimeout:        readyTimeout,
+		destroyWait:         10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
+		exportMaxBytes:      0,                // resolved to api.MaxExportedLayerBytes at first export
+		proc:                make(map[string]*exec.Cmd),
+		clients:             make(map[string]*http.Client),
+		guestVsockListeners: make(map[guestVsockListenerKey]*net.UnixListener),
+		recs:                make(map[string]*instanceRecord),
+		rings:               make(map[string]*logbuf.Ring),
+		materialisedTmp:     make(map[string][]string),
+		bindMounts:          make(map[string][]ephemeralBind),
+		bindSourceModes:     make(map[string]bindSourceMode),
 	}
 }
 
@@ -658,6 +658,10 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if jobManifest != nil {
 		if err = v.prepareJobExitListener(l); err != nil {
 			return fmt.Errorf("vmm: prepare job-exit listener: %w", err)
+		}
+	} else if !l.IsBuilder && cfg.VsockDevice != nil {
+		if err = v.prepareCharacterizationListener(l); err != nil {
+			return fmt.Errorf("vmm: prepare characterization listener: %w", err)
 		}
 	}
 	if err = v.stageMountHelper(root); err != nil {
@@ -1201,6 +1205,101 @@ func (v *JailerVMM) restoreMemSource(ctx context.Context, instanceID string, spe
 // jailer uid can read the socket file.
 func (v *JailerVMM) vsockUDSSock(instance string) string {
 	return filepath.Join(v.chrootRoot(instance), VsockUDSSocketName)
+}
+
+type guestVsockListenerKey struct {
+	instance string
+	port     uint32
+}
+
+// guestVsockUDSSock is Firecracker's documented host endpoint for a
+// guest-initiated connection: <configured uds_path>_<destination port>.
+func (v *JailerVMM) guestVsockUDSSock(instance string, port uint32) string {
+	return fmt.Sprintf("%s_%d", v.vsockUDSSock(instance), port)
+}
+
+// prepareGuestVsockListener binds a guest-initiated endpoint before Firecracker
+// starts. The socket belongs to the jailer identity because the unprivileged
+// Firecracker process is the connecting peer.
+func (v *JailerVMM) prepareGuestVsockListener(l Lease, port uint32) error {
+	if v == nil || l.Instance == "" || port == 0 {
+		return fmt.Errorf("invalid VMM, instance, or vsock port")
+	}
+	v.closeGuestVsockListener(l.Instance, port)
+	path := v.guestVsockUDSSock(l.Instance, port)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale socket %s: %w", path, err)
+	}
+	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", path, err)
+	}
+	ln.SetUnlinkOnClose(true)
+	cleanup := func() {
+		_ = ln.Close()
+		_ = os.Remove(path)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		cleanup()
+		return fmt.Errorf("chmod %s: %w", path, err)
+	}
+	if err := chownJail(path, l.UID, l.GID); err != nil {
+		cleanup()
+		return err
+	}
+	key := guestVsockListenerKey{instance: l.Instance, port: port}
+	v.mu.Lock()
+	if v.guestVsockListeners == nil {
+		v.guestVsockListeners = make(map[guestVsockListenerKey]*net.UnixListener)
+	}
+	v.guestVsockListeners[key] = ln
+	v.mu.Unlock()
+	return nil
+}
+
+func (v *JailerVMM) guestVsockListener(instance string, port uint32) *net.UnixListener {
+	if v == nil {
+		return nil
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.guestVsockListeners[guestVsockListenerKey{instance: instance, port: port}]
+}
+
+func (v *JailerVMM) closeGuestVsockListener(instance string, port uint32) {
+	if v == nil || instance == "" || port == 0 {
+		return
+	}
+	key := guestVsockListenerKey{instance: instance, port: port}
+	v.mu.Lock()
+	ln := v.guestVsockListeners[key]
+	delete(v.guestVsockListeners, key)
+	v.mu.Unlock()
+	if ln != nil {
+		_ = ln.Close()
+	}
+	_ = os.Remove(v.guestVsockUDSSock(instance, port))
+}
+
+func (v *JailerVMM) closeGuestVsockListeners(instance string) {
+	if v == nil || instance == "" {
+		return
+	}
+	v.mu.Lock()
+	listeners := make(map[uint32]*net.UnixListener)
+	for key, ln := range v.guestVsockListeners {
+		if key.instance == instance {
+			listeners[key.port] = ln
+			delete(v.guestVsockListeners, key)
+		}
+	}
+	v.mu.Unlock()
+	for port, ln := range listeners {
+		if ln != nil {
+			_ = ln.Close()
+		}
+		_ = os.Remove(v.guestVsockUDSSock(instance, port))
+	}
 }
 
 // VsockUDSSocketPath returns the host-side Firecracker vsock proxy path for
@@ -1860,7 +1959,7 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // SIGKILL'd instances don't get an artifact export — that's Builderd's path
 // (use DestroyWithExport).
 func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
-	v.closeJobExitListener(l.Instance)
+	v.closeGuestVsockListeners(l.Instance)
 	v.mu.Lock()
 	cmd, hasCmd := v.proc[l.Instance]
 	rec, hasRec := v.recs[l.Instance]
@@ -2091,7 +2190,7 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 	v.mu.Unlock()
 	if !ok {
 		// Unknown / already-torn-down instance: idempotent, no exit code to report.
-		v.closeJobExitListener(l.Instance)
+		v.closeGuestVsockListeners(l.Instance)
 		v.closeClient(l.Instance)
 		_ = os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance))
 		return 0, nil
@@ -2186,7 +2285,7 @@ exited:
 	// see EOF and the byte budget is released. Done before the chroot
 	// wipe for the same reason as in Kill.
 	v.unregisterRing(l.Instance)
-	v.closeJobExitListener(l.Instance)
+	v.closeGuestVsockListeners(l.Instance)
 	v.closeClient(l.Instance)
 	v.unmountBindMounts(l.Instance)
 	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
@@ -3996,26 +4095,25 @@ const VsockCharacterizationMsgType uint32 = 3
 // VsockCharacterizationMaxBody.
 const VsockCharacterizationMaxBody = 128 * 1024
 
-// WaitCharacterizationReport accepts the FIRST guest-initiated
-// AF_VSOCK STREAM connection on VsockCharacterizationHostPort and
-// reads [4B BE msg_type][4B BE body_len][N B JSON], writes a 1-byte
-// ack (0=ok), and returns the parsed report.
+func (v *JailerVMM) characterizationUDSSock(instance string) string {
+	return v.guestVsockUDSSock(instance, VsockCharacterizationHostPort)
+}
+
+func (v *JailerVMM) prepareCharacterizationListener(l Lease) error {
+	return v.prepareGuestVsockListener(l, VsockCharacterizationHostPort)
+}
+
+func (v *JailerVMM) closeCharacterizationListener(instance string) {
+	v.closeGuestVsockListener(instance, VsockCharacterizationHostPort)
+}
+
+// WaitCharacterizationReport accepts a guest-initiated AF_VSOCK STREAM on the
+// listener prepared before cold boot. Firecracker forwards that stream to
+// <uds_path>_1026; dialing the base UDS and sending CONNECT would initiate the
+// opposite direction and can never receive the guest's report.
 //
-// Wire direction: GUEST INITIATES — guest dials host CID 2 at
-// port 1026 (mirror of VsockResumePort which is host-accept). The
-// guest retries with backoff (100/250/500 ms, 3 retries); the host
-// must accept any of them. We open the listener ONCE, accept ONE
-// connection, and let the deadline elapse if no guest arrives.
-//
-// Caller (pkg/sched/engine.go in PR-D) gates the RUNNING transition
-// on the report arriving. On timeout, the engine falls back to the
-// scan-hint class (never fails the deploy — that would regress vs
-// today's opaque `:8080` accept failure).
-//
-// Defense-in-depth mirrors TriggerResumeHook: nil receiver, empty
-// instance, unconfigured chroot root are all explicit errors. A
-// refactor that passes an uninitialised VMM would otherwise dial a
-// malformed UDS path and return a cryptic ENOENT.
+// Invalid frames receive a non-zero ack and consume a bounded retry slot. The
+// listener accepts later guest retries until the overall deadline expires.
 func (v *JailerVMM) WaitCharacterizationReport(ctx context.Context, l Lease, deadline time.Duration) (api.CharacterizationReport, error) {
 	var zero api.CharacterizationReport
 	if v == nil {
@@ -4027,88 +4125,94 @@ func (v *JailerVMM) WaitCharacterizationReport(ctx context.Context, l Lease, dea
 	if v.chrootBase == "" {
 		return zero, fmt.Errorf("vmm: WaitCharacterizationReport: chrootBase not configured")
 	}
-	sock := v.vsockUDSSock(l.Instance)
+	if deadline <= 0 {
+		return zero, fmt.Errorf("vmm: WaitCharacterizationReport: deadline must be positive")
+	}
+	ln := v.guestVsockListener(l.Instance, VsockCharacterizationHostPort)
+	if ln == nil {
+		return zero, fmt.Errorf("vmm: WaitCharacterizationReport: listener for %s was not prepared", l.Instance)
+	}
+	defer v.closeCharacterizationListener(l.Instance)
 
-	dialDeadline := time.Now().Add(deadline)
-	var conn net.Conn
+	end := time.Now().Add(deadline)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(end) {
+		end = ctxDeadline
+	}
+	const maxInvalidFrames = 8
 	var lastErr error
-	for time.Now().Before(dialDeadline) {
-		if ctx.Err() != nil {
-			return zero, ctx.Err()
+	for invalid := 0; invalid < maxInvalidFrames; {
+		if err := ctx.Err(); err != nil {
+			return zero, err
 		}
-		var err error
-		conn, err = net.DialTimeout("unix", sock, 200*time.Millisecond)
-		if err == nil {
-			break
+		now := time.Now()
+		if !now.Before(end) {
+			if lastErr != nil {
+				return zero, fmt.Errorf("vmm: WaitCharacterizationReport: deadline after invalid frame: %w", lastErr)
+			}
+			return zero, context.DeadlineExceeded
 		}
-		lastErr = err
-		select {
-		case <-ctx.Done():
-			return zero, ctx.Err()
-		case <-time.After(resumeHookDialStep):
+		pollDeadline := now.Add(200 * time.Millisecond)
+		if end.Before(pollDeadline) {
+			pollDeadline = end
 		}
+		if err := ln.SetDeadline(pollDeadline); err != nil {
+			return zero, fmt.Errorf("vmm: WaitCharacterizationReport: set accept deadline: %w", err)
+		}
+		conn, err := ln.AcceptUnix()
+		if err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				continue
+			}
+			if ctx.Err() != nil {
+				return zero, ctx.Err()
+			}
+			return zero, fmt.Errorf("vmm: WaitCharacterizationReport: accept: %w", err)
+		}
+		_ = conn.SetDeadline(end)
+		report, readErr := readCharacterizationEnvelope(conn)
+		if readErr != nil {
+			lastErr = readErr
+			invalid++
+			_, _ = conn.Write([]byte{1})
+			_ = conn.Close()
+			continue
+		}
+		_, ackErr := conn.Write([]byte{0})
+		_ = conn.Close()
+		if ackErr != nil {
+			return report, fmt.Errorf("vmm: write characterization ack: %w", ackErr)
+		}
+		return report, nil
 	}
-	if conn == nil {
-		return zero, fmt.Errorf("vmm: dial vsock uds %s: %w", sock, lastErr)
-	}
-	defer func() { _ = conn.Close() }()
+	return zero, fmt.Errorf("vmm: WaitCharacterizationReport: too many invalid frames: %w", lastErr)
+}
 
-	// Step 1: FC CONNECT-port handshake. Same shape as
-	// TriggerResumeHook — the guest's listen_resume_linux.go's UDS
-	// and the characterization UDS are the same socket; the port
-	// arg tells FC which guest-side listener to deliver to.
-	connectCmd := fmt.Sprintf("CONNECT %d\n", VsockCharacterizationHostPort)
-	if _, err := conn.Write([]byte(connectCmd)); err != nil {
-		return zero, fmt.Errorf("vmm: write CONNECT %d: %w", VsockCharacterizationHostPort, err)
-	}
-	connectAck, err := readConnectAck(conn)
-	if err != nil {
-		return zero, fmt.Errorf("vmm: read CONNECT ack: %w", err)
-	}
-	if connectAck != "OK" {
-		return zero, fmt.Errorf("vmm: CONNECT rejected: %q", connectAck)
-	}
-
-	_ = conn.SetDeadline(time.Now().Add(deadline))
-
-	// Step 2: read the framed JSON. 4-byte BE msg type discriminator +
-	// 4-byte BE body length + N bytes JSON. We validate msg_type =
-	// VsockCharacterizationMsgType; a wrong type means a misrouted
-	// frame (the guest dialed the right port but the wrong listener,
-	// or the host reused the UDS for something else).
+func readCharacterizationEnvelope(r io.Reader) (api.CharacterizationReport, error) {
+	var zero api.CharacterizationReport
 	var hdr [8]byte
-	if _, err := io.ReadFull(conn, hdr[:]); err != nil {
-		return zero, fmt.Errorf("vmm: read characterization frame header: %w", err)
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return zero, fmt.Errorf("read frame header: %w", err)
 	}
-	msgType := binary.BigEndian.Uint32(hdr[0:4])
-	bodyLen := binary.BigEndian.Uint32(hdr[4:8])
+	msgType := binary.BigEndian.Uint32(hdr[:4])
+	bodyLen := binary.BigEndian.Uint32(hdr[4:])
 	if msgType != VsockCharacterizationMsgType {
-		return zero, fmt.Errorf("vmm: wrong msg_type %d (want %d)", msgType, VsockCharacterizationMsgType)
+		return zero, fmt.Errorf("msg_type=%d, want %d", msgType, VsockCharacterizationMsgType)
 	}
-	if bodyLen == 0 || int(bodyLen) > VsockCharacterizationMaxBody {
-		return zero, fmt.Errorf("vmm: characterization body length %d out of range (max %d)", bodyLen, VsockCharacterizationMaxBody)
+	if bodyLen == 0 || bodyLen > VsockCharacterizationMaxBody {
+		return zero, fmt.Errorf("body_len=%d out of range (0, %d]", bodyLen, VsockCharacterizationMaxBody)
 	}
 	body := make([]byte, bodyLen)
-	if _, err := io.ReadFull(conn, body); err != nil {
-		return zero, fmt.Errorf("vmm: read characterization body: %w", err)
+	if _, err := io.ReadFull(r, body); err != nil {
+		return zero, fmt.Errorf("read body (%d bytes): %w", bodyLen, err)
 	}
-
-	// Step 3: parse the report. The guest's emit-side encodes via
-	// pkg/api.CharacterizationReport (json tags are wire-stable).
 	var report api.CharacterizationReport
-	if err := json.Unmarshal(body, &report); err != nil {
-		return zero, fmt.Errorf("vmm: unmarshal characterization report: %w", err)
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err := decoder.Decode(&report); err != nil {
+		return zero, fmt.Errorf("parse JSON: %w", err)
 	}
-
-	// Step 4: 1-byte ack. 0 = ok. The guest retries on !=0 or
-	// short read; we send 0 unconditionally (any failure here would
-	// have already returned).
-	if _, err := conn.Write([]byte{0}); err != nil {
-		// Ack write failure doesn't undo the parsed report; the
-		// guest will retry but we already have what we need.
-		// Surface as a soft warning via the return tuple: caller
-		// (engine.go) decides if it matters.
-		return report, fmt.Errorf("vmm: write ack: %w", err)
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return zero, fmt.Errorf("parse JSON: trailing content")
 	}
 	return report, nil
 }

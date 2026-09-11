@@ -12,7 +12,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,6 +25,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCountOutboundLinux_NoChildEarlyOut(t *testing.T) {
@@ -451,6 +455,40 @@ func TestRunL7Probes_NoHTTPListen_NoCrash(t *testing.T) {
 	if gotClass != "" || gotDoc != nil || gotTrunc {
 		t.Errorf("runL7Probes on closed port: got (%q, %d bytes, %v), want (\"\", nil, false)",
 			gotClass, len(gotDoc), gotTrunc)
+	}
+}
+
+func TestMarshalCharacterizationReportKeepsOversizeFrameValid(t *testing.T) {
+	doc := bytes.Repeat([]byte(`{"path":{}}`), VsockCharacterizationMaxBody/4)
+	logTail := strings.Repeat("latest-log-line\n", api.LogRingBufferBytes/8)
+	body, err := marshalCharacterizationReport(api.CharacterizationReport{
+		ObservedClass: "http",
+		ObservedPort:  8080,
+		ExitCode:      -1,
+		LogTail:       logTail,
+		OpenAPIDoc:    doc,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) > VsockCharacterizationMaxBody {
+		t.Fatalf("body = %d bytes, max %d", len(body), VsockCharacterizationMaxBody)
+	}
+	if !json.Valid(body) {
+		t.Fatal("bounded characterization body is malformed JSON")
+	}
+	var got api.CharacterizationReport
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.OpenAPIDocTruncated {
+		t.Fatal("oversize OpenAPI document did not advertise truncation")
+	}
+	if len(got.OpenAPIDoc) >= len(doc) || !bytes.HasPrefix(doc, got.OpenAPIDoc) {
+		t.Fatalf("OpenAPI document was not prefix-truncated: got=%d original=%d", len(got.OpenAPIDoc), len(doc))
+	}
+	if !strings.HasSuffix(logTail, got.LogTail) {
+		t.Fatal("log tail did not retain its newest bytes")
 	}
 }
 

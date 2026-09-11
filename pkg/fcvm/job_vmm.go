@@ -467,7 +467,7 @@ func BuildJobColdBootConfig(s JobColdBootSpec, slot int) VMConfig {
 // jobExitUDSSock is Firecracker's documented host endpoint for a
 // guest-initiated connection: <configured uds_path>_<destination port>.
 func (v *JailerVMM) jobExitUDSSock(instance string) string {
-	return fmt.Sprintf("%s_%d", v.vsockUDSSock(instance), VsockJobExitPort)
+	return v.guestVsockUDSSock(instance, VsockJobExitPort)
 }
 
 // prepareJobExitListener binds the host endpoint before Firecracker starts.
@@ -475,52 +475,11 @@ func (v *JailerVMM) jobExitUDSSock(instance string) string {
 // WaitJobExit RPC. The socket is owned by the jailer identity because the
 // unprivileged Firecracker process is the connecting peer.
 func (v *JailerVMM) prepareJobExitListener(l Lease) error {
-	if v == nil || l.Instance == "" {
-		return fmt.Errorf("invalid VMM or empty instance")
-	}
-	v.closeJobExitListener(l.Instance)
-	path := v.jobExitUDSSock(l.Instance)
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove stale socket %s: %w", path, err)
-	}
-	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", path, err)
-	}
-	ln.SetUnlinkOnClose(true)
-	cleanup := func() {
-		_ = ln.Close()
-		_ = os.Remove(path)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		cleanup()
-		return fmt.Errorf("chmod %s: %w", path, err)
-	}
-	if err := chownJail(path, l.UID, l.GID); err != nil {
-		cleanup()
-		return err
-	}
-	v.mu.Lock()
-	if v.jobExitListeners == nil {
-		v.jobExitListeners = make(map[string]*net.UnixListener)
-	}
-	v.jobExitListeners[l.Instance] = ln
-	v.mu.Unlock()
-	return nil
+	return v.prepareGuestVsockListener(l, VsockJobExitPort)
 }
 
 func (v *JailerVMM) closeJobExitListener(instance string) {
-	if v == nil || instance == "" {
-		return
-	}
-	v.mu.Lock()
-	ln := v.jobExitListeners[instance]
-	delete(v.jobExitListeners, instance)
-	v.mu.Unlock()
-	if ln != nil {
-		_ = ln.Close()
-	}
-	_ = os.Remove(v.jobExitUDSSock(instance))
+	v.closeGuestVsockListener(instance, VsockJobExitPort)
 }
 
 // WaitJobExit accepts the first valid guest-initiated STREAM on the listener
@@ -541,9 +500,7 @@ func (v *JailerVMM) WaitJobExit(ctx context.Context, l Lease, deadline time.Dura
 	if deadline <= 0 {
 		return zero, fmt.Errorf("vmm: WaitJobExit: deadline must be positive")
 	}
-	v.mu.Lock()
-	ln := v.jobExitListeners[l.Instance]
-	v.mu.Unlock()
+	ln := v.guestVsockListener(l.Instance, VsockJobExitPort)
 	if ln == nil {
 		return zero, fmt.Errorf("vmm: WaitJobExit: listener for %s was not prepared", l.Instance)
 	}
