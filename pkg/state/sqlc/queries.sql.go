@@ -9337,6 +9337,7 @@ WITH filtered AS (
             WHEN 'referrer_host' THEN referrer_host
             WHEN 'ua_family' THEN ua_family
             WHEN 'status' THEN status::text
+            WHEN 'consumer_id' THEN COALESCE(consumer_id::text, '__anonymous__')
             ELSE route
         END::text AS dimension,
         CASE WHEN $5::text = 'route' THEN method ELSE '' END AS method,
@@ -9788,6 +9789,7 @@ WITH buckets AS (
                WHEN 'referrer_host' THEN referrer_host
                WHEN 'ua_family' THEN ua_family
                WHEN 'status' THEN status::text
+               WHEN 'consumer_id' THEN COALESCE(consumer_id::text, '__anonymous__')
                ELSE route
            END::text AS dimension,
            CASE WHEN $5::text = 'route' THEN method ELSE '' END AS method,

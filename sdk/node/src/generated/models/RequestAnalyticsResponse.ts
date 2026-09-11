@@ -35,7 +35,7 @@ export type RequestAnalyticsResponse = {
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
-  group_by: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status';
+  group_by: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status' | 'consumer_id';
   groups: Array<RequestAnalyticsGroup>;
   /**
    * Maximum number of top groups before __other__.

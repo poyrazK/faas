@@ -1,8 +1,9 @@
 from typing import Literal
 
-GetAppRequestAnalyticsGroupBy = Literal["country", "referrer_host", "route", "status", "ua_family"]
+GetAppRequestAnalyticsGroupBy = Literal["consumer_id", "country", "referrer_host", "route", "status", "ua_family"]
 
 GET_APP_REQUEST_ANALYTICS_GROUP_BY_VALUES: set[GetAppRequestAnalyticsGroupBy] = {
+    "consumer_id",
     "country",
     "referrer_host",
     "route",

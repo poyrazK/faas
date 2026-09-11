@@ -1,8 +1,11 @@
 from typing import Literal
 
-GetAppRequestAnalyticsTimeseriesGroupBy = Literal["country", "referrer_host", "route", "status", "ua_family"]
+GetAppRequestAnalyticsTimeseriesGroupBy = Literal[
+    "consumer_id", "country", "referrer_host", "route", "status", "ua_family"
+]
 
 GET_APP_REQUEST_ANALYTICS_TIMESERIES_GROUP_BY_VALUES: set[GetAppRequestAnalyticsTimeseriesGroupBy] = {
+    "consumer_id",
     "country",
     "referrer_host",
     "route",

@@ -114,7 +114,8 @@ def sync_detailed(
      Returns an aggregate request overview for one app: total requests,
     errors, cold boots, weighted p50/p95/p99 latency, and the top
     route/method combinations, or a bounded top-N grouping by country,
-    referrer host, client family, or status. This is the customer analytics surface;
+    referrer host, client family, status, or stable API consumer identity. This is the customer
+    analytics surface;
     request identifiers and trace payloads remain on the debugger routes.
 
     `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -126,9 +127,11 @@ def sync_detailed(
 
     Counts and percentiles include the recorder's collapsed row `count`,
     so the result represents original requests rather than stored rows.
-    Grouped results contain at most 50 groups plus `__other__`. Only a
-    normalized User-Agent family, hostname-only referrer, and country code
-    are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
+    Grouped results contain at most 50 groups plus `__other__`. Consumer
+    grouping uses the stable consumer UUID and reports anonymous traffic
+    as `__anonymous__`. Only a normalized User-Agent family, hostname-only
+    referrer, and country code are stored; no IP, cookie, script, raw
+    User-Agent, or full URL is used.
     The endpoint is read-only, IDOR-safe, and plan-gated by
     `DebugTelemetryEnabled`.
 
@@ -173,7 +176,8 @@ def sync(
      Returns an aggregate request overview for one app: total requests,
     errors, cold boots, weighted p50/p95/p99 latency, and the top
     route/method combinations, or a bounded top-N grouping by country,
-    referrer host, client family, or status. This is the customer analytics surface;
+    referrer host, client family, status, or stable API consumer identity. This is the customer
+    analytics surface;
     request identifiers and trace payloads remain on the debugger routes.
 
     `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -185,9 +189,11 @@ def sync(
 
     Counts and percentiles include the recorder's collapsed row `count`,
     so the result represents original requests rather than stored rows.
-    Grouped results contain at most 50 groups plus `__other__`. Only a
-    normalized User-Agent family, hostname-only referrer, and country code
-    are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
+    Grouped results contain at most 50 groups plus `__other__`. Consumer
+    grouping uses the stable consumer UUID and reports anonymous traffic
+    as `__anonymous__`. Only a normalized User-Agent family, hostname-only
+    referrer, and country code are stored; no IP, cookie, script, raw
+    User-Agent, or full URL is used.
     The endpoint is read-only, IDOR-safe, and plan-gated by
     `DebugTelemetryEnabled`.
 
@@ -227,7 +233,8 @@ async def asyncio_detailed(
      Returns an aggregate request overview for one app: total requests,
     errors, cold boots, weighted p50/p95/p99 latency, and the top
     route/method combinations, or a bounded top-N grouping by country,
-    referrer host, client family, or status. This is the customer analytics surface;
+    referrer host, client family, status, or stable API consumer identity. This is the customer
+    analytics surface;
     request identifiers and trace payloads remain on the debugger routes.
 
     `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -239,9 +246,11 @@ async def asyncio_detailed(
 
     Counts and percentiles include the recorder's collapsed row `count`,
     so the result represents original requests rather than stored rows.
-    Grouped results contain at most 50 groups plus `__other__`. Only a
-    normalized User-Agent family, hostname-only referrer, and country code
-    are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
+    Grouped results contain at most 50 groups plus `__other__`. Consumer
+    grouping uses the stable consumer UUID and reports anonymous traffic
+    as `__anonymous__`. Only a normalized User-Agent family, hostname-only
+    referrer, and country code are stored; no IP, cookie, script, raw
+    User-Agent, or full URL is used.
     The endpoint is read-only, IDOR-safe, and plan-gated by
     `DebugTelemetryEnabled`.
 
@@ -284,7 +293,8 @@ async def asyncio(
      Returns an aggregate request overview for one app: total requests,
     errors, cold boots, weighted p50/p95/p99 latency, and the top
     route/method combinations, or a bounded top-N grouping by country,
-    referrer host, client family, or status. This is the customer analytics surface;
+    referrer host, client family, status, or stable API consumer identity. This is the customer
+    analytics surface;
     request identifiers and trace payloads remain on the debugger routes.
 
     `since` accepts a duration such as `24h` or `7d` and defaults to
@@ -296,9 +306,11 @@ async def asyncio(
 
     Counts and percentiles include the recorder's collapsed row `count`,
     so the result represents original requests rather than stored rows.
-    Grouped results contain at most 50 groups plus `__other__`. Only a
-    normalized User-Agent family, hostname-only referrer, and country code
-    are stored; no IP, cookie, script, raw User-Agent, or full URL is used.
+    Grouped results contain at most 50 groups plus `__other__`. Consumer
+    grouping uses the stable consumer UUID and reports anonymous traffic
+    as `__anonymous__`. Only a normalized User-Agent family, hostname-only
+    referrer, and country code are stored; no IP, cookie, script, raw
+    User-Agent, or full URL is used.
     The endpoint is read-only, IDOR-safe, and plan-gated by
     `DebugTelemetryEnabled`.
 
