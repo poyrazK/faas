@@ -3858,7 +3858,7 @@ paths:
           in: query
           required: false
           schema: { type: [string, 'null'] }
-          description: "Lookback duration (e.g. 30m, 24h, 3d). Defaults to 24h and is clamped by plan retention."
+          description: "Lookback duration (e.g. 30m, 24h, 3d). Defaults to 24h and is clamped by plan retention. Supplied values must be positive; malformed, zero, or negative values return 400."
       responses:
         '200':
           description: Observed debugger signal coverage.

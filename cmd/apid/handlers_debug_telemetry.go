@@ -156,7 +156,8 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 // the requested retention window. This is deliberately an observed-coverage
 // endpoint: the durable table cannot tell us how many requests were dropped
 // before persistence, so the response never presents represented_requests as
-// a platform-wide capture denominator.
+// a platform-wide capture denominator. An omitted or blank `since` defaults
+// to 24h; a supplied malformed, zero, or negative value is rejected.
 func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -169,7 +170,15 @@ func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
-	since := parseDebugSinceFromString(sinceRaw, 24*time.Hour)
+	since := 24 * time.Hour
+	if sinceRaw != "" {
+		var ok bool
+		since, ok = parseDebugSincePositive(sinceRaw)
+		if !ok {
+			api.WriteProblem(w, api.ErrValidation("since must be a positive duration (for example, 30m, 24h, or 3d)"))
+			return
+		}
+	}
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
 	if retention > 0 && since > retention {
 		since = retention
@@ -1243,16 +1252,30 @@ func sortRouteStats(stats []api.DebugCompareRouteStats) {
 // takes the raw string directly (the compare body has its own
 // since field, not a query param). Empty / unparseable → def.
 func parseDebugSinceFromString(raw string, def time.Duration) time.Duration {
-	if raw == "" {
-		return def
-	}
-	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+	if d, ok := parseDebugSincePositive(raw); ok {
 		return d
 	}
-	if n, err := strconv.Atoi(raw[:len(raw)-1]); err == nil && raw[len(raw)-1] == 'd' && n > 0 {
-		return time.Duration(n) * 24 * time.Hour
-	}
 	return def
+}
+
+// parseDebugSincePositive parses a supplied coverage window without applying
+// a fallback. Callers can therefore distinguish an omitted/blank value from
+// malformed, zero, or negative input and return a validation problem.
+func parseDebugSincePositive(raw string) (time.Duration, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d, true
+	}
+	if len(raw) > 1 && raw[len(raw)-1] == 'd' {
+		n, err := strconv.ParseInt(raw[:len(raw)-1], 10, 64)
+		const maxDays = int64((time.Duration(1<<63 - 1)) / (24 * time.Hour))
+		if err == nil && n > 0 && n <= maxDays {
+			return time.Duration(n) * 24 * time.Hour, true
+		}
+	}
+	return 0, false
 }
 
 // debugReplayHandler — POST /v1/apps/{slug}/debug/requests/{req_id}/replay.

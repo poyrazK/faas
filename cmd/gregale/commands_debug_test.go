@@ -48,6 +48,34 @@ func TestCmdDebugCoverage_RendersObservedSignalRates(t *testing.T) {
 	}
 }
 
+func TestCmdDebugCoverage_ServerValidationFailureExitsOne(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(api.Problem{
+			Status: http.StatusBadRequest,
+			Code:   api.CodeValidation,
+			Title:  "Validation failed",
+			Detail: "since must be a positive duration",
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test")
+
+	_, readStderr, restore := swapIO(t)
+	defer restore()
+	oldJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = oldJSON }()
+
+	if code := cmdDebugCoverage([]string{"my-app", "--since", "nonsense"}); code != 1 {
+		t.Fatalf("cmdDebugCoverage() = %d, want 1", code)
+	}
+	if got := readStderr(); !strings.Contains(got, "since must be a positive duration") {
+		t.Errorf("stderr = %q, want validation detail", got)
+	}
+}
+
 func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	var got http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
