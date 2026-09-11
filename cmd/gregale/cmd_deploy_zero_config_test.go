@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -181,6 +182,52 @@ func TestDeployZeroConfig_HappyPath_NewApp(t *testing.T) {
 	// Sanity: Whoami fired too (per-plan cap round-trip).
 	if stub.gotCalls["whoami"] == 0 {
 		t.Errorf("Whoami round-trip for per-plan cap should have fired")
+	}
+}
+
+// TestDeployZeroConfig_AuthBeforeSourceInspection pins the zero-config
+// trust boundary: an unauthenticated invocation must fail before doctor,
+// git-archive filtering, or source packaging runs. The committed symlink
+// would otherwise make the packer fail first, masking the actionable login
+// error and proving that source inspection happened before auth.
+func TestDeployZeroConfig_AuthBeforeSourceInspection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Symlink is not reliably available on Windows")
+	}
+	repo := initZeroConfigRepo(t)
+	if err := os.Symlink("README.md", filepath.Join(repo, "linked-readme")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+	cmd := exec.Command("git", "add", "linked-readme")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add symlink: %v\n%s", err, out)
+	}
+	cmd = exec.Command("git", "commit", "-q", "-m", "add symlink")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit symlink: %v\n%s", err, out)
+	}
+	withCwd(t, repo)
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("FAAS_API", "http://127.0.0.1:1")
+
+	var stderr bytes.Buffer
+	oldErr := osStderr
+	osStderr = &stderr
+	t.Cleanup(func() { osStderr = oldErr })
+
+	if code := cmdDeployTarball([]string{"--name", "demo"}); code != 2 {
+		t.Fatalf("unauthenticated zero-config deploy exit = %d, want 2; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Not logged in") {
+		t.Fatalf("stderr = %q, want the login error", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "symlink") {
+		t.Fatalf("source packaging ran before auth: stderr=%q", stderr.String())
 	}
 }
 
