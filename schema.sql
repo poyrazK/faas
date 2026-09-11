@@ -3014,6 +3014,7 @@ CREATE TABLE public.request_telemetry (
     guest_runtime text DEFAULT '__unknown__'::text NOT NULL,
     guest_outcome text DEFAULT 'missing'::text NOT NULL,
     guest_error_class text DEFAULT ''::text NOT NULL,
+    consumer_id uuid,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),

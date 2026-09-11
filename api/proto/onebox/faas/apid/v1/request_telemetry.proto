@@ -152,6 +152,11 @@ message IncrementRequestTelemetryRequest {
 
   // guest_error_class — bounded failure class; empty for successful calls.
   string guest_error_class = 20;
+
+  // consumer_id — stable API consumer identity resolved by the gateway's
+  // consumer-key middleware. Empty for anonymous/legacy traffic. The
+  // credential itself is never sent or persisted.
+  string consumer_id = 21;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

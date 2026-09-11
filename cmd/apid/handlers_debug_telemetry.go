@@ -335,6 +335,7 @@ func debugTelemetryRowToItem(row sqlc.ListRequestTelemetryByAppRow) api.DebugTel
 		row.GuestRuntime,
 		row.GuestOutcome,
 		row.GuestErrorClass,
+		row.ConsumerID,
 	)
 }
 
@@ -356,6 +357,7 @@ func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIDRow) api.D
 		row.GuestRuntime,
 		row.GuestOutcome,
 		row.GuestErrorClass,
+		row.ConsumerID,
 	)
 }
 
@@ -369,6 +371,7 @@ func debugTelemetryItemFromFields(
 	receivedAt pgtype.Timestamptz,
 	wakeID, instanceID pgtype.Text,
 	guestDurationMS int32, guestRuntime, guestOutcome, guestErrorClass string,
+	consumerID pgtype.UUID,
 ) api.DebugTelemetryRequestItem {
 	item := api.DebugTelemetryRequestItem{
 		// pgtype.UUID -> hyphenated hex string. Falls back to "" when
@@ -385,6 +388,7 @@ func debugTelemetryItemFromFields(
 		ReceivedAt:   timeFromPg(receivedAt),
 		WakeID:       textFromPg(wakeID),
 		InstanceID:   textFromPg(instanceID),
+		ConsumerID:   uuidFromPg(consumerID),
 	}
 	if traceID.Valid {
 		s := traceID.String

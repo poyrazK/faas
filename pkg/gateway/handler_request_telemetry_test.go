@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 )
 
 // makeTestRecorder constructs a production-shaped recorder with the
@@ -112,6 +113,43 @@ func TestHandlerObserveEnqueuesRow(t *testing.T) {
 	}
 	if !saw201 || !saw200 {
 		t.Fatalf("missing one of the expected status codes (saw201=%v, saw200=%v)", saw201, saw200)
+	}
+}
+
+func TestHandlerObserveCarriesConsumerIdentity(t *testing.T) {
+	h := &Handler{requestTelemetry: makeTestRecorder()}
+	acct := uuid.New()
+	app := uuid.New()
+	consumer := uuid.New()
+	r := httptest.NewRequest(http.MethodGet, "/checkout", nil)
+	r = withAppAndAccount(r, acct, app)
+	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{
+		ID: consumer.String(), AppID: app.String(), KeyID: uuid.NewString(),
+	}))
+
+	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{DeploymentID: uuid.NewString()})
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 {
+		t.Fatalf("expected one telemetry row, got %d", len(rows))
+	}
+	if rows[0].ConsumerID != consumer.String() {
+		t.Fatalf("ConsumerID = %q, want %q", rows[0].ConsumerID, consumer.String())
+	}
+}
+
+func TestHandlerObserveIgnoresMalformedConsumerIdentity(t *testing.T) {
+	h := &Handler{requestTelemetry: makeTestRecorder()}
+	r := httptest.NewRequest(http.MethodGet, "/checkout", nil)
+	r = withAppAndAccount(r, uuid.New(), uuid.New())
+	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{ID: "legacy-consumer"}))
+
+	h.observe(r, 200, "app", string(api.PlanPro), false, Target{DeploymentID: uuid.NewString()})
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 {
+		t.Fatalf("expected one telemetry row, got %d", len(rows))
+	}
+	if rows[0].ConsumerID != "" {
+		t.Fatalf("ConsumerID = %q, want empty for malformed identity", rows[0].ConsumerID)
 	}
 }
 

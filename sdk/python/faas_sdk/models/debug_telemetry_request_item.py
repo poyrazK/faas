@@ -43,6 +43,8 @@ class DebugTelemetryRequestItem:
     """Opaque wake identifier when this request admitted a wake; omitted for warm requests."""
     instance_id: str | Unset = UNSET
     """Opaque instance identifier that served the request; omitted when no target was reached."""
+    consumer_id: UUID | Unset = UNSET
+    """Stable API consumer identity; omitted for anonymous or legacy traffic."""
     guest: DebugGuestExecutionEvidence | Unset = UNSET
     """Bounded, platform-owned runtime execution evidence. Omitted when the runner signal was unavailable."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -76,6 +78,10 @@ class DebugTelemetryRequestItem:
 
         instance_id = self.instance_id
 
+        consumer_id: str | Unset = UNSET
+        if not isinstance(self.consumer_id, Unset):
+            consumer_id = str(self.consumer_id)
+
         guest: dict[str, Any] | Unset = UNSET
         if not isinstance(self.guest, Unset):
             guest = self.guest.to_dict()
@@ -101,6 +107,8 @@ class DebugTelemetryRequestItem:
             field_dict["wake_id"] = wake_id
         if instance_id is not UNSET:
             field_dict["instance_id"] = instance_id
+        if consumer_id is not UNSET:
+            field_dict["consumer_id"] = consumer_id
         if guest is not UNSET:
             field_dict["guest"] = guest
 
@@ -142,6 +150,13 @@ class DebugTelemetryRequestItem:
 
         instance_id = d.pop("instance_id", UNSET)
 
+        _consumer_id = d.pop("consumer_id", UNSET)
+        consumer_id: UUID | Unset
+        if isinstance(_consumer_id, Unset):
+            consumer_id = UNSET
+        else:
+            consumer_id = UUID(_consumer_id)
+
         _guest = d.pop("guest", UNSET)
         guest: DebugGuestExecutionEvidence | Unset
         if isinstance(_guest, Unset):
@@ -162,6 +177,7 @@ class DebugTelemetryRequestItem:
             trace_id=trace_id,
             wake_id=wake_id,
             instance_id=instance_id,
+            consumer_id=consumer_id,
             guest=guest,
         )
 

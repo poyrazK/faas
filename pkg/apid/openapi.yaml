@@ -25047,6 +25047,7 @@ components:
         received_at: { type: string, format: date-time }
         wake_id: { type: string, description: "Opaque wake identifier when this request admitted a wake; omitted for warm requests." }
         instance_id: { type: string, description: "Opaque instance identifier that served the request; omitted when no target was reached." }
+        consumer_id: { type: string, format: uuid, description: "Stable API consumer identity; omitted for anonymous or legacy traffic." }
         guest:
           $ref: '#/components/schemas/DebugGuestExecutionEvidence'
 
