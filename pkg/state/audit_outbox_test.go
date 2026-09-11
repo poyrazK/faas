@@ -7,6 +7,27 @@ import (
 	"time"
 )
 
+// adr: 141 — durable audit-event outbox retry/backoff contract.
+func TestAuditEventOutboxRetryDelay(t *testing.T) {
+	tests := []struct {
+		attempts int
+		want     time.Duration
+	}{
+		{attempts: -1, want: 5 * time.Second},
+		{attempts: 1, want: 5 * time.Second},
+		{attempts: 2, want: 10 * time.Second},
+		{attempts: 3, want: 20 * time.Second},
+		{attempts: 6, want: 160 * time.Second},
+		{attempts: 7, want: 5 * time.Minute},
+		{attempts: 100, want: 5 * time.Minute},
+	}
+	for _, tt := range tests {
+		if got := auditEventOutboxRetryDelay(tt.attempts); got != tt.want {
+			t.Errorf("auditEventOutboxRetryDelay(%d) = %s, want %s", tt.attempts, got, tt.want)
+		}
+	}
+}
+
 func TestMemAuditEventOutboxDedupeAndDelivery(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemStore()
