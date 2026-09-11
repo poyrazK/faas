@@ -191,6 +191,10 @@ type App struct {
 	// false in fakeBackend unit tests (the in-memory
 	// backend doesn't populate the column).
 	RequireAuthn bool
+	// ConsumerAuthMode (ADR-120) controls end-customer API-key
+	// authentication on this app's public path. Empty is treated as
+	// optional for legacy/fake app rows; required rejects anonymous traffic.
+	ConsumerAuthMode string
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth mode (open|bearer|basic). When
 	// mode='open' (the pre-#477 default), ServeHTTP
@@ -372,11 +376,11 @@ type AppSidecar struct {
 // RequireAuthnAuthenticator (issue #560) is the narrow slice of
 // pkg/auth.Middleware.Authenticator the per-deployment authz
 // branch consumes — AuthenticateKey alone, returning
-// (account, key, error). Declaring it locally keeps pkg/gateway
-// free of any import dependency on pkg/auth or pkg/state
-// (cmd/gatewayd-internal/wires the *authmw.Middleware, which satisfies
-// this interface through its exported Authn field; the
-// compile-time assertion at the call site pins the contract).
+// (account, key, error). Declaring it locally keeps the existing
+// require_authn path free of a direct pkg/auth or pkg/state dependency
+// (cmd/gatewayd-internal wires the *authmw.Middleware). The separate
+// ADR-120 consumer-key carrier lives in pkg/auth/middleware/context.go
+// because downstream metering needs one canonical request getter.
 type RequireAuthnAuthenticator interface {
 	AuthenticateKey(ctx context.Context, hash []byte) (RequireAuthnAccount, RequireAuthnKey, error)
 }
@@ -876,6 +880,13 @@ type Handler struct {
 	// audit emitter so the rows land in the same events table
 	// every other gatewayd-scope row uses (cmd/gatewayd-internal/audit.go).
 	requireAuthnAudit RequireAuthnAuditor
+	// consumerAuthStore resolves app-scoped end-customer keys. nil keeps the
+	// legacy anonymous path for apps in optional mode; required mode fails
+	// closed when production wiring is missing.
+	consumerAuthStore ConsumerAuthStore
+	// consumerKeyTouches coalesces best-effort last_used_at writes so a hot
+	// customer key does not turn every request into a database update.
+	consumerKeyTouches *consumerKeyToucher
 	// publicAuthCache is the unsealed basic-auth credential
 	// cache (issue #477 / ADR-079). Nil = no caching; the
 	// basic-auth path falls back to per-request unsealing
@@ -1064,11 +1075,12 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 				}
 			},
 		),
-		burstPressure:  &burstPressure{},
-		metrics:        m,
-		headHeaders:    newEdgeHeadHeaderCache(),
-		log:            log,
-		wakePageCycles: make(map[string]*wakePageCycle),
+		burstPressure:      &burstPressure{},
+		metrics:            m,
+		headHeaders:        newEdgeHeadHeaderCache(),
+		log:                log,
+		wakePageCycles:     make(map[string]*wakePageCycle),
+		consumerKeyTouches: newConsumerKeyToucher(),
 		// mirrorSlots is sync.Map (zero value ready); the cap is
 		// loaded from api.MirrorMaxConcurrentPerRule (default 5)
 		// so the per-rule VM cost circuit matches the MirrorMaxLifetimeSeconds
@@ -1345,6 +1357,18 @@ func (h *Handler) WithRequireAuthn(authn RequireAuthnAuthenticator, audit Requir
 	return h
 }
 
+// WithConsumerAuth arms the app consumer-key gate. store may be nil in unit
+// tests or in a legacy deployment; optional apps remain backwards-compatible,
+// while required apps fail closed with a service-unavailable response rather
+// than silently accepting anonymous traffic.
+func (h *Handler) WithConsumerAuth(store ConsumerAuthStore) *Handler {
+	h.consumerAuthStore = store
+	if store != nil && h.consumerKeyTouches == nil {
+		h.consumerKeyTouches = newConsumerKeyToucher()
+	}
+	return h
+}
+
 // WithEdgeRules (ADR-089 / issue #561 PR 3) arms the
 // per-host edge-rule matcher. matcher may be nil (matcher
 // disabled; pre-PR-3 behaviour preserved for unit tests +
@@ -1563,9 +1587,9 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 	// audit boundary; Phase 3 keeps it via withAuthenticated. The
 	// context.Value setter is a single map insertion — no
 	// measurable cost on the authn hot path.
-	*r = *r.WithContext(withAuthenticated(r.Context(), Authenticated{
-		APIKeyID: key.ID,
-	}))
+	authenticated := authenticatedFrom(r.Context())
+	authenticated.APIKeyID = key.ID
+	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
 	return true
 }
 
@@ -2258,10 +2282,10 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// key_by="jwt_claim". Claims.Custom is the string→string
 	// subset the verifier extracted from rule.RequiredClaims — no
 	// extra parse cost on the hot path.
-	*r = *r.WithContext(withAuthenticated(r.Context(), Authenticated{
-		JWTSubject: claims.Subject,
-		JWTClaims:  claims.Custom,
-	}))
+	authenticated := authenticatedFrom(r.Context())
+	authenticated.JWTSubject = claims.Subject
+	authenticated.JWTClaims = claims.Custom
+	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
 	return false
 }
 
@@ -5024,10 +5048,17 @@ haveApp:
 		}
 		r = withAppAndAccount(r, accountUUID, appUUID)
 	}
+	// ADR-120: resolve end-customer identity before any edge rewrite, body
+	// buffering, throttling, or wake work. This keeps invalid credentials from
+	// consuming downstream resources and makes the same stable consumer ID
+	// available to later rate-limit and metering stages.
+	if !h.enforceConsumerAuth(w, r, rec, app) {
+		return
+	}
 	// M1 wake hygiene: answer static browser/crawler paths directly at the
-	// edge. This runs immediately after host resolution and before edge-rule,
-	// auth, limiter, or wake work, so these paths cannot create an instance or
-	// accrue resident usage while an app is parked.
+	// edge. This runs after the app-level consumer gate and before edge-rule,
+	// operator-auth, limiter, or wake work, so these paths cannot create an
+	// instance or accrue resident usage while an app is parked.
 	if h.serveEdgeAnswer(w, r, app) {
 		return
 	}

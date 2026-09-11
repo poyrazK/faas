@@ -1136,7 +1136,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return gateway.App{}, false, err
 			}
 			favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
-			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1950,6 +1950,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// nil. Production wires both unconditionally after
 	// deps.authMw is built in run().
 	handler.WithRequireAuthn(deps.requireAuthnAdapter, deps.requireAuthnAudit)
+	// ADR-120: arm end-customer consumer-key authentication against the same
+	// PgStore used by apid. The gateway keeps the hot-path policy and the
+	// adapter translates only the narrow lookup/touch contract.
+	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	// E2 / issue #1397: browser wake pages use the same gatewayd audit
 	// writer as the auth gates so wake.page_served joins the eventual
 	// scheduler wake by its real wake_id.
@@ -2023,6 +2027,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			AutoscaleTargetRPS: app.AutoscaleTargetRPS,
 			Slug:               app.Slug,
 			RequireAuthn:       app.RequireAuthn,
+			ConsumerAuthMode:   string(app.ConsumerAuthMode),
 			PublicAuth:         gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist},
 			StreamingEnabled:   app.StreamingEnabled,
 			WebSocketEnabled:   app.WebSocketEnabled,

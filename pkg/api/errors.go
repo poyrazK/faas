@@ -1669,8 +1669,10 @@ func StatusForCode(code string) int {
 		// fault, and the SDK distinguishes 404 build-not-found
 		// from 503 SBOM-missing so customer agents can branch.
 		return http.StatusServiceUnavailable
-	case CodeUnauthorized:
+	case CodeUnauthorized, CodeConsumerKeyRequired, CodeConsumerKeyInvalid, CodeConsumerKeyInactive:
 		return http.StatusUnauthorized
+	case CodeConsumerScopeMissing:
+		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized
 	case CodeNotFound:

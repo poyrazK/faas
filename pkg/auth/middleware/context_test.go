@@ -5,6 +5,8 @@
 // callers (see helpers in middleware_test.go).
 package middleware
 
+// adr: 120
+
 import (
 	"net/http/httptest"
 	"testing"
@@ -101,6 +103,32 @@ func TestMFAPendingFrom_StampedFalse(t *testing.T) {
 	v, ok := MFAPendingFrom(r)
 	if v || !ok {
 		t.Errorf("got (%v, %v); want (false, true)", v, ok)
+	}
+}
+
+func TestConsumerFromContext_MissingStamp(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	if _, ok := ConsumerFromContext(r); ok {
+		t.Fatal("ok = true on empty context; want false")
+	}
+}
+
+func TestConsumerFromContext_StampedIdentity(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r = r.WithContext(WithConsumer(r.Context(), ConsumerIdentity{
+		ID: "consumer-1", AppID: "app-1", KeyID: "key-1", Scopes: []string{"read"},
+	}))
+	got, ok := ConsumerFromContext(r)
+	if !ok {
+		t.Fatal("ok = false on stamped consumer")
+	}
+	if got.ID != "consumer-1" || got.AppID != "app-1" || got.KeyID != "key-1" {
+		t.Fatalf("identity = %+v, want consumer-1/app-1/key-1", got)
+	}
+	got.Scopes[0] = "write"
+	again, ok := ConsumerFromContext(r)
+	if !ok || len(again.Scopes) != 1 || again.Scopes[0] != "read" {
+		t.Fatalf("context scopes were mutable: %+v", again.Scopes)
 	}
 }
 
