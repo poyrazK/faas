@@ -313,10 +313,33 @@ func doctorCheckArch(path string) doctorCheck {
 	}
 }
 
-// envVarRefRegex matches `process.env.VAR` (Node), `os.environ["VAR"]`
-// (Python), `os.Getenv("VAR")` (Go). Anchored on the env-var name
-// pattern (uppercase + underscore) to skip comments.
-var envVarRefRegex = regexp.MustCompile(`(?i)(?:process\.env|os\.environ(?:\[["']|get\("))([A-Z_][A-Z0-9_]{2,})`)
+// envVarRefRegex matches the common static environment access forms used by
+// Node, Python, and Go. Keep one capture group for scanEnvRefs so all forms
+// feed the same de-duplicated result:
+//   - process.env.API_TOKEN / process.env["API_TOKEN"]
+//   - os.environ["API_TOKEN"] / os.environ.get("API_TOKEN")
+//   - os.Getenv("API_TOKEN")
+//
+// The name is intentionally bounded to the conventional uppercase env-key
+// shape. Dynamic lookups (for example process.env[key]) cannot be reported
+// without executing or parsing the customer's program.
+var envVarRefRegex = regexp.MustCompile(`(?i)(?:process\.env\s*\.\s*|process\.env\s*\[\s*["']|os\.environ\s*\[\s*["']|os\.environ\s*\.\s*(?:get|setdefault)\s*\(\s*["']|os\.Getenv\s*\(\s*["'])([A-Z_][A-Z0-9_]{2,})`)
+
+// platformInjectedEnvVars are supplied by the runtime rather than by the
+// customer's app configuration. Referencing one must not turn a clean
+// generated template into an env-required finding (issue #2014).
+var platformInjectedEnvVars = map[string]struct{}{
+	"FAAS_APP":               {},
+	"FAAS_DEPLOY":            {},
+	"FAAS_PERSISTENT_WORKER": {},
+	"FAAS_RUNTIME":           {},
+	"HOME":                   {},
+	"LANG":                   {},
+	"PATH":                   {},
+	"PORT":                   {},
+	"PYTHONUNBUFFERED":       {},
+	"PYTHON_VERSION":         {},
+}
 
 // doctorCheckEnvRequired scans source for env-var references and
 // flags any not declared in `.gregale/env.json` (the apid
@@ -328,9 +351,19 @@ func doctorCheckEnvRequired(path string) doctorCheck {
 		return doctorCheck{Name: "env-required", Status: "ok"}
 	}
 	declared := loadDeclaredEnv(path)
+	optional := loadOptionalEnv(path)
+	for _, r := range scanOptionalEnvRefs(path, envVarRefRegex) {
+		optional[r] = true
+	}
 	missing := []string{}
 	for _, r := range refs {
+		if _, ok := platformInjectedEnvVars[r]; ok {
+			continue
+		}
 		if _, ok := declared[r]; !ok {
+			if optional[r] {
+				continue
+			}
 			missing = append(missing, r)
 		}
 	}
@@ -444,10 +477,26 @@ func scanSource(root string, re *regexp.Regexp, maxHits int) []string {
 	return out
 }
 
-// scanEnvRefs walks the tree collecting every distinct env-var
-// name referenced. The regex has a capture group; we deduplicate
-// by name. Returns sorted.
+// scanEnvRefs walks source-like files collecting every distinct env-var name
+// referenced. Documentation and comment-only lines are ignored so examples
+// in READMEs do not become runtime findings. The regex has a capture group;
+// we deduplicate by name and return sorted. Multiple references on one source
+// line are all considered so a compact config expression cannot hide a key.
 func scanEnvRefs(root string, re *regexp.Regexp) []string {
+	return scanEnvRefsMatching(root, re, nil)
+}
+
+// scanOptionalEnvRefs returns references that have an obvious source-level
+// fallback: JavaScript's ||/?? operators or Python's os.environ.get(...,
+// default). These variables are optional by construction and should not be
+// reported as missing when the project has not supplied a value.
+func scanOptionalEnvRefs(root string, re *regexp.Regexp) []string {
+	return scanEnvRefsMatching(root, re, func(line string, match []int) bool {
+		return envRefHasFallback(line, match)
+	})
+}
+
+func scanEnvRefsMatching(root string, re *regexp.Regexp, accept func(string, []int) bool) []string {
 	seen := map[string]bool{}
 	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 		// Mirror scanSource's nil-info guard: filepath.Walk delivers
@@ -464,6 +513,9 @@ func scanEnvRefs(root string, re *regexp.Regexp) []string {
 			}
 			return nil
 		}
+		if envRefDocumentationFile(p) {
+			return nil
+		}
 		if info.Size() > 1<<20 {
 			return nil
 		}
@@ -475,9 +527,15 @@ func scanEnvRefs(root string, re *regexp.Regexp) []string {
 		defer func() { _ = f.Close() }() //nolint:errcheck // read-only scan; close is best-effort
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
-			m := re.FindStringSubmatch(scanner.Text())
-			if len(m) > 1 {
-				seen[strings.ToUpper(m[1])] = true
+			line := scanner.Text()
+			if envRefCommentOnlyLine(line) {
+				continue
+			}
+			for _, match := range re.FindAllStringSubmatchIndex(line, -1) {
+				if len(match) < 4 || (accept != nil && !accept(line, match)) {
+					continue
+				}
+				seen[strings.ToUpper(line[match[2]:match[3]])] = true
 			}
 		}
 		return nil
@@ -488,6 +546,52 @@ func scanEnvRefs(root string, re *regexp.Regexp) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// envRefHasFallback recognizes the suffix after the captured key in the
+// source line. The regex intentionally stops at the key, so bracket/quote
+// delimiters are stripped before checking for the fallback operator or the
+// comma that introduces Python's default argument.
+func envRefHasFallback(line string, match []int) bool {
+	if len(match) < 2 || match[1] < 0 || match[1] > len(line) {
+		return false
+	}
+	matched := strings.ToLower(line[match[0]:match[1]])
+	isPythonGetter := strings.Contains(matched, "os.environ.") &&
+		(strings.Contains(matched, ".get") || strings.Contains(matched, ".setdefault"))
+	suffix := strings.TrimSpace(line[match[1]:])
+	for len(suffix) > 0 {
+		switch suffix[0] {
+		case '"', '\'', ']', ')':
+			suffix = strings.TrimSpace(suffix[1:])
+		default:
+			goto delimitersStripped
+		}
+	}
+
+delimitersStripped:
+	return strings.HasPrefix(suffix, "||") ||
+		strings.HasPrefix(suffix, "??") ||
+		(isPythonGetter && strings.HasPrefix(suffix, ",")) ||
+		(strings.HasPrefix(suffix, "or") && (len(suffix) == 2 || suffix[2] == ' ' || suffix[2] == '\t'))
+}
+
+func envRefCommentOnlyLine(line string) bool {
+	line = strings.TrimSpace(line)
+	return line == "" ||
+		strings.HasPrefix(line, "//") ||
+		strings.HasPrefix(line, "#") ||
+		strings.HasPrefix(line, "/*") ||
+		strings.HasPrefix(line, "<!--")
+}
+
+func envRefDocumentationFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".mdx", ".rst", ".adoc":
+		return true
+	default:
+		return false
+	}
 }
 
 // loadDeclaredEnv reads the local `.env` file (the shape `gregale
@@ -548,6 +652,9 @@ func loadDeclaredEnv(path string) map[string]bool {
 		var parsed map[string]any
 		if err := json.Unmarshal(data, &parsed); err == nil {
 			for k := range parsed {
+				if strings.EqualFold(k, "optional") {
+					continue
+				}
 				if !isDeclaredEnvKey(k) {
 					continue
 				}
@@ -556,6 +663,41 @@ func loadDeclaredEnv(path string) map[string]bool {
 		}
 	}
 	return declared
+}
+
+// loadOptionalEnv reads the optional-key declaration from the legacy
+// `.gregale/env.json` metadata shape. The ordinary flat key/value shape stays
+// backwards compatible; projects may add `"optional": ["KEY"]` to mark
+// values that are intentionally absent in some environments.
+func loadOptionalEnv(path string) map[string]bool {
+	optional := map[string]bool{}
+	data, err := os.ReadFile(filepath.Join(path, ".gregale", "env.json"))
+	if err != nil {
+		return optional
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return optional
+	}
+	values, ok := parsed["optional"]
+	if !ok {
+		return optional
+	}
+	switch values := values.(type) {
+	case []any:
+		for _, value := range values {
+			if key, ok := value.(string); ok && isDeclaredEnvKey(key) {
+				optional[strings.ToUpper(key)] = true
+			}
+		}
+	case map[string]any:
+		for key := range values {
+			if isDeclaredEnvKey(key) {
+				optional[strings.ToUpper(key)] = true
+			}
+		}
+	}
+	return optional
 }
 
 // isDeclaredEnvKey accepts the canonical env-var name shape
