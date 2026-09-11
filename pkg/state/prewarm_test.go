@@ -192,6 +192,10 @@ func TestMemStorePrewarmExpiryTerminalizesOnlyExpiredPending(t *testing.T) {
 	app := App{ID: "app-1", AccountID: "acct-1", Status: AppActive}
 	m.apps[app.ID] = app
 	now := time.Now().UTC()
+	if _, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 0,
+		now.Add(time.Minute), now.Add(2*time.Minute), PrewarmTriggerCalendar); err == nil {
+		t.Fatal("invalid prewarm creation succeeded")
+	}
 
 	expiredID := newID()
 	// CreatePrewarmIntent correctly rejects a past wake window, so seed the
@@ -227,5 +231,8 @@ func TestMemStorePrewarmExpiryTerminalizesOnlyExpiredPending(t *testing.T) {
 	}
 	if changed, err := m.ExpirePrewarmIntent(context.Background(), active.ID, now); err != nil || changed {
 		t.Fatalf("active ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
+	}
+	if changed, err := m.ExpirePrewarmIntent(context.Background(), "missing", now); !errors.Is(err, ErrNotFound) || changed {
+		t.Fatalf("missing ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
 	}
 }
