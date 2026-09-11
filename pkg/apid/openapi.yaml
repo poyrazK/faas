@@ -5252,7 +5252,7 @@ paths:
     get:
       tags: [github]
       operationId: getGitHubInstallBinding
-      summary: Read the GitHub installation and binding health for an app.
+      summary: Inspect the app's GitHub repository binding.
       description: |
         Cookie-session-authenticated (NOT API-key). Returns the durable
         GitHub installation metadata and the app's repository binding without
@@ -5260,14 +5260,14 @@ paths:
         named CSRF token required by the sync and disconnect actions.
       responses:
         '200':
-          description: Current GitHub connection state.
+          description: Current installation and binding state.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/GitHubInstallStatus' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503':
-          description: 'code: capacity — the connection state could not be read.'
+          description: 'code: capacity — the installation and binding state could not be loaded.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -5341,7 +5341,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/GitHubInstallStatus' }
         '400':
-          description: 'code: validation — missing or invalid CSRF token.'
+          description: 'code: validation — missing or invalid CSRF token for disconnect.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -5403,7 +5403,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/GitHubInstallStatus' }
         '400':
-          description: 'code: validation — missing or invalid CSRF token.'
+          description: 'code: validation — a valid CSRF token is required for GitHub sync.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
