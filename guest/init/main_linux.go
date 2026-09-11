@@ -52,15 +52,15 @@ const (
 	maxSidecarProfileMB       = 512
 )
 
-// bootMode is which branch of the build (BuildManifest present) vs app
-// (AppManifest present) guest-init took. decideMode is split out so unit
-// tests can drive it with testing/fstest.MapFS.
+// bootMode is which workload branch guest-init took. decideMode is split out
+// so unit tests can drive it with testing/fstest.MapFS.
 type bootMode int
 
 const (
 	modeApp bootMode = iota
 	modeBuild
 	modeJob
+	modeExecution
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
@@ -101,6 +101,14 @@ func boot() error {
 		return err
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
+	// Execution guests are disposable one-shot runtimes. They do not start
+	// the app supervisor, health probes, telemetry, or a restart loop: the
+	// execution listener accepts one protocol stream, returns one result, and
+	// powers the VM off on every path.
+	if mode == modeExecution {
+		guestStage("before-execution")
+		return runExecutionGuest(slog.Default())
+	}
 	if mode == modeApp {
 		// Disk usage is an app-runtime signal. Jobs and builder VMs are
 		// single-purpose artifacts whose writable space is not part of the
@@ -502,10 +510,11 @@ func errorKind(err error) string {
 
 // decideMode picks the boot branch by looking at which manifest file exists.
 //
-// Mode priority (issue #1184 / ADR-099):
-//  1. job.json with kind=="job"  → modeJob
-//  2. build.json (kind=="build") → modeBuild
-//  3. else                       → modeApp (legacy)
+// Mode priority (ADR-171):
+//  1. execution.json with kind=="execution" → modeExecution
+//  2. job.json with kind=="job"              → modeJob
+//  3. build.json (kind=="build")             → modeBuild
+//  4. else                                   → modeApp (legacy)
 //
 // Job VMs never co-exist with build.json (different workload
 // class), so the precedence is "what file wins". If both
@@ -518,6 +527,14 @@ func errorKind(err error) string {
 // fs.FS rejects absolute paths, and the real os.DirFS("/") used
 // at boot happily accepts the relative form on Linux.
 func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
+	if data, err := fs.ReadFile(fsys, executionManifestRelativePath); err == nil {
+		if markerErr := validateExecutionManifest(data); markerErr != nil {
+			return modeExecution, api.BuildManifest{}, fmt.Errorf("invalid execution manifest: %w", markerErr)
+		}
+		return modeExecution, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeExecution, api.BuildManifest{}, fmt.Errorf("read execution manifest: %w", err)
+	}
 	// Job VMs take precedence (issue #1184 Workstream A /
 	// ADR-099). The presence of /etc/faas/job.json with
 	// kind=="job" is the canonical signal — the supervisor
