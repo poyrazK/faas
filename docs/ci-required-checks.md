@@ -49,7 +49,6 @@ was red on `unit tests (pg shard 2)`).
 | `runtime-contract-gate`                                     | Runtime image, source-artifact, adapter, and operator-doc contracts | `images.yml:runtime-contract-gate` |
 | `capabilities-check (product registry + matrix)`             | Product capability registry ↔ generated customer matrix drift | `ci.yml:~800` |
 | `api-hosting-contract-check (framework fixtures)`             | Framework profile inference against production-shaped source fixtures | `ci.yml:~820` |
-| `metal smoke (Firecracker amd64)`                              | Real amd64/KVM VM lifecycle, cgroups, networking, mounts, and leak checks | `builder-native.yml:metal-smoke` |
 
 Runtime OCI vulnerability scanning is enforced by the `images.yml` builder and
 runtime matrix jobs. Those jobs scan the exact locally-built or published
@@ -68,21 +67,15 @@ Changes to `pkg/fcvm/builder_acceptance_metal_test.go` are included in the
 runtime change detector so the post-merge native gate publishes and tests the
 commit containing the updated acceptance fixture.
 
-`metal smoke (Firecracker amd64)` runs in the same trusted workflow after the
-nightly builder gate, by manual dispatch from `main`, and on
-`pull_request_target` for pull requests whose head branch belongs to this
-repository. Loading the workflow definition from `main` keeps the OIDC token
-inside the provider's `refs/heads/main` trust condition; a job-level repository
-guard refuses fork heads before checkout or authentication. It packages the
-exact source SHA and a pinned Go toolchain, builds fresh guest-init/base/layer
-fixtures on the host, and runs the complete
-`pkg/fcvm` metal package plus the isolated network-namespace batch and pre/post
-leak checks. It shares the builder gate's host lock, service quiescing,
-restoration, marker, and workflow-bound OIDC identity. The job records whether
-it started the compute node so the always-running finalizer can stop only nodes
-owned by that workflow run. This replaces the old `ci.yml` manual job that
-targeted a nonexistent `[self-hosted, kvm]` runner and makes native VM-boundary
-changes visible before merge for trusted, same-repository branches.
+`metal smoke (Firecracker amd64, nightly)` runs in the same trusted workflow
+after the nightly builder gate, and by manual dispatch from `main`. It packages
+the exact current `main` source and a pinned Go toolchain, builds fresh
+guest-init/base/layer fixtures on the host, and runs `TestMetalHelloBoot` plus
+the pre/post leak checks. It shares the builder gate's host lock, service
+quiescing, restoration, marker, and workflow-bound OIDC identity. It replaces
+the old `ci.yml` manual job that targeted a nonexistent `[self-hosted, kvm]`
+runner. This first slice is post-merge-only; untrusted pull-request code is not
+given root execution on the persistent compute node.
 
 Every successful Dockerfile and Railpack fixture must also complete its Grype
 scan. The hardened Python 3.13 runtime rejects every CRITICAL finding to match
