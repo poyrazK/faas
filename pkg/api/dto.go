@@ -8057,6 +8057,81 @@ type OperatorJobRunCancelResponse struct {
 	Reason      string         `json:"reason"`
 }
 
+// OperatorDeployment is the safe provider-side projection used during a
+// deployment incident. It intentionally omits source paths, image/rootfs
+// handles, commands, environment values, and log-spool locations.
+type OperatorDeployment struct {
+	ID           string `json:"id"`
+	AppID        string `json:"app_id"`
+	AppSlug      string `json:"app_slug"`
+	AccountID    string `json:"account_id"`
+	BuildID      string `json:"build_id,omitempty"`
+	Kind         string `json:"kind"`
+	Status       string `json:"status"`
+	SourceBytes  int64  `json:"source_bytes"`
+	Priority     int    `json:"priority"`
+	Error        string `json:"error,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorHint    string `json:"error_hint,omitempty"`
+	ErrorWhy     string `json:"error_why,omitempty"`
+	ErrorFix     string `json:"error_fix,omitempty"`
+	RolloutState string `json:"rollout_state,omitempty"`
+	CreatedAt    string `json:"created_at"`
+	CancelledAt  string `json:"cancelled_at,omitempty"`
+	CancelReason string `json:"cancel_reason,omitempty"`
+}
+
+// OperatorDeploymentStage is the bounded stage timeline shown to operators.
+type OperatorDeploymentStage struct {
+	Current             string                        `json:"current,omitempty"`
+	CurrentStartedAt    string                        `json:"current_started_at,omitempty"`
+	RetryRequestedStage string                        `json:"retry_requested_stage,omitempty"`
+	RetryRestartReason  string                        `json:"retry_restart_reason,omitempty"`
+	History             []OperatorDeploymentStageItem `json:"history,omitempty"`
+}
+
+type OperatorDeploymentStageItem struct {
+	Name       string `json:"name"`
+	StartedAt  string `json:"started_at,omitempty"`
+	EndedAt    string `json:"ended_at,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+type OperatorDeploymentBuild struct {
+	ID           string `json:"id"`
+	Status       string `json:"status"`
+	FailureClass string `json:"failure_class,omitempty"`
+	CacheStatus  string `json:"cache_status,omitempty"`
+	EnqueuedAt   string `json:"enqueued_at"`
+	StartedAt    string `json:"started_at,omitempty"`
+	FinishedAt   string `json:"finished_at,omitempty"`
+}
+
+// OperatorDeploymentListResponse is a bounded fleet/account incident page.
+type OperatorDeploymentListResponse struct {
+	Deployments []OperatorDeployment `json:"deployments"`
+	AccountID   string               `json:"account_id,omitempty"`
+	AppID       string               `json:"app_id,omitempty"`
+	Statuses    []string             `json:"statuses,omitempty"`
+	Limit       int                  `json:"limit"`
+	Offset      int                  `json:"offset"`
+	NextOffset  int                  `json:"next_offset"`
+}
+
+type OperatorDeploymentDetailResponse struct {
+	Deployment OperatorDeployment       `json:"deployment"`
+	Build      *OperatorDeploymentBuild `json:"build,omitempty"`
+	Stage      *OperatorDeploymentStage `json:"stage,omitempty"`
+}
+
+type OperatorDeploymentMutationResponse struct {
+	Deployment OperatorDeployment `json:"deployment"`
+	Action     string             `json:"action"`
+	Reason     string             `json:"reason"`
+}
+
 // JobDeletedResponse is the body of DELETE /v1/jobs/{name}.
 // Distinct from JobResponse (no command / env / caps —
 // the dashboard only needs to render the deletion chip +

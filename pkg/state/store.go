@@ -2458,6 +2458,11 @@ type Store interface {
 	// bound). MemStore sorts in memory; PgStore uses a LIMIT/OFFSET or
 	// keyset pagination (deferred — LIMIT/OFFSET is fine at one-box scale).
 	ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error)
+	// ListDeploymentsForOperator returns a bounded, fleet-wide deployment
+	// incident view. Optional account/app/status filters are applied in the
+	// database; rows for deleted apps and soft-deleted deployments are hidden.
+	// Results are ordered newest-first with a stable deployment-ID tie-breaker.
+	ListDeploymentsForOperator(ctx context.Context, filter OperatorDeploymentFilter) ([]Deployment, error)
 	// ListLatestDeploymentPerApp returns at most one deployment for each
 	// non-deleted app the account owns. Newness is ordered by created_at and
 	// then deployment ID so equal timestamps have a stable winner.

@@ -259,6 +259,37 @@ task lease tokens. Reads are audited; cancellation requires a recent MFA
 step-up, idempotency key, explicit reason and confirmation, and returns a trace
 ID for `gregalectl audit trace`.
 
+### Deployment incidents
+
+Inspect failed or stuck deployment attempts through the bounded operator
+projection. The default view includes pending, building, imaging,
+snapshotting, and failed rows; add `--status all` when a full terminal history
+is needed:
+
+```
+gregalectl deployments active
+gregalectl deployments active --account-id <uuid> --app-id <uuid>
+gregalectl deployments inspect --deployment-id <uuid>
+```
+
+When the incident is understood, retry from a specific pipeline stage or
+cancel queued work. Both commands require the same stepped-up operator session,
+explicit confirmation and reason, and return a trace ID:
+
+```
+gregalectl auth step-up
+gregalectl deployments retry --deployment-id <uuid> \
+    --from-stage source_download --reason deploy_incident_123 --yes
+gregalectl deployments cancel --deployment-id <uuid> \
+    --reason deploy_incident_123 --yes
+gregalectl audit trace --trace-id <trace-id>
+```
+
+The projection excludes source paths, image/rootfs handles, commands,
+environment values, and log-spool locations. These actions use the existing
+deployment queue state machine; they do not require direct SQL and do not
+change the deployment hot path.
+
 ### GitHub recovery
 
 Inspect and retry failed GitHub webhook or Check Run work without SSH or
