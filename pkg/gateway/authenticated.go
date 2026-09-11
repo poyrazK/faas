@@ -59,8 +59,8 @@ type Authenticated struct {
 	// APIKeyID is the resolved API key identifier (state.APIKey.ID)
 	// for requests that satisfied enforceRequireAuthn. Empty for
 	// anonymous traffic OR for traffic on apps with
-	// RequireAuthn=false. Used by KeyBy == "api_key" to construct
-	// the per-consumer bucket key.
+	// RequireAuthn=false. Used by KeyBy == "api_key" or
+	// "consumer_id" to construct the per-consumer bucket key.
 	APIKeyID string
 
 	// ConsumerID is the stable end-customer identity resolved from a

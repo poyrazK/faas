@@ -346,7 +346,7 @@ PR-A/B/C — keep their cite numbers untouched.)
       **Amendment 4 (issue #881 Phase 3, ADR-104, 2026-08-14):**
         Per-consumer keying lands as a *further* amendment to D20.5,
         not a new ADR. ADR-104 picks the policy: per-rule opt-in
-        (`key_by ∈ {"none","api_key","jwt_subject","jwt_claim"}`),
+        (`key_by ∈ {"none","api_key","consumer_id","jwt_subject","jwt_claim"}`),
         bounded by `max_keys_per_rule` (Free 100 / Hobby 1000 /
         Pro 5000 / Scale 10000) with a `__other__` collapse when
         the cap is exceeded. The `__other__` bucket is pinned

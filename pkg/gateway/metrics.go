@@ -252,7 +252,7 @@ type Metrics struct {
 	// routeConsumerThrottleDecisions (ADR-104, issue #881 Phase 3):
 	// counter of per-consumer throttle decisions, labelled by
 	// {kind, outcome}. `kind` is the KeyBy dimension
-	// (none | api_key | jwt_subject | jwt_claim — closed set per
+	// (none | api_key | consumer_id | jwt_subject | jwt_claim — closed set per
 	// pkg/api.ThrottleKeyBy* constants). `outcome` is the
 	// decision (admit | throttle | anonymous — the third covers
 	// anonymous traffic on a per-consumer rule, which the limiter
@@ -797,7 +797,7 @@ func NewMetrics() *Metrics {
 		ruleLabels: newRuleLabelSet(),
 		// ADR-104 (issue #881 Phase 3) — per-consumer throttle
 		// decisions, distinct from the per-rule edgeRuleApply path.
-		// `kind` ∈ {none, api_key, jwt_subject, jwt_claim} tracks the
+		// `kind` ∈ {none, api_key, consumer_id, jwt_subject, jwt_claim} tracks the
 		// KeyBy dimension; `outcome` ∈ {admit, throttle, anonymous}
 		// tracks the per-consumer admit/deny split. The anonymous
 		// outcome covers anonymous traffic on a per-consumer rule —
@@ -807,7 +807,7 @@ func NewMetrics() *Metrics {
 		// per-consumer rule (which is a misconfiguration).
 		routeConsumerThrottleDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "route_consumer_throttle_decisions_total",
-			Help: "Per-consumer throttle decisions, labelled by KeyBy kind (none|api_key|jwt_subject|jwt_claim) and outcome (admit|throttle|anonymous). ADR-104, issue #881 Phase 3.",
+			Help: "Per-consumer throttle decisions, labelled by KeyBy kind (none|api_key|consumer_id|jwt_subject|jwt_claim) and outcome (admit|throttle|anonymous). ADR-104, issue #881 Phase 3.",
 		}, []string{"kind", "outcome"}),
 		// ADR-122 §Decision: kind=cache outcome counter.
 		responseCache: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -1360,7 +1360,7 @@ func NewMetrics() *Metrics {
 	// admit/deny split. The "anonymous" outcome covers
 	// unauthenticated traffic on a per-consumer rule — a
 	// misconfiguration signal for the dashboard.
-	for _, kind := range []string{"none", "api_key", "jwt_subject", "jwt_claim"} {
+	for _, kind := range []string{"none", "api_key", "consumer_id", "jwt_subject", "jwt_claim"} {
 		for _, outcome := range []string{"admit", "throttle", "anonymous"} {
 			m.routeConsumerThrottleDecisions.WithLabelValues(kind, outcome)
 		}

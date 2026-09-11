@@ -3744,7 +3744,7 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 // same-account governance doesn't get to gate traffic.
 //
 // Phase 3 (ADR-104, issue #881 Phase 3): when the matched rule
-// opts into a per-consumer KeyBy value (`api_key`, `jwt_subject`,
+// opts into a per-consumer KeyBy value (`api_key`, `consumer_id`, `jwt_subject`,
 // `jwt_claim`), this applier reads the Authenticated struct from
 // the request context (populated by enforceRequireAuthn and
 // applyEdgeRuleJWT) and routes the bucket lookup through the
