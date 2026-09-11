@@ -515,6 +515,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// (proxy → gatewayd-internal) doesn't return in time, regardless
 	// of where the slowness lives.
 	publicHandler := budgetCfg.Middleware(otelhttp.NewHandler(traceMux, "gatewayd-public.handler"))
+	// Stamp the request id before the budget middleware so a public-edge
+	// timeout that fires before gatewayd-internal replies still carries the
+	// same correlation id a CDN/Worker can preserve.
+	publicHandler = gateway.RequestIDMiddleware(publicHandler)
 	publicHandler = httpsec.Static(publicHandler)
 
 	// Control mux + listeners. Combine opsMetrics.Registry() with

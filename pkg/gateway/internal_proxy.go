@@ -497,7 +497,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			p.logger().Warn("internal round-trip exceeded request budget",
 				"target", p.Target.String(),
 				"err", err)
-			writeRequestBudgetExceeded(w)
+			writeRequestBudgetExceededForRequest(w, r)
 			return
 		}
 		p.logger().Warn("internal round-trip failed",
@@ -519,6 +519,16 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// leak that to the customer.
 	for k, vv := range resp.Header {
 		if isHopByHop(k) {
+			continue
+		}
+		// The public request-id middleware stamps the response before the
+		// internal hop returns. These headers are singleton edge metadata;
+		// replace the pre-existing value instead of emitting duplicates when
+		// gatewayd-internal echoes them back.
+		if strings.EqualFold(k, api.RequestIDHeader) || strings.EqualFold(k, api.ErrorCodeHeader) {
+			if len(vv) > 0 {
+				w.Header().Set(k, vv[0])
+			}
 			continue
 		}
 		for _, v := range vv {

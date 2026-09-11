@@ -51,3 +51,14 @@ Acceptance requires both paths:
 2. A direct origin request carrying forged forwarding headers reaches the
    daemon with Caddy's direct peer identity; gatewayd-public also rejects those
    headers when the caller does not match its configured ingress CIDRs.
+
+## Cloudflare timeout envelope
+
+The gateway marks its own request-budget 504 responses with
+`X-Faas-Error-Code: request_budget_exceeded` and `X-Faas-Request-Id`. Cloudflare
+Free may otherwise replace an origin 504 body with a generic page. For proxied
+customer routes, deploy the marker-aware adapter in
+[`deploy/cloudflare/public-timeout-worker`](../../deploy/cloudflare/public-timeout-worker/README.md)
+and keep a DNS-only origin hostname outside the Worker routes. The adapter
+reconstructs only marked Gregale timeouts; unmarked 502/504 responses remain
+unchanged so CDN and origin failures are not misclassified.
