@@ -2043,8 +2043,11 @@ func (d Deployment) DeploymentPreviewActive() bool {
 //	  ]
 //	}
 //
-// `Current` lives outside `History` until it closes. The atomic
-// JSONB merge is implemented by `appendDeploymentStage` in
+// `Current` lives outside `History` until it closes. Store-owned
+// deployment creation stamps the initial source_download start at enqueue
+// time; readers may still encounter a null value on legacy rows until the
+// first stage mutation repairs it. The atomic JSONB merge is implemented by
+// `appendDeploymentStage` in
 // pkg/state/queries.sql — read-modify-write at the Go layer is
 // NOT safe (two transitions from concurrent goroutines would race).
 // The pgstore implementation is the only writer; memstore mirrors
@@ -2064,12 +2067,11 @@ type StageState struct {
 // consumer doesn't have to trust a 2s-tick-derived `time.Now()`
 // reconstruction.
 //
-// `StartedAt` is a *time.Time (NOT time.Time) so the JSON wire shape
-// is `null` when the migration seed left it unset — time.Time zero
-// value marshals to the literal string "0001-01-01T00:00:00Z" which
-// is indistinguishable from a real epoch and contradicts the
-// "uninitialized = null" contract the SSE consumer expects. The
-// pointer nil-vs-set distinction preserves that contract.
+// `StartedAt` is a *time.Time (NOT time.Time) so a genuinely uninitialized
+// legacy stage can remain `null` — time.Time zero value marshals to the
+// literal string "0001-01-01T00:00:00Z" which is indistinguishable from a
+// real epoch and contradicts the SSE consumer's contract. The pointer
+// nil-vs-set distinction preserves that contract.
 type StageStateItem struct {
 	Name       StageName  `json:"name"`
 	StartedAt  *time.Time `json:"started_at"`

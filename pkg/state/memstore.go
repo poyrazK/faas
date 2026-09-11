@@ -4994,7 +4994,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.ID = newID()
 	}
 	if d.CreatedAt.IsZero() {
-		d.CreatedAt = time.Now()
+		d.CreatedAt = time.Now().UTC()
 	}
 	if d.Status == "" {
 		d.Status = DeployPending
@@ -5010,6 +5010,11 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	if d.TrafficPercent == 0 && !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !serviceRollout {
 		d.TrafficPercent = 100
 	}
+	stageState, err := deploymentStageStateForCreate(d.StageState, d.CreatedAt)
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
+	}
+	d.StageState = stageState
 	m.deployments[d.ID] = d
 	return d, nil
 }
@@ -6277,6 +6282,7 @@ func (m *MemStore) AppendDeploymentStage(_ context.Context, id string, from, to 
 	if from == to {
 		return Deployment{}, fmt.Errorf("AppendDeploymentStage: from==to is reserved for MarkDeploymentStageFailed (deployment=%s, stage=%s)", id, from)
 	}
+	ensureDeploymentStageStarted(&state, d.CreatedAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -6284,8 +6290,8 @@ func (m *MemStore) AppendDeploymentStage(_ context.Context, id string, from, to 
 			durMs = 0
 		}
 	}
-	startedAt := at
-	endedAt := at
+	startedAt := stageTimestamp(at)
+	endedAt := startedAt
 	state.History = append(state.History, StageStateItem{
 		Name:       from,
 		StartedAt:  ptrTime(derefTime(state.CurrentStartedAt)),
@@ -6332,6 +6338,7 @@ func (m *MemStore) MarkDeploymentStageFailed(_ context.Context, id string, at ti
 	if state.Current == "" {
 		return Deployment{}, ErrNotFound
 	}
+	ensureDeploymentStageStarted(&state, d.CreatedAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -6339,7 +6346,7 @@ func (m *MemStore) MarkDeploymentStageFailed(_ context.Context, id string, at ti
 			durMs = 0
 		}
 	}
-	endedAt := at
+	endedAt := stageTimestamp(at)
 	state.History = append(state.History, StageStateItem{
 		Name:       state.Current,
 		StartedAt:  ptrTime(derefTime(state.CurrentStartedAt)),
@@ -6377,6 +6384,7 @@ func (m *MemStore) CloseDeploymentStage(_ context.Context, id string, name Stage
 	if state.Current == "" || state.Current != name {
 		return Deployment{}, ErrNotFound
 	}
+	ensureDeploymentStageStarted(&state, d.CreatedAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -6384,7 +6392,7 @@ func (m *MemStore) CloseDeploymentStage(_ context.Context, id string, name Stage
 			durMs = 0
 		}
 	}
-	endedAt := at
+	endedAt := stageTimestamp(at)
 	state.History = append(state.History, StageStateItem{
 		Name:       state.Current,
 		StartedAt:  ptrTime(derefTime(state.CurrentStartedAt)),
@@ -6425,7 +6433,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	if app, ok := m.apps[src.AppID]; !ok || (app.Status != AppActive && app.Status != AppEvictedCold) {
 		return Deployment{}, ErrNotFound
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	newDep, err := retryDeploymentInput(src, now)
 	if err != nil {
 		return Deployment{}, err
@@ -6435,7 +6443,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	// empty history. imaged's transitionWithStage will append
 	// the first row (fromStage → next) the same way it does on
 	// a CLI-driven fresh deploy.
-	seed, err := json.Marshal(RetryStageState(fromStage))
+	seed, err := json.Marshal(RetryStageStateAt(fromStage, now))
 	if err != nil {
 		return Deployment{}, fmt.Errorf("RetryDeploymentFromStage: encode stage_state seed: %w", err)
 	}

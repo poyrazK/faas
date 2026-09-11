@@ -5285,6 +5285,16 @@ func TestMemStoreAppendDeploymentStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
+	var initialState StageState
+	if err := json.Unmarshal(dep.StageState, &initialState); err != nil {
+		t.Fatalf("decode initial stage_state: %v", err)
+	}
+	if initialState.Current != StageSourceDownload || initialState.CurrentStartedAt == nil {
+		t.Fatalf("initial stage state = %+v, want source_download with enqueue timestamp", initialState)
+	}
+	if !initialState.CurrentStartedAt.Equal(dep.CreatedAt) {
+		t.Errorf("initial current_started_at = %v, want CreatedAt %v", initialState.CurrentStartedAt, dep.CreatedAt)
+	}
 
 	now := time.Now().UTC()
 	// Case 1: forward transition source_download -> dependency_restore.
@@ -5942,8 +5952,11 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	if state.Current != StageSourceDownload || state.RetryRequestedStage != StageSnapshotPrepare {
 		t.Errorf("retry stage state = %+v; want actual source_download, requested snapshot_prepare", state)
 	}
-	if state.CurrentStartedAt != nil {
-		t.Errorf("new stage_state.CurrentStartedAt = %v, want nil", state.CurrentStartedAt)
+	if state.CurrentStartedAt == nil {
+		t.Fatal("new stage_state.CurrentStartedAt = nil, want retry enqueue timestamp")
+	}
+	if state.CurrentStartedAt.Before(got.CreatedAt) {
+		t.Errorf("new stage_state.CurrentStartedAt = %v, before CreatedAt %v", state.CurrentStartedAt, got.CreatedAt)
 	}
 	if len(state.History) != 0 {
 		t.Errorf("new stage_state.History length = %d, want 0", len(state.History))

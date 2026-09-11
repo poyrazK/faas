@@ -5169,6 +5169,14 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	if !d.CreatedAt.IsZero() {
 		createdAt = d.CreatedAt
 	}
+	stageStartedAt := d.CreatedAt
+	if stageStartedAt.IsZero() {
+		stageStartedAt = time.Now().UTC()
+	}
+	stageState, err := deploymentStageStateForCreate(d.StageState, stageStartedAt)
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
+	}
 	row := tx.QueryRow(ctx,
 		`insert into deployments (id, app_id, image_digest, kind, source_path, source_root, source_bytes, source_sha256, handler, log_path, source_url, commit_sha,
 		                          override_entrypoint, override_cmd, override_env, override_env_secrets, override_port, override_healthcheck,
@@ -5184,11 +5192,12 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          reason, tag, deployed_by, pr_number, workflows,
 		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
 		                          traffic_percent_explicit, created_at,
-		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages)
+		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
+		                          stage_state)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44)
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -5229,7 +5238,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
 		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt,
-		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages))
+		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -7426,6 +7435,7 @@ func (s *PgStore) AppendDeploymentStage(ctx context.Context, id string, from, to
 	if from == to {
 		return Deployment{}, fmt.Errorf("AppendDeploymentStage: from==to is reserved for MarkDeploymentStageFailed (deployment=%s, stage=%s)", id, from)
 	}
+	ensureDeploymentStageStarted(&state, existing.CreatedAt, at)
 	// Normal transition: close the active row, advance.
 	var durMs int64
 	if state.CurrentStartedAt != nil {
@@ -7434,8 +7444,8 @@ func (s *PgStore) AppendDeploymentStage(ctx context.Context, id string, from, to
 			durMs = 0
 		}
 	}
-	startedAt := at
-	endedAt := at
+	startedAt := stageTimestamp(at)
+	endedAt := startedAt
 	state.History = append(state.History, StageStateItem{
 		Name:       from,
 		StartedAt:  ptrTime(derefTime(state.CurrentStartedAt)),
@@ -7509,7 +7519,8 @@ func ptrTime(t time.Time) *time.Time {
 // when state.Current is the zero value (no stage ever started).
 func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at time.Time, reason string) (Deployment, error) {
 	var raw []byte
-	err := s.pool.QueryRow(ctx, `select stage_state from deployments where id = $1`, id).Scan(&raw)
+	var createdAt time.Time
+	err := s.pool.QueryRow(ctx, `select stage_state, created_at from deployments where id = $1`, id).Scan(&raw, &createdAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, ErrNotFound
@@ -7523,6 +7534,7 @@ func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at t
 	if state.Current == "" {
 		return Deployment{}, ErrNotFound
 	}
+	ensureDeploymentStageStarted(&state, createdAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -7530,7 +7542,7 @@ func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at t
 			durMs = 0
 		}
 	}
-	endedAt := at
+	endedAt := stageTimestamp(at)
 	// The active stage is moved into history as a "failed" entry so
 	// the wire shape is consistent: every stage that ever ran is in
 	// history; the customer's ticker walks history in order. The
@@ -7569,7 +7581,8 @@ func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at t
 // `duration_ms` for the readiness stage on a successful deploy.
 func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name StageName, at time.Time) (Deployment, error) {
 	var raw []byte
-	err := s.pool.QueryRow(ctx, `select stage_state from deployments where id = $1`, id).Scan(&raw)
+	var createdAt time.Time
+	err := s.pool.QueryRow(ctx, `select stage_state, created_at from deployments where id = $1`, id).Scan(&raw, &createdAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, ErrNotFound
@@ -7591,6 +7604,7 @@ func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name Stag
 		// stamp.
 		return Deployment{}, ErrNotFound
 	}
+	ensureDeploymentStageStarted(&state, createdAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -7598,7 +7612,7 @@ func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name Stag
 			durMs = 0
 		}
 	}
-	endedAt := at
+	endedAt := stageTimestamp(at)
 	state.History = append(state.History, StageStateItem{
 		Name:       state.Current,
 		StartedAt:  ptrTime(derefTime(state.CurrentStartedAt)),
@@ -7649,7 +7663,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	// Step 3 — rebuild the immutable intent while resetting mutable execution
 	// state. The helper is shared with MemStore so canary/service-rollout and
 	// annotation semantics cannot drift between production and tests.
-	newDep, err := retryDeploymentInput(src, time.Now())
+	retryStartedAt := time.Now().UTC()
+	newDep, err := retryDeploymentInput(src, retryStartedAt)
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -7659,7 +7674,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	// supersedes the prior live row (a retry is independent of
 	// the prior row's status — it doesn't replace it). The seed
 	// jsonb is marshalled here so the SQL is a single INSERT.
-	stageSeed, err := json.Marshal(RetryStageState(fromStage))
+	stageSeed, err := json.Marshal(RetryStageStateAt(fromStage, retryStartedAt))
 	if err != nil {
 		return Deployment{}, fmt.Errorf("RetryDeploymentFromStage: encode stage_state seed: %w", err)
 	}
