@@ -184,6 +184,53 @@ func TestDeployZeroConfig_HappyPath_NewApp(t *testing.T) {
 	}
 }
 
+// TestDeployTemplate_CreateOnlyReservesWithoutDeployment pins the safe
+// first-deploy sequence used by service templates: the app is created with
+// the same function metadata as a real template deploy, but no deployment
+// request is sent until the customer has configured its secrets.
+func TestDeployTemplate_CreateOnlyReservesWithoutDeployment(t *testing.T) {
+	withCwd(t, t.TempDir())
+	var createReq api.CreateAppRequest
+	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
+		switch {
+		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			z.gotCalls["create"]++
+			if err := json.NewDecoder(r.Body).Decode(&createReq); err != nil {
+				t.Errorf("decode create app: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "cron-ready"})
+		case r.URL.Path == "/v1/apps/cron-ready/deployments":
+			z.gotCalls["deploy"]++
+			http.Error(w, "create-only must not deploy", http.StatusInternalServerError)
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	})
+	t.Setenv("FAAS_API", stub.srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdDeployTarball([]string{
+		"--create-only", "--template", "cron-worker", "--name", "cron-ready",
+	}); code != 0 {
+		t.Fatalf("create-only exit = %d, want 0", code)
+	}
+	if stub.gotCalls["create"] != 1 {
+		t.Fatalf("CreateApp calls = %d, want 1", stub.gotCalls["create"])
+	}
+	if stub.gotCalls["deploy"] != 0 {
+		t.Fatalf("deployment calls = %d, want 0", stub.gotCalls["deploy"])
+	}
+	if createReq.Type != "function" || createReq.Runtime != runtimeNode22 {
+		t.Fatalf("CreateApp shape = type %q runtime %q, want function/%s", createReq.Type, createReq.Runtime, runtimeNode22)
+	}
+}
+
+func TestDeployCreateOnlyRejectsPreview(t *testing.T) {
+	if code := cmdDeployTarball([]string{"--create-only", "--dry-run", "--name", "reserved"}); code != 1 {
+		t.Fatalf("create-only + dry-run exit = %d, want 1", code)
+	}
+}
+
 func TestDeployZeroConfig_GitHeadGoFunctionStaysFunction(t *testing.T) {
 	repo := initZeroConfigRepo(t)
 	if err := os.Remove(filepath.Join(repo, "package.json")); err != nil {

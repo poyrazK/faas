@@ -19,6 +19,15 @@ Plug in any managed PostgreSQL:
 **Don't** run `postgres:16` as your base image — the platform's
 deny-list rejects it at accept time (Wave 0 PR-A).
 
+## First deploy
+
+Reserve the app before setting the database URL. The create-only step does
+not start a process, so the first deployment can boot with its credentials:
+
+```sh
+gregale deploy --create-only --template rest-api-postgres --name <slug>
+```
+
 ## Set the secrets
 
 ```sh

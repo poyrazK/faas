@@ -17,6 +17,15 @@ This is a SCAFFOLD. It logs incoming events to stdout (visible via
 
 Slack Events API.
 
+## First deploy
+
+Reserve the app before setting secrets so the first real deployment starts
+with its required configuration:
+
+```sh
+gregale deploy --create-only --template slack-bot --name <slug>
+```
+
 ## Set the secrets
 
 ```sh

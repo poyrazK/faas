@@ -47,6 +47,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			readmeHas: []string{
 				"S3_BUCKET",
 				"gregale secrets set",
+				"--create-only",
 				"AWS S3", // mentions S3-compatible provider
 			},
 		},
@@ -56,6 +57,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			readmeHas: []string{
 				"SLACK_SIGNING_SECRET",
 				"gregale secrets set",
+				"--create-only",
 				"HMAC-SHA256",
 			},
 		},
@@ -65,6 +67,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			readmeHas: []string{
 				"DATABASE_URL",
 				"gregale secrets set",
+				"--create-only",
 				"Neon",
 			},
 		},
@@ -75,6 +78,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 				"QSTASH_TOKEN",
 				"UPSTASH_REDIS_REST_URL",
 				"gregale secrets set",
+				"--create-only",
 			},
 		},
 		{
@@ -93,6 +97,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 				"OPENAI_API_KEY",
 				"ANTHROPIC_API_KEY",
 				"gregale secrets set",
+				"--create-only",
 			},
 		},
 	}
@@ -245,12 +250,12 @@ func TestCmdInit_NextStepsFor(t *testing.T) {
 		tpl  string
 		want []string
 	}{
-		{"s3-uploader", []string{"S3_BUCKET", "gregale secrets set", "cd <dest>"}},
-		{"slack-bot", []string{"SLACK_SIGNING_SECRET", "gregale secrets set", "cd <dest>"}},
-		{"rest-api-postgres", []string{"DATABASE_URL", "gregale secrets set", "cd <dest>"}},
-		{"cron-worker", []string{"QSTASH_TOKEN", "UPSTASH_REDIS_REST_URL", "gregale secrets set", "cd <dest>"}},
+		{"s3-uploader", []string{"--create-only", "s3-uploader", "S3_BUCKET", "gregale secrets set", "cd <dest>"}},
+		{"slack-bot", []string{"--create-only", "slack-bot", "SLACK_SIGNING_SECRET", "gregale secrets set", "cd <dest>"}},
+		{"rest-api-postgres", []string{"--create-only", "rest-api-postgres", "DATABASE_URL", "gregale secrets set", "cd <dest>"}},
+		{"cron-worker", []string{"--create-only", "cron-worker", "QSTASH_TOKEN", "UPSTASH_REDIS_REST_URL", "gregale secrets set", "cd <dest>"}},
 		{"webhook-receiver", []string{"WEBHOOK_SECRET", "openssl rand", "gregale secrets set", "cd <dest>"}},
-		{"ai-chat", []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "gregale secrets set", "cd <dest>"}},
+		{"ai-chat", []string{"--create-only", "ai-chat", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "gregale secrets set", "cd <dest>"}},
 		{"hello-node", []string{"cd <dest>", "gregale deploy"}}, // default branch
 	}
 	for _, c := range cases {

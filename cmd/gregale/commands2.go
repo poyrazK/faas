@@ -1191,6 +1191,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// deployment so CI and scripts can continue immediately.
 	waitDeploy := fs.Bool("wait", false, "wait for the deployment to become live (default)")
 	noWaitDeploy := fs.Bool("no-wait", false, "return after the deployment is queued")
+	// --create-only reserves the app metadata without uploading a deployment.
+	// This supports service templates whose secrets must be configured before
+	// their first process starts, while reusing the normal shape/runtime path.
+	createOnly := fs.Bool("create-only", false, "create or reserve the app without uploading a deployment")
 	waitTimeoutSeconds := fs.Int("timeout", int(defaultDeployWaitTimeout/time.Second), "maximum seconds to wait when --wait is used (default 300)")
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this deployment (optional)")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
@@ -1259,7 +1263,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff|--create-only] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -1298,6 +1302,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// --require-authn / --no-require-authn above.
 	if *diffStrict && *diffLenient {
 		return printErr("Invalid flags", fmt.Errorf("--strict and --lenient are mutually exclusive"))
+	}
+	if *createOnly && *diff {
+		return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --dry-run or --diff"))
+	}
+	if *createOnly && existingApp {
+		return printErr("Invalid flags", fmt.Errorf("--create-only cannot be used from an existing developer app"))
 	}
 	// Issue #560: flag-pair mutex check (mirrors cmdApp /
 	// cmdAppScale --warm-snapshot/--no-warm-snapshot). Setting
@@ -1481,6 +1491,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// in PR-B; the server resolves the install token from
 	// github_installations, so CI runs need only FAAS_TOKEN + --ref.
 	if *repo != "" {
+		if *createOnly {
+			return printErr("Invalid flags", fmt.Errorf("--create-only is not supported with --repo; use --template or --path"))
+		}
 		if *dryRun {
 			return printErr("Invalid flags", fmt.Errorf("--dry-run is not supported with --repo; use a local source with --path or --worktree"))
 		}
@@ -2017,6 +2030,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// transactional on the server (rollback on over-quota per
 	// ADR-050), and the confirm prompt is gated on TTY + --yes.
 	if *deployOnly != "" || *projectSlug != "" {
+		if *createOnly {
+			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --only or --project-slug"))
+		}
 		if *profile != "" {
 			return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --only or --project-slug"))
 		}
@@ -2108,9 +2124,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return 0
 	}
 
-	workflowDefs, err := loadWorkflowManifestForDeploy(ctx, client, sourceDir)
-	if err != nil {
-		return printErr("Workflow manifest validation failed", err)
+	var workflowDefs []api.WorkflowSpec
+	if !*createOnly {
+		workflowDefs, err = loadWorkflowManifestForDeploy(ctx, client, sourceDir)
+		if err != nil {
+			return printErr("Workflow manifest validation failed", err)
+		}
 	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr, *profile)
@@ -2119,6 +2138,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr); err != nil {
 			return printErr("Could not create or fetch app", err)
+		}
+		if *createOnly {
+			if jsonOutput {
+				return jsonOut(writeJSON(map[string]any{
+					"slug":   slug,
+					"status": "ready",
+				}))
+			}
+			PrintOK(osStdout, "App %s is ready for configuration; no deployment uploaded.", slug)
+			return 0
 		}
 	} else if *profile != "" {
 		// Developer sessions reuse an existing app and skip the

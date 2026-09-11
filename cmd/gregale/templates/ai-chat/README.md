@@ -12,6 +12,15 @@ provider's reply plus token usage. Streaming, conversation history
 persistence, and tool-use are out of scope (the customer adds them
 on top).
 
+## First deploy
+
+Reserve the app before setting a provider key. The create-only step avoids
+starting a deployment before the selected provider is configured:
+
+```sh
+gregale deploy --create-only --template ai-chat --name <slug>
+```
+
 ## Pick a provider
 
 ```sh

@@ -14,6 +14,15 @@ Plug in any S3-compatible provider:
 - **Cloudflare R2** — set `S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com`.
 - **Backblaze B2** — set `S3_ENDPOINT=https://s3.<region>.backblazeb2.com`.
 
+## First deploy
+
+Reserve the app before setting secrets. This creates the slug without
+starting a process that would fail before its configuration is present:
+
+```sh
+gregale deploy --create-only --template s3-uploader --name <slug>
+```
+
 ## Set the secrets
 
 ```sh

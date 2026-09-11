@@ -20,6 +20,14 @@ cold boots.
   customer can answer "how many times has my cron fired?" with a
   single Redis GET.
 
+## First deploy
+
+Reserve the app before setting the QStash and Redis credentials:
+
+```sh
+gregale deploy --create-only --template cron-worker --name <slug>
+```
+
 ## Set the secrets
 
 ```sh

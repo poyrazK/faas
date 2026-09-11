@@ -20,6 +20,8 @@
 // re-materializes the template into its own tmpdir and tar.gz's it; the
 // customer's `--path` stays as their working copy. We never chdir —
 // the chain runs in the caller's cwd, the deployment is independent.
+// Service-template next steps include `deploy --create-only` so an app can
+// be reserved before `secrets set` targets its slug.
 //
 // What this command does NOT do (UX spec §8 doesn't promise it):
 //   - list templates (`--list` is implicit; customers run with a bad
@@ -279,6 +281,8 @@ func nextStepsFor(tpl string) []string {
 	switch tpl {
 	case "s3-uploader":
 		return []string{
+			"Create the app before setting secrets:",
+			"  gregale deploy --create-only --template s3-uploader --name <slug>",
 			"Set the S3 / R2 / B2 secrets:",
 			"  gregale secrets set --app <slug> S3_BUCKET=... S3_REGION=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...",
 			"  (optionally: S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com for R2/B2)",
@@ -287,6 +291,8 @@ func nextStepsFor(tpl string) []string {
 		}
 	case "slack-bot":
 		return []string{
+			"Create the app before setting secrets:",
+			"  gregale deploy --create-only --template slack-bot --name <slug>",
 			"Set the Slack signing secret + bot token:",
 			"  gregale secrets set --app <slug> SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=xoxb-...",
 			"Deploy from the new directory:",
@@ -294,6 +300,8 @@ func nextStepsFor(tpl string) []string {
 		}
 	case "rest-api-postgres":
 		return []string{
+			"Create the app before setting secrets:",
+			"  gregale deploy --create-only --template rest-api-postgres --name <slug>",
 			"Set the database URL (Neon / Supabase / PlanetScale / CockroachDB Cloud):",
 			"  gregale secrets set --app <slug> DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
 			"Deploy from the new directory:",
@@ -301,6 +309,8 @@ func nextStepsFor(tpl string) []string {
 		}
 	case "cron-worker":
 		return []string{
+			"Create the app before setting secrets:",
+			"  gregale deploy --create-only --template cron-worker --name <slug>",
 			"Set the Upstash QStash + Redis credentials:",
 			"  gregale secrets set --app <slug> QSTASH_TOKEN=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
 			"Wire QStash to invoke the function (curl or the QStash dashboard):",
@@ -320,6 +330,8 @@ func nextStepsFor(tpl string) []string {
 		}
 	case "ai-chat":
 		return []string{
+			"Create the app before setting secrets:",
+			"  gregale deploy --create-only --template ai-chat --name <slug>",
 			"Pick a provider — set exactly one of:",
 			"  gregale secrets set --app <slug> OPENAI_API_KEY=sk-...",
 			"  gregale secrets set --app <slug> ANTHROPIC_API_KEY=sk-ant-...",
