@@ -2,14 +2,16 @@
 
 RFC 7807 problems the platform emits carry a `docs_url`. Those links now point
 at the live documentation host (`https://gregale.dev/docs`) instead of the
-never-deployed `docs.gregale.dev`. The **host** is fixed; the **content** is
-not.
+never-deployed `docs.gregale.dev`.
 
-Of the 27 topics `pkg/api/errors.go` links to, exactly one — `/storage` — is
-among the 14 guides the site publishes. The rest render the site's client-side
-404 until the pages are written.
+The source-side customer pages and route catalog now live in this repository:
+`docs/customer-pages.json` maps every customer-facing topic to a Markdown
+source, and `make docs-links-check` rejects a new documentation URL unless it
+is catalogued. The catalog deliberately aliases overlapping spellings such as
+`/build` and `/builds`, while operator-only paths remain explicitly marked
+external.
 
-## Why CI cannot catch this
+## Why HTTP checks alone cannot catch this
 
 The docs site is a SPA. It answers **HTTP 200 for every path** — including
 `/docs/zzz-not-a-real-page` — and renders its 404 in JavaScript. `curl`, a
@@ -17,47 +19,46 @@ link checker, and any CI gate all see a healthy 200 with a byte-identical
 response body. Only a browser that executes JS can tell a real page from a
 missing one.
 
-Practical consequence: adding a link to a nonexistent page is invisible to
-every automated check we have. This list is maintained by hand.
+Practical consequence: adding a link to a nonexistent SPA page is invisible to
+HTTP-only checks. The source-side catalog is the deterministic contract that
+CI can enforce before the docs site is published.
 
-## Pages to write, by how often the API links to them
+## Customer pages, by how often the API links to them
 
-| Page | Referenced | Notes |
+| Page | Referenced | Source-side contract |
 |---|---:|---|
-| `/plans` | 44 | Every plan-limit problem. Highest-value page by a wide margin. |
-| `/apps` | 17 | App lifecycle + per-app settings. |
-| `/deploys` | 14 | Deploy pipeline and failure classes. |
-| `/orgs` | 12 | Org / team model (IAM-6, ADR-061). |
-| `/auth` | 9 | Includes `/auth/reset`, `/auth/sign-in`, `/auth/oauth`, `/auth/email-verification`. |
-| `/errors` | 8 | The per-code explanation pages the whycopy catalog references. |
-| `/jobs` | 6 | Run-to-completion jobs. |
-| `/event-driven` | 6 | Async invoke, delayed tasks, long-poll. |
-| `/env` | 6 | Environment variables. |
-| `/build` | 6 | Includes `/build/source-ref`, `/build/limits`, `/build/source`. |
-| `/domains` | 5 | Includes `/domains/verify`, `/domains/doctor`. |
-| `/secrets` | 4 | Sealed secrets. |
-| `/registry-credentials` | 4 | Private registry auth. |
-| `/admin` | 4 | `/admin/compute-nodes` — operator-facing. |
-| `/sidecars` | 3 | |
-| `/builds` | 3 | Distinct from `/build`; worth collapsing into one page. |
-| `/alerts` | 3 | Includes `/alerts/presets`. |
-| `/billing` | 2 | Includes `/billing/providers`. |
-| `/static-egress-ip` | 1 | |
-| `/postgres` | 1 | Managed Postgres. |
-| `/functions` | 1 | |
-| `/dev` | 1 | `/dev/source-sync` — the `gregale dev` loop. |
-| `/deployments` | 1 | Overlaps `/deploys`; pick one. |
-| `/deploy-overrides` | 1 | |
-| `/crons` | 1 | |
-| `/account` | 1 | |
+| `/plans` | 44 | `docs/plans.md`, generated from `pkg/api/limits.go`. |
+| `/apps` | 17 | `docs/apps.md`; lifecycle + per-app settings. |
+| `/deploys` | 14 | `docs/deploys.md`; `/deployments` is an alias. |
+| `/orgs` | 12 | `docs/account.md`; org/team commands are included. |
+| `/auth` | 9 | `docs/auth.md`; child paths use the same guide. |
+| `/errors` | 8 | `docs/errors.md`; dynamic error codes use the prefix route. |
+| `/jobs` | 6 | `docs/jobs.md`; run-to-completion workloads. |
+| `/event-driven` | 6 | `docs/event-driven.md`; async invoke and triggers. |
+| `/env` | 6 | `docs/env.md`; pull/push and scope guidance. |
+| `/build` | 6 | `docs/build.md`; source-ref and limits are aliases. |
+| `/domains` | 5 | `docs/domains.md`; verify and doctor are child routes. |
+| `/secrets` | 4 | `docs/secrets.md`; sealed secrets. |
+| `/registry-credentials` | 4 | `docs/registry-credentials.md`; private registry auth. |
+| `/admin` | 4 | Operator-facing; marked external in the catalog. |
+| `/sidecars` | 3 | `docs/sidecars.md`; stateless sidecar contract. |
+| `/builds` | 3 | Alias of `/build`. |
+| `/alerts` | 3 | `docs/alerts.md`; presets are a child route. |
+| `/billing` | 2 | `docs/billing.md`; provider details use the same guide. |
+| `/static-egress-ip` | 1 | `docs/static-egress-ip.md`. |
+| `/postgres` | 1 | Existing `docs/managed-postgres.md`. |
+| `/functions` | 1 | `docs/functions.md`. |
+| `/dev` | 1 | Existing `docs/gregale-dev.md`; source-sync is a child route. |
+| `/deploy-overrides` | 1 | `docs/deploy-overrides.md`. |
+| `/crons` | 1 | Alias of `docs/event-driven.md`. |
+| `/account` | 1 | `docs/account.md`. |
 
 ## Cleanup worth doing alongside
 
-- `/build` vs `/builds` and `/deploys` vs `/deployments` are the same topics
-  under two spellings. Collapse each pair before writing the pages, or the
-  split will be baked into the URLs.
-- When a page ships, nothing in the code needs to change — the link already
-  points at the right URL.
+- Keep `docs/customer-pages.json` as the place where aliases are recorded;
+  do not create a second page merely to satisfy a spelling variant.
+- When a page is published by the docs site, nothing in the API needs to
+  change — the link already points at the catalogued URL.
 
 ## Still on the legacy host
 
