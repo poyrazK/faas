@@ -56,7 +56,7 @@ const ResendSignatureHeader = "svix-signature"
 
 // ResendIDHeader is the delivery-id header Svix stamps on every
 // delivery. The verifier doesn't use it for HMAC validation but
-// the apid webhook handler feeds it into webhookdedupe.CheckReplay
+// the apid webhook handler feeds it into the durable replay claim
 // as the dedupe key.
 const ResendIDHeader = "svix-id"
 
