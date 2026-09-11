@@ -50,6 +50,9 @@ class AppResponse:
     app configuration and current plan; they describe enforcement rather than guest hardware alone."""
     min_instances: int
     status: str
+    build_cache_hit_rate_pct: float
+    """Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache
+    decision was recorded in the window."""
     url: str
     manifest: AppManifest
     """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
@@ -174,6 +177,8 @@ class AppResponse:
         min_instances = self.min_instances
 
         status = self.status
+
+        build_cache_hit_rate_pct = self.build_cache_hit_rate_pct
 
         url = self.url
 
@@ -324,6 +329,7 @@ class AppResponse:
                 "effective_limits": effective_limits,
                 "min_instances": min_instances,
                 "status": status,
+                "build_cache_hit_rate_pct": build_cache_hit_rate_pct,
                 "url": url,
                 "manifest": manifest,
                 "autoscale_target_rps": autoscale_target_rps,
@@ -418,6 +424,8 @@ class AppResponse:
         min_instances = d.pop("min_instances")
 
         status = d.pop("status")
+
+        build_cache_hit_rate_pct = d.pop("build_cache_hit_rate_pct")
 
         url = d.pop("url")
 
@@ -657,6 +665,7 @@ class AppResponse:
             effective_limits=effective_limits,
             min_instances=min_instances,
             status=status,
+            build_cache_hit_rate_pct=build_cache_hit_rate_pct,
             url=url,
             manifest=manifest,
             autoscale_target_rps=autoscale_target_rps,

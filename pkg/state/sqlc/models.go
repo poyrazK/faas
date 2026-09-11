@@ -422,6 +422,8 @@ type Build struct {
 	EnqueuedAt                   pgtype.Timestamptz
 	CancelledAt                  pgtype.Timestamptz
 	CancelledByDeploymentCascade bool
+	CacheStatus                  pgtype.Text
+	CacheKeySha256               pgtype.Text
 }
 
 type BuildProvenance struct {

@@ -225,6 +225,13 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 	if build.Status != state.BuildSucceeded {
 		t.Errorf("build status = %s, want succeeded", build.Status)
 	}
+	wantKey, err := testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal).KeySHA256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build.CacheStatus != cacheOutcomeHit || build.CacheKeySHA256 != wantKey {
+		t.Errorf("cache decision = (%q, %q), want hit + %q", build.CacheStatus, build.CacheKeySHA256, wantKey)
+	}
 	bootFound := false
 	for _, c := range notif.calls {
 		if c.channel == db.NotifySnapshotBoot &&
@@ -284,12 +291,19 @@ func TestProcessOne_VMSpawnSucceedsAndStamps(t *testing.T) {
 	if fvm.spawnCalls != 1 {
 		t.Errorf("VM spawn was called %d times, want 1", fvm.spawnCalls)
 	}
+	build, err := store.BuildByID(context.Background(), buildID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build.CacheStatus != cacheOutcomeMiss || build.CacheKeySHA256 == "" {
+		t.Errorf("cache decision = (%q, %q), want miss with a recipe digest", build.CacheStatus, build.CacheKeySHA256)
+	}
 	dep, _ := store.DeploymentByID(context.Background(), depID)
 	wantArtifactBytes := int64(len("produced layer"))
 	if dep.RootfsBytes != wantArtifactBytes {
 		t.Errorf("rootfs_bytes = %d, want artifact size %d", dep.RootfsBytes, wantArtifactBytes)
 	}
-	build, _ := store.BuildByID(context.Background(), buildID)
+	build, _ = store.BuildByID(context.Background(), buildID)
 	if build.Status != state.BuildSucceeded {
 		t.Errorf("build status = %s, want succeeded", build.Status)
 	}

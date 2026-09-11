@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.build_response_cache_status import BuildResponseCacheStatus, check_build_response_cache_status
 from ..models.build_response_failure_class import BuildResponseFailureClass, check_build_response_failure_class
 from ..models.build_response_kind import BuildResponseKind, check_build_response_kind
 from ..models.build_response_status import BuildResponseStatus, check_build_response_status
@@ -55,6 +56,10 @@ class BuildResponse:
     finished_at: datetime.datetime | Unset = UNSET
     duration_seconds: int | Unset = UNSET
     """Server-computed FinishedAt − StartedAt in whole seconds. Absent until the build reaches a terminal state."""
+    cache_status: BuildResponseCacheStatus | Unset = UNSET
+    """Builderd cache decision for this build."""
+    cache_key_sha256: str | Unset = UNSET
+    """SHA-256 digest of the versioned BuildCacheRecipe."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -86,6 +91,12 @@ class BuildResponse:
 
         duration_seconds = self.duration_seconds
 
+        cache_status: str | Unset = UNSET
+        if not isinstance(self.cache_status, Unset):
+            cache_status = self.cache_status
+
+        cache_key_sha256 = self.cache_key_sha256
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -108,6 +119,10 @@ class BuildResponse:
             field_dict["finished_at"] = finished_at
         if duration_seconds is not UNSET:
             field_dict["duration_seconds"] = duration_seconds
+        if cache_status is not UNSET:
+            field_dict["cache_status"] = cache_status
+        if cache_key_sha256 is not UNSET:
+            field_dict["cache_key_sha256"] = cache_key_sha256
 
         return field_dict
 
@@ -151,6 +166,15 @@ class BuildResponse:
 
         duration_seconds = d.pop("duration_seconds", UNSET)
 
+        _cache_status = d.pop("cache_status", UNSET)
+        cache_status: BuildResponseCacheStatus | Unset
+        if isinstance(_cache_status, Unset):
+            cache_status = UNSET
+        else:
+            cache_status = check_build_response_cache_status(_cache_status)
+
+        cache_key_sha256 = d.pop("cache_key_sha256", UNSET)
+
         build_response = cls(
             id=id,
             deployment_id=deployment_id,
@@ -163,6 +187,8 @@ class BuildResponse:
             started_at=started_at,
             finished_at=finished_at,
             duration_seconds=duration_seconds,
+            cache_status=cache_status,
+            cache_key_sha256=cache_key_sha256,
         )
 
         build_response.additional_properties = d

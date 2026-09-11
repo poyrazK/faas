@@ -417,14 +417,14 @@ select tail_count from instances where id = $1;
 -- name: CreateBuild :one
 insert into builds (id, deployment_id, kind, source_bytes, status, log_path)
 values (gen_random_uuid(), $1, $2, $3, 'queued', $4)
-returning id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at;
+returning id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at, cache_status, cache_key_sha256;
 
 -- name: BuildByID :one
-select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at
+select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at, cache_status, cache_key_sha256
 from builds where id = $1;
 
 -- name: BuildByDeployment :one
-select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at
+select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at, cache_status, cache_key_sha256
 from builds where deployment_id = $1 order by started_at desc nulls last limit 1;
 
 -- name: UpdateBuildStatus :exec

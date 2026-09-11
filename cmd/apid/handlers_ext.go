@@ -60,6 +60,13 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 		return
 	}
 	resp := s.appResponse(app, acct.Plan)
+	if reader, ok := s.store.(interface {
+		BuildCacheStatsForApp(context.Context, string, time.Time) (state.BuildCacheStats, error)
+	}); ok {
+		if stats, statsErr := reader.BuildCacheStatsForApp(r.Context(), app.ID, time.Now().UTC().Add(-30*24*time.Hour)); statsErr == nil && stats.Eligible > 0 {
+			resp.BuildCacheHitRatePct = float64(stats.Hits) * 100 / float64(stats.Eligible)
+		}
+	}
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
 }
 
@@ -1447,7 +1454,7 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(d, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponseWithBuild(r.Context(), d, app))
 }
 
 // updateDeploymentMinInstances (issue #557 closure / ADR-074) is the
@@ -4321,6 +4328,23 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	return resp
 }
 
+// deploymentResponseWithBuild enriches the detail endpoint with the
+// builderd-owned cache decision. Keeping the lookup here avoids an N+1 query
+// on list surfaces while making GET /v1/deployments/{id} self-contained.
+func (s *server) deploymentResponseWithBuild(ctx context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
+	resp := s.deploymentResponse(d, app)
+	if d.BuildID == "" {
+		return resp
+	}
+	build, err := s.store.BuildByID(ctx, d.BuildID)
+	if err != nil {
+		return resp
+	}
+	resp.BuildCacheStatus = build.CacheStatus
+	resp.CacheKeySHA256 = build.CacheKeySHA256
+	return resp
+}
+
 // buildPlanFramework keeps the long-lived BuildPlan wire enum coarse while
 // receipts retain the more specific framework-profile value (express, hono,
 // fastapi, and so on). This preserves compatibility for clients that already
@@ -4400,6 +4424,12 @@ func (s *server) buildResponse(b state.Build) api.BuildResponse {
 	}
 	if !b.StartedAt.IsZero() && !b.FinishedAt.IsZero() {
 		out.DurationSeconds = int(b.FinishedAt.Sub(b.StartedAt).Seconds())
+	}
+	if b.CacheStatus != "" {
+		out.CacheStatus = b.CacheStatus
+	}
+	if b.CacheKeySHA256 != "" {
+		out.CacheKeySHA256 = b.CacheKeySHA256
 	}
 	out.EnqueuedAt = b.EnqueuedAt.UTC().Format(time.RFC3339)
 	return out

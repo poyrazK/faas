@@ -1133,6 +1133,10 @@ type OpsMetrics struct {
 	// wait histogram is unlabelled (every observation has the same shape).
 	buildDur       *prometheus.HistogramVec
 	buildQueueWait prometheus.Histogram
+	// buildCacheOutcome is the closed-set builderd cache decision counter.
+	// It is registered on every daemon's registry for a stable scrape shape;
+	// only builderd records samples.
+	buildCacheOutcome *prometheus.CounterVec
 	// cpuStatsCollectDur: introduced for issue #279 / PR-B / ADR-039.
 	// Wall-clock duration of the CPU-rate-and-accumulator read path
 	// on the vmmd and schedd wires. Stored as prometheus.Histogram
@@ -2549,6 +2553,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, outcome := range []string{"cache_hit", "ok", "failed"} {
 		buildDur.WithLabelValues(outcome)
 	}
+	buildCacheOutcome := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_build_cache_outcome_total",
+		Help: "Count of builderd build-cache decisions, labelled by outcome {hit,miss,invalidated}.",
+	}, []string{"outcome"})
+	for _, outcome := range []string{"hit", "miss", "invalidated"} {
+		buildCacheOutcome.WithLabelValues(outcome)
+	}
 	buildQueueWait := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: prefix + "_build_queue_wait_seconds",
 		Help: "Seconds a build waited between enqueue (apid) and dequeue (builderd start), spec §12 target < 60 s, warn > 300 s (ADR-030).",
@@ -3238,7 +3249,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
-		buildDur, buildQueueWait, residentGBPerCustomer, billingCapExceededTotal,
+		buildDur, buildQueueWait, buildCacheOutcome, residentGBPerCustomer, billingCapExceededTotal,
 		meterdFloorAppliedTotal, meteredMBSecondsTotal,
 		// ADR-123 alert-preset signal series — PR-A (3) + PR-B (2). Each
 		// backs one of the 8 alert_presets catalog rows. Without
@@ -4580,6 +4591,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		polarPushDur:                                          polarPushDur,
 		buildDur:                                              buildDur,
 		buildQueueWait:                                        buildQueueWait,
+		buildCacheOutcome:                                     buildCacheOutcome,
 		residentGBPerCustomer:                                 residentGBPerCustomer,
 		billingCapExceededTotal:                               billingCapExceededTotal,
 		meterdFloorAppliedTotal:                               meterdFloorAppliedTotal,
@@ -4656,7 +4668,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditLogWriteTotal:                                    auditLogWriteTotal,
 		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,
-		operatorActionTraceCompletenessFirstTickCompleted:     operatorActionTraceCompletenessFirstTickCompleted,
+		operatorActionTraceCompletenessFirstTickCompleted:   operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp: operatorActionTraceCompletenessLastSuccessTimestamp,
 		uploadSessionCreatedTotal:                           uploadSessionCreatedTotal,
 		uploadSessionCommittedTotal:                         uploadSessionCommittedTotal,
@@ -6680,6 +6692,20 @@ func (m *OpsMetrics) ObserveBuildCount(code string) {
 		return
 	}
 	m.ops.WithLabelValues("build", code).Inc()
+}
+
+// ObserveBuildCacheOutcome records one builderd cache decision. The label is
+// closed so a malformed or future value cannot create an unbounded metric
+// series. Safe on a nil receiver and on metrics bundles created by older
+// callers.
+func (m *OpsMetrics) ObserveBuildCacheOutcome(outcome string) {
+	if m == nil || m.buildCacheOutcome == nil {
+		return
+	}
+	switch outcome {
+	case "hit", "miss", "invalidated":
+		m.buildCacheOutcome.WithLabelValues(outcome).Inc()
+	}
 }
 
 // ObserveDeploymentCancelled (ADR-124) increments the

@@ -153,6 +153,8 @@ from .build_plan_class_type_3_type_1 import BuildPlanClassType3Type1
 from .build_plan_framework import BuildPlanFramework
 from .build_provenance_response import BuildProvenanceResponse
 from .build_response import BuildResponse
+from .build_response_cache_status import BuildResponseCacheStatus
+from .build_response_cache_status import BuildResponseCacheStatus
 from .build_response_failure_class import BuildResponseFailureClass
 from .build_response_kind import BuildResponseKind
 from .build_response_status import BuildResponseStatus
@@ -307,6 +309,7 @@ from .deployment_list_response import DeploymentListResponse
 from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_response import DeploymentResponse
+from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
 from .deployment_response_deployed_via_type_1 import DeploymentResponseDeployedViaType1
 from .deployment_response_deployed_via_type_2_type_1 import DeploymentResponseDeployedViaType2Type1
@@ -1044,6 +1047,8 @@ __all__ = (
     "BuildPlanFramework",
     "BuildProvenanceResponse",
     "BuildResponse",
+    "BuildResponseCacheStatus",
+    "BuildResponseCacheStatus",
     "BuildResponseFailureClass",
     "BuildResponseKind",
     "BuildResponseStatus",
@@ -1191,6 +1196,7 @@ __all__ = (
     "DeploymentLivenessProbe",
     "DeploymentPreviewURL",
     "DeploymentResponse",
+    "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
     "DeploymentResponseDeployedViaType1",
     "DeploymentResponseDeployedViaType2Type1",

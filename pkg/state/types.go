@@ -2068,6 +2068,14 @@ type Build struct {
 	// transitioned to BuildCancelled. Set by MarkBuildCancelled
 	// (ADR-124). Nil for every other row.
 	CancelledAt *time.Time
+	// CacheStatus records the builderd cache decision. It is empty for
+	// builds created before cache observability was added and otherwise
+	// belongs to the closed set hit|miss|invalidated.
+	CacheStatus string
+	// CacheKeySHA256 is the digest of the versioned BuildCacheRecipe used
+	// for the lookup. It is safe to expose because the recipe excludes
+	// customer secrets and preserves the plan/runtime/base partitions.
+	CacheKeySHA256 string
 	// CancelledByDeploymentCascade is true when the cancel came
 	// from a deployment-row flip (CancelDeploymentTx). False when
 	// a future direct build-cancel path lands. Disambiguates the

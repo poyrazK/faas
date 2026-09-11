@@ -444,21 +444,23 @@ func (q *Queries) AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParam
 }
 
 const buildByDeployment = `-- name: BuildByDeployment :one
-select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at
+select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at, cache_status, cache_key_sha256
 from builds where deployment_id = $1 order by started_at desc nulls last limit 1
 `
 
 type BuildByDeploymentRow struct {
-	ID           pgtype.UUID
-	DeploymentID pgtype.UUID
-	Kind         string
-	SourceBytes  int64
-	Status       string
-	FailureClass pgtype.Text
-	LogPath      pgtype.Text
-	StartedAt    pgtype.Timestamptz
-	FinishedAt   pgtype.Timestamptz
-	EnqueuedAt   pgtype.Timestamptz
+	ID             pgtype.UUID
+	DeploymentID   pgtype.UUID
+	Kind           string
+	SourceBytes    int64
+	Status         string
+	FailureClass   pgtype.Text
+	LogPath        pgtype.Text
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	EnqueuedAt     pgtype.Timestamptz
+	CacheStatus    pgtype.Text
+	CacheKeySha256 pgtype.Text
 }
 
 func (q *Queries) BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error) {
@@ -475,26 +477,30 @@ func (q *Queries) BuildByDeployment(ctx context.Context, db DBTX, deploymentID p
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.EnqueuedAt,
+		&i.CacheStatus,
+		&i.CacheKeySha256,
 	)
 	return i, err
 }
 
 const buildByID = `-- name: BuildByID :one
-select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at
+select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at, cache_status, cache_key_sha256
 from builds where id = $1
 `
 
 type BuildByIDRow struct {
-	ID           pgtype.UUID
-	DeploymentID pgtype.UUID
-	Kind         string
-	SourceBytes  int64
-	Status       string
-	FailureClass pgtype.Text
-	LogPath      pgtype.Text
-	StartedAt    pgtype.Timestamptz
-	FinishedAt   pgtype.Timestamptz
-	EnqueuedAt   pgtype.Timestamptz
+	ID             pgtype.UUID
+	DeploymentID   pgtype.UUID
+	Kind           string
+	SourceBytes    int64
+	Status         string
+	FailureClass   pgtype.Text
+	LogPath        pgtype.Text
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	EnqueuedAt     pgtype.Timestamptz
+	CacheStatus    pgtype.Text
+	CacheKeySha256 pgtype.Text
 }
 
 func (q *Queries) BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error) {
@@ -511,6 +517,8 @@ func (q *Queries) BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (Build
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.EnqueuedAt,
+		&i.CacheStatus,
+		&i.CacheKeySha256,
 	)
 	return i, err
 }
@@ -857,7 +865,7 @@ func (q *Queries) CreateApp(ctx context.Context, db DBTX, arg CreateAppParams) (
 const createBuild = `-- name: CreateBuild :one
 insert into builds (id, deployment_id, kind, source_bytes, status, log_path)
 values (gen_random_uuid(), $1, $2, $3, 'queued', $4)
-returning id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at
+returning id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at, cache_status, cache_key_sha256
 `
 
 type CreateBuildParams struct {
@@ -868,16 +876,18 @@ type CreateBuildParams struct {
 }
 
 type CreateBuildRow struct {
-	ID           pgtype.UUID
-	DeploymentID pgtype.UUID
-	Kind         string
-	SourceBytes  int64
-	Status       string
-	FailureClass pgtype.Text
-	LogPath      pgtype.Text
-	StartedAt    pgtype.Timestamptz
-	FinishedAt   pgtype.Timestamptz
-	EnqueuedAt   pgtype.Timestamptz
+	ID             pgtype.UUID
+	DeploymentID   pgtype.UUID
+	Kind           string
+	SourceBytes    int64
+	Status         string
+	FailureClass   pgtype.Text
+	LogPath        pgtype.Text
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	EnqueuedAt     pgtype.Timestamptz
+	CacheStatus    pgtype.Text
+	CacheKeySha256 pgtype.Text
 }
 
 func (q *Queries) CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParams) (CreateBuildRow, error) {
@@ -899,6 +909,8 @@ func (q *Queries) CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParam
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.EnqueuedAt,
+		&i.CacheStatus,
+		&i.CacheKeySha256,
 	)
 	return i, err
 }
