@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.invocation import Invocation
 
@@ -15,12 +17,14 @@ T = TypeVar("T", bound="ListInvocationsResponse")
 
 @_attrs_define
 class ListInvocationsResponse:
-    """Page of invocations; ordered by created_at DESC, id DESC. Pass the LAST id of the returned slice as the next
-    `?before=` to load older.
+    """Page of invocations; ordered by created_at DESC, id DESC. When present, pass next_before as `?before=` to load older
+    rows.
 
     """
 
     invocations: list[Invocation]
+    next_before: str | Unset = UNSET
+    """ID cursor for the next older page; omitted when this page contains fewer rows than requested."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -29,6 +33,8 @@ class ListInvocationsResponse:
             invocations_item = invocations_item_data.to_dict()
             invocations.append(invocations_item)
 
+        next_before = self.next_before
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -36,6 +42,8 @@ class ListInvocationsResponse:
                 "invocations": invocations,
             }
         )
+        if next_before is not UNSET:
+            field_dict["next_before"] = next_before
 
         return field_dict
 
@@ -51,8 +59,11 @@ class ListInvocationsResponse:
 
             invocations.append(invocations_item)
 
+        next_before = d.pop("next_before", UNSET)
+
         list_invocations_response = cls(
             invocations=invocations,
+            next_before=next_before,
         )
 
         list_invocations_response.additional_properties = d

@@ -23609,13 +23609,15 @@ components:
           { type: [string, "null"], format: date-time, description: "ADR-134 PR-C. When this row was most recently replayed from dead_letter via POST /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay." }
 
     ListInvocationsResponse:
-      description: "Page of invocations; ordered by created_at DESC, id DESC. Pass the LAST id of the returned slice as the next `?before=` to load older."
+      description: "Page of invocations; ordered by created_at DESC, id DESC. When present, pass next_before as `?before=` to load older rows."
       type: object
       required: [invocations]
       properties:
         invocations:
           type: array
           items: { $ref: '#/components/schemas/Invocation' }
+        next_before:
+          { type: string, description: "ID cursor for the next older page; omitted when this page contains fewer rows than requested." }
 
     InvokeRequest:
       description: "Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to POST; path defaults to `/`."

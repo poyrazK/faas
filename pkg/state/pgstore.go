@@ -11703,12 +11703,9 @@ func (s *PgStore) ListInvocationsForAccount(ctx context.Context, accountID strin
 	// monotonic under the same index. The id btree on PK carries the
 	// sort; created_at is the user's primary ordering.
 	//
-	// Move 2 simplification: a single id cursor
-	// (`created_at < (cursor's created_at) or (created_at = cursor.created_at and id < cursor.id)`)
-	// would be more exact but requires two extra round-trips per page
-	// (one to fetch the cursor row, one to scan). Per-account page
-	// counts are small (single customer scale) so the planner picks the
-	// existing PK + sort anyway.
+	// Resolve the cursor to the same (created_at, id) tuple used by the
+	// ordering. Including id as the tie-breaker prevents rows sharing an
+	// insertion timestamp from being skipped between pages.
 	//
 	// The empty-cursor case must NOT reference the subquery at all —
 	// PostgreSQL type-checks the entire statement, so `id = $2` with a
@@ -11727,8 +11724,8 @@ func (s *PgStore) ListInvocationsForAccount(ctx context.Context, accountID strin
 		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+`
 			from invocations
 			where account_id = $1
-			  and created_at < (
-			      select created_at from invocations where id = $2 and account_id = $1)
+			  and (created_at, id) < (
+			      select created_at, id from invocations where id = $2 and account_id = $1)
 			order by created_at desc, id desc
 			limit $3`, accountID, before, limit)
 	}

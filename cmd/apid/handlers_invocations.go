@@ -564,7 +564,15 @@ func (s *server) listInvocations(w http.ResponseWriter, r *http.Request, acct st
 	if rows == nil {
 		rows = []state.Invocation{}
 	}
-	writeJSON(w, http.StatusOK, invocationListResponse{Invocations: rows})
+	var nextBefore string
+	if len(rows) == limit && len(rows) > 0 {
+		// The store orders newest first and applies the same cursor to
+		// the next query, so the last row is the stable continuation
+		// token. An extra request at the end of an exact-size history is
+		// harmless and keeps the store interface backwards-compatible.
+		nextBefore = rows[len(rows)-1].ID
+	}
+	writeJSON(w, http.StatusOK, invocationListResponse{Invocations: rows, NextBefore: nextBefore})
 }
 
 // invocationListResponse is the handler-local wire shape for GET
@@ -574,6 +582,7 @@ func (s *server) listInvocations(w http.ResponseWriter, r *http.Request, acct st
 // the same JSON regardless of where the type lives.
 type invocationListResponse struct {
 	Invocations []state.Invocation `json:"invocations"`
+	NextBefore  string             `json:"next_before,omitempty"`
 }
 
 // getInvocation is the single-row read. Account-scoped so a customer

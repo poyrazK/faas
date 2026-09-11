@@ -3713,9 +3713,12 @@ type Invocation struct {
 // ListInvocationsResponse is the wire shape for GET /v1/invocations.
 // The handler emits a `[]state.Invocation` under the `invocations`
 // key; here we declare the same shape with the SDK-side mirror type
-// so pkg/api stays decoupled from pkg/state.
+// so pkg/api stays decoupled from pkg/state. NextBefore is the id of
+// the last row when the page reaches its limit; pass it as `before`
+// to continue with older rows.
 type ListInvocationsResponse struct {
 	Invocations []Invocation `json:"invocations"`
+	NextBefore  string       `json:"next_before,omitempty"`
 }
 
 // --- Issue #791 — cron run history ----------------------------------
