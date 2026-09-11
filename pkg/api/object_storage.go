@@ -119,6 +119,34 @@ type ObjectBucketAccessGrantList struct {
 	Items []ObjectBucketAccessGrant `json:"items"`
 }
 
+// ObjectUploadRoute is the customer-facing declaration for an authenticated
+// upload endpoint. The route is served by Gregale's edge and never wakes the
+// application deployment.
+type ObjectUploadRoute struct {
+	ID                  string    `json:"id"`
+	Name                string    `json:"name"`
+	BucketID            string    `json:"bucket_id"`
+	KeyPrefix           string    `json:"key_prefix,omitempty"`
+	MaxBytes            int64     `json:"max_bytes"`
+	AllowedContentTypes []string  `json:"allowed_content_types,omitempty"`
+	Enabled             bool      `json:"enabled"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+type ObjectUploadRouteList struct {
+	Items []ObjectUploadRoute `json:"items"`
+}
+
+type CreateObjectUploadRouteRequest struct {
+	Name                string   `json:"name"`
+	BucketID            string   `json:"bucket_id"`
+	KeyPrefix           string   `json:"key_prefix,omitempty"`
+	MaxBytes            int64    `json:"max_bytes"`
+	AllowedContentTypes []string `json:"allowed_content_types,omitempty"`
+	Enabled             *bool    `json:"enabled,omitempty"`
+}
+
 type SetObjectBucketAccessGrantRequest struct {
 	Permission string `json:"permission"`
 }

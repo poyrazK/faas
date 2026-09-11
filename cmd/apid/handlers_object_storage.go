@@ -23,6 +23,161 @@ func (s *server) WithObjectStorage(registry *objectstorage.Registry) *server {
 	return s
 }
 
+func viewObjectUploadRoute(route state.ObjectUploadRoute) api.ObjectUploadRoute {
+	return api.ObjectUploadRoute{ID: route.ID, Name: route.Name, BucketID: route.BucketID, KeyPrefix: route.KeyPrefix, MaxBytes: route.MaxBytes, AllowedContentTypes: append([]string(nil), route.AllowedContentTypes...), Enabled: route.Enabled, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt}
+}
+
+func (s *server) uploadRouteStore(w http.ResponseWriter) (state.ObjectUploadRouteStore, bool) {
+	store, ok := s.store.(state.ObjectUploadRouteStore)
+	if !ok {
+		bucketProblem(w, objectstorage.ErrUnavailable)
+	}
+	return store, ok
+}
+
+func (s *server) listObjectUploadRoutes(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	store, ok := s.uploadRouteStore(w)
+	if !ok {
+		return
+	}
+	routes, err := store.ListObjectUploadRoutes(r.Context(), acct.ID, app.ID)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	items := make([]api.ObjectUploadRoute, 0, len(routes))
+	for _, route := range routes {
+		items = append(items, viewObjectUploadRoute(route))
+	}
+	writeJSON(w, http.StatusOK, api.ObjectUploadRouteList{Items: items})
+}
+
+func (s *server) createObjectUploadRoute(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	store, ok := s.uploadRouteStore(w)
+	if !ok {
+		return
+	}
+	if !s.objectStorageEnabled() {
+		bucketProblem(w, objectstorage.ErrUnavailable)
+		return
+	}
+	var req api.CreateObjectUploadRouteRequest
+	if !decodeBucketRequest(w, r, &req) {
+		return
+	}
+	req.Name = strings.TrimSpace(strings.ToLower(req.Name))
+	req.KeyPrefix = strings.Trim(strings.TrimSpace(req.KeyPrefix), "/")
+	if !validObjectUploadRouteName(req.Name) || !validObjectUploadPrefix(req.KeyPrefix) || req.BucketID == "" {
+		bucketProblem(w, objectstorage.ErrInvalid)
+		return
+	}
+	maxBytes := req.MaxBytes
+	if maxBytes == 0 {
+		maxBytes = s.objectStorage.MaxUploadBytes
+	}
+	if maxBytes < 1 || maxBytes > s.objectStorage.MaxUploadBytes {
+		bucketProblem(w, objectstorage.ErrInvalid)
+		return
+	}
+	if len(req.AllowedContentTypes) > 32 {
+		bucketProblem(w, objectstorage.ErrInvalid)
+		return
+	}
+	for _, contentType := range req.AllowedContentTypes {
+		if !validUploadContentType(contentType) {
+			bucketProblem(w, objectstorage.ErrInvalid)
+			return
+		}
+	}
+	bucketStore, ok := s.store.(state.ObjectBucketStore)
+	if !ok {
+		bucketProblem(w, objectstorage.ErrUnavailable)
+		return
+	}
+	bucket, err := bucketStore.GetObjectBucket(r.Context(), acct.ID, app.ID, req.BucketID)
+	if err != nil || bucket.State != "ready" {
+		bucketProblem(w, state.ErrNotFound)
+		return
+	}
+	for i, contentType := range req.AllowedContentTypes {
+		req.AllowedContentTypes[i] = strings.ToLower(strings.TrimSpace(contentType))
+	}
+	created := false
+	route, err := store.GetObjectUploadRoute(r.Context(), acct.ID, app.ID, req.Name)
+	if errors.Is(err, state.ErrNotFound) {
+		route = state.ObjectUploadRoute{ID: uuid.NewString(), AccountID: acct.ID, AppID: app.ID, Name: req.Name}
+		created = true
+	} else if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	route.BucketID, route.KeyPrefix, route.MaxBytes = bucket.ID, req.KeyPrefix, maxBytes
+	route.AllowedContentTypes = append([]string(nil), req.AllowedContentTypes...)
+	route.Enabled = req.Enabled == nil || *req.Enabled
+	route, err = store.UpsertObjectUploadRoute(r.Context(), route)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, viewObjectUploadRoute(route))
+}
+
+func (s *server) deleteObjectUploadRoute(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	store, ok := s.uploadRouteStore(w)
+	if !ok {
+		return
+	}
+	if err := store.DeleteObjectUploadRoute(r.Context(), acct.ID, app.ID, r.PathValue("route")); err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func validObjectUploadRouteName(name string) bool {
+	return regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`).MatchString(name)
+}
+
+func validObjectUploadPrefix(prefix string) bool {
+	if len(prefix) > 256 || strings.ContainsAny(prefix, "\\\r\n") {
+		return false
+	}
+	if prefix == "" {
+		return true
+	}
+	for _, segment := range strings.Split(prefix, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return objectstorage.ValidKey(prefix)
+}
+
+func validUploadContentType(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || strings.Count(value, "/") != 1 || strings.ContainsAny(value, " \t\r\n") {
+		return false
+	}
+	parts := strings.SplitN(value, "/", 2)
+	return parts[0] != "" && parts[1] != "" && parts[1] != "*" || strings.HasSuffix(value, "/*")
+}
+
 func (s *server) objectStorageEnabled() bool {
 	return s.objectStorage != nil && s.runtimeBool(runtimeConfigS3, false)
 }
