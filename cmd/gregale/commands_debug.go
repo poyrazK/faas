@@ -5,7 +5,7 @@
 //
 // Subcommand surface:
 //
-//	gregale debug requests list <slug> [--since <dur>] [--route <pattern>] [--limit N]
+//	gregale debug requests list <slug> [--since <dur>] [--route <pattern>] [--cursor C] [--limit N]
 //	gregale debug requests watch <slug> [--since <dur>] [--route <pattern>] [--limit N] [--interval D] [--once]
 //	gregale debug requests get <slug> <req_id>
 //	gregale debug requests show <slug> <req_id>
@@ -158,13 +158,14 @@ func cmdDebugRequestsList(args []string) int {
 	fs := flag.NewFlagSet("debug requests list", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	route := fs.String("route", "", "route filter (exact match)")
+	cursor := fs.String("cursor", "", "opaque cursor from the previous page")
 	limit := fs.Int("limit", 20, "max rows (1..200)")
-	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true, "route": true, "limit": true})
+	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true, "route": true, "cursor": true, "limit": true})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests list [--since D] [--route P] [--limit N] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests list [--since D] [--route P] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {
@@ -177,9 +178,10 @@ func cmdDebugRequestsList(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	resp, err := client.ListAppDebugRequestsWithOptions(context.Background(), slug, api.DebugTelemetryListOptions{
-		Since: *since,
-		Route: *route,
-		Limit: *limit,
+		Since:  *since,
+		Route:  *route,
+		Cursor: *cursor,
+		Limit:  *limit,
 	})
 	if err != nil {
 		return printErr("Could not list debug requests", err)
@@ -313,6 +315,14 @@ func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) 
 			r.ID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, r.ReceivedAt)
 	}
 	_ = tw.Flush()
+	if resp.RetentionClamped {
+		_, _ = fmt.Fprintln(w, "window clamped to the plan's telemetry retention")
+	}
+	if resp.Complete {
+		_, _ = fmt.Fprintln(w, "page complete for the retained window")
+	} else if resp.NextCursor != "" {
+		_, _ = fmt.Fprintf(w, "more rows available; next_cursor=%s\n", resp.NextCursor)
+	}
 }
 
 func renderDebugCoverage(w io.Writer, resp api.DebugCoverageResponse) {

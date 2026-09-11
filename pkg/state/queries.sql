@@ -1599,7 +1599,8 @@ INSERT INTO request_telemetry (
 -- Backs GET /v1/apps/{slug}/debug/requests. Uses
 -- request_telemetry_app_received_idx. The (since, until) pair is
 -- timestamptz; handler-side date parsing is at cmd/apid/
--- handlers_debug_telemetry.go (parseDebugTelemetryWindow).
+-- handlers_debug_telemetry.go (parseDebugSinceFromString). Cursor pages use
+-- the strict (received_at, id) tuple so equal timestamps cannot reorder rows.
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
@@ -1608,9 +1609,12 @@ FROM request_telemetry
 WHERE app_id = $1
   AND received_at >= $2
   AND received_at <  $3
+  AND (sqlc.arg('cursor_received_at')::timestamptz IS NULL
+       OR (received_at, id) < (sqlc.arg('cursor_received_at')::timestamptz,
+                               sqlc.arg('cursor_id')::uuid))
   AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text)
-ORDER BY received_at DESC
-LIMIT $4;
+ORDER BY received_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
 
 -- name: RequestTelemetryCoverage :one
 -- Signal coverage for the customer debugger. Counts are weighted by the

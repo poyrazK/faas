@@ -5702,8 +5702,9 @@ type Store interface {
 	// ListRequestTelemetryByApp backs GET /v1/apps/{slug}/debug/requests.
 	// Time-windowed (since, until) with hard limit; cursor pagination
 	// is by (received_at DESC, id) tuple, matching the
-	// request_telemetry_app_received_idx index direction. limit MUST
-	// be pre-clamped to api.DebugTelemetryMaxLimit by the handler.
+	// request_telemetry_app_received_idx index direction. The handler
+	// pre-clamps the customer limit and adds one lookahead row to determine
+	// whether Complete can be reported.
 	ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error)
 
 	// RequestTelemetryCoverage backs GET /v1/apps/{slug}/debug/coverage.

@@ -1041,7 +1041,7 @@ Production debugger (ADR-127)
 
 ### debug requests
 
-Per-request telemetry (list|get|show|evidence|replay|watch [--interval D] [--once])
+Per-request telemetry (list --cursor C for pagination | get | show | evidence | replay | watch)
 
 ### debug coverage
 

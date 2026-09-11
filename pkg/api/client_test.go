@@ -534,6 +534,55 @@ func TestListOrgInvitations_EncodesCursor(t *testing.T) {
 	}
 }
 
+func TestListAppDebugRequestsWithOptions_EncodesCursor(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"since":"24h","window_start":"2026-09-11T00:00:00Z","window_end":"2026-09-12T00:00:00Z","retention_clamped":false,"complete":true,"requests":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	_, err := c.ListAppDebugRequestsWithOptions(context.Background(), "debug-app", DebugTelemetryListOptions{
+		Since: "24h", Route: "GET /checkout", Cursor: "opaque+/=", Limit: 25,
+	})
+	if err != nil {
+		t.Fatalf("ListAppDebugRequestsWithOptions: %v", err)
+	}
+	want := "cursor=opaque%2B%2F%3D&limit=25&route=GET+%2Fcheckout&since=24h"
+	if gotQuery != want {
+		t.Errorf("RawQuery = %q, want %q", gotQuery, want)
+	}
+}
+
+func TestListAppDebugRequestsAll_WalksCursor(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		cursor := r.URL.Query().Get("cursor")
+		w.Header().Set("Content-Type", "application/json")
+		switch cursor {
+		case "":
+			_, _ = w.Write([]byte(`{"since":"24h","window_start":"2026-09-11T00:00:00Z","window_end":"2026-09-12T00:00:00Z","retention_clamped":false,"complete":false,"next_cursor":"page-2","requests":[{"id":"r1"}]}`))
+		case "page-2":
+			_, _ = w.Write([]byte(`{"since":"24h","window_start":"2026-09-11T00:00:00Z","window_end":"2026-09-12T00:00:00Z","retention_clamped":false,"complete":true,"requests":[{"id":"r2"}]}`))
+		default:
+			t.Fatalf("unexpected cursor %q", cursor)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	got, err := c.ListAppDebugRequestsAll(context.Background(), "debug-app", DebugTelemetryListOptions{Since: "24h", Limit: 50})
+	if err != nil {
+		t.Fatalf("ListAppDebugRequestsAll: %v", err)
+	}
+	if calls != 2 || len(got) != 2 || got[0].ID != "r1" || got[1].ID != "r2" {
+		t.Fatalf("calls=%d rows=%+v, want two pages [r1 r2]", calls, got)
+	}
+}
+
 // --- SSE ---------------------------------------------------------------------
 
 // TestStreamAppLogs_HappyPath verifies the SDK opens a text/event-stream,

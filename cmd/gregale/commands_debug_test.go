@@ -54,7 +54,7 @@ func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 		got = *r.Clone(r.Context())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(api.DebugTelemetryListResponse{
-			Since: "6h",
+			Since: "6h", WindowStart: "2026-09-12T00:00:00Z", WindowEnd: "2026-09-12T06:00:00Z", Complete: false, NextCursor: "next-page",
 			Requests: []api.DebugTelemetryRequestItem{{
 				ID: "request-1", Route: "GET /checkout", Method: "GET", Status: 200,
 				LatencyMS: 42, Count: 7, ReceivedAt: "2026-09-06T10:00:00Z",
@@ -74,7 +74,7 @@ func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	// The slug intentionally appears before the flags. This is the form
 	// shown in the command's top-level docs and must not drop the filters.
 	if code := cmdDebugRequestsList([]string{
-		"my-app", "--since", "6h", "--route", "GET /checkout", "--limit", "50",
+		"my-app", "--since", "6h", "--route", "GET /checkout", "--cursor", "previous-page", "--limit", "50",
 	}); code != 0 {
 		t.Fatalf("cmdDebugRequestsList() = %d, want 0", code)
 	}
@@ -84,7 +84,7 @@ func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	}
 	q := got.URL.Query()
 	for key, want := range map[string]string{
-		"since": "6h", "route": "GET /checkout", "limit": "50",
+		"since": "6h", "route": "GET /checkout", "cursor": "previous-page", "limit": "50",
 	} {
 		if got := q.Get(key); got != want {
 			t.Errorf("query %s = %q, want %q", key, got, want)
@@ -92,6 +92,9 @@ func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "COUNT") || !strings.Contains(stdout.String(), "7") {
 		t.Errorf("human output does not show collapsed request count:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "next_cursor=next-page") {
+		t.Errorf("human output does not expose next cursor:\n%s", stdout.String())
 	}
 }
 

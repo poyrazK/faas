@@ -3796,7 +3796,11 @@ paths:
         The window is clamped to `DebugTelemetryRetentionDays`
         (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
         effective `since` is returned in the response so the
-        dashboard can render a "you widened past the cap" tile.
+        dashboard can render a "you widened past the cap" tile. Results are
+        cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
+        cursor pins the effective window and route, so callers can safely
+        walk pages while new telemetry arrives. `complete` is true only when
+        every retained row in that bounded window is present in the page.
         Returns 200 with `requests: []` when no rows exist in the
         window — never 404. Cross-account slug is 404 (IDOR-safe;
         byte-identical to "no such app").
@@ -3816,6 +3820,11 @@ paths:
           required: false
           schema: { type: [string, 'null'], maxLength: 256 }
           description: "Exact route-template filter."
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 8192 }
+          description: "Opaque next_cursor from a previous response. The cursor must be reused with the same app and route."
       responses:
         '200':
           description: Page of recent request telemetry rows.
@@ -25650,9 +25659,14 @@ components:
         `since` echoes the effective window used (after the plan's
         `DebugTelemetryRetentionDays` clamp) so the dashboard can
         surface a "you widened past the cap" tile.
-      required: [requests, since]
+      required: [requests, since, window_start, window_end, retention_clamped, complete]
       properties:
         since: { type: string, description: "Effective window applied (e.g. '24h', '72h')." }
+        window_start: { type: string, format: date-time, description: "Inclusive start of the pinned retention window." }
+        window_end: { type: string, format: date-time, description: "Exclusive end of the pinned retention window." }
+        retention_clamped: { type: boolean, description: "True when the requested lookback exceeded the plan retention cap." }
+        complete: { type: boolean, description: "True when this page contains every retained row in the pinned window." }
+        next_cursor: { type: string, description: "Opaque cursor for the next page; omitted when complete is true." }
         requests:
           type: array
           items: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }

@@ -17,6 +17,7 @@ def _get_kwargs(
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
     route: None | str | Unset = UNSET,
+    cursor: None | str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -41,6 +42,13 @@ def _get_kwargs(
     else:
         json_route = route
     params["route"] = json_route
+
+    json_cursor: None | str | Unset
+    if isinstance(cursor, Unset):
+        json_cursor = UNSET
+    else:
+        json_cursor = cursor
+    params["cursor"] = json_cursor
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -112,6 +120,7 @@ def sync_detailed(
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
     route: None | str | Unset = UNSET,
+    cursor: None | str | Unset = UNSET,
 ) -> Response[DebugTelemetryListResponse | Problem]:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
@@ -128,7 +137,11 @@ def sync_detailed(
     The window is clamped to `DebugTelemetryRetentionDays`
     (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
     effective `since` is returned in the response so the
-    dashboard can render a \"you widened past the cap\" tile.
+    dashboard can render a \"you widened past the cap\" tile. Results are
+    cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
+    cursor pins the effective window and route, so callers can safely
+    walk pages while new telemetry arrives. `complete` is true only when
+    every retained row in that bounded window is present in the page.
     Returns 200 with `requests: []` when no rows exist in the
     window — never 404. Cross-account slug is 404 (IDOR-safe;
     byte-identical to \"no such app\").
@@ -138,6 +151,7 @@ def sync_detailed(
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
         route (None | str | Unset):
+        cursor (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,6 +166,7 @@ def sync_detailed(
         since=since,
         limit=limit,
         route=route,
+        cursor=cursor,
     )
 
     response = client.get_httpx_client().request(
@@ -168,6 +183,7 @@ def sync(
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
     route: None | str | Unset = UNSET,
+    cursor: None | str | Unset = UNSET,
 ) -> DebugTelemetryListResponse | Problem | None:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
@@ -184,7 +200,11 @@ def sync(
     The window is clamped to `DebugTelemetryRetentionDays`
     (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
     effective `since` is returned in the response so the
-    dashboard can render a \"you widened past the cap\" tile.
+    dashboard can render a \"you widened past the cap\" tile. Results are
+    cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
+    cursor pins the effective window and route, so callers can safely
+    walk pages while new telemetry arrives. `complete` is true only when
+    every retained row in that bounded window is present in the page.
     Returns 200 with `requests: []` when no rows exist in the
     window — never 404. Cross-account slug is 404 (IDOR-safe;
     byte-identical to \"no such app\").
@@ -194,6 +214,7 @@ def sync(
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
         route (None | str | Unset):
+        cursor (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -209,6 +230,7 @@ def sync(
         since=since,
         limit=limit,
         route=route,
+        cursor=cursor,
     ).parsed
 
 
@@ -219,6 +241,7 @@ async def asyncio_detailed(
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
     route: None | str | Unset = UNSET,
+    cursor: None | str | Unset = UNSET,
 ) -> Response[DebugTelemetryListResponse | Problem]:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
@@ -235,7 +258,11 @@ async def asyncio_detailed(
     The window is clamped to `DebugTelemetryRetentionDays`
     (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
     effective `since` is returned in the response so the
-    dashboard can render a \"you widened past the cap\" tile.
+    dashboard can render a \"you widened past the cap\" tile. Results are
+    cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
+    cursor pins the effective window and route, so callers can safely
+    walk pages while new telemetry arrives. `complete` is true only when
+    every retained row in that bounded window is present in the page.
     Returns 200 with `requests: []` when no rows exist in the
     window — never 404. Cross-account slug is 404 (IDOR-safe;
     byte-identical to \"no such app\").
@@ -245,6 +272,7 @@ async def asyncio_detailed(
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
         route (None | str | Unset):
+        cursor (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -259,6 +287,7 @@ async def asyncio_detailed(
         since=since,
         limit=limit,
         route=route,
+        cursor=cursor,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -273,6 +302,7 @@ async def asyncio(
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
     route: None | str | Unset = UNSET,
+    cursor: None | str | Unset = UNSET,
 ) -> DebugTelemetryListResponse | Problem | None:
     r"""Per-app request telemetry (ADR-127 / PR-A).
 
@@ -289,7 +319,11 @@ async def asyncio(
     The window is clamped to `DebugTelemetryRetentionDays`
     (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
     effective `since` is returned in the response so the
-    dashboard can render a \"you widened past the cap\" tile.
+    dashboard can render a \"you widened past the cap\" tile. Results are
+    cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
+    cursor pins the effective window and route, so callers can safely
+    walk pages while new telemetry arrives. `complete` is true only when
+    every retained row in that bounded window is present in the page.
     Returns 200 with `requests: []` when no rows exist in the
     window — never 404. Cross-account slug is 404 (IDOR-safe;
     byte-identical to \"no such app\").
@@ -299,6 +333,7 @@ async def asyncio(
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
         route (None | str | Unset):
+        cursor (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -315,5 +350,6 @@ async def asyncio(
             since=since,
             limit=limit,
             route=route,
+            cursor=cursor,
         )
     ).parsed

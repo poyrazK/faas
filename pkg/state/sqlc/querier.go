@@ -659,7 +659,8 @@ type Querier interface {
 	// Backs GET /v1/apps/{slug}/debug/requests. Uses
 	// request_telemetry_app_received_idx. The (since, until) pair is
 	// timestamptz; handler-side date parsing is at cmd/apid/
-	// handlers_debug_telemetry.go (parseDebugTelemetryWindow).
+	// handlers_debug_telemetry.go (parseDebugSinceFromString). Cursor pages use
+	// the strict (received_at, id) tuple so equal timestamps cannot reorder rows.
 	ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg ListRequestTelemetryByAppParams) ([]ListRequestTelemetryByAppRow, error)
 	// Active rows only, newest first. Partial index keeps the scan tight.
 	ListSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListSessionsRow, error)

@@ -100,6 +100,22 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		return
 	}
 
+	cursorRaw := strings.TrimSpace(r.URL.Query().Get("cursor"))
+	if len(cursorRaw) > 8192 {
+		api.WriteProblem(w, api.ErrValidation("cursor must be at most 8192 characters"))
+		return
+	}
+	decodedCursor, cursorErr := decodeDebugTelemetryCursor(cursorRaw)
+	if cursorErr != nil {
+		api.WriteProblem(w, api.ErrValidation("cursor is invalid; restart the request list"))
+		return
+	}
+	if decodedCursor.Version != 0 && (decodedCursor.AppID != app.ID || decodedCursor.Route != data.Route) {
+		api.WriteProblem(w, api.ErrValidation("cursor does not match this app or route"))
+		return
+	}
+	data.Cursor = cursorRaw
+
 	now := time.Now().UTC()
 	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
 	since := parseDebugSinceFromString(sinceRaw, 24*time.Hour)
@@ -108,15 +124,31 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		since = retention
 		data.WindowClamped = true
 	}
+	windowStart := now.Add(-since)
+	windowEnd := now
+	if decodedCursor.Version != 0 {
+		if decodedCursor.WindowEnd.After(now.Add(time.Minute)) || decodedCursor.WindowStart.Before(now.Add(-retention)) {
+			api.WriteProblem(w, api.ErrValidation("cursor has expired; restart the request list"))
+			return
+		}
+		if sinceRaw != "" && since != decodedCursor.WindowEnd.Sub(decodedCursor.WindowStart) {
+			api.WriteProblem(w, api.ErrValidation("cursor does not match since; restart the request list"))
+			return
+		}
+		windowStart = decodedCursor.WindowStart.UTC()
+		windowEnd = decodedCursor.WindowEnd.UTC()
+		since = windowEnd.Sub(windowStart)
+		data.WindowClamped = decodedCursor.RetentionClamped || data.WindowClamped
+	}
 	data.Since = echoDebugSince(sinceRaw, since)
-	data.WindowStart = now.Add(-since).Format(time.RFC3339)
-	data.WindowEnd = now.Format(time.RFC3339)
+	data.WindowStart = windowStart.Format(time.RFC3339Nano)
+	data.WindowEnd = windowEnd.Format(time.RFC3339Nano)
 
 	coverage, coverageErr := s.store.RequestTelemetryCoverage(ctx, sqlc.RequestTelemetryCoverageParams{
 		AppID:        stringToPgUUID(app.ID),
 		AccountID:    stringToPgUUID(acct.ID),
-		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-since), Valid: true},
-		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: windowEnd, Valid: true},
 	})
 	if coverageErr != nil {
 		// Coverage is an enrichment card. Keep the request investigation
@@ -126,20 +158,39 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		data.Coverage = dashboardDebugCoverageView(coverage, data.Since, data.WindowStart, data.WindowEnd, limits.DebugTelemetryRetentionDays)
 	}
 
+	cursorReceivedAt, cursorID := debugTelemetryCursorParams(decodedCursor)
 	rows, err := s.store.ListRequestTelemetryByApp(ctx, sqlc.ListRequestTelemetryByAppParams{
-		AppID:        stringToPgUUID(app.ID),
-		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-since), Valid: true},
-		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
-		Limit:        50,
-		Route:        data.Route,
+		AppID:            stringToPgUUID(app.ID),
+		ReceivedAt:       pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReceivedAt_2:     pgtype.Timestamptz{Time: windowEnd, Valid: true},
+		CursorReceivedAt: cursorReceivedAt,
+		CursorID:         cursorID,
+		Limit:            51,
+		Route:            data.Route,
 	})
 	if err != nil {
 		log.Warn("dashboard renderAppDebug: list requests", "account_id", acct.ID, "app_id", app.ID, "err", err)
 		data.ErrorMessage = "Debugger telemetry is temporarily unavailable. Please try again shortly."
 	} else {
+		hasMore := len(rows) > 50
+		if hasMore {
+			rows = rows[:50]
+		}
 		data.Requests = make([]dashboard.DebugRequestView, 0, len(rows))
 		for _, row := range rows {
-			data.Requests = append(data.Requests, dashboardDebugRequestView(debugTelemetryRowToItem(row), app.Slug, data.Since, data.Route))
+			data.Requests = append(data.Requests, dashboardDebugRequestView(debugTelemetryRowToItem(row), app.Slug, data.Since, data.Route, data.Cursor))
+		}
+		data.NextCursor = ""
+		if hasMore && len(rows) > 0 {
+			data.NextCursor = encodeDebugTelemetryCursor(app.ID, data.Route, windowStart, windowEnd, data.WindowClamped, rows[len(rows)-1])
+		}
+		data.Complete = !hasMore || data.NextCursor == ""
+		if data.NextCursor != "" {
+			values := url.Values{"since": []string{data.Since}, "cursor": []string{data.NextCursor}}
+			if data.Route != "" {
+				values.Set("route", data.Route)
+			}
+			data.NextPageURL = "/dashboard/apps/" + url.PathEscape(app.Slug) + "/debug?" + values.Encode() + "#requests"
 		}
 	}
 
@@ -256,6 +307,7 @@ func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 		"request_id": []string{reqID},
 		"since":      []string{strings.TrimSpace(r.FormValue("since"))},
 		"route":      []string{strings.TrimSpace(r.FormValue("route"))},
+		"cursor":     []string{strings.TrimSpace(r.FormValue("cursor"))},
 	}
 	if problem != nil {
 		values.Set("action", "replay_error")
@@ -357,10 +409,13 @@ func dashboardDebugCoverageSignalView(rows, requests, total int64) dashboard.Deb
 	return dashboard.DebugCoverageSignalView{Rows: rows, Requests: requests, RatePct: rate}
 }
 
-func dashboardDebugRequestView(item api.DebugTelemetryRequestItem, slug, since, route string) dashboard.DebugRequestView {
+func dashboardDebugRequestView(item api.DebugTelemetryRequestItem, slug, since, route, cursor string) dashboard.DebugRequestView {
 	values := url.Values{"since": []string{since}}
 	if route != "" {
 		values.Set("route", route)
+	}
+	if cursor != "" {
+		values.Set("cursor", cursor)
 	}
 	values.Set("request_id", item.ID)
 	return dashboard.DebugRequestView{
@@ -610,7 +665,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 	}
 
 	item := debugTelemetryGetRowToItem(row)
-	request := dashboardDebugRequestView(item, app.Slug, data.Since, data.Route)
+	request := dashboardDebugRequestView(item, app.Slug, data.Since, data.Route, data.Cursor)
 	spans, truncated := parseDebugEvidenceSpans(row.SpansSummary)
 	spanViews := make([]dashboard.DebugSpanView, 0, len(spans))
 	for _, span := range spans {
