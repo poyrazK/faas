@@ -28,6 +28,8 @@ const (
 	Vmmd_WaitJobExit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_WarmSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
+	Vmmd_WaitBuilderReady_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
+	Vmmd_DeleteWarmSnapshot_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
 	Vmmd_FrameworkReady_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
 	Vmmd_Destroy_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
 	Vmmd_StopInstance_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
@@ -112,6 +114,13 @@ type VmmdClient interface {
 	// engine's failure path is "Destroy the VM and skip the init
 	// capture" — see pkg/sched/engine.go::captureWarmSnapshotLocked.
 	WarmSnapshot(ctx context.Context, in *WarmSnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error)
+	// WaitBuilderReady blocks until a KeepWarm builder writes its durable
+	// build-done marker and emits the guest-stage build-ready line. A builder
+	// that exits before that handoff returns ready=false with its exit code.
+	WaitBuilderReady(ctx context.Context, in *WaitBuilderReadyRequest, opts ...grpc.CallOption) (*WaitBuilderReadyResponse, error)
+	// DeleteWarmSnapshot removes the two storage objects created by a builder
+	// warm capture. Missing objects are treated as an idempotent success.
+	DeleteWarmSnapshot(ctx context.Context, in *DeleteWarmSnapshotRequest, opts ...grpc.CallOption) (*DeleteWarmSnapshotResponse, error)
 	// FrameworkReady is the vmmd-side receipt of the guest-init
 	// "framework ready" vsock DGRAM (port 1027, msg=4) signal
 	// (issue #470, PR #470-FU-B). vmmd's host-side DGRAM listener
@@ -446,6 +455,26 @@ func (c *vmmdClient) WarmSnapshot(ctx context.Context, in *WarmSnapshotRequest, 
 	return out, nil
 }
 
+func (c *vmmdClient) WaitBuilderReady(ctx context.Context, in *WaitBuilderReadyRequest, opts ...grpc.CallOption) (*WaitBuilderReadyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WaitBuilderReadyResponse)
+	err := c.cc.Invoke(ctx, Vmmd_WaitBuilderReady_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) DeleteWarmSnapshot(ctx context.Context, in *DeleteWarmSnapshotRequest, opts ...grpc.CallOption) (*DeleteWarmSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteWarmSnapshotResponse)
+	err := c.cc.Invoke(ctx, Vmmd_DeleteWarmSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) FrameworkReady(ctx context.Context, in *FrameworkReadyRequest, opts ...grpc.CallOption) (*FrameworkReadyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FrameworkReadyResponse)
@@ -732,6 +761,13 @@ type VmmdServer interface {
 	// engine's failure path is "Destroy the VM and skip the init
 	// capture" — see pkg/sched/engine.go::captureWarmSnapshotLocked.
 	WarmSnapshot(context.Context, *WarmSnapshotRequest) (*SnapshotResponse, error)
+	// WaitBuilderReady blocks until a KeepWarm builder writes its durable
+	// build-done marker and emits the guest-stage build-ready line. A builder
+	// that exits before that handoff returns ready=false with its exit code.
+	WaitBuilderReady(context.Context, *WaitBuilderReadyRequest) (*WaitBuilderReadyResponse, error)
+	// DeleteWarmSnapshot removes the two storage objects created by a builder
+	// warm capture. Missing objects are treated as an idempotent success.
+	DeleteWarmSnapshot(context.Context, *DeleteWarmSnapshotRequest) (*DeleteWarmSnapshotResponse, error)
 	// FrameworkReady is the vmmd-side receipt of the guest-init
 	// "framework ready" vsock DGRAM (port 1027, msg=4) signal
 	// (issue #470, PR #470-FU-B). vmmd's host-side DGRAM listener
@@ -1024,6 +1060,12 @@ func (UnimplementedVmmdServer) PauseAndSnapshot(context.Context, *PauseAndSnapsh
 func (UnimplementedVmmdServer) WarmSnapshot(context.Context, *WarmSnapshotRequest) (*SnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WarmSnapshot not implemented")
 }
+func (UnimplementedVmmdServer) WaitBuilderReady(context.Context, *WaitBuilderReadyRequest) (*WaitBuilderReadyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WaitBuilderReady not implemented")
+}
+func (UnimplementedVmmdServer) DeleteWarmSnapshot(context.Context, *DeleteWarmSnapshotRequest) (*DeleteWarmSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteWarmSnapshot not implemented")
+}
 func (UnimplementedVmmdServer) FrameworkReady(context.Context, *FrameworkReadyRequest) (*FrameworkReadyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FrameworkReady not implemented")
 }
@@ -1212,6 +1254,42 @@ func _Vmmd_WarmSnapshot_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).WarmSnapshot(ctx, req.(*WarmSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_WaitBuilderReady_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WaitBuilderReadyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).WaitBuilderReady(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_WaitBuilderReady_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).WaitBuilderReady(ctx, req.(*WaitBuilderReadyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_DeleteWarmSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteWarmSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).DeleteWarmSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_DeleteWarmSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).DeleteWarmSnapshot(ctx, req.(*DeleteWarmSnapshotRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1595,6 +1673,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WarmSnapshot",
 			Handler:    _Vmmd_WarmSnapshot_Handler,
+		},
+		{
+			MethodName: "WaitBuilderReady",
+			Handler:    _Vmmd_WaitBuilderReady_Handler,
+		},
+		{
+			MethodName: "DeleteWarmSnapshot",
+			Handler:    _Vmmd_DeleteWarmSnapshot_Handler,
 		},
 		{
 			MethodName: "FrameworkReady",

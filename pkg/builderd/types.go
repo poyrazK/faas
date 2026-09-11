@@ -21,6 +21,17 @@ type VM interface {
 	Cancel(ctx context.Context, buildID string) error
 }
 
+// WarmVM is the optional transport capability for the guaranteed builder
+// slot. Keeping it separate from VM preserves the cold-build fallback for
+// older vmmd nodes and for unit-test fakes during a rolling deployment.
+type WarmVM interface {
+	VM
+	FirecrackerVersion(ctx context.Context) (string, error)
+	RestoreWarmBuilder(ctx context.Context, req VMRequest, snapshot WarmSnapshot) (BuildHandle, error)
+	WaitForWarmCompletion(ctx context.Context, h BuildHandle) (BuildOutcome, WarmSnapshot, error)
+	DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapshot) error
+}
+
 // VMRequest is the input to a builder VM spawn. The orchestrator at
 // builderd.go::ProcessOne populates this from a queued Build row.
 type VMRequest struct {
@@ -46,8 +57,12 @@ type VMRequest struct {
 	Plan string
 	// KeepWarm asks the guest to remain in a host-controlled wait state after
 	// a successful build so vmmd can capture a reusable builder snapshot.
-	// It is deliberately opt-in until the warm-slot orchestrator is wired.
+	// The guaranteed-slot orchestrator sets it only after the vmmd warm
+	// transport capability has been confirmed.
 	KeepWarm bool
+	// WarmScopeKey identifies the app/runtime scope allowed to reuse a warm
+	// builder drive. It is host metadata and is never written into the guest.
+	WarmScopeKey string
 }
 
 // VMResult is the legacy single-step result — kept for backwards compat
@@ -70,6 +85,7 @@ type BuildHandle struct {
 	StartedAt               time.Time // when Spawn returned; for log lines / metrics
 	DependencyCacheKey      string    // cache generation to publish after success
 	DependencyCacheRestored bool      // a prior BuildKit cache was staged into drive1
+	WarmScopeKey            string    // scope bound to a retained warm drive
 }
 
 // BuildOutcome is what WaitForCompletion returns. The orchestrator at

@@ -1057,7 +1057,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// stageWritable with an empty src would fail; skip it — Boot handles a missing drive1.
 	tStageWritableStart := time.Now()
 	if layerSrc != "" {
-		if _, err := v.stageWritable(root, layerSrc, l.UID, l.GID, l.Instance); err != nil {
+		if spec.EphemeralWritable {
+			if _, err := v.stageEphemeralWritableAs(root, layerSrc, layerImageName, l.UID, l.GID, l.Instance); err != nil {
+				return fmt.Errorf("vmm: stage ephemeral layer: %w", err)
+			}
+		} else if _, err := v.stageWritable(root, layerSrc, l.UID, l.GID, l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage layer: %w", err)
 		}
 	}
@@ -2388,6 +2392,18 @@ func (v *JailerVMM) killProcess(instance string) {
 // kernel emits "System halted" after guest-init has synced its build marker;
 // limiting the read bounds teardown overhead even for a noisy build log.
 func consoleShowsGuestHalted(path string) bool {
+	return consoleContains(path, "System halted")
+}
+
+// consoleShowsBuilderReady reads the bounded tail of the serial console for
+// the stable guest-init stage emitted after a successful KeepWarm build. The
+// check belongs in vmmd, which owns the console file even when builderd and
+// vmmd are separate processes.
+func consoleShowsBuilderReady(path string) bool {
+	return consoleContains(path, "guest-init: stage build-ready")
+}
+
+func consoleContains(path, marker string) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false
@@ -2397,7 +2413,7 @@ func consoleShowsGuestHalted(path string) bool {
 	if err != nil {
 		return false
 	}
-	const tailBytes int64 = 4096
+	const tailBytes int64 = 16 * 1024
 	offset := info.Size() - tailBytes
 	if offset < 0 {
 		offset = 0
@@ -2406,7 +2422,86 @@ func consoleShowsGuestHalted(path string) bool {
 	if _, err := f.ReadAt(buf, offset); err != nil && !errors.Is(err, io.EOF) {
 		return false
 	}
-	return bytes.Contains(buf, []byte("System halted"))
+	return bytes.Contains(buf, []byte(marker))
+}
+
+// WaitBuilderReady waits for a KeepWarm builder to finish a successful build
+// while retaining its VM. A failed build powers the guest off instead, so the
+// false result lets builderd use the ordinary Destroy export path. The
+// console is the vmmd-owned readiness source, which keeps this contract valid
+// on split-box deployments.
+func (v *JailerVMM) WaitBuilderReady(ctx context.Context, instance string, deadline time.Duration) (bool, int32, error) {
+	if v == nil {
+		return false, 0, fmt.Errorf("vmm: wait builder ready: nil receiver")
+	}
+	if instance == "" {
+		return false, 0, fmt.Errorf("vmm: wait builder ready: empty instance")
+	}
+	v.mu.Lock()
+	rec := v.recs[instance]
+	v.mu.Unlock()
+	if rec == nil {
+		return false, 0, fmt.Errorf("vmm: wait builder ready: instance %s not found", instance)
+	}
+	if !rec.isBuilder {
+		return false, 0, fmt.Errorf("vmm: wait builder ready: instance %s is not a builder", instance)
+	}
+	if consoleShowsBuilderReady(rec.consolePath) {
+		return true, 0, nil
+	}
+
+	if deadline <= 0 {
+		deadline = v.destroyWait
+		if deadline <= 0 {
+			deadline = 10 * time.Minute
+		}
+	}
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false, 0, ctx.Err()
+		case <-timer.C:
+			return false, 0, context.DeadlineExceeded
+		case <-rec.done:
+			// A guest can write the marker immediately before the watchdog
+			// observes its exit. Check once more so a successful handoff is
+			// not misclassified as a failed build.
+			if consoleShowsBuilderReady(rec.consolePath) {
+				return true, 0, nil
+			}
+			v.mu.Lock()
+			code := rec.exitCode
+			v.mu.Unlock()
+			return false, int32(code), nil
+		case <-ticker.C:
+			if consoleShowsBuilderReady(rec.consolePath) {
+				return true, 0, nil
+			}
+		}
+	}
+}
+
+// DeleteWarmSnapshot removes the memory and vmstate objects for a builder
+// warm capture. Deletion is idempotent because expiry and restore failure can
+// race a daemon restart or a previous cleanup attempt.
+func (v *JailerVMM) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateStorageKey string) error {
+	if v == nil || v.storage == nil {
+		return fmt.Errorf("vmm: delete warm snapshot: storage backend unavailable")
+	}
+	var errs []error
+	for _, key := range []string{storageKey, vmstateStorageKey} {
+		if key == "" {
+			continue
+		}
+		if err := v.storage.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+			errs = append(errs, fmt.Errorf("delete %q: %w", key, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // InstancePID returns the host PID of the running jailer child for

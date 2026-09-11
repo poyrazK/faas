@@ -115,9 +115,8 @@ type Config struct {
 	// window trades queue latency for fairness.
 	FairnessWindow time.Duration `toml:"fairness_window"`
 	// WarmIdle is how long a captured builder snapshot remains eligible for
-	// reuse. The transport driver keeps warm mode disabled until the full
-	// capture/restore handoff is available, but the lifecycle policy is
-	// initialized here so every future path uses the same bound.
+	// reuse. The guaranteed builder slot uses this bound for every capture
+	// and restore decision.
 	WarmIdle time.Duration `toml:"warm_idle"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
@@ -257,6 +256,44 @@ func (b *Builderd) InvalidateWarmBuilder() (WarmSnapshot, bool) {
 // WarmState reports the current guaranteed-slot lifecycle state.
 func (b *Builderd) WarmState() WarmState {
 	return b.warm.State()
+}
+
+func (b *Builderd) prepareWarmBuilder(ctx context.Context, slot SlotDecision, req VMRequest) (WarmVM, WarmRestoreResult, WarmSnapshot, bool) {
+	if slot.Label != "guaranteed" || req.WarmScopeKey == "" {
+		return nil, "", WarmSnapshot{}, false
+	}
+	warmVM, ok := b.vm.(WarmVM)
+	if !ok {
+		return nil, "", WarmSnapshot{}, false
+	}
+	fcVersion, err := warmVM.FirecrackerVersion(ctx)
+	if err != nil {
+		b.log.Warn("builderd: warm builder disabled; vmmd version unavailable", "err", err)
+		if snapshot, retained := b.InvalidateWarmBuilder(); retained {
+			b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
+		}
+		return nil, "", WarmSnapshot{}, false
+	}
+	result, snapshot, err := b.StartWarmBuilder(time.Now(), fcVersion)
+	if err != nil {
+		b.log.Warn("builderd: warm builder disabled; lifecycle start failed", "err", err)
+		return nil, "", WarmSnapshot{}, false
+	}
+	if snapshot.StorageKey != "" && (result != WarmRestoreHit || snapshot.ScopeKey == "" || snapshot.ScopeKey != req.WarmScopeKey) {
+		b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
+		snapshot = WarmSnapshot{}
+		result = WarmRestoreMiss
+	}
+	return warmVM, result, snapshot, true
+}
+
+func (b *Builderd) cleanupWarmSnapshot(ctx context.Context, warmVM WarmVM, snapshot WarmSnapshot) {
+	if warmVM == nil || snapshot.StorageKey == "" {
+		return
+	}
+	if err := warmVM.DeleteWarmSnapshot(context.WithoutCancel(ctx), snapshot); err != nil {
+		b.log.Warn("builderd: warm snapshot cleanup failed", "mem_key", snapshot.StorageKey, "vmstate_key", snapshot.VMStateStorageKey, "err", err)
+	}
 }
 
 // WithOpsMetrics attaches the build-metrics sink (ADR-030) and returns the
@@ -762,10 +799,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, ErrNotMetal
 	}
 
-	timeout := time.Duration(b.cfg.BuildTimeoutSeconds) * time.Second
-	vmCtx, cancel := context.WithTimeout(ctx, timeout)
-
-	handle, err := b.vm.Spawn(vmCtx, VMRequest{
+	dependencyCacheKey := dependencyCacheKeyForApp(app, fw, dep.SourceRoot, runtimeBaseRef)
+	vmReq := VMRequest{
 		BuildID:            build.ID,
 		TenantID:           app.AccountID,
 		DeploymentID:       dep.ID,
@@ -774,12 +809,42 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Framework:          fw,
 		Runtime:            runtimeName,
 		RuntimeBaseRef:     runtimeBaseRef,
-		DependencyCacheKey: dependencyCacheKeyForApp(app, fw, dep.SourceRoot, runtimeBaseRef),
+		DependencyCacheKey: dependencyCacheKey,
 		LogPath:            dep.LogPath,
 		RAMMB:              api.BuildVMRAMMB,
 		TimeoutSec:         b.cfg.BuildTimeoutSeconds,
 		Plan:               string(acct.Plan),
-	})
+		WarmScopeKey:       builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
+	}
+	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)
+	var warmCaptured WarmSnapshot
+	warmCommitted := false
+	if warmStarted {
+		defer func() {
+			if warmCommitted {
+				return
+			}
+			if retained, ok := b.InvalidateWarmBuilder(); ok {
+				b.cleanupWarmSnapshot(ctx, warmVM, retained)
+			}
+			b.cleanupWarmSnapshot(ctx, warmVM, warmCaptured)
+		}()
+	}
+	vmReq.KeepWarm = warmStarted
+	timeout := time.Duration(b.cfg.BuildTimeoutSeconds) * time.Second
+	vmCtx, cancel := context.WithTimeout(ctx, timeout)
+
+	var handle BuildHandle
+	if warmStarted && warmResult == WarmRestoreHit {
+		handle, err = warmVM.RestoreWarmBuilder(vmCtx, vmReq, warmSnapshot)
+		if err != nil {
+			b.log.Warn("builderd: warm restore failed; retrying cold", "build", build.ID, "err", err)
+			b.cleanupWarmSnapshot(ctx, warmVM, warmSnapshot)
+			handle, err = b.vm.Spawn(vmCtx, vmReq)
+		}
+	} else {
+		handle, err = b.vm.Spawn(vmCtx, vmReq)
+	}
 	if err != nil {
 		// Translate a context-deadline to timeout-class; everything else is infra.
 		fc := state.FailureInfra
@@ -835,7 +900,12 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			}
 		}
 	}()
-	out, err := b.vm.WaitForCompletion(ctx, handle)
+	var out BuildOutcome
+	if warmStarted {
+		out, warmCaptured, err = warmVM.WaitForWarmCompletion(ctx, handle)
+	} else {
+		out, err = b.vm.WaitForCompletion(ctx, handle)
+	}
 	stopWatch()
 	<-watchDone
 	if err != nil {
@@ -928,6 +998,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	if b.stopIfBuildCancelled(ctx, build.ID) {
 		return BuildResult{}, nil
+	}
+	if warmStarted {
+		if warmCaptured.StorageKey == "" || warmCaptured.LayerPath == "" || warmCaptured.ScopeKey != vmReq.WarmScopeKey {
+			b.log.Warn("builderd: warm capture missing or mismatched scope; discarding", "build", build.ID)
+		} else if err := b.CompleteWarmBuilder(time.Now(), warmCaptured); err != nil {
+			b.log.Warn("builderd: warm capture could not be retained", "build", build.ID, "err", err)
+		} else {
+			warmCommitted = true
+		}
 	}
 
 	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,

@@ -73,11 +73,13 @@ type fakeVMM struct {
 	// FrameworkReady handler test inject errors or override the
 	// (stamped, appID, runtime) return tuple. nil = stamps
 	// successfully with empty app/runner labels.
-	frameworkReadyFn func(ctx context.Context, instance string, warmupMs int64) (bool, string, string, error)
-	jobBootFn        func(context.Context, fcvm.JobBootRequest) (*fcvm.Instance, error)
-	jobExitFn        func(context.Context, string, time.Duration) (fcvm.JobExitPayload, error)
-	live             int
-	leased           int
+	frameworkReadyFn     func(ctx context.Context, instance string, warmupMs int64) (bool, string, string, error)
+	waitBuilderReadyFn   func(ctx context.Context, instance string, deadline time.Duration) (bool, int32, error)
+	deleteWarmSnapshotFn func(ctx context.Context, storageKey, vmstateStorageKey string) error
+	jobBootFn            func(context.Context, fcvm.JobBootRequest) (*fcvm.Instance, error)
+	jobExitFn            func(context.Context, string, time.Duration) (fcvm.JobExitPayload, error)
+	live                 int
+	leased               int
 }
 
 func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
@@ -123,6 +125,20 @@ func (f *fakeVMM) WarmSnapshot(ctx context.Context, instance string, spec fcvm.S
 		return fcvm.SnapshotInfo{}, errNotLive
 	}
 	return fcvm.SnapshotInfo{MemBytes: 1024 * 1024 * 130, VMStateBytes: 4096}, nil
+}
+
+func (f *fakeVMM) WaitBuilderReady(ctx context.Context, instance string, deadline time.Duration) (bool, int32, error) {
+	if f.waitBuilderReadyFn != nil {
+		return f.waitBuilderReadyFn(ctx, instance, deadline)
+	}
+	return false, 0, nil
+}
+
+func (f *fakeVMM) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateStorageKey string) error {
+	if f.deleteWarmSnapshotFn != nil {
+		return f.deleteWarmSnapshotFn(ctx, storageKey, vmstateStorageKey)
+	}
+	return nil
 }
 
 func (f *fakeVMM) Destroy(ctx context.Context, instance string) error {
@@ -551,6 +567,64 @@ func TestWarmSnapshot_RoundTrip(t *testing.T) {
 			t.Fatalf("code = %v, want InvalidArgument", code)
 		}
 	})
+}
+
+func TestWaitBuilderReady_RoundTrip(t *testing.T) {
+	var gotInstance string
+	var gotDeadline time.Duration
+	f := &fakeVMM{
+		waitBuilderReadyFn: func(_ context.Context, instance string, deadline time.Duration) (bool, int32, error) {
+			gotInstance = instance
+			gotDeadline = deadline
+			return true, 0, nil
+		},
+	}
+	cli, _ := newServer(t, f)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	resp, err := cli.WaitBuilderReady(ctx, &vmmdpb.WaitBuilderReadyRequest{Instance: "build-1"})
+	if err != nil {
+		t.Fatalf("WaitBuilderReady: %v", err)
+	}
+	if !resp.GetReady() || resp.GetInstance() != "build-1" || resp.GetExitCode() != 0 {
+		t.Fatalf("response = %+v, want ready build-1 exit 0", resp)
+	}
+	if gotInstance != "build-1" || gotDeadline <= 0 || gotDeadline > time.Second {
+		t.Fatalf("fake call = instance %q deadline %s, want build-1 and a bounded deadline", gotInstance, gotDeadline)
+	}
+}
+
+func TestWaitBuilderReady_RequiresInstance(t *testing.T) {
+	cli, _ := newServer(t, &fakeVMM{})
+	_, err := cli.WaitBuilderReady(context.Background(), &vmmdpb.WaitBuilderReadyRequest{})
+	if code := status.Code(err); code != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", code)
+	}
+}
+
+func TestDeleteWarmSnapshot_RoundTrip(t *testing.T) {
+	var gotMem, gotVMState string
+	f := &fakeVMM{
+		deleteWarmSnapshotFn: func(_ context.Context, storageKey, vmstateStorageKey string) error {
+			gotMem, gotVMState = storageKey, vmstateStorageKey
+			return nil
+		},
+	}
+	cli, _ := newServer(t, f)
+	resp, err := cli.DeleteWarmSnapshot(context.Background(), &vmmdpb.DeleteWarmSnapshotRequest{
+		StorageKey:        "snap/builder/mem",
+		VmstateStorageKey: "snap/builder/vmstate",
+	})
+	if err != nil {
+		t.Fatalf("DeleteWarmSnapshot: %v", err)
+	}
+	if !resp.GetDeleted() || gotMem != "snap/builder/mem" || gotVMState != "snap/builder/vmstate" {
+		t.Fatalf("response = %+v, fake keys = %q/%q", resp, gotMem, gotVMState)
+	}
+	_, err = cli.DeleteWarmSnapshot(context.Background(), &vmmdpb.DeleteWarmSnapshotRequest{StorageKey: "snap/builder/mem"})
+	if code := status.Code(err); code != codes.InvalidArgument {
+		t.Fatalf("missing vmstate code = %v, want InvalidArgument", code)
+	}
 }
 
 func TestDestroy_Idempotent(t *testing.T) {
