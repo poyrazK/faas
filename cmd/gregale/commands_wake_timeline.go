@@ -271,10 +271,26 @@ func renderWakeTimingSummary(w io.Writer, events []api.WakeTimelineEvent) {
 // deterministic across runs (matters for golden-file tests).
 func renderSummaryHeader(w io.Writer, events []api.WakeTimelineEvent) {
 	counts := make(map[string]int)
-	for _, ev := range events {
+	canonical := make(map[string]api.WakeTimelineEvent)
+	for i, ev := range events {
 		if ev.Kind != "wake.boot_started" {
 			continue
 		}
+		// The server's customer-facing reader removes vmmd's mirror,
+		// but keep the renderer defensive for older apid versions and
+		// cached pages. A missing wake_id is a legacy payload; use a
+		// per-row key so those rows retain their historical behavior.
+		wakeID, _ := ev.Data["wake_id"].(string)
+		key := wakeID
+		if key == "" {
+			key = fmt.Sprintf("legacy-%d", i)
+		}
+		current, ok := canonical[key]
+		if !ok || (ev.Actor == "schedd" && current.Actor != "schedd") {
+			canonical[key] = ev
+		}
+	}
+	for _, ev := range canonical {
 		t, _ := ev.Data["trigger"].(string)
 		if t == "" {
 			continue

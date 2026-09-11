@@ -156,6 +156,38 @@ func TestListWakeTimeline_SinceFiltersOlderRows(t *testing.T) {
 	}
 }
 
+func TestListWakeTimeline_DeduplicatesVMMDMirror(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedAppForTimeline(t, e, "tl-app-mirror")
+	wakeID := "wake-tl-mirror"
+	canonical := []byte(`{"wake_id":"wake-tl-mirror","app_id":"` + app.ID + `","instance_id":"inst-1","node_id":"node-1","trigger":"gateway","at_capacity":true}`)
+	mirror := []byte(`{"wake_id":"wake-tl-mirror","app_id":"` + app.ID + `","instance_id":"inst-1","trigger":"gateway","at_capacity":false}`)
+	if err := e.store.AppendEvent(context.Background(), "schedd", "wake.boot_started", nil, canonical); err != nil {
+		t.Fatalf("append canonical: %v", err)
+	}
+	if err := e.store.AppendEvent(context.Background(), "vmmd", "wake.boot_started", nil, mirror); err != nil {
+		t.Fatalf("append mirror: %v", err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/wakes/"+wakeID+"/timeline", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.WakeTimelineResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Events) != 1 {
+		t.Fatalf("events = %d, want one canonical boot event", len(resp.Events))
+	}
+	if resp.Events[0].Actor != "schedd" {
+		t.Fatalf("actor = %q, want schedd canonical event", resp.Events[0].Actor)
+	}
+	if got, ok := resp.Events[0].Data["at_capacity"].(bool); !ok || !got {
+		t.Fatalf("at_capacity = %#v, want canonical true", resp.Events[0].Data["at_capacity"])
+	}
+}
+
 // TestListWakeTimeline_LimitAboveMaxIs400 pins the explicit
 // early-return on overflow (the CodeQL-blessed sanitizer for
 // go/uncontrolled-allocation-size, CWE-770). The previous shape

@@ -12358,24 +12358,25 @@ func (m *MemStore) ListDeploymentAuditByAlertRule(_ context.Context, alertRuleID
 }
 
 // ListEventsByWakeID (issue #517 / PR-C, ADR-064) — the
-// in-memory twin of the pgstore ListEventsByWakeID sqlc query.
+// in-memory twin of the pgstore ListEventsByWakeID read query.
 // Filters on the jsonb data.wake_id key (the index shape on the
-// production path), orders by `at` ASC (oldest → newest) so the
-// customer-facing timeline reads as a forward narrative, and
-// respects the optional `since` lower bound + `limit` cap (the
-// handler enforces max 1000). Insertion order is not equivalent
-// to at-order: emit sites run under different locks and the
-// in-memory append order interleaves the wake phases. Sort by
-// `at` so the result matches the production ORDER BY at ASC.
+// production path), keeps one canonical wake.boot_started row per
+// wake (schedd wins over vmmd; legacy actors fall back to earliest),
+// orders by `at` ASC (oldest → newest) so the customer-facing
+// timeline reads as a forward narrative, and respects the optional
+// `since` lower bound + `limit` cap (the handler enforces max 1000).
+// Insertion order is not equivalent to at-order: emit sites run under
+// different locks and the in-memory append order interleaves the wake
+// phases. Sort by `at` so the result matches the production ORDER BY.
 func (m *MemStore) ListEventsByWakeID(_ context.Context, wakeID string, since time.Time, limit int) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if wakeID == "" {
+		return []Event{}, nil
+	}
 	var out []Event
 	for i := 0; i < len(m.events); i++ {
 		e := m.events[i]
-		if !e.At.After(since) {
-			continue
-		}
 		// The wake_id is a key on the jsonb data blob; the
 		// in-memory Event has Data as []byte. Decode lazily
 		// — the per-row cost is one json.Unmarshal + map
@@ -12393,12 +12394,20 @@ func (m *MemStore) ListEventsByWakeID(_ context.Context, wakeID string, since ti
 		}
 		out = append(out, e)
 	}
-	// Sort by at ASC. Stable across insertion order (the wake
-	// phases are emitted at different lock depths so the
-	// append order is not the same as the at-order).
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].At.Before(out[j].At)
-	})
+	// Sort before canonical selection so legacy same-actor rows have a
+	// deterministic earliest fallback, and so the final result remains
+	// ordered after the mirror is removed.
+	sortWakeTimelineEvents(out)
+	out = deduplicateWakeBootStarted(out)
+	if !since.IsZero() {
+		filtered := out[:0]
+		for _, e := range out {
+			if e.At.After(since) {
+				filtered = append(filtered, e)
+			}
+		}
+		out = filtered
+	}
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}

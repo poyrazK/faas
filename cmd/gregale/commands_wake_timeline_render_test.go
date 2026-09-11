@@ -67,6 +67,26 @@ func TestRenderSummaryHeader_SortedByKey(t *testing.T) {
 	}
 }
 
+func TestRenderSummaryHeader_DeduplicatesCanonicalWake(t *testing.T) {
+	events := []api.WakeTimelineEvent{
+		{Kind: "wake.boot_started", Actor: "schedd", Data: map[string]any{
+			"wake_id": "wake-1", "trigger": "gateway",
+		}},
+		{Kind: "wake.boot_started", Actor: "vmmd", Data: map[string]any{
+			"wake_id": "wake-1", "trigger": "gateway",
+		}},
+		{Kind: "wake.boot_started", Actor: "schedd", Data: map[string]any{
+			"wake_id": "wake-2", "trigger": "cron.schedule",
+		}},
+	}
+	var buf bytes.Buffer
+	renderSummaryHeader(&buf, events)
+	want := "  triggers: cron.schedule=1 gateway=1\n"
+	if got := buf.String(); got != want {
+		t.Errorf("renderSummaryHeader = %q, want %q", got, want)
+	}
+}
+
 // TestRenderSummaryHeader_AbsentNoop verifies the histogram is
 // suppressed when no wake.boot_started event carries a trigger
 // (pre-ADR-123 fleet or events emitted by an older schedd).

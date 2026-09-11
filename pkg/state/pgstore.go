@@ -15138,7 +15138,12 @@ func (s *PgStore) ListEventsPage(ctx context.Context, subject string, beforeAt t
 // GET /v1/apps/{slug}/wakes/{wake_id}/timeline endpoint. Filters
 // on the jsonb expression index events_wake_id_idx
 // (migrations/00113_events_wake_id_idx.sql) and orders by at ASC
-// so the timeline reads as a forward narrative. Uses raw SQL
+// so the timeline reads as a forward narrative. A wake.boot_started
+// row is a logical wake marker, not an observation count: schedd is
+// canonical and vmmd may emit a corroborating mirror. The CTE picks
+// the canonical row (falling back to the earliest row for legacy
+// actors) before applying the cursor and limit, so a mirror cannot
+// resurrect a boot on a later page. Uses raw SQL
 // (mirroring AppendEvent / ListEvents) so the method shape stays
 // consistent with the rest of the events table surface — the
 // sqlc-generated ListEventsByWakeID in pkg/state/sqlc is used by
@@ -15147,21 +15152,23 @@ func (s *PgStore) ListEventsByWakeID(ctx context.Context, wakeID string, since t
 	if limit <= 0 {
 		limit = 100
 	}
-	var rows pgx.Rows
-	var err error
-	if since.IsZero() {
-		rows, err = s.pool.Query(ctx,
-			`select id, at, actor, kind, subject, data from events
-			 where data->>'wake_id' = $1
-			 order by at asc limit $2`,
-			wakeID, limit)
-	} else {
-		rows, err = s.pool.Query(ctx,
-			`select id, at, actor, kind, subject, data from events
-			 where data->>'wake_id' = $1 and at > $2
-			 order by at asc limit $3`,
-			wakeID, since, limit)
-	}
+	rows, err := s.pool.Query(ctx,
+		`WITH wake_events AS (
+			SELECT id, at, actor, kind, subject, data,
+				   row_number() OVER (
+					   PARTITION BY kind
+					   ORDER BY (actor = 'schedd') DESC, at ASC, id ASC
+				   ) AS boot_rank
+			  FROM events
+			 WHERE data->>'wake_id' = $1
+		)
+		 SELECT id, at, actor, kind, subject, data
+		   FROM wake_events
+		  WHERE (kind <> 'wake.boot_started' OR boot_rank = 1)
+		    AND at > $2
+		  ORDER BY at ASC, id ASC
+		  LIMIT $3`,
+		wakeID, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -15182,10 +15189,10 @@ func (s *PgStore) ListEventsByWakeID(ctx context.Context, wakeID string, since t
 // LookupBootStartedForWakes (ADR-123) returns the wake-boot telemetry
 // for each wake_id in the input slice, indexed by wake_id. One SQL
 // round-trip via the events_wake_id_idx jsonb expression index
-// (migrations/00114_events_wake_id_idx.sql) — DISTINCT ON picks the
-// earliest wake.boot_started row per wake_id so a re-wake that emits
-// a second boot_started still maps to the original cause. Empty map
-// when no rows match (pre-ADR-123 fleet or a wake_id mismatch).
+// (migrations/00114_events_wake_id_idx.sql) — DISTINCT ON picks one
+// wake.boot_started row per wake_id, preferring schedd's canonical
+// row over the vmmd corroborating mirror and then the earliest row.
+// Empty map when no rows match (pre-ADR-123 fleet or a wake_id mismatch).
 // Nil/empty input returns an empty map without touching the pool.
 func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []string) (map[string]WakeBootMeta, error) {
 	if len(wakeIDs) == 0 {
@@ -15248,7 +15255,7 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 		     FROM events
 		    WHERE kind = 'wake.boot_started'
 		      AND data->>'wake_id' = ANY($1)
-		    ORDER BY data->>'wake_id', at ASC
+			 ORDER BY data->>'wake_id', (actor = 'schedd') DESC, at ASC, id ASC
 		 ) bs
 		 LEFT JOIN LATERAL (
 		   SELECT at AS completed_at
@@ -15296,8 +15303,10 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 }
 
 // CountWakeBootStarted24h (per-app dashboard, Hobby+) returns the
-// count of wake.boot_started events the schedd recorded for the
-// given app in the trailing 24 hours. Hand-written raw-SQL path
+// count of distinct logical wakes the schedd recorded for the given
+// app in the trailing 24 hours. A vmmd mirror has the same wake_id,
+// so COUNT(DISTINCT wake_id) prevents the corroborating observation
+// from inflating the customer-facing count. Hand-written raw-SQL path
 // — the sqlc-generated binding was deleted because it had the
 // wrong parameter shape (bound the whole jsonb row against a UUID
 // literal, which would always return 0). See the rationale
@@ -15315,13 +15324,14 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 // empty app, a degraded store call, or when the events table
 // predates the post-ADR-123 schema (pre-ADR-123 boot_started
 // rows carry no app_id field, so the cast returns NULL which
-// COUNT(*) coerces to 0 — same posture as the wake-timeline
+// COUNT(DISTINCT wake_id) coerces to 0 — same posture as the wake-timeline
 // view's `WakeCountWithMeta` denominator at
 // cmd/apid/handlers_dashboard.go:2659).
 func (s *PgStore) CountWakeBootStarted24h(ctx context.Context, appID string) (int64, error) {
-	const q = `SELECT COUNT(*) FROM events
+	const q = `SELECT COUNT(DISTINCT data->>'wake_id') FROM events
 WHERE kind = 'wake.boot_started'
   AND (data->>'app_id')::uuid = $1::uuid
+  AND data->>'wake_id' IS NOT NULL
   AND at >= now() - interval '24 hours'`
 	var n int64
 	if err := s.pool.QueryRow(ctx, q, appID).Scan(&n); err != nil {

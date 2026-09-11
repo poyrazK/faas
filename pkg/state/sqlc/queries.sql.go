@@ -5187,11 +5187,20 @@ func (q *Queries) ListEvents(ctx context.Context, db DBTX, arg ListEventsParams)
 }
 
 const listEventsByWakeID = `-- name: ListEventsByWakeID :many
+with wake_events as (
+  select id, at, actor, kind, subject, data,
+         row_number() over (
+           partition by kind
+           order by (actor = 'schedd') desc, at asc, id asc
+         ) as boot_rank
+  from events
+  where data->>'wake_id' = $1
+)
 select id, at, actor, kind, subject, data
-from events
-where data->>'wake_id' = $1
+from wake_events
+where (kind <> 'wake.boot_started' or boot_rank = 1)
   and at > $2
-order by at asc
+order by at asc, id asc
 limit $3
 `
 
@@ -5214,9 +5223,11 @@ type ListEventsByWakeIDRow struct {
 // Filters on the jsonb expression index events_wake_id_idx
 // (migrations/00114_events_wake_id_idx.sql) and orders by at ASC
 // so the customer-facing timeline endpoint surfaces a forward
-// narrative. The $2 lower bound is the `since` RFC 3339 cursor
-// from the endpoint query string; the $3 limit is bounded to
-// 1000 by the handler. Index path: partial index on
+// narrative. schedd is canonical for wake.boot_started; vmmd's
+// same-kind row is a corroborating observation. Rank that pair
+// before applying the $2 `since` lower bound and $3 limit so a
+// later mirror cannot appear on a subsequent page. Index path:
+// partial index on
 // (data->>'wake_id') WHERE data->>'wake_id' IS NOT NULL means
 // only rows with a wake_id tag (i.e. the 13 wake.* kinds) are
 // indexed — legacy audit rows are not in scope of PR-C, see
