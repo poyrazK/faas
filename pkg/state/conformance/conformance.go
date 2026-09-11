@@ -60,6 +60,7 @@ func Run(t *testing.T, open Open) {
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
+		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
@@ -68,6 +69,84 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testActiveJobRuns(t *testing.T, fx *Fixture) {
+	createJob := func(accountID, name string) state.Job {
+		t.Helper()
+		job, err := fx.Store.JobCreate(
+			fx.Ctx,
+			accountID,
+			name,
+			"app",
+			"ghcr.io/onebox-faas/conformance:latest",
+			[]string{"/bin/true"},
+			128,
+			60,
+			1,
+			0,
+			nil,
+		)
+		if err != nil {
+			t.Fatalf("JobCreate(%s): %v", accountID, err)
+		}
+		return job
+	}
+	createRun := func(job state.Job) state.JobRun {
+		t.Helper()
+		run, tasks, err := fx.Store.JobRunCreate(
+			fx.Ctx, job.ID, job.AccountID, "manual", nil, nil, nil, nil, 1,
+		)
+		if err != nil {
+			t.Fatalf("JobRunCreate(%s): %v", job.ID, err)
+		}
+		if len(tasks) != 1 || tasks[0].RunID != run.ID || tasks[0].Status != "queued" {
+			t.Fatalf("JobRunCreate(%s) tasks = %+v, want one queued task for run %s", job.ID, tasks, run.ID)
+		}
+		return run
+	}
+
+	job := createJob(fx.Account.ID, "active-"+uuid.NewString())
+	activeRun := createRun(job)
+	terminalRun := createRun(job)
+	cancelled, err := fx.Store.JobRunCancel(fx.Ctx, terminalRun.ID)
+	if err != nil {
+		t.Fatalf("JobRunCancel(%s): %v", terminalRun.ID, err)
+	}
+	if cancelled.AggregateStatus != "cancelled" || cancelled.TasksCancelled != 1 || cancelled.FinishedAt == nil {
+		t.Fatalf("JobRunCancel(%s) = %+v, want a finished cancelled run with one cancelled task", terminalRun.ID, cancelled)
+	}
+
+	foreignAccount, err := fx.Store.CreateAccount(
+		fx.Ctx, "active-foreign-"+uuid.NewString()+"@example.com", api.PlanPro,
+	)
+	if err != nil {
+		t.Fatalf("CreateAccount(foreign): %v", err)
+	}
+	foreignRun := createRun(createJob(foreignAccount.ID, "active-foreign-"+uuid.NewString()))
+
+	accountRuns, err := fx.Store.JobRunListActive(fx.Ctx, fx.Account.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("JobRunListActive(account): %v", err)
+	}
+	if len(accountRuns) != 1 || accountRuns[0].ID != activeRun.ID {
+		t.Fatalf("JobRunListActive(account) = %+v, want only run %s", accountRuns, activeRun.ID)
+	}
+
+	fleetRuns, err := fx.Store.JobRunListActive(fx.Ctx, "", 10, 0)
+	if err != nil {
+		t.Fatalf("JobRunListActive(fleet): %v", err)
+	}
+	want := map[string]bool{activeRun.ID: true, foreignRun.ID: true}
+	for _, run := range fleetRuns {
+		delete(want, run.ID)
+		if run.ID == terminalRun.ID {
+			t.Errorf("terminal run %s leaked into active fleet results", terminalRun.ID)
+		}
+	}
+	if len(fleetRuns) != 2 || len(want) != 0 {
+		t.Fatalf("JobRunListActive(fleet) = %+v, want active runs %s and %s", fleetRuns, activeRun.ID, foreignRun.ID)
 	}
 }
 

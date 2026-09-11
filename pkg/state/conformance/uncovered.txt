@@ -304,12 +304,9 @@ IssueLoginToken
 IssueMFADisableRequest
 JobConcurrentByAccount
 JobCountByAccount
-JobCreate
 JobGetByID
 JobGetByName
 JobListByAccount
-JobRunCancel
-JobRunCreate
 JobRunGetByID
 JobRunIncrementDeadLetter
 JobRunListByAccount
