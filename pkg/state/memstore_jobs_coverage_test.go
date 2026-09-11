@@ -379,6 +379,10 @@ func TestMemStoreJobs_JobRunCancel(t *testing.T) {
 	if r.AggregateStatus != "cancelled" {
 		t.Fatalf("JobRunCancel.AggregateStatus = %q, want cancelled", r.AggregateStatus)
 	}
+	if r.TasksSucceeded != 0 || r.TasksFailed != 0 || r.TasksCancelled != 3 || r.TasksRunning != 0 {
+		t.Fatalf("JobRunCancel counters = (%d, %d, %d, %d), want (0, 0, 3, 0)",
+			r.TasksSucceeded, r.TasksFailed, r.TasksCancelled, r.TasksRunning)
+	}
 	if r.FinishedAt == nil {
 		t.Fatalf("JobRunCancel.FinishedAt nil; should stamp on cancel")
 	}
@@ -390,6 +394,31 @@ func TestMemStoreJobs_JobRunCancel(t *testing.T) {
 	}
 	if r2.AggregateStatus != "cancelled" {
 		t.Fatalf("JobRunCancel (re-call).AggregateStatus = %q, want cancelled", r2.AggregateStatus)
+	}
+	if r2.TasksCancelled != 3 {
+		t.Fatalf("JobRunCancel (re-call).TasksCancelled = %d, want 3", r2.TasksCancelled)
+	}
+
+	// Mixed terminal/non-terminal tasks must preserve the terminal count
+	// while counting only the remaining queued/claimed tasks as cancelled.
+	_, mixed, _ := newJobAndRun(t, ms, "acct-RC", "rc-mixed")
+	if err := ms.JobTaskMarkTerminal(ctx, mixed.ID, 0, "succeeded", 0, "", "", time.Now().UTC()); err != nil {
+		t.Fatalf("setup succeeded task: %v", err)
+	}
+	if err := ms.JobTaskMarkClaimed(ctx, mixed.ID, 1, "instance-1", "lease-1", time.Now().Add(time.Minute), "node-1"); err != nil {
+		t.Fatalf("setup claimed task: %v", err)
+	}
+	mixedCancelled, err := ms.JobRunCancel(ctx, mixed.ID)
+	if err != nil {
+		t.Fatalf("JobRunCancel (mixed): %v", err)
+	}
+	if mixedCancelled.AggregateStatus != "cancelled" ||
+		mixedCancelled.TasksSucceeded != 1 || mixedCancelled.TasksFailed != 0 ||
+		mixedCancelled.TasksCancelled != 2 || mixedCancelled.TasksRunning != 0 {
+		t.Fatalf("JobRunCancel (mixed) = status %q counters (%d, %d, %d, %d), want cancelled (1, 0, 2, 0)",
+			mixedCancelled.AggregateStatus, mixedCancelled.TasksSucceeded,
+			mixedCancelled.TasksFailed, mixedCancelled.TasksCancelled,
+			mixedCancelled.TasksRunning)
 	}
 
 	if _, err := ms.JobRunCancel(ctx, "missing"); !errors.Is(err, ErrNotFound) {
