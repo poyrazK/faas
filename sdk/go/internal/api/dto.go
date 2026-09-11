@@ -233,6 +233,53 @@ type APIConsumerUsageResponse struct {
 	AsOf          string                           `json:"as_of"`
 }
 
+// CreateAPIConsumerRateCardRequest creates an immutable request price for an app.
+type CreateAPIConsumerRateCardRequest struct {
+	Currency               string     `json:"currency"`
+	PriceMillicentsPerUnit int64      `json:"price_millicents_per_unit"`
+	EffectiveFrom          *time.Time `json:"effective_from,omitempty"`
+}
+
+// APIConsumerRateCardResponse is one versioned request price.
+type APIConsumerRateCardResponse struct {
+	ID                     string    `json:"id"`
+	AppID                  string    `json:"app_id"`
+	Currency               string    `json:"currency"`
+	Unit                   string    `json:"unit"`
+	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit"`
+	EffectiveFrom          time.Time `json:"effective_from"`
+	CreatedAt              time.Time `json:"created_at"`
+}
+
+// APIConsumerRateCardListResponse wraps an app's versioned request prices.
+type APIConsumerRateCardListResponse struct {
+	RateCards []APIConsumerRateCardResponse `json:"rate_cards"`
+}
+
+// APIConsumerUsageQuoteBucketResponse is one priced usage segment.
+type APIConsumerUsageQuoteBucketResponse struct {
+	WindowStart            time.Time `json:"window_start"`
+	BillableUnits          int64     `json:"billable_units"`
+	RateCardID             string    `json:"rate_card_id,omitempty"`
+	Currency               string    `json:"currency,omitempty"`
+	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
+	AmountMillicents       int64     `json:"amount_millicents"`
+}
+
+// APIConsumerUsageQuoteResponse is a usage estimate under the app's rate cards.
+type APIConsumerUsageQuoteResponse struct {
+	ConsumerID       string                                `json:"consumer_id"`
+	PeriodStart      time.Time                             `json:"period_start"`
+	PeriodEnd        time.Time                             `json:"period_end"`
+	Currency         string                                `json:"currency,omitempty"`
+	BillableUnits    int64                                 `json:"billable_units"`
+	UnpricedUnits    int64                                 `json:"unpriced_units"`
+	AmountMillicents int64                                 `json:"amount_millicents"`
+	Priced           bool                                  `json:"priced"`
+	Buckets          []APIConsumerUsageQuoteBucketResponse `json:"buckets"`
+	AsOf             string                                `json:"as_of"`
+}
+
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
 // Validated server-side via the same validSlug regex used at CreateApp
 // time; rejected on conflict with 409 CodeAppRenameFailed when another

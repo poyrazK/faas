@@ -11,8 +11,8 @@ import (
 // getAPIConsumerUsage serves the first customer-monetization read surface.
 // The minute ledger is deliberately separate from request_telemetry: debug
 // telemetry can be sampled, rate-limited, and expired, while these counters
-// are idempotent financial facts. The endpoint returns raw usage only; a
-// customer-defined price card is a follow-up.
+// are idempotent financial facts. The endpoint returns raw usage only; the
+// companion /usage/quote endpoint applies the app's customer-defined prices.
 func (s *server) getAPIConsumerUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.consumerFeatureAllowed(w, acct) {
 		return

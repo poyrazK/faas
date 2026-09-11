@@ -1,24 +1,27 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.git_hub_install_status import GitHubInstallStatus
+from ...models.api_consumer_rate_card_response import APIConsumerRateCardResponse
 from ...models.problem import Problem
 from ...types import Response
 
 
 def _get_kwargs(
     slug: str,
+    rate_card_id: UUID,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/apps/{slug}/install/bind".format(
+        "url": "/v1/apps/{slug}/rate-cards/{rate_card_id}".format(
             slug=quote(str(slug), safe=""),
+            rate_card_id=quote(str(rate_card_id), safe=""),
         ),
     }
 
@@ -27,9 +30,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> GitHubInstallStatus | Problem | None:
+) -> APIConsumerRateCardResponse | Problem | None:
     if response.status_code == 200:
-        response_200 = GitHubInstallStatus.from_dict(response.json())
+        response_200 = APIConsumerRateCardResponse.from_dict(response.json())
 
         return response_200
 
@@ -43,11 +46,6 @@ def _parse_response(
 
         return response_404
 
-    if response.status_code == 503:
-        response_503 = Problem.from_dict(response.json())
-
-        return response_503
-
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -56,7 +54,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[GitHubInstallStatus | Problem]:
+) -> Response[APIConsumerRateCardResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -67,29 +65,27 @@ def _build_response(
 
 def sync_detailed(
     slug: str,
+    rate_card_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[GitHubInstallStatus | Problem]:
-    """Inspect the app's GitHub repository binding.
-
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+) -> Response[APIConsumerRateCardResponse | Problem]:
+    """Fetch one API consumer rate card.
 
     Args:
         slug (str):
+        rate_card_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[GitHubInstallStatus | Problem]
+        Response[APIConsumerRateCardResponse | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
+        rate_card_id=rate_card_id,
     )
 
     response = client.get_httpx_client().request(
@@ -101,58 +97,54 @@ def sync_detailed(
 
 def sync(
     slug: str,
+    rate_card_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> GitHubInstallStatus | Problem | None:
-    """Inspect the app's GitHub repository binding.
-
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+) -> APIConsumerRateCardResponse | Problem | None:
+    """Fetch one API consumer rate card.
 
     Args:
         slug (str):
+        rate_card_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        GitHubInstallStatus | Problem
+        APIConsumerRateCardResponse | Problem
     """
 
     return sync_detailed(
         slug=slug,
+        rate_card_id=rate_card_id,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
     slug: str,
+    rate_card_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[GitHubInstallStatus | Problem]:
-    """Inspect the app's GitHub repository binding.
-
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+) -> Response[APIConsumerRateCardResponse | Problem]:
+    """Fetch one API consumer rate card.
 
     Args:
         slug (str):
+        rate_card_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[GitHubInstallStatus | Problem]
+        Response[APIConsumerRateCardResponse | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
+        rate_card_id=rate_card_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -162,30 +154,28 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
+    rate_card_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> GitHubInstallStatus | Problem | None:
-    """Inspect the app's GitHub repository binding.
-
-     Cookie-session-authenticated (NOT API-key). Returns the durable
-    GitHub installation metadata and the app's repository binding without
-    exposing installation credentials. The response also carries the
-    named CSRF token required by the sync and disconnect actions.
+) -> APIConsumerRateCardResponse | Problem | None:
+    """Fetch one API consumer rate card.
 
     Args:
         slug (str):
+        rate_card_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        GitHubInstallStatus | Problem
+        APIConsumerRateCardResponse | Problem
     """
 
     return (
         await asyncio_detailed(
             slug=slug,
+            rate_card_id=rate_card_id,
             client=client,
         )
     ).parsed

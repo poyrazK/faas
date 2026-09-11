@@ -680,6 +680,21 @@ type APIConsumerUsageBucket struct {
 	BillableUnits int64
 }
 
+// APIConsumerRateCard is an immutable, versioned price for one request unit
+// emitted by an app. A later EffectiveFrom supersedes an earlier card for
+// future usage; historical cards remain readable so quotes are auditable.
+// Prices are integer millicents (1000 millicents = 1 minor currency unit).
+type APIConsumerRateCard struct {
+	ID                     string
+	AccountID              string
+	AppID                  string
+	Currency               string
+	Unit                   string
+	PriceMillicentsPerUnit int64
+	EffectiveFrom          time.Time
+	CreatedAt              time.Time
+}
+
 // Active reports whether the key is in an authentication-eligible
 // state (not revoked, not expired). The gatewayd-internal
 // middleware reads this on every inbound request.

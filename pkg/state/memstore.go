@@ -463,6 +463,10 @@ type MemStore struct {
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage       map[string]APIConsumerUsageBucket
 	apiConsumerUsageEvents map[string]struct{}
+	// apiConsumerRateCards is keyed by card ID. The production table is
+	// append-only and unique on (app_id, effective_from); MemStore mirrors
+	// both invariants for handler tests.
+	apiConsumerRateCards map[string]APIConsumerRateCard
 	// builderUsage is the per-build grain backing AppendBuilderUsage
 	// (ADR-048 §4). PK is build_id; the meterd rollup cron sums
 	// into usage_daily.builder_seconds per (account, app, day).
@@ -894,6 +898,7 @@ func NewMemStore() *MemStore {
 		usageByMonth:            []Usage{},
 		apiConsumerUsage:        map[string]APIConsumerUsageBucket{},
 		apiConsumerUsageEvents:  map[string]struct{}{},
+		apiConsumerRateCards:    map[string]APIConsumerRateCard{},
 		idem:                    map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByProviderCustomerID
 		// walks; populated by UpdateAccountProviderCustomerID.
