@@ -209,6 +209,8 @@ func (r pgRouter) previewScopeFromHost(host string) (number int, slug string, ok
 // The secretbox-sealed BasicSealed blob is carried on gateway.App so
 // the gatewayd basic-auth path can unseal it at boot (and cache the
 // unsealed form for 60s + db.NotifyKeyChanged invalidation).
+// ConsumerAuthMode (ADR-120) is likewise plumbed through so the public
+// edge can resolve app-scoped end-customer keys before downstream work.
 func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, error) {
 	if app.Status == state.AppDeleted {
 		return gateway.App{}, false, nil
@@ -252,8 +254,9 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		// short-circuit WITHOUT re-reading the database. Default
 		// false on the App struct matches the apps.maintenance_mode
 		// column DEFAULT (migration 00237).
-		MaintenanceMode: app.MaintenanceMode,
-		RequireAuthn:    app.RequireAuthn,
+		MaintenanceMode:  app.MaintenanceMode,
+		RequireAuthn:     app.RequireAuthn,
+		ConsumerAuthMode: string(app.ConsumerAuthMode),
 		// ADR-124: per-app wire-protocol selector (closed-set
 		// {http1, http2, grpc}, default 'http1'). Plumbed from
 		// apps.app_protocol through pgRouter.toApp so

@@ -3,7 +3,7 @@
 // applyEdgeRuleJWT for JWKS-verified tokens) populate this struct
 // and stamp it on the request context so downstream appliers —
 // today only applyEdgeRuleThrottle — can read the resolved
-// consumer identity without re-running the auth chain.
+// operator or end-customer identity without re-running the auth chain.
 //
 // Phase 1+2 (PR #887, ADR-091 D20.5 amendment 3) shipped
 // kind=throttle keyed only on `appID+"\x00"+ruleID`. The authn chain
@@ -12,7 +12,8 @@
 // :1698) but the values were dropped at the audit boundary, never
 // reaching the rate limiter. Phase 3 plumbs them through.
 //
-// All three fields are zero-valued unless their respective authn
+// APIKeyID, ConsumerID, and ConsumerKeyID are zero-valued unless
+// their respective authn
 // branch ran on this request. Anonymous traffic has APIKeyID ==
 // "" and JWTSubject == ""; applyEdgeRuleThrottle treats that as a
 // single anonymous bucket per rule (the same scope today already
@@ -61,6 +62,17 @@ type Authenticated struct {
 	// RequireAuthn=false. Used by KeyBy == "api_key" to construct
 	// the per-consumer bucket key.
 	APIKeyID string
+
+	// ConsumerID is the stable end-customer identity resolved from a
+	// consumer key. It survives key rotation and is the identifier future
+	// quota, metering, and billing paths must use. Empty means that no
+	// consumer key was accepted for the request.
+	ConsumerID string
+
+	// ConsumerKeyID is the specific credential used for this request. It is
+	// useful for revocation/last-used diagnostics, while ConsumerID remains
+	// the stable attribution dimension.
+	ConsumerKeyID string
 
 	// JWTSubject is the `sub` claim from a JWKS-verified token for
 	// requests that satisfied applyEdgeRuleJWT. Empty for traffic
@@ -131,6 +143,11 @@ func resolveConsumerKey(keyBy, claimName string, authed Authenticated) (string, 
 			return "", false
 		}
 		return authed.APIKeyID, true
+	case "consumer_id", "consumerID":
+		if authed.ConsumerID == "" {
+			return "", false
+		}
+		return authed.ConsumerID, true
 	case "jwt_subject", "jwtSubject":
 		if authed.JWTSubject == "" {
 			return "", false
