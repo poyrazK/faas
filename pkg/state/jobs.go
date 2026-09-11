@@ -312,6 +312,11 @@ type JobStore interface {
 	// JobRunListByAccount paginates the per-account run list
 	// (job_runs_account_idx). Used by the dashboard's runs tab.
 	JobRunListByAccount(ctx context.Context, accountID string, limit, offset int) ([]JobRun, error)
+	// JobRunListActive returns only queued/running runs, newest first.
+	// accountID optionally narrows the operator incident query to one tenant;
+	// an empty value provides the bounded fleet view needed to locate capacity
+	// consumers without an unbounded application-side scan.
+	JobRunListActive(ctx context.Context, accountID string, limit, offset int) ([]JobRun, error)
 	// JobRunRecompute recomputes the denormalised counter columns
 	// (tasks_succeeded / tasks_failed / tasks_cancelled / tasks_running
 	// / dead_letter_count) + the aggregate_status in a single SQL.

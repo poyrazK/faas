@@ -508,6 +508,31 @@ func (s *PgStore) JobRunListByAccount(ctx context.Context, accountID string, lim
 	return scanJobRuns(rows)
 }
 
+// JobRunListActive keeps the operator incident query bounded to work that can
+// still hold scheduler capacity. The optional account filter uses the existing
+// partial active index; the fleet view is intentionally capped by the caller.
+func (s *PgStore) JobRunListActive(ctx context.Context, accountID string, limit, offset int) ([]JobRun, error) {
+	query := `select ` + jobRunSelectCols + ` from job_runs
+		  where aggregate_status in ('queued', 'running')
+		  order by created_at desc
+		  limit $1 offset $2`
+	args := []any{limit, offset}
+	if accountID != "" {
+		query = `select ` + jobRunSelectCols + ` from job_runs
+		  where account_id = $1::uuid
+		    and aggregate_status in ('queued', 'running')
+		  order by created_at desc
+		  limit $2 offset $3`
+		args = []any{accountID, limit, offset}
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("state: list active runs: %w", err)
+	}
+	defer rows.Close()
+	return scanJobRuns(rows)
+}
+
 // JobRunRecompute recomputes the denormalised counter columns + the
 // aggregate_status in a single SQL. The CASE chain reads every
 // transition once per recompute; for a 5000-task run that's one

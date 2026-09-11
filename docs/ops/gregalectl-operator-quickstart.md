@@ -240,6 +240,25 @@ The command uses the authenticated operator API, emits a trace ID, and never
 opens a database connection. Use `gregalectl audit trace --trace-id <id>` to
 inspect its audit event.
 
+### Job-run incidents
+
+Find capacity-consuming job runs, inspect their bounded task metadata, and
+cancel a stuck run without PostgreSQL access or a customer credential:
+
+```
+gregalectl jobs active
+gregalectl jobs active --account-id <uuid>
+gregalectl jobs inspect --run-id <uuid> --task-limit 100
+
+gregalectl auth step-up
+gregalectl jobs cancel --run-id <uuid> --reason jobs_queue_incident --yes
+```
+
+The read paths omit job inputs, environment overrides, commands, images, and
+task lease tokens. Reads are audited; cancellation requires a recent MFA
+step-up, idempotency key, explicit reason and confirmation, and returns a trace
+ID for `gregalectl audit trace`.
+
 ### GitHub recovery
 
 Inspect and retry failed GitHub webhook or Check Run work without SSH or

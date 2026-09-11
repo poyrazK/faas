@@ -8002,6 +8002,52 @@ type JobRunCancelledResponse struct {
 	CancelledAt string         `json:"cancelled_at"`
 }
 
+// OperatorJobRun joins the customer-safe job and run projections for one
+// cross-account operator incident row. It deliberately excludes environment
+// overrides, command arguments, and task lease tokens.
+type OperatorJobRun struct {
+	JobID           string `json:"job_id"`
+	JobName         string `json:"job_name"`
+	RunID           string `json:"run_id"`
+	AccountID       string `json:"account_id"`
+	AggregateStatus string `json:"aggregate_status"`
+	Tasks           int    `json:"tasks"`
+	TasksRunning    int    `json:"tasks_running"`
+	TasksSucceeded  int    `json:"tasks_succeeded"`
+	TasksFailed     int    `json:"tasks_failed"`
+	TasksCancelled  int    `json:"tasks_cancelled"`
+	RAMMB           int    `json:"ram_mb"`
+	CreatedAt       string `json:"created_at"`
+	StartedAt       string `json:"started_at,omitempty"`
+}
+
+// OperatorJobRunListResponse is the bounded active-run projection used by
+// gregalectl during queue incidents.
+type OperatorJobRunListResponse struct {
+	AccountID  string           `json:"account_id,omitempty"`
+	Runs       []OperatorJobRun `json:"runs"`
+	Limit      int              `json:"limit"`
+	Offset     int              `json:"offset"`
+	NextOffset int              `json:"next_offset"`
+}
+
+// OperatorJobRunDetailResponse adds a bounded, lease-free task page to one
+// operator run projection.
+type OperatorJobRunDetailResponse struct {
+	Run            OperatorJobRun    `json:"run"`
+	Tasks          []JobTaskResponse `json:"tasks"`
+	TaskLimit      int               `json:"task_limit"`
+	TaskOffset     int               `json:"task_offset"`
+	NextTaskOffset int               `json:"next_task_offset"`
+}
+
+// OperatorJobRunCancelResponse confirms the guarded terminal transition.
+type OperatorJobRunCancelResponse struct {
+	Run         OperatorJobRun `json:"run"`
+	CancelledAt string         `json:"cancelled_at"`
+	Reason      string         `json:"reason"`
+}
+
 // JobDeletedResponse is the body of DELETE /v1/jobs/{name}.
 // Distinct from JobResponse (no command / env / caps —
 // the dashboard only needs to render the deletion chip +

@@ -71,6 +71,7 @@ type cliFlag struct {
 //   - obs             (health)
 //   - debug           (otel-smoke; ADR-127 PR-D)
 //   - github          (status | retry-delivery | retry-check)
+//   - jobs            (active | inspect | cancel)
 //   - trusted-publishers (add | remove | list) — see ADR-058 deviation note in main.go:15
 //   - version         (internal)
 //   - completion      (bash | zsh | fish | powershell) (internal)
@@ -572,6 +573,29 @@ var cliCommands = []cliCommand{
 					{Name: "yes", Short: "acknowledge that rows older than the threshold will be flipped (required)"},
 				},
 			},
+		},
+	},
+	{
+		Name:    dispatchJobs,
+		DocSlug: "jobs",
+		Short:   "Cross-account job-run diagnosis and guarded cancellation",
+		Subcommands: []cliSub{
+			{Name: "active", Short: "List queued and running job runs across the fleet or for one account", Flags: []cliFlag{
+				{Name: "account-id", Short: "optional target account id; omit for a bounded fleet view"},
+				{Name: "limit", Short: "maximum active runs (1..500)"},
+				{Name: "offset", Short: "active-run pagination offset"},
+			}},
+			{Name: "inspect", Short: "Inspect one run and a bounded task page", Flags: []cliFlag{
+				{Name: "run-id", Short: "job run id", Req: true},
+				{Name: "task-limit", Short: "maximum tasks (1..500)"},
+				{Name: "task-offset", Short: "task pagination offset"},
+			}},
+			{Name: "cancel", Short: "Cancel every non-terminal task in one job run", Flags: []cliFlag{
+				{Name: "run-id", Short: "job run id", Req: true},
+				{Name: "reason", Short: "durable audit reason slug", Req: true},
+				{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+				{Name: "yes", Short: "acknowledge cancelling customer job work", Req: true},
+			}},
 		},
 	},
 	{
