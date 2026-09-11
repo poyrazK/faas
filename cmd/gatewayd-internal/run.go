@@ -2266,8 +2266,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					TraceId:          row.TraceID,
 					ReceivedAtUnixMs: row.ReceivedAt.UnixMilli(),
 					Count:            int32(row.Count),
+					UaFamily:         row.UAFamily,
+					ReferrerHost:     row.ReferrerHost,
+					Country:          row.Country,
 					WakeId:           row.WakeID,
 					InstanceId:       row.InstanceID,
+					GuestDurationMs:  int32(row.GuestDurationMS),
+					GuestRuntime:     row.GuestRuntime,
+					GuestOutcome:     row.GuestOutcome,
+					GuestErrorClass:  row.GuestErrorClass,
 				}
 				if row.Count < 1 {
 					req.Count = 1

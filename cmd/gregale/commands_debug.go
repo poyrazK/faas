@@ -314,6 +314,13 @@ func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceRespon
 	if r.ColdBoot {
 		_, _ = fmt.Fprintln(w, "signal cold boot")
 	}
+	if r.Guest != nil {
+		_, _ = fmt.Fprintf(w, "guest: %s · %d ms · %s", r.Guest.Runtime, r.Guest.DurationMS, r.Guest.Outcome)
+		if r.Guest.ErrorClass != "" {
+			_, _ = fmt.Fprintf(w, " · error %s", r.Guest.ErrorClass)
+		}
+		_, _ = fmt.Fprintln(w)
+	}
 	if headline := strings.TrimSpace(resp.Explanation.Headline); headline != "" {
 		_, _ = fmt.Fprintf(w, "explanation: %s\n", headline)
 	}

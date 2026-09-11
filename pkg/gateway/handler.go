@@ -4935,6 +4935,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// being effectively zero).
 	start := time.Now()
 	r = r.WithContext(WithStartTime(r.Context(), start)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+	// Keep a request-local sink for platform-owned runner execution markers.
+	// The forwarder consumes and redacts the headers; observe persists the
+	// bounded values with the request telemetry row.
+	r = withGuestExecutionEvidence(r)
 
 	// Request ID is generated once per request and set on the response BEFORE
 	// any error path so even 4xx responses are correlatable. Inbound
@@ -6275,22 +6279,27 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				telemetryRoute = otherRouteLabel
 			}
 			uaFamily, referrerHost, country := h.requestTelemetryDimensions(r)
+			guestEvidence, _ := guestExecutionEvidenceFromContext(r.Context())
 			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
-				AccountID:    acctUUID,
-				AppID:        appUUID,
-				DeploymentID: deploymentUUID,
-				Route:        telemetryRoute,
-				Method:       r.Method,
-				Status:       status,
-				LatencyMS:    int(elapsed / time.Millisecond),
-				ColdBoot:     cold,
-				TraceID:      telemetryTraceID(requestID),
-				ReceivedAt:   time.Now(),
-				WakeID:       target.WakeID,
-				InstanceID:   target.InstanceID,
-				UAFamily:     uaFamily,
-				ReferrerHost: referrerHost,
-				Country:      country,
+				AccountID:       acctUUID,
+				AppID:           appUUID,
+				DeploymentID:    deploymentUUID,
+				Route:           telemetryRoute,
+				Method:          r.Method,
+				Status:          status,
+				LatencyMS:       int(elapsed / time.Millisecond),
+				ColdBoot:        cold,
+				TraceID:         telemetryTraceID(requestID),
+				ReceivedAt:      time.Now(),
+				WakeID:          target.WakeID,
+				InstanceID:      target.InstanceID,
+				UAFamily:        uaFamily,
+				ReferrerHost:    referrerHost,
+				Country:         country,
+				GuestDurationMS: guestEvidence.DurationMS,
+				GuestRuntime:    guestEvidence.Runtime,
+				GuestOutcome:    guestEvidence.Outcome,
+				GuestErrorClass: guestEvidence.ErrorClass,
 			})
 		}
 	}
@@ -7328,6 +7337,12 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	target := &url.URL{Scheme: "http", Host: addr}
 	p := httputil.NewSingleHostReverseProxy(target)
 	p.Transport = sharedUpstreamTransport
+	// Legacy addr-based forwarding uses net/http's ReverseProxy rather than
+	// the gRPC stream, so consume the same runner markers in ModifyResponse.
+	p.ModifyResponse = func(resp *http.Response) error {
+		stripGuestEvidenceResponseHeaders(resp)
+		return nil
+	}
 	// Issue #995 Phase 2 / ADR-121 — the upstream guard. Wrap the
 	// upstream's response body in io.LimitReader(body, cap+1) so a
 	// runaway guest EOFs cleanly at cap+1 bytes instead of
@@ -7343,7 +7358,13 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	// cap has fired.
 	if cap > 0 {
 		limit := cap + 1
+		previousModifyResponse := p.ModifyResponse
 		p.ModifyResponse = func(resp *http.Response) error {
+			if previousModifyResponse != nil {
+				if err := previousModifyResponse(resp); err != nil {
+					return err
+				}
+			}
 			if resp.Body != nil {
 				resp.Body = struct {
 					io.Reader

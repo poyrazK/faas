@@ -140,6 +140,7 @@ export type { DebugCompareRequest } from './DebugCompareRequest.js';
 export type { DebugCompareResponse } from './DebugCompareResponse.js';
 export type { DebugCompareRouteStats } from './DebugCompareRouteStats.js';
 export type { DebugEvidenceExplanation } from './DebugEvidenceExplanation.js';
+export type { DebugGuestExecutionEvidence } from './DebugGuestExecutionEvidence.js';
 export type { DebugRegressionItem } from './DebugRegressionItem.js';
 export type { DebugRegressionsResponse } from './DebugRegressionsResponse.js';
 export type { DebugReplayResponse } from './DebugReplayResponse.js';

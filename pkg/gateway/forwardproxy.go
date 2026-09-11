@@ -477,7 +477,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if init := frame.GetInit(); init != nil && !wroteHeader {
 			recordForwardedFirstByte(r.Context())
 			for _, h := range init.GetHeaders() {
-				w.Header().Add(h.GetName(), h.GetValue())
+				forwardedResponseHeader(r.Context(), w.Header(), h.GetName(), h.GetValue())
 			}
 			for _, trailer := range init.GetTrailers() {
 				if name := strings.TrimSpace(trailer.GetName()); name != "" {
@@ -527,7 +527,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if init := frame.GetInit(); init != nil && wroteHeader {
 			for _, trailer := range init.GetTrailers() {
 				if name := strings.TrimSpace(trailer.GetName()); name != "" {
-					w.Header().Add(name, trailer.GetValue())
+					forwardedResponseHeader(r.Context(), w.Header(), name, trailer.GetValue())
 				}
 			}
 			continue
@@ -835,7 +835,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if init := frame.GetInit(); init != nil && !wroteHeader {
 			recordForwardedFirstByte(r.Context())
 			for _, h := range init.GetHeaders() {
-				w.Header().Add(h.GetName(), h.GetValue())
+				forwardedResponseHeader(r.Context(), w.Header(), h.GetName(), h.GetValue())
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true

@@ -1693,19 +1693,23 @@ type DebugRegressionView struct {
 
 // DebugRequestView is one row in the debugger request table.
 type DebugRequestView struct {
-	ID           string
-	DeploymentID string
-	Route        string
-	Method       string
-	Status       int
-	LatencyMS    int
-	Count        int
-	ColdBoot     bool
-	TraceID      string
-	WakeID       string
-	InstanceID   string
-	ReceivedAt   string
-	DetailURL    string
+	ID              string
+	DeploymentID    string
+	Route           string
+	Method          string
+	Status          int
+	LatencyMS       int
+	Count           int
+	ColdBoot        bool
+	TraceID         string
+	WakeID          string
+	InstanceID      string
+	ReceivedAt      string
+	GuestRuntime    string
+	GuestDurationMS int
+	GuestOutcome    string
+	GuestErrorClass string
+	DetailURL       string
 }
 
 // DebugRequestDetailView is the selected request drill-down. Spans and the

@@ -7175,23 +7175,34 @@ type AppOpenAPIPolicyPreviewRule struct {
 
 // DebugTelemetryRequestItem is one row of per-app request telemetry
 // returned by GET /v1/apps/{slug}/debug/requests (ADR-127 / PR-A).
-// The fields are 1:1 with the request_telemetry table columns; the
-// apid handler maps sqlc-generated rows to this wire DTO (cmd/apid
-// uses the sqlc row directly because pkg/api cannot import
-// pkg/state/sqlc without an import cycle).
+// The scalar fields mirror the request_telemetry table columns; guest
+// execution columns are grouped under a nested, optional object. The apid
+// handler maps sqlc-generated rows to this wire DTO (cmd/apid uses the sqlc
+// row directly because pkg/api cannot import pkg/state/sqlc without a cycle).
 type DebugTelemetryRequestItem struct {
-	ID           string  `json:"id"`
-	DeploymentID string  `json:"deployment_id"`
-	Route        string  `json:"route"`
-	Method       string  `json:"method"`
-	Status       int     `json:"status"`
-	LatencyMS    int     `json:"latency_ms"`
-	Count        int     `json:"count"`
-	ColdBoot     bool    `json:"cold_boot"`
-	TraceID      *string `json:"trace_id"`
-	ReceivedAt   string  `json:"received_at"`
-	WakeID       string  `json:"wake_id,omitempty"`
-	InstanceID   string  `json:"instance_id,omitempty"`
+	ID           string                       `json:"id"`
+	DeploymentID string                       `json:"deployment_id"`
+	Route        string                       `json:"route"`
+	Method       string                       `json:"method"`
+	Status       int                          `json:"status"`
+	LatencyMS    int                          `json:"latency_ms"`
+	Count        int                          `json:"count"`
+	ColdBoot     bool                         `json:"cold_boot"`
+	TraceID      *string                      `json:"trace_id"`
+	ReceivedAt   string                       `json:"received_at"`
+	WakeID       string                       `json:"wake_id,omitempty"`
+	InstanceID   string                       `json:"instance_id,omitempty"`
+	Guest        *DebugGuestExecutionEvidence `json:"guest,omitempty"`
+}
+
+// DebugGuestExecutionEvidence is the bounded execution signal emitted by a
+// platform-owned runtime runner. It contains no customer payload or error
+// text and is omitted when the runner did not emit evidence.
+type DebugGuestExecutionEvidence struct {
+	Runtime    string `json:"runtime"`
+	DurationMS int    `json:"duration_ms"`
+	Outcome    string `json:"outcome"`
+	ErrorClass string `json:"error_class,omitempty"`
 }
 
 // DebugTelemetryListOptions controls the server-side filters for a request

@@ -118,6 +118,25 @@ func TestCollapseRequestTelemetry_PreservesLatencyDistribution(t *testing.T) {
 	}
 }
 
+func TestCollapseRequestTelemetry_PreservesGuestOutcomes(t *testing.T) {
+	t.Parallel()
+	appID := uuid.New()
+	deployID := uuid.New()
+	accountID := uuid.New()
+	base := time.Date(2026, 8, 24, 18, 42, 0, 0, time.UTC)
+	rows := []RequestTelemetryRow{
+		{AccountID: accountID, AppID: appID, DeploymentID: deployID, Route: "GET /v1/foo", Method: "GET", Status: 200, LatencyMS: 40, GuestDurationMS: 12, GuestRuntime: "node22", GuestOutcome: "ok", ReceivedAt: base, Count: 1},
+		{AccountID: accountID, AppID: appID, DeploymentID: deployID, Route: "GET /v1/foo", Method: "GET", Status: 200, LatencyMS: 40, GuestDurationMS: 12, GuestRuntime: "node22", GuestOutcome: "http_error", GuestErrorClass: "http_5xx", ReceivedAt: base, Count: 1},
+	}
+	collapsed := collapseRequestTelemetry(rows)
+	if got, want := len(collapsed), 2; got != want {
+		t.Fatalf("len(collapsed) = %d, want %d", got, want)
+	}
+	if collapsed[0].GuestOutcome != "ok" || collapsed[1].GuestOutcome != "http_error" {
+		t.Fatalf("guest outcomes collapsed incorrectly: %+v", collapsed)
+	}
+}
+
 func TestRequestTelemetryLatencyBucketUpperBound(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
