@@ -61,7 +61,14 @@ func (m *Manager) ExecuteExecution(ctx context.Context, instance string, req exe
 		return zero, fmt.Errorf("fcvm: dial execution: %w", err)
 	}
 	if session == nil {
-		return zero, errors.New("fcvm: execution dialer returned nil session")
+		nilSessionErr := errors.New("fcvm: execution dialer returned nil session")
+		destroyCtx, cancel := context.WithTimeout(context.Background(), executionDestroyTimeout)
+		destroyErr := m.Destroy(destroyCtx, instance)
+		cancel()
+		if destroyErr != nil {
+			return zero, errors.Join(nilSessionErr, fmt.Errorf("fcvm: destroy after nil execution session: %w", destroyErr))
+		}
+		return zero, nilSessionErr
 	}
 
 	result, executeErr := session.Execute(ctx, req)
