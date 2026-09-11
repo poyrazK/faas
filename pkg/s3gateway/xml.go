@@ -3,6 +3,7 @@ package s3gateway
 import (
 	"encoding/xml"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -129,6 +130,35 @@ type copyObjectResult struct {
 	XMLNS        string   `xml:"xmlns,attr"`
 	LastModified string   `xml:"LastModified,omitempty"`
 	ETag         string   `xml:"ETag"`
+}
+
+type objectTaggingRequest struct {
+	XMLName xml.Name    `xml:"Tagging"`
+	Tags    []objectTag `xml:"TagSet>Tag"`
+}
+
+type objectTaggingResult struct {
+	XMLName xml.Name    `xml:"Tagging"`
+	XMLNS   string      `xml:"xmlns,attr"`
+	Tags    []objectTag `xml:"TagSet>Tag"`
+}
+
+type objectTag struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
+
+func objectTagSet(tags map[string]string) []objectTag {
+	keys := make([]string, 0, len(tags))
+	for key := range tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]objectTag, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, objectTag{Key: key, Value: tags[key]})
+	}
+	return out
 }
 
 func listObjectsResult(bucket, prefix string, limit int32, page objectstorage.ObjectPage) listBucketResult {

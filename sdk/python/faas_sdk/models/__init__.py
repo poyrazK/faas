@@ -599,7 +599,9 @@ from .object_s3_credential_secret import ObjectS3CredentialSecret
 from .object_s3_credential_secret_addressing_style import ObjectS3CredentialSecretAddressingStyle
 from .object_s3_credential_status import ObjectS3CredentialStatus
 from .object_sign_request import ObjectSignRequest
+from .object_sign_request_metadata import ObjectSignRequestMetadata
 from .object_sign_request_method import ObjectSignRequestMethod
+from .object_sign_request_tags import ObjectSignRequestTags
 from .object_signed_request import ObjectSignedRequest
 from .object_signed_request_headers import ObjectSignedRequestHeaders
 from .object_signed_request_method import ObjectSignedRequestMethod
@@ -1529,7 +1531,9 @@ __all__ = (
     "ObjectSignedRequestHeaders",
     "ObjectSignedRequestMethod",
     "ObjectSignRequest",
+    "ObjectSignRequestMetadata",
     "ObjectSignRequestMethod",
+    "ObjectSignRequestTags",
     "ObjectStorageCharge",
     "ObjectStorageComputeBinding",
     "ObjectStorageComputeBindingList",

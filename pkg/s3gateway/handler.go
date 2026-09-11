@@ -439,6 +439,14 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 		}
 		return
 	}
+	if query.Has("tagging") {
+		if !queryKeysOnly(query, "tagging") {
+			h.unsupported(w, r, req.requestID)
+			return
+		}
+		h.objectTags(w, r, req, key)
+		return
+	}
 	if r.Method == http.MethodPost && query.Has("uploads") {
 		if !queryKeysOnly(query, "uploads") {
 			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
@@ -510,6 +518,11 @@ func (h *Handler) admit(w http.ResponseWriter, r *http.Request, req requestConte
 }
 
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
+	metadata, metadataErr := objectMetadataFromHeaders(r)
+	if metadataErr != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "The object metadata or tags are invalid.", r.URL.Path, req.requestID)
+		return
+	}
 	if r.ContentLength < 0 {
 		writeS3Error(w, http.StatusLengthRequired, "MissingContentLength", "You must provide the Content-Length HTTP header.", r.URL.Path, req.requestID)
 		return
@@ -570,7 +583,12 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		return
 	}
 	contentType := r.Header.Get("Content-Type")
-	signed, err := req.provider.Presign(r.Context(), req.bucket.PhysicalName, objectstorage.SignRequest{Method: http.MethodPut, Key: key, SizeBytes: &r.ContentLength, ContentType: contentType, ExpiresIn: 60})
+	signed, err := req.provider.Presign(r.Context(), req.bucket.PhysicalName, objectstorage.SignRequest{
+		Method: http.MethodPut, Key: key, SizeBytes: &r.ContentLength, ContentType: contentType, ExpiresIn: 60,
+		CacheControl: metadata.CacheControl, ContentDisposition: metadata.ContentDisposition,
+		ContentEncoding: metadata.ContentEncoding, ContentLanguage: metadata.ContentLanguage,
+		Metadata: metadata.Metadata, Tags: metadata.Tags,
+	})
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return
@@ -634,6 +652,26 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "The object metadata is invalid.", r.URL.Path, req.requestID)
 		return
 	}
+	taggingDirective := strings.ToUpper(strings.TrimSpace(r.Header.Get("X-Amz-Tagging-Directive")))
+	if taggingDirective == "" {
+		taggingDirective = "COPY"
+	}
+	if taggingDirective != "COPY" && taggingDirective != "REPLACE" {
+		writeS3Error(w, http.StatusBadRequest, "InvalidDirective", "The tagging directive is invalid.", r.URL.Path, req.requestID)
+		return
+	}
+	if raw := r.Header.Get("X-Amz-Tagging"); raw != "" || taggingDirective == "REPLACE" {
+		tags, tagErr := objectstorage.ParseObjectTags(raw)
+		if tagErr != nil {
+			writeS3Error(w, http.StatusBadRequest, "InvalidTag", "The object tags are invalid.", r.URL.Path, req.requestID)
+			return
+		}
+		metadata.Tags = tags
+	}
+	if taggingDirective == "COPY" && len(metadata.Tags) != 0 {
+		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "x-amz-tagging requires REPLACE tagging directive.", r.URL.Path, req.requestID)
+		return
+	}
 	size := int64(0)
 	if sizer, ok := req.provider.(objectstorage.ObjectSizer); ok {
 		size, err = sizer.ObjectSize(r.Context(), req.bucket.PhysicalName, sourceKey)
@@ -646,7 +684,7 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 		return
 	}
 	result, err := copier.CopyObject(r.Context(), req.bucket.PhysicalName, objectstorage.CopyObjectRequest{
-		SourceKey: sourceKey, DestinationKey: destinationKey, MetadataDirective: directive, Metadata: metadata,
+		SourceKey: sourceKey, DestinationKey: destinationKey, MetadataDirective: directive, TaggingDirective: taggingDirective, Metadata: metadata,
 	})
 	if err != nil {
 		h.providerError(w, r, req, err, sourceKey)
@@ -684,7 +722,7 @@ func copyMetadata(r *http.Request, directive string) (objectstorage.ObjectMetada
 	if directive == "COPY" {
 		for name := range r.Header {
 			lower := strings.ToLower(name)
-			if strings.HasPrefix(lower, "x-amz-meta-") || strings.HasPrefix(lower, "x-amz-tag") || name == "Content-Type" || name == "Cache-Control" || name == "Content-Disposition" || name == "Content-Encoding" || name == "Content-Language" {
+			if strings.HasPrefix(lower, "x-amz-meta-") || lower == "content-type" || lower == "cache-control" || lower == "content-disposition" || lower == "content-encoding" || lower == "content-language" {
 				return metadata, objectstorage.ErrInvalid
 			}
 		}
@@ -698,9 +736,6 @@ func copyMetadata(r *http.Request, directive string) (objectstorage.ObjectMetada
 	metadata.Metadata = make(map[string]string)
 	for name, values := range r.Header {
 		lower := strings.ToLower(name)
-		if strings.HasPrefix(lower, "x-amz-tag") {
-			return objectstorage.ObjectMetadata{}, objectstorage.ErrInvalid
-		}
 		if !strings.HasPrefix(lower, "x-amz-meta-") {
 			continue
 		}
@@ -714,6 +749,36 @@ func copyMetadata(r *http.Request, directive string) (objectstorage.ObjectMetada
 		metadata.Metadata[key] = values[0]
 	}
 	return metadata, nil
+}
+
+func objectMetadataFromHeaders(r *http.Request) (objectstorage.ObjectMetadata, error) {
+	metadata := objectstorage.ObjectMetadata{
+		CacheControl: r.Header.Get("Cache-Control"), ContentDisposition: r.Header.Get("Content-Disposition"),
+		ContentEncoding: r.Header.Get("Content-Encoding"), ContentLanguage: r.Header.Get("Content-Language"),
+		ContentType: r.Header.Get("Content-Type"), Metadata: map[string]string{},
+	}
+	for name, values := range r.Header {
+		lower := strings.ToLower(name)
+		if !strings.HasPrefix(lower, "x-amz-meta-") {
+			continue
+		}
+		if len(values) != 1 {
+			return objectstorage.ObjectMetadata{}, objectstorage.ErrInvalid
+		}
+		key := strings.TrimPrefix(lower, "x-amz-meta-")
+		if key == "" {
+			return objectstorage.ObjectMetadata{}, objectstorage.ErrInvalid
+		}
+		metadata.Metadata[key] = values[0]
+	}
+	if raw := r.Header.Get("X-Amz-Tagging"); raw != "" {
+		tags, err := objectstorage.ParseObjectTags(raw)
+		if err != nil {
+			return objectstorage.ObjectMetadata{}, err
+		}
+		metadata.Tags = tags
+	}
+	return metadata, objectstorage.ValidateObjectMetadata(metadata)
 }
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
@@ -755,6 +820,83 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 	}
 }
 
+func (h *Handler) objectTags(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
+	tagger, ok := req.provider.(objectstorage.ObjectTagger)
+	if !ok {
+		h.unsupported(w, r, req.requestID)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admit(w, r, req, key, 0, false) || !h.recordProviderRequest(w, r, req) {
+			return
+		}
+		tags, err := tagger.GetObjectTags(r.Context(), req.bucket.PhysicalName, key)
+		if err != nil {
+			h.providerError(w, r, req, err, key)
+			return
+		}
+		writeS3XML(w, http.StatusOK, req.requestID, objectTaggingResult{XMLNS: s3XMLNamespace, Tags: objectTagSet(tags)})
+	case http.MethodPut:
+		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) || !h.admit(w, r, req, key, 0, false) {
+			return
+		}
+		tags, err := decodeObjectTags(w, r)
+		if err != nil {
+			writeS3Error(w, http.StatusBadRequest, "InvalidTag", "The object tags are invalid.", r.URL.Path, req.requestID)
+			return
+		}
+		if !h.recordProviderRequest(w, r, req) {
+			return
+		}
+		if err := tagger.PutObjectTags(r.Context(), req.bucket.PhysicalName, key, tags); err != nil {
+			h.providerError(w, r, req, err, key)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	case http.MethodDelete:
+		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) || !h.admit(w, r, req, key, 0, false) || !h.recordProviderRequest(w, r, req) {
+			return
+		}
+		if err := tagger.DeleteObjectTags(r.Context(), req.bucket.PhysicalName, key); err != nil {
+			h.providerError(w, r, req, err, key)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		h.unsupported(w, r, req.requestID)
+	}
+}
+
+func decodeObjectTags(w http.ResponseWriter, r *http.Request) (map[string]string, error) {
+	if r.ContentLength > 16<<10 {
+		return nil, objectstorage.ErrInvalid
+	}
+	decoder := xml.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	var body objectTaggingRequest
+	if err := decoder.Decode(&body); err != nil {
+		return nil, objectstorage.ErrInvalid
+	}
+	if body.XMLName.Local != "Tagging" {
+		return nil, objectstorage.ErrInvalid
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, objectstorage.ErrInvalid
+	}
+	tags := make(map[string]string, len(body.Tags))
+	for _, tag := range body.Tags {
+		if _, exists := tags[tag.Key]; exists {
+			return nil, objectstorage.ErrInvalid
+		}
+		tags[tag.Key] = tag.Value
+	}
+	if err := objectstorage.ValidateObjectMetadata(objectstorage.ObjectMetadata{Tags: tags}); err != nil {
+		return nil, err
+	}
+	return tags, nil
+}
+
 // recordProviderRequest commits the outbound request attempt before it is
 // sent. A failed commit blocks the request rather than allowing an
 // unaccounted provider call to escape; the resulting 503 is preferable to
@@ -780,10 +922,26 @@ func (h *Handler) closeResponseBody(body io.Closer, requestID string) {
 }
 
 func copyObjectHeaders(dst, src http.Header) {
-	for _, name := range []string{"Accept-Ranges", "Cache-Control", "Content-Disposition", "Content-Length", "Content-Range", "Content-Type", "ETag", "Expires", "Last-Modified"} {
+	for _, name := range []string{"Accept-Ranges", "Cache-Control", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Length", "Content-Range", "Content-Type", "ETag", "Expires", "Last-Modified"} {
 		if value := src.Get(name); value != "" {
 			dst.Set(name, value)
 		}
+	}
+	for name, values := range src {
+		lower := strings.ToLower(name)
+		key := ""
+		switch {
+		case strings.HasPrefix(lower, "x-amz-meta-"):
+			key = strings.TrimPrefix(lower, "x-amz-meta-")
+		case strings.HasPrefix(lower, "x-goog-meta-"):
+			key = strings.TrimPrefix(lower, "x-goog-meta-")
+		default:
+			continue
+		}
+		if key == objectstorage.ReservedObjectTagsMetadataKey || len(values) == 0 {
+			continue
+		}
+		dst.Set("x-amz-meta-"+key, values[0])
 	}
 }
 
@@ -799,6 +957,10 @@ func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requ
 	}
 	if errors.Is(err, objectstorage.ErrInvalid) {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "The request is invalid.", resource, req.requestID)
+		return
+	}
+	if errors.Is(err, objectstorage.ErrUnsupported) {
+		h.unsupported(w, r, req.requestID)
 		return
 	}
 	writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not reach this bucket's storage placement.", resource, req.requestID)

@@ -63,6 +63,8 @@ type gatewayTestProvider struct {
 	objects          objectstorage.ObjectPage
 	objectSize       int64
 	copyRequests     []objectstorage.CopyObjectRequest
+	presignRequests  []objectstorage.SignRequest
+	tags             map[string]string
 	deleted          string
 	multipart        map[string]map[int32]objectstorage.MultipartPart
 	completedUploads []string
@@ -104,8 +106,20 @@ func (p *gatewayTestProvider) DeleteObject(_ context.Context, _ string, key stri
 	p.deleted = key
 	return nil
 }
-func (*gatewayTestProvider) Presign(_ context.Context, bucket string, request objectstorage.SignRequest) (objectstorage.SignedRequest, error) {
+func (p *gatewayTestProvider) Presign(_ context.Context, bucket string, request objectstorage.SignRequest) (objectstorage.SignedRequest, error) {
+	p.presignRequests = append(p.presignRequests, request)
 	return objectstorage.SignedRequest{URL: "https://provider.invalid/" + bucket + "/" + request.Key, Method: request.Method, Headers: map[string]string{"Content-Type": request.ContentType}}, nil
+}
+func (p *gatewayTestProvider) GetObjectTags(context.Context, string, string) (map[string]string, error) {
+	return p.tags, nil
+}
+func (p *gatewayTestProvider) PutObjectTags(_ context.Context, _, _ string, tags map[string]string) error {
+	p.tags = tags
+	return nil
+}
+func (p *gatewayTestProvider) DeleteObjectTags(context.Context, string, string) error {
+	p.tags = nil
+	return nil
 }
 func (p *gatewayTestProvider) EnsureMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartCreateRequest) (string, error) {
 	if p.multipart == nil {
@@ -462,6 +476,66 @@ func TestGatewayCopyObjectWithReplacementMetadata(t *testing.T) {
 	}
 	if len(store.admitted) == 0 || store.admitted[len(store.admitted)-1] != "archive/copy.txt" {
 		t.Fatalf("copy was not admitted: %v", store.admitted)
+	}
+}
+
+func TestGatewayPutMetadataAndObjectTags(t *testing.T) {
+	var upstreamHeaders http.Header
+	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+		upstreamHeaders = r.Header.Clone()
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"ETag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	body := []byte("hello")
+	sum := sha256.Sum256(body)
+	request := httptest.NewRequest(http.MethodPut, "https://s3.gregale.dev/assets/metadata.txt", bytes.NewReader(body))
+	request.Host = "s3.gregale.dev"
+	request.Header.Set("Content-Type", "text/plain")
+	request.Header.Set("Cache-Control", "max-age=60")
+	request.Header.Set("X-Amz-Meta-Owner", "platform")
+	request.Header.Set("X-Amz-Tagging", "env=prod&team=core")
+	request.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(sum[:]))
+	request.Header.Set("X-Amz-Date", "20260907T120000Z")
+	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || len(provider.presignRequests) != 1 {
+		t.Fatalf("PUT = %d %s presigns=%+v", recorder.Code, recorder.Body.String(), provider.presignRequests)
+	}
+	presign := provider.presignRequests[0]
+	if presign.ContentType != "text/plain" || presign.CacheControl != "max-age=60" || presign.Metadata["owner"] != "platform" || presign.Tags["env"] != "prod" || upstreamHeaders.Get("Content-Type") != "text/plain" {
+		t.Fatalf("metadata did not reach provider: %+v upstream=%v", presign, upstreamHeaders)
+	}
+
+	provider.tags = map[string]string{"env": "prod"}
+	getRecorder := httptest.NewRecorder()
+	handler.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/plain"}, "x-goog-meta-owner": {"platform"}}, Body: io.NopCloser(strings.NewReader("hello")), Request: r}, nil
+	}), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	handler.ServeHTTP(getRecorder, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/metadata.txt", nil, "UNSIGNED-PAYLOAD"))
+	if getRecorder.Code != http.StatusOK || getRecorder.Header().Get("x-amz-meta-owner") != "platform" {
+		t.Fatalf("GET metadata = %d headers=%v", getRecorder.Code, getRecorder.Header())
+	}
+
+	tagBody := []byte(`<Tagging><TagSet><Tag><Key>team</Key><Value>core</Value></Tag></TagSet></Tagging>`)
+	tagSum := sha256.Sum256(tagBody)
+	tagRequest := signedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/metadata.txt?tagging", tagBody, hex.EncodeToString(tagSum[:]))
+	tagRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(tagRecorder, tagRequest)
+	if tagRecorder.Code != http.StatusOK || provider.tags["team"] != "core" {
+		t.Fatalf("PUT tagging = %d %s tags=%v", tagRecorder.Code, tagRecorder.Body.String(), provider.tags)
+	}
+
+	getTags := httptest.NewRecorder()
+	handler.ServeHTTP(getTags, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/metadata.txt?tagging", nil, "UNSIGNED-PAYLOAD"))
+	if getTags.Code != http.StatusOK || !strings.Contains(getTags.Body.String(), "<Key>team</Key>") {
+		t.Fatalf("GET tagging = %d %s", getTags.Code, getTags.Body.String())
+	}
+	deleteTags := httptest.NewRecorder()
+	handler.ServeHTTP(deleteTags, signedGatewayRequest(t, http.MethodDelete, "https://s3.gregale.dev/assets/metadata.txt?tagging", nil, "UNSIGNED-PAYLOAD"))
+	if deleteTags.Code != http.StatusNoContent || provider.tags != nil {
+		t.Fatalf("DELETE tagging = %d tags=%v", deleteTags.Code, provider.tags)
 	}
 }
 

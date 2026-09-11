@@ -59,6 +59,11 @@ func (s *fakeGCSStore) ObjectState(context.Context, string, string) (gcsObjectSt
 	return s.object, nil
 }
 
+func (s *fakeGCSStore) UpdateObjectMetadata(_ context.Context, _, _ string, metadata map[string]string) (gcsObjectState, error) {
+	s.object.Metadata = metadata
+	return s.object, nil
+}
+
 func (s *fakeGCSStore) CopyObject(context.Context, string, string, string, ObjectMetadata, string) (gcsObjectState, error) {
 	return s.object, s.copyObjectErr
 }
@@ -162,6 +167,52 @@ func TestGCSPresignBindsUploadAndMultipartShape(t *testing.T) {
 	}
 	if _, err := p.Presign(context.Background(), "gregale-test", SignRequest{Method: http.MethodGet, Key: "hello"}); !errors.Is(err, ErrConfiguration) || strings.Contains(err.Error(), "private") {
 		t.Fatal("signing error was not sanitized", err)
+	}
+}
+
+func TestGCSPresignMetadataAndTagCapability(t *testing.T) {
+	p := testGCS(gcsDefaultEndpoint, &fakeGCSStore{})
+	size := int64(4)
+	out, err := p.Presign(context.Background(), "gregale-test", SignRequest{
+		Method: http.MethodPut, Key: "metadata.txt", SizeBytes: &size, ContentType: "text/plain", CacheControl: "max-age=60",
+		Metadata: map[string]string{"owner": "platform"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	query, _ := url.Parse(out.URL)
+	if !strings.Contains(query.Query().Get("X-Goog-SignedHeaders"), "x-goog-meta-owner") || out.Headers["x-goog-meta-owner"] != "platform" || out.Headers["Cache-Control"] != "max-age=60" {
+		t.Fatalf("metadata was not signed: url=%s headers=%v", out.URL, out.Headers)
+	}
+	tagged, err := p.Presign(context.Background(), "gregale-test", SignRequest{Method: http.MethodPut, Key: "tags.txt", SizeBytes: &size, Tags: map[string]string{"env": "prod"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taggedURL, _ := url.Parse(tagged.URL)
+	if !strings.Contains(taggedURL.Query().Get("X-Goog-SignedHeaders"), "x-goog-meta-gregale-s3-tags") || tagged.Headers["x-goog-meta-gregale-s3-tags"] != "env=prod" {
+		t.Fatalf("GCS tags were not signed: url=%s headers=%v", tagged.URL, tagged.Headers)
+	}
+}
+
+func TestGCSTagsUseReservedMetadata(t *testing.T) {
+	store := &fakeGCSStore{object: gcsObjectState{Key: "file.txt", Metadata: map[string]string{"owner": "platform"}}}
+	p := testGCS(gcsDefaultEndpoint, store)
+	tagger := ObjectTagger(p)
+	if err := tagger.PutObjectTags(context.Background(), "gregale-test", "file.txt", map[string]string{"env": "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if store.object.Metadata[ReservedObjectTagsMetadataKey] != "env=prod" || store.object.Metadata["owner"] != "platform" {
+		t.Fatalf("stored metadata = %+v", store.object.Metadata)
+	}
+	tags, err := tagger.GetObjectTags(context.Background(), "gregale-test", "file.txt")
+	if err != nil || tags["env"] != "prod" {
+		t.Fatalf("tags = %v err=%v", tags, err)
+	}
+	if err := tagger.DeleteObjectTags(context.Background(), "gregale-test", "file.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.object.Metadata[ReservedObjectTagsMetadataKey]; exists {
+		t.Fatalf("reserved metadata not deleted: %+v", store.object.Metadata)
 	}
 }
 
