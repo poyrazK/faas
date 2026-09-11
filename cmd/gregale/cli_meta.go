@@ -1121,6 +1121,16 @@ var cliCommands = []cliCommand{
 		Short:   "Print the CLI version",
 	},
 	{
+		Name:    "config",
+		DocSlug: "config",
+		Short:   "Manage non-secret local CLI settings (config get|set|list)",
+		Subcommands: []cliSub{
+			{Name: "get", Short: "Show one effective setting"},
+			{Name: "set", Short: "Persist one non-secret setting"},
+			{Name: "list", Short: "Show all effective settings"},
+		},
+	},
+	{
 		Name:    "wake-timeline",
 		DocSlug: "wake-timeline",
 		Short:   "Walk the per-wake event stream (wake-timeline <slug> <wake-id> [--since RFC3339] [--limit N] [--all])",

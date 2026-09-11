@@ -129,6 +129,8 @@ func run(args []string) (status int) {
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
 		// via cmdCompletion; the dispatcher is in completion.go.
 		return cmdCompletion(args[1:])
+	case "config":
+		return cmdConfig(args[1:])
 	case "man":
 		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
 		// gregale-<command>(1). Dispatcher is in man.go.

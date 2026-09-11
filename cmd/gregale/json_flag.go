@@ -42,8 +42,9 @@ import (
 var jsonOutput bool
 
 // applyJSONFlag consumes a leading --json (or -j / --json=BOOL) from
-// args and sets jsonOutput. Honors FAAS_JSON=1 env unless --json=false
-// is explicit on the command line. Returns the args with the flag
+// args and sets jsonOutput. Honors FAAS_JSON first, then the persistent
+// non-secret config preference, unless --json=false is explicit on the
+// command line. Returns the args with the flag
 // stripped so downstream dispatch sees only its own flags. Idempotent
 // on a second call — safe if a subcommand happens to call it.
 //
@@ -57,8 +58,8 @@ var jsonOutput bool
 // matching the previous behaviour and the UX §3.2 "agents depend on
 // it" intent: every obvious truthy spelling Just Works.
 func applyJSONFlag(args []string) []string {
-	if os.Getenv("FAAS_JSON") == "1" {
-		jsonOutput = true
+	if configured, ok := configuredJSONPreference(); ok {
+		jsonOutput = configured
 	}
 	for i, a := range args {
 		switch {
