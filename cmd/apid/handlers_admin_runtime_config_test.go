@@ -93,7 +93,7 @@ func TestRuntimeConfigRollback_RejectsStaleExpectedVersion(t *testing.T) {
 func TestRuntimeConfigPatch_PropagatesTraceToAuditEvent(t *testing.T) {
 	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 	e := newObsEnv(t, []string{"admin"}, "ops@faas.dev", "ops@faas.dev")
-	response := e.doAdmin(t, http.MethodPatch, "/v1/admin/config/hsts_enabled", map[string]any{
+	response := e.doAdmin(t, http.MethodPatch, "/v1/admin/config/data_placement_enabled", map[string]any{
 		"value": false, "reason": "incident mitigation",
 	}, map[string]string{"X-Trace-Id": traceID})
 	if response.Code != http.StatusOK {
