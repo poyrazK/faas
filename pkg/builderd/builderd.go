@@ -270,7 +270,8 @@ func (b *Builderd) prepareWarmBuilder(ctx context.Context, slot SlotDecision, re
 	if err != nil {
 		b.log.Warn("builderd: warm builder disabled; vmmd version unavailable", "err", err)
 		if snapshot, retained := b.InvalidateWarmBuilder(); retained {
-			b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
+			// cleanupWarmSnapshot logs failures; this path must continue with a cold builder.
+			_ = b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
 		}
 		return nil, "", WarmSnapshot{}, false
 	}
@@ -280,7 +281,8 @@ func (b *Builderd) prepareWarmBuilder(ctx context.Context, slot SlotDecision, re
 		return nil, "", WarmSnapshot{}, false
 	}
 	if snapshot.StorageKey != "" && (result != WarmRestoreHit || snapshot.ScopeKey == "" || snapshot.ScopeKey != req.WarmScopeKey) {
-		b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
+		// cleanupWarmSnapshot logs failures; this path must continue with a cold builder.
+		_ = b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
 		snapshot = WarmSnapshot{}
 		result = WarmRestoreMiss
 	}
@@ -827,9 +829,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 				return
 			}
 			if retained, ok := b.InvalidateWarmBuilder(); ok {
-				b.cleanupWarmSnapshot(ctx, warmVM, retained)
+				// cleanupWarmSnapshot logs failures; claim teardown is best effort.
+				_ = b.cleanupWarmSnapshot(ctx, warmVM, retained)
 			}
-			b.cleanupWarmSnapshot(ctx, warmVM, warmCaptured)
+			// cleanupWarmSnapshot logs failures; claim teardown is best effort.
+			_ = b.cleanupWarmSnapshot(ctx, warmVM, warmCaptured)
 		}()
 	}
 	vmReq.KeepWarm = warmStarted
@@ -841,7 +845,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		handle, err = warmVM.RestoreWarmBuilder(vmCtx, vmReq, warmSnapshot)
 		if err != nil {
 			b.log.Warn("builderd: warm restore failed; retrying cold", "build", build.ID, "err", err)
-			b.cleanupWarmSnapshot(ctx, warmVM, warmSnapshot)
+			// cleanupWarmSnapshot logs failures; the cold retry remains authoritative.
+			_ = b.cleanupWarmSnapshot(ctx, warmVM, warmSnapshot)
 			handle, err = b.vm.Spawn(vmCtx, vmReq)
 		}
 	} else {
