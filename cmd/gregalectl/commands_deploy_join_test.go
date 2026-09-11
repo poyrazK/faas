@@ -179,6 +179,30 @@ func TestNodeJoinPublishesHardwareCapacityBeforeVMMDStarts(t *testing.T) {
 	}
 }
 
+func TestNodeJoinPreregistrationAcknowledgesBootstrapDatabaseWrite(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	start := strings.Index(playbook, "Pre-register the adopted node as drained before release installation")
+	end := strings.Index(playbook, "Stop stale compute-only services before replacing the active release")
+	if start < 0 || end < 0 || start >= end {
+		t.Fatal("node_join.yml is missing the compute-node preregistration block")
+	}
+	block := playbook[start:end]
+	for _, token := range []string{
+		"- --reason",
+		"- node_join_preregister",
+		"- --break-glass-db",
+		"- --yes",
+	} {
+		if !strings.Contains(block, token) {
+			t.Errorf("compute-node preregistration missing %q", token)
+		}
+	}
+}
+
 func splitboxJoinManifest(t *testing.T) string {
 	t.Helper()
 	body := strings.Replace(validManifestYAML,
