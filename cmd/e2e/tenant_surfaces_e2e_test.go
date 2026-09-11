@@ -9,7 +9,7 @@
 //  3. GET  /v1/apps/{slug}/tenant-surfaces/{id} — fetch by id
 //  4. POST /v1/apps/{slug}/tenant-surfaces/{id}/hostnames — add a 3rd
 //  5. POST /v1/apps/{slug}/tenant-surfaces/{id}/hostnames — quota trip
-//  6. POST /v1/apps/{slug}/tenant-surfaces — flag off → 402
+//  6. POST /v1/apps/{slug}/tenant-surfaces — flag off → 503
 //  7. POST /v1/apps/{slug}/tenant-surfaces — Free plan → 402
 //  8. DELETE /v1/apps/{slug}/tenant-surfaces/{id}/hostnames/{h} — remove
 //  9. DELETE /v1/apps/{slug}/tenant-surfaces/{id} — soft-delete + cascade
@@ -46,8 +46,8 @@ import (
 
 // TestE2E_TenantSurfaces_VerticalSlice is the PR-C customer-facing
 // E2E. The test boots apid with FAAS_TENANT_SURFACES_ENABLED=true so
-// the dark-launch flag is lifted. The Pro plan gate is used so
-// TenantSurfacesAllowed=true applies (no 402 on the create path).
+// the dark-launch flag is lifted. The Scale plan gate is used so
+// the advertised tier can list and add tenant surfaces successfully.
 func TestE2E_TenantSurfaces_VerticalSlice(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
@@ -67,11 +67,11 @@ func TestE2E_TenantSurfaces_VerticalSlice(t *testing.T) {
 
 	store := state.NewPgStore(pool)
 
-	// Seed the operator account + a Pro plan app so the surface
+	// Seed the operator account + a Scale plan app so the surface
 	// create path is unblocked.
-	token := h.SeedAccount(ctx, api.PlanPro, "tenant-surfaces-e2e")
+	token := h.SeedAccount(ctx, api.PlanScale, "tenant-surfaces-e2e")
 	appSlug := "tenant-surfaces-app"
-	acct, err := store.AccountByEmail(ctx, "e2e+pro+tenant-surfaces-e2e@test.example")
+	acct, err := store.AccountByEmail(ctx, "e2e+scale+tenant-surfaces-e2e@test.example")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
 	}

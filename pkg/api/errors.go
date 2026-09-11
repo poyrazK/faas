@@ -1504,6 +1504,11 @@ const (
 	// surface" — the next action is different. 402 mirrors the
 	// *NotAllowed siblings (CodePlanCronsNotAllowed, etc.).
 	CodeTenantSurfacesNotAllowed = "tenant_surfaces_not_allowed"
+	// CodeTenantSurfacesNotEnabled marks the cluster-level dark-launch gate.
+	// It is intentionally distinct from CodeTenantSurfacesNotAllowed: a
+	// Scale customer must not receive a plan downgrade when the operator has
+	// not enabled the runtime feature.
+	CodeTenantSurfacesNotEnabled = "tenant_surfaces_not_enabled"
 	// CodeTenantSurfaceQuota marks the per-account tenant_surfaces cap
 	// (Hobby 1 / Pro 5 / Scale 25). The Problem carries Limit +
 	// Observed (the observed count is the cap) so the dashboard can
@@ -1661,7 +1666,7 @@ func StatusForCode(code string) int {
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
 	case CodeCapacity, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
-		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity:
+		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled:
 		return http.StatusServiceUnavailable
@@ -3755,6 +3760,17 @@ func ErrTenantSurfacesNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeTenantSurfacesNotAllowed,
 		"Tenant surfaces unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include tenant surfaces; upgrade to Hobby or above to expose one app to many customer hostnames under a single cert.", p)).
+		WithDocs(docsBase + "/plans#tenant-surfaces")
+}
+
+// ErrTenantSurfacesNotEnabled is returned when the cluster-level tenant
+// surfaces runtime switch is off. This is a deployment state, not a billing
+// decision, so the 503 and dedicated code let clients ask the operator to
+// enable the feature without suggesting an impossible plan downgrade.
+func ErrTenantSurfacesNotEnabled() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeTenantSurfacesNotEnabled,
+		"Tenant surfaces are not enabled",
+		"the FAAS_TENANT_SURFACES_ENABLED flag is not enabled on this cluster; ask the cluster operator to enable the tenant-surface API").
 		WithDocs(docsBase + "/plans#tenant-surfaces")
 }
 

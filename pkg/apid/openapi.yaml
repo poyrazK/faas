@@ -215,7 +215,7 @@ tags:
       holds N hostnames under one SAN bundle. Soft-deleted surfaces
       are filtered out of list/get; the cert engine picks up
       pending-state surfaces via pg_notify('tenant_surface_changed')
-      to mint the cert. Returns 402 when the
+      to mint the cert. Returns 503 when the
       `FAAS_TENANT_SURFACES_ENABLED` flag is off.
   - name: usage
     description: Usage roll-up and metering.
@@ -6188,7 +6188,7 @@ paths:
       summary: List tenant surfaces on an app.
       description: |
         Returns every active tenant surface on the app. Soft-deleted
-        surfaces are filtered out server-side. Returns 402 when the
+        surfaces are filtered out server-side. Returns 503 when the
         `FAAS_TENANT_SURFACES_ENABLED` flag is off (the cluster ships
         dark until the cert-engine real-mint ADR lands).
       responses:
@@ -6199,6 +6199,7 @@ paths:
               schema: { $ref: '#/components/schemas/ListTenantSurfacesResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
+        '503': { $ref: '#/components/responses/TenantSurfacesNotEnabled' }
         '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [tenant-surfaces]
@@ -6225,6 +6226,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
+        '503': { $ref: '#/components/responses/TenantSurfacesNotEnabled' }
         '403':
           description: "code: tenant_surface_quota | tenant_hostname_quota | forbidden — the account or seed-hostname cap is exhausted, or the caller lacks scope."
           content:
@@ -6257,6 +6259,7 @@ paths:
               schema: { $ref: '#/components/schemas/TenantSurfaceResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
+        '503': { $ref: '#/components/responses/TenantSurfacesNotEnabled' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [tenant-surfaces]
@@ -6266,6 +6269,7 @@ paths:
         '204': { description: Surface and hostnames removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
+        '503': { $ref: '#/components/responses/TenantSurfacesNotEnabled' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/tenant-surfaces/{id}/hostnames:
@@ -6296,6 +6300,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
+        '503': { $ref: '#/components/responses/TenantSurfacesNotEnabled' }
         '403':
           description: "code: tenant_hostname_quota | forbidden — the surface hostname cap is exhausted or the caller lacks scope."
           content:
@@ -6329,6 +6334,7 @@ paths:
         '204': { description: Hostname removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/TenantSurfacesNotAllowed' }
+        '503': { $ref: '#/components/responses/TenantSurfacesNotEnabled' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ADR-117 PR-C: env-diff matrix endpoint. The response is
@@ -25856,7 +25862,13 @@ components:
   responses:
 
     TenantSurfacesNotAllowed:
-      description: "code: tenant_surfaces_not_allowed — this plan or cluster does not enable tenant surfaces."
+      description: "code: tenant_surfaces_not_allowed — this account's plan does not include tenant surfaces."
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    TenantSurfacesNotEnabled:
+      description: "code: tenant_surfaces_not_enabled — the cluster operator has not enabled the tenant-surface API."
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
