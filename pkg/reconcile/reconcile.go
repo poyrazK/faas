@@ -83,6 +83,20 @@ type Result struct {
 	// WasIgnored is true when guard #2 (production-branch-only)
 	// tripped. The caller returns 200-ignored to the webhook.
 	WasIgnored bool
+	// scanSourceApplied is internal bookkeeping for the atomic project
+	// reconcile path; it prevents a second non-transactional stamp after
+	// the store already committed the upgrade with app/cron mutations.
+	scanSourceApplied bool
+}
+
+// CronSpec is the desired scheduled workload shape supplied by the project
+// apply path. The state layer resolves WorkloadName to the app created or
+// retained by the same atomic transaction.
+type CronSpec struct {
+	WorkloadName string
+	Schedule     string
+	Path         string
+	Enabled      bool
 }
 
 // Alert is one entry in Result.Alerts. Kind is the stable enum;
@@ -140,7 +154,22 @@ func (s *Service) Reconcile(
 	// Implementation lives in the reconcile_internal.go file in
 	// the same package. Splitting it keeps this file readable as
 	// the package's public-surface contract.
-	return s.reconcile(ctx, project, scan, commitSHA, branch, exclude)
+	return s.reconcile(ctx, project, scan, commitSHA, branch, exclude, nil)
+}
+
+// ReconcileWithCrons is the project-apply variant of Reconcile. It carries
+// the scanned cron desired set into the store's atomic app+cron mutation
+// transaction; callers that do not manage project crons should use Reconcile.
+func (s *Service) ReconcileWithCrons(
+	ctx context.Context,
+	project state.Project,
+	scan reposcan.Result,
+	commitSHA string,
+	branch string,
+	exclude []string,
+	crons []CronSpec,
+) (Result, error) {
+	return s.reconcile(ctx, project, scan, commitSHA, branch, exclude, crons)
 }
 
 // Plan runs the same three guards + diff as Reconcile but never
