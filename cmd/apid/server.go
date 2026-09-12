@@ -103,9 +103,11 @@ type server struct {
 	// yet". Set via env FAAS_GATEWAYD_CONTROL_URL at boot.
 	gatewaydControlURL string
 	// realtimeRegistrar is optional in split-box deployments. When set, apid
-	// mirrors durable endpoint writes onto the local realtimed owner; cross-node
-	// routing will replace this seam with the leased control-plane adapter.
+	// mirrors durable endpoint writes onto the local or leased realtime owner.
 	realtimeRegistrar realtimeEndpointRegistrar
+	// realtimeClient is retained so the leased fleet adapter can use the local
+	// Unix owner for endpoint registration and connection discovery.
+	realtimeClient *realtime.Client
 	// realtimeOwner routes customer-facing connection operations to the node
 	// that owns a live socket. The initial implementation wires a local Unix
 	// client; a leased cross-node resolver can replace it without changing the
@@ -695,14 +697,15 @@ func (s *server) WithRealtimeSocket(socket string) *server {
 		client := realtime.NewUnixClient(socket)
 		s.realtimeRegistrar = client
 		s.realtimeOwner = localRealtimeOwner{client: client}
+		s.realtimeClient = client
 	}
 	return s
 }
 
 // WithRealtimeOwner attaches the owner resolver used by public managed
-// realtime operations. Production currently uses WithRealtimeSocket; this
-// seam lets the dispatch/lease control plane route operations to another
-// realtime node and keeps tests independent of a Unix socket.
+// realtime operations. Production installs the leased fleet adapter when the
+// persistence boundary supports it; tests can use this seam independently of
+// a Unix socket.
 func (s *server) WithRealtimeOwner(owner realtimeOwner) *server {
 	s.realtimeOwner = owner
 	return s
