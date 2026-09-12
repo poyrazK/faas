@@ -817,9 +817,9 @@ func TestDeployZeroConfig_409OtherAccount_HardFail(t *testing.T) {
 	}
 }
 
-// TestDeployZeroConfig_JSONShape pins that the refactored path
-// honours --json: stdout is a single JSON document describing the
-// deployment, not the human "packing / build queued" lines.
+// TestDeployZeroConfig_JSONShape pins that the queued receipt path honours
+// --json --no-wait: stdout is a single JSON document describing the
+// accepted deployment, not the human "packing / build queued" lines.
 // The legacy zero-config path always streamed logs regardless
 // of --json (issue #1182 §3.2).
 func TestDeployZeroConfig_JSONShape(t *testing.T) {
@@ -853,7 +853,7 @@ func TestDeployZeroConfig_JSONShape(t *testing.T) {
 	jsonOutput = true
 	t.Cleanup(func() { jsonOutput = false })
 
-	code := cmdDeployTarball([]string{"--json", "--name", "demo"})
+	code := cmdDeployTarball([]string{"--json", "--no-wait", "--name", "demo"})
 	out := stdout.Bytes()
 
 	if code != 0 {
@@ -944,7 +944,7 @@ func TestDeployZeroConfig_ReceiptContainsProvenance(t *testing.T) {
 	jsonOutput = true
 	t.Cleanup(func() { jsonOutput = false })
 
-	code := cmdDeployTarball([]string{"--json", "--name", "demo"})
+	code := cmdDeployTarball([]string{"--json", "--no-wait", "--name", "demo"})
 	if code != 0 {
 		t.Fatalf("zero-config deploy --json exit = %d, want 0\nstdout: %s", code, stdout.String())
 	}

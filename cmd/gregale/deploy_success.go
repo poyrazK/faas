@@ -50,7 +50,7 @@ func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.Deployme
 }
 
 // waitForDeploymentReceiptUntil is the timeout-aware implementation used by
-// `gregale deploy --json --wait`.
+// JSON deploys whenever lifecycle waiting is enabled (the default).
 func waitForDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.DeploymentResponse, bool) {
 	if dep.Status == statusLive || dep.Status == deploymentStatusFailed {
 		return deploymentWithReceipt(ctx, c, dep), true

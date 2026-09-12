@@ -229,7 +229,9 @@ cmd_deploy() {
 
     # 2. Invoke the vendored CLI. The wire shape is the same as
     #    `gregale deploy --repo --ref` — POST /v1/apps/{slug}/deployments/source-ref.
-    #    --json stdout is the canonical DeploymentResponse shape;
+    #    --json --no-wait stdout is the canonical queued receipt. The Action
+    #    owns optional waiting below so it can renew short-lived OIDC identity
+    #    between bounded polling windows.
     #    stderr in failure mode is the RFC 7807 Problem JSON line
     #    (cmd/gregale/json_flag.go:116-122 writeJSONProblem).
     #
@@ -257,7 +259,7 @@ cmd_deploy() {
     fi
     local dep_json
     if ! dep_json="$(
-        "$BIN" deploy --json \
+        "$BIN" deploy --json --no-wait \
             --name "$INPUT_APP" \
             --repo "$INPUT_REPO" \
             --ref "$INPUT_REF" \
