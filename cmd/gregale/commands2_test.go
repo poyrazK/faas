@@ -2004,7 +2004,7 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 	if !strings.Contains(out, "app: my-app") {
 		t.Errorf("snippet missing the --app slug; got:\n%s", out)
 	}
-	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@v1") {
+	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@v0") {
 		t.Errorf("snippet missing the action reference; got:\n%s", out)
 	}
 	if !strings.Contains(out, "id-token: write") {

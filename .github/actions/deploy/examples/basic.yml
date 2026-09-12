@@ -13,7 +13,7 @@ jobs:
       checks: write                    # publish the deployment link in GitHub Checks
       id-token: write                   # Gregale exchanges the job JWT for a 5-minute bearer
     steps:
-      - uses: poyrazK/faas/.github/actions/deploy@v1
+      - uses: poyrazK/faas/.github/actions/deploy@v0
         with:
           api-base: https://api.gregale.dev
           app: my-app

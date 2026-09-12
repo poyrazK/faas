@@ -1,6 +1,7 @@
 # ADR-093 · `faas-deploy-action` customer-facing GitHub Action (issue #270)
 
 - **Status:** accepted
+- **Amended:** 2026-09-12 (public beta uses the maintained `v0` Action ref)
 - **Date:** 2026-08-11
 - **Issue:** #270 (`SDK: Publish an official GitHub deploy action`)
 - **Labels:** `tier-2-public-launch`, `customer-facing`, `dx`
@@ -40,7 +41,7 @@ big PR.
 | Runtime dependency | None. Vendored binary committed to the repo per release. | None. | Node.js runtime in the Actions runner. |
 | Determinism | Best. `cli-version` is the literal vendored binary. | Best. | Mixed. |
 | Repo size | Heavier: ~15 MB binary in `.github/actions/deploy/bin/`. `git clone --depth 1` keeps day-to-day work fast. | Tighter: ~15 MB in the action repo only. | ~200 KB. |
-| Customer `uses:` URL | `poyrazK/faas/.github/actions/deploy@v1` | `poyrazK/faas-deploy-action@v1` | `poyrazK/faas-deploy-action@v1` |
+| Customer `uses:` URL | `poyrazK/faas/.github/actions/deploy@v0` during public beta | `poyrazK/faas-deploy-action@v1` | `poyrazK/faas-deploy-action@v1` |
 | Cross-repo coordination | None. | Required (issue #270 plan R8). | None. |
 | Vendor lock-in | Customer pinned to `poyrazK/faas` repo path. | Customer pinned to a separate repo; cleaner namespace. | Customer pinned to a separate repo. |
 | Release pipeline | New `.github/workflows/release.yml` (no precedent in this repo) — cross-builds at tag, vendors binary, updates `src/version.txt`, commits to `release/v<tag>` branch, attaches to GitHub Release. | New release workflow in the action repo. | New npm publish workflow. |
@@ -83,7 +84,7 @@ the same `LDFLAGS` (`pkg/wire.Version` stamping) that
 `SHA256SUMS` file, copies the binary into `.github/actions/deploy/bin/gregale`,
 updates `src/version.txt`, commits everything to a `release/v<tag>`
 branch, **force-updates the `vN` moving tag** so customers pinned at
-`@v1` always resolve to the latest vendored binary, and attaches the
+`@v0` always resolve to the latest public-beta vendored binary, and attaches the
 binary + SHA256SUMS to a GitHub Release via
 `softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2`
 (the same SHA pinned at
@@ -101,7 +102,7 @@ The snippet uses `${{ github.repository }}` / `${{ github.sha }}`
 placeholders by default; when run inside an Actions runner
 (`GITHUB_REPOSITORY` + `GITHUB_SHA` env vars are set), the snippet
 hard-codes those values. The Action reference is pinned to
-`poyrazK/faas/.github/actions/deploy@v1` (the user-confirmed shape
+`poyrazK/faas/.github/actions/deploy@v0` during public beta (the moving-major shape
 from the plan) and a `# pin:` comment line surfaces the immutable
 SHA for customers who want reproducibility.
 
@@ -156,7 +157,7 @@ deployment row and the audit row distinguishes them by
 - **No migration needed.** The audit-row fields live in
   `audit_log` JSON column (no schema change). Plan R6 documents
   this explicitly.
-- **Monorepo coupling.** Customers who pin `poyrazK/faas/.github/actions/deploy@v1`
+- **Monorepo coupling.** Customers who pin `poyrazK/faas/.github/actions/deploy@v0`
   are coupled to the release cadence of the whole repo. A fork
   or refactor that moves the action to a separate repo is a
   documentation break for those customers. Plan R8 identified

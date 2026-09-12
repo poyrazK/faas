@@ -97,7 +97,7 @@ GitHub Actions already has a first-class path that needs no install — the
 action vendors the binary:
 
 ```yaml
-- uses: poyrazK/faas/.github/actions/deploy@v1
+- uses: poyrazK/faas/.github/actions/deploy@v0
   with:
     app: my-app
 ```
