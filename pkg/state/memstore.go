@@ -179,7 +179,10 @@ type MemStore struct {
 	statusCreateKeys map[string]string
 	statusUpdateKeys map[string]string
 	statusBuckets    map[string]StatusBucket
-	builds           map[string]Build
+	// operatorIncidentTriage mirrors operator_incident_triage, keyed by the
+	// stable inbox dedupe key. It contains only operator workflow metadata.
+	operatorIncidentTriage map[string]OperatorIncidentTriage
+	builds                 map[string]Build
 	// builderVMCleanup mirrors builder_vm_cleanup. Rows are durable in
 	// production and intentionally private here; tests exercise the same
 	// claim/complete capability through the state interface.
@@ -823,14 +826,15 @@ func NewMemStore() *MemStore {
 		githubWebhookSecrets:    map[int64][]byte{},
 		githubWebhookSecretMeta: map[int64]webhookSecretMeta{},
 		// Issue #246 acceptance item 7: mail suppression list mirror.
-		mailSuppressions:    map[string]mailSuppressionRow{},
-		deployFailedEmailAt: map[string]time.Time{},
-		deployments:         map[string]Deployment{},
-		statusCreateKeys:    map[string]string{},
-		statusUpdateKeys:    map[string]string{},
-		statusBuckets:       map[string]StatusBucket{},
-		builds:              map[string]Build{},
-		builderVMCleanup:    map[string]builderVMCleanupRow{},
+		mailSuppressions:       map[string]mailSuppressionRow{},
+		deployFailedEmailAt:    map[string]time.Time{},
+		deployments:            map[string]Deployment{},
+		statusCreateKeys:       map[string]string{},
+		statusUpdateKeys:       map[string]string{},
+		statusBuckets:          map[string]StatusBucket{},
+		operatorIncidentTriage: map[string]OperatorIncidentTriage{},
+		builds:                 map[string]Build{},
+		builderVMCleanup:       map[string]builderVMCleanupRow{},
 		// buildProvenance is the ADR-038 "what ran?" map keyed by
 		// build_id (mirrors the build_provenance.build_id UNIQUE).
 		// Starts empty; CreateBuildProvenance fills it.
@@ -7105,6 +7109,44 @@ func (m *MemStore) ListOpenStatusIncidents(_ context.Context) ([]StatusIncident,
 		}
 	}
 	return out, nil
+}
+
+// ListOperatorIncidentTriage returns the rows matching the supplied inbox
+// keys. An empty key set is a no-op, matching PgStore and avoiding an
+// accidental full-table scan.
+func (m *MemStore) ListOperatorIncidentTriage(_ context.Context, dedupeKeys []string) (map[string]OperatorIncidentTriage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]OperatorIncidentTriage, len(dedupeKeys))
+	for _, key := range dedupeKeys {
+		if row, ok := m.operatorIncidentTriage[key]; ok {
+			out[key] = row
+		}
+	}
+	return out, nil
+}
+
+// UpsertOperatorIncidentTriage mirrors the single-row primary-key upsert in
+// PgStore. The operation is intentionally independent from source incidents.
+func (m *MemStore) UpsertOperatorIncidentTriage(_ context.Context, dedupeKey, status, owner, note, updatedBy string) (OperatorIncidentTriage, error) {
+	if err := validateOperatorIncidentTriage(dedupeKey, status, owner, note, updatedBy); err != nil {
+		return OperatorIncidentTriage{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.operatorIncidentTriage == nil {
+		m.operatorIncidentTriage = make(map[string]OperatorIncidentTriage)
+	}
+	row := OperatorIncidentTriage{
+		DedupeKey: dedupeKey,
+		Status:    status,
+		Owner:     owner,
+		Note:      note,
+		UpdatedAt: time.Now().UTC(),
+		UpdatedBy: updatedBy,
+	}
+	m.operatorIncidentTriage[dedupeKey] = row
+	return row, nil
 }
 
 func (m *MemStore) CreatePublicStatusEvent(_ context.Context, input StatusEventCreate) (StatusIncident, error) {

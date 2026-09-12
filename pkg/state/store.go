@@ -2697,6 +2697,13 @@ type Store interface {
 	RecordStatusBucket(ctx context.Context, bucket StatusBucket) error
 	ListStatusBuckets(ctx context.Context, from, to time.Time) ([]StatusBucket, error)
 
+	// Operator incident triage is durable, operator-authored metadata keyed by
+	// the incident inbox dedupe key. It never mutates the source deployment,
+	// job, node, or alert state. List is bounded by the caller's key set so a
+	// fleet inbox does not fan out into one query per incident.
+	ListOperatorIncidentTriage(ctx context.Context, dedupeKeys []string) (map[string]OperatorIncidentTriage, error)
+	UpsertOperatorIncidentTriage(ctx context.Context, dedupeKey, status, owner, note, updatedBy string) (OperatorIncidentTriage, error)
+
 	// ADR-122 / issue #975 item #1: per-deployment OpenAPI
 	// document capture. The surface is paid-only (Free plan
 	// returns 403 from the apid) but the microVM always captures

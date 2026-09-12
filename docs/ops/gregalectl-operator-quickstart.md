@@ -306,7 +306,21 @@ gregalectl obs incidents --json
 Each row carries a stable incident/dedupe ID, safe resource identifiers, an
 inspection path, and a runbook link. Use the existing `deployments`, `jobs`,
 and `compute-nodes` commands for explicit retry, cancellation, or drain
-actions after reviewing the inbox.
+actions after reviewing the inbox. Triage metadata is durable and audited,
+but never changes the underlying workload state. After `gregalectl auth
+step-up`, acknowledge or resolve a row with its dedupe key:
+
+```
+gregalectl auth step-up
+gregalectl obs incidents ack --dedupe-key deployment:<id> \
+    --reason triage_started --owner oncall --yes
+gregalectl obs incidents resolve --dedupe-key deployment:<id> \
+    --reason fixed --note "rollback completed" --yes
+```
+
+The API requires a strict stepped-up operator session, idempotency key, and
+same-origin checks. A signal observed after a resolve is shown as open again
+so recurring node or alert conditions cannot be hidden by stale annotations.
 
 ### Fleet overview and capacity
 

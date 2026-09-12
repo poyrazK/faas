@@ -3061,6 +3061,24 @@ CREATE TABLE public.operator_intents (
 
 
 --
+-- Name: operator_incident_triage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_incident_triage (
+    dedupe_key text NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    owner text DEFAULT ''::text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by text NOT NULL,
+    CONSTRAINT operator_incident_triage_note_len CHECK ((length(note) <= 1024)),
+    CONSTRAINT operator_incident_triage_owner_len CHECK ((length(owner) <= 128)),
+    CONSTRAINT operator_incident_triage_updated_by_len CHECK ((length(updated_by) <= 128)),
+    CONSTRAINT operator_incident_triage_status_check CHECK ((status = ANY (ARRAY['open'::text, 'acknowledged'::text, 'in_progress'::text, 'resolved'::text])))
+);
+
+
+--
 -- Name: org_invitations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4852,6 +4870,14 @@ ALTER TABLE ONLY public.operator_intents
 
 
 --
+-- Name: operator_incident_triage operator_incident_triage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_incident_triage
+    ADD CONSTRAINT operator_incident_triage_pkey PRIMARY KEY (dedupe_key);
+
+
+--
 -- Name: org_invitations org_invitations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6581,6 +6607,13 @@ CREATE INDEX operator_intents_target_idx ON public.operator_intents USING btree 
 --
 
 CREATE INDEX operator_intents_trace_idx ON public.operator_intents USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: operator_incident_triage_updated_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_incident_triage_updated_idx ON public.operator_incident_triage USING btree (updated_at DESC, dedupe_key);
 
 
 --

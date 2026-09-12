@@ -821,7 +821,7 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name:  subObsIncidents,
-				Short: "List bounded deployment, job, node, and alert incidents",
+				Short: "List incidents or acknowledge/resolve one dedupe key",
 				Flags: []cliFlag{
 					{Name: "type", Short: "filter by deployment|job_run|compute_node|platform_alert"},
 					{Name: "severity", Short: "filter by warning|error|critical"},
@@ -831,6 +831,12 @@ var cliCommands = []cliCommand{
 					{Name: "json", Short: "emit structured JSON"},
 					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
 					{Name: "timeout", Short: "HTTP timeout for the apid round-trip (default 10s)"},
+					{Name: "dedupe-key", Short: "incident inbox dedupe key (ack/resolve)"},
+					{Name: "owner", Short: "operator owner (ack/resolve)"},
+					{Name: "note", Short: "bounded operator note (ack/resolve)"},
+					{Name: "reason", Short: "durable audit reason slug (ack/resolve)"},
+					{Name: "trace-id", Short: "32-char hex trace id (ack/resolve)"},
+					{Name: "yes", Short: "acknowledge triage mutation (ack/resolve)"},
 				},
 			},
 			{
