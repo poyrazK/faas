@@ -1,6 +1,6 @@
 package main
 
-// `gregale edge-rules <list|create|get|update|delete> ...` —
+// `gregale edge-rules <list|create|get|update|rm> ...` —
 // customer-facing CLI for the Edge Rules resource (ADR-089, issue #561).
 // PR 1 of the rollout shipped the schema, state, apid CRUD, SDK, and
 // OpenAPI surface (PR #799). PR 2 (this file) ships the CLI wrapper
@@ -74,7 +74,7 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|create|get|update|delete> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|create|get|update|rm> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
@@ -608,13 +608,13 @@ func cmdEdgeRulesUpdate(args []string) int {
 // for CI/scripted paths (issue #312 pattern). Returns 1 if the
 // user cancels (per requireTyped semantics).
 func cmdEdgeRulesRm(args []string) int {
-	fs := flag.NewFlagSet("edge-rules delete", flag.ContinueOnError)
+	fs := flag.NewFlagSet("edge-rules rm", flag.ContinueOnError)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules delete <id> [--quiet]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--quiet]", "edge-rules")
 		return 1
 	}
 	id := fs.Arg(0)

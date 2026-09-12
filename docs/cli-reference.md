@@ -24,15 +24,15 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
-| [`deployments`](#deployments) | List deployments (--limit N \| --before C \| --all) |
+| [`deployments`](#deployments) | List deployments (--app SLUG \| --limit N \| --before C \| --all \| --wide) |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
-| [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete) |
+| [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
 | [`tenant-surfaces`](#tenant-surfaces) | Manage tenant surfaces (multi-hostname SAN bundle per app) |
-| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|delete --app &lt;slug&gt;) |
+| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt;) |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
@@ -689,15 +689,17 @@ Cancel a delayed task
 
 ## deployments
 
-List deployments (--limit N | --before C | --all)
+List deployments (--app SLUG | --limit N | --before C | --all | --wide)
 
-`gregale deployments [--limit <N>] [--before <cursor>] [--all]`
+`gregale deployments [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug (app-scoped deployment history) |  |
 | `--limit <N>` | page size (1-200) |  |
 | `--before <cursor>` | pagination cursor (RFC3339Nano) |  |
 | `--all` | walk every page |  |
+| `--wide` | include annotation columns (by / pr / tag / reason) |  |
 
 
 ## deployment
@@ -734,7 +736,7 @@ Set the per-deployment cold-wake floor
 
 ## deploys
 
-Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete)
+Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|retry)
 
 `gregale deploys [<subcommand>] <id>`
 
@@ -745,6 +747,22 @@ Print the closed 6-stage post-stream summary
 ### deploys status
 
 Print stages, terminal status, and failure guidance
+
+### deploys cancel
+
+Cancel one pending deployment
+
+### deploys reorder
+
+Change one pending deployment&#39;s queue priority
+
+### deploys clear
+
+Hide one deployment from the list
+
+### deploys clear-obsolete
+
+Hide obsolete deployments older than a cutoff
 
 ### deploys retry
 
@@ -908,7 +926,7 @@ Manage hostnames on a surface (add|rm)
 
 ## edge-rules
 
-Per-app edge rules (edge-rules list|create|get|update|delete --app &lt;slug&gt;)
+Per-app edge rules (edge-rules list|create|get|update|rm --app &lt;slug&gt;)
 
 `gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
 

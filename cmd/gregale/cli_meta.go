@@ -548,11 +548,13 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployments,
 		DocSlug: "deployments",
-		Short:   "List deployments (--limit N | --before C | --all)",
+		Short:   "List deployments (--app SLUG | --limit N | --before C | --all | --wide)",
 		Flags: []cliFlag{
+			{Name: "app", Short: "app slug (app-scoped deployment history)", Value: "slug"},
 			{Name: "limit", Short: "page size (1-200)", Value: "N"},
 			{Name: "before", Short: "pagination cursor (RFC3339Nano)", Value: "cursor"},
 			{Name: "all", Short: "walk every page"},
+			{Name: "wide", Short: "include annotation columns (by / pr / tag / reason)"},
 		},
 	},
 	{
@@ -577,15 +579,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeploys,
 		DocSlug: "deploys",
-		Short:   "Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete)",
+		Short:   "Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|retry)",
 		Subcommands: []cliSub{
-			// ADR-117 companion read surface. Future siblings
-			// (timeline, events, artifacts) land here as new
-			// cliSub entries — NOT as flags on the singular
-			// `deployment` verb, which is already at three
-			// flag-shaped drill-downs.
+			// ADR-117 companion read surface and ADR-124 deployment
+			// operations. Keep this list in lock-step with cmdDeploys.
 			{Name: "show", Short: "Print the closed 6-stage post-stream summary"},
 			{Name: statusLiteral, Short: "Print stages, terminal status, and failure guidance"},
+			{Name: "cancel", Short: "Cancel one pending deployment"},
+			{Name: "reorder", Short: "Change one pending deployment's queue priority"},
+			{Name: "clear", Short: "Hide one deployment from the list"},
+			{Name: "clear-obsolete", Short: "Hide obsolete deployments older than a cutoff"},
 			// ADR-117 §Production-ready follow-on, C2 — per-stage
 			// retry. The verb is `retry` (NOT a `--retry` flag on
 			// show/status) because the action mutates state — a
@@ -749,7 +752,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "edge-rules",
 		DocSlug: "edge-rules",
-		Short:   "Per-app edge rules (edge-rules list|create|get|update|delete --app <slug>)",
+		Short:   "Per-app edge rules (edge-rules list|create|get|update|rm --app <slug>)",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List edge rules", Flags: []cliFlag{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
