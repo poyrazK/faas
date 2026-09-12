@@ -86,9 +86,12 @@ Verification compares the artifact with the configured single default
 backend, its non-secret placement fingerprint, the provider-neutral spec, and
 the current canary allowlist. It exits non-zero with stable blocking reasons
 when the approval is missing, expired, tampered with, or not lifecycle
-qualified. The `approval_env` values are the exact staging gate values to
-apply only after the report is reviewed; provisioning remains disabled until
-the operator deliberately enables it.
+qualified. When the approval path is configured on `apid`, the same artifact
+is loaded at startup and is authoritative for staging provisioning; invalid,
+expired, tampered, or mismatched artifacts keep the gate closed. The legacy
+`FAAS_MANAGED_POSTGRES_QUALIFIED*` variables are only a fallback when no
+approval path is configured. Restart `apid` after replacing the artifact.
+Provisioning remains disabled until the operator deliberately enables it.
 
 Set `FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` for the second,
 control-plane smoke in the same isolated run. After the provider checks pass,

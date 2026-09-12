@@ -47,6 +47,14 @@ canary allowlist without contacting Neon. A non-zero exit or any readiness
 reason blocks rollout. Treat the artifact as expired when its `expires_at`
 passes; rerun qualification instead of extending it by hand.
 
+When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
+the provisioning gate loads that artifact at startup and validates it against
+the configured backend and current canary list. The artifact is authoritative:
+missing, malformed, stale, tampered, or mismatched approval keeps provisioning
+disabled even if the legacy `FAAS_MANAGED_POSTGRES_QUALIFIED*` variables look
+valid. Those variables are a fallback only when no approval path is set.
+Restart `apid` after replacing the artifact so the new document is loaded.
+
 ## Staging canary rollout
 
 Keep the global qualification gates enabled only in the isolated staging

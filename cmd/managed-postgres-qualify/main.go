@@ -423,26 +423,7 @@ func runVerify(getenv func(string) string, path string, output, errorOutput io.W
 }
 
 func readQualificationArtifact(path string) (managedpostgres.QualificationArtifact, error) {
-	file, err := os.Open(path) //nolint:forbidigo
-	if err != nil {
-		return managedpostgres.QualificationArtifact{}, err
-	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil || info.Size() > 1<<20 {
-		return managedpostgres.QualificationArtifact{}, errors.New("approval artifact exceeds size limit")
-	}
-	decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
-	decoder.DisallowUnknownFields()
-	var artifact managedpostgres.QualificationArtifact
-	if err := decoder.Decode(&artifact); err != nil {
-		return managedpostgres.QualificationArtifact{}, err
-	}
-	var extra any
-	if decoder.Decode(&extra) != io.EOF {
-		return managedpostgres.QualificationArtifact{}, errors.New("approval artifact has trailing data")
-	}
-	return artifact, nil
+	return managedpostgres.LoadQualificationArtifact(path)
 }
 
 func isLiveQualificationEnabled(getenv func(string) string) bool {
