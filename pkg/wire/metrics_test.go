@@ -2419,3 +2419,22 @@ func TestOpsMetrics_AlertPresetSignalsRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestOpsMetrics_SetServiceReplicaStatus(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.SetServiceReplicaStatus("app-1", 4, 1, 1, 1, 1)
+	body := render(t, m)
+	for _, want := range []string{
+		`schedd_service_replicas{app="app-1",state="desired"} 4`,
+		`schedd_service_replicas{app="app-1",state="ready"} 1`,
+		`schedd_service_replicas{app="app-1",state="starting"} 1`,
+		`schedd_service_replicas{app="app-1",state="draining"} 1`,
+		`schedd_service_replicas{app="app-1",state="unavailable"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in /metrics:\n%s", want, body)
+		}
+	}
+	var nilMetrics *wire.OpsMetrics
+	nilMetrics.SetServiceReplicaStatus("ignored", 1, 1, 0, 0, 0)
+}

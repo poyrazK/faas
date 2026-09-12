@@ -189,6 +189,25 @@ func (m *MemStore) MarkSnapshotReplicaReady(_ context.Context, snapshotID, nodeI
 	return errors.New("state: snapshot replica lease token required")
 }
 
+func (m *MemStore) RenewSnapshotReplicaLease(_ context.Context, snapshotID, nodeID, leaseToken string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if leaseToken == "" {
+		return errors.New("state: snapshot replica lease token required")
+	}
+	key := snapshotReplicaKey{snapshotID: snapshotID, nodeID: nodeID}
+	row, ok := m.snapshotReplicas[key]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.state != SnapshotReplicaSyncing || row.leaseToken != leaseToken {
+		return ErrConflict
+	}
+	row.updatedAt = time.Now()
+	m.snapshotReplicas[key] = row
+	return nil
+}
+
 func (m *MemStore) MarkSnapshotReplicaReadyWithLease(_ context.Context, snapshotID, nodeID, leaseToken string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

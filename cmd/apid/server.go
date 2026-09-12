@@ -1936,6 +1936,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryCoverageHandler))))
+	mux.HandleFunc("GET /v1/apps/{slug}/debug/running", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRunningHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	// Portable incident artifact for the customer debugger. The export uses
 	// the same retention and tenant gates as the list endpoint, but is kept on

@@ -252,6 +252,26 @@ func (s *PgStore) MarkSnapshotReplicaReady(ctx context.Context, snapshotID, node
 	return errors.New("state: snapshot replica lease token required")
 }
 
+func (s *PgStore) RenewSnapshotReplicaLease(ctx context.Context, snapshotID, nodeID, leaseToken string) error {
+	if snapshotID == "" || nodeID == "" || leaseToken == "" {
+		return errors.New("state: renew snapshot replica lease: snapshot_id, node_id, and lease token required")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		update snapshot_replicas
+		   set updated_at = now()
+		 where snapshot_id = $1
+		   and node_id = $2
+		   and state = 'syncing'
+		   and lease_token = $3`, snapshotID, nodeID, leaseToken)
+	if err != nil {
+		return fmt.Errorf("state: renew snapshot replica lease: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
 func (s *PgStore) MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nodeID string, cause error) error {
 	return errors.New("state: snapshot replica lease token required")
 }

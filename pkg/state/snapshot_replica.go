@@ -128,6 +128,9 @@ type SnapshotReplicaStore interface {
 // production PgStore and MemStore implement this stronger interface.
 type SnapshotReplicaLeaseStore interface {
 	SnapshotReplicaStore
+	// RenewSnapshotReplicaLease extends the current claim without changing its
+	// fencing token. ErrConflict means another worker reclaimed the row.
+	RenewSnapshotReplicaLease(ctx context.Context, snapshotID, nodeID, leaseToken string) error
 	MarkSnapshotReplicaReadyWithLease(ctx context.Context, snapshotID, nodeID, leaseToken string) error
 	MarkSnapshotReplicaFailedWithLease(ctx context.Context, snapshotID, nodeID, leaseToken string, cause error) error
 }

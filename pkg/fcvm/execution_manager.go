@@ -36,6 +36,12 @@ func (m *Manager) ExecuteExecution(ctx context.Context, instance string, req exe
 	if m == nil || m.vmm == nil {
 		return zero, ErrExecutionNotConfigured
 	}
+	// A caller may invoke vmmd directly without going through schedd's
+	// deadline-bearing coordinator. Bound both the vsock dial and guest
+	// exchange to the validated request budget so a longer parent context can
+	// never turn a disposable run into an unbounded VM lease.
+	requestCtx, cancelRequest := context.WithTimeout(ctx, time.Duration(req.TimeoutMS)*time.Millisecond)
+	defer cancelRequest()
 
 	m.mu.Lock()
 	inst, ok := m.live[instance]
@@ -48,7 +54,7 @@ func (m *Manager) ExecuteExecution(ctx context.Context, instance string, req exe
 	if !ok {
 		return zero, ErrExecutionNotConfigured
 	}
-	session, err := dialer.DialExecution(ctx, inst.Lease)
+	session, err := dialer.DialExecution(requestCtx, inst.Lease)
 	if err != nil {
 		// A failed dial cannot be retried safely: the guest may have accepted
 		// the CONNECT and then disappeared. Release the live VM and lease.
@@ -71,7 +77,7 @@ func (m *Manager) ExecuteExecution(ctx context.Context, instance string, req exe
 		return zero, nilSessionErr
 	}
 
-	result, executeErr := session.Execute(ctx, req)
+	result, executeErr := session.Execute(requestCtx, req)
 	destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionDestroyTimeout)
 	sessionDestroyErr := session.Destroy(destroyCtx)
 	// ExecutionSession's destroy hook tears down Firecracker, while Manager
