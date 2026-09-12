@@ -675,6 +675,14 @@ func testOperatorIncidentTriage(t *testing.T, fx *Fixture) {
 	key := "deployment:" + uuid.NewString()
 	foreignKey := "job_run:" + uuid.NewString()
 
+	empty, err := fx.Store.ListOperatorIncidentTriage(fx.Ctx, nil)
+	if err != nil {
+		t.Fatalf("ListOperatorIncidentTriage(nil): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("nil-key triage rows = %+v, want empty", empty)
+	}
+
 	initial, err := fx.Store.ListOperatorIncidentTriage(fx.Ctx, []string{key, foreignKey})
 	if err != nil {
 		t.Fatalf("ListOperatorIncidentTriage(empty): %v", err)
