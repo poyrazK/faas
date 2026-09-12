@@ -299,6 +299,9 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/account/plan":                     "ChangePlan",
 	"GET /v1/account":                            "Whoami",
 	"GET /v1/capabilities":                       "GetCapabilities",
+	"POST /v1/executions":                        "CreateExecution",
+	"GET /v1/executions/{id}":                    "GetExecution",
+	"DELETE /v1/executions/{id}":                 "CancelExecution",
 	"POST /v1/account/restore":                   "RestoreAccount",
 	"POST /v1/account/overage-cap":               "RaiseOverageCap", // issue #561 spend cap
 	"POST /v1/account/mfa/disable-email":         "PostAccountMfaDisableEmail",

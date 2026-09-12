@@ -12,6 +12,17 @@
       "acceptance_test": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"
     },
     {
+      "id": "disposable-runs",
+      "name": "Disposable isolated runs",
+      "category": "runtime",
+      "description": "Execute untrusted Node.js or Python source in a fresh, networkless Firecracker microVM with bounded time, memory, and output.",
+      "maturity": "preview",
+      "plans": ["hobby", "pro", "scale"],
+      "docs_url": "https://gregale.dev/docs/executions",
+      "operator_flag": "FAAS_EXECUTION_API_ENABLED",
+      "acceptance_test": "cmd/apid/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection"
+    },
+    {
       "id": "firecracker-isolation",
       "name": "Firecracker isolation",
       "category": "runtime",
