@@ -1,3 +1,5 @@
+// adr: 099
+
 package sched
 
 import (
@@ -80,6 +82,46 @@ func TestEngineWakeJobCallsVMMWithCompleteSpec(t *testing.T) {
 	}
 	if result.Method != "cold_boot" || result.NodeID != vmm.spec.NodeID {
 		t.Fatalf("result = %+v, want cold_boot and returned node", result)
+	}
+}
+
+func TestEngineWakeJobFleetSchedulerChoosesActiveComputeNode(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	defaultLocal, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName(default-local): %v", err)
+	}
+	if err := store.SetComputeNodeActive(ctx, defaultLocal.ID, false); err != nil {
+		t.Fatalf("SetComputeNodeActive(default-local): %v", err)
+	}
+	remote, err := store.CreateComputeNode(ctx, state.ComputeNode{
+		Name:               "fleet-compute-1",
+		TargetURL:          "tcp://10.0.0.42:50051",
+		VPCPUs:             4,
+		MemMB:              8192,
+		MaxConcurrency:     20,
+		AdmissionCeilingMB: 4096,
+		VCPUBudget:         4,
+		Active:             true,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode(remote): %v", err)
+	}
+	vmm := &recordingJobVMM{}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+
+	result, err := e.WakeJob(ctx, acct.ID, run.ID, 0)
+	if err != nil {
+		t.Fatalf("WakeJob: %v", err)
+	}
+	if result.NodeID != remote.ID || vmm.spec.NodeID != remote.ID {
+		t.Fatalf("job routed to result=%q spec=%q, want active fleet node %q", result.NodeID, vmm.spec.NodeID, remote.ID)
+	}
+	if got := e.Ledger().ResidentRAMForNode(remote.ID); got == 0 {
+		t.Fatal("remote node has no job RAM reservation")
 	}
 }
 
