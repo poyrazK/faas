@@ -4184,6 +4184,32 @@ func (c *Client) RetryAppWebhookDelivery(ctx context.Context, slug, id, delivery
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
 }
 
+// --- Managed realtime endpoints (ADR-156) -------------------------------
+
+func (c *Client) ListManagedRealtimeEndpoints(ctx context.Context, slug string) ([]ManagedRealtimeEndpointResponse, error) {
+	var out []ManagedRealtimeEndpointResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/realtime/endpoints", nil, &out)
+}
+
+func (c *Client) CreateManagedRealtimeEndpoint(ctx context.Context, slug string, req CreateManagedRealtimeEndpointRequest) (ManagedRealtimeEndpointResponse, error) {
+	var out ManagedRealtimeEndpointResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints", req, &out)
+}
+
+func (c *Client) GetManagedRealtimeEndpoint(ctx context.Context, slug, id string) (ManagedRealtimeEndpointResponse, error) {
+	var out ManagedRealtimeEndpointResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/realtime/endpoints/"+id, nil, &out)
+}
+
+func (c *Client) UpdateManagedRealtimeEndpoint(ctx context.Context, slug, id string, req UpdateManagedRealtimeEndpointRequest) (ManagedRealtimeEndpointResponse, error) {
+	var out ManagedRealtimeEndpointResponse
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/realtime/endpoints/"+id, req, &out)
+}
+
+func (c *Client) DeleteManagedRealtimeEndpoint(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+id, nil, nil)
+}
+
 // --- Customer runtime log drains (issue #1398 O4) -------------------------
 
 func (c *Client) ListAppLogDrains(ctx context.Context, slug string) ([]AppLogDrainResponse, error) {

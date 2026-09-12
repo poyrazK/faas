@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -101,6 +102,10 @@ type server struct {
 	// distinguishes "gatewayd not reachable" from "no traffic
 	// yet". Set via env FAAS_GATEWAYD_CONTROL_URL at boot.
 	gatewaydControlURL string
+	// realtimeRegistrar is optional in split-box deployments. When set, apid
+	// mirrors durable endpoint writes onto the local realtimed owner; cross-node
+	// routing will replace this seam with the leased control-plane adapter.
+	realtimeRegistrar realtimeEndpointRegistrar
 	// events is the in-process broadcaster the SSE handlers read from
 	// (slice 5/6). nil falls back to a fresh one so callers can defer
 	// initialization in unit tests.
@@ -657,6 +662,16 @@ func (s *server) WithHostHashFunc(fn func(host string) (string, error)) *server 
 // this PR; same-box is the only supported posture today).
 func (s *server) WithGatewaydControlURL(url string) *server {
 	s.gatewaydControlURL = url
+	return s
+}
+
+// WithRealtimeSocket attaches the local realtimed management client. The
+// socket is deliberately optional so tests and split-box control planes can
+// persist endpoint state without assuming a local realtime owner.
+func (s *server) WithRealtimeSocket(socket string) *server {
+	if socket != "" {
+		s.realtimeRegistrar = realtime.NewUnixClient(socket)
+	}
 	return s
 }
 
@@ -1834,6 +1849,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAppWebhookSecret))))
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
+
+	// Managed realtime endpoint resources (ADR-156). These routes persist the
+	// callback contract and sealed credentials; live connections remain owned by
+	// realtimed and are reconciled from this durable source of truth.
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listManagedRealtimeEndpoints))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createManagedRealtimeEndpoint)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimeEndpoint))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateManagedRealtimeEndpoint))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteManagedRealtimeEndpoint))))
 
 	// Customer runtime log drains (issue #1398 O4). Each destination is
 	// provider-neutral: HTTP JSON covers compatible intake endpoints, while

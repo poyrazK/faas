@@ -1,6 +1,6 @@
 # ADR-156 — Managed realtime connections
 
-Status: accepted — first implementation slice (2026-09-12)
+Status: accepted — control-plane endpoint resources (2026-09-12)
 
 ## Decision
 
@@ -77,9 +77,9 @@ registry is intentionally node-local.
 
 ## Follow-up work
 
-The first slice provides the socket owner, gateway routing, callbacks, and
-bounded management API. A production control-plane integration still needs a
-durable endpoint/resource table, leased cross-node registry or deterministic
-node routing, and the authenticated customer-facing API in `apid`. Those
-pieces should reuse the existing `pkg/dispatch` retry/lease contracts rather
-than writing Postgres rows from `realtimed`.
+The socket owner, gateway routing, callbacks, durable endpoint/resource table,
+and authenticated `apid` CRUD API are now shipped. The remaining production
+work is a leased cross-node registry or deterministic node routing, plus
+customer-facing send/close/subscribe/publish operations. Those pieces should
+reuse the existing `pkg/dispatch` retry/lease contracts rather than writing
+Postgres rows from `realtimed`.

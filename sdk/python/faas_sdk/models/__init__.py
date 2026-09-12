@@ -262,6 +262,7 @@ from .create_managed_postgres_binding_request_access import CreateManagedPostgre
 from .create_managed_postgres_database_request import CreateManagedPostgresDatabaseRequest
 from .create_managed_postgres_database_request_availability import CreateManagedPostgresDatabaseRequestAvailability
 from .create_managed_postgres_database_request_service_class import CreateManagedPostgresDatabaseRequestServiceClass
+from .create_managed_realtime_endpoint_request import CreateManagedRealtimeEndpointRequest
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
@@ -593,6 +594,11 @@ from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperat
 from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_realtime_endpoint_response import ManagedRealtimeEndpointResponse
+from .managed_realtime_endpoint_response_auth_token_masked import ManagedRealtimeEndpointResponseAuthTokenMasked
+from .managed_realtime_endpoint_response_callback_auth_token_masked import (
+    ManagedRealtimeEndpointResponseCallbackAuthTokenMasked,
+)
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -924,6 +930,7 @@ from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidat
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
+from .update_managed_realtime_endpoint_request import UpdateManagedRealtimeEndpointRequest
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
 from .update_trigger_request import UpdateTriggerRequest
@@ -1237,6 +1244,7 @@ __all__ = (
     "CreateManagedPostgresDatabaseRequest",
     "CreateManagedPostgresDatabaseRequestAvailability",
     "CreateManagedPostgresDatabaseRequestServiceClass",
+    "CreateManagedRealtimeEndpointRequest",
     "CreateMirrorRuleRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
@@ -1560,6 +1568,9 @@ __all__ = (
     "ManagedPostgresUsageOperatorResponseGuardrailState",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedRealtimeEndpointResponse",
+    "ManagedRealtimeEndpointResponseAuthTokenMasked",
+    "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
@@ -1887,6 +1898,7 @@ __all__ = (
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
+    "UpdateManagedRealtimeEndpointRequest",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
     "UpdateTriggerRequest",

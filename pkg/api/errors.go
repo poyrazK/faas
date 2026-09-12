@@ -1663,7 +1663,7 @@ func StatusForCode(code string) int {
 	case CodeSourceTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
-		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeHandlerMissing, CodeImageRequired,
+		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
 		CodeOpenAPIPolicyConfirmationRequired:
@@ -1966,6 +1966,10 @@ func StatusForCode(code string) int {
 	case CodePlanWebhooksNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanWebhookQuota:
+		return http.StatusForbidden
+	case CodePlanRealtimeNotAllowed:
+		return http.StatusPaymentRequired
+	case CodePlanRealtimeQuota:
 		return http.StatusForbidden
 	case CodePlanLogDrainsNotAllowed:
 		return http.StatusPaymentRequired
@@ -3005,6 +3009,15 @@ const CodePlanWebhooksNotAllowed = "plan_webhooks_not_allowed"
 // can branch on upsell-vs-delete copy without parsing the body.
 const CodePlanWebhookQuota = "plan_webhook_quota"
 
+// Managed realtime endpoint errors (ADR-156). Realtime is an opt-in
+// connection service; Free is gated, while paid plans have bounded endpoint
+// inventories so quiet connections cannot become an unmetered resource.
+const (
+	CodePlanRealtimeNotAllowed = "plan_realtime_not_allowed"
+	CodePlanRealtimeQuota      = "plan_realtime_quota"
+	CodeRealtimeInvalid        = "realtime_invalid"
+)
+
 // CodePlanLogDrainsNotAllowed is the 402 returned when the plan does not
 // include customer-configurable runtime log destinations.
 const CodePlanLogDrainsNotAllowed = "plan_log_drains_not_allowed"
@@ -3653,6 +3666,28 @@ func ErrPlanWebhookQuota(plan Plan, scope string, limit, observed int) *Problem 
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#webhooks")
+}
+
+func ErrPlanRealtimeNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanRealtimeNotAllowed,
+		"Managed realtime unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include managed realtime endpoints; upgrade to Hobby or above to keep WebSocket clients connected while your app sleeps.", p)).
+		WithDocs(docsBase + "/plans#realtime")
+}
+
+func ErrPlanRealtimeQuota(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodePlanRealtimeQuota,
+		"Managed realtime endpoint limit reached",
+		fmt.Sprintf("%s plan caps managed realtime endpoints at %d for %s; you have %d. Delete one to add another.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#realtime")
+}
+
+func ErrRealtimeInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid,
+		"Invalid managed realtime endpoint", reason)
 }
 
 // ErrPlanTriggersNotAllowed is returned by apid's createTrigger /

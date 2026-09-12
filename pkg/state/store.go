@@ -680,6 +680,19 @@ type ComputeNodeUsageBatcher interface {
 	ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// ManagedRealtimeEndpointStore is the optional persistence surface for
+// managed realtime endpoint resources. It is intentionally separate from
+// Store so narrow test doubles and older integrations remain source-
+// compatible while the control-plane resource rolls out.
+type ManagedRealtimeEndpointStore interface {
+	CreateManagedRealtimeEndpointIfUnderQuota(ctx context.Context, endpoint ManagedRealtimeEndpoint, perApp, perAccount int) (ManagedRealtimeEndpoint, error)
+	ManagedRealtimeEndpointByID(ctx context.Context, id string) (ManagedRealtimeEndpoint, error)
+	UpdateManagedRealtimeEndpoint(ctx context.Context, id string, params UpdateManagedRealtimeEndpointParams) (ManagedRealtimeEndpoint, error)
+	DeleteManagedRealtimeEndpoint(ctx context.Context, id string) error
+	ListManagedRealtimeEndpointsForApp(ctx context.Context, appID string) ([]ManagedRealtimeEndpoint, error)
+	ListManagedRealtimeEndpointsForAccount(ctx context.Context, accountID string) ([]ManagedRealtimeEndpoint, error)
+}
+
 // WebhookDeliveryReleaser is an optional rollback seam for webhook ingress.
 // A delivery is claimed before its side effects run to serialize concurrent
 // redeliveries; if those side effects fail, the claim must be removed so the

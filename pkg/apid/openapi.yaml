@@ -40,6 +40,8 @@ tags:
     description: Private customer object-storage preview, separate from runtime snapshots and image layers.
   - name: managed_postgres
     description: Provider-neutral managed PostgreSQL databases and workload bindings.
+  - name: realtime
+    description: Durable managed realtime endpoint configuration for long-lived WebSocket clients.
   - name: account
     description: Account & billing (self-service, GDPR, plan).
   - name: apps
@@ -10889,6 +10891,109 @@ paths:
         '400': { $ref: '#/components/responses/AppWebhookInvalid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # ─── Managed realtime endpoints (ADR-156) ─────────────────────────────────
+  /v1/apps/{slug}/realtime/endpoints:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [realtime]
+      operationId: listManagedRealtimeEndpoints
+      summary: List managed realtime endpoints for this app.
+      responses:
+        '200':
+          description: The configured managed realtime endpoints.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ManagedRealtimeEndpointResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [realtime]
+      operationId: createManagedRealtimeEndpoint
+      summary: Create a managed realtime endpoint.
+      description: |
+        Registers the callback contract used by realtimed for connect,
+        message, and disconnect events. Callback and optional client
+        credentials are sealed at rest and never returned in plaintext.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateManagedRealtimeEndpointRequest' }
+            example:
+              callback_url: "https://api.example.com"
+              connect_path: "/realtime/connect"
+              message_path: "/realtime/message"
+              disconnect_path: "/realtime/disconnect"
+              callback_auth_token: "callback-secret"
+              auth_token: "client-secret"
+              enabled: true
+      responses:
+        '201':
+          description: Managed realtime endpoint created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeEndpointResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '403': { $ref: '#/components/responses/PlanRealtimeQuota' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [realtime]
+      operationId: getManagedRealtimeEndpoint
+      summary: Fetch one managed realtime endpoint.
+      responses:
+        '200':
+          description: The managed realtime endpoint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeEndpointResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [realtime]
+      operationId: updateManagedRealtimeEndpoint
+      summary: Partially update a managed realtime endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateManagedRealtimeEndpointRequest' }
+      responses:
+        '200':
+          description: The updated managed realtime endpoint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeEndpointResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [realtime]
+      operationId: deleteManagedRealtimeEndpoint
+      summary: Delete a managed realtime endpoint.
+      responses:
+        '204': { description: No body. The endpoint was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -26115,6 +26220,51 @@ components:
         created_at: "2026-08-06T10:00:00Z"
         updated_at: "2026-08-06T10:00:00Z"
 
+    ManagedRealtimeEndpointResponse:
+      type: object
+      description: |
+        Durable managed realtime endpoint configuration. Credentials are
+        write-only and represented by a constant mask on every response.
+      required: [id, app_id, account_id, callback_url, connect_path, message_path, disconnect_path, callback_auth_token_masked, auth_token_masked, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        callback_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        connect_path: { type: string, pattern: '^/', maxLength: 256 }
+        message_path: { type: string, pattern: '^/', maxLength: 256 }
+        disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
+        callback_auth_token_masked: { type: string, enum: ["***"] }
+        auth_token_masked: { type: string, enum: ["***"] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateManagedRealtimeEndpointRequest:
+      type: object
+      description: Create a durable managed realtime endpoint and its callback contract.
+      required: [callback_url, callback_auth_token]
+      properties:
+        callback_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        connect_path: { type: string, pattern: '^/', maxLength: 256, default: "/realtime/connect" }
+        message_path: { type: string, pattern: '^/', maxLength: 256, default: "/realtime/message" }
+        disconnect_path: { type: string, pattern: '^/', maxLength: 256, default: "/realtime/disconnect" }
+        callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
+        auth_token: { type: string, maxLength: 256, writeOnly: true }
+        enabled: { type: boolean, default: true }
+
+    UpdateManagedRealtimeEndpointRequest:
+      type: object
+      description: Partially update a managed realtime endpoint; omitted fields remain unchanged.
+      properties:
+        callback_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        connect_path: { type: string, pattern: '^/', maxLength: 256 }
+        message_path: { type: string, pattern: '^/', maxLength: 256 }
+        disconnect_path: { type: string, pattern: '^/', maxLength: 256 }
+        callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
+        auth_token: { type: string, maxLength: 256, writeOnly: true }
+        enabled: { type: boolean }
+
     AppLogDrainResponse:
       type: object
       description: Runtime log destination with sealed credentials represented by a mask.
@@ -27061,6 +27211,24 @@ components:
 
     PlanWebhookQuota:
       description: 'code: plan_webhook_quota — per-app or per-account webhook limit reached.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    RealtimeInvalid:
+      description: 'code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanRealtimeNotAllowed:
+      description: 'code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanRealtimeQuota:
+      description: 'code: plan_realtime_quota — per-app or per-account managed realtime endpoint limit reached.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
