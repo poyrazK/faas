@@ -12,7 +12,7 @@ create table if not exists managed_realtime_endpoints (
     message_path                text not null default '/realtime/message',
     disconnect_path             text not null default '/realtime/disconnect',
     callback_auth_token_sealed  bytea not null,
-    auth_token_sealed           bytea not null default ''::bytea,
+    auth_token_sealed            bytea not null default ''::bytea,
     enabled                     boolean not null default true,
     created_at                  timestamptz not null default now(),
     updated_at                  timestamptz not null default now(),
