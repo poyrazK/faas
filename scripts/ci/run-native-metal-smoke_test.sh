@@ -105,6 +105,22 @@ grep -Fq "> \"\${layer_skeleton}/upper/etc/faas/app.json\"" "${runner}" || {
   echo "native metal app manifest is not staged in the writable app layer" >&2
   exit 1
 }
+grep -Fq 'execution_layer_skeleton="${stage_root}/execution-layer-skeleton"' "${runner}" || {
+  echo "native metal execution fixture skeleton is not staged" >&2
+  exit 1
+}
+grep -Fq '> "${execution_layer_skeleton}/upper/etc/faas/execution.json"' "${runner}" || {
+  echo "native metal execution marker is not staged in the execution layer" >&2
+  exit 1
+}
+grep -Fq '> "${execution_layer_skeleton}/upper/usr/local/bin/python3"' "${runner}" || {
+  echo "native metal execution interpreter fixture is not staged" >&2
+  exit 1
+}
+grep -Fq 'export FAAS_TEST_EXECUTION_LAYER_ROOTFS="${execution_layer_path}"' "${runner}" || {
+  echo "native metal execution fixture is not exported to the metal tests" >&2
+  exit 1
+}
 if grep -Fq '/etc/faas/uuid.txt' "${runner}"; then
   echo "native metal hello app must not mutate platform-owned /etc/faas" >&2
   exit 1

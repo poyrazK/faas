@@ -50,8 +50,10 @@ fi
 stage_root="/srv/fc/acceptance/metal-${FAAS_METAL_SOURCE_SHA}-${run_id}"
 base_skeleton="${stage_root}/base-skeleton"
 layer_skeleton="${stage_root}/layer-skeleton"
+execution_layer_skeleton="${stage_root}/execution-layer-skeleton"
 base_path="${stage_root}/hello-base.ext4"
 layer_path="${stage_root}/hello-layer.ext4"
+execution_layer_path="${stage_root}/execution-layer.ext4"
 guest_init="${base_skeleton}/sbin/init"
 active_services="${stage_root}/active-services"
 cache_root="/var/cache/faas-metal-smoke"
@@ -66,6 +68,8 @@ flock -w "${FAAS_METAL_LOCK_TIMEOUT_SECONDS:-900}" 9 ||
 mkdir -p "${base_skeleton}/bin" "${base_skeleton}/sbin" \
   "${base_skeleton}/etc/faas" \
   "${layer_skeleton}/upper/etc/faas" "${layer_skeleton}/upper/tmp" \
+  "${execution_layer_skeleton}/upper/etc/faas" \
+  "${execution_layer_skeleton}/upper/usr/local/bin" \
   "${cache_root}/go-build" "${cache_root}/go-mod" "${cache_root}/home"
 for mountpoint in "${base_mountpoints[@]}"; do
   mkdir -p "${base_skeleton}/${mountpoint}"
@@ -148,13 +152,32 @@ printf '%s\n' \
   '{"entrypoint":["/bin/busybox","httpd","-f","-p","8080","-h","/"],"port":8080}' \
   > "${layer_skeleton}/upper/etc/faas/app.json"
 
+# The execution acceptance fixture deliberately uses a tiny shell-backed
+# python3 shim. The guest executor and vsock protocol are production code; the
+# shim only makes the native test hermetic on the busybox host, without
+# claiming to validate CPython itself (guest/executor unit tests cover that
+# language contract). It writes the executor's result path (argument 7).
+printf '%s\n' \
+  '{"kind":"execution","version":1}' \
+  > "${execution_layer_skeleton}/upper/etc/faas/execution.json"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'result_path="${7:-}"' \
+  '[ -n "${result_path}" ] || exit 2' \
+  'printf %s "{\"ok\":true,\"fixture\":\"native\"}" > "${result_path}"' \
+  > "${execution_layer_skeleton}/upper/usr/local/bin/python3"
+chmod 0755 "${execution_layer_skeleton}/upper/usr/local/bin/python3"
+
 truncate -s 64M "${base_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${base_skeleton}" -L faas-metal-smoke -F "${base_path}"
 truncate -s 16M "${layer_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${layer_skeleton}" -L faas-metal-layer -F "${layer_path}"
+truncate -s 16M "${execution_layer_path}"
+mkfs.ext4 -q -O '^has_journal' -d "${execution_layer_skeleton}" -L faas-metal-execution -F "${execution_layer_path}"
 e2fsck -fn "${base_path}"
 e2fsck -fn "${layer_path}"
-chmod 0644 "${base_path}" "${layer_path}"
+e2fsck -fn "${execution_layer_path}"
+chmod 0644 "${base_path}" "${layer_path}" "${execution_layer_path}"
 
 if firecracker_running; then
   die "a Firecracker workload started while the fixture was staged; drain the node before retrying"
@@ -171,6 +194,8 @@ export PATH
 export FAAS_TEST_KERNEL="${kernel}"
 export FAAS_TEST_BASE_ROOTFS="${base_path}"
 export FAAS_TEST_LAYER_ROOTFS="${layer_path}"
+export FAAS_TEST_EXECUTION_BASE_ROOTFS="${base_path}"
+export FAAS_TEST_EXECUTION_LAYER_ROOTFS="${execution_layer_path}"
 export FAAS_TEST_FC_VERSION="${fc_version}"
 # This workflow targets the HDD acceptance node. It exercises restore
 # correctness and reports latency, but it must never enforce or contribute to
