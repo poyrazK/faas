@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -56,16 +55,16 @@ func TestCmdDeploy_RollsBackManifestTriggersWhenDeploymentRejected(t *testing.T)
 	t.Chdir(t.TempDir())
 	if err := os.WriteFile("gregale.yaml", []byte(`triggers:
   - kind: cron
-    app: rollback-app
-    schedule: "0 3 * * *"
-    path: /run
+    app: cwd-only
+    schedule: "0 9 * * *"
+    path: /cwd
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tarball := filepath.Join(t.TempDir(), "source.tar.gz")
-	if err := os.WriteFile(tarball, []byte("not-a-real-tarball"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	tarball := writeDeploySourceArchive(t, map[string]string{
+		"archive-root/package.json": `{}`,
+		"archive-root/gregale.yaml": "triggers:\n  - kind: cron\n    app: rollback-app\n    schedule: 0 3 * * *\n    path: /run\n",
+	})
 
 	oldJSON := jsonOutput
 	jsonOutput = false

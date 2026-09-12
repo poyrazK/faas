@@ -1359,10 +1359,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// standalone cmdDoctor semantics). Scoped via --doctor-strict
 	// because --strict/--lenient are taken by --diff above.
 	//
-	// v1 only fires on the cwd / auto-pack path. --tarball and
-	// --image skip the doctor (the source isn't a directory the
-	// doctor can scan); the server-side validators still run on
-	// upload.
+	// Explicit archives are extracted into an authoritative temporary source
+	// view below, so --doctor-strict also scans --tarball/--template contents.
+	// Images still skip the local doctor; server-side validators remain the
+	// source of truth for image deploys.
 	doctorStrict := fs.Bool("doctor-strict", false, "run `gregale doctor` first; abort the deploy on any error-class finding (warnings are warn-only)")
 	noDoctor := fs.Bool("no-doctor", false, "skip the automatic local doctor preflight")
 	// Issue #977 / ADR-116: deployment annotations surface. Four
@@ -1718,6 +1718,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return code
 	}
 
+	// Remember whether the source was explicitly supplied. The zero-config
+	// path may populate *tarball later with an auto-packed cwd archive, but its
+	// metadata source must remain the selected working tree rather than an
+	// extracted copy.
+	explicitTarball := *tarball != ""
+
 	// --template materializes an embedded starter project. For function
 	// templates we force the runtime + handler so the customer doesn't
 	// need to know the convention; for app templates we leave them
@@ -1744,6 +1750,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not materialize template", err)
 		}
 		*tarball = tmpPath
+		explicitTarball = true
 		// --image would have precedence over --template by accident;
 		// reject it explicitly so the customer isn't surprised by
 		// which one wins.
@@ -1864,7 +1871,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		*projectSlug = sanitizeSlug(projectName)
 	}
-	// Authenticate before any zero-config source scan or archive work. The
+	// Authenticate before any zero-config source scan or archive extraction. The
 	// zero-config path can inspect the working tree, run doctor checks, and
 	// materialise a potentially large archive; doing that for an unauthenticated
 	// invocation wastes customer CPU/IO and can expose source-side diagnostics
@@ -1874,27 +1881,41 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	localZeroConfig := *image == "" && *tarball == ""
 	var client *Client
 	var err error
-	if localZeroConfig {
+	if localZeroConfig || explicitTarball {
 		var authErr error
 		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
 		if authErr != nil {
 			return printErr("Not logged in", authErr)
 		}
 	}
+	if explicitTarball {
+		// Snapshot and extract the explicit archive before any doctor,
+		// preview, manifest, or trigger work. The snapshot is also the path
+		// uploaded below, so every local decision is made against the exact
+		// bytes that reach the API rather than against the caller's cwd.
+		archivePath, archiveSourceDir, archiveCleanup, archiveErr := materializeDeployArchive(*tarball)
+		if archiveErr != nil {
+			return printErr("Bad --tarball", archiveErr)
+		}
+		*tarball = archivePath
+		sourceDir = archiveSourceDir
+		defer archiveCleanup()
+	}
 	// Cluster A: local doctor preflight. Zero-config deploys run the
 	// deterministic source checks automatically in warn-only mode; the
 	// explicit --doctor-strict variant keeps the fail-fast policy gate.
-	// Runs runDoctorChecks
-	// against the selected source directory BEFORE any HTTP / pack. Errors exit 1 with the
-	// doctor report printed to stderr (pre-network, no half-state).
+	// Runs runDoctorChecks against the selected source directory (cwd for
+	// zero-config, extracted archive contents for --tarball/--template) BEFORE
+	// any HTTP / pack. Errors exit 1 with the doctor report printed to stderr
+	// (pre-network, no half-state).
 	// Warnings render but don't fail (mirrors the standalone cmdDoctor
-	// exit semantics). The cwd scan fires regardless of --tarball /
-	// --image — the doctor catches source-side failure modes
-	// (stateless_only_violation, app_loopback_bound, env_var_missing)
-	// that the tarball/image bytes alone can't reveal. Only when
-	// cwd itself is unreachable (cwdErr != nil) does the gate
-	// skip — in that case the server-side validators on upload are
-	// the catch.
+	// exit semantics). The selected source is scanned regardless of whether
+	// it came from --tarball, --template, or zero-config — the doctor catches
+	// source-side failure modes
+	// (stateless_only_violation, app_loopback_bound, env_var_missing) from the
+	// selected source. Only when that source is unreachable (cwdErr != nil for
+	// zero-config) does the gate skip — in that case the server-side validators
+	// on upload are the catch.
 	doctorEnabled := *doctorStrict || (!*noDoctor && localZeroConfig)
 	if doctorEnabled && sourceDir != "" {
 		doctorShape := resolvedShape
@@ -1919,7 +1940,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !*doctorStrict && (rep.HasErrors() || rep.HasWarnings() || rep.HasProfileWarnings()) {
 			renderDoctorDeployPreflight(rep, jsonOutput)
 		}
-		// Cluster A (F7 perf): doctor already walked cwd. Signal
+		// Cluster A (F7 perf): doctor already walked the selected source. Signal
 		// runPackPreflight to skip its own loopback-bind and
 		// arch-mismatch scans so we don't double-walk the repo.
 		doctorPreflightRan = true
