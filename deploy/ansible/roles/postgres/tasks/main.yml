@@ -181,8 +181,8 @@
       faas_map faas-schedd  faas
       faas_map faas-meterd  faas
       faas_map faas-githubd faas
-  register: pg_ident
       faas_map faas-outboundd faas
+  register: pg_ident
   failed_when: false
   notify: reload postgresql
 
