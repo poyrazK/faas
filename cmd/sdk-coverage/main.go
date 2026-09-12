@@ -253,6 +253,7 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"GET /v1/github/repos":                         "ListGitHubRepositories",
 	"DELETE /v1/keys/{id}":                         "DeleteKey",
 	"POST /v1/keys/{id}/rotate":                    "RotateKey",
 	"PATCH /v1/account/keys/grace_window_days":     "SetGraceWindow",
