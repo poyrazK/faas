@@ -69,7 +69,7 @@ func (e Envelope) Validate() error {
 			return fmt.Errorf("%w: source is outside hard bounds or mixed with a bundle", ErrInvalid)
 		}
 	} else if err := api.ValidateExecutionBundle(e.Entrypoint, e.Files, api.ExecutionPlaintextFieldMaxBytes); err != nil {
-		return fmt.Errorf("%w: bundle is invalid: %v", ErrInvalid, err)
+		return fmt.Errorf("%w: bundle is invalid: %w", ErrInvalid, err)
 	}
 	if len(e.Input) == 0 || len(e.Input) > api.ExecutionPlaintextFieldMaxBytes || !json.Valid(e.Input) {
 		return fmt.Errorf("%w: input is missing, too large, or invalid JSON", ErrInvalid)

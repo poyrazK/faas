@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -177,7 +178,8 @@ func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *P
 		entrypoint = r.Entrypoint
 		_, err := validateExecutionBundle(entrypoint, r.Files, planLimits.MaxSourceBytes)
 		if err != nil {
-			if tooLarge, ok := err.(executionBundleTooLargeError); ok {
+			var tooLarge executionBundleTooLargeError
+			if errors.As(err, &tooLarge) {
 				return ResolvedExecutionRequest{}, executionPayloadTooLarge("bundle", planLimits.MaxSourceBytes, tooLarge.observed)
 			}
 			return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionSourceInvalid, err.Error())

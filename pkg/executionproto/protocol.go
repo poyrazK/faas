@@ -155,7 +155,7 @@ func (r Request) Validate() error {
 			return fmt.Errorf("%w: source is invalid or mixed with a bundle", ErrInvalidRequest)
 		}
 	} else if err := api.ValidateExecutionBundle(r.Entrypoint, r.Files, api.ExecutionPlaintextFieldMaxBytes); err != nil {
-		return fmt.Errorf("%w: bundle is invalid: %v", ErrInvalidRequest, err)
+		return fmt.Errorf("%w: bundle is invalid: %w", ErrInvalidRequest, err)
 	}
 	if len(r.Input) == 0 {
 		return fmt.Errorf("%w: input is empty", ErrInvalidRequest)
