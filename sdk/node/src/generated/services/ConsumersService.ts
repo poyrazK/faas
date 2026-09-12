@@ -422,7 +422,7 @@ export class ConsumersService {
      */
     slug: string,
     /**
-     * Consumer identity owning the statement.
+     * Consumer identity whose billing handoff is being recorded.
      */
     consumerId: string,
     /**
@@ -462,7 +462,7 @@ export class ConsumersService {
      */
     slug: string,
     /**
-     * Consumer identity owning the statement.
+     * Consumer identity whose billing handoff is being recorded.
      */
     consumerId: string,
     /**

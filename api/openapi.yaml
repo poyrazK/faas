@@ -2962,7 +2962,7 @@ paths:
       - name: consumer_id
         in: path
         required: true
-        description: Consumer identity owning the statement.
+        description: Consumer identity whose billing handoff is being recorded.
         schema: { type: string, format: uuid }
       - name: statement_id
         in: path
