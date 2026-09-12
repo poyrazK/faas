@@ -61,9 +61,9 @@ type Action struct {
 // The diff is INTENTIONALLY conservative: a (RootDir, WorkloadName)
 // present in both scan and existing but with identical columns is
 // NOT emitted as an update. The update path only fires when at
-// least one of RootDir / WorkloadName / StartCommand actually
-// changed. This keeps the audit log clean and avoids spurious
-// project.workload.changed rows on every scan.
+// least one of RootDir / WorkloadName / WorkloadClass /
+// StartCommand actually changed. This keeps the audit log clean and
+// avoids spurious project.workload.changed rows on every scan.
 func workloadDiff(
 	scan reposcan.Result,
 	_ state.Project,
@@ -222,8 +222,8 @@ func resolveStartCommand(w reposcan.Workload) string {
 }
 
 // diffFieldsChanged returns the subset of {"root_dir", "workload_name",
-// "start_command", "service_env"} that actually changed between the existing
-// state.App and the new scan-derived workload. The columns
+// "workload_class", "start_command", "service_env"} that actually changed
+// between the existing state.App and the new scan-derived workload. The columns
 // RootDir and WorkloadName are NOT NULL DEFAULT ” in the schema
 // so equality is on the empty-string vs populated distinction —
 // no NULL handling needed.
@@ -234,6 +234,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	}
 	if a.WorkloadName != w.Name {
 		changed = append(changed, "workload_name")
+	}
+	if a.WorkloadClass != workloadClassFromScan(w) {
+		changed = append(changed, "workload_class")
 	}
 	// StartCommand is NULL-able; the existing App has "" for the
 	// unset case (memstore mirrors pgstore via the NULL → ""

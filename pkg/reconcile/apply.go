@@ -235,11 +235,13 @@ func (s *Service) applyUpdate(
 		serviceNames = available[0]
 	}
 	manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, a.Workload, serviceNames)
+	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
-		RootDir:      &rootDir,
-		WorkloadName: &workloadName,
-		StartCommand: &a.StartCommand,
-		Manifest:     &manifest,
+		RootDir:       &rootDir,
+		WorkloadName:  &workloadName,
+		WorkloadClass: &workloadClass,
+		StartCommand:  &a.StartCommand,
+		Manifest:      &manifest,
 	}
 	updated, err := s.Store.UpdateApp(ctx, a.App.ID, params)
 	if err != nil {
@@ -282,15 +284,7 @@ func (s *Service) applyRemove(
 // sync` while direct POST /v1/apps on the same plan returns
 // bearer-by-default — same plan, two different defaults.
 func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd string, plan api.Plan, available ...map[string]struct{}) state.App {
-	class := state.WorkloadClass(string(w.Class))
-	if class == "" {
-		class = state.WorkloadClassHTTP
-	}
-	if w.Class == reposcan.ClassServer {
-		// "server" hint is normalised to "http" — ADR-051 will
-		// re-derive the authoritative class.
-		class = state.WorkloadClassHTTP
-	}
+	class := workloadClassFromScan(w)
 	var serviceNames map[string]struct{}
 	if len(available) > 0 {
 		serviceNames = available[0]
@@ -306,6 +300,30 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		Manifest:       state.AppManifest{Env: serviceEnvForWorkloadWithAvailable(nil, w, serviceNames)},
 		RequireAuthn:   plan.RequireAuthnDefault(),
 		PublicAuthMode: plan.PublicAuthModeDefault(),
+	}
+}
+
+// workloadClassFromScan converts the reposcan hint into the closed set that
+// apps.workload_class accepts. Server/unknown/empty hints are intentionally
+// conservative and fall back to HTTP; characterization can refine the class
+// after the workload has booted. Keeping this normalization in one helper
+// ensures create and update paths persist the same value (issue #2162).
+func workloadClassFromScan(w reposcan.Workload) state.WorkloadClass {
+	switch w.Class {
+	case reposcan.ClassGraphQL:
+		return state.WorkloadClassGraphQL
+	case reposcan.ClassGRPC:
+		return state.WorkloadClassGRPC
+	case reposcan.ClassJob:
+		return state.WorkloadClassJob
+	case reposcan.ClassWorker:
+		return state.WorkloadClassWorker
+	case reposcan.ClassHTTP:
+		return state.WorkloadClassHTTP
+	default:
+		// ClassServer, ClassUnknown, empty, and any future scanner
+		// value must not trip the database CHECK on the first apply.
+		return state.WorkloadClassHTTP
 	}
 }
 

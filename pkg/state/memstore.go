@@ -2762,6 +2762,12 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	if app.ConsumerAuthMode == "" {
 		app.ConsumerAuthMode = ConsumerAuthModeOptional
 	}
+	// workload_class is NOT NULL with a closed CHECK in PostgreSQL;
+	// mirror the PgStore's HTTP fallback for hand-built callers that
+	// leave the Go zero value unset.
+	if app.WorkloadClass == "" {
+		app.WorkloadClass = WorkloadClassHTTP
+	}
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -2836,6 +2842,11 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	}
 	if app.ConsumerAuthMode == "" {
 		app.ConsumerAuthMode = ConsumerAuthModeOptional
+	}
+	// Keep the quota-aware path in parity with CreateApp and PgStore:
+	// an omitted workload class is the canonical HTTP default.
+	if app.WorkloadClass == "" {
+		app.WorkloadClass = WorkloadClassHTTP
 	}
 	m.apps[app.ID] = app
 	return app, nil
@@ -4238,6 +4249,9 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	}
 	if p.WorkloadName != nil {
 		a.WorkloadName = *p.WorkloadName
+	}
+	if p.WorkloadClass != nil {
+		a.WorkloadClass = *p.WorkloadClass
 	}
 	if p.StartCommand != nil {
 		a.StartCommand = *p.StartCommand
