@@ -32,6 +32,21 @@ func TestPgCreateApp_PersistsWorkloadFields(t *testing.T) {
 	if got.WorkloadClass != state.WorkloadClassWorker || got.StartCommand != "node worker.js" {
 		t.Fatalf("CreateApp fields = class %q command %q, want worker/node worker.js", got.WorkloadClass, got.StartCommand)
 	}
+
+	// Hand-built callers may omit the detector hint. The SQL path must
+	// preserve the schema-safe HTTP default rather than sending an empty
+	// value that violates apps_workload_class_chk.
+	defaulted, err := s.CreateApp(ctx, state.App{
+		AccountID: acct.ID,
+		Slug:      "workload-fields-create-default",
+		Type:      state.AppTypeFunction,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp default: %v", err)
+	}
+	if defaulted.WorkloadClass != state.WorkloadClassHTTP {
+		t.Fatalf("CreateApp default WorkloadClass = %q, want %q", defaulted.WorkloadClass, state.WorkloadClassHTTP)
+	}
 }
 
 func TestPgCreateAppIfUnderQuota_PersistsWorkloadFields(t *testing.T) {
@@ -56,5 +71,17 @@ func TestPgCreateAppIfUnderQuota_PersistsWorkloadFields(t *testing.T) {
 	}
 	if got.WorkloadClass != state.WorkloadClassJob || got.StartCommand != "python job.py" {
 		t.Fatalf("CreateAppIfUnderQuota fields = class %q command %q, want job/python job.py", got.WorkloadClass, got.StartCommand)
+	}
+
+	defaulted, err := s.CreateAppIfUnderQuota(ctx, state.App{
+		AccountID: acct.ID,
+		Slug:      "workload-fields-quota-default",
+		Type:      state.AppTypeFunction,
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota default: %v", err)
+	}
+	if defaulted.WorkloadClass != state.WorkloadClassHTTP {
+		t.Fatalf("CreateAppIfUnderQuota default WorkloadClass = %q, want %q", defaulted.WorkloadClass, state.WorkloadClassHTTP)
 	}
 }
