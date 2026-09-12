@@ -1348,8 +1348,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *doctorStrict && *noDoctor {
 		return printErr("Invalid flags", fmt.Errorf("--doctor-strict and --no-doctor are mutually exclusive"))
 	}
-	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "" || *deployOnly != "" || *projectDeploy || *projectSlug != "") {
-		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, --repo, --only, --project, or --project-slug"))
+	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "") {
+		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, or --repo"))
 	}
 	if *projectDeploy {
 		if *image != "" {
@@ -2184,6 +2184,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			*projectSlug, prodBranch, 0, onlyList, excludeList, *deployPersistExclude)
 		if err != nil {
 			return printErr("Apply failed", err)
+		}
+		// Project deploys share the same sealed app-secret storage as
+		// single-app deploys. Apply the validated bundle to every workload
+		// selected by this project plan before returning the apply receipt;
+		// this keeps existing host-key rekey and secret redaction paths in
+		// force while making one-command monorepo deploys usable.
+		if len(deploySecrets) > 0 {
+			configured, secretErr := setProjectDeploySecrets(ctx, client, plan.Workloads, deploySecrets)
+			if secretErr != nil {
+				return printErr("Could not configure --secrets-file", secretErr)
+			}
+			if !jsonOutput {
+				PrintOK(osStdout, "Configured %d secret(s) across %d workload(s)", len(deploySecrets), configured)
+			}
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(apply))
