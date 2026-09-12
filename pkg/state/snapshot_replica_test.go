@@ -75,6 +75,9 @@ func TestMemStoreSnapshotReplicaLifecycle(t *testing.T) {
 	if job.SnapshotID != snap.ID || job.VMStateStorageKey != SnapVMStateKey(dep.ID) {
 		t.Fatalf("job = %+v", job)
 	}
+	if job.QueuedAt.IsZero() {
+		t.Fatal("ClaimSnapshotReplica returned an empty durable queue timestamp")
+	}
 	if got, want := job.LayerStorageKeys, []string{"layers/" + dep.ID + ".ext4"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("job layer keys = %v, want %v", got, want)
 	}

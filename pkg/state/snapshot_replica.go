@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // SnapshotReplicaState is the durable state of one snapshot's local
@@ -79,6 +80,10 @@ type SnapshotReplicaJob struct {
 	NodeID           string
 	Region           string
 	Attempts         int
+	// QueuedAt is the durable enqueue timestamp. Workers use it to expose
+	// end-to-end prepositioning latency (queue wait plus artifact reads), not
+	// just the time spent copying bytes after a claim.
+	QueuedAt time.Time
 }
 
 // SnapshotOriginStore records the node/locality that produced a snapshot.
