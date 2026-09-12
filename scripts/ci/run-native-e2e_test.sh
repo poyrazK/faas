@@ -122,26 +122,50 @@ grep -Fq 'native_e2e_verdict "${e2e_log}"' "${runner}" ||
 grep -Fq 'source "${repo_root}/scripts/ci/native-e2e-verdict.sh"' "${runner}" ||
   fail "the wrapper does not load the verdict rules"
 
-run_args="$(sed -n "s/^[[:space:]]*RUN_ARGS='\([^']*\)' test-metal.*$/\1/p" "${runner}")"
-[[ -n "${run_args}" ]] || fail "could not extract the RUN_ARGS contract"
+# ---------------------------------------------------------------------------
+# The run set: derived from source, never hand-listed.
+# ---------------------------------------------------------------------------
+# Execute the SAME derivation the runner uses, against this tree. This is what
+# replaced the old "RUN_ARGS must contain no -run filter" rule: the gate does
+# filter now (running all ~330 e2e tests starved the metal ones on the 4-vCPU
+# node), but the filter is generated from the build tag, so it cannot be
+# narrowed to a hand-picked test without failing these checks.
+metal_tests="$(native_e2e_metal_tests "${repo_root}")"
+[[ -n "${metal_tests}" ]] || fail "the derivation found no metal-tagged tests in cmd/e2e"
+metal_count="$(printf '%s\n' "${metal_tests}" | wc -l | tr -d ' ')"
+[[ "${metal_count}" -ge 15 ]] ||
+  fail "only ${metal_count} metal-tagged tests derived; the gate has shrunk or the derivation broke"
+
+# Every required test must be derivable, or it would silently stop being run.
+for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
+  printf '%s\n' "${metal_tests}" | grep -qx "${required}" ||
+    fail "required test ${required} is not in the metal-tagged set (lost its //go:build metal tag?)"
+done
+
+# The derivation must actually key on the build tag, not on a filename pattern:
+# metal tests live in files both with and without a _metal_ infix.
+grep -Fq "grep -l '^//go:build metal'" "${repo_root}/scripts/ci/native-e2e-verdict.sh" ||
+  fail "the run set is no longer derived from the //go:build metal tag"
+
+# The runner must build its filter from that derivation and refuse an empty set.
+grep -Fq 'native_e2e_metal_tests "${repo_root}"' "${runner}" ||
+  fail "the wrapper does not derive its run set from source"
+grep -Fq 'no metal-tagged tests found in cmd/e2e' "${runner}" ||
+  fail "the wrapper does not fail when the derived run set is empty"
+grep -Fq 'is not in the metal-tagged set' "${runner}" ||
+  fail "the wrapper does not verify every required test is in the derived set"
 
 expanded="$(
   make -n -C "${repo_root}" GO=/usr/bin/true PKGS=./cmd/e2e/... \
-    RUN_ARGS="${run_args}" test-metal
+    RUN_ARGS="-timeout=75m -v -run ^(TestExample)\$" test-metal
 )"
-expected='/usr/bin/true test -tags metal -race -count=1 -timeout=75m -v ./cmd/e2e/...'
-grep -Fq -- "${expected}" <<<"${expanded}" || {
+grep -Fq -- '/usr/bin/true test -tags metal -race -count=1 -timeout=75m -v -run' <<<"${expanded}" || {
   printf '%s\n' "${expanded}" >&2
   fail "the invocation expanded incorrectly"
 }
 # The metal build tag is what makes this a platform gate instead of a rerun of
 # the pure-Go e2e shard CI already has.
 grep -Fq -- '-tags metal' <<<"${expanded}" || fail "the gate does not use the metal build tag"
-
-# Run the package, not a hand-picked test.
-if grep -q -- '-run' <<<"${run_args}"; then
-  fail "RUN_ARGS carries a -run filter (${run_args}); the gate must run the whole ./cmd/e2e package"
-fi
 grep -Fq 'PKGS=./cmd/e2e/...' "${runner}" ||
   fail "the wrapper no longer targets the ./cmd/e2e package"
 

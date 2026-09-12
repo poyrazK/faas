@@ -94,10 +94,19 @@ func TestSec11_SeccompFilterEnforced_CrossProcess(t *testing.T) {
 	if _, err := os.Stat("/dev/kvm"); err != nil {
 		t.Skipf("/dev/kvm not available: %v", err)
 	}
+	// NOTE: this used to pre-flight /run/faas/vmmd.sock and skip when it was
+	// absent. That guard was stale: it ran BEFORE e2etest.Start, which starts
+	// this test's own vmmd on a private socket under the harness SockDir, and
+	// the dial below already prefers h.VMMDSock. So it gated on the PRODUCTION
+	// daemon, which this test never uses.
+	//
+	// The cost was a silent skip of a §11 ship-blocking fence on exactly the
+	// hosts that matter: the native acceptance runner stops the production
+	// daemons before running the suite (they own host-global vmmd, jailer,
+	// cgroups and netns state), so /run/faas/vmmd.sock is guaranteed absent
+	// there and this test could never run. Observed 2026-09-12 on the first
+	// real e2e-native run.
 	vmmdSock := "/run/faas/vmmd.sock"
-	if _, err := os.Stat(vmmdSock); err != nil {
-		t.Skipf("vmmd socket not at %s: %v (harness must have started vmmd)", vmmdSock, err)
-	}
 
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
