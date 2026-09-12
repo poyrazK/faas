@@ -61,10 +61,6 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 	return reasons
 }
 
-func validateWorkloadAdmission(workloads []reposcan.Workload, accountApps []state.App, projectID string) error {
-	return validateWorkloadAdmissionWithManaged(workloads, nil, accountApps, projectID)
-}
-
 func validateWorkloadAdmissionWithManaged(workloads []reposcan.Workload, managed []reposcan.Managed, accountApps []state.App, projectID string) error {
 	reasons := WorkloadAdmissionReasonsWithManaged(workloads, managed, accountApps, projectID)
 	if len(reasons) == 0 {

@@ -695,43 +695,6 @@ type planCron struct {
 // identical; the local type is a transitional convenience.
 type appliedBuild = api.AppliedBuild
 
-// applyBuildsForAddedChanged stages a per-workload tarball rooted
-// at app.RootDir under FAAS_SPOOL_ROOT/projects/<account>/<project>/
-// <appID>.tar.gz and enqueues one (deployment, build) per workload
-// via apidsource.Enqueue. Returns one appliedBuild per input app in
-// the same order. On staging or enqueue failure the per-app Error
-// field is populated and the loop continues — partial success is the
-// design (mirrors pkg/githubd/service.go:361-367).
-//
-// Lifetime: the staged tarball persists on disk after the function
-// returns — builderd reads it as a local file (pkg/builderd/
-// builderd.go:321). A spool GC is a follow-up issue (the plan calls
-// it out explicitly); this PR does not silently leave it undocumented
-// but also does not implement the GC.
-//
-// The SourceURL + CommitSHA fields are empty (the apply path is
-// upload-from-customer-tarball, not pull-from-codeload); the helper
-// handles empty values cleanly.
-//
-// scanDir is the path to the extracted source tree (req.ScanDir from
-// the multipart parse). It must outlive the staging call but is
-// removed by the handler's defer after scanService returns.
-//
-// r is the inbound HTTP request. MEDIUM review #2 (PR #992): the
-// scan-and-apply path was the only HTTP-routed deploy surface
-// that didn't stamp the four actor columns — every
-// customer-triggered project apply landed in deployments with
-// deployed_by_user_id=NULL and deployed_from_ip=NULL. Threading
-// r through keeps cmd/apid/deploy_actor.go as the single source
-// of truth (routeKindForRequest + middleware.ClientIP) rather
-// than forking the actor surface across packages.
-func (s *server) applyBuildsForAddedChanged(
-	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
-	scanDir string, added, changed []state.App,
-) []appliedBuild {
-	return s.applyBuildsForAddedChangedOrdered(ctx, r, acct, project, scanDir, nil, nil, added, changed)
-}
-
 func (s *server) applyBuildsForAddedChangedOrdered(
 	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
 	scanDir string, workloads []reposcan.Workload, managed []reposcan.Managed, added, changed []state.App,

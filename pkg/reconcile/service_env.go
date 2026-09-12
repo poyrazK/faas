@@ -13,18 +13,6 @@ const (
 	serviceEnvPort   = 10080
 )
 
-// serviceEnvForWorkload returns the platform-owned endpoint variables for a
-// workload's local service dependencies. The reserved namespace is stripped
-// and rebuilt on every project apply, so removed dependencies do not leave
-// stale endpoints behind.
-func serviceEnvForWorkload(w reposcan.Workload) map[string]string {
-	return serviceEnvForWorkloadWithAvailable(nil, w, nil)
-}
-
-func serviceEnvForWorkloadWithBase(base map[string]string, w reposcan.Workload) map[string]string {
-	return serviceEnvForWorkloadWithAvailable(base, w, nil)
-}
-
 func serviceEnvForWorkloadWithAvailable(base map[string]string, w reposcan.Workload, available map[string]struct{}) map[string]string {
 	env := make(map[string]string, len(base)+len(w.DependsOn))
 	for key, value := range base {
