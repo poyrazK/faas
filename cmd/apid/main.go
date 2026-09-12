@@ -1487,6 +1487,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// same-box install doesn't brick the per-route surface just
 	// because the operator never exported the env var.
 	srv.WithGatewaydControlURL(resolveGatewaydControlURL(deps.getenv))
+	// ADR-156: same-box installs mirror durable realtime endpoint writes onto
+	// the local realtimed owner. Split-box deployments leave this unset until
+	// the leased cross-node registrar is configured.
+	srv.WithRealtimeSocket(deps.getenv("FAAS_REALTIME_SOCKET"))
 
 	// ADR-126 / issue #975 item #2: the in-process LRU backing
 	// the `?source=auto` OpenAPI generation. Constructed once

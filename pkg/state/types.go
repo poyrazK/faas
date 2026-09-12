@@ -2946,6 +2946,52 @@ type AppWebhook struct {
 	UpdatedAt    time.Time
 }
 
+// ManagedRealtimeEndpoint is the durable control-plane description of one
+// managed WebSocket endpoint (ADR-156). The realtime daemon owns live sockets;
+// apid owns this row and synchronizes it to the daemon. Credentials are age
+// sealed and are never returned by the API.
+type ManagedRealtimeEndpoint struct {
+	ID                      string
+	AppID                   string
+	AccountID               string
+	CallbackURL             string
+	ConnectPath             string
+	MessagePath             string
+	DisconnectPath          string
+	CallbackAuthTokenSealed []byte
+	AuthTokenSealed         []byte
+	Enabled                 bool
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+type UpdateManagedRealtimeEndpointParams struct {
+	CallbackURL             *string
+	ConnectPath             *string
+	MessagePath             *string
+	DisconnectPath          *string
+	CallbackAuthTokenSealed *[]byte
+	AuthTokenSealed         *[]byte
+	Enabled                 *bool
+}
+
+type ManagedRealtimeEndpointQuotaScope string
+
+const (
+	ManagedRealtimeEndpointQuotaScopeApp     ManagedRealtimeEndpointQuotaScope = "app"
+	ManagedRealtimeEndpointQuotaScopeAccount ManagedRealtimeEndpointQuotaScope = "account"
+)
+
+type ManagedRealtimeEndpointQuotaError struct {
+	Scope    ManagedRealtimeEndpointQuotaScope
+	Limit    int
+	Observed int
+}
+
+func (e *ManagedRealtimeEndpointQuotaError) Error() string {
+	return fmt.Sprintf("state: managed realtime endpoint quota exceeded (scope=%s, limit=%d, observed=%d)", e.Scope, e.Limit, e.Observed)
+}
+
 // AppWebhookDelivery is one (event × target) ledger row. The
 // dispatcher mutates the row in place on every attempt until
 // status='succeeded' or status='dead'. Payload is the wire body the

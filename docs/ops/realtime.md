@@ -12,6 +12,20 @@ application-owned raw Upgrade sessions are unaffected.
 Register an endpoint (normally from an authorized control-plane process), then
 connect clients to `wss://<app-host>/__gregale/realtime/<endpoint-id>`:
 
+Customer applications should use the authenticated API resource instead of
+writing the daemon socket directly:
+
+```
+POST /v1/apps/{slug}/realtime/endpoints
+GET|PATCH|DELETE /v1/apps/{slug}/realtime/endpoints/{id}
+```
+
+The API persists endpoint configuration in the control plane, applies the
+per-plan inventory cap, returns masked credentials, and best-effort mirrors the
+row to a local realtimed owner when `FAAS_REALTIME_SOCKET` is configured. The
+daemon-socket example below remains useful for node-local bootstrap and
+recovery tooling.
+
 ```
 curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/endpoints \
   -H 'content-type: application/json' \

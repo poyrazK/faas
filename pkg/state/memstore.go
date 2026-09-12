@@ -260,11 +260,12 @@ type MemStore struct {
 	// invariant is enforced at insert time. MemStore holds no
 	// concurrency control beyond m.mu — the dispatcher's claim
 	// query is a single goroutine today.
-	appWebhooks          map[string]AppWebhook
-	appWebhookDeliveries map[string]AppWebhookDelivery
-	appLogDrains         map[string]AppLogDrain
-	appLogDrainHealth    map[string]AppLogDrainHealth
-	appLogDrainAnalytics map[string]AppLogDrainDeliveryAnalytics
+	appWebhooks              map[string]AppWebhook
+	appWebhookDeliveries     map[string]AppWebhookDelivery
+	managedRealtimeEndpoints map[string]ManagedRealtimeEndpoint
+	appLogDrains             map[string]AppLogDrain
+	appLogDrainHealth        map[string]AppLogDrainHealth
+	appLogDrainAnalytics     map[string]AppLogDrainDeliveryAnalytics
 	// deploymentScopeExclusions backs the ADR-124 follow-up #3
 	// persistent --exclude history (migration 00418). Keyed by row
 	// id (uuid string) for symmetry with appWebhooks; the (account,
@@ -870,6 +871,7 @@ func NewMemStore() *MemStore {
 		alertDeliveries:           map[string]AlertDelivery{},
 		appWebhooks:               map[string]AppWebhook{},
 		appWebhookDeliveries:      map[string]AppWebhookDelivery{},
+		managedRealtimeEndpoints:  map[string]ManagedRealtimeEndpoint{},
 		appLogDrains:              map[string]AppLogDrain{},
 		appLogDrainHealth:         map[string]AppLogDrainHealth{},
 		appLogDrainAnalytics:      map[string]AppLogDrainDeliveryAnalytics{},

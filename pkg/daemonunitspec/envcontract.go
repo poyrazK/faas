@@ -358,7 +358,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_OUTBOUND_QUEUE", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_PONG_WAIT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_ROLE", Owners: []string{"realtimed", "shared"}, Source: EnvSourceDropin},
-	{Name: "FAAS_REALTIME_SOCKET", Owners: []string{"gatewayd-internal", "realtimed", "shared"}, Source: EnvSourceUnit},
+	{Name: "FAAS_REALTIME_SOCKET", Owners: []string{"apid", "gatewayd-internal", "realtimed", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_REALTIME_WRITE_WAIT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REBALANCE_COOLDOWN_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REBALANCE_MAX_PER_TICK", Owners: []string{"schedd"}, Source: EnvSourceDefault},

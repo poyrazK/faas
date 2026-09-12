@@ -505,6 +505,13 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/webhooks/{id}/deliveries":              "ListAppWebhookDeliveries",
 	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry": "RetryAppWebhookDelivery",
 
+	// ADR-156 — durable managed realtime endpoint configuration.
+	"GET /v1/apps/{slug}/realtime/endpoints":         "ListManagedRealtimeEndpoints",
+	"POST /v1/apps/{slug}/realtime/endpoints":        "CreateManagedRealtimeEndpoint",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}":    "GetManagedRealtimeEndpoint",
+	"PATCH /v1/apps/{slug}/realtime/endpoints/{id}":  "UpdateManagedRealtimeEndpoint",
+	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}": "DeleteManagedRealtimeEndpoint",
+
 	// Issue #1398 O4 — customer runtime log destinations. Hyphenated path
 	// segments need explicit noun-oriented SDK names.
 	"GET /v1/apps/{slug}/log-drains":                "ListAppLogDrains",
