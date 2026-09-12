@@ -15,6 +15,15 @@ package api
 
 import "time"
 
+// UpdateAccountBillingInfoRequest is the partial update payload for
+// PATCH /v1/account/billing. A nil field leaves its existing value unchanged;
+// an explicitly empty string clears it.
+type UpdateAccountBillingInfoRequest struct {
+	BusinessName   *string `json:"business_name,omitempty"`
+	BillingAddress *string `json:"billing_address,omitempty"`
+	TaxID          *string `json:"tax_id,omitempty"`
+}
+
 // BillingReconcileResponse is the JSON shape POST
 // /v1/admin/billing-reconcile/{id} returns on success (200).
 //

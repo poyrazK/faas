@@ -509,6 +509,7 @@ export type { TriggerRecord } from './models/TriggerRecord.js';
 export type { TriggerRecordState } from './models/TriggerRecordState.js';
 export type { TriggerRoutedTo } from './models/TriggerRoutedTo.js';
 export type { TrustedSigner } from './models/TrustedSigner.js';
+export type { UpdateAccountBillingInfoRequest } from './models/UpdateAccountBillingInfoRequest.js';
 export type { UpdateAlertRuleRequest } from './models/UpdateAlertRuleRequest.js';
 export type { UpdateAppLogDrainRequest } from './models/UpdateAppLogDrainRequest.js';
 export type { UpdateAppRequest } from './models/UpdateAppRequest.js';

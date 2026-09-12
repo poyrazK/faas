@@ -511,6 +511,8 @@ from .get_deployment_stages_response_200_history_item_status import GetDeploymen
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .git_hub_deployment_policy import GitHubDeploymentPolicy
+from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
 from .git_hub_install_mutation_request import GitHubInstallMutationRequest
 from .git_hub_install_status import GitHubInstallStatus
 from .git_hub_install_status_health import GitHubInstallStatusHealth
@@ -942,6 +944,7 @@ from .trigger_source_type_1 import TriggerSourceType1
 from .trigger_source_type_2_type_1 import TriggerSourceType2Type1
 from .trigger_source_type_3_type_1 import TriggerSourceType3Type1
 from .trusted_signer import TrustedSigner
+from .update_account_billing_info_request import UpdateAccountBillingInfoRequest
 from .update_alert_rule_request import UpdateAlertRuleRequest
 from .update_alert_rule_request_action import UpdateAlertRuleRequestAction
 from .update_alert_rule_request_comparison import UpdateAlertRuleRequestComparison
@@ -1542,6 +1545,8 @@ __all__ = (
     "GetOpenAPISpecJSONResponse200",
     "GithubCheckUpdateRecord",
     "GithubCheckUpdateRecordStatus",
+    "GitHubDeploymentPolicy",
+    "GitHubDeploymentPolicyPatch",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusHealth",
@@ -1967,6 +1972,7 @@ __all__ = (
     "TriggerSourceType2Type1",
     "TriggerSourceType3Type1",
     "TrustedSigner",
+    "UpdateAccountBillingInfoRequest",
     "UpdateAlertRuleRequest",
     "UpdateAlertRuleRequestAction",
     "UpdateAlertRuleRequestComparison",

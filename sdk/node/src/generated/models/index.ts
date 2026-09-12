@@ -503,6 +503,7 @@ export type { TriggerRecord } from './TriggerRecord.js';
 export type { TriggerRecordState } from './TriggerRecordState.js';
 export type { TriggerRoutedTo } from './TriggerRoutedTo.js';
 export type { TrustedSigner } from './TrustedSigner.js';
+export type { UpdateAccountBillingInfoRequest } from './UpdateAccountBillingInfoRequest.js';
 export type { UpdateAlertRuleRequest } from './UpdateAlertRuleRequest.js';
 export type { UpdateAppLogDrainRequest } from './UpdateAppLogDrainRequest.js';
 export type { UpdateAppRequest } from './UpdateAppRequest.js';

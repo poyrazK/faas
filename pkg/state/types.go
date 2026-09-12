@@ -507,6 +507,13 @@ type Account struct {
 	// accounts.egress_allowlist_extra (>= 0) is the wire-bypass
 	// backstop; the apid validator is the soft cap.
 	EgressAllowlistExtra int
+	// BusinessName, BillingAddress, and TaxID are the mutable billing
+	// identity used for the next provider-issued invoice. Issued invoice
+	// rows will carry their own immutable snapshot; these fields may be
+	// changed by the account owner without rewriting invoice history.
+	BusinessName   string
+	BillingAddress string
+	TaxID          string
 }
 
 // Active reports whether the account may deploy (not suspended/deleted).

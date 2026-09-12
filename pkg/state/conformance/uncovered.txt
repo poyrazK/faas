@@ -660,6 +660,7 @@ TrafficAnomalyAggregateByNode
 TransferOrgOwnership
 TriggerByID
 TriggerRecordIDByItemIdentifier
+UpdateAccountBillingInfo
 UpdateAccountPlan
 UpdateAccountProviderCustomerID
 UpdateAccountStatus

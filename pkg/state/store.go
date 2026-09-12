@@ -871,6 +871,10 @@ type Store interface {
 	// account row so the webhook + push paths can join. Idempotent — a
 	// repeat call with the same value is a no-op (ADR-010, Slice 2).
 	UpdateAccountProviderCustomerID(ctx context.Context, id, stripeCustomerID string) error
+	// UpdateAccountBillingInfo replaces the mutable billing identity used
+	// for future provider invoices. Empty values clear the corresponding
+	// nullable database columns. The returned account is the committed row.
+	UpdateAccountBillingInfo(ctx context.Context, id string, businessName, billingAddress, taxID string) (Account, error)
 	// UpdateAccountStripeSubscriptionItem records the Stripe metered
 	// subscription item ID (si_…) so meterd's hourly push knows
 	// where to POST UsageRecord (issue #52, M7). Empty until the
