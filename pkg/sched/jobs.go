@@ -126,7 +126,6 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		ramMB = api.JobRAMMB[planIdx]
 	}
 	instanceID := uuid.NewString()
-	nodeID := e.nodeForRoute(e.ownerNodeID)
 	req := Request{
 		Instance: instanceID,
 		AppID:    "", // jobs have no appID
@@ -134,8 +133,17 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		RAMMB:    ramMB,
 		VCPU:     1, // jobs are single-vCPU today (M5); future SxS uses more
 		Kind:     KindJob,
-		NodeID:   nodeID,
 	}
+	// Jobs submitted to the control-plane fleet scheduler have no app row
+	// whose owner can drive routing. Select an admitting compute node through
+	// the same capacity-aware chooser as ordinary cold boots. A node-local
+	// schedd still pins the chooser to ownerNodeID in choosePlacementLocked.
+	placement, err := e.choosePlacementLocked(ctx, req)
+	if err != nil {
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob placement: %w", err)
+	}
+	nodeID := placement.NodeID
+	req.NodeID = nodeID
 	if err := e.ledger.Admit(req); err != nil {
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob admit: %w", err)
 	}
@@ -631,6 +639,7 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 			continue
 		}
 		if _, err := e.WakeJob(ctx, run.AccountID, t.RunID, t.TaskIndex); err != nil {
+			e.log.Warn("sched: job dispatch failed", "run", t.RunID, "task", t.TaskIndex, "err", err)
 			// Best-effort retry: a transient admit / vmmd failure
 			// should not block other tasks. next_attempt_at = now()
 			// means "eligible immediately on the next tick". Use
