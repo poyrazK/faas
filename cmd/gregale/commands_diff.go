@@ -8,7 +8,7 @@
 //
 // The diff is read-only: it never calls CreateApp, Deploy, or
 // DeployTarball. The only network traffic is five GETs (apps +
-// deployments + envs + crons + edge-rules) plus the schema-break
+// app-scoped deployments + envs + crons + edge-rules) plus the schema-break
 // detection (text-only in PR-0; structural OpenAPI walk in PR-2).
 //
 // Exit codes:
@@ -30,6 +30,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -169,9 +170,9 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	}
 
 	// 1. Baseline snapshot.
-	baseline, err := buildBaseline(ctx, client, opts.Slug)
-	if err != nil {
-		return printErr("Could not read baseline", err)
+	baseline, baselineErr := buildBaseline(ctx, client, opts.Slug)
+	if baselineErr != nil && !opts.Lenient {
+		return printErr("Could not read baseline", baselineErr)
 	}
 
 	// 2. Pending projection. The gregale.yaml triggers fan-out
@@ -190,6 +191,18 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	// engine itself doesn't read pkg/api/limits.go; the caller
 	// supplies QuotaConfig.
 	d := deploydiff.Compute(opts.Slug, plan, baseline, pending)
+	if baselineErr != nil {
+		// Lenient mode may still show the partial projection, but it must
+		// be explicit that the result is incomplete. Keeping this as a
+		// warning break makes the condition visible in both text and JSON
+		// output without turning --lenient into an authoritative approval.
+		d.Breaks = append(d.Breaks, deploydiff.Break{
+			Code:     "baseline_unavailable",
+			Severity: deploydiff.SeverityWarn,
+			Reason:   fmt.Sprintf("baseline read failed; preview is incomplete: %v", baselineErr),
+			Field:    "baseline",
+		})
+	}
 
 	if planKnown {
 		breaks := deploydiff.Quota(plan, baseline, pending, deploydiff.QuotaConfig{
@@ -250,52 +263,36 @@ func validateDeployDiffManifest(cwd string) error {
 
 // buildBaseline reads the live state for the slug. Missing app is
 // not an error — a fresh deploy that would create-app has a
-// zero-value baseline.
+// zero-value baseline. Once the app exists, deployment history is
+// read from the app-scoped route; history failures are returned
+// instead of being mistaken for a never-deployed app.
 func buildBaseline(ctx context.Context, client *api.Client, slug string) (deploydiff.Baseline, error) {
 	out := deploydiff.EmptyBaseline()
 	app, err := client.GetApp(ctx, slug)
 	switch {
 	case err == nil:
 		out.App = &app
-		// Latest deployment: ListDeployments is account-scoped
-		// (no ?app= filter today), so a single page can return
-		// another app's most-recent row. Bound-paginate until we
-		// find a row with AppID == app.ID, or until the cursor
-		// (NextBefore) goes empty. The bound (maxDeploymentPages)
-		// keeps the worst-case bounded so an account with hundreds
-		// of apps doesn't loop forever; missing the match leaves
-		// LatestDeployment nil — same shape as a never-deployed
-		// app, which is the safe default.
-		const pageSize = 20
-		const maxDeploymentPages = 10 // ≤ 200 rows scanned worst-case
-		cursor := ""
-		pagesScanned := 0
-		for pagesScanned < maxDeploymentPages {
-			page, derr := client.ListDeployments(ctx, cursor, pageSize)
-			if derr != nil {
-				break // surface no error — LatestDeployment
-				// staying nil is the safe default
-			}
-			for i := range page.Items {
-				if page.Items[i].AppID == app.ID {
-					latest := page.Items[i]
-					out.LatestDeployment = &latest
-					// SAFE-RELEASES production-leveling Stream
-					// E: pin the scope of the latest deployment
-					// so the engine can emit a `scope_mismatch`
-					// SeverityWarn break when the pending deploy
-					// targets a different scope (cross-env
-					// promotion). The field is already on the
-					// wire via DeploymentResponse (ADR-091).
-					out.LatestScope = latest.Scope
-					break
-				}
-			}
-			if out.LatestDeployment != nil || page.NextBefore == "" {
-				break
-			}
-			cursor = page.NextBefore
-			pagesScanned++
+		// The account-wide ListDeployments route is not a safe baseline
+		// source: unrelated apps can crowd the first 200 rows, and a
+		// request failure used to look identical to an app with no
+		// deployment history. The app-scoped route returns the newest
+		// deployment directly and lets us distinguish an empty history
+		// from an unavailable history.
+		page, derr := client.ListAppDeployments(ctx, slug, "", 1)
+		if derr != nil && !isNotFound(derr) {
+			return out, derr
+		}
+		if derr == nil && len(page.Items) > 0 {
+			latest := page.Items[0]
+			out.LatestDeployment = &latest
+			// SAFE-RELEASES production-leveling Stream
+			// E: pin the scope of the latest deployment
+			// so the engine can emit a `scope_mismatch`
+			// SeverityWarn break when the pending deploy
+			// targets a different scope (cross-env
+			// promotion). The field is already on the
+			// wire via DeploymentResponse (ADR-091).
+			out.LatestScope = latest.Scope
 		}
 	case isNotFound(err):
 		// Fresh deploy — leave baseline.App == nil.
