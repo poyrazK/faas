@@ -244,6 +244,13 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
             f"{policy['audit_logs']['minimum_retention_days']}"
         )
 
+    channels = snap.get("notification_channels", {})
+    enabled_channels: set[str] = set()
+    if isinstance(channels, dict) and channels.get("_error"):
+        failures.append(f"notification channels cannot be audited: {channels['_error']}")
+    else:
+        enabled_channels = {str(channel.get("name")) for channel in channels if channel.get("enabled", True)}
+
     alerts = snap.get("alert_policies", {})
     if isinstance(alerts, dict) and alerts.get("_error"):
         failures.append(f"monitoring policies cannot be audited: {alerts['_error']}")
@@ -254,14 +261,11 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
                 failures.append(f"enabled alert policy is missing: {name}")
         if policy["logging"].get("require_notification_destination"):
             for alert in alerts:
-                if alert.get("displayName") in policy["logging"]["required_alerts"] and not alert.get(
-                    "notificationChannels"
-                ):
-                    failures.append(f"alert policy has no notification destination: {alert.get('displayName')}")
-
-    channels = snap.get("notification_channels", {})
-    if isinstance(channels, dict) and channels.get("_error"):
-        failures.append(f"notification channels cannot be audited: {channels['_error']}")
+                if alert.get("displayName") not in policy["logging"]["required_alerts"]:
+                    continue
+                destinations = {str(name) for name in alert.get("notificationChannels", [])}
+                if not destinations & enabled_channels:
+                    failures.append(f"alert policy has no enabled notification destination: {alert.get('displayName')}")
 
     budgets = snap.get("budgets", {})
     if isinstance(budgets, dict) and budgets.get("_error"):

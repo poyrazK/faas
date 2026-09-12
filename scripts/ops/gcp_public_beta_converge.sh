@@ -161,7 +161,7 @@ guard_phase() {
 
   local channel
   channel="$(gcloud beta monitoring channels list --project="$project" \
-    --filter='displayName="Gregale operator email" AND enabled=true' --format='value(name)' | head -1)"
+    --filter='displayName="Gregale operator email" AND enabled=true' --format='value(name)' 2>/dev/null | head -1)"
   if [[ -z "$channel" ]]; then
     run gcloud beta monitoring channels create --project="$project" \
       --display-name='Gregale operator email' \
@@ -169,7 +169,7 @@ guard_phase() {
       --type=email --channel-labels="email_address=$alert_email" --quiet
     if ((apply)); then
       channel="$(gcloud beta monitoring channels list --project="$project" \
-        --filter='displayName="Gregale operator email" AND enabled=true' --format='value(name)' | head -1)"
+        --filter='displayName="Gregale operator email" AND enabled=true' --format='value(name)' 2>/dev/null | head -1)"
       [[ -n "$channel" ]] || { echo "created notification channel is not visible" >&2; return 1; }
     else
       channel="projects/$project/notificationChannels/created-during-apply"
