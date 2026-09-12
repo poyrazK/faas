@@ -699,6 +699,10 @@ func testExecutionIntentLifecycle(t *testing.T, fx *Fixture) {
 	if err != nil || len(listed) != 1 || listed[0].ID != created.ID {
 		t.Fatalf("ListExecutions = %#v, %v", listed, err)
 	}
+	queued, err := fx.Store.ListExecutionsByStatus(fx.Ctx, fx.Account.ID, api.ExecutionStatusQueued, 10, 0)
+	if err != nil || len(queued) != 1 || queued[0].ID != created.ID {
+		t.Fatalf("ListExecutionsByStatus = %#v, %v", queued, err)
+	}
 	claim, err := fx.Store.ClaimExecution(fx.Ctx, "conformance-schedd", base.Add(10*time.Millisecond), time.Second)
 	if err != nil {
 		t.Fatalf("ClaimExecution: %v", err)
