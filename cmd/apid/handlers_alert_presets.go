@@ -53,6 +53,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
+var operatorOnlyAlertPresets = map[string]struct{}{
+	"canary_stuck_step":             {},
+	"safedeploy_audit_emit_failing": {},
+	"deployment_audit_gc_failing":   {},
+	"canary_fleet_in_flight_high":   {},
+}
+
+func isOperatorOnlyAlertPreset(name string) bool {
+	_, ok := operatorOnlyAlertPresets[name]
+	return ok
+}
+
 // listAlertPresets returns every row in alert_presets ordered by
 // category, name. The catalog is small (15 rows after O2) so no
 // pagination; the response is a flat slice.
@@ -74,6 +86,9 @@ func (s *server) listAlertPresets(w http.ResponseWriter, r *http.Request, _ stat
 	}
 	out := make([]api.AlertPresetResponse, 0, len(rows))
 	for _, row := range rows {
+		if isOperatorOnlyAlertPreset(row.Name) {
+			continue
+		}
 		out = append(out, api.AlertPresetResponseFromRow(api.AlertPresetRow{
 			ID:                     row.ID,
 			Name:                   row.Name,
@@ -170,6 +185,9 @@ func (s *server) enableAlertPresetFromForm(ctx context.Context, acct state.Accou
 // plan-gate phases are unit-testable in isolation — both surfaces
 // (JSON, form) share this exact gate.
 func (s *server) loadAndGateAlertPreset(ctx context.Context, acct state.Account, presetName string) (state.AlertPreset, *api.Problem) {
+	if isOperatorOnlyAlertPreset(presetName) {
+		return state.AlertPreset{}, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such alert preset", "no preset with that name is in the catalog")
+	}
 	preset, err := s.store.AlertPresetByName(ctx, presetName)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {

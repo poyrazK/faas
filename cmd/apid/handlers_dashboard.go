@@ -1140,6 +1140,9 @@ func (s *server) fetchDashboardPresets(ctx context.Context, log *slog.Logger, ac
 	}
 	out := make([]dashboard.AlertPresetItem, 0, len(rows))
 	for _, p := range rows {
+		if isOperatorOnlyAlertPreset(p.Name) {
+			continue
+		}
 		meetsPlan := api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(p.MinimumPlan))
 		enabled := p.EnabledInCatalog && meetsPlan
 		item := dashboard.AlertPresetItem{
