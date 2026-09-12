@@ -144,7 +144,7 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 	}
 
 	// 1. requests_total.
-	reqCountQ := fmt.Sprintf(`sum(increase(gateway_requests_total{app=%q}[%s]))`, app.ID, window)
+	reqCountQ := fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{app=%q}[%s]))`, app.ID, window)
 	if v, err := s.promqlClient.QueryScalar(ctx, reqCountQ); err == nil {
 		resp.RequestsTotal = int64(appmetrics.SafeRoundNonNeg(v))
 	} else {
@@ -174,8 +174,8 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 
 	// 5. error_rate_pct.
 	errQ := appmetrics.PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q,code=~"[45].."}[%s]))`, app.ID, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, app.ID, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"[45]xx"}[%s]))`, app.ID, window),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, app.ID, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = appmetrics.SafePercent(v)
 	} else {
@@ -185,7 +185,7 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 	// 6. cold_boot_rate_pct.
 	coldQ := appmetrics.PercentRatioQuery(
 		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, app.ID, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, app.ID, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, app.ID, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, coldQ); err == nil {
 		resp.ColdBootRatePct = appmetrics.SafePercent(v)
 	} else {

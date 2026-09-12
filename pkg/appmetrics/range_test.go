@@ -152,7 +152,7 @@ func TestFetchRange_HappyPath(t *testing.T) {
 				Metric map[string]string
 				Values []promql.QueryRangeSample
 			}{{Values: makeSeries([]float64{300, 310, 320})}}, nil
-		case strings.Contains(query, "[45].."):
+		case strings.Contains(query, "[45]xx"):
 			return []struct {
 				Metric map[string]string
 				Values []promql.QueryRangeSample

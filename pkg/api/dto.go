@@ -4408,7 +4408,7 @@ type AppMetricsResponse struct {
 	AppID  string `json:"app_id"`
 	Range  string `json:"range"`  // echoed window, e.g. "5m"
 	Source string `json:"source"` // "prometheus" on success, "degraded: <err>" otherwise
-	AsOf   string `json:"as_of"`  // RFC3339Nano UTC
+	AsOf   string `json:"as_of"`  // RFC3339Nano UTC; latest Prometheus scrape, or request time when unavailable
 	// RequestCount is the count of gateway_requests_total{app} over the
 	// window. Drives the empty-state message: 0 means "no requests in
 	// the last 5m" rather than a row of zeros.

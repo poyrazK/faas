@@ -99,8 +99,8 @@ func FetchRangeAccount(ctx context.Context, fetcher RangeFetcher, log *slog.Logg
 
 	// Error rate (account apps).
 	errQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_requests_total{%s,code=~"[45].."}[%s]))`, appMatcher, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total{%s}[%s]))`, appMatcher, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class=~"[45]xx"}[%s]))`, appMatcher, window),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s}[%s]))`, appMatcher, window))
 	if rows, err := fetcher.QueryRange(ctx, errQ, startStr, endStr, step); err == nil && len(rows) > 0 {
 		out.ErrorRate = seriesToPoints(rows[0].Values)
 	} else {
@@ -116,7 +116,7 @@ func FetchRangeAccount(ctx context.Context, fetcher RangeFetcher, log *slog.Logg
 	// Cold-boot rate (account apps).
 	coldQ := PercentRatioQuery(
 		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{%s}[%s]))`, appMatcher, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total{%s}[%s]))`, appMatcher, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s}[%s]))`, appMatcher, window))
 	if rows, err := fetcher.QueryRange(ctx, coldQ, startStr, endStr, step); err == nil && len(rows) > 0 {
 		out.ColdBootRate = seriesToPoints(rows[0].Values)
 	} else {
