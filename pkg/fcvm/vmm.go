@@ -234,6 +234,56 @@ func (w *ringWriter) Write(p []byte) (int, error) {
 	return w.ring.Write(w.stream, p)
 }
 
+// customerConsoleWriter separates the guest serial console from Firecracker's
+// own stdout. Firecracker multiplexes both onto the child stdout pipe, while
+// the customer log API promises only guest application/runtime output. The
+// unfiltered stream is still copied to the root-owned console file by
+// startJailer for operator diagnostics.
+type customerConsoleWriter struct {
+	mu      sync.Mutex
+	ring    *logbuf.Ring
+	pending []byte
+}
+
+func (w *customerConsoleWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pending = append(w.pending, p...)
+	for {
+		newline := bytes.IndexByte(w.pending, '\n')
+		if newline < 0 {
+			break
+		}
+		line := append([]byte(nil), w.pending[:newline+1]...)
+		w.pending = w.pending[newline+1:]
+		if firecrackerControlLine(line) {
+			continue
+		}
+		if _, err := w.ring.Write("stdout", line); err != nil {
+			return len(p), err
+		}
+	}
+	return len(p), nil
+}
+
+func firecrackerControlLine(line []byte) bool {
+	trimmed := strings.TrimSpace(string(line))
+	if !strings.HasPrefix(trimmed, "[") {
+		return false
+	}
+	headerEnd := strings.IndexByte(trimmed, ']')
+	if headerEnd < 0 {
+		return false
+	}
+	header := trimmed[:headerEnd+1]
+	for _, origin := range []string{":fc_api]", ":api_server]", ":vmm]", ":snapshot]"} {
+		if strings.Contains(header, origin) {
+			return true
+		}
+	}
+	return strings.Contains(header, ":main]") && strings.Contains(trimmed[headerEnd+1:], "Firecracker")
+}
+
 // ringFor returns the per-instance ring registered for instance, or nil
 // when the instance never had one (legacy Boot callers, test seams).
 // Caller may be holding v.mu; the function takes and releases it.
@@ -3336,7 +3386,7 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 		// into the per-instance ring. stderr stays discarded — FC only
 		// writes there on configuration errors and operators inspect those
 		// via systemctl logs, not the per-app tail.
-		stdout = &ringWriter{ring: ring, stream: "stdout"}
+		stdout = &customerConsoleWriter{ring: ring}
 	}
 	if consoleFile != nil {
 		stdout = io.MultiWriter(stdout, consoleFile)
