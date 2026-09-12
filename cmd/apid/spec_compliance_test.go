@@ -124,6 +124,10 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/ops/jobs/runs":                                true, // operator-only active job-run projection
 	"GET /v1/admin/ops/jobs/runs/{id}":                           true, // operator-only job-run inspection
 	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                   true, // operator-only job-run cancellation
+	"GET /v1/admin/ops/deployments":                              true, // operator-only deployment incident projection
+	"GET /v1/admin/ops/deployments/{id}":                         true, // operator-only deployment inspection
+	"POST /v1/admin/ops/deployments/{id}/cancel":                 true, // operator-only deployment cancellation
+	"POST /v1/admin/ops/deployments/{id}/retry":                  true, // operator-only deployment retry
 	"GET /v1/admin/ops/github/recovery":                          true, // operator-only githubd queue projection
 	"POST /v1/admin/ops/github/deliveries/{id}/retry":            true, // operator-only githubd delivery recovery
 	"POST /v1/admin/ops/github/check-updates/{id}/retry":         true, // operator-only githubd Check Run recovery
@@ -414,10 +418,17 @@ var dtoExclude = map[string]bool{
 	"ObsTenantUsageApp":         true,
 	// Operator job-run incident projections are intentionally absent from the
 	// public customer OpenAPI and generated SDKs.
-	"OperatorJobRun":               true,
-	"OperatorJobRunListResponse":   true,
-	"OperatorJobRunDetailResponse": true,
-	"OperatorJobRunCancelResponse": true,
+	"OperatorJobRun":                     true,
+	"OperatorJobRunListResponse":         true,
+	"OperatorJobRunDetailResponse":       true,
+	"OperatorJobRunCancelResponse":       true,
+	"OperatorDeployment":                 true,
+	"OperatorDeploymentStage":            true,
+	"OperatorDeploymentStageItem":        true,
+	"OperatorDeploymentBuild":            true,
+	"OperatorDeploymentListResponse":     true,
+	"OperatorDeploymentDetailResponse":   true,
+	"OperatorDeploymentMutationResponse": true,
 	// Issue #975 #4 / ADR-129 — query parameter struct for
 	// GET /v1/cors-presets (the `app_id` filter). The wire
 	// surface inlines the field directly in the query parameter

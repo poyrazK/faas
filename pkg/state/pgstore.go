@@ -6289,6 +6289,54 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 	return scanDeployments(rows)
 }
 
+// ListDeploymentsForOperator returns the bounded deployment incident view
+// used by provider operators. Filters are pushed into Postgres so a fleet
+// query never materializes the full deployment history in apid. Deleted apps
+// and soft-deleted deployment rows are intentionally excluded.
+func (s *PgStore) ListDeploymentsForOperator(ctx context.Context, filter OperatorDeploymentFilter) ([]Deployment, error) {
+	if filter.Limit <= 0 {
+		return nil, nil
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+	var accountID, appID *uuid.UUID
+	if strings.TrimSpace(filter.AccountID) != "" {
+		id, err := uuid.Parse(strings.TrimSpace(filter.AccountID))
+		if err != nil {
+			return nil, fmt.Errorf("state: invalid operator deployment account id: %w", err)
+		}
+		accountID = &id
+	}
+	if strings.TrimSpace(filter.AppID) != "" {
+		id, err := uuid.Parse(strings.TrimSpace(filter.AppID))
+		if err != nil {
+			return nil, fmt.Errorf("state: invalid operator deployment app id: %w", err)
+		}
+		appID = &id
+	}
+	statuses := make([]string, 0, len(filter.Statuses))
+	for _, status := range filter.Statuses {
+		if status != "" {
+			statuses = append(statuses, string(status))
+		}
+	}
+	rows, err := s.pool.Query(ctx,
+		`select `+deploymentSelectColumnsQualified+`
+		 from deployments d join apps a on a.id = d.app_id
+		 where a.status <> 'deleted' and d.deleted_at is null
+		   and ($1::uuid is null or a.account_id = $1::uuid)
+		   and ($2::uuid is null or d.app_id = $2::uuid)
+		   and (cardinality($3::text[]) = 0 or d.status = any($3::text[]))
+		 order by d.created_at desc, d.id desc
+		 limit $4 offset $5`, accountID, appID, statuses, filter.Limit, filter.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDeployments(rows)
+}
+
 func (s *PgStore) ListLatestDeploymentPerApp(ctx context.Context, accountID string) (map[string]Deployment, error) {
 	rows, err := s.pool.Query(ctx,
 		`select distinct on (d.app_id) `+deploymentSelectColumnsQualified+`

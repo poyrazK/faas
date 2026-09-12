@@ -2105,6 +2105,17 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorJobRun))))
 	mux.Handle("POST /v1/admin/ops/jobs/runs/{id}/cancel",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postOperatorJobRunCancel))))
+	// Deployment incident controls. Reads expose a bounded safe projection;
+	// retry/cancel reuse the normal queue primitives behind the strict
+	// operator-session policy and are always audited.
+	mux.HandleFunc("GET /v1/admin/ops/deployments",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDeployments))))
+	mux.HandleFunc("GET /v1/admin/ops/deployments/{id}",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDeployment))))
+	mux.Handle("POST /v1/admin/ops/deployments/{id}/cancel",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postOperatorDeploymentCancel))))
+	mux.Handle("POST /v1/admin/ops/deployments/{id}/retry",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postOperatorDeploymentRetry))))
 	// githubd-owned incident recovery. The read path is MFA-gated and the
 	// retry paths use the strict provider-mutation policy; apid never opens or
 	// writes githubd's queue tables directly.

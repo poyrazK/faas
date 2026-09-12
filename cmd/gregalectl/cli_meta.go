@@ -72,6 +72,7 @@ type cliFlag struct {
 //   - debug           (otel-smoke; ADR-127 PR-D)
 //   - github          (status | retry-delivery | retry-check)
 //   - jobs            (active | inspect | cancel)
+//   - deployments     (active | inspect | cancel | retry)
 //   - trusted-publishers (add | remove | list) — see ADR-058 deviation note in main.go:15
 //   - version         (internal)
 //   - completion      (bash | zsh | fish | powershell) (internal)
@@ -595,6 +596,36 @@ var cliCommands = []cliCommand{
 				{Name: "reason", Short: "durable audit reason slug", Req: true},
 				{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
 				{Name: "yes", Short: "acknowledge cancelling customer job work", Req: true},
+			}},
+		},
+	},
+	{
+		Name:    dispatchDeployments,
+		DocSlug: "deployments",
+		Short:   "Cross-account deployment diagnosis and guarded retry/cancellation",
+		Subcommands: []cliSub{
+			{Name: "active", Short: "List incident-state deployments across the fleet or for one account/app", Flags: []cliFlag{
+				{Name: "account-id", Short: "optional target account id"},
+				{Name: "app-id", Short: "optional target app id"},
+				{Name: "status", Short: "comma-separated status filter; default incident states; all for every state"},
+				{Name: "limit", Short: "maximum deployments (1..200)"},
+				{Name: "offset", Short: "deployment pagination offset"},
+			}},
+			{Name: "inspect", Short: "Inspect one deployment, build, and bounded stage timeline", Flags: []cliFlag{
+				{Name: "deployment-id", Short: "deployment id", Req: true},
+			}},
+			{Name: "cancel", Short: "Cancel one pending deployment and its active build", Flags: []cliFlag{
+				{Name: "deployment-id", Short: "deployment id", Req: true},
+				{Name: "reason", Short: "durable audit reason slug", Req: true},
+				{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+				{Name: "yes", Short: "acknowledge cancelling customer deployment work", Req: true},
+			}},
+			{Name: "retry", Short: "Enqueue a failed deployment from a selected stage", Flags: []cliFlag{
+				{Name: "deployment-id", Short: "failed deployment id", Req: true},
+				{Name: "from-stage", Short: "stage to restart from (default source_download)"},
+				{Name: "reason", Short: "durable audit reason slug", Req: true},
+				{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+				{Name: "yes", Short: "acknowledge enqueueing customer deployment work", Req: true},
 			}},
 		},
 	},

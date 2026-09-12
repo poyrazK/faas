@@ -1977,6 +1977,19 @@ type Deployment struct {
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
 }
 
+// OperatorDeploymentFilter bounds the provider-side deployment incident
+// view. Empty AccountID/AppID values mean fleet-wide filtering; an empty
+// Statuses slice means all non-deleted deployment states. Limit and Offset
+// are applied by the store so an operator cannot accidentally load the full
+// deployment history into apid.
+type OperatorDeploymentFilter struct {
+	AccountID string
+	AppID     string
+	Statuses  []DeploymentStatus
+	Limit     int
+	Offset    int
+}
+
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot
 // captured at a deployment's status='live' transition (ADR-121,
 // migration 00358). One row per deployment; the PR-C gate

@@ -46,14 +46,11 @@ curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=increase(meterd_deployment_f
 # Any deployments stuck in activating/pending?
 curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=meterd_deployment_status_count{account_id%3D%22<acct>%22%2C+app_id%3D%22<app>%22%2C+status%3D~%22pending%7Cactivating%22}'
 
-# The actual deployment audit log (SQL):
-sudo -u postgres psql -d faas -c "
-  SELECT id, status, error_class, created_at
-  FROM deployments
-  WHERE account_id = '<acct>' AND app_id = '<app>'
-  ORDER BY created_at DESC
-  LIMIT 5;
-"
+# Inspect the bounded operator projection (no SSH or database access):
+gregalectl deployments active \
+  --account-id <acct> --app-id <app> \
+  --status pending,building,imaging,snapshotting,failed --limit 50
+gregalectl deployments inspect --deployment-id <deployment-id>
 ```
 
 ## Silence
@@ -72,4 +69,19 @@ window. A failed deployment does NOT auto-rollback the previous
 good deployment — the customer stays on their last-good version
 per ADR-005 / spec §5.4. Operator action is required only to
 unblock the customer's next retry (e.g., raise builder VM
-limits, fix classifier regex).
+limits, fix classifier regex). After the underlying issue is
+understood, use the guarded API rather than editing the row directly:
+
+```bash
+gregalectl auth step-up
+gregalectl deployments retry \
+  --deployment-id <deployment-id> --from-stage source_download \
+  --reason deploy_incident_123 --yes
+# Or retract queued work that must not continue:
+gregalectl deployments cancel \
+  --deployment-id <deployment-id> --reason deploy_incident_123 --yes
+```
+
+Both mutations are MFA-stepped, idempotent, and audited with a trace ID.
+Retry creates a fresh attempt and leaves the failed row unchanged; cancel
+only applies to pending/building/imaging/snapshotting rows.

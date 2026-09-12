@@ -5778,6 +5778,68 @@ func (m *MemStore) ListDeploymentsForAccount(_ context.Context, accountID string
 	return all, nil
 }
 
+// ListDeploymentsForOperator mirrors PgStore.ListDeploymentsForOperator while
+// keeping the same account/app ownership and soft-delete filters in memory.
+func (m *MemStore) ListDeploymentsForOperator(_ context.Context, filter OperatorDeploymentFilter) ([]Deployment, error) {
+	if filter.Limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ownedApps := make(map[string]App)
+	for id, app := range m.apps {
+		if app.Status == AppDeleted {
+			continue
+		}
+		if filter.AccountID != "" && app.AccountID != filter.AccountID {
+			continue
+		}
+		if filter.AppID != "" && id != filter.AppID {
+			continue
+		}
+		ownedApps[id] = app
+	}
+	statusSet := make(map[DeploymentStatus]struct{}, len(filter.Statuses))
+	for _, status := range filter.Statuses {
+		if status != "" {
+			statusSet[status] = struct{}{}
+		}
+	}
+	all := make([]Deployment, 0)
+	for _, deployment := range m.deployments {
+		if deployment.DeletedAt != nil {
+			continue
+		}
+		if _, ok := ownedApps[deployment.AppID]; !ok {
+			continue
+		}
+		if len(statusSet) > 0 {
+			if _, ok := statusSet[deployment.Status]; !ok {
+				continue
+			}
+		}
+		all = append(all, deployment)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].ID > all[j].ID
+		}
+		return all[i].CreatedAt.After(all[j].CreatedAt)
+	})
+	start := filter.Offset
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(all) {
+		return []Deployment{}, nil
+	}
+	end := start + filter.Limit
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[start:end], nil
+}
+
 func (m *MemStore) ListLatestDeploymentPerApp(_ context.Context, accountID string) (map[string]Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

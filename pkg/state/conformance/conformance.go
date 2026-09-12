@@ -60,6 +60,7 @@ func Run(t *testing.T, open Open) {
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
+		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
@@ -585,6 +586,85 @@ func testLatestDeploymentPerApp(t *testing.T, fx *Fixture) {
 	}
 	if _, ok := got[foreignApp.ID]; ok {
 		t.Error("foreign account deployment leaked into latest map")
+	}
+}
+
+func testOperatorDeploymentListing(t *testing.T, fx *Fixture) {
+	stamp := time.Date(2032, 3, 4, 5, 6, 7, 0, time.UTC)
+	failed, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, CreatedAt: stamp, Kind: state.DeploymentKindImage,
+		Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(failed): %v", err)
+	}
+	// CreateDeployment's PostgreSQL implementation inserts a pending row;
+	// transition it through the store API so both backends exercise the same
+	// failed-state listing behavior.
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, failed.ID, state.DeployFailed, "builder failed"); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(failed): %v", err)
+	}
+	pending, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, CreatedAt: stamp.Add(time.Minute), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(pending): %v", err)
+	}
+	limits := api.MustLimitsFor(api.PlanPro)
+	foreignAccount, err := fx.Store.CreateAccount(fx.Ctx, "operator-deployments-foreign-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount(foreign): %v", err)
+	}
+	foreignApp, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: foreignAccount.ID, Slug: "operator-deployments-foreign-" + uuid.NewString(),
+		Type: state.AppTypeApp, RAMMB: limits.RAMMB, MaxConcurrency: limits.MaxConcurrency,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateApp(foreign): %v", err)
+	}
+	foreign, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: foreignApp.ID, CreatedAt: stamp.Add(2 * time.Minute), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(foreign): %v", err)
+	}
+
+	accountRows, err := fx.Store.ListDeploymentsForOperator(fx.Ctx, state.OperatorDeploymentFilter{
+		AccountID: fx.Account.ID,
+		Statuses:  []state.DeploymentStatus{state.DeployPending, state.DeployFailed},
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("ListDeploymentsForOperator(account): %v", err)
+	}
+	if len(accountRows) != 2 || accountRows[0].ID != pending.ID || accountRows[1].ID != failed.ID {
+		t.Fatalf("account rows = %+v, want pending then failed for fixture app", accountRows)
+	}
+	appRows, err := fx.Store.ListDeploymentsForOperator(fx.Ctx, state.OperatorDeploymentFilter{
+		AppID: fx.App.ID, Statuses: []state.DeploymentStatus{state.DeployPending}, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListDeploymentsForOperator(app): %v", err)
+	}
+	if len(appRows) != 1 || appRows[0].ID != pending.ID {
+		t.Fatalf("app rows = %+v, want only pending deployment %s", appRows, pending.ID)
+	}
+	fleetPage, err := fx.Store.ListDeploymentsForOperator(fx.Ctx, state.OperatorDeploymentFilter{
+		Statuses: []state.DeploymentStatus{state.DeployPending}, Limit: 1,
+	})
+	if err != nil {
+		t.Fatalf("ListDeploymentsForOperator(fleet page): %v", err)
+	}
+	fleetNext, err := fx.Store.ListDeploymentsForOperator(fx.Ctx, state.OperatorDeploymentFilter{
+		Statuses: []state.DeploymentStatus{state.DeployPending}, Limit: 1, Offset: 1,
+	})
+	if err != nil {
+		t.Fatalf("ListDeploymentsForOperator(fleet next): %v", err)
+	}
+	if len(fleetPage) != 1 || len(fleetNext) != 1 || fleetPage[0].ID == fleetNext[0].ID {
+		t.Fatalf("bounded fleet pages = (%+v, %+v), want two distinct rows including foreign %s", fleetPage, fleetNext, foreign.ID)
 	}
 }
 
