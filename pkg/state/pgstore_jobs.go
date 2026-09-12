@@ -408,7 +408,7 @@ func (s *PgStore) JobConcurrentByAccount(ctx context.Context, accountID string) 
 // uses this to echo the slice back without a second round-trip.
 //
 // Failure modes:
-//   - ErrNotFound when the parent job_id is gone (FK violation).
+//   - ErrNotFound when the parent job_id is gone or belongs to another account.
 //   - mapErr-wrapped CHECK violations on bad tasks / parallelism.
 //   - mapErr-wrapped FK violations on accountID.
 func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int) (JobRun, []JobTask, error) {
@@ -421,11 +421,22 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
-	// 1. Insert the run row. Returning * spreads into scanJobRunCols.
+	// 1. Insert the run row. Parallelism is NOT NULL on job_runs, so a
+	// nil per-run override must be materialized from jobs.max_parallelism.
+	// retry_max and task_timeout_s stay nullable: nil is their durable
+	// "inherit from the parent job at dispatch time" representation.
+	// INSERT ... SELECT keeps the default lookup and insert atomic, and the
+	// account predicate prevents a caller from pairing another tenant's job
+	// with its own account row.
 	row := tx.QueryRow(ctx,
 		`insert into job_runs (job_id, account_id, trigger_kind, env_overrides,
 		                       tasks, parallelism, retry_max, task_timeout_s)
-		 values ($1::uuid, $2::uuid, $3, $4::jsonb, $5, $6, $7, $8)
+		 select j.id, $2::uuid, $3, $4::jsonb, $5,
+		        coalesce($6, j.max_parallelism), $7, $8
+		   from jobs j
+		  where j.id = $1::uuid
+		    and j.account_id = $2::uuid
+		    and j.status <> 'deleted'
 		 returning `+jobRunSelectCols,
 		jobID, accountID, triggerKind, []byte(envOverrides),
 		tasks, parallelism, retryMaxOverride, taskTimeoutOverride)
