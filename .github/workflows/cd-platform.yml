@@ -165,7 +165,7 @@ jobs:
             gate_timeout=0
           fi
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
-            "systemd-run --quiet --wait --pipe --collect --property=EnvironmentFile=/etc/faas/compute-db.env /usr/local/bin/gregalectl compute-nodes release-status --desired-release '${DESIRED_RELEASE}' --timeout '${gate_timeout}' --poll-interval 10s --break-glass-db --json" \
+            "/usr/local/bin/gregalectl compute-nodes release-status --desired-release '${DESIRED_RELEASE}' --timeout '${gate_timeout}' --poll-interval 10s --break-glass-db --json" \
             >"$status_file" 2>"$error_file"
           gate_exit=$?
 

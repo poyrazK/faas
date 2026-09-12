@@ -27,6 +27,9 @@ func TestCDPlatformOrchestratesControlComputeAndFleetGate(t *testing.T) {
 	if !strings.Contains(workflow, "--timeout '${gate_timeout}'") || !strings.Contains(workflow, "--break-glass-db --json") {
 		t.Fatal("platform workflow must execute the bounded, machine-readable active-node release gate")
 	}
+	if strings.Contains(workflow, "--property=EnvironmentFile=/etc/faas/compute-db.env") {
+		t.Fatal("control-plane release gate must let gregalectl fall back to sealed.env when compute-db.env is absent")
+	}
 }
 
 // This pins the incident from #2348: a successful control-plane stage followed
