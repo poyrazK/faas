@@ -17,16 +17,45 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const (
-	publicStatusPreviousMigrationVersion int64 = 20260912130000001
-	publicStatusMigrationVersion         int64 = 20260912144727207
-)
+const publicStatusMigrationVersion int64 = 20260912144727207
+
+// publicStatusPreviousVersion resolves the version immediately preceding
+// publicStatusMigrationVersion in the embedded migration set, at run time.
+//
+// It used to be a hardcoded constant (20260912130000001), which broke on
+// 2026-09-12 when 20260912134233953_managed_realtime_endpoints.sql merged with
+// a version BETWEEN the two. migrateUpTo then applied that migration as well,
+// so the single goose down step landed the ledger on 20260912134233953 and the
+// test failed on main for every open PR.
+//
+// The helper's original comment anticipated migrations landing AFTER this one
+// and is still true for those; the gap was a migration landing in between,
+// which no hardcoded predecessor can survive. Deriving it removes the whole
+// class rather than re-pinning today's answer.
+//
+// migrations.LoadMigrations is the same filename parser the embed checks use,
+// exported from embed_test.go precisely so external test packages in this
+// directory can reuse it.
+func publicStatusPreviousVersion(t *testing.T) int64 {
+	t.Helper()
+	var prev int64
+	for _, m := range migrations.LoadMigrations(t) {
+		if m.Version < publicStatusMigrationVersion && m.Version > prev {
+			prev = m.Version
+		}
+	}
+	if prev == 0 {
+		t.Fatalf("no embedded migration precedes %d", publicStatusMigrationVersion)
+	}
+	return prev
+}
 
 func TestMigrationPublicStatusBackfillConstraintsReplayAndRollback(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 	defer pool.Close()
-	migrateUpTo(t, ctx, pool, publicStatusPreviousMigrationVersion)
+	previousVersion := publicStatusPreviousVersion(t)
+	migrateUpTo(t, ctx, pool, previousVersion)
 	longTitle := strings.Repeat("x", 200)
 	if _, err := pool.Exec(ctx, `insert into status_incidents(component,severity,message) values ('faas-control-plane','full_outage',$1)`, longTitle); err != nil {
 		t.Fatalf("seed legacy incident: %v", err)
@@ -100,7 +129,7 @@ func TestMigrationPublicStatusBackfillConstraintsReplayAndRollback(t *testing.T)
 	}
 
 	migrateUpTo(t, ctx, pool, publicStatusMigrationVersion)
-	migrateDownPublicStatus(t, ctx, pool)
+	migrateDownPublicStatus(t, ctx, pool, previousVersion)
 
 	var columns int
 	if err := pool.QueryRow(ctx, `select count(*) from information_schema.columns where table_schema=current_schema() and table_name='status_incidents' and column_name='public_id'`).Scan(&columns); err != nil {
@@ -114,7 +143,7 @@ func TestMigrationPublicStatusBackfillConstraintsReplayAndRollback(t *testing.T)
 // migrateDownPublicStatus rolls back the exact prefix staged by migrateUpTo.
 // Later migrations in the repository are deliberately never applied, so this
 // remains a v2 round-trip test even when newer migrations land on main.
-func migrateDownPublicStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func migrateDownPublicStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, wantVersion int64) {
 	t.Helper()
 	cfg := pool.Config()
 	if cfg == nil || cfg.ConnConfig == nil {
@@ -137,7 +166,7 @@ func migrateDownPublicStatus(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	if err := pool.QueryRow(ctx, `select coalesce(max(version_id), 0) from goose_db_version where is_applied`).Scan(&got); err != nil {
 		t.Fatalf("migrateDownPublicStatus: read ledger: %v", err)
 	}
-	if got != publicStatusPreviousMigrationVersion {
-		t.Fatalf("migration ledger at %d after rollback, want %d", got, publicStatusPreviousMigrationVersion)
+	if got != wantVersion {
+		t.Fatalf("migration ledger at %d after rollback, want %d", got, wantVersion)
 	}
 }
