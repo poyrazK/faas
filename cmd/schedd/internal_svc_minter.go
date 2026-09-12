@@ -52,6 +52,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -161,6 +162,11 @@ const (
 	// reservation in ADR-119 §Deployment requirements
 	// ("namespace 'internal_svc' under host.age").
 	internalSvcKeySealedNamespaceDefault = "internal_svc"
+	// hostAgeIdentityPathEnv is set by the systemd LoadCredential wiring.
+	// Unprivileged schedd processes cannot read the canonical root-only
+	// /etc/faas/secrets/host.age path, so every unseal path must honor the
+	// credential copy when it is present.
+	hostAgeIdentityPathEnv = "FAAS_HOST_AGE_IDENTITY_PATH"
 	// defaultInternalSvcKeyPath is the production path the
 	// operator is expected to provision. Used when the env is
 	// unset.
@@ -280,7 +286,7 @@ func loadSchedInternalSvcKey(log *slog.Logger) (ed25519.PrivateKey, string, erro
 // so a stolen ciphertext from a different namespace cannot be
 // replayed against the internal-svc path.
 func loadSchedKeySealed(sealedB64 string, log *slog.Logger) (ed25519.PrivateKey, error) {
-	identities, err := secretbox.LoadHostKeys(filepath.Dir(secretbox.DefaultHostKeyPath))
+	identities, err := secretbox.LoadHostKeys(scheddHostAgeKeyDir())
 	if err != nil {
 		return nil, fmt.Errorf("schedd: load host.age identities for sealed key: %w", err)
 	}
@@ -319,6 +325,14 @@ func loadSchedKeySealed(sealedB64 string, log *slog.Logger) (ed25519.PrivateKey,
 	log.Info("schedd: unsealed internal-svc key from host.age",
 		"namespace", gotNS, "identities", len(identities))
 	return priv, nil
+}
+
+func scheddHostAgeKeyDir() string {
+	path := strings.TrimSpace(os.Getenv(hostAgeIdentityPathEnv))
+	if path == "" {
+		path = secretbox.DefaultHostKeyPath
+	}
+	return filepath.Dir(path)
 }
 
 // looksLikeAgeBlob is a cheap heuristic: age output starts

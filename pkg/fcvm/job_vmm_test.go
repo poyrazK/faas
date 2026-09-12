@@ -13,9 +13,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestBuildJobColdBootConfigUsesPrivateWritableDrive(t *testing.T) {
@@ -118,6 +121,69 @@ func TestEnsureJobManifestDirectoryRejectsImageSymlink(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(escape, "faas")); !os.IsNotExist(err) {
 		t.Fatalf("staging escaped through image symlink: %v", err)
 	}
+}
+
+func TestJobManifestStorageRootUsesOptimizedUpper(t *testing.T) {
+	root := t.TempDir()
+	upper := filepath.Join(root, "upper")
+	if err := os.Mkdir(upper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := jobManifestStorageRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != upper {
+		t.Fatalf("job manifest root = %q, want %q", got, upper)
+	}
+}
+
+func TestJobManifestStorageRootUsesFullRoot(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte(api.FullRootfsMarkerValue), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	got, err := jobManifestStorageRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != root {
+		t.Fatalf("job manifest root = %q, want %q", got, root)
+	}
+}
+
+func TestJobManifestStorageRootRejectsMalformedLayouts(t *testing.T) {
+	t.Run("missing optimized upper", func(t *testing.T) {
+		if _, err := jobManifestStorageRoot(t.TempDir()); err == nil {
+			t.Fatal("missing optimized upper accepted")
+		}
+	})
+	t.Run("symlinked optimized upper", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.Symlink(t.TempDir(), filepath.Join(root, "upper")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := jobManifestStorageRoot(root); err == nil {
+			t.Fatal("symlinked optimized upper accepted")
+		}
+	})
+	t.Run("invalid full-rootfs marker", func(t *testing.T) {
+		root := t.TempDir()
+		marker := filepath.Join(root, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
+		if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, []byte("invalid\n"), 0o444); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := jobManifestStorageRoot(root); err == nil {
+			t.Fatal("invalid full-rootfs marker accepted")
+		}
+	})
 }
 
 func TestSignalJobGuestUsesHostInitiatedConnect(t *testing.T) {
