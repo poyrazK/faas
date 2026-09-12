@@ -10,7 +10,81 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// TestStatusHistoryRollup seeds 90 days of terminal invocation rows and
+// verifies that the public status projection keeps exactly the last 30 days,
+// calculates weighted uptime, and includes the operator incident timeline
+// (issue #276 / spec §12).
+func TestStatusHistoryRollup(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	account, err := store.CreateAccount(ctx, "status-history@localhost", api.PlanScale)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID,
+		Slug:      "status-history",
+		Runtime:   "node22",
+		RAMMB:     256,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	now := time.Now().UTC()
+	for daysAgo := 0; daysAgo < 90; daysAgo++ {
+		createdAt := now.AddDate(0, 0, -daysAgo)
+		for i := 0; i < 3; i++ {
+			stateValue := state.InvocationCompleted
+			if daysAgo >= statusHistoryDays || i == 2 {
+				stateValue = state.InvocationFailed
+			}
+			if _, err := store.EnqueueInvocation(ctx, state.Invocation{
+				AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke,
+				State: stateValue, CreatedAt: createdAt, DueAt: createdAt,
+			}); err != nil {
+				t.Fatalf("EnqueueInvocation day %d row %d: %v", daysAgo, i, err)
+			}
+		}
+	}
+	if _, err := store.InsertStatusIncident(ctx, state.StatusIncidentComponentApid,
+		state.StatusIncidentSeverityDegraded, "API latency elevated"); err != nil {
+		t.Fatalf("InsertStatusIncident: %v", err)
+	}
+
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"scalar","result":[{"value":[0,"0"]}]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.5"]}]}}`))
+	}))
+	t.Cleanup(prom.Close)
+
+	c := newStatusCacheWithStore(prom.URL, store, slog.Default())
+	snap, err := c.Get(ctx)
+	if err != nil {
+		t.Fatalf("status Get: %v", err)
+	}
+	if len(snap.Uptime30d) != statusHistoryDays {
+		t.Fatalf("uptime buckets = %d, want %d", len(snap.Uptime30d), statusHistoryDays)
+	}
+	want := float64(2) / 3 * 100
+	if snap.Uptime30dPct != want {
+		t.Fatalf("uptime_30d_pct = %v, want %v", snap.Uptime30dPct, want)
+	}
+	if snap.Uptime30d[0].Total != 3 || snap.Uptime30d[0].Successful != 2 {
+		t.Fatalf("oldest bucket = %+v, want 2/3", snap.Uptime30d[0])
+	}
+	if len(snap.Incidents) != 1 || snap.Incidents[0].Summary != "API latency elevated" {
+		t.Fatalf("incidents = %+v, want one projected incident", snap.Incidents)
+	}
+}
 
 // TestStatusJSONHandlerNoPrometheusURL is the degraded path. With
 // an empty prometheus URL the handler must return 200 + a payload

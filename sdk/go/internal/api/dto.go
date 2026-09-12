@@ -1038,6 +1038,14 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
+	// Uptime30dPct is the weighted terminal-invocation success rate over
+	// the last 30 calendar days.
+	Uptime30dPct float64 `json:"uptime_30d_pct"`
+	// Uptime30d contains daily buckets, oldest first, for the public
+	// status page sparkline.
+	Uptime30d []StatusUptimeBucket `json:"uptime_30d"`
+	// Incidents contains recent public status incidents, newest first.
+	Incidents []StatusIncident `json:"incidents"`
 	// Degraded is true when at least one page- or warn-severity alert
 	// is currently firing on the local Prometheus. The public status
 	// page renders a "degraded" pill when this is true so prospects
@@ -1056,6 +1064,23 @@ type StatusPage struct {
 	// "degraded: <reason>" so an operator tailing the JSON can tell
 	// at a glance why a snapshot is or isn't trustworthy.
 	Source string `json:"source"`
+}
+
+// StatusUptimeBucket is one daily point in StatusPage.Uptime30d.
+type StatusUptimeBucket struct {
+	Date       time.Time `json:"date"`
+	UptimePct  float64   `json:"uptime_pct"`
+	Successful int64     `json:"successful"`
+	Total      int64     `json:"total"`
+}
+
+// StatusIncident is the public projection of an operator-posted incident.
+type StatusIncident struct {
+	Component  string     `json:"component,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	ResolvedAt *time.Time `json:"resolved_at"`
+	Severity   string     `json:"severity"`
+	Summary    string     `json:"summary"`
 }
 
 // --- Move 2: event-driven surface response shapes ----------------------------
