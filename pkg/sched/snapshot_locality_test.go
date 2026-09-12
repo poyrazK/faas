@@ -1,3 +1,4 @@
+// adr: 063
 package sched
 
 import (
@@ -50,7 +51,11 @@ func TestWakeSnapshotProducerLocality(t *testing.T) {
 			if _, err := store.EnqueueSnapshotReplicasForNode(ctx, replica); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.MarkSnapshotReplicaReady(ctx, snap.ID, replica); err != nil {
+			job, err := store.ClaimSnapshotReplica(ctx, replica)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, replica, job.LeaseToken); err != nil {
 				t.Fatal(err)
 			}
 			node, err := store.ComputeNodeByID(ctx, producer)

@@ -383,7 +383,10 @@ spinner) and PR #51 (the closeout batch):
   HTML, `deploy/statuspage/index.html`) and `GET /status/slo.json`
   (4 PromQL queries against the local Prometheus with a 30 s
   in-process cache and graceful degradation on transient failures;
-  never 5xx the route). The fourth query drives the `degraded` flag
+  never 5xx the route). The JSON also includes a bounded 30-day
+  terminal-invocation rollup and recent operator incidents from Postgres;
+  history reads are best-effort and cannot block current SLI reporting.
+  The fourth query drives the `degraded` flag
   surfaced by the alert pipeline — see
   [M8 — alert pipeline](#m8--alert-pipeline--this-pr) below.
 - **§14 restore drill wired** —
@@ -532,7 +535,7 @@ The §14 M8 gates still on the board are listed in [What's next](#whats-next).
 
 - **ADR-066** (Tier A5 cross-node live-instance migration, accepted 2026-08-07): four-phase handoff (Park → mint lease → `MigrateInstanceOwner` → ack), `schedd_live_migration_decisions_total{outcome}` counter, `apps.migrated_at` + `instances.migrated_at` stamped in the same transaction. Bundled with PR #509 (Tier A4 per-node schedd), PRs in the ADR-066 → 067 → 068 cluster.
 - **ADR-062** (per-node schedd + async placement claim, accepted 2026-08-16): single-writer-per-host invariant survives multi-host deploys; `apid_control_plane_only` depguard in `.golangci.yml` prevents a control-plane path from calling a compute-only peer.
-- **ADR-063** (snapshot de-localization, revised 2026-08-26; issue #1054): snapshots use the shared OCI backend as the authoritative transport, while each active node's vmmd asynchronously prepositions both restore blobs through a durable event-cursor plus `snapshot_replicas` queue. Origin metadata restricts new fan-out to the producer's region; wake placement prefers ready local replicas and retains on-demand restore/cold-boot fallback. vmmd now samples durable queue-to-ready latency (`snapshothipd_fanout_latency_seconds`) on a 100 ms cursor cadence; the two-node ≤200 ms measurement and 100-cycle leak drill remain M9 acceptance work.
+- **ADR-063** (snapshot de-localization, revised 2026-08-26; issue #1054): snapshots use the shared OCI backend as the authoritative transport, while each active node's vmmd asynchronously prepositions both restore blobs through a durable event-cursor plus `snapshot_replicas` queue. Origin metadata restricts new fan-out to the producer's region; wake placement prefers ready local replicas and retains on-demand restore/cold-boot fallback. vmmd now samples durable queue-to-ready latency (`snapshothipd_fanout_latency_seconds`) on a 100 ms cursor cadence, and per-claim lease fencing prevents late workers from overwriting reclaimed jobs; the two-node ≤200 ms measurement and 100-cycle leak drill remain M9 acceptance work.
 - **ADR-067** (migrating-instance watchdog, accepted 2026-08-16): 1 s ticker self-heals stuck `state='migrating'` rows that never committed (peer died mid-handoff, gRPC dropped, operator killed the new owner). The watchdog is the only writer that can move a row out of `migrating` without a peer commit.
 - **ADR-110** (declarative split-box manifest, accepted 2026-08-16): versioned YAML + typed schema at `deploy/manifest/splitbox.yaml` + `pkg/manifest/`; SemVer `schema_version (1.0.0)`; canonical validation through `gregalectl manifest validate` + the renderer + the release bundle installer + the doctor + the metal harness. PR-cluster shipped (PRs #912 #913 #914 #915 #917 #918 #919 #920 #921 #922 #923 #924).
 - **ADR-141** (durable imaged→apid audit delivery, accepted 2026-09-03): migration 00590 adds a deduplicated `audit_event_outbox`; imaged keeps `pg_notify` as the fast wakeup, while apid transactionally writes the audit row and replays pending or expired-lease handoffs every two seconds. Failed deliveries back off, dead-letter after twelve attempts, and queue metadata is pruned after 90 days without deleting audit evidence. This closes the signature-audit loss window identified in ADR-058.
@@ -594,6 +597,21 @@ The §12 dashboard pipeline is wired end-to-end:
   `ALERTS{}` not yet populated, e.g. on a freshly-reloaded Prometheus)
   is treated as "no firing alerts" rather than poisoning the snapshot
   — the flag is intentionally conservative.
+
+#### Status page history contract
+
+- `uptime_30d_pct` is the weighted terminal-invocation success rate for the
+  last 30 UTC calendar days. `uptime_30d` always contains 30 daily points;
+  each point carries `successful`, `total`, and `uptime_pct`. Pending work is
+  excluded, and a day with no terminal traffic is shown as no traffic rather
+  than as a failure.
+- `incidents` contains incidents posted in the last 30 days, plus any still-
+  open older incident. The public projection includes `started_at`,
+  `resolved_at`, `severity`, `summary`, and the affected `component`.
+- The history query is capped at 100 incidents and has a 2 s database timeout.
+  If Postgres is unavailable, the endpoint still serves the current
+  Prometheus-backed snapshot and leaves history empty/default for that
+  refresh.
 
 #### Runbook index
 

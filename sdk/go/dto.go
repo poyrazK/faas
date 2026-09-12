@@ -67,6 +67,8 @@ type (
 	GdprAuditExportResponse = api.GdprAuditExportResponse
 	AppSecretExportResponse = api.AppSecretExportResponse
 	StatusPage              = api.StatusPage
+	StatusUptimeBucket      = api.StatusUptimeBucket
+	StatusIncident          = api.StatusIncident
 
 	// API keys.
 	APIKeyResponse   = api.APIKeyResponse

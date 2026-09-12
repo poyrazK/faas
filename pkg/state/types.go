@@ -6680,6 +6680,16 @@ type StatusIncident struct {
 	ResolvedAt *time.Time
 }
 
+// StatusUptimeBucket is the daily terminal-invocation rollup used by the
+// public status page. It deliberately lives in state so both PgStore and
+// MemStore can expose the same optional read seam without widening Store's
+// large compatibility interface.
+type StatusUptimeBucket struct {
+	Day        time.Time
+	Successful int64
+	Total      int64
+}
+
 // StatusIncidentComponent* are the closed-set vocabulary for the
 // status_incidents.component column (migrations/00412). Add a
 // new component by appending a constant + extending the SQL CHECK

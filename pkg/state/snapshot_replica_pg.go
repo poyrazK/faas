@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -230,11 +231,12 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		}
 		return SnapshotReplicaJob{}, fmt.Errorf("state: claim snapshot replica scan: %w", err)
 	}
+	leaseToken := uuid.NewString()
 	if _, err := tx.Exec(ctx, `
 		update snapshot_replicas
-		set state = 'syncing', attempts = least(attempts + 1, $3),
+		set state = 'syncing', lease_token = $3, attempts = least(attempts + 1, $4),
 		    updated_at = now(), next_attempt_at = null, last_error = null
-		where snapshot_id = $1 and node_id = $2`, job.SnapshotID, job.NodeID, snapshotReplicaAttemptCap); err != nil {
+		where snapshot_id = $1 and node_id = $2`, job.SnapshotID, job.NodeID, leaseToken, snapshotReplicaAttemptCap); err != nil {
 		return SnapshotReplicaJob{}, fmt.Errorf("state: claim snapshot replica update: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -242,14 +244,43 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 	}
 	job.Attempts = min(job.Attempts+1, snapshotReplicaAttemptCap)
 	job.VMStateStorageKey = SnapshotVMStateKey(Snapshot{DeploymentID: job.DeploymentID, StorageKey: job.StorageKey, Tier: job.Tier})
+	job.LeaseToken = leaseToken
 	return job, nil
 }
 
 func (s *PgStore) MarkSnapshotReplicaReady(ctx context.Context, snapshotID, nodeID string) error {
-	return s.markSnapshotReplica(ctx, snapshotID, nodeID, string(SnapshotReplicaReady), "", time.Time{})
+	return errors.New("state: snapshot replica lease token required")
 }
 
 func (s *PgStore) MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nodeID string, cause error) error {
+	return errors.New("state: snapshot replica lease token required")
+}
+
+func (s *PgStore) MarkSnapshotReplicaReadyWithLease(ctx context.Context, snapshotID, nodeID, leaseToken string) error {
+	if snapshotID == "" || nodeID == "" || leaseToken == "" {
+		return errors.New("state: mark snapshot replica ready: snapshot_id, node_id, and lease token required")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		update snapshot_replicas
+		   set state = 'ready', lease_token = null, last_error = null,
+		       ready_at = now(), updated_at = now(), next_attempt_at = null
+		 where snapshot_id = $1
+		   and node_id = $2
+		   and state = 'syncing'
+		   and lease_token = $3`, snapshotID, nodeID, leaseToken)
+	if err != nil {
+		return fmt.Errorf("state: mark snapshot replica ready: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) MarkSnapshotReplicaFailedWithLease(ctx context.Context, snapshotID, nodeID, leaseToken string, cause error) error {
+	if snapshotID == "" || nodeID == "" || leaseToken == "" {
+		return errors.New("state: mark snapshot replica failed: snapshot_id, node_id, and lease token required")
+	}
 	message := "snapshot replica failed"
 	if cause != nil {
 		message = cause.Error()
@@ -262,13 +293,14 @@ func (s *PgStore) MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nod
 		tag, err := s.pool.Exec(ctx, `
 			update snapshot_replicas
 			set state = $3, attempts = greatest(attempts, $5), last_error = $4,
-			    ready_at = null, updated_at = now(), next_attempt_at = null
-			where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, string(SnapshotReplicaFailed), message, snapshotReplicaAttemptCap)
+			    ready_at = null, lease_token = null, updated_at = now(), next_attempt_at = null
+			where snapshot_id = $1 and node_id = $2
+			  and state = 'syncing' and lease_token = $6`, snapshotID, nodeID, string(SnapshotReplicaFailed), message, snapshotReplicaAttemptCap, leaseToken)
 		if err != nil {
 			return fmt.Errorf("state: mark snapshot replica permanent failure: %w", err)
 		}
 		if tag.RowsAffected() == 0 {
-			return ErrNotFound
+			return ErrConflict
 		}
 		return nil
 	}
@@ -276,42 +308,17 @@ func (s *PgStore) MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nod
 	// attempts was incremented by ClaimSnapshotReplica. Compute the capped
 	// exponential delay in SQL so the state transition remains atomic.
 	tag, err := s.pool.Exec(ctx, `
-		update snapshot_replicas
-		set state = $3, last_error = $4, ready_at = null, updated_at = now(),
+	update snapshot_replicas
+		set state = $3, last_error = $4, ready_at = null, lease_token = null, updated_at = now(),
 		    next_attempt_at = now() + make_interval(secs => least($5, $6 * power(2, greatest(attempts - 1, 0)))::int)
-		where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, string(SnapshotReplicaFailed), message,
-		int(snapshotReplicaMaxRetryDelay/time.Second), int(snapshotReplicaInitialRetryDelay/time.Second))
+		where snapshot_id = $1 and node_id = $2
+		  and state = 'syncing' and lease_token = $7`, snapshotID, nodeID, string(SnapshotReplicaFailed), message,
+		int(snapshotReplicaMaxRetryDelay/time.Second), int(snapshotReplicaInitialRetryDelay/time.Second), leaseToken)
 	if err != nil {
 		return fmt.Errorf("state: mark snapshot replica failed: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-func (s *PgStore) markSnapshotReplica(ctx context.Context, snapshotID, nodeID, status, message string, retryAt time.Time) error {
-	if snapshotID == "" || nodeID == "" {
-		return errors.New("state: mark snapshot replica: snapshot_id and node_id required")
-	}
-	var tag interface{ RowsAffected() int64 }
-	var err error
-	if retryAt.IsZero() {
-		tag, err = s.pool.Exec(ctx, `
-			update snapshot_replicas
-			set state = $3, last_error = null, ready_at = now(), updated_at = now(), next_attempt_at = null
-			where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, status)
-	} else {
-		tag, err = s.pool.Exec(ctx, `
-			update snapshot_replicas
-			set state = $3, last_error = $4, ready_at = null, updated_at = now(), next_attempt_at = $5
-			where snapshot_id = $1 and node_id = $2`, snapshotID, nodeID, status, message, retryAt)
-	}
-	if err != nil {
-		return fmt.Errorf("state: mark snapshot replica %s: %w", status, err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		return ErrConflict
 	}
 	return nil
 }

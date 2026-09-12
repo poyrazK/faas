@@ -81,7 +81,7 @@ func TestMemStoreSnapshotReplicaLifecycle(t *testing.T) {
 	if got, want := job.LayerStorageKeys, []string{"layers/" + dep.ID + ".ext4"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("job layer keys = %v, want %v", got, want)
 	}
-	if err := m.MarkSnapshotReplicaReady(ctx, snap.ID, second.ID); err != nil {
+	if err := m.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, second.ID, job.LeaseToken); err != nil {
 		t.Fatalf("MarkSnapshotReplicaReady: %v", err)
 	}
 	ready, err := m.ReadySnapshotReplicaNodes(ctx, snap.ID)
@@ -93,6 +93,57 @@ func TestMemStoreSnapshotReplicaLifecycle(t *testing.T) {
 	}
 	if _, err := m.ClaimSnapshotReplica(ctx, second.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second claim err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMemStoreSnapshotReplicaStaleLeaseCannotCompleteNewAttempt(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	region := DefaultLocalityLabel
+	node := ComputeNode{
+		ID: "node-lease", Name: "compute-lease", TargetURL: "unix:///run/faas/compute-lease.sock",
+		AdmissionCeilingMB: 4096, VCPUBudget: 16, Active: true, Region: &region,
+	}
+	if _, err := m.CreateComputeNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	_, dep := seedMemReplicaDeployment(t, m, "dep-lease", "replica-lease")
+	snap, err := m.CreateSnapshot(ctx, Snapshot{
+		ID: "snap-lease", DeploymentID: dep.ID, FCVersion: "fc-1", StorageKey: SnapMemKey(dep.ID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.EnqueueSnapshotReplicasForNode(ctx, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	first, err := m.ClaimSnapshotReplica(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	row := m.snapshotReplicas[snapshotReplicaKey{snapshotID: snap.ID, nodeID: node.ID}]
+	row.updatedAt = time.Now().Add(-6 * time.Minute)
+	m.snapshotReplicas[snapshotReplicaKey{snapshotID: snap.ID, nodeID: node.ID}] = row
+	m.mu.Unlock()
+	second, err := m.ClaimSnapshotReplica(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.LeaseToken == second.LeaseToken {
+		t.Fatal("reclaimed replica reused the old lease token")
+	}
+	if err := m.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, node.ID, first.LeaseToken); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale completion error = %v, want ErrConflict", err)
+	}
+	m.mu.Lock()
+	row = m.snapshotReplicas[snapshotReplicaKey{snapshotID: snap.ID, nodeID: node.ID}]
+	m.mu.Unlock()
+	if row.state != SnapshotReplicaSyncing || row.leaseToken != second.LeaseToken {
+		t.Fatalf("stale completion changed active lease: state=%q lease=%q", row.state, row.leaseToken)
+	}
+	if err := m.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, node.ID, second.LeaseToken); err != nil {
+		t.Fatalf("current completion: %v", err)
 	}
 }
 
@@ -149,10 +200,20 @@ func TestMemStoreSnapshotReplicaPermanentFailureStopsRetry(t *testing.T) {
 	if !reflect.DeepEqual(job.LayerStorageKeys, wantLayers) {
 		t.Fatalf("job layer keys = %v, want %v", job.LayerStorageKeys, wantLayers)
 	}
-	if err := m.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, second.ID, errors.New("registry unavailable")); err != nil {
+	if err := m.MarkSnapshotReplicaFailedWithLease(ctx, job.SnapshotID, second.ID, job.LeaseToken, errors.New("registry unavailable")); err != nil {
 		t.Fatalf("MarkSnapshotReplicaFailed transient: %v", err)
 	}
-	if err := m.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, second.ID,
+	m.mu.Lock()
+	retryKey := snapshotReplicaKey{snapshotID: job.SnapshotID, nodeID: second.ID}
+	retryRow := m.snapshotReplicas[retryKey]
+	retryRow.nextAttemptAt = time.Now().Add(-time.Second)
+	m.snapshotReplicas[retryKey] = retryRow
+	m.mu.Unlock()
+	job, err = m.ClaimSnapshotReplica(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("reclaim snapshot replica: %v", err)
+	}
+	if err := m.MarkSnapshotReplicaFailedWithLease(ctx, job.SnapshotID, second.ID, job.LeaseToken,
 		PermanentSnapshotReplicaError(errors.New("immutable layer missing"))); err != nil {
 		t.Fatalf("MarkSnapshotReplicaFailed permanent: %v", err)
 	}
@@ -188,7 +249,7 @@ func TestMemStoreSnapshotReplicaTransientFailureKeepsRetryingAtCap(t *testing.T)
 		if err != nil {
 			t.Fatalf("claim attempt %d: %v", attempt, err)
 		}
-		if err := m.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, node.ID, errors.New("registry unavailable")); err != nil {
+		if err := m.MarkSnapshotReplicaFailedWithLease(ctx, job.SnapshotID, node.ID, job.LeaseToken, errors.New("registry unavailable")); err != nil {
 			t.Fatal(err)
 		}
 		row := m.snapshotReplicas[key]
@@ -228,7 +289,7 @@ func TestMemStoreSnapshotReplicaReadyRowsAreRevalidated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.MarkSnapshotReplicaReady(ctx, job.SnapshotID, node.ID); err != nil {
+	if err := m.MarkSnapshotReplicaReadyWithLease(ctx, job.SnapshotID, node.ID, job.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: node.ID}
@@ -306,7 +367,7 @@ func TestMemStoreSnapshotReplicaPrioritizesCustomerWakes(t *testing.T) {
 		if job.SnapshotID != want {
 			t.Fatalf("claimed %q, want %q", job.SnapshotID, want)
 		}
-		if err := m.MarkSnapshotReplicaReady(ctx, job.SnapshotID, peer.ID); err != nil {
+		if err := m.MarkSnapshotReplicaReadyWithLease(ctx, job.SnapshotID, peer.ID, job.LeaseToken); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -336,7 +397,7 @@ func TestMemStoreSnapshotReplicaRetiresTerminalAndDeletedSnapshots(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := m.MarkSnapshotReplicaReady(ctx, job.SnapshotID, peer.ID); err != nil {
+		if err := m.MarkSnapshotReplicaReadyWithLease(ctx, job.SnapshotID, peer.ID, job.LeaseToken); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -407,7 +468,7 @@ func TestMemStoreRAMChangeRetiresIncompatibleSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.MarkSnapshotReplicaReady(ctx, job.SnapshotID, peer.ID); err != nil {
+	if err := m.MarkSnapshotReplicaReadyWithLease(ctx, job.SnapshotID, peer.ID, job.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	sameRAM := app.RAMMB

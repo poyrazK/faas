@@ -11,6 +11,10 @@ export type PlanWorkload = {
   root_dir: string;
   dockerfile?: string;
   command: Array<string>;
+  /**
+   * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies.
+   */
+  depends_on?: Array<string>;
   class?: 'http' | 'graphql' | 'grpc' | 'job' | 'worker' | 'server' | 'unknown';
   /**
    * cron expression when declared (CronJob, render, serverless)
