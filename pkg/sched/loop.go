@@ -1820,6 +1820,13 @@ func (l *Loop) runReaper(ctx context.Context) {
 		l.log.Warn("reaper: list apps", "err", err)
 		return
 	}
+	owned := apps[:0]
+	for _, app := range apps {
+		if l.engine.ownsApp(app) {
+			owned = append(owned, app)
+		}
+	}
+	apps = owned
 	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps
 	// from the table source of truth on every reaper tick so a schedd restart,
 	// LISTEN reconnect, or transient notification loss cannot leave a VM live

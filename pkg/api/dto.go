@@ -7096,6 +7096,7 @@ type RekeyProgress struct {
 type ComputeNodeEnrollmentRequest struct {
 	Name               string `json:"name"`
 	TargetURL          string `json:"target_url"`
+	ScheddTargetURL    string `json:"schedd_target_url,omitempty"`
 	GatewayTargetURL   string `json:"gateway_target_url,omitempty"`
 	VPCPUs             int    `json:"vpcpus"`
 	MemMB              int    `json:"mem_mb"`
