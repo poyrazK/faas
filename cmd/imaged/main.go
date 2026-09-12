@@ -316,6 +316,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("imaged: %w", err)
 	}
+	if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
+		defer func() {
+			if err := cacheBackend.Close(); err != nil {
+				log.Warn("imaged: close storage cache", "err", err)
+			}
+		}()
+	}
 	if envOr("FAAS_STORAGE_BACKEND", "local") == "oci" {
 		log.Info("imaged: storage backend = oci", "registry", envOr("FAAS_OCI_REGISTRY", ""))
 	} else {

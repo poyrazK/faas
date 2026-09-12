@@ -158,6 +158,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err != nil {
 			return fmt.Errorf("builderd: source storage: %w", err)
 		}
+		if cacheBackend := storage.AsCacheBackend(sourceStorage); cacheBackend != nil {
+			defer func() {
+				if err := cacheBackend.Close(); err != nil {
+					log.Warn("builderd: close source storage cache", "err", err)
+				}
+			}()
+		}
 		log.Info("source storage enabled", "backend", "oci")
 	}
 	// Gate-B box-role gate. builderd is a compute-only daemon —
