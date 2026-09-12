@@ -391,11 +391,12 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	env = StampOverridePortEnv(env, m.EffectivePort())
 	env = StampWorkloadIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
-	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env. The
-	// W3C trace context was shipped from the host via the vsock
-	// resume hook; the supervisor reads it via GetResumeTraceparent
-	// at Start() time. Empty = no OTel configured, the env is
-	// unchanged.
+	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env as the
+	// boot/wake trace seed. The W3C trace context was shipped from the
+	// host via the vsock resume hook; the supervisor reads it via
+	// GetResumeTraceparent at Start() time. Request-scoped propagation
+	// for warm handlers uses the traceparent HTTP header at the guest
+	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
 	cmd.Env = env
 	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr

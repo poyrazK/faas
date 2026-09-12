@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/baggage"
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -71,6 +72,15 @@ func TestForwardingReverseProxy_InjectsW3CTraceContextIntoGuestHeaders(t *testin
 		TraceFlags: oteltrace.FlagsSampled,
 		TraceState: traceState,
 	}))
+	baggageMember, err := baggage.NewMember("tenant", "customer-a")
+	if err != nil {
+		t.Fatalf("baggage member: %v", err)
+	}
+	requestBaggage, err := baggage.New(baggageMember)
+	if err != nil {
+		t.Fatalf("request baggage: %v", err)
+	}
+	ctx = baggage.ContextWithBaggage(ctx, requestBaggage)
 	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
 	r.Header.Set("x-faas-instance", "i-test")
 	rec := httptest.NewRecorder()
@@ -93,6 +103,138 @@ func TestForwardingReverseProxy_InjectsW3CTraceContextIntoGuestHeaders(t *testin
 	if got["tracestate"] != "vendor=value" {
 		t.Errorf("tracestate = %q, want vendor=value", got["tracestate"])
 	}
+	if got["baggage"] != "tenant=customer-a" {
+		t.Errorf("baggage = %q, want tenant=customer-a", got["baggage"])
+	}
+}
+
+func TestForwardingReverseProxy_WarmInstanceUsesRequestScopedTraceContext(t *testing.T) {
+	streams := []*fakeBidiStream{
+		noContentHTTPStream(),
+		noContentHTTPStream(),
+	}
+	cli := &fakeVmmdClient{HTTPStreams: streams}
+	lookup := &fakeNodeLookup{cli: cli}
+	proxy := gateway.ForwardingReverseProxy(lookup, nil)
+
+	requests := []struct {
+		traceID string
+		spanID  string
+	}{
+		{
+			traceID: "4bf92f3577b34da6a3ce929d0e0e4736",
+			spanID:  "00f067aa0ba902b7",
+		},
+		{
+			traceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			spanID:  "bbbbbbbbbbbbbbbb",
+		},
+	}
+
+	for i, tc := range requests {
+		traceID, err := oteltrace.TraceIDFromHex(tc.traceID)
+		if err != nil {
+			t.Fatalf("request %d trace id: %v", i, err)
+		}
+		spanID, err := oteltrace.SpanIDFromHex(tc.spanID)
+		if err != nil {
+			t.Fatalf("request %d span id: %v", i, err)
+		}
+		ctx := oteltrace.ContextWithSpanContext(context.Background(), oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+			TraceID:    traceID,
+			SpanID:     spanID,
+			TraceFlags: oteltrace.FlagsSampled,
+		}))
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
+		r.Header.Set("x-faas-instance", "i-warm")
+		rec := httptest.NewRecorder()
+
+		proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-warm"}).ServeHTTP(rec, r)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("request %d status = %d, want 204", i, rec.Code)
+		}
+	}
+
+	for i, stream := range streams {
+		if len(stream.Sends) == 0 || stream.Sends[0].GetInit() == nil {
+			t.Fatalf("request %d did not send an init frame", i)
+		}
+		got := headerValue(stream.Sends[0].GetInit().GetHeaders(), "traceparent")
+		want := "00-" + requests[i].traceID + "-" + requests[i].spanID + "-01"
+		if got != want {
+			t.Errorf("request %d traceparent = %q, want %q", i, got, want)
+		}
+	}
+	if first, second := headerValue(streams[0].Sends[0].GetInit().GetHeaders(), "traceparent"), headerValue(streams[1].Sends[0].GetInit().GetHeaders(), "traceparent"); first == second {
+		t.Fatalf("warm requests reused traceparent %q", first)
+	}
+}
+
+func TestForwardingReverseProxy_DropsOversizedBaggage(t *testing.T) {
+	stream := noContentHTTPStream()
+	cli := &fakeVmmdClient{Stream: stream}
+	lookup := &fakeNodeLookup{cli: cli}
+	proxy := gateway.ForwardingReverseProxy(lookup, nil)
+
+	member, err := baggage.NewMemberRaw("customer", strings.Repeat("x", 3000))
+	if err != nil {
+		t.Fatalf("baggage member: %v", err)
+	}
+	requestBaggage, err := baggage.New(member)
+	if err != nil {
+		t.Fatalf("request baggage: %v", err)
+	}
+	ctx := baggage.ContextWithBaggage(context.Background(), requestBaggage)
+	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
+	r.Header.Set("x-faas-instance", "i-test")
+	rec := httptest.NewRecorder()
+
+	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, r)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if got := headerValue(stream.Sends[0].GetInit().GetHeaders(), "baggage"); got != "" {
+		t.Errorf("oversized baggage = %q, want it omitted", got)
+	}
+}
+
+func TestForwardingReverseProxy_DropsOversizedTraceState(t *testing.T) {
+	stream := noContentHTTPStream()
+	cli := &fakeVmmdClient{Stream: stream}
+	lookup := &fakeNodeLookup{cli: cli}
+	proxy := gateway.ForwardingReverseProxy(lookup, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("x-faas-instance", "i-test")
+	r.Header.Set("tracestate", strings.Repeat("x", 513))
+	rec := httptest.NewRecorder()
+
+	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, r)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if got := headerValue(stream.Sends[0].GetInit().GetHeaders(), "tracestate"); got != "" {
+		t.Errorf("oversized tracestate = %q, want it omitted", got)
+	}
+}
+
+func noContentHTTPStream() *fakeBidiStream {
+	return &fakeBidiStream{
+		Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+			{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{
+				Init: &vmmdpb.ForwardHTTPResponseInit{Status: http.StatusNoContent},
+			}},
+		},
+	}
+}
+
+func headerValue(headers []*vmmdpb.Header, name string) string {
+	for _, h := range headers {
+		if strings.EqualFold(h.GetName(), name) {
+			return h.GetValue()
+		}
+	}
+	return ""
 }
 
 // fakeVmmdClient is a vmmdpb.VmmdClient that records every
@@ -107,6 +249,10 @@ func TestForwardingReverseProxy_InjectsW3CTraceContextIntoGuestHeaders(t *testin
 // unset Stream + a drive-through call panics ("not stubbed").
 type fakeVmmdClient struct {
 	Stream *fakeBidiStream
+	// HTTPStreams, when configured, returns one stream per request. This
+	// lets warm-instance tests issue sequential requests through one client
+	// while inspecting each request's independently injected context.
+	HTTPStreams []*fakeBidiStream
 	// RawStream is the bidi-streaming client the forwarder
 	// sees. Typed as the gRPC interface (not the concrete
 	// fake) so issue #710's blockingRawBidiStream can plug
@@ -118,6 +264,11 @@ type fakeVmmdClient struct {
 // ForwardHTTPStream returns the configured Stream. The forwarder
 // drives the bidi stream directly through Send/Recv/CloseSend.
 func (f *fakeVmmdClient) ForwardHTTPStream(_ context.Context, _ ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse], error) {
+	if len(f.HTTPStreams) > 0 {
+		stream := f.HTTPStreams[0]
+		f.HTTPStreams = f.HTTPStreams[1:]
+		return stream, nil
+	}
 	if f.Stream == nil {
 		panic("ForwardHTTPStream: not stubbed (set fakeVmmdClient.Stream)")
 	}
