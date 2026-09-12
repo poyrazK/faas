@@ -116,6 +116,10 @@ type UpdateAppRequest struct {
 	// one-liner; this field is exposed for callers that bundle
 	// eviction_priority into a wider PATCH.
 	EvictionPriority *string `json:"eviction_priority,omitempty"`
+	// OnlyAllowDeclaredRoutes enables gateway-side rejection of paths that are
+	// absent from the imported OpenAPI document or explicit route list.
+	OnlyAllowDeclaredRoutes *bool            `json:"only_allow_declared_routes,omitempty"`
+	DeclaredRoutes          *[]DeclaredRoute `json:"declared_routes,omitempty"`
 	// ConsumerAuthMode controls whether app requests may omit an
 	// end-customer consumer key. Values are "optional" and "required".
 	ConsumerAuthMode *string `json:"consumer_auth_mode,omitempty"`
@@ -396,6 +400,10 @@ type AppResponse struct {
 	// order matches insertion order. NOT in `required:` because the
 	// empty-slice case is the contract.
 	EgressAllowlist []string `json:"egress_allowlist"`
+	// OnlyAllowDeclaredRoutes reports whether the gateway rejects paths that
+	// are absent from the app's declared OpenAPI/route contract.
+	OnlyAllowDeclaredRoutes bool            `json:"only_allow_declared_routes"`
+	DeclaredRoutes          []DeclaredRoute `json:"declared_routes,omitempty"`
 	// AutoscaleTargetRPS / AutoscaleTargetCPUPct are the per-app
 	// reactive scale-up targets (issue #169 / #172 / pkg/sched/scaleup).
 	// Each is 0 when unset ("disabled") and > 0 when configured.
@@ -420,6 +428,12 @@ type AppResponse struct {
 	// on this surface is unambiguous across operator-deployed
 	// fleets).
 	OverflowNode *string `json:"overflow_node,omitempty"`
+}
+
+// DeclaredRoute is an explicit pre-wake route declaration.
+type DeclaredRoute struct {
+	Path    string   `json:"path"`
+	Methods []string `json:"methods"`
 }
 
 // CreateDeploymentRequest ships a version (JSON variant; the multipart

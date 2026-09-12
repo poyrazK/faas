@@ -309,6 +309,36 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Free tier does not support per-route observability; upgrade to Hobby or higher.")
 		}
 	}
+	// Only-allow-declared-routes is deliberately plan-agnostic: the gateway
+	// rejects invalid paths before wake, reducing work for every tier.
+	// Validate explicit route declarations here so malformed patterns never
+	// reach the matcher. An empty list means "use the imported OpenAPI document".
+	if req.DeclaredRoutes != nil {
+		routes := *req.DeclaredRoutes
+		if len(routes) > 50 {
+			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+				"Too many declared routes", "declared_routes may contain at most 50 entries")
+		}
+		validMethods := map[string]struct{}{"GET": {}, "POST": {}, "PUT": {}, "PATCH": {}, "DELETE": {}, "OPTIONS": {}, "HEAD": {}, "CONNECT": {}, "TRACE": {}}
+		for _, route := range routes {
+			path := strings.TrimSpace(route.Path)
+			if path == "" || !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#") {
+				return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Invalid declared route", fmt.Sprintf("declared route path %q must be an absolute path without query or fragment", route.Path))
+			}
+			if len(route.Methods) == 0 {
+				return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Invalid declared route", fmt.Sprintf("declared route %q must include at least one HTTP method", path))
+			}
+			for _, rawMethod := range route.Methods {
+				method := strings.ToUpper(strings.TrimSpace(rawMethod))
+				if _, ok := validMethods[method]; !ok {
+					return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+						"Invalid declared route method", fmt.Sprintf("method %q on declared route %q is not supported", rawMethod, path))
+				}
+			}
+		}
+	}
 	// Issue #470 / ADR-055: per-app two-tier-snapshot flag. Same
 	// plan-gate shape as streaming — Free/Hobby + true = 403
 	// plan_warm_snapshot_not_allowed. Out-of-range thresholds =
@@ -716,6 +746,28 @@ func countIPAllowlistAudit(mode string, ipAllowlist []string) int {
 	return len(ipAllowlist)
 }
 
+func declaredRoutesState(routes *[]api.DeclaredRoute) *[]state.DeclaredRoute {
+	if routes == nil {
+		return nil
+	}
+	out := make([]state.DeclaredRoute, len(*routes))
+	for i, route := range *routes {
+		out[i] = state.DeclaredRoute{Path: strings.TrimSpace(route.Path), Methods: make([]string, len(route.Methods))}
+		for j, method := range route.Methods {
+			out[i].Methods[j] = strings.ToUpper(strings.TrimSpace(method))
+		}
+	}
+	return &out
+}
+
+func hasDeclaredRouteSource(req *api.UpdateAppRequest, app state.App) bool {
+	hasRoutes := len(app.DeclaredRoutes) > 0
+	if req != nil && req.DeclaredRoutes != nil {
+		hasRoutes = len(*req.DeclaredRoutes) > 0
+	}
+	return hasRoutes
+}
+
 // updateApp is the PATCH /v1/apps/{slug} handler. User-tunable:
 // RAM, idle_timeout_s, max_concurrency, min_instances, and lifecycle
 // configuration (Pro/Scale only — validateUpdateApp gates the relevant
@@ -768,6 +820,24 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 		api.WriteProblem(w, prob)
 		return
+	}
+	// An enabled gate with no explicit route list requires an imported OpenAPI
+	// document. Evaluate the post-PATCH state so clearing a list on an already
+	// enabled app cannot leave the gateway with an unusable contract.
+	declaredRoutesEnabled := app.OnlyAllowDeclaredRoutes
+	if req.OnlyAllowDeclaredRoutes != nil {
+		declaredRoutesEnabled = *req.OnlyAllowDeclaredRoutes
+	}
+	if declaredRoutesEnabled && !hasDeclaredRouteSource(&req, app) {
+		if _, _, err := s.store.GetAppOpenAPIDoc(r.Context(), app.ID, acct.ID); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"OpenAPI document required", "import an OpenAPI document or provide declared_routes before enabling only_allow_declared_routes"))
+				return
+			}
+			api.WriteProblem(w, api.ErrInternal("could not verify OpenAPI document"))
+			return
+		}
 	}
 	// Tier A10 / ADR-088: per-app overflow_node preference.
 	// Resolve the wire name → UUID server-side before the
@@ -927,8 +997,12 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// already gated the plan (CodePlanRouteMetricsNotAllowed
 		// for Free customers PATCHing true), so the store is a
 		// plain column write.
-		RouteMetricsEnabled:    req.RouteMetricsEnabled,
-		SetRouteMetricsEnabled: req.RouteMetricsEnabled != nil,
+		RouteMetricsEnabled:        req.RouteMetricsEnabled,
+		SetRouteMetricsEnabled:     req.RouteMetricsEnabled != nil,
+		OnlyAllowDeclaredRoutes:    req.OnlyAllowDeclaredRoutes,
+		SetOnlyAllowDeclaredRoutes: req.OnlyAllowDeclaredRoutes != nil,
+		DeclaredRoutes:             declaredRoutesState(req.DeclaredRoutes),
+		SetDeclaredRoutes:          req.DeclaredRoutes != nil,
 		// ADR-124: per-app wire-protocol selector. Same
 		// Set*/optional-pointer convention as RouteMetricsEnabled
 		// above — nil pointer means "don't touch the column"

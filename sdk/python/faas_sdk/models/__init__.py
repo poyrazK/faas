@@ -323,6 +323,8 @@ from .debug_telemetry_request_item_method import DebugTelemetryRequestItemMethod
 from .debug_telemetry_span import DebugTelemetrySpan
 from .debug_timeline_event import DebugTimelineEvent
 from .debug_timeline_event_phase import DebugTimelineEventPhase
+from .declared_route import DeclaredRoute
+from .declared_route_methods_item import DeclaredRouteMethodsItem
 from .delayed_task_request import DelayedTaskRequest
 from .delayed_task_request_payload import DelayedTaskRequestPayload
 from .delayed_task_response import DelayedTaskResponse
@@ -1283,6 +1285,8 @@ __all__ = (
     "DebugTelemetrySpan",
     "DebugTimelineEvent",
     "DebugTimelineEventPhase",
+    "DeclaredRoute",
+    "DeclaredRouteMethodsItem",
     "DelayedTaskRequest",
     "DelayedTaskRequestPayload",
     "DelayedTaskResponse",

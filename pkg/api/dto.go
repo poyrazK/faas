@@ -312,6 +312,12 @@ type UpdateAppRequest struct {
 	// true → false to opt out. Pointer distinguishes "don't
 	// touch" (nil) from "explicit false" (*bool=false).
 	RouteMetricsEnabled *bool `json:"route_metrics_enabled,omitempty"`
+	// OnlyAllowDeclaredRoutes makes the gateway enforce the app's declared
+	// endpoint contract before waking an instance. When enabled, use the
+	// optional DeclaredRoutes list for an explicit contract; when omitted or
+	// empty the imported per-app OpenAPI document is used.
+	OnlyAllowDeclaredRoutes *bool            `json:"only_allow_declared_routes,omitempty"`
+	DeclaredRoutes          *[]DeclaredRoute `json:"declared_routes,omitempty"`
 	// MaintenanceMode (ADR-091 amendment) opts the app into
 	// 503 + Retry-After mode via PATCH. Pointer distinguishes
 	// "don't touch" (nil) from "explicit false" (*bool=false).
@@ -470,6 +476,14 @@ type UpdateAppRequest struct {
 	// `MinScaleInCooldownS` / `MaxScaleInCooldownS`).
 	ScalingPolicy    *ScalingPolicy `json:"scaling_policy,omitempty"`
 	SetScalingPolicy bool           `json:"-"`
+}
+
+// DeclaredRoute is an explicit pre-wake route declaration. Path parameters
+// use OpenAPI's `{name}` segment syntax; methods are HTTP verbs (for example
+// ["GET", "POST"]).
+type DeclaredRoute struct {
+	Path    string   `json:"path"`
+	Methods []string `json:"methods"`
 }
 
 // CreateAPIConsumerRequest creates a stable API consumer identity within an app.
@@ -875,6 +889,9 @@ type AppResponse struct {
 	// show "route metrics on / off" alongside the streaming/WS
 	// pills.
 	RouteMetricsEnabled bool `json:"route_metrics_enabled"`
+	// OnlyAllowDeclaredRoutes reflects the opt-in gateway route contract.
+	OnlyAllowDeclaredRoutes bool            `json:"only_allow_declared_routes"`
+	DeclaredRoutes          []DeclaredRoute `json:"declared_routes,omitempty"`
 	// MaintenanceMode (ADR-091 amendment) is the coarse-grained
 	// maintenance toggle for the whole app. When true the
 	// gatewayd applier (applyAppsMaintenanceMode, §4.1.2.0)

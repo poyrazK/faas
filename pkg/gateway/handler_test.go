@@ -78,6 +78,17 @@ type fakeBackend struct {
 	pickCalls atomic.Int32
 }
 
+type declaredRouteMatcherStub struct {
+	allowed bool
+	err     error
+	called  atomic.Int32
+}
+
+func (m *declaredRouteMatcherStub) MatchDeclaredRoute(context.Context, App, string, string) (bool, error) {
+	m.called.Add(1)
+	return m.allowed, m.err
+}
+
 // reconcileBackend exposes the optional live-target reconciliation seam
 // without changing fakeBackend itself. The blocking hook lets the test keep
 // the first cold-wake leader in reconciliation while a follower joins the
@@ -364,6 +375,51 @@ func TestHotPathDoesNotWakeOrTagCold(t *testing.T) {
 	}
 	if atomic.LoadInt32(b.Admits()) != 0 {
 		t.Errorf("hot path must not trigger an admit, got %d", atomic.LoadInt32(b.Admits()))
+	}
+}
+
+func TestOnlyAllowDeclaredRoutesRejectsBeforeWake(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.app.OnlyAllowDeclaredRoutes = true
+	m := &declaredRouteMatcherStub{}
+	h.WithDeclaredRouteMatcher(m)
+
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/wp-login.php", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (%s)", rec.Code, rec.Body)
+	}
+	if rec.Header().Get("x-faas-error-reason") != api.CodeUndeclaredRoute {
+		t.Fatalf("x-faas-error-reason = %q, want %s", rec.Header().Get("x-faas-error-reason"), api.CodeUndeclaredRoute)
+	}
+	if got := atomic.LoadInt32(b.Admits()); got != 0 {
+		t.Fatalf("undeclared request triggered %d wake admissions", got)
+	}
+	if got := m.called.Load(); got != 1 {
+		t.Fatalf("matcher calls = %d, want 1", got)
+	}
+}
+
+func TestOnlyAllowDeclaredRoutesAllowsDeclaredPathToWake(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.app.OnlyAllowDeclaredRoutes = true
+	m := &declaredRouteMatcherStub{allowed: true}
+	h.WithDeclaredRouteMatcher(m)
+
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if got := atomic.LoadInt32(b.Admits()); got != 1 {
+		t.Fatalf("declared request triggered %d wake admissions, want 1", got)
+	}
+	if got := m.called.Load(); got != 1 {
+		t.Fatalf("matcher calls = %d, want 1", got)
 	}
 }
 

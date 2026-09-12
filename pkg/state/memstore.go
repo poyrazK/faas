@@ -4128,6 +4128,16 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	if p.SetRouteMetricsEnabled {
 		a.RouteMetricsEnabled = boolOrFalse(p.RouteMetricsEnabled)
 	}
+	if p.SetOnlyAllowDeclaredRoutes {
+		a.OnlyAllowDeclaredRoutes = boolOrFalse(p.OnlyAllowDeclaredRoutes)
+	}
+	if p.SetDeclaredRoutes {
+		src := derefDeclaredRoutes(p.DeclaredRoutes)
+		a.DeclaredRoutes = append([]DeclaredRoute(nil), src...)
+		for i := range a.DeclaredRoutes {
+			a.DeclaredRoutes[i].Methods = append([]string(nil), a.DeclaredRoutes[i].Methods...)
+		}
+	}
 	// Issue #462 / ADR-058 / PR-A: per-app scaling policy. The
 	// Set bit is the canonical "unset vs explicit zero" signal;
 	// when Set is true the jsonb column is overwritten (deep-copied
@@ -14191,6 +14201,13 @@ func intOrZero(p *int) int {
 func boolOrFalse(p *bool) bool {
 	if p == nil {
 		return false
+	}
+	return *p
+}
+
+func derefDeclaredRoutes(p *[]DeclaredRoute) []DeclaredRoute {
+	if p == nil {
+		return nil
 	}
 	return *p
 }

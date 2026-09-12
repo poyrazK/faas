@@ -247,7 +247,9 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		// lazily create the per-app routeLabelSet. Default false
 		// on the App struct matches the apps.route_metrics_enabled
 		// column DEFAULT (migration 00212).
-		RouteMetricsEnabled: app.RouteMetricsEnabled,
+		RouteMetricsEnabled:     app.RouteMetricsEnabled,
+		OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
+		DeclaredRoutes:          gatewayDeclaredRoutes(app.DeclaredRoutes),
 		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
 		// maintenance flag. Plumbed from apps.maintenance_mode so
 		// Handler.ServeHTTP's applyAppsMaintenanceMode can
@@ -302,6 +304,17 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 			IPAllowlist: app.PublicAuthIPAllowlist,
 		},
 	}, true, nil
+}
+
+func gatewayDeclaredRoutes(routes []state.DeclaredRoute) []gateway.DeclaredRoute {
+	if len(routes) == 0 {
+		return nil
+	}
+	out := make([]gateway.DeclaredRoute, len(routes))
+	for i, route := range routes {
+		out[i] = gateway.DeclaredRoute{Path: route.Path, Methods: append([]string(nil), route.Methods...)}
+	}
+	return out
 }
 
 func edgeAnswersFromManifest(manifest state.AppManifest) ([]byte, string, bool, string, string, bool) {

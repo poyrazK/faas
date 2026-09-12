@@ -15749,6 +15749,19 @@ components:
       type: string
       enum: [micro, small, medium, large, xlarge]
 
+    DeclaredRoute:
+      description: "One gateway route declaration. Path parameters use OpenAPI {name} segments."
+      type: object
+      required: [path, methods]
+      properties:
+        path: { type: string, pattern: '^/[^?#]*$' }
+        methods:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, CONNECT, TRACE]
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
@@ -15866,6 +15879,15 @@ components:
           description: "Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed."
           type: boolean
           example: false
+        only_allow_declared_routes:
+          description: "When true, gatewayd rejects paths not present in declared_routes or the imported OpenAPI document before waking an app."
+          type: boolean
+          example: false
+        declared_routes:
+          description: "Optional explicit route contract. When non-empty it takes precedence over the imported OpenAPI document."
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclaredRoute'
         # ADR-091 amendment: apps.maintenance_mode is the
         # coarse-grained "whole app in maintenance" toggle. When
         # true the gatewayd-internal hot-path short-circuits
@@ -16535,6 +16557,15 @@ components:
           description: "Per-app per-route observability flag (ADR-093). Omitted → no change. Free PATCHing true is 403 plan_route_metrics_not_allowed."
           type: [boolean, "null"]
           example: false
+        only_allow_declared_routes:
+          description: "Enable or disable gateway-side rejection of paths not declared by the app. Enabling requires declared_routes or an imported OpenAPI document."
+          type: [boolean, "null"]
+          example: true
+        declared_routes:
+          description: "Replace the explicit route contract. An empty array clears it and makes the gateway use the imported OpenAPI document."
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclaredRoute'
         # ADR-091 amendment: partial-update nullable boolean.
         # Omitted → no change. Free-tier allowed; no plan gate.
         # PATCH true → every request to this app 503 + Retry-After.
