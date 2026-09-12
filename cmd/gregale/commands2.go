@@ -2075,8 +2075,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if *profile != "" {
 				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --only or --project-slug"))
 			}
-			return runProjectDeployPreview(ctx, client, *tarball, *projectSlug,
-				*deployOnly, *deployExclude, *deployShowAffected, *diffJSON)
+			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
+				*deployOnly, *deployExclude, *deployShowAffected, *diffJSON,
+				*diffStrict || !*diffLenient)
 		}
 		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, *runtime, *handler, sourceSHA256, *image != "")

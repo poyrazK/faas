@@ -570,6 +570,82 @@ func TestCmdDeployTarball_ProjectDryRunHumanRendersPlan(t *testing.T) {
 	}
 }
 
+func TestCmdDeployTarball_ProjectPreviewStrictGate(t *testing.T) {
+	overQuota := goldenPlan
+	overQuota.CanApply = false
+	overQuota.CanApplyReasons = []string{"apps over plan limit", "cron configuration is unsupported"}
+	overQuota.ObservedApps = 7
+	overQuota.LimitApps = 5
+
+	cases := []struct {
+		name      string
+		flags     []string
+		wantCode  int
+		wantJSON  bool
+		wantUsage string
+	}{
+		{
+			name:     "dry-run strict json",
+			flags:    []string{"--dry-run", "--strict", "--json"},
+			wantCode: 1,
+			wantJSON: true,
+		},
+		{
+			name:     "diff strict json",
+			flags:    []string{"--diff", "--strict", "--json"},
+			wantCode: 1,
+			wantJSON: true,
+		},
+		{
+			name:     "dry-run lenient json",
+			flags:    []string{"--dry-run", "--lenient", "--json"},
+			wantCode: 0,
+			wantJSON: true,
+		},
+		{
+			name:      "dry-run strict text",
+			flags:     []string{"--dry-run", "--strict"},
+			wantCode:  1,
+			wantUsage: "can_apply: false",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetJSONOut(t)
+			sink := &decomposeSink{scanStatus: http.StatusOK, scanBody: overQuota}
+			srv := httptest.NewServer(sink)
+			t.Cleanup(srv.Close)
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			stdout, restore := captureStdout(t)
+			defer restore()
+			args := append([]string{"--tarball", writeTarball(t), "--project-slug", "fixture"}, tc.flags...)
+			if code := cmdDeployTarball(args); code != tc.wantCode {
+				t.Fatalf("project preview exit = %d, want %d; output=%s", code, tc.wantCode, stdout.String())
+			}
+			if sink.applyCalls != 0 {
+				t.Fatalf("project preview issued apply call: %d", sink.applyCalls)
+			}
+			out := stdout.String()
+			if tc.wantJSON {
+				var got api.PlanResponse
+				if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &got); err != nil {
+					t.Fatalf("project preview output is not JSON: %v\n%s", err, out)
+				}
+				if got.CanApply {
+					t.Fatal("project preview reported can_apply=true for blocked plan")
+				}
+				if !reflect.DeepEqual(got.CanApplyReasons, overQuota.CanApplyReasons) {
+					t.Errorf("can_apply_reasons = %#v, want %#v", got.CanApplyReasons, overQuota.CanApplyReasons)
+				}
+			} else if !strings.Contains(out, tc.wantUsage) {
+				t.Errorf("project preview output missing %q: %s", tc.wantUsage, out)
+			}
+		})
+	}
+}
+
 // TestCmdDeployTarball_OverQuotaCreatesNothing is the §4 acceptance
 // gate's lock side: when the scan returns can_apply=false, the CLI
 // must NOT issue an apply request. The test asserts applyCalls == 0
