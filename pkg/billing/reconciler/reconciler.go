@@ -59,10 +59,12 @@ type Reconciler struct {
 	// ProviderName is the label value on the emitted gauges
 	// (e.g. "stripe", "paddle"). Empty defaults to "unknown".
 	ProviderName string
+	Mode         billing.Mode
 
 	driftMBSeconds *prometheus.GaugeVec
 	driftRatio     *prometheus.GaugeVec
 	supported      *prometheus.GaugeVec
+	modeEnabled    *prometheus.GaugeVec
 	failures       *prometheus.CounterVec
 }
 
@@ -106,17 +108,34 @@ func New(providerName string, store state.Store, provider billing.Provider, log 
 			Name: "meterd_billing_reconcile_supported",
 			Help: "Whether the active billing provider supports usage reconciliation (1 supported, 0 unavailable).",
 		}, []string{"provider"}),
+		modeEnabled: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "meterd_billing_mode_enabled",
+			Help: "Whether provider billing and reconciliation are enabled by deployment configuration (1 live, 0 disabled).",
+		}, []string{"provider"}),
 		failures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meterd_billing_drift_reconcile_failures_total",
 			Help: "Billing reconciliation failures by provider and failure source. A non-zero rate means the drift gauges may be stale and requires operator investigation.",
 		}, []string{"provider", "reason"}),
 	}
-	registry.MustRegister(r.driftMBSeconds, r.driftRatio, r.supported, r.failures)
+	registry.MustRegister(r.driftMBSeconds, r.driftRatio, r.supported, r.modeEnabled, r.failures)
 	capabilityValue := float64(0)
 	if provider != nil && provider.Capabilities().Has(billing.CapUsageReconcile) {
 		capabilityValue = 1
 	}
 	r.supported.WithLabelValues(providerName).Set(capabilityValue)
+	r.modeEnabled.WithLabelValues(providerName).Set(1)
+	return r
+}
+
+// WithMode applies the deployment billing switch. The zero/default remains
+// live for callers created before FAAS_BILLING_MODE existed.
+func (r *Reconciler) WithMode(mode billing.Mode) *Reconciler {
+	r.Mode = mode.Effective()
+	if r.Mode.Enabled() {
+		r.modeEnabled.WithLabelValues(r.ProviderName).Set(1)
+	} else {
+		r.modeEnabled.WithLabelValues(r.ProviderName).Set(0)
+	}
 	return r
 }
 
@@ -137,6 +156,12 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 	if r.ProviderName == "" {
 		r.ProviderName = "unknown"
 	}
+	mode := r.Mode.Effective()
+	if !mode.Enabled() {
+		r.modeEnabled.WithLabelValues(r.ProviderName).Set(0)
+		return nil
+	}
+	r.modeEnabled.WithLabelValues(r.ProviderName).Set(1)
 	if r.Provider == nil || !r.Provider.Capabilities().Has(billing.CapUsageReconcile) {
 		r.supported.WithLabelValues(r.ProviderName).Set(0)
 		r.failures.WithLabelValues(r.ProviderName, "unsupported").Inc()

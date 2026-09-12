@@ -1704,7 +1704,7 @@ groups:
           description: "meterd cannot refresh provider-vs-local billing drift for provider {{ $labels.provider }}. The drift gauges may be stale even when they are below threshold; inspect meterd logs and the reason-labelled meterd_billing_drift_reconcile_failures_total counter."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
       - alert: BillingReconciliationUnavailable
-        expr: meterd_billing_reconcile_supported == 0
+        expr: meterd_billing_mode_enabled == 1 and on(provider) meterd_billing_reconcile_supported == 0
         for: 5m
         labels:
           severity: page
@@ -1713,7 +1713,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Billing reconciliation is unavailable for {{ $labels.provider }}"
-          description: "The active provider does not expose a usable reconciliation surface, so provider-vs-local billing drift cannot be measured. Treat drift gauges as unknown, not healthy, until the provider or deployment configuration is corrected."
+          description: "Live billing is enabled but the active provider does not expose a usable reconciliation surface, so provider-vs-local billing drift cannot be measured. Treat drift gauges as unknown until the provider configuration is corrected."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
 
       # ─────────────────────────────────────────────────────────────────

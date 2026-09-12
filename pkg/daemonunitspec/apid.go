@@ -68,6 +68,7 @@ func UnitApid() daemonunit.Unit {
 
 		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
+			{Key: "FAAS_BILLING_MODE", Value: "live"},
 			{Key: "FAAS_SESSION_KEY", Value: "%d/faas_session_key"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
 			{Key: "FAAS_HOST_HMAC_KEY_PATH", Value: "%d/faas_host_hmac_key"},

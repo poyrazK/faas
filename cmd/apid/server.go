@@ -238,6 +238,7 @@ type server struct {
 	// billingProviderName retains the configured provider even for the legacy
 	// Stripe apid path, where billingProvider is intentionally nil.
 	billingProviderName string
+	billingMode         billing.Mode
 	// ops holds the per-daemon Prometheus registry. Wired via
 	// WithOpsMetrics so callers (cmd/apid) control the registry
 	// lifecycle. A dedicated metric observer middleware sits atop
@@ -505,6 +506,11 @@ func (s *server) WithBillingProviderName(name string) *server {
 	return s
 }
 
+func (s *server) WithBillingMode(mode billing.Mode) *server {
+	s.billingMode = mode.Effective()
+	return s
+}
+
 // WithResendWebhookSecret attaches the Svix / Standard Webhooks
 // signing secret Resend uses for bounce / complaint / delivery
 // events (issue #246 acceptance item 8). When empty the
@@ -742,6 +748,9 @@ func (s *server) billingPortalURLFor(acct state.Account) string {
 // used by the legacy Stripe path. The short timeout keeps plan-change and
 // billing reads from hanging on a provider outage.
 func (s *server) billingPortalURLForProvider(ctx context.Context, acct state.Account) string {
+	if !s.billingMode.Effective().Enabled() {
+		return ""
+	}
 	resolved, err := s.accountForActiveBillingProvider(ctx, acct)
 	if err != nil {
 		s.log.Warn("billing portal identity unavailable", "account", acct.ID, "err", err)

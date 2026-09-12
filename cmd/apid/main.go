@@ -40,6 +40,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/authcode"
+	"github.com/onebox-faas/faas/pkg/billing"
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
@@ -1295,6 +1296,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv)).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv))
+	billingMode, err := billing.ModeFromEnv(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid: billing mode: %w", err)
+	}
+	srv.WithBillingMode(billingMode)
 	objectRegistry, err := objectstorage.Load(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
@@ -1374,18 +1380,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: load billing config: %w", err)
 	}
 	billingCfg = billingloader.ApplyBillingEnvOverlay(billingCfg, deps.getenv)
-	billingProv, provName, err := billingloader.LoadProviderForAPID(ctx, billingCfg, deps.getenv, log)
-	if err != nil {
-		return fmt.Errorf("apid: load billing provider: %w", err)
-	}
-	if err := validateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
-		return err
-	}
-	if billingProv != nil {
-		srv.WithBillingProvider(billingProv)
+	provName := billingCfg.DefaultProvider()
+	if billingMode.Enabled() {
+		billingProv, loadedName, err := billingloader.LoadProviderForAPID(ctx, billingCfg, deps.getenv, log)
+		if err != nil {
+			return fmt.Errorf("apid: load billing provider: %w", err)
+		}
+		provName = loadedName
+		if err := validateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
+			return err
+		}
+		if billingProv != nil {
+			srv.WithBillingProvider(billingProv)
+		}
+		log.Info("billing provider loaded", "provider", provName)
+	} else {
+		log.Info("billing disabled; provider initialization skipped", "provider", provName)
 	}
 	srv.WithBillingProviderName(provName)
-	log.Info("billing provider loaded", "provider", provName)
 
 	// Issue #299 / ADR-038 Phase 3: imagd stores CycloneDX JSON under
 	// sboms/<buildID>.cdx.json and records that storage key in provenance.

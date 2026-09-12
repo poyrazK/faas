@@ -137,6 +137,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_BASE_EXTRACT_ROOT", Owners: []string{"shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_BASE_STAGING_ROOT", Owners: []string{"shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_BASE_TMP_ROOT", Owners: []string{"shared"}, Source: EnvSourceUnit},
+	{Name: "FAAS_BILLING_MODE", Owners: []string{"apid", "meterd", "shared"}, Source: EnvSourceUnit, Default: "live", Note: "disabled pauses provider delivery and reconciliation paging; the public-beta control-plane role overrides the unit default to disabled"},
 	{Name: "FAAS_BILLING_PORTAL_URL", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_BILLING_PROVIDER", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_BRIDGE_HEADERS", Owners: []string{"vmmd-stream-bridge"}, Source: EnvSourceInternal, Note: "set by vmmd for the per-request stream-bridge subprocess"},

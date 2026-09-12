@@ -257,7 +257,7 @@ func TestCSP_HeaderMatchesDashboardSpec(t *testing.T) {
 		"connect-src 'self'; " +
 		"frame-ancestors 'none'; " +
 		"base-uri 'none'; " +
-		"form-action 'self' https://*.stripe.com https://billing.faas.example'"
+		"form-action 'self' https://*.stripe.com'"
 	if got != want {
 		t.Errorf("CSP wire mismatch:\n got:  %s\n want: %s", got, want)
 	}

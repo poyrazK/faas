@@ -151,6 +151,9 @@ func TestUnitApid_Shape(t *testing.T) {
 	if u.Slice != FaasCPSlice {
 		t.Errorf("apid: Slice = %q, want %q", u.Slice, FaasCPSlice)
 	}
+	if !hasEnvironment(u, "FAAS_BILLING_MODE", "live") {
+		t.Error("apid: missing live billing mode default")
+	}
 	if !hasEnvironment(u, "FAAS_HOST_HMAC_KEY_PATH", "%d/faas_host_hmac_key") {
 		t.Error("apid: missing FAAS_HOST_HMAC_KEY_PATH credential-dir environment")
 	}
@@ -305,6 +308,9 @@ func TestUnitMeterd_Shape(t *testing.T) {
 	}
 	if u.Slice != FaasCPSlice {
 		t.Errorf("meterd: Slice = %q, want %q", u.Slice, FaasCPSlice)
+	}
+	if !hasEnvironment(u, "FAAS_BILLING_MODE", "live") {
+		t.Error("meterd: missing live billing mode default")
 	}
 	if !hasReadWrite(u, "/var/log/faas") {
 		t.Errorf("meterd: missing ReadWritePaths=/var/log/faas")

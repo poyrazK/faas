@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 )
 
 func TestBillingStatusCustomerRoute(t *testing.T) {
@@ -47,5 +48,24 @@ func TestBillingStatusRequiresCustomerAuthentication(t *testing.T) {
 	rec := e.do(t, req.Method, req.URL.Path, nil, map[string]string{"Authorization": ""})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBillingStatusDisabledIsTruthful(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	e.s.WithBillingProviderName("stripe").WithBillingMode(billing.ModeDisabled)
+	rec := e.do(t, http.MethodGet, "/v1/billing/status", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got api.BillingStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode != "disabled" || got.Enabled || got.UsageReconciliationEnabled {
+		t.Fatalf("disabled projection = %+v", got)
+	}
+	if url := e.s.billingPortalURLForProvider(context.Background(), e.acct); url != "" {
+		t.Fatalf("disabled mode exposed portal URL %q", url)
 	}
 }

@@ -12,10 +12,15 @@ import (
 // billing status surface. The authenticated account supplied by authLimited is
 // the only tenant input; no operator endpoint or account id is consulted.
 func (s *server) getBillingStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	resolved, err := s.accountForActiveBillingProvider(r.Context(), acct)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not load billing status"))
-		return
+	mode := s.billingMode.Effective()
+	resolved := acct
+	if mode.Enabled() {
+		var err error
+		resolved, err = s.accountForActiveBillingProvider(r.Context(), acct)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not load billing status"))
+			return
+		}
 	}
 
 	name := s.billingProviderName
@@ -24,9 +29,13 @@ func (s *server) getBillingStatus(w http.ResponseWriter, r *http.Request, acct s
 	}
 	reconciliation := s.billingProvider != nil &&
 		s.billingProvider.Capabilities().Has(billing.CapUsageReconcile)
+	enabled := mode.Enabled()
+	if !enabled {
+		reconciliation = false
+	}
 	writeJSON(w, http.StatusOK, api.BillingStatusResponse{
-		Mode:                       "live",
-		Enabled:                    true,
+		Mode:                       string(mode),
+		Enabled:                    enabled,
 		Provider:                   name,
 		Plan:                       resolved.Plan,
 		AccountStatus:              string(resolved.Status),
