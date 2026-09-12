@@ -13,6 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func testIntegration(t *testing.T, origin, token string, apps []string, rate float64, burst, maxInFlight int) Integration {
@@ -101,6 +104,121 @@ func TestHandlersShareOneBackendAcrossInstances(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("first request did not finish")
+	}
+}
+
+func TestTwentyHandlersShareOneBudget(t *testing.T) {
+	entered := make(chan struct{}, 5)
+	finish := make(chan struct{})
+	var providerCalls atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalls.Add(1)
+		entered <- struct{}{}
+		<-finish
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	// This models twenty independently constructed gateway handlers. They all
+	// point at one shared backend, so the five-token burst is consumed once for
+	// the integration rather than twenty times (once per process).
+	integration := testIntegration(t, server.URL, "secret", []string{"app-1"}, .001, 5, 20)
+	resolver, err := NewStaticResolver([]Integration{integration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := NewMemoryBackend()
+	handlers := make([]*Handler, 20)
+	for i := range handlers {
+		handlers[i], err = NewHandler(resolver, backend, server.Client())
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	responses := make(chan int, len(handlers))
+	var wg sync.WaitGroup
+	for _, handler := range handlers {
+		wg.Add(1)
+		go func(h *Handler) {
+			defer wg.Done()
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, gatewayRequest(Prefix+integration.ID+"/v1/items", "secret", "app-1", http.MethodGet, nil))
+			responses <- rr.Code
+		}(handler)
+	}
+
+	// The five admitted requests block at the provider. This prevents token
+	// refill from making the assertion timing-dependent.
+	for i := 0; i < 5; i++ {
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatalf("provider received %d/5 admitted requests", i)
+		}
+	}
+	close(finish)
+	wg.Wait()
+	close(responses)
+	var granted, rejected int
+	for status := range responses {
+		switch status {
+		case http.StatusNoContent:
+			granted++
+		case http.StatusTooManyRequests:
+			rejected++
+		default:
+			t.Errorf("unexpected handler status %d", status)
+		}
+	}
+	if providerCalls.Load() != 5 || granted != 5 || rejected != 15 {
+		t.Fatalf("shared budget: provider_calls=%d granted=%d rejected=%d; want 5/5/15", providerCalls.Load(), granted, rejected)
+	}
+}
+
+func TestHandlerMetricsExposeBudgetAndProviderOutcomes(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	integration := testIntegration(t, server.URL, "secret", []string{"app-1"}, .001, 1, 1)
+	resolver, err := NewStaticResolver([]Integration{integration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := prometheus.NewRegistry()
+	metrics, err := NewMetrics(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(resolver, NewMemoryBackend(), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.Metrics = metrics
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, gatewayRequest(Prefix+integration.ID+"/v1/items", "secret", "app-1", http.MethodGet, nil))
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, gatewayRequest(Prefix+integration.ID+"/v1/items", "secret", "app-1", http.MethodGet, nil))
+	if first.Code != http.StatusAccepted || second.Code != http.StatusTooManyRequests {
+		t.Fatalf("statuses = %d/%d; want 202/429", first.Code, second.Code)
+	}
+
+	recorder := httptest.NewRecorder()
+	promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://metrics/metrics", nil))
+	body := recorder.Body.String()
+	for _, want := range []string{
+		`outbound_admissions_total{integration_id="integration-1",outcome="granted"} 1`,
+		`outbound_admissions_total{integration_id="integration-1",outcome="rejected"} 1`,
+		`outbound_rejections_total{integration_id="integration-1",reason="rate_limit"} 1`,
+		`outbound_in_flight{integration_id="integration-1"} 0`,
+		`outbound_upstream_requests_total{integration_id="integration-1",outcome="2xx"} 1`,
+		`outbound_upstream_latency_seconds_count{integration_id="integration-1"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics missing %q\n%s", want, body)
+		}
 	}
 }
 

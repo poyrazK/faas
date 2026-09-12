@@ -12,7 +12,7 @@ func TestLoadConfigDefaultsWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.ListenAddr != "127.0.0.1:8095" || c.MaxBodyBytes <= 0 {
+	if c.ListenAddr != "127.0.0.1:8095" || c.MetricsAddr != "127.0.0.1:9108" || c.MaxBodyBytes <= 0 {
 		t.Fatalf("defaults = %#v", c)
 	}
 }

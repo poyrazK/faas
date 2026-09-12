@@ -1574,9 +1574,9 @@ func TestOpsMetrics_WakeLatencyIncrement(t *testing.T) {
 // pre-instantiated so an unexpected daemon name doesn't trip the
 // "missing series" alert path at boot.
 //
-// Cardinality: 10 daemons × 1 version = 10 series per OpsMetrics
-// instance. Across the 9 daemons that construct their own
-// OpsMetrics = 90 series fleet-wide, all with the same
+// Cardinality: 11 daemons × 1 version = 11 series per OpsMetrics
+// instance. Across the daemons that construct their own
+// OpsMetrics, all with the same
 // {daemon, version} label set. Well below the Prometheus
 // "tens of thousands" guideline.
 func TestRecordDaemonRestart_PreInstantiationCartesian(t *testing.T) {
@@ -1584,7 +1584,7 @@ func TestRecordDaemonRestart_PreInstantiationCartesian(t *testing.T) {
 	body := render(t, m)
 	for _, daemon := range []string{
 		"apid", "gatewayd-public", "gatewayd-internal", "schedd",
-		"vmmd", "imaged", "meterd", "builderd", "gregale", "other",
+		"vmmd", "imaged", "meterd", "builderd", "outboundd", "gregale", "other",
 	} {
 		want := fmt.Sprintf(`vmmd_daemon_restart_count{daemon=%q,version=%q} 0`, daemon, wire.Version)
 		if !strings.Contains(body, want) {
@@ -1623,7 +1623,7 @@ func TestDaemon_BuildInfo_Uptime_Ready(t *testing.T) {
 	body := render(t, m)
 	for _, daemon := range []string{
 		"apid", "gatewayd-public", "gatewayd-internal", "schedd",
-		"vmmd", "imaged", "meterd", "builderd", "gregale", "other",
+		"vmmd", "imaged", "meterd", "builderd", "outboundd", "gregale", "other",
 	} {
 		// Build info: 1 per closed daemon.
 		wantInfo := fmt.Sprintf(`vmmd_daemon_build_info{build_time=%q,daemon=%q,git_sha=%q,version=%q} 1`,
