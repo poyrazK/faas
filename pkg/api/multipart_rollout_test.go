@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+func boolPtr(v bool) *bool { return &v }
+
 func TestMultipartDeployPreservesExplicitZeroAndCanary(t *testing.T) {
 	zero := 0
 	for _, tc := range []struct {
@@ -18,6 +20,8 @@ func TestMultipartDeployPreservesExplicitZeroAndCanary(t *testing.T) {
 	}{
 		{name: "explicit zero", ann: DeployAnnotations{TrafficPercent: &zero}, wantField: "traffic_percent", wantValue: "0"},
 		{name: "canary", ann: DeployAnnotations{Canary: &CanaryPresetSpec{Preset: "balanced"}}, wantField: "canary", wantValue: `{"preset":"balanced"}`},
+		{name: "rollback enabled", ann: DeployAnnotations{RollbackOn5xx: boolPtr(true)}, wantField: "rollback_on_5xx", wantValue: "true"},
+		{name: "rollback explicitly disabled", ann: DeployAnnotations{RollbackOn5xx: boolPtr(false)}, wantField: "rollback_on_5xx", wantValue: "false"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var body bytes.Buffer

@@ -64,6 +64,9 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 			_ = w.WriteField("canary", string(raw))
 		}
 	}
+	if a.RollbackOn5xx != nil {
+		_ = w.WriteField("rollback_on_5xx", fmt.Sprintf("%t", *a.RollbackOn5xx))
+	}
 	if len(a.Workflows) > 0 {
 		if raw, err := json.Marshal(a.Workflows); err == nil {
 			_ = w.WriteField("workflows", string(raw))
@@ -115,6 +118,7 @@ type DeployAnnotations struct {
 	// semantics as image JSON deploys. The pointer preserves explicit zero.
 	TrafficPercent *int
 	Canary         *CanaryPresetSpec
+	RollbackOn5xx  *bool
 }
 
 func normalizeMultipartSourceRoot(raw string) (string, error) {

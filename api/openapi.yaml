@@ -18106,6 +18106,9 @@ components:
         workflows:
           type: array
           items: { $ref: '#/components/schemas/WorkflowSpec' }
+        rollback_on_5xx:
+          type: [boolean, "null"]
+          description: "Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback, while omitted or null keeps the default false."
 
     UploadStartResponse:
       description: "Body of POST /v1/uploads response. The session row persists for 24h; the reaper (cmd/apid/upload_session_reaper.go) flips `status='open'` rows whose `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-decided (8 MiB default; 16 MiB for Scale)."
@@ -18513,6 +18516,9 @@ components:
             - $ref: '#/components/schemas/CanaryPresetSpec'
             - type: 'null'
           description: "Canary rollout policy for this source-tarball deployment. Mutually exclusive with traffic_percent."
+        rollback_on_5xx:
+          type: [boolean, "null"]
+          description: "Source-tarball deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false."
 
     UpdateDeploymentRequest:
 
@@ -20970,6 +20976,9 @@ components:
             - $ref: '#/components/schemas/CanaryPresetSpec'
             - type: 'null'
           description: "Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent."
+        rollback_on_5xx:
+          type: [boolean, "null"]
+          description: "Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false."
 
     DiffRequest:
       description: |

@@ -568,7 +568,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// the Hobby plan doesn't subsidise.
 			RequireAuthnDefault: true, PublicAuthModeDefault: "bearer",
 			// Issue #556 PR-A: Pro unlocks traffic splitting.
-			TrafficSplit: true,
+			TrafficSplit: true, RollbackOn5xxAllowed: true,
 			// Issue #72 / ADR-125: Pro unlocks traffic mirroring
 			// (one shadow deployment per app for canary-shadow
 			// comparisons). Hobby/Free stay gated — the mirror
@@ -733,7 +733,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// is part of the production-tier value-prop.
 			RequireAuthnDefault: true, PublicAuthModeDefault: "bearer",
 			// Issue #556 PR-A: Pro unlocks traffic splitting.
-			TrafficSplit: true,
+			TrafficSplit: true, RollbackOn5xxAllowed: true,
 			// ADR-124: Scale mirrors Pro — gRPC framing unlocked.
 			AppProtocolGrpcAllowed: true,
 			// Issue #554 / ADR-078: Scale mirrors Pro — same
@@ -1886,6 +1886,24 @@ func TestPlanTrafficSplitAllowed(t *testing.T) {
 	for _, c := range cases {
 		if got := c.plan.TrafficSplitAllowed(); got != c.want {
 			t.Errorf("%s.TrafficSplitAllowed() = %v, want %v", c.plan, got, c.want)
+		}
+	}
+}
+
+func TestPlanRollbackOn5xxAllowed(t *testing.T) {
+	cases := []struct {
+		plan Plan
+		want bool
+	}{
+		{PlanFree, false},
+		{PlanHobby, false},
+		{PlanPro, true},
+		{PlanScale, true},
+		{Plan("unknown"), false},
+	}
+	for _, tc := range cases {
+		if got := tc.plan.RollbackOn5xxAllowed(); got != tc.want {
+			t.Errorf("%s.RollbackOn5xxAllowed() = %v, want %v", tc.plan, got, tc.want)
 		}
 	}
 }

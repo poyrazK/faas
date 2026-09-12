@@ -154,6 +154,13 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrSourceTooLarge(limits, req.TotalSize))
 		return
 	}
+	if req.DeployOptions != nil {
+		rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: req.DeployOptions.RollbackOn5xx}
+		if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	app, err := s.store.AppBySlug(r.Context(), req.AppSlug)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -563,6 +570,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
+	rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: opts.RollbackOn5xx}
+	if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if opts.SourceRoot != "" {
 		root, rootErr := sourcecontext.StorageRoot(opts.SourceRoot)
 		if rootErr != nil {
@@ -650,6 +662,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		Tag:              opts.Tag,
 		DeployedBy:       opts.DeployedBy,
 		PRNumber:         opts.PRNumber,
+		RollbackOn5xx:    opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
 		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
 		HostingObserver:  s.ops,
 		HostingFlow:      "first_deploy",

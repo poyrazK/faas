@@ -1329,6 +1329,11 @@ type CreateDeploymentRequest struct {
 	Tag        *string `json:"tag,omitempty"`
 	DeployedBy *string `json:"deployed_by,omitempty"`
 	PRNumber   *int    `json:"pr_number,omitempty"`
+	// RollbackOn5xx opts this deployment into the first-wake 5xx
+	// auto-rollback watcher. nil/omitted keeps the server default (false);
+	// an explicit value preserves the caller's intent across every deploy
+	// transport. The feature is plan-gated to Pro and Scale.
+	RollbackOn5xx *bool `json:"rollback_on_5xx,omitempty"`
 	// Canary (issue #976 / ADR-122 / SAFE-RELEASES-A). Pointer
 	// so omitted == "no canary; server-default 'none' preset"
 	// (today's behaviour preserved exactly: 100% on the new
@@ -4955,6 +4960,7 @@ type SourceRefDeployRequest struct {
 	PRNumber       int               `json:"pr_number,omitempty"`
 	TrafficPercent *int              `json:"traffic_percent,omitempty"`
 	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
+	RollbackOn5xx  *bool             `json:"rollback_on_5xx,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -4979,6 +4985,7 @@ type SourceTarballDeployRequest struct {
 	PRNumber       int               `json:"pr_number,omitempty"`
 	TrafficPercent *int              `json:"traffic_percent,omitempty"`
 	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
+	RollbackOn5xx  *bool             `json:"rollback_on_5xx,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).

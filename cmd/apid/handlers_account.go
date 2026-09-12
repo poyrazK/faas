@@ -879,10 +879,16 @@ func buildDeploymentsForExport(rows []state.Deployment) ([]api.DeploymentRespons
 			// to reason / tag / deployed_by so a customer who
 			// pasted PII into reason is still covered by the
 			// existing export scrubber.
-			Reason:     sanitizeExportString(d.Reason),
-			Tag:        sanitizeExportString(d.Tag),
-			DeployedBy: sanitizeExportString(d.DeployedBy),
-			PRNumber:   d.PRNumber,
+			Reason:                 sanitizeExportString(d.Reason),
+			Tag:                    sanitizeExportString(d.Tag),
+			DeployedBy:             sanitizeExportString(d.DeployedBy),
+			PRNumber:               d.PRNumber,
+			RollbackOn5xx:          d.RollbackOn5xx,
+			FirstWakeAt:            d.FirstWakeAt,
+			First5xxWindowEndsAt:   d.First5xxWindowEndsAt,
+			First5xxCount:          d.First5xxCount,
+			LastAutoRollbackAt:     d.LastAutoRollbackAt,
+			LastAutoRollbackReason: sanitizeExportString(d.LastAutoRollbackReason),
 		})
 	}
 	return out, nil
