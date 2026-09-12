@@ -19,7 +19,7 @@ import (
 
 const (
 	publicStatusPreviousMigrationVersion int64 = 20260912130000001
-	publicStatusMigrationVersion         int64 = 20260912133000000
+	publicStatusMigrationVersion         int64 = 20260912144727207
 )
 
 func TestMigrationPublicStatusBackfillConstraintsReplayAndRollback(t *testing.T) {
@@ -61,15 +61,13 @@ func TestMigrationPublicStatusBackfillConstraintsReplayAndRollback(t *testing.T)
 	var rollingPublicID, rollingKind, rollingState string
 	var rollingUpdates int
 	if err := pool.QueryRow(ctx, `
-		with inserted as (
-			insert into status_incidents(component,severity,message)
-			values ('apid','degraded','Rolling writer incident')
-			returning id,public_id::text,kind,lifecycle_state
-		)
-		select inserted.public_id,inserted.kind,inserted.lifecycle_state,
-		       (select count(*) from status_incident_updates where incident_id=inserted.id)
-		from inserted`).Scan(&rollingPublicID, &rollingKind, &rollingState, &rollingUpdates); err != nil {
+		insert into status_incidents(component,severity,message)
+		values ('apid','degraded','Rolling writer incident')
+		returning public_id::text,kind,lifecycle_state`).Scan(&rollingPublicID, &rollingKind, &rollingState); err != nil {
 		t.Fatalf("legacy writer insert after migration: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) from status_incident_updates where incident_id=(select id from status_incidents where public_id=$1)`, rollingPublicID).Scan(&rollingUpdates); err != nil {
+		t.Fatalf("legacy writer initial update: %v", err)
 	}
 	if rollingPublicID == "" || rollingKind != "incident" || rollingState != "investigating" || rollingUpdates != 1 {
 		t.Fatalf("rolling writer defaults = id:%q kind:%q state:%q updates:%d", rollingPublicID, rollingKind, rollingState, rollingUpdates)

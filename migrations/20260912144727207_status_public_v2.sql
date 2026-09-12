@@ -238,7 +238,7 @@ CREATE TABLE IF NOT EXISTS status_observation_buckets (
     )
 );
 CREATE INDEX IF NOT EXISTS status_observation_buckets_day_idx
-    ON status_observation_buckets((bucket_at AT TIME ZONE 'UTC')::date, component);
+    ON status_observation_buckets(((bucket_at AT TIME ZONE 'UTC')::date), component);
 
 CREATE OR REPLACE FUNCTION reject_status_update_mutation() RETURNS trigger AS $$
 BEGIN
