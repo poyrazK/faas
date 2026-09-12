@@ -408,8 +408,8 @@ func TestValidateTOMLPlacement_UnknownDaemon(t *testing.T) {
 
 func TestSortedHostKeys_Exhaustive(t *testing.T) {
 	keys := SortedHostKeys()
-	if len(keys) != 10 {
-		t.Errorf("SortedHostKeys() = %d daemons, want 10 (manifest schema's daemons: map)", len(keys))
+	if len(keys) != 11 {
+		t.Errorf("SortedHostKeys() = %d daemons, want 11 (manifest schema's daemons: map)", len(keys))
 	}
 	// Every HostKeys entry must appear in the manifest schema's
 	// daemons.go map — that's the source of truth for "which
