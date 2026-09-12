@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 )
 
@@ -57,14 +58,32 @@ type ExecutionLimitRequest struct {
 	MaxOutputBytes  int `json:"max_output_bytes,omitempty"`
 }
 
+// ExecutionFile is one regular file in an ephemeral source bundle. Content
+// is base64 encoded by JSON clients and exists only for the lifetime of the
+// execution; it is never persisted in the customer-facing execution receipt.
+type ExecutionFile struct {
+	Path    string `json:"path"`
+	Content []byte `json:"content"`
+}
+
+const (
+	// ExecutionBundleMaxFiles prevents a caller from turning admission into a
+	// directory-tree allocation attack. The plan's source-byte limit remains
+	// the authoritative total-content cap.
+	ExecutionBundleMaxFiles    = 256
+	ExecutionBundleMaxPathSize = 256
+)
+
 // CreateExecutionRequest is the caller-authored one-shot execution contract.
 // Source and input are never included in ExecutionResponse.
 type CreateExecutionRequest struct {
-	Runtime ExecutionRuntime        `json:"runtime"`
-	Source  string                  `json:"source"`
-	Input   json.RawMessage         `json:"input,omitempty"`
-	Limits  *ExecutionLimitRequest  `json:"limits,omitempty"`
-	Network *ExecutionNetworkPolicy `json:"network,omitempty"`
+	Runtime    ExecutionRuntime        `json:"runtime"`
+	Source     string                  `json:"source,omitempty"`
+	Entrypoint string                  `json:"entrypoint,omitempty"`
+	Files      []ExecutionFile         `json:"files,omitempty"`
+	Input      json.RawMessage         `json:"input,omitempty"`
+	Limits     *ExecutionLimitRequest  `json:"limits,omitempty"`
+	Network    *ExecutionNetworkPolicy `json:"network,omitempty"`
 }
 
 // ResolvedExecutionLimits is the immutable envelope admitted by apid and
@@ -81,11 +100,26 @@ type ResolvedExecutionLimits struct {
 // ResolvedExecutionRequest is the normalized form persisted as execution
 // intent. Input is always valid JSON and Network.Mode is always explicit.
 type ResolvedExecutionRequest struct {
-	Runtime ExecutionRuntime
-	Source  string
-	Input   json.RawMessage
-	Limits  ResolvedExecutionLimits
-	Network ExecutionNetworkPolicy
+	Runtime    ExecutionRuntime
+	Source     string
+	Entrypoint string
+	Files      []ExecutionFile
+	Input      json.RawMessage
+	Limits     ResolvedExecutionLimits
+	Network    ExecutionNetworkPolicy
+}
+
+// SourceBytes returns the admitted source footprint for state accounting. It
+// counts file content for bundles and the legacy source string otherwise.
+func (r ResolvedExecutionRequest) SourceBytes() int {
+	if len(r.Files) == 0 {
+		return len(r.Source)
+	}
+	total := 0
+	for _, file := range r.Files {
+		total += len(file.Content)
+	}
+	return total
 }
 
 // ExecutionSnapshotShape identifies the caller-controlled portion of a
@@ -121,14 +155,36 @@ func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *P
 			fmt.Sprintf("runtime %q is not supported; use node22, node24, python312, or python313", r.Runtime),
 		)
 	}
-	if strings.TrimSpace(r.Source) == "" || strings.ContainsRune(r.Source, '\x00') {
-		return ResolvedExecutionRequest{}, executionInvalid(
-			CodeExecutionSourceInvalid,
-			"source must contain non-whitespace code and must not contain NUL bytes",
-		)
+
+	var source string
+	var entrypoint string
+	var files []ExecutionFile
+	sourcePresent := strings.TrimSpace(r.Source) != ""
+	bundlePresent := len(r.Files) != 0 || strings.TrimSpace(r.Entrypoint) != ""
+	if sourcePresent && bundlePresent {
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionSourceInvalid, "source cannot be combined with files or entrypoint")
 	}
-	if len(r.Source) > planLimits.MaxSourceBytes {
-		return ResolvedExecutionRequest{}, executionPayloadTooLarge("source", planLimits.MaxSourceBytes, len(r.Source))
+	switch {
+	case sourcePresent:
+		if strings.ContainsRune(r.Source, '\x00') {
+			return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionSourceInvalid, "source must not contain NUL bytes")
+		}
+		if len(r.Source) > planLimits.MaxSourceBytes {
+			return ResolvedExecutionRequest{}, executionPayloadTooLarge("source", planLimits.MaxSourceBytes, len(r.Source))
+		}
+		source = r.Source
+	case bundlePresent:
+		entrypoint = r.Entrypoint
+		_, err := validateExecutionBundle(entrypoint, r.Files, planLimits.MaxSourceBytes)
+		if err != nil {
+			if tooLarge, ok := err.(executionBundleTooLargeError); ok {
+				return ResolvedExecutionRequest{}, executionPayloadTooLarge("bundle", planLimits.MaxSourceBytes, tooLarge.observed)
+			}
+			return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionSourceInvalid, err.Error())
+		}
+		files = cloneExecutionFiles(r.Files)
+	default:
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionSourceInvalid, "source or a non-empty files bundle with entrypoint is required")
 	}
 
 	input := r.Input
@@ -165,12 +221,104 @@ func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *P
 	}
 
 	return ResolvedExecutionRequest{
-		Runtime: r.Runtime,
-		Source:  r.Source,
-		Input:   append(json.RawMessage(nil), input...),
-		Limits:  limits,
-		Network: network,
+		Runtime:    r.Runtime,
+		Source:     source,
+		Entrypoint: entrypoint,
+		Files:      files,
+		Input:      append(json.RawMessage(nil), input...),
+		Limits:     limits,
+		Network:    network,
 	}, nil
+}
+
+type executionBundleTooLargeError struct {
+	observed int
+}
+
+func (e executionBundleTooLargeError) Error() string {
+	return "bundle exceeds the source-byte limit"
+}
+
+func validateExecutionBundle(entrypoint string, files []ExecutionFile, maxBytes int) (int, error) {
+	if strings.TrimSpace(entrypoint) == "" {
+		return 0, fmt.Errorf("entrypoint is required for a files bundle")
+	}
+	if len(files) == 0 {
+		return 0, fmt.Errorf("files must contain at least one file")
+	}
+	if len(files) > ExecutionBundleMaxFiles {
+		return 0, fmt.Errorf("bundle contains %d files; maximum is %d", len(files), ExecutionBundleMaxFiles)
+	}
+	seen := make(map[string]struct{}, len(files))
+	total := 0
+	entrypointFound := false
+	for _, file := range files {
+		clean, err := validateExecutionFilePath(file.Path)
+		if err != nil {
+			return 0, err
+		}
+		if _, ok := seen[clean]; ok {
+			return 0, fmt.Errorf("bundle contains duplicate path %q", clean)
+		}
+		seen[clean] = struct{}{}
+		if clean == entrypoint {
+			entrypointFound = true
+		}
+		total += len(file.Content)
+		if total > maxBytes {
+			return total, executionBundleTooLargeError{observed: total}
+		}
+	}
+	if clean, err := validateExecutionFilePath(entrypoint); err != nil {
+		return 0, fmt.Errorf("invalid entrypoint: %w", err)
+	} else if clean != entrypoint {
+		return 0, fmt.Errorf("entrypoint must be normalized relative path")
+	}
+	for filePath := range seen {
+		for parent := path.Dir(filePath); parent != "."; parent = path.Dir(parent) {
+			if _, ok := seen[parent]; ok {
+				return 0, fmt.Errorf("bundle path conflict: %q is both a file and a directory", parent)
+			}
+		}
+	}
+	if !entrypointFound {
+		return 0, fmt.Errorf("entrypoint %q is not present in files", entrypoint)
+	}
+	if total == 0 {
+		return 0, fmt.Errorf("bundle content must not be empty")
+	}
+	return total, nil
+}
+
+// ValidateExecutionBundle applies the same path, file-count, and byte-count
+// checks used by API admission. Guest-side code calls this again before
+// writing files, so a future transport cannot turn an untrusted manifest into
+// a host path traversal.
+func ValidateExecutionBundle(entrypoint string, files []ExecutionFile, maxBytes int) error {
+	_, err := validateExecutionBundle(entrypoint, files, maxBytes)
+	return err
+}
+
+func validateExecutionFilePath(value string) (string, error) {
+	if value == "" || len(value) > ExecutionBundleMaxPathSize || strings.ContainsRune(value, '\x00') || strings.ContainsRune(value, '\\') {
+		return "", fmt.Errorf("file path is empty, too long, or contains forbidden characters")
+	}
+	if strings.HasPrefix(value, "/") {
+		return "", fmt.Errorf("file path %q must be relative", value)
+	}
+	clean := path.Clean(value)
+	if clean != value || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("file path %q must be a normalized relative path", value)
+	}
+	return clean, nil
+}
+
+func cloneExecutionFiles(files []ExecutionFile) []ExecutionFile {
+	cloned := make([]ExecutionFile, len(files))
+	for i, file := range files {
+		cloned[i] = ExecutionFile{Path: file.Path, Content: append([]byte(nil), file.Content...)}
+	}
+	return cloned
 }
 
 func resolveExecutionLimits(requested *ExecutionLimitRequest, plan ExecutionPlanLimits) (ResolvedExecutionLimits, *Problem) {

@@ -4354,9 +4354,10 @@ const (
 	ExecutionPlaintextFieldMaxBytes = 1 << 20
 	ExecutionPIDsMax                = 64
 	// ExecutionSealedPayloadMaxBytes is the storage-layer ceiling for the
-	// encrypted source+input envelope. It leaves bounded room above the two
-	// admitted 1 MiB plaintext fields for envelope and age-recipient overhead;
-	// it is not a customer-visible allowance.
+	// encrypted source/input envelope, including an optional multi-file bundle.
+	// It leaves bounded room above the admitted 1 MiB source and input fields for
+	// JSON/base64 encoding and age-recipient overhead; it is not a
+	// customer-visible allowance.
 	ExecutionSealedPayloadMaxBytes = 3 << 20
 )
 

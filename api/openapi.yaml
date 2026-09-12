@@ -25617,12 +25617,16 @@ components:
 
     CreateExecutionRequest:
       description: |
-        Source and JSON input for one disposable execution. v1 supports only
-        the listed interpreter runtimes and `network.mode=none`; dependencies,
-        secrets, environment injection, and persistent disks are not part of
-        this contract.
+        Source and JSON input for one disposable execution. Send either the
+        legacy `source` string or an ephemeral `files` bundle with an
+        `entrypoint`. v1 supports only the listed interpreter runtimes and
+        `network.mode=none`; dependencies, secrets, environment injection, and
+        persistent disks are not part of this contract.
       type: object
-      required: [runtime, source]
+      required: [runtime]
+      oneOf:
+        - required: [source]
+        - required: [entrypoint, files]
       additionalProperties: false
       properties:
         runtime:
@@ -25633,12 +25637,37 @@ components:
           minLength: 1
           maxLength: 1048576
           description: Single-file source code; never returned by execution reads.
+        entrypoint:
+          type: string
+          maxLength: 256
+          description: Normalized relative path of the file to execute when `files` is supplied.
+        files:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ExecutionFile' }
+          description: Regular files staged into the guest's ephemeral scratch filesystem.
         input:
           description: One complete JSON value delivered to the guest as input.
         limits:
           $ref: '#/components/schemas/ExecutionLimitRequest'
         network:
           $ref: '#/components/schemas/ExecutionNetworkPolicy'
+
+    ExecutionFile:
+      description: One regular file in an ephemeral execution bundle. Content is base64-encoded in JSON.
+      type: object
+      required: [path, content]
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Normalized relative POSIX path; absolute paths, dot segments, and symlinks are rejected.
+        content:
+          type: string
+          format: byte
+          description: File bytes, base64-encoded by JSON clients.
 
     ExecutionLimitRequest:
       description: Caller-selected execution resource limits; zero selects the plan default.
