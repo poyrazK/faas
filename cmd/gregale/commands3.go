@@ -434,6 +434,32 @@ func setDeploySecrets(ctx context.Context, client *Client, app string, pairs []s
 	return nil
 }
 
+// setProjectDeploySecrets applies a validated deploy bundle to each workload
+// in a project plan. Project plans can contain duplicate names only when a
+// detector has merged the same workload, so de-duplicate by the API slug to
+// avoid issuing duplicate writes. Values remain in memory and are passed only
+// to the existing sealed app-secret endpoint; they are never logged.
+func setProjectDeploySecrets(ctx context.Context, client *Client, workloads []api.PlanWorkload, pairs []secretsPair) (int, error) {
+	seen := make(map[string]struct{}, len(workloads))
+	configured := 0
+	for _, workload := range workloads {
+		app := strings.TrimSpace(workload.Name)
+		if app == "" {
+			continue
+		}
+		key := strings.ToLower(app)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if err := setDeploySecrets(ctx, client, app, pairs); err != nil {
+			return configured, fmt.Errorf("workload %s: %w", app, err)
+		}
+		configured++
+	}
+	return configured, nil
+}
+
 // --- unset -----------------------------------------------------------------
 
 func secretsUnset(args []string) int {
