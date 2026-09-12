@@ -501,9 +501,10 @@ func (d *VMMDriver) stopAndDestroy(ctx context.Context, instance string) error {
 	return errors.Join(stopErr, destroyErr)
 }
 
-// DeleteWarmSnapshot removes both vmmd-owned snapshot blobs and the retained
-// local builder drive. The latter is part of the warm snapshot because
-// Firecracker's memory snapshot does not include virtio block-device bytes.
+// DeleteWarmSnapshot removes vmmd-owned snapshot blobs and local warm state.
+// The retained builder drive is part of the warm snapshot because Firecracker
+// memory snapshots do not include virtio block-device bytes. VMStatePath is
+// kept for legacy local snapshots whose vmstate was not stored through vmmd.
 func (d *VMMDriver) DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapshot) error {
 	if d == nil || d.cli == nil {
 		return fmt.Errorf("builderd: VMMDriver not wired")
@@ -521,6 +522,11 @@ func (d *VMMDriver) DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapsho
 	if snapshot.LayerPath != "" {
 		if err := os.Remove(snapshot.LayerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, fmt.Errorf("remove warm builder drive: %w", err))
+		}
+	}
+	if snapshot.VMStatePath != "" {
+		if err := os.Remove(snapshot.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("remove warm vmstate: %w", err))
 		}
 	}
 	return errors.Join(errs...)

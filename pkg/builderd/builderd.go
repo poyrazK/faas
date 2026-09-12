@@ -298,7 +298,7 @@ func (b *Builderd) prepareWarmBuilder(ctx context.Context, slot SlotDecision, re
 		b.log.Warn("builderd: warm builder disabled; lifecycle start failed", "err", err)
 		return nil, "", WarmSnapshot{}, false
 	}
-	if snapshot.StorageKey != "" && (result != WarmRestoreHit || snapshot.ScopeKey == "" || snapshot.ScopeKey != req.WarmScopeKey) {
+	if snapshot.hasCleanupTarget() && (result != WarmRestoreHit || snapshot.ScopeKey == "" || snapshot.ScopeKey != req.WarmScopeKey) {
 		// cleanupWarmSnapshot logs failures; this path must continue with a cold builder.
 		_ = b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
 		snapshot = WarmSnapshot{}
@@ -320,7 +320,7 @@ func (b *Builderd) cleanupWarmSnapshot(ctx context.Context, warmVM WarmVM, snaps
 }
 
 func (b *Builderd) cleanupWarmSnapshotLocked(ctx context.Context, warmVM WarmVM, snapshot WarmSnapshot) error {
-	if warmVM == nil || snapshot.StorageKey == "" {
+	if warmVM == nil || !snapshot.hasCleanupTarget() {
 		return nil
 	}
 	if err := warmVM.DeleteWarmSnapshot(context.WithoutCancel(ctx), snapshot); err != nil {
