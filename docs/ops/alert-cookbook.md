@@ -58,7 +58,7 @@ When you receive a page:
 |---|---|---|---|
 | `tenant_residency` | page | [`FaasHighResidentRam.md`](FaasHighResidentRam.md) | None — this is always a real signal. |
 | `tenant_residency` | warn | [`FaasHighResidentRam.md`](FaasHighResidentRam.md) | A single customer's burst can spike the gauge transiently; check `faas_resident_ram_pct{account_id}` to see if one tenant is driving the alert. |
-| `snapshot_fleet` | page | [`FaasSnapshotFleetHigh.md`](FaasSnapshotFleetHigh.md) | None — fleet-wide storage pressure is always actionable. |
+| `snapshot_fleet` | page | [`FaasSnapshotFleetHigh.md`](FaasSnapshotFleetHigh.md) | None — fleet-wide storage pressure is always actionable. It is internal capacity health until a request-path alert reports customer impact. |
 | `lv_fc` | warn | [`FaasLvFcUsageHigh.md`](FaasLvFcUsageHigh.md) | Snapshot retention prune lag; check `imaged_prune_lag_seconds`. |
 | `build_queue` | page | [`FaasBuildQueueBacklog.md`](FaasBuildQueueBacklog.md) | Builder slot gate tripping on a single customer's burst; rule out by checking the per-account queued count. |
 | `wake_latency` | page | [`FaasWakeLatencyHigh.md`](FaasWakeLatencyHigh.md) | Single instance wedged (liveness probe will catch it). |

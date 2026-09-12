@@ -11,6 +11,10 @@ The fleet-average snapshot size has crossed the §12 threshold.
 - Warn tier (`FaasSnapshotFleetAvgHighWarn`) trips at > 160 MB for 15 m.
 - Page tier (`FaasSnapshotFleetAvgHighPage`) trips at > 200 MB for 10 m.
 
+Both alerts carry `public_status="internal"`. They remain actionable operator
+capacity signals, while restore failures, quota errors, and request-path SLO
+alerts determine customer-visible platform status.
+
 The metric sums each snapshot's allocated filesystem blocks with its
 deployment's above-base app content. It does not use the Firecracker memory
 file's logical length: a sparse 1 GiB memory file may consume about 130 MiB.
