@@ -63,6 +63,10 @@ export type CreateDeploymentRequest = {
    */
   canary?: (CanaryPresetSpec | null);
   /**
+   * Create-time opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
+   */
+  rollback_on_5xx?: boolean | null;
+  /**
    * Whether to auto-fallback to a self-contained rootfs for images without a Gregale runtime base. Omitted uses the plan default.
    */
   full_rootfs_allow_auto?: boolean | null;

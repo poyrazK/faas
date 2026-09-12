@@ -1526,6 +1526,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// validates [0, 100] (422) and the plan gate (403) on the
 	// request path; we just thread the pointer through.
 	trafficPercent := fs.Int("traffic-percent", -1, "split weight for this deployment (0-100, Pro/Scale only; -1 = server default 100)")
+	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses (Pro/Scale only)")
 	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
 	// The flag is the explicit opt-out; without it, a present
 	// gregale.yaml with a `triggers:` block is applied after app
@@ -1629,6 +1630,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	var rollbackOn5xxPtr *bool
+	if explicit["rollback-on-5xx"] {
+		value := *rollbackOn5xx
+		rollbackOn5xxPtr = &value
+	}
 	// Project scope controls are all planner inputs. Treat each one as a
 	// project deploy request even when the operator omitted the discoverable
 	// --project spelling; otherwise --exclude/--show-affected silently fell
@@ -1821,6 +1827,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "canary-preset", "canary-stages",
+			"rollback-on-5xx",
 			"reason", "tag", "deployed-by", "pr-number",
 			// Project plans currently infer each workload's execution
 			// configuration from the scanned source. Reject single-app
@@ -1968,7 +1975,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Slug: slug, Repo: *repo, Ref: *ref, Reason: *reason, Tag: *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-			CanaryStages: *canaryStages, Environment: *environment,
+			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -1982,6 +1989,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PRNumber:       *prNumber,
 			TrafficPercent: optTrafficPercent(*trafficPercent),
 			Canary:         canarySpec,
+			RollbackOn5xx:  rollbackOn5xxPtr,
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers)
 		return code
 	}
@@ -2549,8 +2557,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		AppProtocol: appProtocolIntent, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-		CanaryStages: *canaryStages, NoTriggers: *noTriggers,
-		Environment: *environment,
+		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
@@ -2832,6 +2839,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Workflows:      workflowDefs,
 			TrafficPercent: optTrafficPercent(*trafficPercent),
 			Canary:         canarySpec,
+			RollbackOn5xx:  rollbackOn5xxPtr,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -2861,6 +2869,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				Environment: ann.Environment,
 				Reason:      ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs,
+				RollbackOn5xx: ann.RollbackOn5xx,
 			}
 			var progress resumableUploadProgress
 			if !jsonOutput {
@@ -2977,6 +2986,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		DeployedBy:     annPtr(resolveDeployedBy(*deployedBy)),
 		PRNumber:       annIntPtr(*prNumber),
 		Canary:         canarySpec,
+		RollbackOn5xx:  rollbackOn5xxPtr,
 	})
 	if err != nil {
 		code := printErr("Deploy failed", err)
